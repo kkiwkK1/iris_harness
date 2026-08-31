@@ -6,12 +6,20 @@
  * notated the way a critical edition notates variants: a quiet ladder in the
  * margin, one tick per reading, the current one filled and wider. It answers
  * "how many, which one" without a hover toolbar, and it disappears entirely
- * when there is only one reading, which is most of the time.
+ * when there is only one reading, which on real cards is most of the time.
+ *
+ * Past the point where ticks stop being countable it hands over to a stepper of
+ * fixed height (see `rail.ts` for where that point is and why). The stepper is
+ * still a vertical marginal object reading top-to-bottom, so earlier readings
+ * stay up and later ones stay down — the ladder's axis survives the change of
+ * form, which is what keeps the two from feeling like different controls.
  *
  * @module iris-web/app/VariantRail
  */
 
 import type { ReactElement } from 'react'
+
+import { railMode, stepReading } from './rail.ts'
 
 /**
  * Render the rail for one message.
@@ -29,10 +37,49 @@ export function VariantRail({
   index: number
   onSelect: (index: number) => void
 }): ReactElement | null {
-  if (count <= 1) return null
+  const mode = railMode(count)
+  if (mode === 'hidden') return null
+
+  const label = `${count} readings of this reply`
+
+  if (mode === 'compact') {
+    const earlier = stepReading(index, count, -1)
+    const later = stepReading(index, count, 1)
+    return (
+      <div className="iris-rail iris-rail--compact" role="group" aria-label={label}>
+        <button
+          type="button"
+          className="iris-rail__step"
+          aria-label="Earlier reading"
+          disabled={earlier === undefined}
+          onClick={() => {
+            if (earlier !== undefined) onSelect(earlier)
+          }}
+        >
+          ▲
+        </button>
+        {/* The readout is the whole report here, so unlike the ladder's count it
+            is not decorative and must not be hidden from assistive tech. */}
+        <span className="iris-rail__count">
+          {index + 1}/{count}
+        </span>
+        <button
+          type="button"
+          className="iris-rail__step"
+          aria-label="Later reading"
+          disabled={later === undefined}
+          onClick={() => {
+            if (later !== undefined) onSelect(later)
+          }}
+        >
+          ▼
+        </button>
+      </div>
+    )
+  }
 
   return (
-    <div className="iris-rail" role="group" aria-label={`${count} readings of this reply`}>
+    <div className="iris-rail" role="group" aria-label={label}>
       {Array.from({ length: count }, (_unused, at) => (
         <button
           key={at}

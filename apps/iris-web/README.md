@@ -61,6 +61,22 @@ per reading, the current one filled. Reasoning is a footnote, collapsed by
 default. Fonts are system stacks with CJK fallbacks, because a local-first app
 must render identically with the network down.
 
+## The variant rail's two forms
+
+The rail is a ladder of ticks, one per reading — but only while the ticks are
+countable. `src/app/rail.ts` holds the threshold (8) and the reasoning; the short
+version is that two constraints agree on roughly the same number. The rail must
+never be taller than the message it annotates, and a one-line reply is about
+80px against 7px per tick; and a ladder earns its place by being countable at a
+glance, which thirteen ticks are not.
+
+Past the threshold it becomes a fixed-height stepper — `▲ 7/14 ▼` stacked
+vertically, so earlier readings stay up and later ones stay down and the ladder's
+axis survives the change of form. This is not a defensive case: the nineteen
+cards on the development machine carry `0,0,0,0,0,0,0,0,0,0,0,1,1,2,4,6,10,10,13`
+alternate greetings, so one already needs fourteen cells, and regenerations stack
+on top with no ceiling.
+
 ## Contract notes for the host half
 
 Requests against `@iris/protocol`, in rough order of how much they cost to work

@@ -135,6 +135,45 @@
 }
 
 /*
+ * The compact form: a fixed ~40px regardless of how many readings there are,
+ * which is what keeps the rail from growing taller than the message it
+ * annotates. A card on this machine already carries fourteen greetings, and
+ * regenerations stack with no ceiling.
+ */
+.iris-rail--compact {
+  align-items: center;
+  gap: 0;
+}
+
+.iris-rail--compact .iris-rail__count {
+  margin: 1px 0;
+  /* The readout is the report now, not a footnote to the ticks. */
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-rail__step {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--iris-rule-strong);
+  transition: color var(--iris-fast) var(--iris-ease);
+}
+
+.iris-rail__step:hover:not(:disabled) {
+  color: var(--iris-accent);
+}
+
+.iris-rail__step:disabled {
+  cursor: default;
+  /* Dimmed rather than removed: the ends of the set are information, and a
+     control that vanishes at the boundary makes the rail jump. */
+  opacity: 0.3;
+}
+
+/*
  * The one animated moment. Message text is keyed by its visible reading, so
  * switching readings remounts it and replays this — changing reading feels like
  * flipping between takes rather than like a re-fetch. The same mount animation

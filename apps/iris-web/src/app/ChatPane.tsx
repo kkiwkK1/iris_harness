@@ -17,6 +17,7 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Composer } from './Composer.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
 import { groupByTurn, lastReplyId, swipeTarget, withStream } from './project.ts'
+import { stepReading } from './rail.ts'
 
 /**
  * Render the conversation pane.
@@ -63,8 +64,10 @@ export function ChatPane(): ReactElement {
       if (!event.altKey || event.metaKey || event.ctrlKey) return
       const step = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
       if (step === 0) return
-      const next = target.index + step
-      if (next < 0 || next >= target.count) return
+      // Same clamp the rail's own stepper uses, so the keyboard and the margin
+      // cannot disagree about where the set ends.
+      const next = stepReading(target.index, target.count, step)
+      if (next === undefined) return
       event.preventDefault()
       void actions.swipe(target.turn, next)
     }

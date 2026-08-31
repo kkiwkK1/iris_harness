@@ -23,6 +23,7 @@ import { StoreProvider } from '../src/client/provider.tsx'
 import { createIrisStore, type IrisStore } from '../src/client/store.ts'
 import { SlotProvider } from '../src/slots/Slot.tsx'
 import { createIrisSlots, type IrisSlotName } from '../src/slots/slots.ts'
+import { RAIL_MAX_TICKS, railMode } from '../src/app/rail.ts'
 import type { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 
 /**
@@ -47,19 +48,48 @@ function render(store: IrisStore, core: SlotCore): string {
   )
 }
 
-/** Wait for the fake's next frame of a given type. */
-function nextFrame(store: IrisStore, predicate: () => boolean): Promise<void> {
-  return new Promise(resolve => {
+/**
+ * Wait until the store satisfies a predicate.
+ *
+ * Deadlined rather than open-ended: a check that hangs is worse than one that
+ * fails, because it stalls whatever runs it with no message.
+ * @param store - the store to watch.
+ * @param predicate - the condition to wait for.
+ * @param what - named in the timeout message.
+ * @returns a promise that resolves once the condition holds.
+ */
+function until(store: IrisStore, predicate: () => boolean, what: string): Promise<void> {
+  return new Promise((resolve, reject) => {
     if (predicate()) {
       resolve()
       return
     }
+    const timer = setTimeout(() => {
+      off()
+      reject(new Error(`timed out waiting for ${what}`))
+    }, 5000)
     const off = store.subscribe(() => {
       if (!predicate()) return
+      clearTimeout(timer)
       off()
       resolve()
     })
   })
+}
+
+/**
+ * Run something that starts a turn, and wait for that turn to finish.
+ *
+ * Both edges have to be observed. Waiting only for "no stream in flight" returns
+ * immediately, before the turn it was supposed to wait for has even opened —
+ * which is how the first version of this helper turned a loop into a hang.
+ * @param store - the store to watch.
+ * @param work - the action that opens a turn.
+ */
+async function generated(store: IrisStore, work: () => Promise<void>): Promise<void> {
+  await work()
+  await until(store, () => store.getState().stream !== undefined, 'the turn to open')
+  await until(store, () => store.getState().stream === undefined, 'the turn to settle')
 }
 
 async function main(): Promise<void> {
@@ -83,7 +113,7 @@ async function main(): Promise<void> {
 
   // -------------------------------------------------------------- streaming
   await wired.store.getState().send('那你说，我该怎么办。')
-  await nextFrame(wired.store, () => (wired.store.getState().stream?.text.length ?? 0) > 0)
+  await until(wired.store, () => (wired.store.getState().stream?.text.length ?? 0) > 0, 'the first delta')
 
   const streaming = render(wired.store, slots.core)
   assert.match(streaming, /iris-caret/, 'the streaming caret is missing')
@@ -97,13 +127,34 @@ async function main(): Promise<void> {
     'buffered text did not reach the page',
   )
 
-  await nextFrame(wired.store, () => wired.store.getState().stream === undefined)
+  await until(wired.store, () => wired.store.getState().stream === undefined, 'the turn to settle')
 
   // ------------------------------------------------------------- regenerate
-  await wired.store.getState().regenerate()
-  await nextFrame(wired.store, () => wired.store.getState().stream === undefined)
+  await generated(wired.store, () => wired.store.getState().regenerate())
   const regenerated = render(wired.store, slots.core)
   assert.match(regenerated, /aria-label="Reading 2 of 2"/, 'regenerate did not add a reading')
+
+  // ------------------------------------------------------- rail, crowded
+  // A card on the development machine already carries thirteen alternate
+  // greetings, and regenerations stack without limit, so the ladder handing over
+  // to a fixed-height readout is a real path and worth rendering rather than
+  // only unit-testing the threshold.
+  while ((wired.store.getState().view?.messages.at(-1)?.swipes?.count ?? 0) <= RAIL_MAX_TICKS) {
+    await generated(wired.store, () => wired.store.getState().regenerate())
+  }
+  const crowded = render(wired.store, slots.core)
+  const readings = wired.store.getState().view?.messages.at(-1)?.swipes?.count ?? 0
+  assert.equal(railMode(readings), 'compact', 'the fixture did not cross the threshold')
+  assert.match(crowded, /iris-rail--compact/, 'the crowded rail did not switch form')
+  assert.match(crowded, /aria-label="Earlier reading"/, 'the compact rail has no stepper')
+  // Scoped to this message's count: other turns in the fixture have two or three
+  // readings and are still entitled to their ladders.
+  assert.doesNotMatch(
+    crowded,
+    new RegExp(`aria-label="Reading \d+ of ${readings}"`),
+    'ticks were drawn for a message past the threshold',
+  )
+  assert.match(crowded, new RegExp(`>${readings}<`), 'the compact rail does not report the count')
 
   // ------------------------------------------------------------------ slots
   const registered = slots.core.register(
