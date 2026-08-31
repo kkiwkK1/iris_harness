@@ -10,12 +10,13 @@
  * @module iris-web/app/ChatPane
  */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Composer } from './Composer.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
+import { PromptPanel } from './PromptPanel.tsx'
 import { groupByTurn, lastReplyId, swipeTarget, withStream } from './project.ts'
 import { stepReading } from './rail.ts'
 
@@ -35,6 +36,10 @@ export function ChatPane(): ReactElement {
   const groups = useMemo(() => groupByTurn(messages), [messages])
   const retryId = lastReplyId(messages)
 
+  // `undefined` means "preview the next request"; a number means "the record for
+  // that turn". Both go to the same panel, which is why one piece of state
+  // carries the distinction rather than two booleans that could disagree.
+  const [explaining, setExplaining] = useState<{ turn: number | undefined } | undefined>(undefined)
   const scroller = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
 
@@ -99,6 +104,7 @@ export function ChatPane(): ReactElement {
       onEdit: (id, text) => void actions.editMessage(id, text),
       onDelete: id => void actions.deleteMessage(id),
       onNotify: text => actions.notify('info', text),
+      onExplain: turn => setExplaining({ turn }),
     }),
     [actions],
   )
@@ -164,6 +170,12 @@ export function ChatPane(): ReactElement {
         generating={generating}
         onSend={text => void actions.send(text)}
         onStop={() => void actions.abort()}
+        onPreviewPrompt={() => setExplaining({ turn: undefined })}
+      />
+      <PromptPanel
+        open={explaining !== undefined}
+        turn={explaining?.turn}
+        onClose={() => setExplaining(undefined)}
       />
     </>
   )

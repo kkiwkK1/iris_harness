@@ -21,6 +21,7 @@ import { Slot } from '../slots/Slot.tsx'
  * @param props.generating - whether a reply is arriving; Send becomes Stop.
  * @param props.onSend - called with the trimmed draft.
  * @param props.onStop - called to interrupt the reply in flight.
+ * @param props.onPreviewPrompt - opens the breakdown of what would be sent next.
  * @returns the composer.
  */
 export function Composer({
@@ -28,11 +29,13 @@ export function Composer({
   generating,
   onSend,
   onStop,
+  onPreviewPrompt,
 }: {
   chatId: string
   generating: boolean
   onSend: (text: string) => void
   onStop: () => void
+  onPreviewPrompt: () => void
 }): ReactElement {
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
@@ -82,6 +85,11 @@ export function Composer({
         />
         <div className="iris-composer__row">
           <Slot name="iris.composer.actions" owner={{ chatId, generating }} />
+          {/* Beside the composer because that is where "what will be sent" lives.
+              The per-turn record hangs off each message instead. */}
+          <button type="button" className="iris-act" onClick={onPreviewPrompt}>
+            Prompt
+          </button>
           <span className="iris-composer__hint">
             Enter sends · Shift+Enter for a new line · Alt+←/→ changes reading
           </span>

@@ -544,6 +544,12 @@
 
 /* --------------------------------------------------------- prompt breakdown */
 
+/* The modal's own body: a fixed measure so a forty-row table does not stretch
+   the dialog to the window's width and lose the alignment of its columns. */
+.iris-prompt {
+  min-width: min(560px, 78vw);
+}
+
 .iris-prompt__notice {
   margin: 0 0 12px;
   font-size: 12px;
@@ -663,4 +669,20 @@
   text-align: right;
   color: var(--iris-ink-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+/* The previous run's ending, kept visible after the run so an observation does
+   not depend on a panel happening to still be open. */
+.iris-probe__outcome {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--iris-ink-secondary);
+}
+
+/* An entry that parsed but contributes nothing. Named rather than shown as `0`:
+   a reader who finds it here is asking why their part did not get through. */
+.iris-prompt__tokens--empty {
+  color: var(--iris-ink-faint);
+  font-style: italic;
 }

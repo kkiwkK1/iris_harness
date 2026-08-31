@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import {
   budgetUse,
+  contributing,
   discrepancy,
   itemizationMode,
   rowsFor,
@@ -102,4 +103,54 @@ test('an expired record is a third state, not an error and not a plain preview',
   assert.equal(itemizationMode(itemization(), 3), 'record')
   assert.equal(itemizationMode(itemization({ preview: true }), undefined), 'preview')
   assert.equal(itemizationMode(itemization({ preview: true }), 3), 'expired')
+})
+
+test('a flat distribution is handled as well as a skewed one', () => {
+  // Measured across six real presets, the largest part held 23%–92%. The 23% case
+  // is the one an earlier design assumption missed: fifty comparable parts, where
+  // ordering by size matters MORE because the eye cannot rank them.
+  const flat: PromptItemEntry[] = Array.from({ length: 12 }, (_unused, at) => ({
+    id: `p${at}`,
+    label: `Part ${at}`,
+    kind: 'system' as const,
+    tokens: at === 4 ? 230 : 70,
+  }))
+  const total = flat.reduce((sum, entry) => sum + entry.tokens, 0)
+  const rows = rowsFor(flat, 'size', total)
+
+  assert.equal(rows[0]?.entry.id, 'p4')
+  assert.ok(rows[0] !== undefined && rows[0].share < 0.3, 'this fixture is the flat case')
+  // Every part still gets a share, so the reader can see that it IS flat.
+  assert.ok(rows.every(row => row.share > 0))
+})
+
+test('a zero-token part is kept out of the picture and kept in the table', () => {
+  // 14 of one preset's 53 parts were zero. They occupy none of the prompt, so
+  // drawing them at the one-pixel minimum that protects genuinely small parts
+  // would claim they take up space — but hiding them would lose the answer to
+  // "why did my part not get through".
+  const withEmpty: PromptItemEntry[] = [
+    { id: 'a', label: 'A', kind: 'system', tokens: 100 },
+    { id: 'empty', label: 'Auxiliary Prompt', kind: 'system', tokens: 0 },
+    { id: 'b', label: 'B', kind: 'system', tokens: 40 },
+  ]
+
+  assert.deepEqual(
+    contributing(withEmpty).map(entry => entry.id),
+    ['a', 'b'],
+  )
+  assert.equal(rowsFor(withEmpty, 'size', 140).length, 3, 'the table keeps every part')
+})
+
+test('a zero-token part sorts last rather than being dropped', () => {
+  const rows = rowsFor(
+    [
+      { id: 'empty', label: 'E', kind: 'system', tokens: 0 },
+      { id: 'big', label: 'B', kind: 'system', tokens: 90 },
+    ],
+    'size',
+    90,
+  )
+  assert.deepEqual(rows.map(row => row.entry.id), ['big', 'empty'])
+  assert.equal(rows[1]?.share, 0)
 })

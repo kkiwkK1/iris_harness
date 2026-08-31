@@ -52,6 +52,15 @@ export interface RunnerHost {
    */
   onBlocked: (host: string, directive: string) => void
   /**
+   * The card body finished evaluating without throwing.
+   *
+   * Distinct from "the card is finished": a card that installs listeners and
+   * returns has run to completion while its actual work is only beginning. This
+   * answers exactly one question — did the body execute — which is the question a
+   * first run asks.
+   */
+  onRan?: () => void
+  /**
    * The frame reported its content height, already bounded by the protocol.
    *
    * The runner applies it either way; this is for a caller that needs to know it
@@ -153,6 +162,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
           })
         return
       case 'ran':
+        host.onRan?.()
         return
       default:
         return

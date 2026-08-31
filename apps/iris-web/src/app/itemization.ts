@@ -1,14 +1,16 @@
 /**
  * Reading a prompt breakdown.
  *
- * One measurement decided this module's shape: on a real preset and card, 1920 of
- * 2929 prompt tokens — 66% — were a single world-info injection. So an
- * itemization is not a list of comparable parts, it is **one column and a pile of
- * rubble**, and a panel that sorts by assembly order shows a wall of two-token
- * rows with the answer somewhere in the middle of it.
+ * Measured across six real presets against one real card, the largest single part
+ * held between **23% and 92%** of the prompt. So there is no one shape to design
+ * for: sometimes it is one column and a pile of rubble, sometimes fifty
+ * comparable parts. (An earlier version of this comment said 66% as though it
+ * were the rule; that came from a single sample.)
  *
- * Hence a default order by size, and hence the share of the total being computed
- * for every row rather than left to the eye.
+ * What holds across both extremes is what this module does. Ordering by size
+ * matters *more* in the flat case, not less — a 23% maximum spread over fifty
+ * rows is exactly the distribution the eye cannot rank. And computing every
+ * row's share is what lets a reader tell the two situations apart at all.
  *
  * @module iris-web/app/itemization
  */
@@ -58,6 +60,24 @@ export function rowsFor(
   }
 
   return rows.map(({ entry, share }) => ({ entry, share }))
+}
+
+/**
+ * The parts that actually divide the prompt.
+ *
+ * A zero-token entry is real — 14 of one preset's 53 were zero, from markers with
+ * nothing to fill them and enabled prompts with empty content — but it occupies
+ * none of the prompt, so it has no place in a picture of how the prompt is
+ * divided. Drawing it anyway, at the one-pixel minimum that protects genuinely
+ * small parts, would claim it takes up space.
+ *
+ * It stays in the table, where its presence is the answer to "why is my X not
+ * getting through".
+ * @param entries - every entry.
+ * @returns those with a nonzero cost.
+ */
+export function contributing(entries: readonly PromptItemEntry[]): PromptItemEntry[] {
+  return entries.filter(entry => entry.tokens > 0)
 }
 
 /**

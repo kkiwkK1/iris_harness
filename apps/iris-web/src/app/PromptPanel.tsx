@@ -26,7 +26,14 @@ import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PromptItemization } from '@iris/protocol'
 
 import { useIrisActions } from '../client/provider.tsx'
-import { budgetUse, discrepancy, itemizationMode, rowsFor, type ItemOrder } from './itemization.ts'
+import {
+  budgetUse,
+  contributing,
+  discrepancy,
+  itemizationMode,
+  rowsFor,
+  type ItemOrder,
+} from './itemization.ts'
 
 /** One decimal, and only where it says something: 0.4% and 66% both have to read cleanly. */
 function percent(share: number): string {
@@ -158,7 +165,7 @@ function Breakdown({
         Nothing is merged, so a one-pixel segment stays a real part.
       */}
       <div className="iris-prompt__bar" role="img" aria-label="Share of the prompt by part">
-        {rowsFor(itemization.entries, 'assembly', itemization.tokens).map(row => (
+        {rowsFor(contributing(itemization.entries), 'assembly', itemization.tokens).map(row => (
           <span
             key={row.entry.id}
             className={`iris-prompt__slice iris-prompt__slice--${row.entry.kind}`}
@@ -206,8 +213,18 @@ function Breakdown({
               {row.entry.label}
               {row.entry.role === undefined ? null : <span className="iris-meta"> {row.entry.role}</span>}
             </span>
-            <span className="iris-prompt__share iris-meta">{percent(row.share)}</span>
-            <span className="iris-prompt__tokens">{row.entry.tokens.toLocaleString()}</span>
+            {/*
+              A zero-token part reads as "empty", not as "0". They are common — 14
+              of one real preset's 53 — and a reader looking for one is asking why
+              their X did not get through. Seeing it present and empty answers
+              that; seeing `0` invites them to wonder if the count is broken.
+            */}
+            <span className="iris-prompt__share iris-meta">
+              {row.entry.tokens === 0 ? '' : percent(row.share)}
+            </span>
+            <span className={`iris-prompt__tokens${row.entry.tokens === 0 ? ' iris-prompt__tokens--empty' : ''}`}>
+              {row.entry.tokens === 0 ? 'empty' : row.entry.tokens.toLocaleString()}
+            </span>
           </li>
         ))}
       </ul>

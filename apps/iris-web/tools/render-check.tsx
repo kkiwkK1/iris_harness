@@ -24,6 +24,7 @@ import { createIrisStore, type IrisStore } from '../src/client/store.ts'
 import { SlotProvider } from '../src/slots/Slot.tsx'
 import { createIrisSlots, type IrisSlotName } from '../src/slots/slots.ts'
 import { RAIL_MAX_TICKS, railMode } from '../src/app/rail.ts'
+import { contributing, discrepancy, rowsFor } from '../src/app/itemization.ts'
 import type { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 
 /**
@@ -244,6 +245,42 @@ async function main(): Promise<void> {
     recorded,
     /<button[^>]*aria-label="Reading /,
     'a recorded rail rendered a tick as a control',
+  )
+
+  // ------------------------------------------------------- prompt breakdown
+  // Asserted on the projection rather than on the modal, which only renders once
+  // opened. The measured shape is the point: one part holds two thirds of the
+  // prompt, so the panel's default order has to surface it first.
+  const itemized = await wired.store.getState().itemize()
+  assert.ok(itemized.ok, 'the fake should model an itemization, not refuse one')
+  const breakdown = itemized.itemization
+  assert.equal(
+    discrepancy(breakdown),
+    undefined,
+    'a breakdown whose parts do not sum to its total would be drawn against a wrong scale',
+  )
+  const bySize = rowsFor(breakdown.entries, 'size', breakdown.tokens)
+  assert.ok(bySize[0] !== undefined)
+  // A fixture property, not a claim about prompts in general: measured across six
+  // real presets the largest part held 23%–92%, and this fixture sits at the
+  // skewed end deliberately, because that is the end where an equal-width list
+  // looks fine and tells the reader nothing.
+  assert.ok(bySize[0].share > 0.5, 'the fixture must keep its skew, or the design is untested')
+  // Zero-token parts are normal — 14 of one preset's 53 — and must stay in the
+  // table while staying out of the proportion bar.
+  assert.ok(
+    breakdown.entries.some(entry => entry.tokens === 0),
+    'the fixture should carry an empty part, since real presets are full of them',
+  )
+  assert.equal(
+    contributing(breakdown.entries).length,
+    breakdown.entries.filter(entry => entry.tokens > 0).length,
+    'the bar must be drawn from contributing parts only',
+  )
+  // A UUID id with a human label is the normal case, not the exception.
+  assert.ok(
+    breakdown.entries.some(entry => /^[0-9a-f]{8}-/.test(entry.id) && !/^[0-9a-f]{8}-/.test(entry.label)),
+    'the fixture should carry a UUID-identified prompt, since 29 of 41 real ones are',
   )
 
   // ------------------------------------------------------------------ slots
