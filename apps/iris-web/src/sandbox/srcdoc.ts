@@ -27,7 +27,7 @@ import { REMOTE_ALLOWLIST } from './policy.ts'
  * instead of asking.
  * @returns the policy value.
  */
-export function framePolicy(networkGranted: boolean): string {
+export function framePolicy(networkGranted: boolean, selfOrigin: string): string {
   const remotes = REMOTE_ALLOWLIST.map(host => `https://${host}`).join(' ')
 
   // Fonts are the one default widening: high coverage across real cards, and a
@@ -75,7 +75,18 @@ export function framePolicy(networkGranted: boolean): string {
      * author's images is a different decision from letting it execute its author's
      * code, and only the first is what the grant is for.
      */
-    `script-src 'unsafe-inline' 'unsafe-eval' blob: ${remotes}`,
+    /*
+     * Iris's own origin is listed because the card-library bundle is served from
+     * it. Named exactly, never as a wildcard: this admits one origin that Iris
+     * already controls end to end, which is a different thing from admitting a
+     * host on the public internet.
+     *
+     * Without it the bundle is refused by this very policy — and the symptom would
+     * be `_ is not defined`, a message pointing at a missing library rather than at
+     * the rule that blocked it. (The refusal *would* be reported, which is the
+     * point of reporting refusals; it would still have cost a round trip.)
+     */
+    `script-src 'unsafe-inline' 'unsafe-eval' blob: ${selfOrigin} ${remotes}`,
     `connect-src ${connectSrc}`,
     `style-src ${styleSrc}`,
     `font-src data: ${fontFiles}`,
@@ -120,9 +131,9 @@ function attribute(value: string): string {
 export function buildSrcdoc(
   token: string,
   bootstrap: string,
-  options: { networkGranted: boolean, libraries: readonly string[] },
+  options: { networkGranted: boolean, libraries: readonly string[], selfOrigin: string },
 ): string {
-  const { networkGranted, libraries } = options
+  const { networkGranted, libraries, selfOrigin } = options
   // The bootstrap is placed inside a script element, so the one sequence that
   // could break out of it is a literal `</script`. Split rather than escaped:
   // the string is JavaScript, and an HTML escape inside it would change the code.
@@ -137,7 +148,7 @@ export function buildSrcdoc(
     '<!doctype html>',
     '<html lang="en"><head>',
     '<meta charset="utf-8">',
-    `<meta http-equiv="Content-Security-Policy" content="${attribute(framePolicy(networkGranted))}">`,
+    `<meta http-equiv="Content-Security-Policy" content="${attribute(framePolicy(networkGranted, selfOrigin))}">`,
     // How the bootstrap learns its token. An attribute rather than a global,
     // because the bootstrap runs before any card code and reads it once.
     `<meta name="iris-token" content="${attribute(token)}">`,

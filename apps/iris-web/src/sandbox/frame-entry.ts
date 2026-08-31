@@ -248,6 +248,19 @@ try {
     post({ iris: run, type: 'globals', published, refused })
   },
 
+  reportMissingGlobals: expected => {
+    const host = window as unknown as Record<string, unknown>
+    const missing = expected.filter(name => host[name] === undefined)
+    if (missing.length === 0) return
+    post({
+      iris: run,
+      type: 'error',
+      message:
+        `libraries a card may expect are not present in this frame: ${missing.join(', ')}` +
+        ' — upstream seeds these from its host page, which a cross-origin frame cannot do',
+    })
+  },
+
   /**
    * Two execution shapes, chosen by the caller.
    *

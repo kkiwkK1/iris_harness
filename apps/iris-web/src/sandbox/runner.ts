@@ -140,6 +140,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   frame.srcdoc = buildSrcdoc(token, host.bootstrap, {
     networkGranted: host.networkGranted,
     libraries: host.libraries,
+    selfOrigin: window.location.origin,
   })
 
   let disposed = false

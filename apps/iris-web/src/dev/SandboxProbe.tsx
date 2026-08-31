@@ -167,7 +167,7 @@ export function SandboxProbe(): ReactElement | null {
           bootstrap,
           code: stripCodeFence(code),
           mode: modeFor(kind),
-          libraries: librariesFor(kind),
+          libraries: librariesFor(kind, window.location.origin),
           documentGranted: granted,
           networkGranted,
           context,

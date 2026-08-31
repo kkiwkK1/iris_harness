@@ -34,8 +34,17 @@ export const SCRIPT_LIBRARIES: readonly string[] = [
  * problem producing the same symptom — which is the confusion this whole
  * diagnostic layer exists to remove.
  * @param kind - what the frame is running.
+ * @param origin - Iris's own origin, for the locally served bundle.
  * @returns the library URLs, in load order.
  */
-export function librariesFor(kind: 'card-script' | 'probe'): readonly string[] {
-  return kind === 'card-script' ? SCRIPT_LIBRARIES : []
+export function librariesFor(kind: 'card-script' | 'probe', origin: string): readonly string[] {
+  if (kind !== 'card-script') return []
+  // Absolute rather than root-relative. A `srcdoc` document resolves relative
+  // URLs against its parent's base URL, which is a browser behaviour this project
+  // cannot verify from outside a browser — and the failure mode if it differs is
+  // a silent 404 that surfaces as a missing library three steps later.
+  //
+  // Last, after Vue: upstream's own order runs its third-party tags first and
+  // seeds the library globals afterwards.
+  return [...SCRIPT_LIBRARIES, `${origin}/sandbox/preset.js`]
 }

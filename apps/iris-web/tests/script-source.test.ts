@@ -86,17 +86,27 @@ test('a card frame gets upstream two libraries, the probe gets none', () => {
   // two tags for a script frame, nothing else. The probe gets none — making a
   // diagnostic depend on two CDN fetches would let a network problem and a sandbox
   // problem produce the same symptom.
-  assert.deepEqual(librariesFor('probe'), [])
+  assert.deepEqual(librariesFor('probe', 'http://x'), [])
 
-  const libs = librariesFor('card-script')
-  assert.equal(libs.length, 2)
+  const libs = librariesFor('card-script', 'http://x')
+  // Two from upstream's list plus Iris's own library bundle.
+  assert.equal(libs.length, 3)
   assert.ok(libs[0]?.includes('/npm/vue/dist/vue.runtime.global.prod.min.js'))
   assert.ok(libs[1]?.includes('/npm/vue-router/dist/vue-router.global.prod.min.js'))
 })
 
-test('the libraries come from the host the CSP already admits', () => {
-  // No new allowance is needed, and none should creep in unnoticed.
-  for (const url of librariesFor('card-script')) {
-    assert.ok(url.startsWith('https://testingcf.jsdelivr.net/'), `${url} is off the allowlist`)
+test('every library comes from an origin the policy names', () => {
+  // Two from the measured CDN, one from Iris itself. Nothing else should creep in
+  // unnoticed, because anything that does is refused by the frame's own policy.
+  for (const url of librariesFor('card-script', 'http://x')) {
+    const allowed = url.startsWith('https://testingcf.jsdelivr.net/') || url.startsWith('http://x/')
+    assert.ok(allowed, `${url} is off the allowlist`)
   }
+})
+
+test('Iris own bundle loads after upstream libraries, as upstream orders it', () => {
+  // Upstream runs its third-party tags first and seeds the library globals
+  // afterwards, in `predefine`.
+  const libs = librariesFor('card-script', 'http://x')
+  assert.ok(libs.at(-1)?.endsWith('/sandbox/preset.js'))
 })

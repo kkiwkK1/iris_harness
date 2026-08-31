@@ -19,6 +19,7 @@ import { UnsupportedApiError } from './errors.ts'
 import { UNBRIDGED_GLOBALS } from './policy.ts'
 import type { FromFrame, ToFrame } from './protocol.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
+import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import type { ScriptContext } from '@iris/protocol'
 
 /** What the frame-side code needs from its realm. */
@@ -59,6 +60,15 @@ export interface FrameEnv {
    * more than saving two property definitions.
    */
   publishGlobals?: (entries: readonly [string, unknown][]) => void
+  /**
+   * Say which of a list of globals are not present in this frame.
+   *
+   * Enumerating beats discovering. Upstream seeds six library globals from its
+   * host page; a cross-origin frame cannot borrow any of them, so each one Iris
+   * does not provide is a card crash waiting to happen — and the crash says
+   * `X is not defined`, which names the symptom and not the list it came from.
+   */
+  reportMissingGlobals?: (expected: readonly string[]) => void
   /**
    * Publish the viewport into the frame's own realm.
    *
@@ -360,14 +370,20 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       //
       // Published before evaluation in both modes, because a module has no other
       // way to see these and a classic body loses nothing by having both routes.
-      env.publishGlobals?.(
-        shadowed.map((name, at) => [name, values[at]] as [string, unknown]).filter(
+      env.publishGlobals?.([
+        ...shadowed.map((name, at) => [name, values[at]] as [string, unknown]).filter(
           // The window aliases are not ours to redefine and would be circular
           // anyway; `parent`/`top` are attempted because whether they can be
           // redefined is a browser question the frame answers empirically.
           ([name]) => name !== 'window' && name !== 'self' && name !== 'globalThis',
         ),
-      )
+      ])
+
+      // Which of upstream's seeded globals this frame does NOT have. Reported
+      // rather than waited for: without it, each missing library costs a full
+      // round trip to discover, one crash at a time, and the crash names the
+      // symptom rather than the gap.
+      env.reportMissingGlobals?.(EXPECTED_GLOBALS)
 
       const running = env.evaluate(message.code, message.mode, shadowed, values)
       if (running instanceof Promise) {
