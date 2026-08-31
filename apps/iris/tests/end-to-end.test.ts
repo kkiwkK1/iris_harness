@@ -49,7 +49,12 @@ const PRESET: ChatCompletionPreset = {
     { identifier: 'jailbreak', role: 'system', content: 'Stay in character.' },
   ],
   prompt_order: [{
-    character_id: 100000,
+    // 100001, not 100000: `openai.js` overrides `PromptManager`'s class default
+    // for the Chat Completion path, so this is the sentinel a real preset is
+    // ordered under. The old value still resolves through the legacy fallback,
+    // which is exactly why it had to be changed — it would have gone on passing
+    // while testing the wrong path.
+    character_id: 100001,
     order: [
       { identifier: 'main', enabled: true },
       { identifier: 'charDescription', enabled: true },

@@ -18,11 +18,30 @@
 
 import type { Contribution, Role } from '@iris/pipeline'
 
-/** Character-id sentinel for the ordering every character inherits. */
-export const GLOBAL_ORDER_ID = 100000
+/**
+ * The character-id sentinel the Chat Completion path actually uses.
+ *
+ * Not 100000, which is the obvious reading and the wrong one. `PromptManager`
+ * declares `promptOrder.dummyId: 100000` as a CLASS DEFAULT
+ * (`PromptManager.js:336`), and `openai.js:689` overrides it to **100001** when
+ * it constructs the manager for this path. With `strategy: 'global'` every
+ * lookup then goes through the overridden value, so 100000 is unreachable here.
+ *
+ * Measured on six real presets: two carry only 100001, and the four that also
+ * carry 100000 put ~10 enabled prompts in it against 33–60 in 100001. Reading
+ * 100000 as the global order therefore does not fail loudly — it quietly builds
+ * a prompt out of the wrong, much shorter list.
+ */
+export const GLOBAL_ORDER_ID = 100001
 
-/** Character-id sentinel for the ordering group chats inherit. */
-export const GROUP_ORDER_ID = 100001
+/**
+ * The class default, still written into shipped preset files.
+ *
+ * Kept as a last resort before file order because a preset that carries only
+ * this group is better read than ignored, but it is never what the Chat
+ * Completion path selects first.
+ */
+export const LEGACY_ORDER_ID = 100000
 
 /**
  * The built-in prompt identifiers, in SillyTavern's own order.
@@ -91,26 +110,34 @@ export interface ResolveOptions {
   characterId?: number
   /** Text for `marker` items, keyed by identifier. */
   markers?: MarkerSources
-  /** Treat the chat as a group, preferring the group ordering sentinel. */
-  group?: boolean
 }
 
 /**
  * Pick the ordering that applies to one character.
  *
- * Falls back through the character's own entry, then the group or global
- * sentinel, then — for a preset that shipped without `prompt_order` at all —
- * the declared prompt list in file order.
+ * Falls back through the character's own entry, then the global sentinel, then
+ * the legacy one, then — for a preset that shipped without `prompt_order` at
+ * all — the declared prompt list in file order.
+ *
+ * The character's own entry is tried first even though upstream's Chat
+ * Completion path runs `strategy: 'global'` and so never consults one: a caller
+ * that passes a character id is asking for it, and no real preset carries a
+ * per-character group anyway (measured: six presets, only the two sentinels).
+ *
+ * The file-order fallback returns EVERY prompt, enabled or not, because a
+ * preset with no `prompt_order` carries no enabled flags to filter on. That is
+ * the right answer for a preset that genuinely has no ordering, and the wrong
+ * answer for one whose ordering we failed to find — which is why the sentinel
+ * above has to be right.
  * @param preset - the preset file.
- * @param options - character identity and group flag.
+ * @param options - character identity.
  * @returns identifiers in the order they should be rendered.
  */
 export function resolveOrder(preset: ChatCompletionPreset, options: ResolveOptions = {}): string[] {
   const orders = preset.prompt_order ?? []
-  const fallbackId = options.group === true ? GROUP_ORDER_ID : GLOBAL_ORDER_ID
   const chosen = orders.find(entry => entry.character_id === options.characterId)
-    ?? orders.find(entry => entry.character_id === fallbackId)
     ?? orders.find(entry => entry.character_id === GLOBAL_ORDER_ID)
+    ?? orders.find(entry => entry.character_id === LEGACY_ORDER_ID)
 
   if (chosen === undefined) return preset.prompts.map(prompt => prompt.identifier)
   return chosen.order.filter(entry => entry.enabled).map(entry => entry.identifier)

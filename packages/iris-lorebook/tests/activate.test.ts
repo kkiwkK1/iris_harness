@@ -592,3 +592,30 @@ test('macros are expanded in both keys and content', () => {
   assert.deepEqual(uids(result), [0])
   assert.equal(result.buckets.before[0]?.content, 'About Seraphina.')
 })
+
+test('disabled entries cost nothing, at the proportion real books ship', () => {
+  // Measured over the user's 1478 entries: 503 of them — 34% — are shipped
+  // switched off by their author. That makes this behaviour magnitude-sensitive
+  // rather than a detail: an engine that merely declined to *emit* them while
+  // still charging them to the budget would evict a third of the book's real
+  // content, and the symptom would be a model that had stopped knowing things
+  // it was told.
+  const entries = Array.from({ length: 90 }, (_, uid) =>
+    entry({ uid, constant: true, disable: uid % 3 === 0, content: `body ${String(uid)}` }))
+  const enabled = entries.filter(candidate => candidate.disable !== true).length
+  assert.equal(enabled, 60, 'the fixture really is a third disabled')
+
+  const result = activateEntries({
+    entries,
+    chat: ['Hello.'],
+    // Enough for every enabled entry and not one more, so a disabled entry that
+    // consumed budget would push a real one out and be visible here.
+    budget: enabled,
+    countTokens: () => 1,
+    random: rng(),
+  })
+
+  assert.equal(result.activated.length, enabled)
+  assert.equal(result.activated.some(activated => activated.disable === true), false)
+  assert.equal(result.budgetOverflowed, false, 'the disabled two thirds were never charged')
+})

@@ -7,7 +7,7 @@
 export {
   BUILTIN_IDENTIFIERS,
   GLOBAL_ORDER_ID,
-  GROUP_ORDER_ID,
+  LEGACY_ORDER_ID,
   HISTORY_IDENTIFIER,
   resolveOrder,
   resolvePreset,

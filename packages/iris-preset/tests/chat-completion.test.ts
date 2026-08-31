@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
+import { readdir, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { assemble } from '@iris/pipeline'
 
 import {
   GLOBAL_ORDER_ID,
-  GROUP_ORDER_ID,
+  LEGACY_ORDER_ID,
   resolveOrder,
   resolvePreset,
   type ChatCompletionPreset,
@@ -60,14 +63,58 @@ test("a character's own ordering wins over the sentinel", () => {
   assert.deepEqual(resolveOrder(file, { characterId: 42 }), ['charDescription', 'main'])
 })
 
-test('a group chat falls back to the group sentinel', () => {
+test('the sentinel the Chat Completion path uses wins over the class default', () => {
+  // 100000 is `PromptManager`'s class default; `openai.js` overrides it to
+  // 100001 for this path. A preset that carries both puts a vestigial ~10-prompt
+  // list in the first and the real one in the second, so reading them the wrong
+  // way round builds a prompt that is quietly far too short.
+  assert.equal(GLOBAL_ORDER_ID, 100001)
+  assert.equal(LEGACY_ORDER_ID, 100000)
+
   const file = preset()
   file.prompt_order?.push({
-    character_id: GROUP_ORDER_ID,
-    order: [{ identifier: 'main', enabled: true }],
+    character_id: LEGACY_ORDER_ID,
+    order: [{ identifier: 'jailbreak', enabled: true }],
   })
 
-  assert.deepEqual(resolveOrder(file, { group: true }), ['main'])
+  assert.deepEqual(
+    resolveOrder(file),
+    ['main', 'worldInfoBefore', 'charDescription', 'chatHistory', 'jailbreak'],
+    'the 100001 group, not the 100000 one',
+  )
+})
+
+test('a preset carrying only the class default is still read', () => {
+  const file = preset()
+  const order = file.prompt_order?.[0]
+  if (order !== undefined) order.character_id = LEGACY_ORDER_ID
+
+  // Better read than ignored: falling through to file order here would return
+  // every prompt, including the ones the author switched off.
+  assert.deepEqual(resolveOrder(file), ['main', 'worldInfoBefore', 'charDescription', 'chatHistory', 'jailbreak'])
+})
+
+test('a preset shaped like a real one yields only its enabled prompts', () => {
+  // The shape that exposed the bug: 41 prompts, one `prompt_order` group under
+  // 100001 listing 37 of them, 22 enabled. Under the old sentinel this matched
+  // nothing and fell through to file order — 41 prompts, wrong sequence, and
+  // the 15 the author had switched off included.
+  const identifiers = Array.from({ length: 41 }, (_, index) => `p${String(index)}`)
+  const listed = identifiers.slice(0, 37)
+  const file: ChatCompletionPreset = {
+    prompts: identifiers.map(identifier => ({ identifier, role: 'system', content: identifier })),
+    prompt_order: [{
+      character_id: 100001,
+      order: listed.map((identifier, index) => ({ identifier, enabled: index % 5 !== 0 && index < 28 })),
+    }],
+  }
+
+  const order = resolveOrder(file)
+  const expected = listed.filter((_identifier, index) => index % 5 !== 0 && index < 28)
+
+  assert.equal(expected.length, 22, 'the fixture really is 22 of 37')
+  assert.deepEqual(order, expected)
+  assert.notEqual(order.length, identifiers.length, 'not the file-order fallback')
 })
 
 test('a preset with no prompt_order falls back to file order', () => {
@@ -136,4 +183,44 @@ test('an absolute injection pins itself to its own depth', () => {
 
   assert.equal(note?.placement.kind, 'depth')
   assert.equal((note?.placement as { depth: number }).depth, 2)
+})
+
+/**
+ * The real presets on this machine.
+ *
+ * Skipped without a SillyTavern install. It earns its place because the sentinel
+ * bug was invisible to every fixture in this file: the fixtures were written
+ * from the same belief as the code, so they used the sentinel the code looked
+ * for. Only files someone else wrote could disagree.
+ */
+const PRESET_DIR = 'E:/sillyTavern/SillyTavern/data/default-user/OpenAI Settings'
+
+test('every real preset resolves to its enabled prompts, not to file order', { skip: !existsSync(PRESET_DIR) }, async () => {
+  const files = (await readdir(PRESET_DIR)).filter(name => name.endsWith('.json'))
+  assert.ok(files.length > 0, 'no presets to read')
+
+  let checked = 0
+  for (const name of files) {
+    let file: ChatCompletionPreset
+    try {
+      file = JSON.parse(await readFile(join(PRESET_DIR, name), 'utf8')) as ChatCompletionPreset
+    } catch {
+      continue
+    }
+    const groups = file.prompt_order ?? []
+    if (groups.length === 0 || !Array.isArray(file.prompts)) continue
+    checked += 1
+
+    const expected = (groups.find(group => group.character_id === 100001) ?? groups[0])
+      ?.order.filter(entry => entry.enabled).map(entry => entry.identifier) ?? []
+    const order = resolveOrder(file)
+
+    assert.deepEqual(order, expected, `${name} did not resolve to its enabled prompts`)
+    // The failure this guards is silent in both directions: too many prompts
+    // (file-order fallback, including ones the author switched off) or too few
+    // (the vestigial 100000 group, which real presets fill with about ten).
+    assert.notEqual(order.length, file.prompts.length, `${name} fell through to file order`)
+  }
+
+  assert.ok(checked >= 5, `only checked ${String(checked)} presets`)
 })
