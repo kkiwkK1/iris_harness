@@ -265,6 +265,8 @@ importers:
         specifier: ^8.18.0
         version: 8.18.1
 
+  packages/iris-tokenizer: {}
+
   packages/iris-turn:
     dependencies:
       '@deepseek-ai/dsh-llm':

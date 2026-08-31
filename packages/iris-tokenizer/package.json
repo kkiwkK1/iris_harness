@@ -1,0 +1,11 @@
+{
+  "name": "@iris/tokenizer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Token estimation for context budgeting, calibrated against real provider counts.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  }
+}
