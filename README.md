@@ -26,13 +26,16 @@ pnpm demo:mvu
 
 这个 demo 用世界书 `[InitVar]` 声明变量树，跑三轮真实对话，把模型吐出的 `<UpdateVariable>` 命令解析套用，打印每轮的状态变化，最后重新生成并切回旧候选，验证状态各自归属。
 
-### 跑起宿主进程
+### 跑起来
 
 先配置端点——把 `apps/iris/.env.example` 复制成 `apps/iris/.env` 并改成你自己的（该文件已被 gitignore）。任何讲 OpenAI `/chat/completions` + SSE 的端点都行：Ollama、llama.cpp、TextGen WebUI、OpenAI、OpenRouter、DeepSeek。本地端点通常不需要密钥。
 
 ```
-pnpm start
+pnpm build:web    # 构建界面，只在界面代码变动后需要重跑
+pnpm start        # 起宿主；启动时会打印界面地址
 ```
+
+浏览器打开它打印的那个地址即可。界面和传输层同源，所以不涉及 CORS。没有构建界面时宿主照样启动，只是不提供页面——无头的传输测试正是这样跑的。
 
 之所以走配置文件而不是环境变量前缀，是因为 **PowerShell 没有 `VAR=value cmd` 这种写法**——那是 bash 的语法。真要临时覆盖，两种 shell 各自的写法是：
 
@@ -62,12 +65,21 @@ IRIS_MODEL=qwen3:8b pnpm start
 | `packages/iris-preset` | SillyTavern 预设 → 装配贡献项 |
 | `packages/iris-persistence` | SillyTavern 聊天 JSONL 的无损往返 |
 | `packages/iris-llm-openai-compat` | 一个适配器覆盖 OpenAI/OpenRouter/Ollama/llama.cpp/TextGen/DeepSeek… |
+| `packages/iris-regex` | 正则脚本引擎。三态易失性（仅显示 / 仅提示词 / 永久），MVU 的硬依赖 |
+| `packages/iris-tokenizer` | token 估算，权重由实测拟合；可用 provider 报告的用量在线校准 |
+| `packages/iris-protocol` | 宿主与浏览器之间的契约。请求方向带 zod 校验 |
+| `packages/iris-rpc-host` / `-client` | HTTP + WebSocket 传输，带重连 |
+| `packages/iris-app-service` | 宿主应用层：用领域包实现协议方法 |
+| `packages/iris-client-fake` | 内存版 `IrisClient`，界面可脱离宿主开发与测试 |
 | `apps/iris` | 宿主进程：`cordis.yml` 组合 + 端到端测试 |
+| `apps/iris-web` | 浏览器界面。npm 管理（原因见 `pnpm-workspace.yaml` 注释） |
 | `spike/` | 阶段 0 的一次性验证工程，不属于产品树（已排除出 workspace） |
 | `.reference/` | deepseek-harness 与 MagVarUpdate 的只读检出，供对照实现 |
 
 ## 现状
 
-阶段 0 的五道验证关全部通过。领域内核、生态兼容层与宿主组合已可运行，**275 个测试全绿，类型检查干净**。
+阶段 0 的五道验证关全部通过。领域内核、生态兼容层、宿主传输层与浏览器界面均已落地，**463 个测试（461 通过 / 2 联网跳过）**，类型检查干净。
 
-尚未开始的是产品的前端一半：浏览器传输层（RPC）、客户端状态库、领域 UI，以及卡片脚本的 iframe 沙箱。阶段 0 已经证明 DSH 的浏览器外壳可以在不引入编码 agent 客户端栈的情况下启动，接缝是 `uiRenderer` 服务。
+对真实 provider 的端到端验证跑通：8MB 的真实角色卡导入成功，开场白成为 turn 0 且备选开场白作为该轮的 swipe，回复以 121 条增量流式返回，重新生成与切换 swipe 都正确。
+
+功能差距、兼容性实测分析与排期见 [ROADMAP.md](ROADMAP.md)。最大的剩余缺口是**卡片脚本沙箱**——本机 19 张卡里 7 张带脚本共 22 个，目前一个都跑不了，而它也是唯一存在真实兼容性风险的地方。
