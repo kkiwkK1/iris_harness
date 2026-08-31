@@ -148,6 +148,26 @@ export const requestSchemas = {
     depth: z.number().int().min(0).max(1000).default(0),
   }),
   /**
+   * Write back this card's extension settings.
+   *
+   * The read side alone was not enough, and the corpus is what showed it: a
+   * card does `if (!extensionSettings.someKey) { …compute… }` and then
+   * `extensionSettings.someKey = result`. Without a write it reads falsy every
+   * run, recomputes, assigns into a snapshot that is discarded, and repeats
+   * that work forever without ever saying anything.
+   *
+   * Whole-object per card, matching `script.saveMetadata`: cards mutate their
+   * settings object and expect deletions to stick, which a merge would undo.
+   * The partition is the card's own — one card can neither read nor overwrite
+   * another's, because cross-card access would defeat the per-card grant model
+   * by letting a card learn through a neighbour what it was not allowed itself.
+   */
+  'script.setExtensionSettings': z.object({
+    characterId: z.string().min(1),
+    settings: z.record(z.string(), z.unknown()),
+  }),
+
+  /**
    * One completion, on the card's behalf.
    *
    * Non-streaming, matching upstream's `generateRaw`, which resolves with the
@@ -209,6 +229,8 @@ export interface RpcResponseMap {
   'script.saveMetadata': { metadata: Record<string, unknown> }
   'script.saveChat': Record<string, never>
   'script.setExtensionPrompt': Record<string, never>
+  /** The settings as stored, so a card can see what survived. */
+  'script.setExtensionSettings': { settings: Record<string, unknown> }
   'script.generateRaw': { text: string }
 }
 

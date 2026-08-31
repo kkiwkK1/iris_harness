@@ -31,7 +31,7 @@ import type { ChatStore } from './chats.ts'
 import type { ChatEntry } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
-import { buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
+import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { buildPrompt, DEFAULT_PRESET } from './prompt.ts'
 import { runScripts } from './regex.ts'
 import type { ScriptPolicyStore } from './scripts.ts'
@@ -309,6 +309,27 @@ export class IrisAppService {
         // assuming its object round-tripped intact.
         return { metadata: entry.header.chat_metadata }
       },
+
+      'script.setExtensionSettings': async ({ characterId, settings }) => {
+
+        const store = this.#options.extensionSettings
+
+        if (store === undefined) throw new AppError('unsupported', 'extension settings are not configured on this host')
+
+        // The card must exist. A partition written for a card that is not there
+
+        // is storage nobody can find to clear.
+
+        await library.load(characterId)
+
+        assertStorable(settings, 'extensionSettings')
+
+        await store.set(characterId, settings)
+
+        return { settings: await store.get(characterId) }
+
+      },
+
 
       'script.saveChat': async ({ chatId }) => {
         const entry = await chats.open(chatId)

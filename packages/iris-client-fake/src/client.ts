@@ -381,6 +381,7 @@ class InMemoryClient implements FakeClient {
       case 'script.saveMetadata':
       case 'script.saveChat':
       case 'script.setExtensionPrompt':
+      case 'script.setExtensionSettings':
       case 'script.generateRaw': {
         // Refused, not faked. A context assembled here would be the fake's
         // invention of SillyTavern's shape, and a runner built against it would
