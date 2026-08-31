@@ -201,6 +201,18 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
     if (scope === 'cache') {
       throw new UnsupportedTemplateApiError('setvar scope \'cache\'', 'upstream has no cache-only write')
     }
+    if (scope === 'initial') {
+      // Upstream does support this, writing its in-memory `STATE.initialVariables`,
+      // which evaporates with the page. Iris has no such store: `initial` is a
+      // projection of what the card file ships. So the write would either vanish
+      // silently — misleading — or edit the card, which is a different and much
+      // larger operation than the template asked for. Refused by name instead;
+      // zero corpus sites, and `DEVIATIONS.md` records the divergence.
+      throw new UnsupportedTemplateApiError(
+        'setvar scope \'initial\'',
+        'initial variables come from the card file and are not writable at runtime',
+      )
+    }
     if (newValue === undefined) _.unset(state.scopes[scope], key)
     else _.set(state.scopes[scope], key, newValue)
 
@@ -221,29 +233,28 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
   /**
    * `getwi(world, entry)` — fetch another world-info entry and evaluate it.
    *
-   * Upstream's overload: when the second argument is a plain object the first is
-   * the entry name and the entry's own book is used, which is what
-   * `getwi(null, 'Name')` relies on. The target may be a string or a RegExp;
-   * both occur in the corpus.
+   * Upstream's overload: when the second argument is a plain object, the first
+   * argument is the entry title and the book comes from the fallback chain.
+   * The target may be a string, a RegExp or a uid; the corpus uses all but uid.
    */
   const getwi = async (
     worldOrEntry: string | RegExp | null,
     entryOrData: string | RegExp | number | Record<string, unknown> = {},
     data: Record<string, unknown> = {},
   ): Promise<string> => {
-    let world: string | null
+    let explicitBook: string | null
     let target: string | RegExp | number
     if (_.isPlainObject(entryOrData)) {
-      world = null
+      explicitBook = null
       target = worldOrEntry as string | RegExp
       data = entryOrData as Record<string, unknown>
     } else {
-      world = (worldOrEntry as string | null) || null
+      explicitBook = (worldOrEntry as string | null) || null
       target = entryOrData as string | RegExp | number
     }
 
     const own = itemLocals?.['world_info'] as { world?: string } | undefined
-    const book = world ?? own?.world ?? null
+    const book = resolveLorebook(explicitBook, own?.world, snapshot.lorebooks)
     const entry = findWorldInfoEntry(snapshot.worldInfo, book, target)
     if (!entry) return ''
 
@@ -295,25 +306,75 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
 }
 
 /**
- * Find the entry `getwi` was asked for.
+ * Which book an unqualified `getwi` searches.
  *
- * Matched on `comment` — the entry's title — which is what upstream's
- * `getWorldInfoEntry` matches. A regex target is tested against the title; a
- * string is compared exactly. Confined to one book when the caller named one.
- * @param entries - every pushed entry.
- * @param world - the book to search, or null for all of them.
+ * Upstream's chain, from `getWorldInfoEntries`:
+ *
+ * ```js
+ * const lore = name || characters[this_chid]?.data?.extensions?.world
+ *   || power_user.persona_description_lorebook || chat_metadata[METADATA_KEY] || ''
+ * ```
+ *
+ * The first link — the entry's own book — is reached through
+ * `boundedReadWorldinfo`, which passes `worldinfoOrEntry || this.world_info?.world
+ * || ''` as `name`. So an entry being evaluated in its own right searches its own
+ * book; an entry whose text has already been folded into an assembled message has
+ * no `world_info` and falls through to the card's bound book, which is where all
+ * 58 of the corpus's literal targets live.
+ * @param explicit - the book the caller named, if any.
+ * @param entryWorld - `world_info.world`, when this evaluation has one.
+ * @param lorebooks - the rest of the chain.
+ * @returns the single book to search, or undefined when the chain runs out.
+ */
+export function resolveLorebook(
+  explicit: string | null | undefined,
+  entryWorld: string | undefined,
+  lorebooks: Snapshot['lorebooks'],
+): string | undefined {
+  // Upstream's `||`, so an empty string falls through exactly as it does there.
+  return explicit || entryWorld || lorebooks.character || lorebooks.persona || lorebooks.chat || undefined
+}
+
+/**
+ * Find the entry `getwi` was asked for, within one book.
+ *
+ * **One book, never the union.** Upstream loads a single lorebook and scans it;
+ * when the chain resolves to nothing it loads nothing and the lookup fails. An
+ * implementation that searched every pushed entry would answer a `getwi` with a
+ * same-titled entry from a book the card never referenced — the right shape of
+ * answer, from the wrong place, with nothing raised anywhere.
+ *
+ * The predicate is upstream's, in one pass per entry:
+ * `comment === title || uid === title || comment.match(title)`. The third is a
+ * `String.prototype.match`, so a **string** target is also tried as a regular
+ * expression — which means a title containing regex metacharacters can throw,
+ * exactly as it does upstream, and surfaces as a failed item.
+ * @param entries - every pushed entry, across all books.
+ * @param book - the resolved book; undefined means the chain ran out.
  * @param target - a title, a regex over titles, or a uid.
- * @returns the entry, or undefined.
+ * @returns the first entry that matches, or undefined.
  */
 export function findWorldInfoEntry(
   entries: WorldInfoEntry[],
-  world: string | null,
+  book: string | undefined,
   target: string | RegExp | number,
 ): WorldInfoEntry | undefined {
-  const inBook = world == null ? entries : entries.filter(entry => entry.world === world)
-  if (typeof target === 'number') return inBook.find(entry => entry.uid === String(target))
-  if (target instanceof RegExp) return inBook.find(entry => target.test(entry.comment))
-  return inBook.find(entry => entry.comment === target) ?? inBook.find(entry => entry.uid === target)
+  if (book === undefined) return undefined
+  return entries.find(entry => entry.world === book && matchesEntry(entry, target))
+}
+
+/**
+ * Upstream's three-way match, evaluated per entry rather than in passes.
+ * @param entry - the candidate.
+ * @param target - what `getwi` was given.
+ * @returns whether upstream would return this entry.
+ */
+function matchesEntry(entry: WorldInfoEntry, target: string | RegExp | number): boolean {
+  if (target instanceof RegExp) return target.test(entry.comment)
+  if (entry.comment === String(target) || entry.uid === String(target)) return true
+  // `String.match(number)` is null, which upstream notes and relies on.
+  if (typeof target === 'number') return false
+  return entry.comment.match(target) !== null
 }
 
 /** Variable state that lives for the whole batch, not one item. */

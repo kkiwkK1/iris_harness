@@ -190,3 +190,25 @@ test('a path write creates what is missing, the way lodash does', () => {
   assert.deepEqual(before, { a: { b: 1 } })
   assert.deepEqual(after, { a: { b: 1, c: 2 } })
 })
+
+test('the lorebook fallback chain carries the card’s own book', () => {
+  const bound = card({ extensions: { world: '命定之诗世界书' } })
+  const entry = entryFor(bound)
+  entry.header.chat_metadata['world_info'] = '本聊天的书'
+
+  const snapshot = buildSnapshot(entry, 0, 1)
+
+  // Upstream takes ONE book from `name || character || persona || chat`, never a
+  // union — and a chain that runs out means "search nothing", so every `getwi`
+  // would quietly return an empty string.
+  assert.equal(snapshot.lorebooks.character, '命定之诗世界书')
+  assert.equal(snapshot.lorebooks.chat, '本聊天的书')
+  // No persona store exists yet, so the link is absent rather than invented.
+  assert.equal(snapshot.lorebooks.persona, undefined)
+})
+
+test('a card with no bound book leaves the link out rather than empty', () => {
+  const snapshot = buildSnapshot(entryFor(), 0, 1)
+  assert.equal(snapshot.lorebooks.character, undefined)
+  assert.deepEqual(snapshot.lorebooks, {})
+})

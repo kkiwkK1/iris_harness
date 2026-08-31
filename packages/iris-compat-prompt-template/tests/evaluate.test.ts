@@ -38,6 +38,7 @@ function snapshot(): Snapshot {
     worldInfo: [
       { world: 'book', uid: '1', comment: 'TakamatsuTomori_Wary', content: '灯还在戒备。' },
     ],
+    lorebooks: { character: 'book' },
     scalars: { charName: '未央', userName: 'user' },
     traceId: 1,
   }

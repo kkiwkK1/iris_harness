@@ -19,6 +19,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     worldInfo: [
       { world: 'book', uid: '1', comment: 'Persona_Wary', content: '戒备中。' },
     ],
+    lorebooks: { character: 'book' },
     scalars: { charName: '未央' },
     traceId: 1,
     ...overrides,

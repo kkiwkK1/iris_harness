@@ -122,6 +122,32 @@ export function scalarsOf(entry: ChatEntry): Record<string, Json> {
 }
 
 /**
+ * Which books `getwi(null, …)` falls back through.
+ *
+ * Upstream resolves an unnamed book as
+ * `name || character's own || persona's || chat's || ''`, and takes **one** book
+ * — never a union. A chain that runs out means "search nothing", not "search
+ * everything", so a missing entry here makes every `getwi` return an empty
+ * string with no error anywhere.
+ *
+ * Measured over the corpus: all 58 literal call sites pass `null`, and every one
+ * of their targets lives in the card's own bound book, so `character` is the
+ * link that carries this ecosystem.
+ * @param entry - the conversation.
+ * @returns the books, in upstream's fallback order; absent links are omitted.
+ */
+export function lorebooksOf(entry: ChatEntry): { character?: string, persona?: string, chat?: string } {
+  const bound = entry.card?.data.extensions.world
+  // Upstream's `chat_metadata[METADATA_KEY]`, and `METADATA_KEY` is `world_info`.
+  const chatBook = entry.header.chat_metadata['world_info']
+  return {
+    ...typeof bound === 'string' && bound.length > 0 ? { character: bound } : {},
+    // No persona store yet; the link is simply absent rather than guessed at.
+    ...typeof chatBook === 'string' && chatBook.length > 0 ? { chat: chatBook } : {},
+  }
+}
+
+/**
  * Build the snapshot for one batch.
  *
  * The four variable scopes go over **unmerged**: the evaluator recomputes
@@ -159,6 +185,7 @@ export function buildSnapshot(entry: ChatEntry, turn: number, traceId: number): 
       initial: jsonOf(entry.initialVariables),
     },
     chatMetadata: jsonOf(entry.header.chat_metadata),
+    lorebooks: lorebooksOf(entry),
     worldInfo: worldInfoOf(entry.card, expand),
     scalars: scalarsOf(entry),
     traceId,
@@ -170,8 +197,11 @@ function optionFor(scope: Scope, turn: number): Parameters<ChatEntry['variables'
   if (scope === 'global') return { type: 'global' }
   if (scope === 'local') return { type: 'chat' }
   if (scope === 'message') return { type: 'message', message_id: turn }
-  // `initial` is the card's shipped state. A template writing to it would be
-  // editing what a reset resets to, which upstream does not do either.
+  // `initial` never arrives: the evaluator refuses `setvar` into it by name, so
+  // a template gets a named error rather than a write that vanishes. This branch
+  // is the host's own backstop for a scope it cannot honour — Iris has no
+  // equivalent of upstream's in-memory `STATE.initialVariables`, and `initial`
+  // here is a projection of the card file.
   return undefined
 }
 

@@ -6,6 +6,7 @@ import {
   buildEnvironment,
   createState,
   findWorldInfoEntry,
+  resolveLorebook,
 } from '../src/index.ts'
 import type { Snapshot, WorldInfoEntry } from '../src/index.ts'
 
@@ -30,6 +31,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     },
     chatMetadata: { yinqi_story_flags: { 宋赵复合: true } },
     worldInfo: [],
+    lorebooks: {},
     scalars: { charName: '未央', userName: 'user' },
     traceId: 7,
     ...overrides,
@@ -276,21 +278,53 @@ const ENTRIES: WorldInfoEntry[] = [
   { world: 'other', uid: '1', comment: 'TakamatsuTomori_Wary', content: 'other book' },
 ]
 
-test('an entry is found by title, by regex, by uid, and confined to its book', () => {
+test('an entry is found by title, by regex, and by uid, within one book', () => {
   // 58 of the 62 corpus call sites pass a literal title; the other four compute
-  // it, and one of those builds a RegExp — `getwi(null, `^${charName}$`)` — which
+  // it, and one of those builds a RegExp — ``getwi(null, `^${charName}$`)`` — which
   // is why regex targets are supported rather than assumed away.
-  assert.equal(findWorldInfoEntry(ENTRIES, null, 'TakamatsuTomori_Wary')?.content, 'wary text')
+  assert.equal(findWorldInfoEntry(ENTRIES, 'book', 'TakamatsuTomori_Wary')?.content, 'wary text')
   assert.equal(findWorldInfoEntry(ENTRIES, 'other', 'TakamatsuTomori_Wary')?.content, 'other book')
-  assert.equal(findWorldInfoEntry(ENTRIES, null, /^TakamatsuTomori_Fam/)?.content, 'familiar text')
+  assert.equal(findWorldInfoEntry(ENTRIES, 'book', /^TakamatsuTomori_Fam/)?.content, 'familiar text')
   assert.equal(findWorldInfoEntry(ENTRIES, 'book', 2)?.content, 'familiar text')
-  assert.equal(findWorldInfoEntry(ENTRIES, null, 'absent'), undefined)
+  assert.equal(findWorldInfoEntry(ENTRIES, 'book', 'absent'), undefined)
 })
 
-test('getwi(null, name) searches the entry\'s own book', () => {
-  // The corpus's dominant shape. `null` means "the book this entry came from",
-  // which upstream reads off `this.world_info.world`.
-  const snap = snapshot({ worldInfo: ENTRIES })
+test('a string target is also tried as a regex, as String.match does', () => {
+  // Upstream's third predicate is `comment.match(title)`, so a plain string is
+  // coerced to a RegExp. Faithful, warts included: a title carrying regex
+  // metacharacters throws here exactly as it does upstream.
+  assert.equal(findWorldInfoEntry(ENTRIES, 'book', 'Tomori_Fam')?.content, 'familiar text')
+  assert.throws(() => findWorldInfoEntry(ENTRIES, 'book', 'Tomori_('), SyntaxError)
+})
+
+test('a lookup with no resolved book finds nothing, rather than searching all books', () => {
+  // The correction that matters. Upstream loads exactly one book; when the chain
+  // runs out it loads nothing and the lookup fails. Searching the union instead
+  // would answer with a same-titled entry from a book the card never referenced —
+  // the right shape of answer from the wrong place, and nothing raised anywhere.
+  assert.equal(findWorldInfoEntry(ENTRIES, undefined, 'TakamatsuTomori_Wary'), undefined)
+})
+
+test('the lorebook fallback chain is upstream\'s, in upstream\'s order', () => {
+  // `name || card.data.extensions.world || persona || chat || ''`, with the
+  // entry's own book reached first through `boundedReadWorldinfo`.
+  const books = { character: 'card', persona: 'persona', chat: 'chat' }
+  assert.equal(resolveLorebook('explicit', 'entry', books), 'explicit')
+  assert.equal(resolveLorebook(null, 'entry', books), 'entry')
+  assert.equal(resolveLorebook(null, undefined, books), 'card')
+  assert.equal(resolveLorebook(null, undefined, { persona: 'persona', chat: 'chat' }), 'persona')
+  assert.equal(resolveLorebook(null, undefined, { chat: 'chat' }), 'chat')
+  assert.equal(resolveLorebook(null, undefined, {}), undefined)
+  // Upstream chains with `||`, so an empty string falls through rather than
+  // selecting a book named "".
+  assert.equal(resolveLorebook('', '', { character: 'card' }), 'card')
+})
+
+test('getwi(null, name) searches the entry\'s own book when it has one', () => {
+  // An entry evaluated in its own right — a nested `getwi`, or one of the
+  // individually-evaluated decorator entries — carries `world_info`, and that is
+  // the first link in the chain.
+  const snap = snapshot({ worldInfo: ENTRIES, lorebooks: { character: 'book' } })
   const { locals, nested } = environment(snap, { world_info: { world: 'other' } } as never)
   const getwi = locals['getwi'] as (w: string | null, e?: unknown) => Promise<string>
 
@@ -300,12 +334,43 @@ test('getwi(null, name) searches the entry\'s own book', () => {
   })
 })
 
+test('getwi(null, name) falls back to the card\'s bound book', () => {
+  // The corpus's actual shape: all 58 literal call sites pass `null`, and every
+  // target lives in the calling card's bound book. Text folded into an assembled
+  // message has no `world_info`, so this is the link that resolves them.
+  const snap = snapshot({ worldInfo: ENTRIES, lorebooks: { character: 'book' } })
+  const { locals } = environment(snap)
+  const getwi = locals['getwi'] as (w: string | null, e?: unknown) => Promise<string>
+
+  return getwi(null, 'TakamatsuTomori_Wary').then((text) => {
+    assert.equal(text, '[evaluated worldinfo/book/1-TakamatsuTomori_Wary]')
+  })
+})
+
 test('getwi returns empty string for an entry that is not there', () => {
   // Upstream warns and returns `''`. Copied: a missing entry is a card bug the
   // card author can see in their own SillyTavern, and throwing here would lose
   // the rest of a working entry.
-  const snap = snapshot({ worldInfo: ENTRIES })
+  const snap = snapshot({ worldInfo: ENTRIES, lorebooks: { character: 'book' } })
   const { locals } = environment(snap)
   const getwi = locals['getwi'] as (w: string | null, e?: unknown) => Promise<string>
   return getwi(null, 'absent').then(text => assert.equal(text, ''))
+})
+
+test('writing the initial scope is refused by name', () => {
+  // Upstream allows it, writing an in-memory store that evaporates with the
+  // page. Iris has no such store — `initial` is a projection of the card file —
+  // so the write would either vanish silently or edit the card. Refused instead.
+  const { locals } = environment()
+  const setvar = locals['setvar'] as (k: string, v: unknown, o?: unknown) => unknown
+  assert.throws(
+    () => setvar('who', 1, { scope: 'initial' }),
+    (error: unknown) => error instanceof UnsupportedTemplateApiError && /not writable at runtime/.test(error.message),
+  )
+})
+
+test('reading the initial scope still works', () => {
+  const { locals } = environment()
+  const getvar = locals['getvar'] as (key: string | null, options?: unknown) => unknown
+  assert.equal(getvar('who', 'initial'), 'initial')
 })

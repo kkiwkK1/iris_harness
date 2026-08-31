@@ -40,11 +40,25 @@ that is, over the **already-assembled message array**, evaluating every message'
 content. Not per source field. So the seam in our pipeline is *after* assembly
 and *before* the provider call.
 
-One `EvalItem` per assembled message. `origin` is upstream's `filename`, which
-only ever shows up in an error message; upstream uses
-`generate/<chatId>/<index>` for messages and
+One `EvalItem` per assembled message — and **only** that. World-info entries are
+not items: their text is already folded into the assembled messages by then, and
+`snapshot.worldInfo` exists so `getwi` has something to search, not so entries can
+be evaluated one by one.
+
+`origin` is upstream's `filename`, which only ever shows up in an error message;
+upstream uses `generate/<chatId>/<index>` for messages and
 `worldinfo/<world>/<uid>-<comment>` for entries, and matching that makes an error
 report recognisable to someone who knows their SillyTavern.
+
+**Not implemented, and worth knowing it is missing:** upstream *also* evaluates
+some entries individually and earlier, at `WORLDINFO_ENTRIES_LOADED` — the ones
+carrying `@@preprocessing`, `@@if`, `@@private`, or a `[GENERATE:*]` title. Those
+run before assembly, with their own `world_info` in scope, and their output is
+what goes into the prompt. The corpus has 117 `@@preprocessing` entries in one
+card (and 234 across the disk books) and zero `[GENERATE:*]` titles. When that
+pass is built it will add a second item kind with `locals.world_info` set, ahead
+of the assembled messages in the same batch. Nothing about the current contract
+has to change for it.
 
 ## Field by field
 
@@ -58,11 +72,22 @@ report recognisable to someone who knows their SillyTavern.
   content: `ARCHITECTURE.md` records what that cost last time.
 - **`text`** — see the precondition above.
 - **`origin`** — for error messages only.
-- **`locals`** — per-item environment additions. A world-info entry must carry
-  `{ world_info: entry }`, because `getwi(null, name)` resolves `null` to
-  *this entry's own book* by reading `world_info.world`. 58 of the 62 corpus call
-  sites pass `null`, so an entry pushed without its `world_info` silently
-  searches every book instead of its own.
+- **`locals`** — per-item environment additions. In practice: **leave it unset.**
+
+  An earlier version of this document said a world-info entry must carry
+  `{ world_info: entry }`. That was wrong, and it was wrong in the direction that
+  matters, so the correction is spelled out rather than quietly edited.
+
+  World-info entries are **not items**. By the time the batch is built their text
+  is already inside an assembled message, and upstream is in the same position:
+  its `processGenerateAfter` pass evaluates assembled message content with no
+  `world_info` in scope at all. `world_info` is set by upstream only when an entry
+  is evaluated *in its own right* — the `@@preprocessing` and `[GENERATE:*]`
+  decorator entries, which this package does not yet implement — and for
+  `getwi`'s own recursion, which the evaluator sets for itself.
+
+  So `getwi(null, …)` inside ordinary assembled text does not resolve through
+  `world_info`. It resolves through `lorebooks`, below.
 
 **Order is the contract.** Items are evaluated in array order, sharing variable
 state, so a `setvar` in item 3 is visible to item 4 — because upstream is writing
@@ -128,6 +153,46 @@ Measured, this is cheap: 882 entries, 3.12 MiB, 4–16 ms over the IPC channel.
 - Entries the card's author disabled should not be here. So should entries from
   books that are not active for this chat: `getwi` searches what it is given.
 
+### `lorebooks: { character?, persona?, chat? }`
+
+Which book an unqualified `getwi` searches. **Exactly one book gets searched,
+never the union** — this is the field that makes that possible, and it was
+missing from the first version of this document.
+
+Upstream's chain, from `getWorldInfoEntries`:
+
+```js
+const lore = name                                        // the explicit argument
+  || characters[this_chid]?.data?.extensions?.world      // → lorebooks.character
+  || power_user.persona_description_lorebook             // → lorebooks.persona
+  || chat_metadata[METADATA_KEY]                         // → lorebooks.chat
+  || ''                                                  // → nothing is searched
+```
+
+with the entry's own book slotted in ahead of `character` when there is one
+(`boundedReadWorldinfo` passes `worldinfoOrEntry || this.world_info?.world || ''`).
+`loadWorldInfo('')` finds nothing, so a chain that runs out means the lookup
+fails and `getwi` returns `''` — it does **not** widen to every book.
+
+Measured, this is the whole story for the corpus:
+
+- **58 of 58** literal `getwi` call sites pass `null` as the book. Not one names
+  a book explicitly.
+- Both cards that call `getwi` have `data.extensions.world` set to a disk book
+  that exists, and **58/58 targets resolve inside it**.
+- **58/58 are exact `comment` hits**, 0 need upstream's regex fallback, and 0 are
+  ambiguous — which is why the entry sort order is not reproduced (see
+  `DEVIATIONS.md`).
+
+So `character` is the field that carries this corpus. Fill the other two if the
+host knows them; an absent field is skipped, matching upstream's `||`.
+
+Matching within the resolved book is upstream's, one pass per entry:
+`comment === title || uid === title || comment.match(title)`. The third is
+`String.prototype.match`, so a plain string target is *also* tried as a regular
+expression — and a title containing regex metacharacters throws, exactly as it
+does upstream, surfacing as a failed item.
+
 ### `scalars: Record<string, Json>`
 
 Upstream's flat environment values. Anything absent is not `undefined` in the
@@ -185,10 +250,17 @@ it; it exists so that a card that does sees what it expects.
   whatever else guards a write. That is the point of describing rather than
   applying: a template cannot bypass a check the host makes on the way in.
 
-  `key` is a lodash path (`stat_data.银麒系统.账户.银麒点`). `scope` is one of
-  `global` / `initial` / `local` / `message` and maps back the same way as the
-  table above. The default write scope is **`message`**, not the read default —
-  upstream's asymmetry, and reproduced here.
+  `key` is a lodash path (`stat_data.银麒系统.账户.银麒点`). `scope` is
+  `global` / `local` / `message` and maps back the same way as the table above.
+  The default write scope is **`message`**, not the read default — upstream's
+  asymmetry, and reproduced here.
+
+  **`initial` never appears in an op.** A template writing it is refused at the
+  evaluator with a named error, so the host needs no branch for it: upstream
+  allows the write into an in-memory store that evaporates with the page, and
+  Iris has no equivalent — `initial` is a projection of the card file, so the
+  write would either vanish silently or edit the card. Silence is the thing this
+  project rejects, so it is refused loudly instead. `DEVIATIONS.md` records it.
 
   **Ops from a failed item are still present, deliberately.** Upstream applies a
   `setvar` the moment it runs, so a template that writes and then throws has

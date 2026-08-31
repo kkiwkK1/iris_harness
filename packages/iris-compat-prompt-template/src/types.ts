@@ -64,6 +64,31 @@ export interface Snapshot {
   /** `SillyTavern.chatMetadata`. The only member of that object cards reach for. */
   chatMetadata: Json
   worldInfo: WorldInfoEntry[]
+  /**
+   * Which book `getwi` searches when the caller does not name one.
+   *
+   * Upstream resolves **exactly one** book through a fallback chain and scans
+   * only that — it never searches the union. From `getWorldInfoEntries`:
+   *
+   * ```js
+   * const lore = name || characters[this_chid]?.data?.extensions?.world
+   *   || power_user.persona_description_lorebook || chat_metadata[METADATA_KEY] || ''
+   * ```
+   *
+   * Measured, this is the whole story for the corpus: **all 58 literal `getwi`
+   * call sites pass `null`** as the book, and every one of their targets lives in
+   * the calling card's bound book. Without this field the evaluator would have to
+   * guess, and guessing "search everything" returns a same-titled entry from the
+   * wrong book with nothing raised anywhere.
+   */
+  lorebooks: {
+    /** The card's own bound book — `data.extensions.world`. The usual answer. */
+    character?: string
+    /** The persona's book — upstream's `power_user.persona_description_lorebook`. */
+    persona?: string
+    /** The chat's book — upstream's `chat_metadata[METADATA_KEY]`. */
+    chat?: string
+  }
   /** `userName`, `charName`, `chatId`, `characterId`, … — upstream's flat env values. */
   scalars: Record<string, Json>
   /** Upstream stamps an incrementing `_trace_id` into the variable cache. */

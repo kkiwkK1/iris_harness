@@ -130,7 +130,36 @@ On Windows, `env: {}` still yields 11 OS-injected variables: `HOMEDRIVE`,
 secrets, but the OS user name and home path do cross, so "empty environment" is
 the intent and not literally the state.
 
-### 8. No recursion guard on `getwi`
+### 8. Writing the `initial` scope is refused, though upstream allows it
+
+Upstream's `setVariable` has a `case 'initial'` that writes
+`STATE.initialVariables` — an in-memory store that evaporates with the page.
+
+Iris has no equivalent: `initial` is a *projection* of what the card file ships
+(`CardScriptBundle.variables` and `@@initial_variables` entries), not a store. So
+the write would either vanish silently, which is misleading, or edit the card,
+which is a much larger operation than the template asked for — it changes what a
+reset restores, permanently, in a file the user may share.
+
+Refused by name instead (`UnsupportedTemplateApiError`), so it never becomes an
+op and the host needs no branch for it. Reads of `initial` are unaffected.
+
+**0 corpus sites.**
+
+### 9. The world-info entry sort order is not reproduced
+
+Upstream sorts a loaded book with `worldInfoSorter` (position, depth, order)
+before scanning it, so the sort decides which entry wins when more than one
+matches. This package scans in the order the host pushed.
+
+Measured unobservable: across the corpus's 58 literal `getwi` targets, **every one
+is an exact `comment` hit, none needs upstream's regex fallback, and none matches
+more than one entry**. With no ambiguity there is nothing for the sort to decide.
+
+If a future card writes a `getwi` whose target matches two entries, this becomes
+observable and the sorter has to be ported.
+
+### 10. No recursion guard on `getwi`
 
 Upstream has none either. A cycle of entries fetching each other overflows the
 stack, which lands as one failed item rather than a lost batch. An *async* cycle

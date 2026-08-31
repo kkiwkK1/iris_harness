@@ -32,6 +32,7 @@ export {
   buildEnvironment,
   createState,
   findWorldInfoEntry,
+  resolveLorebook,
   type BatchState,
   type Environment,
   type EnvironmentOptions,
