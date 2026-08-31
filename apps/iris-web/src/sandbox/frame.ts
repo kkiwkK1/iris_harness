@@ -21,6 +21,8 @@ import type { FromFrame, ToFrame } from './protocol.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isCardMethod } from './card-api.ts'
+import { createFrameTavernHelper } from './tavern-helper.ts'
+import { EventBus } from '@iris/compat-tavernhelper-core'
 import type { ScriptContext } from '@iris/protocol'
 
 /** What the frame-side code needs from its realm. */
@@ -375,7 +377,25 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    */
   const getScriptId = (): string | undefined => scriptId
 
-  const shadowed = [
+  /**
+   * The bus is the frame's, not the host's.
+   *
+   * Cards both listen and emit, and MVU emits far more than it listens for — 53
+   * `eventEmit` sites against 17 `eventOn`. Most of that traffic is a card
+   * talking to itself, so it stays here; the shell forwards in only the host
+   * events something is actually waiting on.
+   */
+  const events = new EventBus()
+
+  const tavernHelper = createFrameTavernHelper({
+    context: () => context,
+    scriptId: () => scriptId,
+    call: callAction,
+    triggerSlash,
+    events,
+  })
+
+  const core = [
     'window',
     'self',
     'globalThis',
@@ -386,6 +406,20 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     'triggerSlash',
     'getScriptId',
   ] as const
+
+  /**
+   * The Tavern Helper names, minus the two the core list already binds.
+   *
+   * A name may only be bound once — it becomes a function parameter in classic
+   * mode — and `triggerSlash` and `getScriptId` appear on both lists because
+   * upstream exposes them through both surfaces. The core binding wins; both
+   * carry the same behaviour, so which one wins does not change what a card sees.
+   */
+  const helperNames = Object.keys(tavernHelper).filter(
+    name => !(core as readonly string[]).includes(name),
+  )
+
+  const shadowed = [...core, ...helperNames]
 
   /**
    * Values are resolved per evaluation, not at install.
@@ -404,6 +438,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     extensionSettings,
     triggerSlash,
     getScriptId,
+    ...helperNames.map(name => tavernHelper[name]),
   ]
 
   env.onMessage(message => {
@@ -427,6 +462,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (message.type === 'slash:ok') waiting.resolve(message.result)
       // Rejected with a real Error so a card's `.catch` sees what upstream's would.
       else waiting.reject(new Error(message.message))
+      return
+    }
+    if (message.type === 'event') {
+      // Not awaited and not reported: a listener that throws is the card's
+      // problem with its own handler, and upstream does not tell the host either.
+      void events.eventEmit(message.event, ...message.args)
       return
     }
     if (message.type === 'context') {

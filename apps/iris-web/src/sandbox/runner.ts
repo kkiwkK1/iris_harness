@@ -128,6 +128,13 @@ export interface RunnerHost {
 export interface RunningCard {
   /** The frame element, for the shell to place. */
   readonly element: HTMLIFrameElement
+  /**
+   * Deliver a host event to the card's bus.
+   *
+   * A no-op once disposed, so a shell subscription that outlives the frame by a
+   * tick cannot post into a torn-down realm.
+   */
+  emit: (event: string, args: unknown[]) => void
   /** Remove the frame and every listener it needed. Idempotent. */
   dispose: () => void
 }
@@ -280,6 +287,10 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
 
   return {
     element: frame,
+    emit: (event, args) => {
+      if (disposed) return
+      post({ iris: token, type: 'event', event, args })
+    },
     dispose: () => {
       if (disposed) return
       disposed = true

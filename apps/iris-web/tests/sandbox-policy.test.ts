@@ -199,3 +199,19 @@ test('a run carries the script id, and refuses one that is not a string', () => 
     undefined,
   )
 })
+
+test('a forwarded event needs a name and an argument list', () => {
+  // `args` is always an array, even when empty: a card's listener is called with
+  // spread arguments, and spreading a non-array throws inside the bus rather
+  // than at the boundary that could have named the problem.
+  assert.deepEqual(
+    parseToFrame('tok', { iris: 'tok', type: 'event', event: 'message_received', args: [1] }),
+    { iris: 'tok', type: 'event', event: 'message_received', args: [1] },
+  )
+  assert.equal(parseToFrame('tok', { iris: 'tok', type: 'event', event: '', args: [] }), undefined)
+  assert.equal(
+    parseToFrame('tok', { iris: 'tok', type: 'event', event: 'x', args: 'not-a-list' }),
+    undefined,
+  )
+  assert.equal(parseToFrame('tok', { iris: 'tok', type: 'event', args: [] }), undefined)
+})

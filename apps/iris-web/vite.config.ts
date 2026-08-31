@@ -30,6 +30,10 @@ export default defineConfig({
       { find: '@iris/protocol', replacement: workspace('iris-protocol') },
       { find: '@iris/rpc-client', replacement: workspace('iris-rpc-client') },
       { find: '@iris/client-fake', replacement: workspace('iris-client-fake') },
+      {
+        find: '@iris/compat-tavernhelper-core',
+        replacement: workspace('iris-compat-tavernhelper-core'),
+      },
       // The vendored Cordis Loader's only Node import.
       { find: /^node:module$/, replacement: src('./src/node-module-stub.ts') },
     ],

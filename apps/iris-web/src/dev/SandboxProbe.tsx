@@ -30,7 +30,9 @@ import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ScriptContext } from '@iris/protocol'
 
-import { useIris, useIrisActions } from '../client/provider.tsx'
+import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
+import { tapHostEvents } from '../client/store.ts'
+import { chatChangedEvent, forwardedEvents } from '../sandbox/host-events.ts'
 import { describeBytes } from '../app/format.ts'
 import { Section } from '../app/fields.tsx'
 import { runCard } from '../sandbox/runner.ts'
@@ -78,6 +80,7 @@ export function SandboxProbe(): ReactElement | null {
   const granted = useIris(state => state.documentGranted)
   const scripts = useIris(state => state.scripts)
   const actions = useIrisActions()
+  const store = useIrisStore()
 
   const observed = useSyncExternalStore(subscribeHarness, getHarness, getHarness)
   const mount = useRef<HTMLDivElement>(null)
@@ -89,6 +92,32 @@ export function SandboxProbe(): ReactElement | null {
 
   // Only what would actually run: the card's switch and the user's, combined.
   const runnable = scripts.filter(script => script.enabled)
+
+  /*
+   * Host events into whatever card is running.
+   *
+   * Subscribed once for the panel's life rather than per run, and it reads
+   * `runningCard()` at delivery time: the frame outlives this component by
+   * design here, so a subscription tied to one run would stop forwarding the
+   * moment the panel remounted while the card kept going.
+   */
+  useEffect(() => {
+    let openChat = chatId
+    return tapHostEvents(store, event => {
+      const card = runningCard()
+      if (card === undefined) return
+      for (const forwarded of forwardedEvents(event)) card.emit(forwarded.event, forwarded.args)
+
+      // The chat switch has no host event of its own, so it is noticed here.
+      const nowOpen = store.getState().chatId
+      const changed = chatChangedEvent(openChat, nowOpen)
+      openChat = nowOpen
+      if (changed !== undefined) card.emit(changed.event, changed.args)
+    })
+    // `chatId` is the seed only; later values are read from the store above, so
+    // re-subscribing on every switch would drop events during the swap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store])
 
   // Re-attach the surviving frame after a remount. Without this the record would
   // outlive the thing it describes, which is its own kind of confusing.

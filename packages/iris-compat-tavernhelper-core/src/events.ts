@@ -24,6 +24,13 @@ export const IFRAME_EVENTS = {
 /** The SillyTavern events cards rely on most. */
 export const TAVERN_EVENTS = {
   APP_READY: 'app_ready',
+  // Verified against upstream's events.js (104 keys); every entry in this table
+  // was byte-checked in one audit rather than trusted entry by entry. These two
+  // were absent until live MVU code subscribed to them and got a listener keyed
+  // on the string "undefined" — the exact silent failure this package exists to
+  // prevent, caught by the frame's non-empty-name guard.
+  CHAT_COMPLETION_SETTINGS_READY: 'chat_completion_settings_ready',
+  WORLDINFO_UPDATED: 'worldinfo_updated',
   CHAT_CHANGED: 'chat_id_changed',
   MESSAGE_SENT: 'message_sent',
   MESSAGE_RECEIVED: 'message_received',

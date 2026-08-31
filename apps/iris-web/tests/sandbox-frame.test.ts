@@ -115,6 +115,33 @@ test('exactly the outward-reaching names are shadowed', () => {
     'extension_settings',
     'triggerSlash',
     'getScriptId',
+    'getVariables',
+    'getAllVariables',
+    'getLastMessageId',
+    'getCurrentMessageId',
+    'getChatMessages',
+    'getSwipes',
+    'replaceVariables',
+    'insertOrAssignVariables',
+    'insertVariables',
+    'deleteVariable',
+    'updateVariablesWith',
+    'swipeTo',
+    'generate',
+    'substidudeMacros',
+    'eventOn',
+    'eventOnce',
+    'eventMakeFirst',
+    'eventMakeLast',
+    'eventEmit',
+    'eventRemoveListener',
+    'eventClearEvent',
+    'eventClearListener',
+    'eventClearAll',
+    'iframe_events',
+    'tavern_events',
+    'mvu_events',
+    'TavernHelper',
   ])
 })
 
@@ -420,6 +447,33 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'extension_settings',
     'triggerSlash',
     'getScriptId',
+    'getVariables',
+    'getAllVariables',
+    'getLastMessageId',
+    'getCurrentMessageId',
+    'getChatMessages',
+    'getSwipes',
+    'replaceVariables',
+    'insertOrAssignVariables',
+    'insertVariables',
+    'deleteVariable',
+    'updateVariablesWith',
+    'swipeTo',
+    'generate',
+    'substidudeMacros',
+    'eventOn',
+    'eventOnce',
+    'eventMakeFirst',
+    'eventMakeLast',
+    'eventEmit',
+    'eventRemoveListener',
+    'eventClearEvent',
+    'eventClearListener',
+    'eventClearAll',
+    'iframe_events',
+    'tavern_events',
+    'mvu_events',
+    'TavernHelper',
   ])
 })
 
@@ -631,4 +685,45 @@ test('a second run re-answers getScriptId rather than keeping the first id', () 
   evaluate(scope, record, 'second')
 
   assert.deepEqual(seen, ['first', 'second'], 'each run must answer with its own id')
+})
+
+test('a host event forwarded by the shell reaches a listener the card registered', async () => {
+  /*
+   * The whole point of the bus being the frame's: a card subscribes before any
+   * host event exists, and the shell posts into that same bus later.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  const heard: unknown[] = []
+  evaluate(scope, globals => {
+    ;(globals['eventOn'] as (event: string, listener: (value: unknown) => void) => void)(
+      'message_received',
+      value => heard.push(value),
+    )
+  })
+
+  scope.send({ iris: 'tok', type: 'event', event: 'message_received', args: [7] })
+  // The bus awaits each listener, so the emit settles a microtask later.
+  await Promise.resolve()
+
+  assert.deepEqual(heard, [7])
+})
+
+test('a card emitting on its own bus does not put the event on the wire', () => {
+  /*
+   * Measured on MVU: 53 emit sites against 17 subscriptions, so most of what a
+   * card emits it is saying to itself. Forwarding that outward would be traffic
+   * nobody reads, and would let a card's internal names reach the shell.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  evaluate(scope, globals => {
+    void (globals['eventEmit'] as (event: string) => Promise<void>)('mag_command_parsed')
+  })
+
+  assert.equal(
+    scope.posted.some(message => (message as { type: string }).type === 'event'),
+    false,
+    'the frame must not post its own emissions outward',
+  )
 })

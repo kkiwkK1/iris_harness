@@ -556,6 +556,10 @@ export function createIrisStore(
 
   const offEvents = client.subscribe(event => {
     applyEvent(store, event)
+    // After the projection, not before: a tap that ran first would see the store
+    // in its pre-event state, and a card asking what changed would be told the
+    // old answer.
+    for (const listener of [...(TAPS.get(store) ?? [])]) listener(event)
   })
   // The connection has its own channel because the host cannot report its own
   // silence. Inferring it from arriving frames means the banner only appears
@@ -586,6 +590,34 @@ export function createIrisStore(
  * with no value imports from the protocol — which is what lets the streaming
  * state machine be tested under plain `node --test`, with no bundler.
  */
+/**
+ * Extra listeners on the host's event stream, per store.
+ *
+ * A `WeakMap` rather than a module-level set, for the same reason `actionsOf`
+ * uses one: two stores exist during a hot reload, and a shared registry would
+ * feed the new store's events to the old store's listeners.
+ */
+const TAPS = new WeakMap<IrisStore, Set<(event: IrisEvent) => void>>()
+
+/**
+ * Watch the host's events as they arrive, alongside the projection.
+ *
+ * For consumers that need the events themselves rather than the state they
+ * produce — a running card script is the only one so far, because upstream
+ * gives cards an event stream and no equivalent of the store.
+ * @param store - the store whose stream to watch.
+ * @param listener - called after each event has been applied.
+ * @returns a function that stops the subscription.
+ */
+export function tapHostEvents(store: IrisStore, listener: (event: IrisEvent) => void): () => void {
+  const existing = TAPS.get(store) ?? new Set<(event: IrisEvent) => void>()
+  existing.add(listener)
+  TAPS.set(store, existing)
+  return () => {
+    existing.delete(listener)
+  }
+}
+
 export function applyEvent(store: IrisStore, event: IrisEvent): void {
   const state = store.getState()
 

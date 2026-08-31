@@ -29,7 +29,7 @@ export function StoreProvider({ store, children }: { store: IrisStore, children:
 }
 
 /** The store, or a thrown error — a component outside the provider is a bug, not a state. */
-function useIrisStore(): IrisStore {
+export function useIrisStore(): IrisStore {
   const store = useContext(StoreContext)
   if (store === undefined) throw new Error('iris: no store in context')
   return store

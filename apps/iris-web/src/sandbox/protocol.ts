@@ -55,6 +55,15 @@ export type ToFrame =
     }
   /** The host page's viewport, at boot and on every resize. */
   | { iris: string, type: 'viewport', width: number, height: number }
+  /**
+   * A host event, translated to the upstream name a card listens for.
+   *
+   * One direction only. A card emitting on its own bus stays inside its frame:
+   * most of MVU's traffic is it talking to itself — 53 emit sites against 17
+   * subscriptions — and routing that through the shell would put a card's
+   * internal chatter on the wire for no one to read.
+   */
+  | { iris: string, type: 'event', event: string, args: unknown[] }
   /** Answer to a `fetch` request, resolved or refused. */
   | { iris: string, type: 'fetch:ok', id: string, content: string }
   | { iris: string, type: 'fetch:error', id: string, message: string }
@@ -178,6 +187,13 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
       if (scriptId !== undefined && typeof scriptId !== 'string') return undefined
       return typeof message['code'] === 'string' && (mode === 'classic' || mode === 'module')
         ? { iris: token, type: 'run', code: message['code'], mode, scriptId }
+        : undefined
+    }
+    case 'event': {
+      const name = message['event']
+      const args = message['args']
+      return typeof name === 'string' && name.length > 0 && Array.isArray(args)
+        ? { iris: token, type: 'event', event: name, args: args as unknown[] }
         : undefined
     }
     case 'viewport':
