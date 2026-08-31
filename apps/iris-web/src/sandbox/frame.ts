@@ -20,6 +20,7 @@ import { UNBRIDGED_GLOBALS } from './policy.ts'
 import type { FromFrame, ToFrame } from './protocol.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
+import { isCardMethod } from './card-api.ts'
 import type { ScriptContext } from '@iris/protocol'
 
 /** What the frame-side code needs from its realm. */
@@ -167,6 +168,44 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       }
       if (property === 'getContext') return () => sillyTavern
       if (property === 'extensionSettings') return extensionSettings
+
+      /*
+       * Actions, reachable here AND through `getContext()` — because `getContext`
+       * returns this same object. One surface, two entry points, which is what
+       * upstream has: `SillyTavern.saveMetadata` and `context.saveChat` are both
+       * measured in real cards, and MVU calls `SillyTavern.saveChat` directly.
+       *
+       * The earlier facade offered the data members both ways and the actions
+       * neither, which is the gap a real card found.
+       */
+      if (isCardMethod(property)) {
+        if (property === 'saveMetadata') {
+          // No argument upstream: a card mutates `chatMetadata` in place and then
+          // asks for it to be saved. So the current snapshot is what travels,
+          // rather than whatever the card happened to pass.
+          return () => callAction('saveMetadata', { metadata: context?.chatMetadata ?? {} })
+        }
+        if (property === 'saveChat') return () => callAction('saveChat', {})
+        return (...args: unknown[]) => {
+          // `generateRaw`'s upstream signature varies by caller, and guessing
+          // wrong here would send a malformed request that fails as a host error
+          // rather than as a shape problem. A string is the contract's shape; an
+          // object with a prompt-ish field is the other common one; anything else
+          // is refused by name so the next real card tells us what it actually
+          // passes instead of us inferring it.
+          const first = args[0]
+          if (typeof first === 'string') return callAction('generateRaw', { prompt: first })
+          if (typeof first === 'object' && first !== null) {
+            const bag = first as Record<string, unknown>
+            const prompt = bag['prompt'] ?? bag['user_input']
+            if (typeof prompt === 'string') return callAction('generateRaw', { prompt })
+          }
+          throw new UnsupportedApiError(
+            `SillyTavern.${property}`,
+            `Iris does not recognise this call's arguments (${typeof first}); the shape a card passes has not been measured yet.`,
+          )
+        }
+      }
       const fields = context as unknown as Record<string, unknown>
       if (Object.hasOwn(fields, property)) return fields[property]
       throw new UnsupportedApiError(
@@ -183,7 +222,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     has(_target, property): boolean {
       if (context === undefined) return false
       const fields = context as unknown as Record<string, unknown>
-      return property === 'getContext' || property === 'extensionSettings' || Object.hasOwn(fields, property)
+      return (
+        property === 'getContext' ||
+        property === 'extensionSettings' ||
+        (typeof property === 'string' && isCardMethod(property)) ||
+        Object.hasOwn(fields, property)
+      )
     },
   })
 
@@ -288,6 +332,24 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   let nextSlash = 0
   const pendingSlash = new Map<string, { resolve: (result: string) => void, reject: (why: Error) => void }>()
 
+  let nextCall = 0
+  const pendingCall = new Map<string, { resolve: (result: unknown) => void, reject: (why: Error) => void }>()
+
+  /**
+   * One action on the card's facade.
+   *
+   * The shell is what decides whether the action may run; this only carries the
+   * request. A refusal comes back as a rejection so a card's `catch` sees it,
+   * which is what upstream's would do.
+   */
+  const callAction = (method: string, params: unknown): Promise<unknown> => {
+    const id = `c${(nextCall += 1)}`
+    return new Promise<unknown>((resolve, reject) => {
+      pendingCall.set(id, { resolve, reject })
+      env.post({ iris: env.token, type: 'call', id, method, params })
+    })
+  }
+
   const triggerSlash = (command: unknown): Promise<string> => {
     const id = `s${(nextSlash += 1)}`
     return new Promise<string>((resolve, reject) => {
@@ -329,6 +391,14 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     if (message.type === 'viewport') {
       viewport = { width: message.width, height: message.height }
       env.applyViewport?.(viewport)
+      return
+    }
+    if (message.type === 'call:ok' || message.type === 'call:error') {
+      const waiting = pendingCall.get(message.id)
+      if (waiting === undefined) return
+      pendingCall.delete(message.id)
+      if (message.type === 'call:ok') waiting.resolve(message.result)
+      else waiting.reject(new Error(message.message))
       return
     }
     if (message.type === 'slash:ok' || message.type === 'slash:error') {

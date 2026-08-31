@@ -364,3 +364,43 @@ test('two stores get their own facades', () => {
   a.dispose()
   b.dispose()
 })
+
+test('a card action not on the allowlist is refused by the shell, by name', () => {
+  // The frame shapes its facade from the same list, but that is convenience. The
+  // frame is the untrusted side: a card reaching the shell with a name the shell
+  // does not know is refused here regardless of what the frame believed it was
+  // offering.
+  const stub = stubClient()
+  const { store, dispose } = createIrisStore(stub.client, TEST_SOURCE)
+  store.setState({ chatId: 'c1' })
+
+  return store
+    .getState()
+    .runCardAction('deleteAllChats', {})
+    .then(
+      () => assert.fail('an unlisted action should not reach the wire'),
+      (error: unknown) => {
+        assert.match(String(error), /does not let card scripts call deleteAllChats/)
+        dispose()
+      },
+    )
+})
+
+test('an allowed card action reaches its wire method with the chat attached', async () => {
+  const seen: { method: string, params: unknown }[] = []
+  const stub = stubClient()
+  const client: IrisClient = {
+    ...stub.client,
+    call: async (method, params) => {
+      seen.push({ method, params })
+      return {} as never
+    },
+  }
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  store.setState({ chatId: 'c1' })
+
+  await store.getState().runCardAction('saveMetadata', { metadata: { a: 1 } })
+
+  assert.deepEqual(seen, [{ method: 'script.saveMetadata', params: { chatId: 'c1', metadata: { a: 1 } } }])
+  dispose()
+})

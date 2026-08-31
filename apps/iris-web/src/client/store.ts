@@ -27,6 +27,7 @@ import type {
 } from '@iris/protocol'
 
 import { asRpcError, describeError } from './errors.ts'
+import { wireMethodFor } from '../sandbox/card-api.ts'
 
 /** A prompt breakdown, or why there is not one. */
 export type ItemizationResult =
@@ -160,6 +161,15 @@ export interface IrisActions {
    * every test and disagree the first time a user types a `|`.
    */
   runSlash(command: string): Promise<string>
+  /**
+   * Perform one card action.
+   *
+   * The allowlist is checked here, on the trusted side. The frame shapes its
+   * facade from the same list, but that is convenience — a card reaching the
+   * shell with a name that is not on it is refused regardless of what the frame
+   * thought it was offering.
+   */
+  runCardAction(method: string, params: unknown): Promise<unknown>
   loadConnections(): Promise<void>
   activateConnection(id: string): Promise<void>
   saveConnection(patch: {
@@ -498,6 +508,23 @@ export function createIrisStore(
         // resolve the card's `await` as though the command had worked.
         const { result } = await client.call('script.slash', { chatId, command })
         return result
+      },
+
+      async runCardAction(method: string, params: unknown): Promise<unknown> {
+        const chatId = get().chatId
+        if (chatId === undefined) throw new Error('no chat is open')
+
+        const wire = wireMethodFor(method)
+        if (wire === undefined) {
+          // Named, so a card author reading their console learns which member was
+          // refused rather than that "something" failed.
+          throw new Error(`Iris does not let card scripts call ${method}`)
+        }
+
+        // Not wrapped in `guard`: a card is awaiting this, and turning a refusal
+        // into a notice would resolve its promise as though the action had run.
+        const params_ = (typeof params === 'object' && params !== null ? params : {}) as Record<string, unknown>
+        return client.call(wire as never, { chatId, ...params_ } as never)
       },
 
       async itemize(turn?: number): Promise<ItemizationResult> {

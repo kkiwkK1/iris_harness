@@ -63,6 +63,14 @@ export interface RunnerHost {
    * indistinguishable, from the reader's side, from a card that is broken.
    */
   onSlash: (command: string) => Promise<string>
+  /**
+   * The card invoked one of its facade's actions.
+   *
+   * The shell decides whether a named action may run. The frame is the untrusted
+   * side, so its belief about what is callable is a proposal — this is where the
+   * proposal is accepted or refused.
+   */
+  onCall: (method: string, params: unknown) => Promise<unknown>
   /** The card threw, or was refused a member. */
   onError: (message: string, member?: string) => void
   /**
@@ -187,6 +195,21 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         return
       case 'settings':
         host.onSettings(message.settings)
+        return
+      case 'call':
+        void host
+          .onCall(message.method, message.params)
+          .then(result => {
+            post({ iris: token, type: 'call:ok', id: message.id, result })
+          })
+          .catch((error: unknown) => {
+            post({
+              iris: token,
+              type: 'call:error',
+              id: message.id,
+              message: error instanceof Error ? error.message : String(error),
+            })
+          })
         return
       case 'slash':
         void host

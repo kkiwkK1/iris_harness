@@ -54,6 +54,9 @@ export type ToFrame =
    */
   | { iris: string, type: 'slash:ok', id: string, result: string }
   | { iris: string, type: 'slash:error', id: string, message: string }
+  /** Answer to a card action. */
+  | { iris: string, type: 'call:ok', id: string, result: unknown }
+  | { iris: string, type: 'call:error', id: string, message: string }
 
 /** Frame → host. */
 export type FromFrame =
@@ -114,6 +117,16 @@ export type FromFrame =
    * halves each held their own idea of a convention and agreed only in tests.
    */
   | { iris: string, type: 'slash', id: string, command: string }
+  /**
+   * The card invoked one of the actions on its `SillyTavern` facade.
+   *
+   * Generic rather than one frame per action, because the set will grow and a
+   * message type per member would be a second place to declare it. Generic does
+   * NOT mean open: the shell decides whether a named action may run, and a name
+   * it does not recognise is refused there. The frame proposes; the trusted side
+   * disposes.
+   */
+  | { iris: string, type: 'call', id: string, method: string, params: unknown }
   /** The card's content changed height; the shell sizes the frame to it. */
   | { iris: string, type: 'height', pixels: number }
 
@@ -157,6 +170,14 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
     case 'fetch:ok':
       return typeof message['id'] === 'string' && typeof message['content'] === 'string'
         ? { iris: token, type: 'fetch:ok', id: message['id'], content: message['content'] }
+        : undefined
+    case 'call:ok':
+      return typeof message['id'] === 'string'
+        ? { iris: token, type: 'call:ok', id: message['id'], result: message['result'] }
+        : undefined
+    case 'call:error':
+      return typeof message['id'] === 'string' && typeof message['message'] === 'string'
+        ? { iris: token, type: 'call:error', id: message['id'], message: message['message'] }
         : undefined
     case 'slash:ok':
       return typeof message['id'] === 'string' && typeof message['result'] === 'string'
@@ -243,6 +264,13 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
         message: message['message'].slice(0, 2000),
         ...(typeof member === 'string' ? { member: member.slice(0, 200) } : {}),
       }
+    }
+    case 'call': {
+      const id = message['id']
+      const method = message['method']
+      return typeof id === 'string' && typeof method === 'string'
+        ? { iris: token, type: 'call', id, method: method.slice(0, 100), params: message['params'] }
+        : undefined
     }
     case 'slash': {
       const command = message['command']

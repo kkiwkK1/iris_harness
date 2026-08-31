@@ -175,6 +175,7 @@ export function SandboxProbe(): ReactElement | null {
           fetch: async url => {
             throw new Error(`the probe does not fetch (${url})`)
           },
+          onCall: async (method, params) => actions.runCardAction(method, params),
           onSlash: async command => {
             setHarness(before => ({ slash: [...before.slash, command] }))
             // Rethrown, not swallowed: the card is awaiting this, and a resolved

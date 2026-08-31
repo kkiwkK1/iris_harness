@@ -497,3 +497,86 @@ test('triggerSlash returns something awaitable', () => {
 
   assert.ok(returned instanceof Promise)
 })
+
+test('the actions are reachable both directly and through getContext', () => {
+  // The gap a real card found: data members were reachable both ways and the
+  // actions neither. Upstream exposes both — `SillyTavern.saveMetadata` at six
+  // measured sites, `context.saveChat` at eight, and MVU's own bundle calling
+  // `SillyTavern.saveChat` directly.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    const viaContext = (bare['getContext'] as () => Record<string, unknown>)()
+
+    for (const name of ['saveChat', 'saveMetadata', 'generateRaw']) {
+      assert.equal(typeof bare[name], 'function', `${name} missing from the facade`)
+      assert.equal(typeof viaContext[name], 'function', `${name} missing from getContext()`)
+    }
+    // One surface, two entry points — not two objects that could drift.
+    assert.equal(bare, viaContext)
+  })
+
+  assert.equal(scope.posted.at(-1)?.type, 'ran')
+})
+
+test('saveMetadata sends the metadata the card has been mutating', () => {
+  // Upstream takes no argument: a card mutates `chatMetadata` in place and then
+  // asks for it to be saved. Sending whatever the card passed would save nothing
+  // it had changed.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    void (bare['saveMetadata'] as () => Promise<unknown>)()
+  })
+
+  const call = scope.posted.find(message => message.type === 'call')
+  assert.ok(call?.type === 'call')
+  assert.equal(call.method, 'saveMetadata')
+  assert.deepEqual(call.params, { metadata: { yinqi_phone: { unread: 2 } } })
+})
+
+test('an unmeasured call shape is refused by name rather than guessed at', () => {
+  // `generateRaw`'s upstream signature varies by caller. Guessing would send a
+  // malformed request that fails as a host error rather than as a shape problem,
+  // and the next real card would teach us nothing.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  let caught: unknown
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    try {
+      void (bare['generateRaw'] as (...args: unknown[]) => unknown)(42)
+    } catch (error: unknown) {
+      caught = error
+    }
+  })
+
+  assert.ok(caught instanceof UnsupportedApiError)
+  assert.match(caught.message, /has not been measured yet/)
+  assert.match(caught.message, /number/, 'the refusal should say what it actually got')
+})
+
+test('a member outside the measured set is still refused', () => {
+  // The gap was a missing entry point, not a refusal that was too wide. The
+  // refusal stays.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  let caught: unknown
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    try {
+      void bare['deleteAllChats']
+    } catch (error: unknown) {
+      caught = error
+    }
+  })
+
+  assert.ok(caught instanceof UnsupportedApiError)
+  assert.equal(caught.member, 'SillyTavern.deleteAllChats')
+})
