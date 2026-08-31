@@ -34,7 +34,21 @@ try {
   process.exit(1)
 }
 
-/** Global → a call that proves it is the real library and not a husk. */
+/**
+ * Global → a call that proves it is the real library and not a husk.
+ *
+ * jQuery is absent from this table on purpose, and the reason is worth keeping.
+ * Its UMD decides what to export by looking for `window.document` **at load**:
+ * with one it returns an initialized instance, without one it returns a factory.
+ * This harness deliberately supplies no document, so whatever it would assert
+ * about jQuery's shape would be an assertion about a branch the frame never
+ * takes. Checking it here anyway produced a confident `$ (present but not
+ * usable)` against a bundle that was completely fine.
+ *
+ * jQuery is checked below instead, by the two questions this environment *can*
+ * answer: is the library actually in the bundle, at the pinned version, and did
+ * both names end up pointing at the same thing.
+ */
 const seeds = {
   _: value => typeof value.get === 'function',
   z: value => typeof value.object === 'function',
@@ -64,6 +78,21 @@ for (const flag of ['__VUE_PROD_DEVTOOLS__', '__VUE_OPTIONS_API__', '__VUE_PROD_
   if (!Object.hasOwn(win, flag)) broken.push(`${flag} (absent)`)
 }
 
+/*
+ * jQuery, by source and by identity.
+ *
+ * The version comes from the manifest rather than being written here twice, so
+ * bumping the pin cannot leave the check asserting the old number. jQuery's `/*!`
+ * banner is a preserved comment and survives minification, which a name would
+ * not.
+ */
+const pinned = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')).dependencies.jquery
+if (!source.includes(`jQuery JavaScript Library v${pinned}`)) {
+  broken.push(`jquery (v${pinned} not in the bundle)`)
+}
+if (typeof win.$ !== 'function') broken.push('$ (absent)')
+else if (win.$ !== win.jQuery) broken.push('$ and jQuery are different objects')
+
 if (broken.length > 0) {
   console.error(`preset check failed: ${broken.join(', ')}`)
   console.error('  the bundle loaded but does not provide what a card is told it has')
@@ -71,5 +100,5 @@ if (broken.length > 0) {
 }
 
 console.log(
-  `preset check: ok (${Math.round(source.length / 1024)} KB, seeds ${Object.keys(seeds).join(', ')} usable)`,
+  `preset check: ok (${Math.round(source.length / 1024)} KB, seeds ${Object.keys(seeds).join(', ')} usable, jquery v${pinned} bundled)`,
 )

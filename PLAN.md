@@ -285,7 +285,7 @@ mag_variable_update_ended mag_before_message_update    mag_variable_updated(废�
 mag_invoke_mvu            mag_update_variable
 ```
 
-**注入 iframe 的第三方库**：消息 iframe 得到 Tailwind（扩展自带的本地副本）+ jQuery + jQuery-UI + jquery-ui-touch-punch + Vue 3 runtime + vue-router；脚本 iframe 只有 Vue + vue-router。都从 `testingcf.jsdelivr.net` 取，本地部署要自带副本。
+**注入 iframe 的第三方库（2026-09-01 实测更正——原文对脚本 iframe 少记了一个注入源，这个遗漏后来让真 MVU 在沙箱里多跑了一轮才定位）**：消息 iframe 得到 Tailwind（扩展自带本地副本）+ jQuery 全家 + Vue 3 runtime + vue-router。**脚本 iframe 的注入层是五样，按序**：`third_party_script.html`（Vue + vue-router，CDN tag）→ **`parent_jquery.js`（`window.$ = window.parent.$`，借宿主页面的 jQuery——原文漏的就是它）** → `predefine.js`（`_`/`z`/`YAML`/`showdown`/`toastr`/`EjsTemplate` 六个全局 + 三个 Vue 旗标）→ `cleanup_protector.js`（**有条件**：卡源码含 `pagehide` 则不注入）→ `log.js`（jsdelivr gh 路径）。**权威的"卡片期望全局"清单是 MVU 的 webpack externals 表（8 项）**，比枚举注入侧可靠：`$`、`_`、`showdown`、`toastr`、`Vue`、`VueRouter`、`YAML`、`z`。另注意 jQuery 实跑版本跟 **ST 页面服务的 3.5.1**，MVU manifest 里的 `^4.0.0` 是 devDependency（类型/jest 用），照它装会错一个大版本。
 
 ### 仍需确认的一点
 
