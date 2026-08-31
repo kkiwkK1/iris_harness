@@ -20,14 +20,26 @@
  */
 
 import * as lodash from 'lodash-es'
+import * as YAML from 'yaml'
 import { z } from 'zod'
 
 const host = window as unknown as Record<string, unknown>
 
-// The two upstream's `predefine.js` seeds that Iris can supply. Assigned rather
-// than defined so a card may still overwrite them, which upstream also allows.
+/*
+ * The `predefine.js` seeds Iris can supply, assigned rather than defined so a
+ * card may still overwrite them — which upstream also allows.
+ *
+ * Added when a real card reached for them, not in advance. `YAML` arrived that
+ * way: the missing-globals banner had named it for three runs before MVU got far
+ * enough to call it, so by the time it threw, the answer was already on screen.
+ *
+ * The version tracks upstream's declaration (`yaml: ^2.8.0` in Tavern Helper's
+ * manifest) rather than whatever npm resolves today, because a card is written
+ * against the library its author had.
+ */
 host['_'] = lodash
 host['z'] = z
+host['YAML'] = YAML
 
 /*
  * Vue's runtime flags, copied verbatim including the values.

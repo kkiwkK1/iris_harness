@@ -97,3 +97,42 @@ test('every event the mapping produces is a name the shared table actually carri
   }
   assert.ok(known.has(chatChangedEvent(undefined, 'a')?.event ?? ''))
 })
+
+test('the interception hooks are never forwarded as notifications', () => {
+  /*
+   * `CHAT_COMPLETION_SETTINGS_READY` is in the shared table now, which makes it
+   * look forwardable. It is not. MVU's three listeners on it —
+   * `applyExtraModelRequestOverrides`, `overrideToolRequest`, `filterPrompts` —
+   * mutate the outgoing request and expect the host to send what they leave
+   * behind. Delivering it one-way would run the card's edits and then throw them
+   * away: the card succeeds, the request goes out unchanged, and nothing
+   * anywhere reports a problem.
+   *
+   * This test exists to fail if someone adds it to the map because the name was
+   * available.
+   */
+  const samples: IrisEvent[] = [
+    { type: 'stream.start', chatId: 'c', turn: 0, key: 'k' },
+    { type: 'stream.text', chatId: 'c', turn: 0, delta: 'x' },
+    { type: 'stream.end', chatId: 'c', turn: 0, view: VIEW },
+    { type: 'stream.error', chatId: 'c', turn: 0, code: 'x', message: 'y' },
+    { type: 'chat.updated', chatId: 'c', view: VIEW },
+    { type: 'chats.updated', chats: [] },
+  ]
+  const produced = new Set(samples.flatMap(forwardedEvents).map(forwarded => forwarded.event))
+
+  assert.equal(produced.has(TAVERN_EVENTS.CHAT_COMPLETION_SETTINGS_READY), false)
+  assert.equal(produced.has('worldinfo_entries_loaded'), false)
+})
+
+test('nothing claims a message was sent, because nothing knows yet', () => {
+  // Inferring it from `stream.start` would fire on regenerate too, where
+  // upstream sends no `MESSAGE_SENT`. Absent is the honest answer until the
+  // shell has a real source.
+  const produced = forwardedEvents({ type: 'stream.start', chatId: 'c', turn: 0, key: 'k' })
+
+  assert.equal(
+    produced.some(forwarded => forwarded.event === TAVERN_EVENTS.MESSAGE_SENT),
+    false,
+  )
+})

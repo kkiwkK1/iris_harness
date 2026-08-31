@@ -7,12 +7,23 @@
  * action looks like a card bug. So this maps only the events whose meaning is
  * the same on both sides, and says nothing about the rest.
  *
- * The mapping is deliberately smaller than the table. Four events MVU listens
- * for have no host equivalent yet — `MESSAGE_SENT` and `MESSAGE_DELETED` are
- * shell actions rather than stream events, and `WORLDINFO_UPDATED` and
- * `CHAT_COMPLETION_SETTINGS_READY` are not even in the shared table — and
- * inventing a source for any of them would be guessing at when a card should
- * wake up.
+ * The mapping is deliberately smaller than the table, for two different reasons.
+ *
+ * Some events have no source yet. `MESSAGE_SENT` is the one that matters —
+ * MVU subscribes to it twice — and the shell knows when the user sends, but no
+ * host event reports it. It must not be inferred from `stream.start`: that also
+ * fires on regenerate, where upstream sends no `MESSAGE_SENT` at all, and a card
+ * told a message was sent when none was acts on a turn that does not exist.
+ *
+ * Others cannot be forwarded *at all* in this direction.
+ * `CHAT_COMPLETION_SETTINGS_READY` and `worldinfo_entries_loaded` are not
+ * notifications: MVU's three listeners on the first are
+ * `applyExtraModelRequestOverrides`, `overrideToolRequest` and `filterPrompts`,
+ * and they mutate the outgoing request in place, expecting the host to send what
+ * they leave behind. A one-way post cannot carry that — the host would have to
+ * hand the assembled request across and wait for it to come back. Forwarding
+ * them as plain notifications would be worse than not forwarding: the card's
+ * edits would run, appear to succeed, and be discarded.
  *
  * @module iris-web/sandbox/host-events
  */
