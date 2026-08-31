@@ -386,7 +386,9 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     }
   })
 
-  env.post({ iris: env.token, type: 'ready' })
+  // Readiness is announced by the entry, not here: it depends on the frame's
+  // subresources having settled, and this module deliberately knows nothing about
+  // the document it is installed into.
 
   return { shadowed, viewport: readViewport }
 }

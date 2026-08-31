@@ -198,6 +198,22 @@ user for an API endpoint and key) get no special channel: there is no "card
 holds credentials" tier, and the network grant does not create one — a granted
 card can call out, but Iris never hands it anything of the user's.
 
+## Preset libraries follow upstream, unpinned — and why that is acceptable
+
+Upstream's script frames load Vue and vue-router from jsdelivr **without version
+pins** (`/npm/vue/dist/...` resolves to latest); Iris mirrors the list and the
+unpinning. This is a supply-chain property, not a behaviour quirk, and it is
+acceptable for exactly one reason: **the frame is the boundary, and its contents
+are untrusted by construction.** Cards already import arbitrary whitelisted
+code; a library that updates itself changes nothing about what the frame is
+allowed to reach. Pinning would buy no security and would cost compatibility —
+cards are written against the user's SillyTavern, which runs latest, so a
+pinned Iris would break with those cards on a different day than upstream does.
+
+**Condition attached**: this reasoning holds only while the frame is a real
+boundary. Any future weakening — broader grants, relaxed script-src, same-origin
+frames — reopens this decision before it reopens anything else.
+
 ## Deliberate divergences from upstream
 
 - **Frame height sync is one frame late.** Tavern Helper's iframes size

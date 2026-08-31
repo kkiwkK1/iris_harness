@@ -35,19 +35,19 @@ test('the frame cannot open a nested context or post a form', () => {
 test('the bootstrap is inlined, not fetched', () => {
   // An opaque-origin frame has no useful same-origin path, and a stable public
   // URL would be one more answer that could be substituted.
-  const doc = buildSrcdoc('tok', 'console.log(1)', false)
+  const doc = buildSrcdoc('tok', 'console.log(1)', { networkGranted: false, libraries: [] })
 
   assert.match(doc, /<script>console\.log\(1\)<\/script>/)
   assert.doesNotMatch(doc, /<script[^>]+src=/, 'the frame should load nothing')
 })
 
 test('the run token reaches the bootstrap through the markup', () => {
-  const doc = buildSrcdoc('abc123', '', false)
+  const doc = buildSrcdoc('abc123', '', { networkGranted: false, libraries: [] })
   assert.match(doc, /<meta name="iris-token" content="abc123">/)
 })
 
 test('a token containing markup cannot escape its attribute', () => {
-  const doc = buildSrcdoc('a"><script>bad()</script>', '', false)
+  const doc = buildSrcdoc('a"><script>bad()</script>', '', { networkGranted: false, libraries: [] })
 
   assert.doesNotMatch(doc, /content="a"><script>bad/)
   assert.match(doc, /&quot;&gt;&lt;script&gt;/)
@@ -62,7 +62,7 @@ test('a bootstrap containing a closing script tag cannot break out', () => {
   // escaping, a literal backslash in the pattern is one more layer to reason
   // about than the thing under test.
   const BACKSLASH = String.fromCharCode(92)
-  const doc = buildSrcdoc('tok', `const s = "</script><img onerror=bad()>"`, false)
+  const doc = buildSrcdoc('tok', `const s = "</script><img onerror=bad()>"`, { networkGranted: false, libraries: [] })
 
   assert.equal(doc.includes('</script><img'), false, 'the payload broke out of its element')
   assert.equal(doc.includes(`<${BACKSLASH}/script`), true, 'the sequence was not neutralised')
@@ -73,7 +73,7 @@ test('a bootstrap containing a closing script tag cannot break out', () => {
 test('the policy travels in the document, not as an attribute the host must set', () => {
   // The frame is built from `srcdoc`, so there is no response whose headers could
   // carry this. A meta element is the only place it can live.
-  const doc = buildSrcdoc('tok', '', false)
+  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [] })
   assert.match(doc, /<meta http-equiv="Content-Security-Policy" content="[^"]+">/)
 })
 
@@ -122,4 +122,39 @@ test('http is refused whether or not the card was granted the network', () => {
   for (const policy of [framePolicy(false), framePolicy(true)]) {
     assert.doesNotMatch(policy, /http:\/\//, 'a plain-http origin reached the policy')
   }
+})
+
+test('the bootstrap is emitted before the libraries it must be able to report on', () => {
+  // Order is the whole point. The bootstrap has to capture its channel and install
+  // its error handling first, or a library that fails to load is a silent gap that
+  // only surfaces later as `Vue is not defined` — a message naming the symptom and
+  // hiding the cause.
+  const doc = buildSrcdoc('tok', 'BOOTSTRAP', {
+    networkGranted: false,
+    libraries: ['https://cdn.example/vue.js', 'https://cdn.example/vue-router.js'],
+  })
+
+  const bootstrapAt = doc.indexOf('BOOTSTRAP')
+  const firstLibAt = doc.indexOf('vue.js')
+  assert.ok(bootstrapAt !== -1 && firstLibAt !== -1)
+  assert.ok(bootstrapAt < firstLibAt, 'the bootstrap must be able to watch the libraries load')
+})
+
+test('libraries keep their given order', () => {
+  // `vue-router` expects `Vue` to already be a global.
+  const doc = buildSrcdoc('tok', '', {
+    networkGranted: false,
+    libraries: ['https://cdn.example/vue.js', 'https://cdn.example/vue-router.js'],
+  })
+  assert.ok(doc.indexOf('vue.js') < doc.indexOf('vue-router.js'))
+})
+
+test('library tags are marked so the bootstrap can find them', () => {
+  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: ['https://cdn.example/a.js'] })
+  assert.ok(doc.includes('data-iris-lib'), 'the bootstrap watches for load failures by this marker')
+})
+
+test('a frame with no libraries emits no library tags', () => {
+  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [] })
+  assert.equal(doc.includes('data-iris-lib'), false)
 })

@@ -134,6 +134,9 @@ importers:
       '@iris/compat-prompt-template':
         specifier: workspace:*
         version: link:../iris-compat-prompt-template
+      '@iris/compat-tavernhelper':
+        specifier: workspace:*
+        version: link:../iris-compat-tavernhelper
       '@iris/lorebook':
         specifier: workspace:*
         version: link:../iris-lorebook

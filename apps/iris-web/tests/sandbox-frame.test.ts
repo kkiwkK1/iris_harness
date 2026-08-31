@@ -78,11 +78,20 @@ function evaluate(scope: ReturnType<typeof realm>, body: (globals: Record<string
   scope.send({ iris: 'tok', type: 'run', code: '/* card */', mode: 'classic' })
 }
 
-test('the frame announces itself before any card code exists', () => {
-  // The shell must not post `run` into a frame whose bootstrap has not installed
-  // the globals yet, so readiness is the frame's to declare.
+test('installing announces nothing, because readiness is not this module to judge', () => {
+  /*
+   * `ready` used to be posted right here. It moved to the frame entry once the
+   * frame began carrying the card's preset libraries: the shell answers `ready` by
+   * immediately posting the card body, so announcing before Vue has loaded is a
+   * race the card loses — and it loses it with `Vue is not defined`, a message
+   * that names the symptom three steps downstream of the timing that caused it.
+   *
+   * Readiness depends on the document's subresources. This module deliberately
+   * knows nothing about the document it is installed into, so it is not the thing
+   * that can decide.
+   */
   const scope = realm()
-  assert.deepEqual(scope.posted, [{ iris: 'tok', type: 'ready' }])
+  assert.deepEqual(scope.posted, [], 'installing must not announce readiness')
 })
 
 test('exactly the outward-reaching names are shadowed', () => {

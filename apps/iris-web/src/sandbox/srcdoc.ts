@@ -109,14 +109,20 @@ function attribute(value: string): string {
  * answer could be substituted.
  * @param token - the run token for this frame, minted per run.
  * @param bootstrap - the built bootstrap source.
- * @param networkGranted - whether the user let this card reach the network.
- * Required, with no default: a caller that forgot it would build the restrictive
- * policy for a card the user had granted, and the reader would see "Iris refused
- * <host>" and conclude the grant control was broken. A hidden default does not
- * just hide a decision, it points the resulting failure at the wrong thing.
+ * @param options.networkGranted - whether the user let this card reach the
+ * network. No default: a caller that forgot it would build the restrictive policy
+ * for a card the user had granted, and the reader would see "Iris refused <host>"
+ * and conclude the grant control was broken. A hidden default does not just hide
+ * a decision, it points the resulting failure at the wrong thing.
+ * @param options.libraries - preset libraries to load before the card, in order.
  * @returns the `srcdoc` value.
  */
-export function buildSrcdoc(token: string, bootstrap: string, networkGranted: boolean): string {
+export function buildSrcdoc(
+  token: string,
+  bootstrap: string,
+  options: { networkGranted: boolean, libraries: readonly string[] },
+): string {
+  const { networkGranted, libraries } = options
   // The bootstrap is placed inside a script element, so the one sequence that
   // could break out of it is a literal `</script`. Split rather than escaped:
   // the string is JavaScript, and an HTML escape inside it would change the code.
@@ -140,7 +146,21 @@ export function buildSrcdoc(token: string, bootstrap: string, networkGranted: bo
     // without the card ever reaching the host page.
     '<style>html,body{margin:0;padding:0;background:transparent;color-scheme:inherit}</style>',
     '</head><body>',
+    /*
+     * The bootstrap first, then the card's libraries.
+     *
+     * This order is deliberate and the reason is reporting: the bootstrap has to
+     * capture its channel to the shell and install its error handling before
+     * anything else runs, so that a library which fails to load is something the
+     * frame can *say*. Loaded first, a broken library would be a silent gap that
+     * only surfaces later as `Vue is not defined` — a message that names the
+     * symptom and hides the cause.
+     *
+     * The libraries are the card's dependencies, not the sandbox's, which is the
+     * other half of why they come second.
+     */
     `<script>${safe}</script>`,
+    ...libraries.map(url => `<script src="${attribute(url)}" data-iris-lib></script>`),
     '</body></html>',
   ].join('')
 }

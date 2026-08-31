@@ -19,6 +19,43 @@ import { installSandbox } from './frame.ts'
 import { remoteImports } from './script-source.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 
+/**
+ * Tell the shell the frame is usable — but not before its libraries are.
+ *
+ * The shell answers `ready` by immediately posting the card body, so announcing
+ * too early is a race the card loses: it would evaluate against a window where
+ * `Vue` does not exist yet, and fail with a message naming the symptom rather
+ * than the timing.
+ *
+ * A library that fails outright is reported here rather than left to surface
+ * later as `X is not defined`. That substitution — cause replaced by a symptom
+ * three steps downstream — is the specific confusion this frame keeps being
+ * rebuilt to avoid.
+ * @param run - the run token.
+ * @param post - the channel to the shell.
+ */
+function announceReady(run: string, post: (message: FromFrame) => void): void {
+  for (const element of document.querySelectorAll('script[data-iris-lib]')) {
+    element.addEventListener('error', () => {
+      post({
+        iris: run,
+        type: 'error',
+        message: `a preset library failed to load: ${element.getAttribute('src') ?? 'unknown'}`,
+      })
+    })
+  }
+
+  const announce = (): void => {
+    post({ iris: run, type: 'ready' })
+  }
+
+  // `complete` means every subresource has settled, load or error. A frame with
+  // no libraries reaches it almost immediately; one whose CDN is unreachable
+  // never does, and the shell's silence timeout is what speaks then.
+  if (document.readyState === 'complete') announce()
+  else window.addEventListener('load', announce, { once: true })
+}
+
 /** How long a module gets to load before the frame says so. */
 const IMPORT_TIMEOUT_MS = 15_000
 
@@ -280,6 +317,7 @@ try {
 
   reportBlocked(run, post)
   reportHeight(run, post)
+  announceReady(run, post)
 } catch (error: unknown) {
   // Same reasoning: an install that throws is invisible from the outside, and
   // "nothing happened" is the most expensive answer a sandbox can give.

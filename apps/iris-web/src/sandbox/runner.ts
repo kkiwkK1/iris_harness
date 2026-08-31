@@ -36,6 +36,13 @@ export interface RunnerHost {
    * differently for reasons their authors could not predict.
    */
   mode: 'classic' | 'module'
+  /**
+   * Preset libraries to load before the card, in order.
+   *
+   * Upstream's list for the frame type, not a guess: a card written against
+   * Tavern Helper assumes exactly what Tavern Helper provides.
+   */
+  libraries: readonly string[]
   /** Whether the user granted this card the real page. */
   documentGranted: boolean
   /** Whether the user granted this card the network. */
@@ -130,7 +137,10 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   frame.style.width = '100%'
   frame.style.border = '0'
   frame.style.display = 'block'
-  frame.srcdoc = buildSrcdoc(token, host.bootstrap, host.networkGranted)
+  frame.srcdoc = buildSrcdoc(token, host.bootstrap, {
+    networkGranted: host.networkGranted,
+    libraries: host.libraries,
+  })
 
   let disposed = false
 

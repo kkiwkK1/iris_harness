@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { modeFor, remoteImports, stripCodeFence } from '../src/sandbox/script-source.ts'
+import { librariesFor } from '../src/sandbox/libraries.ts'
 
 /** Built from a code point: a literal backtick run in a heredoc-authored file is
  * one more layer to reason about than the thing under test. */
@@ -78,4 +79,24 @@ test('a body with no remote imports names nothing rather than guessing', () => {
 test('the same host twice is named once', () => {
   const body = ["import 'https://a.example/x.js'", "import 'https://a.example/x.js'"].join('\n')
   assert.deepEqual(remoteImports(body), ['https://a.example/x.js'])
+})
+
+test('a card frame gets upstream two libraries, the probe gets none', () => {
+  // Copied from `src/iframe/third_party_script.html` in the installed extension:
+  // two tags for a script frame, nothing else. The probe gets none — making a
+  // diagnostic depend on two CDN fetches would let a network problem and a sandbox
+  // problem produce the same symptom.
+  assert.deepEqual(librariesFor('probe'), [])
+
+  const libs = librariesFor('card-script')
+  assert.equal(libs.length, 2)
+  assert.ok(libs[0]?.includes('/npm/vue/dist/vue.runtime.global.prod.min.js'))
+  assert.ok(libs[1]?.includes('/npm/vue-router/dist/vue-router.global.prod.min.js'))
+})
+
+test('the libraries come from the host the CSP already admits', () => {
+  // No new allowance is needed, and none should creep in unnoticed.
+  for (const url of librariesFor('card-script')) {
+    assert.ok(url.startsWith('https://testingcf.jsdelivr.net/'), `${url} is off the allowlist`)
+  }
 })

@@ -36,6 +36,7 @@ import { Section } from '../app/fields.tsx'
 import { runCard } from '../sandbox/runner.ts'
 import { PROBE_SCRIPT } from './probe-script.ts'
 import { modeFor, stripCodeFence } from '../sandbox/script-source.ts'
+import { librariesFor } from '../sandbox/libraries.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import {
   getHarness,
@@ -166,6 +167,7 @@ export function SandboxProbe(): ReactElement | null {
           bootstrap,
           code: stripCodeFence(code),
           mode: modeFor(kind),
+          libraries: librariesFor(kind),
           documentGranted: granted,
           networkGranted,
           context,
