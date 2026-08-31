@@ -63,11 +63,48 @@ must render identically with the network down.
 
 ## Contract notes for the host half
 
-- `IrisClient` has no connection-change notification, so `connected` is
-  re-read on every pushed frame. A `connection` event would let the offline
-  banner appear without waiting for unrelated traffic.
-- `MessageView.id` is a positional index, so it is not a stable React key across
-  a delete. Local per-message UI state (an open editor) can attach to the wrong
-  row after `chat.deleteMessage`.
-- The protocol says `call` rejects with an `RpcError` *shape* but not whether the
-  value is an `Error`. `errors.ts` accepts both.
+Requests against `@iris/protocol`, in rough order of how much they cost to work
+around from here. All are additions; nothing existing needs to change shape.
+
+1. **`IrisClient` has no connection-change notification.** `connected` is
+   therefore re-read on every pushed frame, which means the offline banner waits
+   for unrelated traffic before it appears. Either a
+   `{ type: 'connection', connected: boolean }` event or an
+   `onConnectionChange(listener): () => void` on the interface would fix it.
+2. **`MessageView.id` is a positional index, so it is not a stable React key.**
+   After `chat.deleteMessage` every later id shifts, and React reuses component
+   instances across what are now different messages — an open inline editor can
+   end up attached to the wrong row. A `key: string` that is merely stable for
+   the lifetime of one open chat would be enough; it need not be durable.
+3. **Is `RpcError` an `Error`?** The contract says `call` rejects with an
+   `RpcError` *shape* and does not say whether that value is an `Error` instance.
+   `src/client/errors.ts` accepts both rather than guessing, but the two halves
+   should agree rather than each covering for the other.
+4. **`settings.set` and the meaning of `null`.** This half sends `null` for "drop
+   this optional field and use the host's default", because an omitted key
+   already means "leave it alone" in a partial patch and so cannot express it.
+   Unknown keys are dropped rather than stored, so a typo cannot look supported.
+   The host must read `null` the same way or the panel's "use host default"
+   control fails silently.
+5. **`chat.regenerate` addresses only the last reply**, which is what this UI
+   offers. Regenerating an earlier turn would mean discarding everything after
+   it; that is a different operation and the protocol does not have one.
+
+## Known gaps in this half
+
+- **Nothing here has been looked at in a browser.** `npm run check:render` is a
+  substitute, not a replacement: it proves the tree renders and that a disposed
+  slot contribution leaves nothing behind, and it is blind to layout, colour,
+  motion, scrolling and drag-and-drop. Open `npx vite preview` before trusting
+  the visual design. (Note: killing the `npx` wrapper leaves the child `node`
+  process holding the port — kill it by PID, or the next build cannot write.)
+- The lorebook editor is not built; `PLAN.md` schedules it after the core path.
+- Card-script sandboxing is out of this half's scope entirely.
+- `character.import` reads PNG and JSON well enough for the library row. `.charx`
+  is passed through as base64 and falls back to the filename, because real
+  decoding belongs to the host's `@iris/character`.
+- `src/client/store.ts` narrows on `event.type` directly instead of the
+  protocol's `isEvent`, which leaves it with no value imports from
+  `@iris/protocol` — that is what lets the streaming state machine be tested
+  under plain `node --test`. Reverting to `isEvent` would cost those tests their
+  runner.
