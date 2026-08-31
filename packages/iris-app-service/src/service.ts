@@ -23,6 +23,7 @@ import { assemble, type AssembleResult, type Contribution, type HistoryEntry } f
 import type { ChatCompletionPreset } from '@iris/preset'
 import type { GenerationSettings, IrisEvent, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
+import { parseSlashCommands } from '@iris/compat-tavernhelper'
 import { checkScriptFetch, extractScripts } from '@iris/script'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
 import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } from '@iris/turn'
@@ -266,6 +267,32 @@ export class IrisAppService {
         // whose record went when the chat last closed. `preview` says which.
         const recorded = turn === undefined ? undefined : entry.itemizations.get(turn)
         return { itemization: recorded ?? this.#previewItemization(entry) }
+      },
+
+      'script.slash': async ({ chatId, command }) => {
+        // Parsed here, once. The browser forwards the string verbatim because
+        // the escape rule must have exactly one implementation.
+        const commands = parseSlashCommands(command)
+        const names = commands.map(entry => entry.name)
+
+        // The corpus's only pattern, and the only one with a meaning Iris can
+        // honour exactly. A lone `/send` means "insert without generating", and
+        // treating it as this pair would start a generation the card explicitly
+        // did not ask for — spending the user's tokens. Doing more silently is
+        // worse than doing less.
+        if (names.length !== 2 || names[0] !== 'send' || names[1] !== 'trigger') {
+          throw new AppError(
+            'unsupported',
+            `only "/send <text>|/trigger" is supported; got "${names.map(name => `/${name}`).join('|')}". `
+            + 'A lone /send would need a method that inserts without generating, which does not exist yet.',
+          )
+        }
+
+        const first = commands[0]
+        if (first?.name !== 'send') throw invalid('the pipeline lost its /send')
+        await this.#start(chatId, { kind: 'send', text: first.text })
+        // Upstream resolves with the pipeline's result; this pair produces none.
+        return { result: '' }
       },
 
       'connection.list': async () => this.#connections().list(),

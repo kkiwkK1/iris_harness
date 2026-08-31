@@ -48,3 +48,50 @@ export function stripCodeFence(content: string): string {
 export function modeFor(kind: 'card-script' | 'probe'): ScriptMode {
   return kind === 'card-script' ? 'module' : 'classic'
 }
+
+/**
+ * The remote modules a body will try to load.
+ *
+ * Extracted only to name them in a timeout message. A module import that never
+ * settles is the one failure in this sandbox that cannot report itself — it does
+ * not throw, so there is nothing to catch, and the frame simply stops. Saying
+ * "the import timed out" is useful; saying which host it was waiting on is what
+ * turns it into an action.
+ *
+ * Deliberately shallow: `from '…'` and bare `import '…'` at a line start, http(s)
+ * only. It is a diagnostic, so a missed specifier costs a vaguer message and
+ * nothing else.
+ * @param source - the card body.
+ * @returns the remote specifiers, in order, without duplicates.
+ */
+export function remoteImports(source: string): string[] {
+  const found = new Set<string>()
+
+  // Scanned line by line with string operations rather than matched with a
+  // pattern. Every escape sequence this file could need has been eaten in transit
+  // at least four times in this project, each time producing something that still
+  // parsed and silently matched nothing. Where a literal will do, a literal is
+  // safer than a pattern that has to survive being written down.
+  // The newline is built from its code point. Writing it as an escape has been
+  // eaten in transit four times in this project, and a collapsed escape still
+  // parses — the last one turned this very split into a split on a literal
+  // newline character inside the source string.
+  const NEWLINE = String.fromCharCode(10)
+  for (const raw of source.split(NEWLINE)) {
+    const line = raw.trim()
+    if (!line.startsWith('import ') && !line.startsWith('import"') && !line.startsWith("import'")) continue
+
+    for (const quote of ['"', "'"]) {
+      let at = line.indexOf(quote)
+      while (at !== -1) {
+        const end = line.indexOf(quote, at + 1)
+        if (end === -1) break
+        const value = line.slice(at + 1, end)
+        if (value.startsWith('http://') || value.startsWith('https://')) found.add(value)
+        at = line.indexOf(quote, end + 1)
+      }
+    }
+  }
+
+  return [...found]
+}

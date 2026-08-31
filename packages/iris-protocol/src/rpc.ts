@@ -85,6 +85,24 @@ export const requestSchemas = {
    * counter-example rather than a precedent. Whoever lifts this passes that gate
    * first.
    */
+  /**
+   * Run a slash command pipeline on the card's behalf.
+   *
+   * The command string crosses the wire **unparsed**. Splitting it needs
+   * upstream's escape rule — a `|` preceded by an odd number of backslashes is
+   * literal — and a second implementation of that rule in the browser would be
+   * two copies of one convention, agreeing in every test and disagreeing on the
+   * first message a user types a `|` into. That is the shape of the most
+   * expensive bug this project has had.
+   *
+   * Measured: four call sites in the corpus, all one snippet, two commands
+   * (`/send` and `/trigger`). Anything else is refused by name.
+   */
+  'script.slash': z.object({
+    chatId: z.string().min(1),
+    command: z.string().min(1).max(32_000),
+  }),
+
   'connection.list': z.object({}),
   'connection.save': z.object({
     /** Absent creates; present replaces that profile. */
@@ -295,6 +313,9 @@ export interface RpcResponseMap {
   /** The new branch, already open, plus the refreshed list it now appears in. */
   'chat.branch': { view: ChatView, chats: ChatSummary[] }
   'prompt.itemize': { itemization: PromptItemization }
+
+  /** Upstream's `triggerSlash` resolves with the pipeline's result. */
+  'script.slash': { result: string }
 
   'connection.list': { profiles: ConnectionProfile[], activeId?: string }
   'connection.save': { profiles: ConnectionProfile[], activeId?: string }

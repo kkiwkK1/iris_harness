@@ -27,4 +27,26 @@ if (why !== undefined) {
   process.exit(1)
 }
 
-console.log(`bootstrap check: ok (${source.length} bytes, classic)`)
+/*
+ * Exactly one reference to `postMessage`, which must be the capture at boot.
+ *
+ * This pins a bug that severed the frame in silence. `post` used to read
+ * `window.parent.postMessage` at call time; once `publishGlobals` began
+ * redefining `window.parent` to the virtual parent — a proxy that throws on
+ * members it does not bridge — every send after that became a thrown error, the
+ * body never ran, and the frame said nothing at all for the rest of its life.
+ *
+ * A second occurrence means someone reintroduced a late read, and the failure it
+ * causes is invisible from outside the frame. Counting is crude and survives
+ * minification, which a name would not.
+ */
+const sends = source.match(/postMessage/g)?.length ?? 0
+if (sends !== 1) {
+  console.error(
+    `bootstrap check failed: expected exactly one postMessage reference (the capture at boot), found ${sends}`,
+  )
+  console.error('  a late `window.parent.postMessage` read is severed the moment the bridge is published')
+  process.exit(1)
+}
+
+console.log(`bootstrap check: ok (${source.length} bytes, classic, channel captured once)`)

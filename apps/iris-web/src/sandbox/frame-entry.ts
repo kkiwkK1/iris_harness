@@ -16,7 +16,11 @@
  */
 
 import { installSandbox } from './frame.ts'
+import { remoteImports } from './script-source.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
+
+/** How long a module gets to load before the frame says so. */
+const IMPORT_TIMEOUT_MS = 15_000
 
 /** The token the host stamped into this frame's markup. */
 function token(): string {
@@ -116,7 +120,7 @@ function reportBlocked(run: string, post: (message: FromFrame) => void): void {
  */
 function fail(error: unknown): void {
   try {
-    window.parent.postMessage(
+    sendToShell(
       {
         iris: '',
         type: 'bootstrap-error',
@@ -136,12 +140,33 @@ try {
   fail(error)
   throw error
 }
+/**
+ * The real channel to the shell, captured before anything can shadow it.
+ *
+ * This is not defensive style, it is a fix for a bug that severed the frame
+ * silently. `post` used to read `window.parent.postMessage` at call time. Then
+ * `publishGlobals` began redefining `window.parent` to the **virtual parent**, a
+ * proxy that throws on every member it does not bridge — and `postMessage` is not
+ * one of the members it bridges.
+ *
+ * So the moment the bridge was published, the frame's own way of speaking became
+ * a thrown `UnsupportedApiError`. The `globals` frame, posted immediately after
+ * the redefinition, was the first casualty; the exception then escaped the run
+ * handler, so the card body never ran and no further frame was ever sent. From
+ * outside: `ready`, then absolute silence.
+ *
+ * A capability the sandbox is about to take away from card code has to be taken
+ * hold of before it is taken away.
+ */
+const realParent = window.parent
+const sendToShell = realParent.postMessage.bind(realParent)
+
 const post = (message: FromFrame): void => {
   // The shell's origin cannot be named: this frame has an opaque origin, so the
   // only usable target is `'*'`. That is safe in this direction because nothing
   // secret travels it — everything here either came from the shell already or is
   // the card's own output. The token is what lets the shell tell frames apart.
-  window.parent.postMessage(message, '*')
+  sendToShell(message, '*')
 }
 
 const listeners: ((message: ReturnType<typeof parseToFrame>) => void)[] = []
@@ -212,7 +237,34 @@ try {
     }
 
     const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
-    return import(/* @vite-ignore */ url).then(
+
+    /*
+     * A deadline, because a stalled module is the only failure here that cannot
+     * report itself.
+     *
+     * A module whose remote import never settles does not throw — there is
+     * nothing to catch and nothing to time out on its own. The frame simply
+     * stops, and from the shell it is indistinguishable from a frame that never
+     * received the body at all. Naming the hosts it was waiting on is what turns
+     * "it stopped" into something someone can act on.
+     *
+     * The import is not cancelled, because it cannot be; the promise is abandoned
+     * and the report is sent. If the module does eventually arrive it will run,
+     * which is untidy and still better than silence.
+     */
+    const targets = remoteImports(source)
+    const deadline = new Promise<never>((_resolve, reject) => {
+      setTimeout(() => {
+        reject(
+          new Error(
+            `import timed out after ${IMPORT_TIMEOUT_MS / 1000}s — the module never finished loading` +
+              (targets.length === 0 ? '' : ` (waiting on ${targets.join(', ')})`),
+          ),
+        )
+      }, IMPORT_TIMEOUT_MS)
+    })
+
+    return Promise.race([import(/* @vite-ignore */ url), deadline]).then(
       () => {
         URL.revokeObjectURL(url)
       },

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { modeFor, stripCodeFence } from '../src/sandbox/script-source.ts'
+import { modeFor, remoteImports, stripCodeFence } from '../src/sandbox/script-source.ts'
 
 /** Built from a code point: a literal backtick run in a heredoc-authored file is
  * one more layer to reason about than the thing under test. */
@@ -43,4 +43,39 @@ test('card scripts are modules, and it is not decided by sniffing the source', (
   // Classic remains for Iris's own probe, which exercises the shadowed globals a
   // module cannot be handed.
   assert.equal(modeFor('probe'), 'classic')
+})
+
+test('remote import targets are named so a stalled load can be acted on', () => {
+  // A module whose remote import never settles does not throw, so nothing can
+  // catch it and the frame simply stops. Naming the host it was waiting on is
+  // what turns "it stopped" into something someone can do about.
+  const body = [
+    "import 'https://testingcf.jsdelivr.net/npm/vue/dist/vue.js'",
+    'import { x } from "https://cdn.jsdelivr.net/npm/lodash/lodash.js"',
+    'console.log(1)',
+  ].join('\n')
+
+  assert.deepEqual(remoteImports(body), [
+    'https://testingcf.jsdelivr.net/npm/vue/dist/vue.js',
+    'https://cdn.jsdelivr.net/npm/lodash/lodash.js',
+  ])
+})
+
+test('only remote specifiers are named, and only from import lines', () => {
+  const body = [
+    "import './local.js'",
+    "const url = 'https://not-an-import.example/x.js'",
+    "import 'https://real.example/y.js'",
+  ].join('\n')
+
+  assert.deepEqual(remoteImports(body), ['https://real.example/y.js'])
+})
+
+test('a body with no remote imports names nothing rather than guessing', () => {
+  assert.deepEqual(remoteImports('console.log(1)'), [])
+})
+
+test('the same host twice is named once', () => {
+  const body = ["import 'https://a.example/x.js'", "import 'https://a.example/x.js'"].join('\n')
+  assert.deepEqual(remoteImports(body), ['https://a.example/x.js'])
 })

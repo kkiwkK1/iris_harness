@@ -109,10 +109,16 @@ export function SandboxProbe(): ReactElement | null {
 
   const start = useCallback(
     async (code: string, label: string, kind: 'card-script' | 'probe') => {
+      // A second Run while the first is still in flight used to start a frame
+      // beside the one already posting into the same shell listener. Stopping the
+      // old one first is what makes the second run mean something.
       setRunningCard(undefined)
+      mount.current?.replaceChildren()
       window.clearTimeout(silence.current)
       resetObservations('loading bootstrap…')
-      setHarness({ lastRun: { label, result: 'started' } })
+      // "dispatched", not "started": this is set before the frame exists, so
+      // calling it started would claim the body had begun when nothing had.
+      setHarness({ lastRun: { label, result: 'dispatched' } })
 
       let bootstrap: string
       try {
@@ -167,8 +173,11 @@ export function SandboxProbe(): ReactElement | null {
           fetch: async url => {
             throw new Error(`the probe does not fetch (${url})`)
           },
-          onSlash: command => {
+          onSlash: async command => {
             setHarness(before => ({ slash: [...before.slash, command] }))
+            // Rethrown, not swallowed: the card is awaiting this, and a resolved
+            // promise would tell it the command ran.
+            return actions.runSlash(command)
           },
           onSettings: settings => {
             setHarness({ settings: JSON.stringify(settings) })

@@ -152,6 +152,14 @@ export interface IrisActions {
    * would mean holding a stale answer that looks current.
    */
   itemize(turn?: number): Promise<ItemizationResult>
+  /**
+   * Run a slash command a card invoked.
+   *
+   * The string is passed through untouched. Splitting it needs upstream's escape
+   * rule, which lives host-side; a second copy in the browser would agree in
+   * every test and disagree the first time a user types a `|`.
+   */
+  runSlash(command: string): Promise<string>
   loadConnections(): Promise<void>
   activateConnection(id: string): Promise<void>
   saveConnection(patch: {
@@ -480,6 +488,16 @@ export function createIrisStore(
           // leave the interface reporting a current connection nobody can open.
           set({ connections: listed.profiles, activeConnectionId: listed.activeId })
         })
+      },
+
+      async runSlash(command: string): Promise<string> {
+        const chatId = get().chatId
+        if (chatId === undefined) throw new Error('no chat is open')
+        // Deliberately not wrapped in `guard`: the caller is a card waiting on a
+        // promise, and it needs the rejection. Turning this into a notice would
+        // resolve the card's `await` as though the command had worked.
+        const { result } = await client.call('script.slash', { chatId, command })
+        return result
       },
 
       async itemize(turn?: number): Promise<ItemizationResult> {

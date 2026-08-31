@@ -16,6 +16,7 @@
     "@iris/character": "workspace:*",
     "@iris/chat": "workspace:*",
     "@iris/compat-prompt-template": "workspace:*",
+    "@iris/compat-tavernhelper": "workspace:*",
     "@iris/lorebook": "workspace:*",
     "@iris/macro": "workspace:*",
     "@iris/mvu": "workspace:*",

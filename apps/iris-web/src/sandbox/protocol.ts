@@ -43,6 +43,17 @@ export type ToFrame =
   /** Answer to a `fetch` request, resolved or refused. */
   | { iris: string, type: 'fetch:ok', id: string, content: string }
   | { iris: string, type: 'fetch:error', id: string, message: string }
+  /**
+   * Answer to a slash command.
+   *
+   * Its existence is what lets `triggerSlash` resolve when upstream's does.
+   * Upstream resolves when the *command* has run, not when generation has
+   * finished — and `/send|/trigger` running to completion means the turn is open,
+   * which is exactly what the host's answer reports. Resolving on dispatch
+   * instead would have been a deviation to document; this is alignment.
+   */
+  | { iris: string, type: 'slash:ok', id: string, result: string }
+  | { iris: string, type: 'slash:error', id: string, message: string }
 
 /** Frame → host. */
 export type FromFrame =
@@ -102,7 +113,7 @@ export type FromFrame =
    * browser is the shape that produced this project's worst bug so far, where two
    * halves each held their own idea of a convention and agreed only in tests.
    */
-  | { iris: string, type: 'slash', command: string }
+  | { iris: string, type: 'slash', id: string, command: string }
   /** The card's content changed height; the shell sizes the frame to it. */
   | { iris: string, type: 'height', pixels: number }
 
@@ -146,6 +157,14 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
     case 'fetch:ok':
       return typeof message['id'] === 'string' && typeof message['content'] === 'string'
         ? { iris: token, type: 'fetch:ok', id: message['id'], content: message['content'] }
+        : undefined
+    case 'slash:ok':
+      return typeof message['id'] === 'string' && typeof message['result'] === 'string'
+        ? { iris: token, type: 'slash:ok', id: message['id'], result: message['result'] }
+        : undefined
+    case 'slash:error':
+      return typeof message['id'] === 'string' && typeof message['message'] === 'string'
+        ? { iris: token, type: 'slash:error', id: message['id'], message: message['message'] }
         : undefined
     case 'fetch:error':
       return typeof message['id'] === 'string' && typeof message['message'] === 'string'
@@ -227,9 +246,12 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
     }
     case 'slash': {
       const command = message['command']
+      const id = message['id']
       // Bounded like every card-controlled string. Generous, because a `/send`
       // carries a user's message.
-      return typeof command === 'string' ? { iris: token, type: 'slash', command: command.slice(0, 32_000) } : undefined
+      return typeof command === 'string' && typeof id === 'string'
+        ? { iris: token, type: 'slash', id, command: command.slice(0, 32_000) }
+        : undefined
     }
     case 'fetch':
       return typeof message['id'] === 'string' && typeof message['url'] === 'string'

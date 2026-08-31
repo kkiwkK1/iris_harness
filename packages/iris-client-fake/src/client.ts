@@ -315,6 +315,18 @@ class InMemoryClient implements FakeClient {
         return { view }
       }
 
+      case 'script.slash': {
+        // Refused rather than modelled, unlike the profiles and the itemization.
+        // The value of this method is upstream's escape rule (a `|` preceded by an
+        // odd number of backslashes is literal), which lives in
+        // `@iris/compat-tavernhelper` and is the whole reason the string crosses
+        // the wire unparsed. A second, simpler implementation here would answer
+        // plausibly for the inputs a developer thinks to try and diverge on the
+        // first message containing a pipe — which is exactly the divergence the
+        // contract was shaped to prevent.
+        throw new FakeRpcError('unsupported', 'the fake client does not run slash commands')
+      }
+
       case 'connection.list':
         return listConnections()
 

@@ -55,7 +55,7 @@ export interface RunnerHost {
    * that asked the application to send a message and was silently ignored is
    * indistinguishable, from the reader's side, from a card that is broken.
    */
-  onSlash: (command: string) => void
+  onSlash: (command: string) => Promise<string>
   /** The card threw, or was refused a member. */
   onError: (message: string, member?: string) => void
   /**
@@ -178,7 +178,19 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         host.onSettings(message.settings)
         return
       case 'slash':
-        host.onSlash(message.command)
+        void host
+          .onSlash(message.command)
+          .then(result => {
+            post({ iris: token, type: 'slash:ok', id: message.id, result })
+          })
+          .catch((error: unknown) => {
+            post({
+              iris: token,
+              type: 'slash:error',
+              id: message.id,
+              message: error instanceof Error ? error.message : String(error),
+            })
+          })
         return
       case 'error':
         host.onError(message.message, message.member)

@@ -239,3 +239,45 @@ test('a bridge call for a chat that does not exist is not found', async (t) => {
     await assert.rejects(call, (error: unknown) => (error as { code?: string }).code === 'not-found')
   }
 })
+
+test('a slash pipeline is parsed once, in the host', async (t) => {
+  const { handlers, chats, settled } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  // The browser forwards the string verbatim; the escape rule has exactly one
+  // implementation, so a `|` a user typed cannot be split differently by the
+  // two halves.
+  const { result } = await handlers['script.slash']({ chatId, command: '/send 你好|/trigger' })
+  await settled()
+
+  assert.equal(result, '')
+  const view = (await handlers['chat.open']({ chatId })).view
+  assert.equal(view.messages[1]?.text, '你好')
+  assert.equal(view.messages[1]?.role, 'user')
+  assert.equal(chats.cached(chatId)?.generating, false)
+})
+
+test('a lone /send is refused rather than quietly generating', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+
+  // `/send` without `/trigger` means insert *without* generating. Treating it
+  // as the pair would start a generation the card explicitly did not ask for,
+  // and spend the user's tokens doing it — doing more silently is worse than
+  // doing less.
+  await assert.rejects(
+    () => handlers['script.slash']({ chatId: created.view.chatId, command: '/send 你好' }),
+    (error: unknown) => (error as { code?: string }).code === 'unsupported',
+  )
+})
+
+test('an unimplemented command is refused by name', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+
+  await assert.rejects(
+    () => handlers['script.slash']({ chatId: created.view.chatId, command: '/setvar x 1' }),
+    (error: unknown) => /\/setvar/.test((error as Error).message),
+  )
+})

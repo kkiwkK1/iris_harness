@@ -269,14 +269,21 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * The raw string travels unparsed — upstream's pipe escaping lives host-side
    * and a second copy here would be two ideas of one convention.
    *
-   * Returns a promise that resolves on **dispatch, not completion**. Upstream's
-   * returns one that resolves when the command has run; matching that needs an
-   * acknowledgement round trip, and there is nothing to acknowledge until the
-   * shell can execute one. Documented rather than papered over.
+   * The promise resolves when the **host has run the command**, which is where
+   * upstream's resolves too: upstream waits for the command, not for generation,
+   * and `/send|/trigger` finishing means the turn is open. Resolving on dispatch
+   * would have been a deviation worth documenting; waiting for the answer is
+   * simply the same contract.
    */
-  const triggerSlash = (command: unknown): Promise<void> => {
-    env.post({ iris: env.token, type: 'slash', command: String(command) })
-    return Promise.resolve()
+  let nextSlash = 0
+  const pendingSlash = new Map<string, { resolve: (result: string) => void, reject: (why: Error) => void }>()
+
+  const triggerSlash = (command: unknown): Promise<string> => {
+    const id = `s${(nextSlash += 1)}`
+    return new Promise<string>((resolve, reject) => {
+      pendingSlash.set(id, { resolve, reject })
+      env.post({ iris: env.token, type: 'slash', id, command: String(command) })
+    })
   }
 
   const shadowed = [
@@ -314,6 +321,15 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       env.applyViewport?.(viewport)
       return
     }
+    if (message.type === 'slash:ok' || message.type === 'slash:error') {
+      const waiting = pendingSlash.get(message.id)
+      if (waiting === undefined) return
+      pendingSlash.delete(message.id)
+      if (message.type === 'slash:ok') waiting.resolve(message.result)
+      // Rejected with a real Error so a card's `.catch` sees what upstream's would.
+      else waiting.reject(new Error(message.message))
+      return
+    }
     if (message.type === 'context') {
       context = message.context
       extensionSettings = settingsProxy({ ...message.context.extensionSettings })
@@ -322,16 +338,6 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     if (message.type !== 'run') return
 
     const values = resolveValues()
-    // Published before evaluation in both modes, because a module has no other
-    // way to see them and a classic body loses nothing by having both routes.
-    env.publishGlobals?.(
-      shadowed.map((name, at) => [name, values[at]] as [string, unknown]).filter(
-        // The window aliases are not ours to redefine and would be circular
-        // anyway; `parent`/`top` are attempted because whether they can be
-        // redefined is a browser question the frame answers empirically.
-        ([name]) => name !== 'window' && name !== 'self' && name !== 'globalThis',
-      ),
-    )
 
     const failed = (error: unknown): void => {
       // A refusal and a bug in the card both land here, and the shell shows them
@@ -346,6 +352,23 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     }
 
     try {
+      // Inside the reporting try/catch, and that placement is the point: it used
+      // to sit above it, so when publishing the bridge threw, the exception
+      // escaped the handler and the frame went silent for the rest of its life —
+      // no body, no error, nothing. Anything between receiving `run` and finishing
+      // the body has to be able to say that it failed.
+      //
+      // Published before evaluation in both modes, because a module has no other
+      // way to see these and a classic body loses nothing by having both routes.
+      env.publishGlobals?.(
+        shadowed.map((name, at) => [name, values[at]] as [string, unknown]).filter(
+          // The window aliases are not ours to redefine and would be circular
+          // anyway; `parent`/`top` are attempted because whether they can be
+          // redefined is a browser question the frame answers empirically.
+          ([name]) => name !== 'window' && name !== 'self' && name !== 'globalThis',
+        ),
+      )
+
       const running = env.evaluate(message.code, message.mode, shadowed, values)
       if (running instanceof Promise) {
         // A module loads asynchronously, so `ran` cannot be posted on the next

@@ -200,6 +200,7 @@ const PROBES: Record<string, unknown> = {
   'chat.deleteMessage': { chatId: 'no-such-chat', id: 0 },
   'chat.branch': { chatId: 'no-such-chat', id: 0 },
   'prompt.itemize': { chatId: 'no-such-chat' },
+  'script.slash': { chatId: 'no-such-chat', command: '/send hi|/trigger' },
   'connection.list': {},
   'connection.save': { provider: 'default', model: 'mock-model' },
   'connection.delete': { id: 'no-such-profile' },
