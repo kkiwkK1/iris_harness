@@ -21,14 +21,23 @@ hands over the whole context, `$` is jQuery bound to the real document.
 
 Iris evaluates in a child process with no environment, no filesystem writes, no
 ability to spawn, inside a `vm` realm with no `process`, no `require`, and no
-working dynamic import. A template sees the six environment members the corpus
-actually uses and nothing else.
+working dynamic import. A template sees the members the corpus actually uses and
+nothing else.
 
-**Measured cost: 0 sites.** Nothing in the corpus touches `execute`,
-`injectPrompt`, `jsonPatch`, `define`, `getchr`, `getprp`, `faker`,
-`activateRegex`, jQuery, zod or toastr. The corpus reaches for `getvar` (537),
-`getwi` (62), `SillyTavern.chatMetadata`/`saveMetadata` (16 each), `setvar` (9),
-`matchChatMessages` (2) and `charName` (2).
+**What the corpus reaches for**, counted over both the cards and the disk world
+books: `getvar` 537, `getwi` 62, `SillyTavern` 32 (only `.chatMetadata` and
+`.saveMetadata`), `setvar` 9, `getMessageVar` 5, `charName` 2, `setLocalVar` 1,
+`matchChatMessages` 1, `YAML` 1.
+
+The per-scope shorthands in that list — `getMessageVar`, `setLocalVar` — were
+missed by the first census, which counted only the base names, and were found by
+the differential script when five fields failed with a `ReferenceError`. They are
+implemented now. The two still absent are `matchChatMessages` (needs the chat,
+which is not pushed) and `YAML` (deviation 9).
+
+**Cost of everything else being absent: 0 sites.** Nothing in the corpus touches
+`execute`, `injectPrompt`, `jsonPatch`, `define`, `getchr`, `getprp`, `faker`,
+`activateRegex`, jQuery, zod or toastr.
 
 Everything below is a cost of that decision or an artefact of the engine.
 
@@ -97,10 +106,18 @@ implements the setting brings them along:
   block and a `const __locals` where stock emits a bare `var` and, with `with`
   off, no block at all.
 
-### 6. Only six environment members exist, and the rest throw
+### 6. Most of upstream's environment is absent, and reaching for it is loud
 
-Upstream exposes about ninety names. A template reaching for one this package
-does not implement gets an `UnsupportedTemplateApiError` naming the member.
+Upstream exposes about ninety names plus every global on the page. This package
+implements what the corpus uses: `getvar`/`getVariable`, `setvar`/`setVariable`,
+the six per-scope shorthands, `getwi`/`getWorldInfo`, `variables`, the two
+bridged `SillyTavern` members, and the scalars.
+
+Reaching for anything else is loud in one of two ways: a bridged object refuses
+by name with an `UnsupportedTemplateApiError` (`SillyTavern.getContext` does),
+and an absent global is a `ReferenceError` that names the identifier
+(`matchChatMessages is not defined`). Both are traceable; neither is
+`undefined`.
 
 Throwing rather than returning `undefined` is `SANDBOX.md`'s rule: `undefined`
 from a lookup is indistinguishable from "not found", so a card would take a
@@ -146,7 +163,35 @@ op and the host needs no branch for it. Reads of `initial` are unaffected.
 
 **0 corpus sites.**
 
-### 9. The world-info entry sort order is not reproduced
+### 9. A template can reach another extension's page globals; here it cannot
+
+Found by `scripts/template-differential.mjs`, not by reading upstream's source —
+which is why the script exists.
+
+Upstream's templates run in the SillyTavern page's realm, so `with (locals)`
+falls through to **every global on the page**, not just the ~90 names
+`prepareContext` binds. That includes globals installed by *other extensions*.
+Measured, TavernHelper (`JS-Slash-Runner`) installs exactly two:
+
+```ts
+globalThis.YAML = YAML_object   // the `yaml` package
+globalThis.z    = z_object      // zod
+```
+
+One corpus field (`命定之诗与黄昏之歌v3.0.4` entry 8) uses `YAML`. It renders in
+the operator's SillyTavern and fails here — and the thing supplying it is not the
+template engine at all.
+
+Not implemented, because it is a scope decision rather than a bug: supporting it
+means a third runtime dependency for one field, and, more importantly, it means
+deciding whether this package chases another extension's global surface at all.
+`ROADMAP.md` already records that the corpus depends on more extensions than
+TavernHelper; this is that problem arriving at the template layer.
+
+Consequence if left: **1 of 196 comparable fields.** The differential script
+reports it by name on every run, so it cannot quietly become five.
+
+### 10. The world-info entry sort order is not reproduced
 
 Upstream sorts a loaded book with `worldInfoSorter` (position, depth, order)
 before scanning it, so the sort decides which entry wins when more than one
@@ -159,7 +204,7 @@ more than one entry**. With no ambiguity there is nothing for the sort to decide
 If a future card writes a `getwi` whose target matches two entries, this becomes
 observable and the sorter has to be ported.
 
-### 10. No recursion guard on `getwi`
+### 11. No recursion guard on `getwi`
 
 Upstream has none either. A cycle of entries fetching each other overflows the
 stack, which lands as one failed item rather than a lost batch. An *async* cycle

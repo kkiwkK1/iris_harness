@@ -73,9 +73,12 @@ export function hasTemplate(text: string, openDelimiter = '<', delimiter = '%'):
  * }
  * ```
  *
- * So `<%=` and `<%-` are **the same tag** in this dialect, and 289 sites in the
- * corpus are written on that assumption — they emit XML into the prompt through
- * `<%=`. Restoring EJS's HTML escaping here would corrupt every one of them.
+ * So `<%=` and `<%-` are **the same tag** in this dialect. The corpus has 289
+ * `<%=` sites; restoring EJS's HTML escaping changes what **3** of them render,
+ * measured by `scripts/template-differential.mjs --self-check`. Small, and not
+ * cosmetic: the three interpolate variable text containing apostrophes, which
+ * would reach the model as `&#39;`. The tag count is not the dependency count —
+ * escaping only shows where an output actually carries `& < > " '`.
  * @param markup - the value EJS is about to append.
  * @returns it, unchanged.
  */

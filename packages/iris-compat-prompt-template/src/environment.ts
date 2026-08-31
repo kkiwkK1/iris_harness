@@ -96,6 +96,19 @@ function normalizeOptions(options: VarOptions = {}): Normalized {
 }
 
 /**
+ * Normalise an options argument so a scope can be layered onto it.
+ *
+ * The shorthands spread their caller's options and then force a scope, and the
+ * caller may have passed upstream's bare-string form. Converting first keeps
+ * `getMessageVar(k, 'old')` meaning what it means upstream.
+ * @param options - whatever the template passed.
+ * @returns the object form.
+ */
+function asObject(options: VarOptions): Normalized {
+  return normalizeOptions(options)
+}
+
+/**
  * `_.get` with upstream's null-key behaviour.
  * @param object - the store to read.
  * @param key - a lodash path, or null for the whole store.
@@ -289,6 +302,25 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
     },
   })
 
+  /**
+   * Upstream's per-scope shorthands.
+   *
+   * Found by the differential script, not by the original census: that counted
+   * `getvar`/`setvar` and missed the alias family entirely, so the corpus's
+   * `getMessageVar` (5 sites) and `setLocalVar` (1 site) read as zero and five
+   * fields failed with a `ReferenceError` that would have rendered fine in the
+   * operator's SillyTavern. Transcribed from `prepareContext`, where each is a
+   * one-line partial application of the base function.
+   */
+  const scoped = {
+    getLocalVar: (key: string | null, options: VarOptions = {}) => getvar(key, { ...asObject(options), scope: 'local' }),
+    getGlobalVar: (key: string | null, options: VarOptions = {}) => getvar(key, { ...asObject(options), scope: 'global' }),
+    getMessageVar: (key: string | null, options: VarOptions = {}) => getvar(key, { ...asObject(options), scope: 'message' }),
+    setLocalVar: (key: string, value: unknown, options: VarOptions = {}) => setvar(key, value, { ...asObject(options), scope: 'local' }),
+    setGlobalVar: (key: string, value: unknown, options: VarOptions = {}) => setvar(key, value, { ...asObject(options), scope: 'global' }),
+    setMessageVar: (key: string, value: unknown, options: VarOptions = {}) => setvar(key, value, { ...asObject(options), scope: 'message' }),
+  }
+
   const env: Record<string, unknown> = {
     ...snapshot.scalars,
     ...itemLocals,
@@ -297,6 +329,7 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
     getVariable: getvar,
     setvar,
     setVariable: setvar,
+    ...scoped,
     getwi,
     getWorldInfo: getwi,
     SillyTavern: sillyTavern,

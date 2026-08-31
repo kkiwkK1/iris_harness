@@ -76,8 +76,9 @@ test('the short-circuit follows the configured delimiters', () => {
 
 test('escaping is the identity, so <%= and <%- are the same tag', () => {
   // `function escape(markup) { return markup }` in the extension, commented
-  // "don't escape any XML tags". 289 `<%=` sites in the corpus emit XML into
-  // the prompt on that assumption; restoring EJS's HTML escaping corrupts them.
+  // "don't escape any XML tags". The corpus has 289 `<%=` sites, of which 3
+  // render differently once escaping is restored — the count of tags is not the
+  // count of dependants, and only the differential script can tell them apart.
   assert.equal(identityEscape('<StatusPlaceHolderImpl/>'), '<StatusPlaceHolderImpl/>')
   assert.equal(identityEscape('a & b "c" \'d\''), 'a & b "c" \'d\'')
 })

@@ -98,8 +98,9 @@ test('a false condition removes the block', () => {
 })
 
 test('<%= does not escape, so a card can emit XML into the prompt', () => {
-  // The identity `escape` is upstream's, and 289 corpus sites depend on it. If
-  // EJS's HTML escaping were restored this would render `&lt;Status…`.
+  // The identity `escape` is upstream's. Restoring EJS's HTML escaping would
+  // render `&lt;Status…` here, and — measured, not inferred — would change what
+  // 3 of the corpus's 196 comparable fields produce.
   return render("<%= '<StatusPlaceHolderImpl/>' %>").then((text) => {
     assert.equal(text, '<StatusPlaceHolderImpl/>')
   })
