@@ -66,19 +66,19 @@ const settled: ChatView = {
 test('deltas accumulate into the stream buffer', () => {
   const { store, push, dispose } = openedStore()
 
-  push({ type: 'stream.start', chatId: 'c1', turn: 0 })
+  push({ type: 'stream.start', chatId: 'c1', turn: 0, key: 'k0' })
   push({ type: 'stream.text', chatId: 'c1', turn: 0, delta: 'the ' })
   push({ type: 'stream.text', chatId: 'c1', turn: 0, delta: 'whole' })
   push({ type: 'stream.reasoning', chatId: 'c1', turn: 0, delta: 'hm' })
 
-  assert.deepEqual(store.getState().stream, { turn: 0, text: 'the whole', reasoning: 'hm' })
+  assert.deepEqual(store.getState().stream, { turn: 0, text: 'the whole', reasoning: 'hm', key: 'k0' })
   dispose()
 })
 
 test('stream.end replaces the view and drops the buffer', () => {
   const { store, push, dispose } = openedStore()
 
-  push({ type: 'stream.start', chatId: 'c1', turn: 0 })
+  push({ type: 'stream.start', chatId: 'c1', turn: 0, key: 'k0' })
   push({ type: 'stream.text', chatId: 'c1', turn: 0, delta: 'partial' })
   push({ type: 'stream.end', chatId: 'c1', turn: 0, view: settled })
 
@@ -102,7 +102,7 @@ test('a delta for a turn whose opening was missed still starts a buffer', () => 
 test('a delta for a different turn restarts the buffer rather than appending', () => {
   const { store, push, dispose } = openedStore()
 
-  push({ type: 'stream.start', chatId: 'c1', turn: 0 })
+  push({ type: 'stream.start', chatId: 'c1', turn: 0, key: 'k0' })
   push({ type: 'stream.text', chatId: 'c1', turn: 0, delta: 'old' })
   push({ type: 'stream.text', chatId: 'c1', turn: 1, delta: 'new' })
 
@@ -113,7 +113,7 @@ test('a delta for a different turn restarts the buffer rather than appending', (
 test('frames for a chat this page is not showing are ignored', () => {
   const { store, push, dispose } = openedStore()
 
-  push({ type: 'stream.start', chatId: 'other', turn: 0 })
+  push({ type: 'stream.start', chatId: 'other', turn: 0, key: 'k0' })
   push({ type: 'stream.text', chatId: 'other', turn: 0, delta: 'not ours' })
 
   assert.equal(store.getState().stream, undefined)
@@ -125,19 +125,19 @@ test('chat.updated does not blank text arriving for a later turn', () => {
   // reply being written vanishes from under the reader.
   const { store, push, dispose } = openedStore()
 
-  push({ type: 'stream.start', chatId: 'c1', turn: 2 })
+  push({ type: 'stream.start', chatId: 'c1', turn: 2, key: 'k2' })
   push({ type: 'stream.text', chatId: 'c1', turn: 2, delta: 'arriving' })
   push({ type: 'chat.updated', chatId: 'c1', view: settled })
 
   assert.equal(store.getState().view, settled)
-  assert.deepEqual(store.getState().stream, { turn: 2, text: 'arriving', reasoning: '' })
+  assert.deepEqual(store.getState().stream, { turn: 2, text: 'arriving', reasoning: '', key: 'k2' })
   dispose()
 })
 
 test('stream.error clears the buffer and raises a notice', () => {
   const { store, push, dispose } = openedStore()
 
-  push({ type: 'stream.start', chatId: 'c1', turn: 0 })
+  push({ type: 'stream.start', chatId: 'c1', turn: 0, key: 'k0' })
   push({ type: 'stream.text', chatId: 'c1', turn: 0, delta: 'half' })
   push({
     type: 'stream.error',
@@ -197,7 +197,7 @@ test('disposing the store drops its event subscription', () => {
   store.setState({ chatId: 'c1' })
   dispose()
 
-  stub.push({ type: 'stream.start', chatId: 'c1', turn: 0 })
+  stub.push({ type: 'stream.start', chatId: 'c1', turn: 0, key: 'k0' })
 
   // A plugin that leaves a listener behind is the failure Iris's reversible
   // mounting exists to prevent, so it is worth a test rather than a comment.

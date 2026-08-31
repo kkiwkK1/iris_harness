@@ -25,6 +25,37 @@ test('a stream for a turn with no message yet is shown against a synthesized one
   assert.equal(live?.turn, 1)
 })
 
+test('the synthesized row carries the identity the settled row will have', () => {
+  // The invariant the whole `key` field exists for, asserted across the one
+  // transition that used to break it. The host mints `m…`; this file once
+  // rebuilt the key as `a${turn}`, which is the FAKE client's scheme, so the
+  // two sides agreed in every test and disagreed in production: each real
+  // reply was torn down and rebuilt at the instant it finished.
+  const announced = 'm1'
+  const live = withStream(view([userLine]), { turn: 1, text: 'She sets', reasoning: '', key: announced })
+
+  assert.equal(live[1]?.key, announced)
+
+  // The host then settles the turn, addressing that row by the same identity.
+  const settledRow: MessageView = {
+    id: 1, key: announced, role: 'assistant', name: '络络', text: 'She sets out.', turn: 1,
+  }
+  const settled = withStream(view([userLine, settledRow]), undefined)
+
+  assert.equal(settled[1]?.key, live[1]?.key, 'the row keeps one identity from first token to last')
+})
+
+test('a stream whose opening frame was missed still renders', () => {
+  // The reconnect case: no announced identity to be had. One remount when the
+  // reopened view lands is the price, and it beats an empty chat while text
+  // is visibly arriving.
+  const messages = withStream(view([userLine]), { turn: 1, text: 'mid-sentence', reasoning: '' })
+
+  assert.equal(messages.length, 2)
+  assert.equal(messages[1]?.text, 'mid-sentence')
+  assert.equal(typeof messages[1]?.key, 'string')
+})
+
 test('the synthesized message borrows the last speaker, not the chat title', () => {
   const earlier: MessageView = { id: 0, key: 'a0', role: 'assistant', name: '络络', text: 'Earlier.', turn: 0 }
   const messages = withStream(view([earlier, { ...userLine, id: 1 }]), {
@@ -53,15 +84,6 @@ test('a stream for an existing message overwrites its text in place', () => {
   // The rail is suppressed while generating: the host's count is one behind
   // during a regenerate, and there is nothing to switch to mid-generation.
   assert.equal(messages[1]?.swipes, undefined)
-})
-
-test('the streaming row carries the key its settled row will have', () => {
-  // This is what makes a finished reply update its row in place. If the keys
-  // differed, React would unmount the half-written message and mount the
-  // finished one next to it — visible as a flicker, and it would discard any
-  // local state on that row.
-  const synthesized = withStream(view([userLine]), { turn: 1, text: 'x', reasoning: '' })
-  assert.equal(synthesized.at(-1)?.key, 'a1')
 })
 
 test('an existing row keeps its own key rather than a recomputed one', () => {

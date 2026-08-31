@@ -411,7 +411,10 @@ class InMemoryClient implements FakeClient {
     const steps: (() => void)[] = []
 
     steps.push(() => {
-      this.#emit({ type: 'stream.start', chatId, turn })
+      // The fake's own identity for the row, announced the way the host
+      // announces its own. Deliberately not made to resemble the host's: a
+      // consumer that works against both can only be relying on the frame.
+      this.#emit({ type: 'stream.start', chatId, turn, key: `a${String(turn)}` })
     })
 
     // Reasoning arrives first and on its own channel, which is the order a real

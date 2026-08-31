@@ -30,6 +30,14 @@ export interface StreamBuffer {
   turn: number
   text: string
   reasoning: string
+  /**
+   * Identity the host gave the row this text belongs to.
+   *
+   * Absent only when deltas arrived without their opening frame — a reconnect
+   * mid-generation — where the settled view fetched by the reopen already
+   * carries the row, and its own key is used instead.
+   */
+  key?: string
 }
 
 /** A transient message shown to the reader. */
@@ -322,7 +330,7 @@ export function applyEvent(store: IrisStore, event: IrisEvent): void {
   if (event.chatId !== state.chatId) return
 
   if (event.type === 'stream.start') {
-    store.setState({ stream: { turn: event.turn, text: '', reasoning: '' } })
+    store.setState({ stream: { turn: event.turn, text: '', reasoning: '', key: event.key } })
     return
   }
 

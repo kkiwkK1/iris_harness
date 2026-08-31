@@ -38,9 +38,11 @@ export function withStream(view: ChatView | undefined, stream: StreamBuffer | un
   const at = view.messages.findIndex(row => row.role === 'assistant' && row.turn === stream.turn)
   // The key must be the one the settled row will carry, so React updates that
   // row in place when the reply lands rather than unmounting a half-written one
-  // and mounting a finished one beside it. Where the row already exists its own
-  // key is reused; only the synthesized case has to know the host's convention,
-  // which keeps that knowledge to one line instead of two.
+  // and mounting a finished one beside it. Both sources are the host's own
+  // word — the existing row's key, or the one `stream.start` announced. This
+  // file used to reconstruct it from the turn, which matched the fake client's
+  // scheme and never the host's: every real reply remounted at the instant it
+  // finished, and every test against the fake passed.
   const live = (base: Pick<MessageView, 'id' | 'name' | 'key'>): MessageView => ({
     id: base.id,
     key: base.key,
@@ -58,9 +60,11 @@ export function withStream(view: ChatView | undefined, stream: StreamBuffer | un
 
   if (at === -1) {
     const name = [...view.messages].reverse().find(row => row.role === 'assistant')?.name ?? view.title
-    // `a${turn}` is the host's key for an assistant row. The one place the
-    // browser has to know it, because there is no row yet to copy it from.
-    return [...view.messages, live({ id: view.messages.length, name, key: `a${stream.turn}` })]
+    // The fallback is reachable only while a reconnect's reopen is still in
+    // flight: without the opening frame there is no identity to be had, and one
+    // remount when the view lands beats showing nothing while text arrives.
+    const key = stream.key ?? 'stream-unannounced'
+    return [...view.messages, live({ id: view.messages.length, name, key })]
   }
 
   const existing = view.messages[at] as MessageView

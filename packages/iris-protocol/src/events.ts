@@ -14,7 +14,18 @@ import type { ChatSummary, ChatView } from './views.ts'
 /** One frame pushed to the browser. */
 export type IrisEvent =
   /** A turn opened and text is about to arrive. */
-  | { type: 'stream.start', chatId: string, turn: number }
+  /**
+   * A turn opened.
+   *
+   * `key` is the identity the reply will carry, and it is here because the
+   * client cannot derive it: identities are minted by the host and deliberately
+   * encode nothing. A client shows arriving text against a row it synthesizes
+   * — no view it holds mentions this turn yet — and unless that row is born
+   * with the identity the settled row will have, the reply is torn down and
+   * rebuilt at the instant it finishes, which is the single failure
+   * {@link import('./views.ts').MessageView.key} exists to prevent.
+   */
+  | { type: 'stream.start', chatId: string, turn: number, key: string }
   /** Visible text. Deltas concatenate; the client must not assume whole words. */
   | { type: 'stream.text', chatId: string, turn: number, delta: string }
   /** Reasoning, kept on its own channel so a UI can collapse it. */

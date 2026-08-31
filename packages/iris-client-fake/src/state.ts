@@ -84,6 +84,12 @@ export function toMessageView(message: FakeMessage, id: number, streaming: boole
     // Mirrors the host's scheme so the interface cannot come to depend on a
     // shape only the fake produces: user rows key off position, assistant rows
     // off the turn, and a streaming row shares its settled row's key.
+    //
+    // No consumer may depend on this shape, and the host's is different on
+    // purpose. It was briefly copied into the browser's synthesized streaming
+    // row, which then matched the fake and never the host — so every real reply
+    // remounted the moment it settled, while every test against the fake
+    // passed. Identity now travels on `stream.start`; nothing reconstructs it.
     key: message.role === 'assistant' ? `a${message.turn}` : `u${id}`,
     role: message.role,
     name: message.name,

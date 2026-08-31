@@ -276,13 +276,22 @@ export class IrisAppService {
       signal,
     }
 
-    this.#options.broadcast({ type: 'stream.start', chatId, turn })
-
     const running = request.kind === 'send'
       // The storage direction runs on what the user typed, before it enters the
       // log — the one point where a message is written for the first time.
-      ? driver.send(entry.session, runScripts(request.text, 'user', entry.scripts), events)
+      ? driver.send(
+        entry.session,
+        runScripts(request.text, 'user', entry.scripts, { substitute: entry.substitute }),
+        events,
+      )
       : driver.regenerate(entry.session, events)
+
+    // Announced after the call, not before: `send` appends the user's line
+    // synchronously at the top of the driver, and until it has, the spare key
+    // slot belongs to that line rather than to the reply. Nothing can have been
+    // emitted yet — the first delta waits on the network — and the ordering is
+    // pinned by test rather than argued.
+    this.#options.broadcast({ type: 'stream.start', chatId, turn, key: entry.streamingKey })
 
     void running.then(
       candidate => this.#settle(entry, turn, textOf(candidate.message)),
@@ -408,7 +417,11 @@ export class IrisAppService {
     if (scripts.length === 0) return entries
     return entries.map((item, index) => ({
       ...item,
-      text: runScripts(item.text, item.role, scripts, { isPrompt: true, depth: entries.length - 1 - index }),
+      text: runScripts(item.text, item.role, scripts, {
+        isPrompt: true,
+        depth: entries.length - 1 - index,
+        substitute: entry.substitute,
+      }),
     }))
   }
 
@@ -426,7 +439,7 @@ export class IrisAppService {
    */
   #storeRewritten(entry: ChatEntry, scripts: readonly RegexScript[], text: string): void {
     if (scripts.length === 0) return
-    const stored = runScripts(text, 'assistant', scripts)
+    const stored = runScripts(text, 'assistant', scripts, { substitute: entry.substitute })
     if (stored === text) return
 
     const { messages } = entry.toFile()

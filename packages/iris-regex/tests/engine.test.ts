@@ -136,6 +136,19 @@ test('both the delimited and the bare pattern form parse', () => {
   assert.equal(regexFromString('abc')?.source, 'abc')
 })
 
+test('a bare pattern replaces only its first match', () => {
+  // Upstream behaviour, pinned because it is surprising enough that someone
+  // will eventually "fix" it: a bare pattern carries no flags, so a script
+  // written as `{{char}}` rewrites the first mention and leaves the rest.
+  // Adding `g` here would silently change what every such card does.
+  const bare = script({ findRegex: 'X', replaceString: 'Y' })
+  const global = script({ findRegex: '/X/g', replaceString: 'Y' })
+
+  assert.equal(regexFromString('X')?.flags, '')
+  assert.equal(applyRegexScripts('X a X', PLACEMENT.AI_OUTPUT, [bare], {}), 'Y a X')
+  assert.equal(applyRegexScripts('X a X', PLACEMENT.AI_OUTPUT, [global], {}), 'Y a Y')
+})
+
 test('a bare pattern containing a slash is not mistaken for a delimiter', () => {
   // The exact shape of MVU's second script.
   const compiled = regexFromString('<StatusPlaceHolderImpl/>')

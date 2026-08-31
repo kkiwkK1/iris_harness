@@ -26,6 +26,14 @@ const DELIMITED = /(\/?)(.+)\1([a-z]*)/i
 
 /**
  * Compile a stored pattern.
+ *
+ * A bare pattern gets NO flags, so it replaces only its first match: a script
+ * whose `findRegex` is `{{char}}` rewrites the first mention of the character
+ * in a message and leaves the rest. This surprises everyone who meets it, and
+ * it is nonetheless upstream's behaviour, so it is preserved rather than fixed
+ * — a card author who wrote a bare pattern tuned their replacement against
+ * exactly this, and quietly adding `g` here would change what their card does.
+ * Authors who want every match write the delimited form with the flag.
  * @param input - the pattern, bare or in `/pattern/flags` form.
  * @returns the compiled expression, or `undefined` when it cannot compile.
  */

@@ -134,6 +134,51 @@ test('deleting a message does not move the keys of the messages that remain', as
   }
 })
 
+test('stream.start announces the identity the settled row carries, before any delta', async (t) => {
+  // The browser synthesizes a row for a turn no view of its holds yet, so the
+  // identity has to travel on the frame: nothing in a minted key is derivable.
+  // Ordering is asserted rather than argued — the announcement is broadcast
+  // after the driver's synchronous appends, and if a delta could overtake it
+  // the client would key the row from the fallback and remount on settle.
+  const dir = await mkdtemp(join(tmpdir(), 'iris-keys-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const chats = new ChatStore(join(dir, 'chats'), library)
+  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
+  const seen: IrisEvent[] = []
+  let ended = false
+  const handlers = new IrisAppService({
+    stream: scripted(['She sets out.']),
+    library,
+    chats,
+    settings,
+    broadcast: (event: IrisEvent) => {
+      seen.push(event)
+      if (event.type === 'stream.end') ended = true
+    },
+    userName: 'Traveller',
+  }).handlers()
+
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+  await handlers['chat.send']({ chatId, text: 'Hello?' })
+  while (!ended) await new Promise(resolve => setTimeout(resolve, 1))
+
+  const streamFrames = seen.filter(event => event.type.startsWith('stream.'))
+  assert.equal(streamFrames[0]?.type, 'stream.start', 'the opening frame is first')
+
+  const opening = streamFrames[0]
+  assert.ok(opening.type === 'stream.start')
+  const settledRows = (await handlers['chat.open']({ chatId })).view.messages
+  const reply = settledRows[settledRows.length - 1]
+
+  assert.equal(reply?.role, 'assistant')
+  assert.equal(opening.key, reply?.key, 'announced identity is the one the reply ends up with')
+})
+
 test('a streaming row keeps its key when the reply settles', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-keys-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })

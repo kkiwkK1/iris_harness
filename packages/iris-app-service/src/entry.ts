@@ -28,11 +28,11 @@ import {
   type SillyTavernMessage,
 } from '@iris/persistence'
 import type { ChatSummary, ChatView } from '@iris/protocol'
-import type { RegexScript } from '@iris/regex'
+import type { MacroSubstitute, RegexScript } from '@iris/regex'
 import { memoryBackend, sessionMessageBackend, VariableStore, type ScopeBackend, type Variables } from '@iris/variables'
 
 import { busy } from './errors.ts'
-import { scriptsOf } from './regex.ts'
+import { scriptsOf, substituteFor } from './regex.ts'
 import { toChatView, type Names, type PendingTurn } from './views.ts'
 
 /** Iris's own header block inside a SillyTavern chat file. */
@@ -139,6 +139,7 @@ export class ChatEntry {
 
   #initVars: MvuData | undefined
   #scripts: RegexScript[] | undefined
+  #substitute: MacroSubstitute | undefined
   #abort: AbortController | undefined
   /** Row identities, one per chat-file line, plus one spare for a streaming row. */
   #keys: string[] = []
@@ -180,6 +181,17 @@ export class ChatEntry {
   get scripts(): readonly RegexScript[] {
     this.#scripts ??= scriptsOf(this.card)
     return this.#scripts
+  }
+
+  /**
+   * The macro expander this chat's scripts resolve their patterns with.
+   *
+   * Built once per chat because it closes over the speaker names, which is all
+   * a script pattern can reference.
+   */
+  get substitute(): MacroSubstitute {
+    this.#substitute ??= substituteFor(this.names)
+    return this.#substitute
   }
 
   /** Whether a turn is in flight. */
@@ -225,6 +237,20 @@ export class ChatEntry {
       this.#nextKey += 1
     }
     return this.#keys
+  }
+
+  /**
+   * Identity of the row a generation streams into.
+   *
+   * The spare `keys` mints past the end: a streaming row occupies it and the
+   * settled row lands in the same slot. Only meaningful once the turn's user
+   * line is in the log — before that the spare belongs to that line instead,
+   * so a caller reads this after the driver has appended, not before.
+   * @returns the identity to announce with `stream.start`.
+   */
+  get streamingKey(): string {
+    const keys = this.keys
+    return keys[keys.length - 1] as string
   }
 
   /**
@@ -439,6 +465,7 @@ export class ChatEntry {
       keys: this.keys,
       pending: this.pending,
       scripts: this.scripts,
+      substitute: this.substitute,
       variables: this.currentVariables(),
     })
   }
