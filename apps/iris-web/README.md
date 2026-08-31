@@ -186,8 +186,45 @@ So three things report rather than assume:
 | signal | what it settles |
 | --- | --- |
 | `bootstrap-error` | the frame died before it could speak. Sent **without** a run token, because what it reports may be "the token never arrived"; accepted on `event.source` alone and believed only as a diagnostic — it can neither run code nor change state. Three tests pin that this bypass is exactly one message wide |
-| `globals` | which of `parent`, `top`, `SillyTavern`, `extension_settings` the frame could actually define on its own window. Whether `parent` is redefinable is a browser fact this project cannot settle from outside a browser, so the frame attempts it and says what it achieved |
+| `globals` | which of the published names — `parent`, `top`, `SillyTavern`, `extension_settings`, and the 27 Tavern Helper members — the frame could actually define on its own window. Whether `parent` is redefinable is a browser fact this project cannot settle from outside a browser, so the frame attempts it and says what it achieved |
 | the 8-second silence timeout | "stuck at running" was the one state that could not explain itself. Readiness now splits it in two: stalled before `frame ready` means the frame never started; stalled after means the body never finished |
+
+### What the instrumentation actually bought
+
+Eleven runs took a real card from "the renderer froze" to "ran to completion".
+The point of writing them down is not the destination — it is that **every
+failure was deeper than the one before it, and every one had a name**. That
+monotonicity is what the reporting is for. Without it a run says "stuck at
+running" and the next run says "stuck at running", and there is no way to tell
+progress from repetition.
+
+| # | what failed | what it cost to find |
+| --- | --- | --- |
+| 1 | a wedged Chrome renderer | a browser restart; `useIrisActions()` returned a value whose identity changed on every write |
+| 2 | infinite render loop | the same root cause, now visible instead of fatal |
+| 3 | Vite rewrote the bootstrap into a module | a parse-time error a runtime reporter can never catch — moved to `public/`, and `checkBootstrap` now refuses it before injection |
+| 4 | the frame severed its own voice | `publishGlobals` redefined `window.parent`, and `post()` read the channel late. Now captured at boot, pinned by a build assertion |
+| 5 | module vs classic semantics | upstream runs every card as a module; the mode is carried, never sniffed |
+| 6 | six library globals missing | one crash per round became one report naming all six |
+| 7–8 | the 28-member facade, then `getScriptId` | the facade seam turned out to be a package boundary, not a missing function |
+| 9 | `YAML is not defined` | zero diagnosis cost: the banner had named it three runs earlier |
+| 10 | `$ is not defined` | not a missing library — a missing *injection source*. See below |
+| 11 | — | ran to completion |
+
+Run 10 is the one worth keeping. The error looked like runs 6 and 9, and the fix
+that pattern suggests — bundle the library — would have been right by accident
+and wrong in method. `$` is not seeded by `predefine.js` at all; upstream injects
+`parent_jquery.js` as a separate script, and our model of the injected layer had
+two entries where it should have had five. Reading the consumer's own build
+config (MVU declares its externals as `$`, `_`, `showdown`, `toastr`, `Vue`,
+`VueRouter`, `YAML`, `z`) is a better source for "what does a card expect to
+exist" than reading the injector, because it is the side that has to be right.
+
+The same run produced a false positive from `check-preset.mjs` — `$ (present but
+not usable)` against a bundle that was fine, because jQuery's UMD picks its
+export shape from `window.document` at load and the checker deliberately supplies
+none. An instrument asserting about a branch production never takes is worse than
+no instrument. It now asks only what that environment can answer.
 
 ### The harness record lives on `globalThis`
 
@@ -262,33 +299,39 @@ reported, any refusal) is shown beside the frame.
 
 ## Known gaps in this half
 
-- **The sandbox's host-side frame lifecycle is designed, not built.** Creating
-  the iframe, getting the bootstrap into it, sizing it and disposing it is the
-  one part that cannot be exercised without a browser, and it has an open
-  dependency: the bootstrap has to reach an opaque-origin frame, which means
-  either a classic script served from a stable same-origin path or the host
-  inlining that text into `srcdoc`. Both need the host half to serve an asset.
-- **`UNBRIDGED_GLOBALS` is deliberately stale-able.** It lists globals that are
-  planned but unwired so a refusal can say "not yet" rather than "no". Each entry
-  must be deleted as its bridge lands — `SillyTavern` and `extension_settings`
-  already have. What remains: `eventSource`, `event_types`, `TavernHelper`.
+- **`UNBRIDGED_GLOBALS` is empty, and that is the rule working.** It lists
+  globals that are planned but unwired so a refusal can say "not yet" rather than
+  "no", and each entry is deleted as its bridge lands. `SillyTavern` and
+  `extension_settings` went first; `eventSource`, `event_types` and
+  `TavernHelper` followed once the card surface was built. The mechanism stays
+  for the next measured-but-unbuilt name.
 - **A `typeof` probe on an unbridged bare global still fails quietly**, and no
-  amount of shadowing closes that. `if (parent.eventSource)` throws and names the
-  member; `if (typeof eventSource !== 'undefined')` simply takes the false branch.
-  The only fix is to bridge the name.
+  amount of shadowing closes that. `if (parent.chat)` throws and names the member;
+  `if (typeof chat !== 'undefined')` simply takes the false branch. The only fix
+  is to bridge the name — which is why the bridged set is as wide as it is.
 - **Extension-settings write tracking is shallow.** A top-level assignment
   (`extension_settings.x = computed`, the shape the corpus was measured to use) is
   reported to the shell. A mutation deeper inside an object that already exists is
   not, and would need either a deep proxy or an explicit save call from the card.
 
-- **Nothing here has been looked at in a browser.** `npm run check:render` is a
-  substitute, not a replacement: it proves the tree renders and that a disposed
-  slot contribution leaves nothing behind, and it is blind to layout, colour,
-  motion, scrolling and drag-and-drop. Open `npx vite preview` before trusting
-  the visual design. (Note: killing the `npx` wrapper leaves the child `node`
-  process holding the port — kill it by PID, or the next build cannot write.)
+- **The visual design has still not been looked at in a browser.** The sandbox
+  has — eleven runs of it — but that exercised the frame, not the interface.
+  `npm run check:render` remains a substitute, not a replacement: it proves the
+  tree renders and that a disposed slot contribution leaves nothing behind, and
+  it is blind to layout, colour, motion, scrolling and drag-and-drop. Open
+  `npx vite preview` before trusting the visual design. (Note: killing the `npx`
+  wrapper leaves the child `node` process holding the port — kill it by PID, or
+  the next build cannot write.)
 - The lorebook editor is not built; `PLAN.md` schedules it after the core path.
-- Card-script sandboxing is out of this half's scope entirely.
+- **A card's frame does not survive edit mode.** Re-rendering the message a card
+  lives in tears the frame down and builds a new one, which restarts the card:
+  its listeners, its Vue app and any state it kept in the frame are gone, and a
+  card that registered on `mag_variable_initialized` will not see the event
+  again. Upstream keeps the element and re-parents it. Fixing this needs the
+  card-UI-in-message pipeline first, because the frame has to belong to something
+  more durable than the rendered message — the harness already does this the
+  right way for its own reasons (the frame lives until Stop, not until the panel
+  unmounts) and that is the shape to copy.
 - `character.import` reads PNG and JSON well enough for the library row. `.charx`
   is passed through as base64 and falls back to the filename, because real
   decoding belongs to the host's `@iris/character`.

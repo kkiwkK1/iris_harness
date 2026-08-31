@@ -214,26 +214,45 @@ test('a resize reaches a card that reads the viewport again', () => {
   assert.equal(read?.(), 1024)
 })
 
-test('an unbridged global says "not yet", not "no"', () => {
-  // Telling a card author something is forbidden when it is merely unbuilt sends
-  // them looking for the wrong thing. `eventSource` has 8 measured sites and no
-  // bridge yet, so it is the live example.
+test('the three formerly-unbridged parent globals reach the same objects as the bare ones', () => {
+  /*
+   * `eventSource` (8 measured sites), `event_types` (6) and `TavernHelper` (1)
+   * used to be `UNBRIDGED_GLOBALS` entries that refused with "not yet". They are
+   * built now, and the rule was always that an entry is deleted the day its
+   * bridge lands.
+   *
+   * Sameness is the assertion, not mere presence. Upstream's `eventOn` is a
+   * wrapper around `eventSource`, so a card that subscribes through one name and
+   * emits through the other is talking to itself — two separate buses would make
+   * that silently stop working.
+   */
   const scope = realm()
-  let caught: unknown
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let bridged: Record<string, unknown> | undefined
+  let bare: Record<string, unknown> | undefined
   evaluate(scope, globals => {
-    const parent = globals['parent'] as Record<string, unknown>
-    try {
-      void parent['eventSource']
-    } catch (error: unknown) {
-      caught = error
-    }
+    bridged = (globals['parent'] as Record<string, unknown>) as Record<string, unknown>
+    bare = globals
   })
 
-  assert.ok(caught instanceof UnsupportedApiError)
-  assert.equal(caught.member, 'parent.eventSource')
-  assert.match(caught.message, /not bridged it yet/)
-  assert.match(caught.message, /event bus/)
+  const source = bridged?.['eventSource'] as { on: (e: string, l: () => void) => void }
+  const heard: string[] = []
+  source.on('message_received', () => heard.push('via parent.eventSource'))
+  void (bare?.['eventEmit'] as (event: string) => Promise<void>)('message_received')
+
+  assert.equal(bridged?.['event_types'], bare?.['tavern_events'], 'one table, two names')
+  assert.equal(bridged?.['TavernHelper'], bare?.['TavernHelper'], 'one surface, two routes')
+  return Promise.resolve().then(() => {
+    assert.deepEqual(heard, ['via parent.eventSource'], 'one bus, two names')
+  })
 })
+
+/*
+ * The "not yet" wording has no live example: `UNBRIDGED_GLOBALS` is empty, which
+ * is the rule working rather than a gap. Whoever adds the next entry should add
+ * the test back alongside it — the distinction it protects (unbuilt is not
+ * forbidden, and a card author debugging needs the right one) still matters.
+ */
 
 test('an unknown parent member is refused without a plan attached', () => {
   const scope = realm()

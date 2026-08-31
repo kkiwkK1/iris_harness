@@ -21,8 +21,8 @@ import type { FromFrame, ToFrame } from './protocol.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isCardMethod } from './card-api.ts'
-import { createFrameTavernHelper } from './tavern-helper.ts'
-import { EventBus } from '@iris/compat-tavernhelper-core'
+import { createEventSource, createFrameTavernHelper } from './tavern-helper.ts'
+import { EventBus, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
 import type { ScriptContext } from '@iris/protocol'
 
 /** What the frame-side code needs from its realm. */
@@ -245,6 +245,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       // protect nothing.
       if (property === 'SillyTavern') return context === undefined ? undefined : sillyTavern
       if (property === 'extension_settings') return extensionSettings
+      /*
+       * The three that used to be `UNBRIDGED_GLOBALS`, measured at 15 sites
+       * between them. All reach the same objects a card gets as bare globals:
+       * upstream's `eventOn` is a wrapper around `eventSource`, so a card that
+       * subscribes through one name and emits through the other must still be
+       * talking to itself.
+       */
+      if (property === 'TavernHelper') return tavernHelper['TavernHelper']
+      if (property === 'eventSource') return eventSource
+      if (property === 'event_types') return TAVERN_EVENTS
 
       const planned = unbridged.get(property)
       if (planned !== undefined) {
@@ -265,6 +275,9 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         property === 'document' ||
         property === 'innerWidth' ||
         property === 'innerHeight' ||
+        property === 'TavernHelper' ||
+        property === 'eventSource' ||
+        property === 'event_types' ||
         ((property === 'SillyTavern' || property === 'extension_settings') && context !== undefined)
       )
     },
@@ -386,6 +399,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * events something is actually waiting on.
    */
   const events = new EventBus()
+  const eventSource = createEventSource(events)
 
   const tavernHelper = createFrameTavernHelper({
     context: () => context,

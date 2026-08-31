@@ -36,13 +36,21 @@ test('the allowlist is a suffix match on subdomains, not on the apex', () => {
   assert.ok(REMOTE_ALLOWLIST.includes('*.jsdelivr.net'))
 })
 
-test('the unbridged globals are named so a refusal can say "not yet" rather than "no"', () => {
-  const names = UNBRIDGED_GLOBALS.map(row => row.name)
-  // `SillyTavern` and `extension_settings` have left this list because they are
-  // bridged now. An entry that outlives its bridge would refuse something that
-  // works, and claim to be temporary while doing it.
-  assert.deepEqual(names, ['eventSource', 'event_types', 'TavernHelper'])
-  // Ordered by measured site count, so the list doubles as the order to bridge in.
+test('no entry outlives its bridge', () => {
+  /*
+   * The list is empty, and that is the rule working rather than a gap to fill.
+   * `SillyTavern` and `extension_settings` left it first; `eventSource` (8
+   * measured sites), `event_types` (6) and `TavernHelper` (1) followed once the
+   * card surface was built.
+   *
+   * An entry that outlives its bridge is the failure this guards: it refuses
+   * something that in fact works, and claims to be temporary while doing it —
+   * so a card author is told to wait for a feature they already have.
+   */
+  assert.deepEqual(UNBRIDGED_GLOBALS.map(row => row.name), [])
+
+  // Ordered by measured site count, so the list doubles as the order to bridge
+  // in. Vacuous while empty, kept because the next entry has to obey it.
   const sites = UNBRIDGED_GLOBALS.map(row => row.sites)
   assert.deepEqual([...sites].sort((left, right) => right - left), sites)
 })

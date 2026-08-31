@@ -106,6 +106,28 @@ export function resolveRange(range: string | number, length: number): number[] {
 }
 
 /**
+ * SillyTavern's own `eventSource`, over the same bus.
+ *
+ * Upstream, Tavern Helper's `eventOn` family is a wrapper around SillyTavern's
+ * `eventSource` — one emitter reached by two names. Reproducing that means the
+ * two routes must share listeners here too: a card that subscribes with
+ * `parent.eventSource.on(...)` and one that subscribes with `eventOn(...)` are
+ * subscribing to the same thing, and a card doing one and emitting through the
+ * other has to work.
+ * @param events - the frame's bus.
+ * @returns an object with the emitter shape SillyTavern exposes.
+ */
+export function createEventSource(events: EventBus): Record<string, unknown> {
+  return {
+    on: (event: string, listener: Listener) => events.eventOn(event, listener),
+    once: (event: string, listener: Listener) => events.eventOnce(event, listener),
+    emit: async (event: string, ...args: unknown[]) => events.eventEmit(event, ...args),
+    removeListener: (event: string, listener: Listener) =>
+      events.eventRemoveListener(event, listener),
+  }
+}
+
+/**
  * Build the flattened Tavern Helper surface for one frame.
  * @param host - what the frame can offer.
  * @returns every name a card expects, ready to publish.

@@ -54,9 +54,16 @@ export function frameSandbox(documentGranted: boolean): string {
  * Site counts are from the corpus measurement in `SANDBOX.md`.
  */
 export const UNBRIDGED_GLOBALS: readonly { name: string, sites: number, plan: string }[] = [
-  { name: 'eventSource', sites: 8, plan: "@iris/compat-tavernhelper's event bus" },
-  { name: 'event_types', sites: 6, plan: 'the static event-name table' },
-  { name: 'TavernHelper', sites: 1, plan: 'the built API surface' },
+  /*
+   * Empty, and the mechanism stays anyway.
+   *
+   * All three original entries — `eventSource` (8 sites), `event_types` (6) and
+   * `TavernHelper` (1) — are bridged now, and the rule was always that an entry
+   * is deleted the day its bridge lands. An empty list is the rule working, not
+   * a dead list to remove: the next measured-but-unbuilt global goes here so its
+   * refusal can say "not yet" instead of "no", which is a different fact and the
+   * one a card author debugging needs.
+   */
 ]
 
 /*
