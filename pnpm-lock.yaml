@@ -131,6 +131,9 @@ importers:
       '@iris/chat':
         specifier: workspace:*
         version: link:../iris-chat
+      '@iris/compat-prompt-template':
+        specifier: workspace:*
+        version: link:../iris-compat-prompt-template
       '@iris/lorebook':
         specifier: workspace:*
         version: link:../iris-lorebook

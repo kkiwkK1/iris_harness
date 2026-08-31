@@ -21,6 +21,7 @@ import type { CharacterCard } from '@iris/character'
 import { listCandidates, selectedCandidate } from '@iris/chat'
 import type { TimedEffectState } from '@iris/lorebook'
 import { applyCommands, extractCommands, loadInitVars, type MvuData } from '@iris/mvu'
+import { extractScripts } from '@iris/script'
 import {
   exportMessages,
   importChat,
@@ -162,6 +163,7 @@ export class ChatEntry {
   readonly itemizations = new Map<number, PromptItemization>()
 
   #initVars: MvuData | undefined
+  #initialVariables: Record<string, unknown> | undefined
   #scripts: RegexScript[] | undefined
   #substitute: MacroSubstitute | undefined
   #abort: AbortController | undefined
@@ -205,6 +207,20 @@ export class ChatEntry {
   get scripts(): readonly RegexScript[] {
     this.#scripts ??= scriptsOf(this.card)
     return this.#scripts
+  }
+
+  /**
+   * The starting variables the card ships beside its scripts.
+   *
+   * Upstream's `initial` scope: what a reset resets to. Deliberately not the
+   * `character` scope, which is a live store with a different lifetime — a
+   * template writing into `initial` would be editing the card's own baseline.
+   */
+  get initialVariables(): Record<string, unknown> {
+    if (this.#initialVariables === undefined) {
+      this.#initialVariables = this.card === undefined ? {} : extractScripts(this.card).variables
+    }
+    return this.#initialVariables
   }
 
   /**

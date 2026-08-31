@@ -15,6 +15,7 @@
     "@deepseek-ai/schemastery": "3.18.2",
     "@iris/character": "workspace:*",
     "@iris/chat": "workspace:*",
+    "@iris/compat-prompt-template": "workspace:*",
     "@iris/lorebook": "workspace:*",
     "@iris/macro": "workspace:*",
     "@iris/mvu": "workspace:*",

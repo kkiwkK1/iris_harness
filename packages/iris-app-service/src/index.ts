@@ -61,6 +61,7 @@ export { placementFor, runScripts, scriptsOf, substituteFor } from './regex.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
 export { ScriptPolicyStore } from './scripts.ts'
 export { SettingsStore, sanitize, type SettingsPatch } from './settings.ts'
+export { applyOps, buildSnapshot, scalarsOf, worldInfoOf, writePath } from './template.ts'
 export {
   projectMessages,
   reasoningOf,
