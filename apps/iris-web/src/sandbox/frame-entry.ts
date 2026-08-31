@@ -75,6 +75,31 @@ function applyViewport(size: { width: number, height: number }): void {
   document.documentElement.style.setProperty('--TH-viewport-height', `${size.height}px`)
 }
 
+/**
+ * Report what the frame's own policy refused.
+ *
+ * The browser fires `securitypolicyviolation` in the document whose policy
+ * blocked the request, which is this one — so the frame is the only place that
+ * can see it, and the shell is the only place that can tell the user. Without
+ * this hop the refusal is silent, and a silent refusal is indistinguishable from
+ * a bug in whatever the card does next.
+ * @param run - the run token.
+ * @param post - the channel to the shell.
+ */
+function reportBlocked(run: string, post: (message: FromFrame) => void): void {
+  document.addEventListener('securitypolicyviolation', event => {
+    let host = event.blockedURI
+    try {
+      host = new URL(event.blockedURI).host || event.blockedURI
+    } catch {
+      // `blockedURI` is not always a URL — `inline`, `eval` and `data` all
+      // appear. Reported as they are: the shell says what was refused, and it is
+      // better to name something unparseable than to drop it.
+    }
+    post({ iris: run, type: 'blocked', host, directive: event.effectiveDirective })
+  })
+}
+
 const run = token()
 const post = (message: FromFrame): void => {
   // The shell's origin cannot be named: this frame has an opaque origin, so the
@@ -119,4 +144,5 @@ installSandbox({
   },
 })
 
+reportBlocked(run, post)
 reportHeight(run, post)

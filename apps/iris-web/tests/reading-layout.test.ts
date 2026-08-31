@@ -79,3 +79,25 @@ test('the turn ordinal outweighs the rule it marks', () => {
   assert.match(ordinal, /color:\s*var\(--iris-ink-secondary\)/, 'the ordinal is back to a faint ink')
   assert.match(ordinal, /font-weight:\s*600/, 'the ordinal no longer outweighs the rule')
 })
+
+test('the recorded rail is legible, not merely present', () => {
+  /*
+   * This started at `--iris-rule`, which measures 1.34:1 against the paper in
+   * light — the same range a reviewer measured this project's turn ordinal at and
+   * called a grey smudge. The whole argument for keeping an inert rail is that it
+   * still reports how many readings a passage had, and a mark below the threshold
+   * of being seen reports nothing.
+   *
+   * Pinned by token rather than by measured ratio: the ratio lives in the token,
+   * and asserting the number here would duplicate a value that belongs to the
+   * palette and would go stale the moment the palette moved.
+   */
+  const record = block(".iris-rail--record .iris-rail__tick")
+  assert.ok(record !== undefined, 'the recorded tick rule is missing')
+  assert.match(record, /background:\s*var\(--iris-rule-strong\)/, 'the recorded tick is back below visibility')
+
+  const count = block(".iris-rail--record .iris-rail__count")
+  assert.ok(count !== undefined, 'the recorded count rule is missing')
+  // Text, so a text-weight ink. `--iris-ink-faint` was 2.80:1.
+  assert.match(count, /color:\s*var\(--iris-ink-tertiary\)/, 'the recorded count is back to a faint ink')
+})

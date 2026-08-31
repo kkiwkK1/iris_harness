@@ -430,8 +430,17 @@
   border-right-color: var(--iris-rule-faint);
 }
 
+/*
+ * Measured, not eyeballed. The first version put these ticks at
+ * `--iris-rule` — 1.34:1 against the paper in light, which is the same range a
+ * reviewer measured this project's turn ordinal at and correctly called a grey
+ * smudge rather than a mark. A record nobody can see is not a record, so it
+ * carries the same tick colour as the live rail (1.66:1) and the distinction is
+ * made where it costs nothing: the selected tick takes the quiet accent instead
+ * of the full one, and the spine thins.
+ */
 .iris-rail--record .iris-rail__tick {
-  background: var(--iris-rule);
+  background: var(--iris-rule-strong);
   cursor: default;
 }
 
@@ -440,5 +449,7 @@
 }
 
 .iris-rail--record .iris-rail__count {
-  color: var(--iris-ink-faint);
+  /* Text, so it is held to a text threshold: 2.80:1 was the same mistake one
+     step smaller. */
+  color: var(--iris-ink-tertiary);
 }

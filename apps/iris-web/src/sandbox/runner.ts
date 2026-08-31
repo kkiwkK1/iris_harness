@@ -30,6 +30,8 @@ export interface RunnerHost {
   code: string
   /** Whether the user granted this card the real page. */
   documentGranted: boolean
+  /** Whether the user granted this card the network. */
+  networkGranted: boolean
   /** The host snapshot, fetched once and pushed before the card runs. */
   context: ScriptContext
   /** The host page's viewport, read on demand. */
@@ -40,6 +42,15 @@ export interface RunnerHost {
   onSettings: (settings: Record<string, unknown>) => void
   /** The card threw, or was refused a member. */
   onError: (message: string, member?: string) => void
+  /**
+   * The frame's policy refused a host.
+   *
+   * Required rather than optional: a refusal nobody is told about is delivered to
+   * the user as whatever the card says next, and one card's author has already
+   * pre-written "your Tavern is broken" for this exact case. A caller that has
+   * nowhere to show this should not be running cards.
+   */
+  onBlocked: (host: string, directive: string) => void
   /**
    * The frame reported its content height, already bounded by the protocol.
    *
@@ -77,7 +88,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   frame.style.width = '100%'
   frame.style.border = '0'
   frame.style.display = 'block'
-  frame.srcdoc = buildSrcdoc(token, host.bootstrap)
+  frame.srcdoc = buildSrcdoc(token, host.bootstrap, host.networkGranted)
 
   let disposed = false
 
@@ -122,6 +133,9 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         return
       case 'error':
         host.onError(message.message, message.member)
+        return
+      case 'blocked':
+        host.onBlocked(message.host, message.directive)
         return
       case 'fetch':
         void host

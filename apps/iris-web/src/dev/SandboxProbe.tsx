@@ -29,6 +29,8 @@ interface Observed {
   height?: number
   settings?: string
   errors: string[]
+  /** Hosts the frame's own policy refused, in arrival order. */
+  blocked: { host: string, directive: string }[]
 }
 
 /**
@@ -64,7 +66,12 @@ export function SandboxProbe(): ReactElement | null {
   const mount = useRef<HTMLDivElement>(null)
   const running = useRef<RunningCard | undefined>(undefined)
   const scripts = useIris(state => state.scripts)
-  const [observed, setObserved] = useState<Observed>({ errors: [] })
+  const [observed, setObserved] = useState<Observed>({ errors: [], blocked: [] })
+  // Dev-only, until `networkGranted` exists in the contract. It is here so the
+  // granted policy can be exercised in a browser now rather than after the field
+  // lands — the policy is the thing worth checking, not the plumbing that carries
+  // the flag.
+  const [networkGranted, setNetworkGranted] = useState(false)
   const [status, setStatus] = useState('idle')
 
   // Only what would actually run: the card's switch and the user's, combined.
@@ -93,7 +100,7 @@ export function SandboxProbe(): ReactElement | null {
 
   const start = useCallback(async (code: string, label: string) => {
     stop('restarting')
-    setObserved({ errors: [] })
+    setObserved({ errors: [], blocked: [] })
     setStatus('loading bootstrap…')
 
     let bootstrap: string
@@ -129,6 +136,7 @@ export function SandboxProbe(): ReactElement | null {
         bootstrap,
         code,
         documentGranted: granted,
+        networkGranted,
         context,
         viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
         fetch: async url => {
@@ -139,6 +147,16 @@ export function SandboxProbe(): ReactElement | null {
         },
         onHeight: pixels => {
           setObserved(before => ({ ...before, height: pixels }))
+        },
+        onBlocked: (host, directive) => {
+          setObserved(before =>
+            // Deduplicated: a card that pulls twenty images from a refused host
+            // produces twenty violations, and twenty identical lines say nothing
+            // the first one did not.
+            before.blocked.some(row => row.host === host && row.directive === directive)
+              ? before
+              : { ...before, blocked: [...before.blocked, { host, directive }] },
+          )
         },
         onError: (message, member) => {
           setObserved(before => ({
@@ -153,7 +171,7 @@ export function SandboxProbe(): ReactElement | null {
     running.current = card
     mount.current?.replaceChildren(card.element)
     setStatus(`running ${label} · ${source}`)
-  }, [actions, chatId, characterId, granted, stop])
+  }, [actions, chatId, characterId, granted, networkGranted, stop])
 
   return (
     <Section title="Sandbox probe (dev)">
@@ -172,6 +190,16 @@ export function SandboxProbe(): ReactElement | null {
         </Button>
         <span className="iris-meta">{status}</span>
       </div>
+      <label className="iris-probe__source">
+        <input
+          type="checkbox"
+          checked={networkGranted}
+          onChange={event => setNetworkGranted(event.target.checked)}
+        />
+        <span className="iris-probe__source-name">
+          Grant this run the network (widens images, fetch and styles to https)
+        </span>
+      </label>
 
       {/*
         Real card code, from the two places it can come from.
@@ -242,6 +270,16 @@ export function SandboxProbe(): ReactElement | null {
           <dd className="iris-state__value">{observed.settings ?? 'none'}</dd>
         </div>
       </dl>
+      {observed.blocked.length === 0 ? null : (
+        <ul className="iris-probe__blocked">
+          {observed.blocked.map(row => (
+            <li key={`${row.directive}:${row.host}`}>
+              Iris refused <strong>{row.host}</strong> ({row.directive}). Network access for this card
+              would allow it.
+            </li>
+          ))}
+        </ul>
+      )}
       {observed.errors.length === 0 ? null : (
         <ul className="iris-probe__errors">
           {observed.errors.map((message, at) => (

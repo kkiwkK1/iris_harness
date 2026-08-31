@@ -14,12 +14,23 @@
  * stay up and later ones stay down — the ladder's axis survives the change of
  * form, which is what keeps the two from feeling like different controls.
  *
- * On any turn but the last it is a **record, not a control**. That is not a
- * borrowed convention — SillyTavern hardcodes `.last_mes` in its swipe handlers —
- * it is what the data allows: switching an earlier beat's reading would leave
- * every later turn answering words the transcript no longer shows. An apparatus
- * criticus records the variants of a passage; it does not rewrite the passage.
- * So the ticks stay, dimmed and inert, and still answer "how many, which one".
+ * On any turn but the last it is a **record, not a control**, and it is worth
+ * separating what is checkable here from what is not.
+ *
+ * Checkable, from SillyTavern's source: its swipe handlers hardcode `.last_mes`;
+ * it ships a labelled setting, `show_swipe_num_all_messages`, for showing swipe
+ * *numbers* on earlier messages; the CSS that setting unlocks names only
+ * `.swipes-counter` and dims it to `opacity: 0.3`, never the arrows; and no
+ * delegation anywhere responds to a non-last message. So upstream deliberately
+ * built "show how many readings an earlier passage had" and, in doing it, did not
+ * release the controls.
+ *
+ * Not checkable: *why*. The reasoning this implementation actually rests on is
+ * that switching an earlier beat's reading would leave every later turn answering
+ * words the transcript no longer shows — a consequence that holds whatever
+ * upstream's motive was. An apparatus criticus records the variants of a passage;
+ * it does not rewrite the passage. So the ticks stay, quieted and inert, and
+ * still answer "how many, which one".
  *
  * @module iris-web/app/VariantRail
  */

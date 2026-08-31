@@ -39,6 +39,16 @@ export type ToFrame =
 /** Frame → host. */
 export type FromFrame =
   /**
+   * The frame's own policy refused a request.
+   *
+   * Reported so the shell can *say* it. A refusal the user cannot see is
+   * indistinguishable from a bug in whatever the card does next — and the case
+   * that settled this is real: one card's author pre-wrote "is Tavern Helper
+   * installed? open your console!" as a fallback for exactly this situation, so a
+   * silent refusal is delivered to the user as the card's misdiagnosis of Iris.
+   */
+  | { iris: string, type: 'blocked', host: string, directive: string }
+  /**
    * The card assigned something into its extension settings.
    *
    * Reported rather than silently kept: the corpus contains the
@@ -127,6 +137,19 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
       return { iris: token, type: 'ready' }
     case 'ran':
       return { iris: token, type: 'ran' }
+    case 'blocked': {
+      const host = message['host']
+      const directive = message['directive']
+      return typeof host === 'string' && typeof directive === 'string'
+        ? {
+            iris: token,
+            type: 'blocked',
+            // Card-influenced strings, so bounded before they reach the UI.
+            host: host.slice(0, 253),
+            directive: directive.slice(0, 40),
+          }
+        : undefined
+    }
     case 'settings': {
       const settings = message['settings']
       return typeof settings === 'object' && settings !== null && !Array.isArray(settings)

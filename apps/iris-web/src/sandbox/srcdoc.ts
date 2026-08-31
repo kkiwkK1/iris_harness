@@ -27,8 +27,36 @@ import { REMOTE_ALLOWLIST } from './policy.ts'
  * instead of asking.
  * @returns the policy value.
  */
-export function framePolicy(): string {
+export function framePolicy(networkGranted: boolean): string {
   const remotes = REMOTE_ALLOWLIST.map(host => `https://${host}`).join(' ')
+
+  // Fonts are the one default widening: high coverage across real cards, and a
+  // stylesheet or a font file executes nothing. `fonts.googleapis.com` serves the
+  // CSS, `fonts.gstatic.com` the faces — both are needed or neither works.
+  const fontCss = 'https://fonts.googleapis.com'
+  const fontFiles = 'https://fonts.gstatic.com'
+
+  /*
+   * The three directives a network grant widens, and why they are closed by
+   * default even though closing them costs real cards their appearance.
+   *
+   * An open image or fetch channel is an exfiltration channel for everything the
+   * frame can see. A card that may request `https://anywhere/x.png?d=<data>` can
+   * send the conversation out one pixel at a time; `connect-src` is the same
+   * capability without the pretence. So the default is data and blob only —
+   * origins the frame already holds in memory — and widening is a decision the
+   * user makes per card.
+   *
+   * `http:` is never listed, granted or not. A grant is the user accepting that
+   * a card may talk to its author's server; it is not them accepting that the
+   * conversation travels in clear text over a network they do not control.
+   */
+  const imgSrc = networkGranted ? 'https: data: blob:' : 'data: blob:'
+  const connectSrc = networkGranted ? 'https:' : "'none'"
+  const styleSrc = networkGranted
+    ? `'unsafe-inline' https: data:`
+    : `'unsafe-inline' ${fontCss} data:`
+
   return [
     "default-src 'none'",
     /*
@@ -42,14 +70,16 @@ export function framePolicy(): string {
      * run and the failure would look like a broken card rather than a wrong
      * policy. It grants nothing extra: a blob URL can only carry what this frame
      * already had in memory.
+     *
+     * Script origins are NOT widened by a network grant. Letting a card fetch its
+     * author's images is a different decision from letting it execute its author's
+     * code, and only the first is what the grant is for.
      */
     `script-src 'unsafe-inline' 'unsafe-eval' blob: ${remotes}`,
-    `connect-src ${remotes} blob: data:`,
-    // Inline styles are how a card draws; images from anywhere plus data URIs is
-    // what card UI actually uses, and neither is a way out of the frame.
-    "style-src 'unsafe-inline' https: data:",
-    'img-src https: data: blob:',
-    "font-src https: data:",
+    `connect-src ${connectSrc}`,
+    `style-src ${styleSrc}`,
+    `font-src data: ${fontFiles}`,
+    `img-src ${imgSrc}`,
     // No nested browsing contexts and no form posts: both would be routes out of
     // a frame whose whole purpose is not having any.
     "frame-src 'none'",
@@ -79,9 +109,10 @@ function attribute(value: string): string {
  * answer could be substituted.
  * @param token - the run token for this frame, minted per run.
  * @param bootstrap - the built bootstrap source.
+ * @param networkGranted - whether the user let this card reach the network.
  * @returns the `srcdoc` value.
  */
-export function buildSrcdoc(token: string, bootstrap: string): string {
+export function buildSrcdoc(token: string, bootstrap: string, networkGranted = false): string {
   // The bootstrap is placed inside a script element, so the one sequence that
   // could break out of it is a literal `</script`. Split rather than escaped:
   // the string is JavaScript, and an HTML escape inside it would change the code.
@@ -96,7 +127,7 @@ export function buildSrcdoc(token: string, bootstrap: string): string {
     '<!doctype html>',
     '<html lang="en"><head>',
     '<meta charset="utf-8">',
-    `<meta http-equiv="Content-Security-Policy" content="${attribute(framePolicy())}">`,
+    `<meta http-equiv="Content-Security-Policy" content="${attribute(framePolicy(networkGranted))}">`,
     // How the bootstrap learns its token. An attribute rather than a global,
     // because the bootstrap runs before any card code and reads it once.
     `<meta name="iris-token" content="${attribute(token)}">`,

@@ -180,7 +180,10 @@ stylesheets and fonts (`fonts.googleapis.com` — six cards), images and texture
   `https:` for that card. This is what makes a card whose whole UI lives on its
   author's host usable without opening the channel for every card. `http:` URLs
   stay refused even under the grant (one measured casualty: a card's version
-  check; recorded, accepted).
+  check; recorded, accepted). The grant never widens `script-src`: letting a
+  card load its author's images and letting it execute its author's code are
+  two different decisions, and the grant exists only for the first — pinned by
+  test, granted and ungranted `script-src` identical byte for byte.
 - **Refusals must out-shout the card's fallback.** Live finding: a blocked card
   showed its author's own "your Tavern is broken, check the console" message
   while Iris said nothing visible — the policy said "refused with a message

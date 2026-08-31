@@ -95,3 +95,38 @@ test('card-controlled strings are truncated before they reach the UI', () => {
   assert.equal(parsed.message.length, 2000)
   assert.equal(parsed.member?.length, 200)
 })
+
+test('a refused host is reported with its host and directive', () => {
+  // The frame is the only place that can see the violation and the shell is the
+  // only place that can tell the user. A refusal nobody is told about is
+  // delivered as whatever the card says next — and one card's author has already
+  // pre-written "is Tavern Helper installed? open your console!" for this case.
+  const parsed = parseFromFrame('tok', {
+    iris: 'tok',
+    type: 'blocked',
+    host: 'files.yuzuki-rii.xyz',
+    directive: 'img-src',
+  })
+
+  assert.ok(parsed?.type === 'blocked')
+  assert.equal(parsed.host, 'files.yuzuki-rii.xyz')
+  assert.equal(parsed.directive, 'img-src')
+})
+
+test('a card-influenced refusal report is bounded before it reaches the UI', () => {
+  const parsed = parseFromFrame('tok', {
+    iris: 'tok',
+    type: 'blocked',
+    host: 'h'.repeat(4000),
+    directive: 'd'.repeat(4000),
+  })
+
+  assert.ok(parsed?.type === 'blocked')
+  assert.equal(parsed.host.length, 253)
+  assert.equal(parsed.directive.length, 40)
+})
+
+test('a malformed refusal report is dropped rather than half-rendered', () => {
+  assert.equal(parseFromFrame('tok', { iris: 'tok', type: 'blocked', host: 'x' }), undefined)
+  assert.equal(parseFromFrame('tok', { iris: 'tok', type: 'blocked', directive: 'img-src' }), undefined)
+})
