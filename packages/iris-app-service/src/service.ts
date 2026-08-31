@@ -274,6 +274,17 @@ export class IrisAppService {
         return { documentGranted: await scripts.setDocumentGrant(characterId, granted) }
       },
 
+      // The bridge surface. The wire shape is frozen so the browser runner and
+      // the host provider can be built against it at once; these throw until
+      // the host-side context provider is wired, and throwing is deliberate —
+      // a stub that answered plausibly could ship unnoticed, and a card reading
+      // an empty context misbehaves silently instead of failing loudly.
+      'script.context': () => { throw new AppError('unsupported', 'the script context provider is not wired yet') },
+      'script.saveMetadata': () => { throw new AppError('unsupported', 'the script context provider is not wired yet') },
+      'script.saveChat': () => { throw new AppError('unsupported', 'the script context provider is not wired yet') },
+      'script.setExtensionPrompt': () => { throw new AppError('unsupported', 'the script context provider is not wired yet') },
+      'script.generateRaw': () => { throw new AppError('unsupported', 'the script context provider is not wired yet') },
+
       'script.fetch': async ({ url }) => {
         const verdict = checkScriptFetch(url)
         // `unsupported` and not `invalid-request`: the URL is well-formed and

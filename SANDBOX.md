@@ -57,10 +57,22 @@ card's own author switched off.
 ### The code is compiled, and it evals
 
 The blobs are webpack output containing `eval()` per module. **This rules out
-CSP as the isolation mechanism**: a sandbox frame that forbids `unsafe-eval`
-runs none of these cards. Isolation therefore comes from the frame boundary and
-from what the globals inside it are wired to, never from restricting what the
-code may compile.
+forbidding `unsafe-eval`**: a frame that does runs none of these cards. So
+isolation comes from the frame boundary and from what the globals inside it are
+wired to, never from restricting what the code may compile.
+
+It does not rule out CSP. An earlier version of this section said it did, which
+was too broad: CSP's other job — pinning *where code may come from* — is intact
+and worth having.
+
+```
+script-src 'unsafe-inline' 'unsafe-eval' https://*.jsdelivr.net https://raw.githubusercontent.com
+```
+
+That permits the eval these cards need while confining remote sources to the
+whitelist below. It is defence in depth and nothing more: **the host-side check
+remains the one that counts**, because a page cannot be relied on to police its
+own fetches, and the two are not equivalent.
 
 ## `parent.*` — what cards actually reach for
 
@@ -160,6 +172,10 @@ raw.githubusercontent.com
 Enforced on the host, not in the page: the browser cannot be trusted to police
 its own fetches, and a card that reaches an unlisted host must be **refused with
 a message naming the host**, never silently allowed and never silently dropped.
+
+The frame's own `script-src` carries the same list. That is a second layer, not
+a second enforcement point — if the two ever disagree, the host's answer is the
+real one.
 
 ## Work split
 

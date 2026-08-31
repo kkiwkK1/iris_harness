@@ -107,6 +107,74 @@ export interface ScriptView {
   bytes: number
 }
 
+/**
+ * One message in the shape a card script expects.
+ *
+ * SillyTavern's own storage shape, field names included, because that is what
+ * the 194 `context.chat` accesses measured across the local corpus read: `mes`,
+ * `is_user`, `swipes`. Renaming these to Iris's own vocabulary would move the
+ * translation into the browser bridge, where it becomes a second table that can
+ * drift from this one — and the bridge's whole job is to be a pass-through.
+ *
+ * Structurally identical to `@iris/persistence`'s `SillyTavernMessage`, and the
+ * index signature makes the two assignable without a cast. Declared here rather
+ * than imported so the contract package keeps its one dependency.
+ */
+export interface ScriptChatMessage {
+  name: string
+  is_user: boolean
+  is_system?: boolean
+  send_date?: string
+  mes: string
+  extra?: Record<string, unknown>
+  swipes?: string[]
+  swipe_id?: number
+  [key: string]: unknown
+}
+
+/**
+ * What a card script sees when it reads `SillyTavern.getContext()`.
+ *
+ * Deliberately narrow. SillyTavern's own context object exposes 145 keys; the
+ * 19 here are the ones the local corpus's 47 scripts actually touch, found by
+ * intersecting what the scripts read against the real key list rather than by
+ * transcribing documentation. Anything absent is absent on purpose: a surface
+ * built to the documentation would be seven times larger, and every extra
+ * member is something a card can come to depend on.
+ *
+ * Field names are SillyTavern's for the same reason as {@link ScriptChatMessage}.
+ */
+export interface ScriptContext {
+  /** The conversation, in storage order. 194 accesses — the largest single one. */
+  chat: ScriptChatMessage[]
+  /**
+   * Per-chat storage, read AND written: cards use it as their durable store
+   * (`meta.someKey[k] = v`, then save). 28 accesses.
+   */
+  chatMetadata: Record<string, unknown>
+  /** The user's name, as the chat file records it. */
+  name1: string
+  /** The character's name. */
+  name2: string
+  characterId?: string
+  chatId?: string
+  /** The library, for a card that offers to switch or reference another. */
+  characters: CharacterSummary[]
+  /**
+   * This card's extension settings, partitioned per card.
+   *
+   * One card must not read another's: cross-card reads would defeat the
+   * per-card grant model, since a card could learn — and store — through a
+   * neighbour what it was not itself allowed.
+   */
+  extensionSettings: Record<string, unknown>
+  /** Current variable state, for a card reading MVU's store. */
+  variables: Record<string, unknown>
+}
+
+/** Where a script's injected prompt goes. Mirrors upstream's positions. */
+export type ScriptPromptPosition = 'before' | 'after' | 'at-depth'
+
 /** The model route and sampling a chat is running with. */
 export interface GenerationSettings {
   provider: string

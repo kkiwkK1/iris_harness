@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, GenerationSettings, ScriptView } from './views.ts'
+import type { ChatSummary, ChatView, CharacterSummary, GenerationSettings, ScriptContext, ScriptView } from './views.ts'
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -104,6 +104,62 @@ export const requestSchemas = {
   'script.fetch': z.object({
     url: z.string().min(1).max(2048),
   }),
+
+  /**
+   * Everything a card reads through `SillyTavern.getContext()`.
+   *
+   * One read rather than fifteen field methods, because that is how cards use
+   * it: they take the whole context once and then read members off it, often in
+   * a loop. Fifteen round trips per script would be the shape of our contract
+   * imposed on theirs.
+   */
+  'script.context': z.object({
+    chatId: z.string().min(1),
+    /** Whose partition of extension settings to include. */
+    characterId: z.string().min(1),
+  }),
+  /**
+   * Write back the chat metadata a card has been mutating.
+   *
+   * Whole-object, not a patch, because that is what upstream does and because
+   * cards mutate arbitrarily deep and also delete — a patch dialect able to
+   * express what they do would be a design of its own. The consequence is
+   * last-write-wins, which is upstream's behaviour too: two scripts racing on
+   * the same chat lose one of the writes.
+   */
+  'script.saveMetadata': z.object({
+    chatId: z.string().min(1),
+    metadata: z.record(z.string(), z.unknown()),
+  }),
+  /** Persist the chat now, as upstream's `saveChat` does. */
+  'script.saveChat': z.object({ chatId: z.string().min(1) }),
+  /**
+   * Inject a script's text into the prompt.
+   *
+   * Keyed so a script can replace its own injection: upstream's
+   * `setExtensionPrompt` is idempotent per key, and a card calling it every
+   * turn expects to overwrite rather than accumulate.
+   */
+  'script.setExtensionPrompt': z.object({
+    chatId: z.string().min(1),
+    key: z.string().min(1).max(200),
+    value: z.string().max(32_000),
+    position: z.enum(['before', 'after', 'at-depth']).default('at-depth'),
+    depth: z.number().int().min(0).max(1000).default(0),
+  }),
+  /**
+   * One completion, on the card's behalf.
+   *
+   * Non-streaming, matching upstream's `generateRaw`, which resolves with the
+   * finished string. A card asking for one is doing a side computation — a
+   * summary, a classification — not writing the visible reply, so there is
+   * nothing to stream it into.
+   */
+  'script.generateRaw': z.object({
+    chatId: z.string().min(1),
+    prompt: z.string().min(1).max(64_000),
+    systemPrompt: z.string().max(32_000).optional(),
+  }),
 } as const
 
 /** Every callable method. */
@@ -147,6 +203,13 @@ export interface RpcResponseMap {
   'script.setDocumentGrant': { documentGranted: boolean }
   /** The fetched body. Refusals arrive as an `unsupported` rejection. */
   'script.fetch': { content: string, contentType?: string }
+
+  'script.context': { context: ScriptContext }
+  /** The metadata as stored, so a card can see what survived. */
+  'script.saveMetadata': { metadata: Record<string, unknown> }
+  'script.saveChat': Record<string, never>
+  'script.setExtensionPrompt': Record<string, never>
+  'script.generateRaw': { text: string }
 }
 
 /** The response of one method. */

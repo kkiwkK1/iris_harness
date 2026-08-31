@@ -377,6 +377,17 @@ class InMemoryClient implements FakeClient {
         return { documentGranted: this.#grants.has(characterId) }
       }
 
+      case 'script.context':
+      case 'script.saveMetadata':
+      case 'script.saveChat':
+      case 'script.setExtensionPrompt':
+      case 'script.generateRaw': {
+        // Refused, not faked. A context assembled here would be the fake's
+        // invention of SillyTavern's shape, and a runner built against it would
+        // pass in development and break on the first real card.
+        throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
+      }
+
       case 'script.fetch': {
         // Refused rather than answered with invented code. The fake exists so
         // the interface can be built without a host; handing back a plausible

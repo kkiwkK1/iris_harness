@@ -33,6 +33,9 @@ export type {
   CharacterSummary,
   GenerationSettings,
   MessageView,
+  ScriptChatMessage,
+  ScriptContext,
+  ScriptPromptPosition,
   ScriptView,
   ViewRole,
 } from './views.ts'

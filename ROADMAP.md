@@ -121,6 +121,12 @@ ST 的 prompt itemization：点开一条消息，看到这次请求里每个部�
 - **摘要**：`memory` 扩展，定期自动摘要并按深度注入，暴露为 `{{summary}}`。
 - **TTS / 图像生成 / 翻译**：各自是一组 provider 集成。
 - **多用户、鉴权、备份**：`dsh-host-webserver` 没有 TLS 也没有鉴权（它自己文档写明），公网部署必须前置反代。
+- **酒馆助手以外的扩展生态**：量卡的时候顺手发现，本机 19 张卡的 `extensions` 里还有
+  `xiaobaix-tasks`（1）、`xiaobaix-template`（1）、`ST-Amily2-Chat-Optimisation`（1）、
+  `juqingtuijin`（1）。**用户的卡不只依赖酒馆助手一个扩展。** 每张只出现一次，所以
+  优先级低；但它说明"兼容酒馆助手"不等于"这些卡全都能用"，而我们目前的
+  兼容性说法只覆盖了 `tavern_helper` / `TavernHelper_scripts` / `regex_scripts`。
+  真要做的时候同样先量：这些键里装的是配置还是代码，决定它是一天的活还是一个子系统。
 
 ---
 
