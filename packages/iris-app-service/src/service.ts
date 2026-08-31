@@ -16,10 +16,10 @@
  * @module @iris/app-service/service
  */
 
-import { createAssistantMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { BlockAssembler, createAssistantMessage, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, selectCandidate, SwipeError } from '@iris/chat'
-import type { HistoryEntry } from '@iris/pipeline'
+import type { Contribution, HistoryEntry } from '@iris/pipeline'
 import type { ChatCompletionPreset } from '@iris/preset'
 import type { GenerationSettings, IrisEvent, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
@@ -31,6 +31,7 @@ import type { ChatStore } from './chats.ts'
 import type { ChatEntry } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
+import { buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { buildPrompt, DEFAULT_PRESET } from './prompt.ts'
 import { runScripts } from './regex.ts'
 import type { ScriptPolicyStore } from './scripts.ts'
@@ -70,6 +71,13 @@ export interface AppServiceOptions {
    */
   scripts?: ScriptPolicyStore
   /**
+   * Per-card `extension_settings`.
+   *
+   * Optional for the same reason as `scripts`: absent means every card sees an
+   * empty partition, which is what "not configured" should look like.
+   */
+  extensionSettings?: ExtensionSettingsStore
+  /**
    * Fetches a remote script dependency. Defaults to global `fetch`.
    *
    * Injectable so the whitelist can be tested without a network, and so a
@@ -103,8 +111,8 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts'>>
-    & { onError: (error: Error) => void, scripts?: ScriptPolicyStore }
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings'>>
+    & { onError: (error: Error) => void, scripts?: ScriptPolicyStore, extensionSettings?: ExtensionSettingsStore }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
 
   /**
@@ -125,6 +133,7 @@ export class IrisAppService {
       onError: options.onError ?? (() => {}),
       fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
+      ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
     }
   }
 
@@ -279,11 +288,45 @@ export class IrisAppService {
       // the host-side context provider is wired, and throwing is deliberate —
       // a stub that answered plausibly could ship unnoticed, and a card reading
       // an empty context misbehaves silently instead of failing loudly.
-      'script.context': () => { throw new AppError('unsupported', 'the script context provider is not wired yet') },
-      'script.saveMetadata': () => { throw new AppError('unsupported', 'the script context provider is not wired yet') },
-      'script.saveChat': () => { throw new AppError('unsupported', 'the script context provider is not wired yet') },
-      'script.setExtensionPrompt': () => { throw new AppError('unsupported', 'the script context provider is not wired yet') },
-      'script.generateRaw': () => { throw new AppError('unsupported', 'the script context provider is not wired yet') },
+      'script.context': async ({ chatId, characterId }) => {
+        const entry = await chats.open(chatId)
+        return {
+          context: buildCardContext(entry, {
+            // The asking card's partition, never the whole store: one card
+            // reading another's settings would defeat the per-card grant.
+            extensionSettings: await this.#options.extensionSettings?.get(characterId) ?? {},
+            characters: await library.list(),
+          }),
+        }
+      },
+
+      'script.saveMetadata': async ({ chatId, metadata }) => {
+        const entry = await chats.open(chatId)
+        commitChatMetadata(entry, metadata)
+        entry.touch()
+        await chats.save(entry)
+        // Echoed back as stored, so a card can see what survived rather than
+        // assuming its object round-tripped intact.
+        return { metadata: entry.header.chat_metadata }
+      },
+
+      'script.saveChat': async ({ chatId }) => {
+        const entry = await chats.open(chatId)
+        entry.touch()
+        await chats.save(entry)
+        return {}
+      },
+
+      'script.setExtensionPrompt': async ({ chatId, key, value, position, depth }) => {
+        const entry = await chats.open(chatId)
+        entry.setExtensionPrompt(key, { value, position, depth })
+        return {}
+      },
+
+      'script.generateRaw': async ({ chatId, prompt, systemPrompt }) => {
+        const entry = await chats.open(chatId)
+        return { text: await this.#generateRaw(entry, prompt, systemPrompt) }
+      },
 
       'script.fetch': async ({ url }) => {
         const verdict = checkScriptFetch(url)
@@ -465,18 +508,7 @@ export class IrisAppService {
       stream: options => this.#stream(options),
       provider: settings.provider,
       model: settings.model,
-      contributions: session => buildPrompt({
-        card: entry.card,
-        preset: this.#options.preset,
-        userName: names.user,
-        characterName: names.character,
-        // The same projection the model gets, so a world-info scan cannot match
-        // a keyword inside a block the prompt scripts are about to strip.
-        history: this.#history(entry, session),
-        count,
-        worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
-        ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
-      }).contributions,
+      contributions: session => this.#contributions(entry, session, count),
       history: session => this.#history(entry, session),
       budget: {
         context: this.#options.contextWindow,
@@ -488,6 +520,70 @@ export class IrisAppService {
       ...settings.stop === undefined ? {} : { stop: settings.stop },
       sampling: samplingOf(settings),
     })
+  }
+
+  /**
+   * One generation's prompt policy, plus whatever a card script has injected.
+   * @param entry - the conversation.
+   * @param session - the log to assemble from.
+   * @param count - the token counter the budget uses.
+   * @returns the contributions for this generation.
+   */
+  #contributions(entry: ChatEntry, session: Session, count: (text: string) => number): Contribution[] {
+    const names = entry.names
+    const built = buildPrompt({
+      card: entry.card,
+      preset: this.#options.preset,
+      userName: names.user,
+      characterName: names.character,
+      // The same projection the model gets, so a world-info scan cannot match a
+      // keyword inside a block the prompt scripts are about to strip.
+      history: this.#history(entry, session),
+      count,
+      worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
+      ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
+    })
+    // Carried forward, or a sticky entry would re-open its window every turn and
+    // a cooldown would never elapse — the state exists precisely to span turns.
+    entry.timedEffects = built.timedEffects
+
+    return [...built.contributions, ...injectedContributions(entry)]
+  }
+
+  /**
+   * Run one completion that never touches the log.
+   *
+   * A card asks for this to compute something on the side — a summary, a
+   * classification — so it is not a turn: nothing is appended, nothing streams,
+   * and no candidate is produced.
+   * @param entry - the conversation whose model route to use.
+   * @param prompt - what to ask.
+   * @param systemPrompt - an optional system slot.
+   * @returns the finished text.
+   * @throws {AppError} `provider-error` when the stream ends in failure.
+   */
+  async #generateRaw(entry: ChatEntry, prompt: string, systemPrompt?: string): Promise<string> {
+    const settings = this.#options.settings.get(entry.chatId)
+    const sampling = samplingOf(settings)
+    const assembler = new BlockAssembler()
+
+    for await (const chunk of this.#stream({
+      provider: settings.provider,
+      model: settings.model,
+      ...systemPrompt === undefined ? {} : { system: systemPrompt },
+      messages: [createUserMessage({ content: [{ type: 'text', text: prompt }], source: { kind: 'user' } })],
+      ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
+      ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
+      ...sampling === undefined ? {} : { sampling },
+    })) {
+      assembler.push(chunk)
+    }
+
+    const finish = assembler.finish
+    if (finish.kind === 'error') {
+      throw new AppError('provider-error', finish.failure?.message ?? 'the provider ended the stream with an error')
+    }
+    return assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('')
   }
 
   /**
@@ -569,6 +665,29 @@ export class IrisAppService {
   #report(error: unknown): void {
     this.#options.onError(error instanceof Error ? error : new Error(String(error)))
   }
+}
+
+/**
+ * A card script's keyed injections, as prompt contributions.
+ *
+ * Ordered around the preset's own sections rather than inside them: a card
+ * injecting text has no way to know what the preset numbered its parts, so the
+ * only stable promise is "before everything" or "after everything".
+ * @param entry - the conversation holding the injections.
+ * @returns one contribution per live injection.
+ */
+export function injectedContributions(entry: ChatEntry): Contribution[] {
+  const contributions: Contribution[] = []
+  for (const [key, injection] of entry.extensionPrompts) {
+    contributions.push({
+      id: `script.${key}`,
+      placement: injection.position === 'at-depth'
+        ? { kind: 'depth', depth: injection.depth, role: 'system', order: 2 }
+        : { kind: 'system', order: injection.position === 'before' ? 850 : 950 },
+      text: injection.value,
+    })
+  }
+  return contributions
 }
 
 /**

@@ -23,10 +23,18 @@ import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
 import { IrisAppService } from './service.ts'
+import { ExtensionSettingsStore } from './context.ts'
 import { ScriptPolicyStore } from './scripts.ts'
 import { SettingsStore } from './settings.ts'
 
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
+export {
+  assertStorable,
+  buildCardContext,
+  commitChatMetadata,
+  ExtensionSettingsStore,
+  type ScriptContext,
+} from './context.ts'
 export { ChatEntry, lineTurns, metadataBackend, readMeta, type IrisChatMeta } from './entry.ts'
 export { AppError, busy, invalid, notFound } from './errors.ts'
 export { CharacterLibrary, type CardFileRef } from './library.ts'
@@ -210,6 +218,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // this is a permission record. Keeping them apart means a settings reset
   // cannot hand a card the page document.
   const scripts = new ScriptPolicyStore(join(dataDir, 'script-policy.json'))
+  // Kept apart from `script-policy.json` because they answer to different
+  // owners: the policy file is the user's decisions, this is data cards wrote.
+  const extensionSettings = new ExtensionSettingsStore(join(dataDir, 'extension-settings.json'))
 
   // The folders are created on first write, not on boot: a host that has never
   // been used should leave nothing behind, and both stores already tolerate a
@@ -222,6 +233,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     chats,
     settings,
     scripts,
+    extensionSettings,
     preset: await loadPreset(config.presetPath),
     broadcast: event => { ctx.irisRpc.broadcast(event) },
     ...config.userName === undefined ? {} : { userName: config.userName },

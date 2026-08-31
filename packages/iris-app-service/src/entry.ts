@@ -27,7 +27,7 @@ import {
   type SillyTavernChatHeader,
   type SillyTavernMessage,
 } from '@iris/persistence'
-import type { ChatSummary, ChatView } from '@iris/protocol'
+import type { ChatSummary, ChatView, ScriptPromptPosition } from '@iris/protocol'
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 import { memoryBackend, sessionMessageBackend, VariableStore, type ScopeBackend, type Variables } from '@iris/variables'
 
@@ -136,6 +136,18 @@ export class ChatEntry {
   timedEffects: TimedEffectState | undefined
   /** The turn currently streaming, if any. */
   pending: PendingTurn | undefined
+  /**
+   * Text a card script has injected, keyed so it can replace its own.
+   *
+   * Upstream's `setExtensionPrompt` is idempotent per key, and a card calling it
+   * once a turn means to overwrite — accumulating instead would grow the prompt
+   * without bound over a long chat, and the symptom (the model losing the early
+   * conversation) looks nothing like its cause.
+   *
+   * Not persisted: an injection belongs to a running script, and a script that
+   * is not running should not still be shaping the prompt.
+   */
+  readonly extensionPrompts = new Map<string, { value: string, position: ScriptPromptPosition, depth: number }>()
 
   #initVars: MvuData | undefined
   #scripts: RegexScript[] | undefined
@@ -259,6 +271,21 @@ export class ChatEntry {
     const rerolling = listCandidates(this.session, turn).length > 0
     const index = rerolling ? keys.length - 2 : keys.length - 1
     return keys[index] ?? keys[keys.length - 1] as string
+  }
+
+  /**
+   * Set or clear one keyed injection.
+   * @param key - the script's own key for this injection.
+   * @param injection - the text and placement, or `undefined` to remove it.
+   */
+  setExtensionPrompt(
+    key: string,
+    injection: { value: string, position: ScriptPromptPosition, depth: number } | undefined,
+  ): void {
+    // An empty string is how upstream clears one, so it is treated as removal
+    // rather than stored as a contribution that renders to nothing.
+    if (injection === undefined || injection.value.trim().length === 0) this.extensionPrompts.delete(key)
+    else this.extensionPrompts.set(key, injection)
   }
 
   /**

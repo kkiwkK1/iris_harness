@@ -1,0 +1,241 @@
+import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test, type TestContext } from 'node:test'
+
+import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { IrisEvent } from '@iris/protocol'
+import type { StreamFn } from '@iris/turn'
+
+import { ChatStore } from '../src/chats.ts'
+import { ExtensionSettingsStore } from '../src/context.ts'
+import { CharacterLibrary } from '../src/library.ts'
+import { IrisAppService, injectedContributions, type Handlers } from '../src/service.ts'
+import { SettingsStore } from '../src/settings.ts'
+
+/**
+ * The five bridge methods, end to end through the handler table.
+ *
+ * These are what a card script reaches the host with. The wire shape is frozen,
+ * so what is worth guarding here is the behaviour behind it: that a card gets a
+ * copy rather than a handle, that one card's settings partition is not another's,
+ * that a keyed injection replaces rather than accumulates, and that `generateRaw`
+ * leaves no trace in the conversation.
+ */
+
+const CARD = JSON.stringify({
+  spec: 'chara_card_v2',
+  spec_version: '2.0',
+  data: {
+    name: 'Aria', description: '', personality: '', scenario: '',
+    first_mes: 'Hello.', mes_example: '', creator_notes: '',
+    system_prompt: '', post_history_instructions: '', alternate_greetings: [],
+    tags: [], creator: '', character_version: '1', extensions: {},
+  },
+})
+
+/** A stream that answers with one scripted reply and records what it was asked. */
+function scripted(replies: readonly string[], seen?: GenerateOptions[]): StreamFn {
+  let call = 0
+  return async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
+    seen?.push(options)
+    const text = replies[Math.min(call, replies.length - 1)] ?? ''
+    call += 1
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+/** Everything one test needs, over a throwaway data folder. */
+interface Fixture {
+  dir: string
+  handlers: Handlers
+  chats: ChatStore
+  extensionSettings: ExtensionSettingsStore
+  seen: GenerateOptions[]
+  settled: () => Promise<void>
+}
+
+async function fixture(t: TestContext, replies: readonly string[] = ['A reply.']): Promise<Fixture> {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-bridge-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const chats = new ChatStore(join(dir, 'chats'), library)
+  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
+  const extensionSettings = new ExtensionSettingsStore(join(dir, 'extension-settings.json'))
+  const seen: GenerateOptions[] = []
+  let ends = 0
+  let waited = 0
+
+  const handlers = new IrisAppService({
+    stream: scripted(replies, seen),
+    library,
+    chats,
+    settings,
+    extensionSettings,
+    broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
+    userName: 'Traveller',
+  }).handlers()
+
+  return {
+    dir,
+    handlers,
+    chats,
+    extensionSettings,
+    seen,
+    settled: async () => {
+      waited += 1
+      while (ends < waited) await new Promise(resolve => setTimeout(resolve, 1))
+    },
+  }
+}
+
+test('a card reads its chat through the frozen context shape', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  const { context } = await handlers['script.context']({ chatId, characterId: 'aria' })
+
+  assert.equal(context.name1, 'Traveller')
+  assert.equal(context.name2, 'Aria')
+  assert.equal(context.chatId, chatId)
+  assert.equal(context.characterId, 'aria')
+  // Upstream's field names and message shape, so the browser bridge is a
+  // pass-through with no translation table to drift.
+  assert.equal(context.chat[0]?.mes, 'Hello.')
+  assert.equal(context.chat[0]?.is_user, false)
+  assert.deepEqual(context.characters.map(entry => entry.characterId), ['aria'])
+})
+
+test('metadata a card writes survives, and a key it dropped stays dropped', async (t) => {
+  const { handlers, dir } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await handlers['script.saveMetadata']({ chatId, metadata: { phone: { unread: 2 }, stale: true } })
+  const second = await handlers['script.saveMetadata']({ chatId, metadata: { phone: { unread: 0 } } })
+
+  // Whole-object, matching upstream: the card mutated what it was handed and a
+  // key it deleted is meant to be gone, not merged back in.
+  assert.deepEqual(second.metadata, { phone: { unread: 0 } })
+
+  const reopened = await handlers['script.context']({ chatId, characterId: 'aria' })
+  assert.deepEqual(reopened.context.chatMetadata, { phone: { unread: 0 } })
+
+  // And it is on disk, not just in memory: a card's store has to survive the
+  // process, or every restart silently resets whatever it was keeping.
+  const file = await readFile(join(dir, 'chats', `${chatId}.jsonl`), 'utf8')
+  const header = JSON.parse(file.split('\n')[0] ?? '{}') as { chat_metadata?: unknown }
+  assert.deepEqual(header.chat_metadata, { phone: { unread: 0 } })
+})
+
+test('a card cannot hand back something the chat file could not hold', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+
+  await assert.rejects(
+    () => handlers['script.saveMetadata']({
+      chatId: created.view.chatId,
+      metadata: { when: Number.POSITIVE_INFINITY },
+    }),
+    (error: unknown) => (error as { code?: string }).code === 'invalid-request',
+  )
+})
+
+test('one card’s settings partition is not another’s', async (t) => {
+  const { handlers, extensionSettings } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await extensionSettings.set('aria', { theme: 'dark' })
+  await extensionSettings.set('someone-else', { theme: 'light', secret: 'not yours' })
+
+  const { context } = await handlers['script.context']({ chatId, characterId: 'aria' })
+
+  // The partition is what makes a per-card grant mean anything.
+  assert.deepEqual(context.extensionSettings, { theme: 'dark' })
+})
+
+test('a keyed injection replaces its own text rather than accumulating', async (t) => {
+  const { handlers, chats, seen, settled } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await handlers['script.setExtensionPrompt']({
+    chatId, key: 'status-bar', value: 'First version.', position: 'at-depth', depth: 0,
+  })
+  await handlers['script.setExtensionPrompt']({
+    chatId, key: 'status-bar', value: 'Second version.', position: 'at-depth', depth: 0,
+  })
+
+  const entry = chats.cached(chatId)
+  assert.ok(entry !== undefined)
+  assert.equal(entry.extensionPrompts.size, 1, 'the same key overwrote rather than piling up')
+  assert.deepEqual(injectedContributions(entry).map(item => item.text), ['Second version.'])
+
+  // It really reaches the model.
+  await handlers['chat.send']({ chatId, text: 'Hello?' })
+  await settled()
+  const request = seen[0]
+  assert.ok(request !== undefined)
+  const sent = [request.system ?? '', ...request.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join(''))].join('\n')
+  assert.match(sent, /Second version\./)
+  assert.doesNotMatch(sent, /First version\./)
+})
+
+test('an empty injection clears the key, the way upstream removes one', async (t) => {
+  const { handlers, chats } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await handlers['script.setExtensionPrompt']({
+    chatId, key: 'status-bar', value: 'Something.', position: 'before', depth: 0,
+  })
+  await handlers['script.setExtensionPrompt']({
+    chatId, key: 'status-bar', value: '', position: 'before', depth: 0,
+  })
+
+  assert.equal(chats.cached(chatId)?.extensionPrompts.size, 0)
+})
+
+test('generateRaw answers without leaving a trace in the conversation', async (t) => {
+  const { handlers, seen, chats } = await fixture(t, ['A summary of things.'])
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+  const before = created.view.messages.length
+
+  const { text } = await handlers['script.generateRaw']({
+    chatId,
+    prompt: 'Summarize the chat.',
+    systemPrompt: 'You summarize.',
+  })
+
+  assert.equal(text, 'A summary of things.')
+  assert.equal(seen[0]?.system, 'You summarize.')
+
+  // A side computation is not a turn: nothing appended, no candidate, no swipe.
+  const after = (await handlers['chat.open']({ chatId })).view
+  assert.equal(after.messages.length, before)
+  assert.equal(chats.cached(chatId)?.generating, false)
+})
+
+test('a bridge call for a chat that does not exist is not found', async (t) => {
+  const { handlers } = await fixture(t)
+
+  for (const call of [
+    () => handlers['script.context']({ chatId: 'nope', characterId: 'aria' }),
+    () => handlers['script.saveChat']({ chatId: 'nope' }),
+    () => handlers['script.saveMetadata']({ chatId: 'nope', metadata: {} }),
+    () => handlers['script.generateRaw']({ chatId: 'nope', prompt: 'x' }),
+  ]) {
+    await assert.rejects(call, (error: unknown) => (error as { code?: string }).code === 'not-found')
+  }
+})
