@@ -159,6 +159,18 @@ card. Requirements:
 Default-deny is what makes the default safe; the grant exists so that "Iris
 cannot run this card" is never the final answer.
 
+## Deliberate divergences from upstream
+
+- **Frame height sync is one frame late.** Tavern Helper's iframes size
+  themselves by writing `frameElement.style.height` from inside — a child
+  reaching directly into its parent, which only same-origin frames can do.
+  Cross-origin that line throws, so Iris measures inside the frame and
+  `postMessage`s the height out for the shell to apply. The visible cost is one
+  frame of latency on resize; it is the known price of the frame being a real
+  boundary, not an implementation choice that could be optimized away.
+  (Verified live 2026-09-01: the probe frame sized to its content through this
+  path.)
+
 ## Remote imports
 
 Card scripts import from CDNs. Whitelist, enforced host-side:

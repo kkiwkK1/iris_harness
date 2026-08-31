@@ -98,8 +98,16 @@ Stated here rather than discovered later.
   the founding decision was that the storage layer be shaped for profiles, while
   multi-user authentication is an explicit non-goal (`PLAN.md`).
 - **No CI.** Every green claim in this repo is a local run.
-- **The browser has never been exercised beyond the reading surface.** The
-  sandbox has 41 tests and has never run a card's script in a real frame.
+- **The sandbox mechanism is verified in a real frame; real cards are not yet.**
+  On 2026-09-01 a probe body ran in an actual opaque-origin srcdoc frame in
+  Chrome: `new Function` and indirect eval both run under the frame's CSP,
+  `ResizeObserver` height reports size the frame (559px observed), viewport
+  reads through the virtual document return the host's real numbers (2498px,
+  not 0), the `SillyTavern` probe is truthy both bare and via `parent`,
+  `document.cookie` refuses loudly naming the member, and an
+  `extension_settings` write crossed back to the shell. What has NOT run yet is
+  a real card's webpack bundle — the probe verifies the mechanism, not the
+  ecosystem.
 - **Registration is hand-maintained.** `register` is generic per method, so the
   call list cannot be looped without a cast that discards the type check. That
   decision stands; two tests cover its cost — one reads the registration site,
