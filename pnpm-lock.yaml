@@ -41,6 +41,9 @@ importers:
       '@deepseek-ai/dsh-app-boot':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(d152608df991a5a21b2e95fd36ee716f)
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))
       '@deepseek-ai/dsh-llm':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-attachment@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/dsh-timeout@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))
@@ -50,6 +53,9 @@ importers:
       '@deepseek-ai/dsh-system-prompt':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/dsh-llm@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-attachment@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/dsh-timeout@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))))(@deepseek-ai/dsh-scope@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))
+      '@iris/app-service':
+        specifier: workspace:*
+        version: link:../../packages/iris-app-service
       '@iris/character':
         specifier: workspace:*
         version: link:../../packages/iris-character
@@ -80,6 +86,18 @@ importers:
       '@iris/preset':
         specifier: workspace:*
         version: link:../../packages/iris-preset
+      '@iris/protocol':
+        specifier: workspace:*
+        version: link:../../packages/iris-protocol
+      '@iris/rpc-client':
+        specifier: workspace:*
+        version: link:../../packages/iris-rpc-client
+      '@iris/rpc-host':
+        specifier: workspace:*
+        version: link:../../packages/iris-rpc-host
+      '@iris/tokenizer':
+        specifier: workspace:*
+        version: link:../../packages/iris-tokenizer
       '@iris/turn':
         specifier: workspace:*
         version: link:../../packages/iris-turn
@@ -128,6 +146,12 @@ importers:
       '@iris/protocol':
         specifier: workspace:*
         version: link:../iris-protocol
+      '@iris/rpc-host':
+        specifier: workspace:*
+        version: link:../iris-rpc-host
+      '@iris/tokenizer':
+        specifier: workspace:*
+        version: link:../iris-tokenizer
       '@iris/turn':
         specifier: workspace:*
         version: link:../iris-turn
@@ -236,6 +260,8 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.5.4
+
+  packages/iris-regex: {}
 
   packages/iris-rpc-client:
     dependencies:

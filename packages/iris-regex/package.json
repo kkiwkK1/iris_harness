@@ -1,0 +1,11 @@
+{
+  "name": "@iris/regex",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SillyTavern-compatible regex scripts: the display/prompt ephemerality that MVU cards depend on.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  }
+}

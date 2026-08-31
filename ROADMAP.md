@@ -28,7 +28,9 @@ import 'https://gcore.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate@master/artifac
 
 远程 import 还带一个必须现在就决定的安全问题：**卡片能从任意 URL 拉代码执行**。ST 是默认放行的。Iris 应当至少做到域名白名单 + 首次加载时告知用户，否则我们的"隔离"只是把门锁上、钥匙插在外面。
 
-### 0.2 正则脚本
+**已决定的策略**：远程代码加载走**域名白名单**，首批放行 `cdn.jsdelivr.net` / `gcore.jsdelivr.net` 与 GitHub raw（社区实际在用的两处）。白名单之外的 URL 拒绝加载并告知用户，而不是默默放行。
+
+### 0.2 正则脚本 —— 已完成
 
 MVU 需要的那两条正则：
 
@@ -55,7 +57,9 @@ substitute_find_regex = { NONE: 0, RAW: 1, ESCAPED: 2 }
 
 还有 `minDepth` / `maxDepth`（按楼层深度限定）、`trimStrings`、`runOnEdit`、`disabled`。角色卡自带的正则在 `data.extensions.regex_scripts`——我们已经原样保留了这个字段，只是还没有引擎去执行。
 
-归属：新建 `packages/iris-regex`，接进 `iris-pipeline`（提示词方向）与视图投影（显示方向）。纯逻辑、可测，工作量不大。
+`packages/iris-regex` 已实现，31 个测试，头三条就是拿 MVU 官方那两条正则跑真实回复，分别验证「读者看不到命令块」「模型读不到自己上一轮的命令块」「存储原文不变」。
+
+剩下的是**接线**：提示词方向接进 `iris-pipeline`，显示方向接进视图投影，并把角色卡 `data.extensions.regex_scripts` 里的脚本按 `SCRIPT_TYPE` 排序喂进去。这部分依赖传输层和界面就位。
 
 ### 0.3 ST-Prompt-Template（EJS 模板）
 
