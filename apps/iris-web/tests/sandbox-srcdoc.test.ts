@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+import { buildSrcdoc, framePolicy } from '../src/sandbox/srcdoc.ts'
+
+test('the frame policy allows eval and pins where code comes from', () => {
+  // The distinction SANDBOX.md now draws: CSP cannot forbid `eval` here, because
+  // the card blobs are webpack output that evals per module. Restricting the
+  // ORIGIN of code is a separate capability and it is fully available.
+  const policy = framePolicy()
+
+  assert.match(policy, /script-src[^;]*'unsafe-eval'/, 'the webpack blobs would not run')
+  assert.match(policy, /script-src[^;]*https:\/\/\*\.jsdelivr\.net/)
+  assert.match(policy, /script-src[^;]*https:\/\/raw\.githubusercontent\.com/)
+  assert.doesNotMatch(policy, /script-src[^;]*https:(?!\/\/)/, 'script-src must not admit all of https')
+})
+
+test('the frame cannot open a nested context or post a form', () => {
+  // Both are routes out of a frame whose entire purpose is not having one.
+  const policy = framePolicy()
+  assert.match(policy, /frame-src 'none'/)
+  assert.match(policy, /form-action 'none'/)
+  assert.match(policy, /default-src 'none'/)
+})
+
+test('the bootstrap is inlined, not fetched', () => {
+  // An opaque-origin frame has no useful same-origin path, and a stable public
+  // URL would be one more answer that could be substituted.
+  const doc = buildSrcdoc('tok', 'console.log(1)')
+
+  assert.match(doc, /<script>console\.log\(1\)<\/script>/)
+  assert.doesNotMatch(doc, /<script[^>]+src=/, 'the frame should load nothing')
+})
+
+test('the run token reaches the bootstrap through the markup', () => {
+  const doc = buildSrcdoc('abc123', '')
+  assert.match(doc, /<meta name="iris-token" content="abc123">/)
+})
+
+test('a token containing markup cannot escape its attribute', () => {
+  const doc = buildSrcdoc('a"><script>bad()</script>', '')
+
+  assert.doesNotMatch(doc, /content="a"><script>bad/)
+  assert.match(doc, /&quot;&gt;&lt;script&gt;/)
+})
+
+test('a bootstrap containing a closing script tag cannot break out', () => {
+  // The one sequence that ends a script element early. Split rather than
+  // HTML-escaped: the payload is JavaScript, and escaping inside it would change
+  // the program.
+  //
+  // Asserted with a constructed string rather than a regex — in a test about
+  // escaping, a literal backslash in the pattern is one more layer to reason
+  // about than the thing under test.
+  const BACKSLASH = String.fromCharCode(92)
+  const doc = buildSrcdoc('tok', `const s = "</script><img onerror=bad()>"`)
+
+  assert.equal(doc.includes('</script><img'), false, 'the payload broke out of its element')
+  assert.equal(doc.includes(`<${BACKSLASH}/script`), true, 'the sequence was not neutralised')
+  // Exactly one real script element: the one we opened.
+  assert.equal(doc.match(/<[/]script>/g)?.length, 1)
+})
+
+test('the policy travels in the document, not as an attribute the host must set', () => {
+  // The frame is built from `srcdoc`, so there is no response whose headers could
+  // carry this. A meta element is the only place it can live.
+  const doc = buildSrcdoc('tok', '')
+  assert.match(doc, /<meta http-equiv="Content-Security-Policy" content="[^"]+">/)
+})

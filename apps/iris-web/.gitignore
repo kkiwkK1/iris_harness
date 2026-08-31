@@ -1,0 +1,9 @@
+# The card-sandbox bootstrap's build output.
+#
+# Its own directory rather than `dist/sandbox/`, which the repository root
+# already ignores, because the app build runs with `emptyOutDir` and would wipe
+# it. `npm run build` orders the two builds correctly, but a bare `vite build`
+# afterwards would silently delete the bootstrap and leave a `dist/` that looks
+# complete and cannot run a single card. A separate directory cannot be emptied
+# by accident.
+dist-sandbox/

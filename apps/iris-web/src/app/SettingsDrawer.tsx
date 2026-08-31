@@ -20,6 +20,7 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
 import { ChoiceField, NumberField, Section, TextField } from './fields.tsx'
+import { ScriptPanel } from './ScriptPanel.tsx'
 import { READING_LIMITS, type ReadingPrefs, type ThemeChoice } from '../theme/theme.ts'
 
 /** Reading preferences and their setter, owned by the shell because they are per-device. */
@@ -238,6 +239,8 @@ export function SettingsDrawer({
             }}
           />
         </Section>
+
+        <ScriptPanel />
 
         <Slot name="iris.settings.sections" owner={{}} />
       </div>

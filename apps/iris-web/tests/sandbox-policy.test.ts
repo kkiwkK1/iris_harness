@@ -1,0 +1,97 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+import { frameSandbox, isAllowedRemote, REMOTE_ALLOWLIST, UNBRIDGED_GLOBALS } from '../src/sandbox/policy.ts'
+import { parseFromFrame, parseToFrame } from '../src/sandbox/protocol.ts'
+
+test('an ungranted card gets an opaque origin', () => {
+  // The whole boundary. Without `allow-same-origin` the browser refuses the
+  // card's reach into the host page before any Iris code is consulted, so
+  // shadowing `parent` is only a compatibility layer and evading it fails closed.
+  assert.equal(frameSandbox(false), 'allow-scripts')
+})
+
+test('a grant is spelled out as the one dangerous combination it is', () => {
+  // `allow-scripts allow-same-origin` together is not a sandbox. That is what a
+  // grant means, and it lives in one function so it appears once in the product.
+  assert.equal(frameSandbox(true), 'allow-scripts allow-same-origin')
+})
+
+test('the remote allowlist admits the measured hosts and nothing adjacent', () => {
+  assert.equal(isAllowedRemote('https://testingcf.jsdelivr.net/npm/vue@3/dist/vue.js'), true)
+  assert.equal(isAllowedRemote('https://cdn.jsdelivr.net/npm/lodash/lodash.min.js'), true)
+  assert.equal(isAllowedRemote('https://raw.githubusercontent.com/user/repo/main/x.js'), true)
+
+  assert.equal(isAllowedRemote('https://unpkg.com/vue'), false)
+  assert.equal(isAllowedRemote('https://evil.example/jsdelivr.net/x.js'), false)
+  // A lookalike registered as a suffix of the pattern without the dot boundary.
+  assert.equal(isAllowedRemote('https://notjsdelivr.net/x.js'), false)
+  assert.equal(isAllowedRemote('not a url at all'), false)
+})
+
+test('the allowlist is a suffix match on subdomains, not on the apex', () => {
+  // Every measured import is a subdomain; admitting the apex too would widen the
+  // list for a case that does not exist in the corpus.
+  assert.equal(isAllowedRemote('https://jsdelivr.net/x.js'), false)
+  assert.ok(REMOTE_ALLOWLIST.includes('*.jsdelivr.net'))
+})
+
+test('the unbridged globals are named so a refusal can say "not yet" rather than "no"', () => {
+  const names = UNBRIDGED_GLOBALS.map(row => row.name)
+  // `SillyTavern` and `extension_settings` have left this list because they are
+  // bridged now. An entry that outlives its bridge would refuse something that
+  // works, and claim to be temporary while doing it.
+  assert.deepEqual(names, ['eventSource', 'event_types', 'TavernHelper'])
+  // Ordered by measured site count, so the list doubles as the order to bridge in.
+  const sites = UNBRIDGED_GLOBALS.map(row => row.sites)
+  assert.deepEqual([...sites].sort((left, right) => right - left), sites)
+})
+
+test('a message without the run token is not ours', () => {
+  // A `srcdoc` frame posts with origin "null", and so does every other opaque
+  // frame on the page, so origin alone cannot tell the shell from a card.
+  assert.equal(parseToFrame('tok', { iris: 'other', type: 'run', code: 'x' }), undefined)
+  assert.equal(parseFromFrame('tok', { iris: 'other', type: 'ready' }), undefined)
+  assert.equal(parseToFrame('tok', null), undefined)
+  assert.equal(parseToFrame('tok', 'run'), undefined)
+})
+
+test('a well-formed message survives the round trip', () => {
+  assert.deepEqual(parseToFrame('tok', { iris: 'tok', type: 'run', code: 'let a = 1' }), {
+    iris: 'tok',
+    type: 'run',
+    code: 'let a = 1',
+  })
+  assert.deepEqual(parseFromFrame('tok', { iris: 'tok', type: 'ready' }), { iris: 'tok', type: 'ready' })
+})
+
+test('a malformed field is rejected rather than coerced', () => {
+  assert.equal(parseToFrame('tok', { iris: 'tok', type: 'run' }), undefined)
+  assert.equal(parseToFrame('tok', { iris: 'tok', type: 'viewport', width: '800', height: 600 }), undefined)
+  assert.equal(parseFromFrame('tok', { iris: 'tok', type: 'error', message: { text: 'x' } }), undefined)
+  assert.equal(parseFromFrame('tok', { iris: 'tok', type: 'unknown-thing' }), undefined)
+})
+
+/** Parse a height frame, narrowed so a test can read the number. */
+function height(pixels: unknown): number | undefined {
+  const parsed = parseFromFrame('tok', { iris: 'tok', type: 'height', pixels })
+  return parsed?.type === 'height' ? parsed.pixels : undefined
+}
+
+test('a reported height is bounded, because a card controls the number', () => {
+  // Not hostility — a bug is enough. An unbounded height makes a frame the page
+  // cannot scroll past, which is a card denying the interface.
+  assert.equal(height(400), 400)
+  assert.equal(height(1e9), 20_000)
+  assert.equal(height(-5), undefined)
+  assert.equal(height(Number.NaN), undefined)
+})
+
+test('card-controlled strings are truncated before they reach the UI', () => {
+  const long = 'x'.repeat(9000)
+  const parsed = parseFromFrame('tok', { iris: 'tok', type: 'error', message: long, member: long })
+
+  assert.ok(parsed?.type === 'error')
+  assert.equal(parsed.message.length, 2000)
+  assert.equal(parsed.member?.length, 200)
+})

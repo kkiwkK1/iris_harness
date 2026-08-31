@@ -5,10 +5,11 @@
   "type": "module",
   "description": "Vite entry over the DSH web shell. npm-managed; see README for why.",
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && npm run build:sandbox",
     "dev": "vite",
     "typecheck": "tsc --noEmit",
-    "check:render": "node tools/render-check.mjs"
+    "check:render": "node tools/render-check.mjs",
+    "build:sandbox": "vite build --config vite.sandbox.config.ts"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.2",

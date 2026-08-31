@@ -1,0 +1,288 @@
+/**
+ * The code that runs inside a card's frame.
+ *
+ * Its whole job is to build the globals a card reaches for and then evaluate the
+ * card's body against them. Every dependency arrives through `FrameEnv` rather
+ * than being read off the real `window`, for one reason: this is the piece that
+ * decides what a card can touch, and a piece that can only be exercised by
+ * opening a browser is a piece whose decisions are never checked. With the
+ * injection it runs under `node --test` against stubs.
+ *
+ * Shadowing is the compatibility layer, not the boundary — see `policy.ts`. A
+ * card that evades these parameters reaches the real, cross-origin `parent` and
+ * is stopped by the browser.
+ *
+ * @module iris-web/sandbox/frame
+ */
+
+import { UnsupportedApiError } from './errors.ts'
+import { UNBRIDGED_GLOBALS } from './policy.ts'
+import type { FromFrame, ToFrame } from './protocol.ts'
+import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
+import type { ScriptContext } from '@iris/protocol'
+
+/** What the frame-side code needs from its realm. */
+export interface FrameEnv {
+  /** The run token every message carries. */
+  token: string
+  /** The frame's own body — which is the card's container, and what `parent.document.body` yields. */
+  container: ScopedRoot
+  /** The frame's own document, for node construction. */
+  factory: NodeFactory
+  /** The real window of this frame, proxied through for everything not overridden. */
+  realWindow: object
+  /** Send a message to the shell. */
+  post: (message: FromFrame) => void
+  /** Receive messages from the shell; already token-checked by the caller. */
+  onMessage: (listener: (message: ToFrame) => void) => void
+  /**
+   * Evaluate a card body with the given globals shadowed.
+   *
+   * Injected rather than calling `new Function` here so a test can observe the
+   * exact names and values a card would see, which is the thing worth asserting.
+   */
+  evaluate: (source: string, names: readonly string[], values: readonly unknown[]) => void
+}
+
+/** A running frame's handle. */
+export interface FrameSandbox {
+  /** Names shadowed for card code, in order. */
+  readonly shadowed: readonly string[]
+  /** Last viewport the shell reported. */
+  viewport: () => { width: number, height: number }
+}
+
+/** Bind a function so calling it off the proxy does not trip an illegal invocation. */
+function passthrough(realWindow: object, property: string): unknown {
+  const value = (realWindow as Record<string, unknown>)[property]
+  return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(realWindow) : value
+}
+
+/**
+ * Install the sandbox and start listening for the card body.
+ *
+ * @param env - the frame's realm, injected.
+ * @returns the handle, mostly for tests and diagnostics.
+ */
+export function installSandbox(env: FrameEnv): FrameSandbox {
+  // Until the shell reports, fall back to the frame's own size. A card measuring
+  // the viewport before the first message gets a real number rather than zero.
+  let viewport = { width: 0, height: 0 }
+  const readViewport = (): { width: number, height: number } => viewport
+
+  const virtualDocument = createVirtualDocument({
+    container: env.container,
+    viewport: readViewport,
+    factory: env.factory,
+  })
+
+  const unbridged = new Map(UNBRIDGED_GLOBALS.map(row => [row.name, row]))
+
+  /** The host snapshot, absent until the shell pushes it. */
+  let context: ScriptContext | undefined
+
+  /**
+   * `extension_settings`, watched for top-level assignment.
+   *
+   * The corpus contains `if (!SillyTavern.extensionSettings.x) { … }` followed by
+   * `SillyTavern.extensionSettings.x = computed`. Without reporting that write
+   * the card recomputes the same value every run and stores it into a snapshot
+   * that is thrown away — silently, which is the expensive kind of wrong.
+   *
+   * Shallow: a top-level assignment is the shape that was measured. A mutation
+   * deeper inside an existing object is NOT caught here, and that is a known
+   * limit rather than an oversight — see the README.
+   */
+  const settingsProxy = (own: Record<string, unknown>): Record<string, unknown> =>
+    new Proxy(own, {
+      set(target, property, value): boolean {
+        const applied = Reflect.set(target, property, value)
+        if (applied) env.post({ iris: env.token, type: 'settings', settings: { ...target } })
+        return applied
+      },
+      deleteProperty(target, property): boolean {
+        const applied = Reflect.deleteProperty(target, property)
+        if (applied) env.post({ iris: env.token, type: 'settings', settings: { ...target } })
+        return applied
+      },
+    })
+
+  let extensionSettings: Record<string, unknown> | undefined
+
+  /**
+   * `SillyTavern`, as a card sees it.
+   *
+   * Both shapes the corpus uses: `getContext()` and direct member reads off the
+   * global. Truthy the moment a snapshot exists, because 12 of its 15 measured
+   * sites are `if (window.parent.SillyTavern)` probes deciding which window to
+   * talk to — a falsy answer sends the card down its own-window branch, where it
+   * does nothing and says nothing.
+   */
+  const sillyTavern = new Proxy(Object.create(null) as object, {
+    get(_target, property): unknown {
+      if (typeof property === 'symbol') return undefined
+      if (context === undefined) {
+        throw new UnsupportedApiError(
+          `SillyTavern.${property}`,
+          'The host context has not reached this frame yet.',
+        )
+      }
+      if (property === 'getContext') return () => sillyTavern
+      if (property === 'extensionSettings') return extensionSettings
+      const fields = context as unknown as Record<string, unknown>
+      if (Object.hasOwn(fields, property)) return fields[property]
+      throw new UnsupportedApiError(
+        `SillyTavern.${property}`,
+        'Iris bridges the members cards were measured to use; this is not one of them.',
+      )
+    },
+    set(_target, property): boolean {
+      throw new UnsupportedApiError(
+        `SillyTavern.${String(property)}`,
+        'Assign into extensionSettings, or call the save methods.',
+      )
+    },
+    has(_target, property): boolean {
+      if (context === undefined) return false
+      const fields = context as unknown as Record<string, unknown>
+      return property === 'getContext' || property === 'extensionSettings' || Object.hasOwn(fields, property)
+    },
+  })
+
+  /** `parent` and `top`, as a card sees them. */
+  const virtualParent = new Proxy(Object.create(null) as object, {
+    get(_target, property): unknown {
+      if (typeof property === 'symbol') return undefined
+      if (property === 'document') return virtualDocument
+      if (property === 'innerWidth') return viewport.width
+      if (property === 'innerHeight') return viewport.height
+      // A window size is not a secret, and the frame can already read one off
+      // its own `window.screen`; refusing it would break ten measured sites to
+      // protect nothing.
+      if (property === 'SillyTavern') return context === undefined ? undefined : sillyTavern
+      if (property === 'extension_settings') return extensionSettings
+
+      const planned = unbridged.get(property)
+      if (planned !== undefined) {
+        // A different fact from "forbidden", and the card author debugging
+        // deserves the right one.
+        throw new UnsupportedApiError(
+          `parent.${property}`,
+          `Iris has not bridged it yet; it is planned as ${planned.plan}.`,
+        )
+      }
+      throw new UnsupportedApiError(`parent.${property}`)
+    },
+    set(_target, property): boolean {
+      throw new UnsupportedApiError(`parent.${String(property)}`, 'The sandbox is not writable.')
+    },
+    has(_target, property): boolean {
+      return (
+        property === 'document' ||
+        property === 'innerWidth' ||
+        property === 'innerHeight' ||
+        ((property === 'SillyTavern' || property === 'extension_settings') && context !== undefined)
+      )
+    },
+  })
+
+  /**
+   * `window`, `self` and `globalThis`, as a card sees them.
+   *
+   * Proxied through to the real frame window rather than replaced: a card
+   * legitimately uses `window.addEventListener`, `window.setTimeout` and its own
+   * `document`, and all of that is the card's own realm. Only the three names
+   * that reach outward are overridden.
+   */
+  const windowShadow = new Proxy(env.realWindow, {
+    get(target, property): unknown {
+      if (property === 'parent' || property === 'top') return virtualParent
+      if (property === 'self' || property === 'window' || property === 'globalThis') {
+        return windowShadow
+      }
+      if (typeof property === 'symbol') return Reflect.get(target, property)
+      return passthrough(target, property)
+    },
+    set(target, property, value): boolean {
+      // Writes land on the real frame window: a card assigning `window.foo` is
+      // using its own realm as a namespace, which is its business.
+      if (property === 'parent' || property === 'top') {
+        throw new UnsupportedApiError(`window.${String(property)}`, 'The sandbox is not writable.')
+      }
+      return Reflect.set(target, property, value)
+    },
+  })
+
+  /*
+   * The bare globals are shadowed too, not only `parent.*`.
+   *
+   * Upstream flattens its whole API onto the child window as plain globals, so
+   * cards are written against both shapes — the corpus has the compatibility
+   * form that tries the bare global first and falls back to
+   * `window.parent.extension_settings`. Bridging only the `parent` path would
+   * miss every card that takes the first branch.
+   *
+   * `eventSource`, `event_types` and `TavernHelper` are deliberately NOT here:
+   * they are unbridged, and a bare name left undefined at least makes a direct
+   * use throw. (A `typeof x !== 'undefined'` probe still fails quietly, which is
+   * a blind spot no shadowing can close — noted in the README.)
+   */
+  const shadowed = [
+    'window',
+    'self',
+    'globalThis',
+    'parent',
+    'top',
+    'SillyTavern',
+    'extension_settings',
+  ] as const
+
+  /**
+   * Values are resolved per evaluation, not at install.
+   *
+   * `extension_settings` does not exist until the context arrives, and the
+   * context arrives after install. Capturing at install would hand every card a
+   * permanent `undefined`.
+   */
+  const resolveValues = (): unknown[] => [
+    windowShadow,
+    windowShadow,
+    windowShadow,
+    virtualParent,
+    virtualParent,
+    context === undefined ? undefined : sillyTavern,
+    extensionSettings,
+  ]
+
+  env.onMessage(message => {
+    if (message.type === 'viewport') {
+      viewport = { width: message.width, height: message.height }
+      return
+    }
+    if (message.type === 'context') {
+      context = message.context
+      extensionSettings = settingsProxy({ ...message.context.extensionSettings })
+      return
+    }
+    if (message.type !== 'run') return
+
+    try {
+      env.evaluate(message.code, shadowed, resolveValues())
+      env.post({ iris: env.token, type: 'ran' })
+    } catch (error: unknown) {
+      // A refusal and a bug in the card both land here, and the shell shows them
+      // differently: `member` is what tells them apart.
+      const member = error instanceof UnsupportedApiError ? error.member : undefined
+      env.post({
+        iris: env.token,
+        type: 'error',
+        message: error instanceof Error ? error.message : String(error),
+        ...(member === undefined ? {} : { member }),
+      })
+    }
+  })
+
+  env.post({ iris: env.token, type: 'ready' })
+
+  return { shadowed, viewport: readViewport }
+}
