@@ -17,6 +17,7 @@ export {
 export {
   parseRequest,
   requestSchemas,
+  RpcCallError,
   type RpcError,
   type RpcMethod,
   type RpcRequest,
@@ -64,4 +65,18 @@ export interface IrisClient {
 
   /** Whether the transport currently has a live connection. */
   readonly connected: boolean
+
+  /**
+   * Observe connection changes.
+   *
+   * Deliberately here and not in {@link import('./events.ts').IrisEvent}: that
+   * union is what the HOST sends, and a connection change is the one fact the
+   * host cannot report — it is least able to speak exactly when the news
+   * matters. A locally synthesized frame in that union would misstate its own
+   * provenance, and without this an offline banner can only appear once some
+   * unrelated traffic arrives to be counted.
+   * @param listener - called with the new state on every change, not on subscribe.
+   * @returns a disposer.
+   */
+  onConnectionChange(listener: (connected: boolean) => void): () => void
 }

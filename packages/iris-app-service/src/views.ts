@@ -76,6 +76,10 @@ export function projectMessages(
     if (event.type === 'user/message') {
       views.push({
         id: views.length,
+        // The log seq, not the position: seqs never shift, so a deletion
+        // earlier in the chat does not slide this row's identity onto its
+        // neighbour.
+        key: `u${event.seq}`,
         role: 'user',
         name: names.user,
         text: textOf(event.data as Message),
@@ -96,6 +100,10 @@ export function projectMessages(
     const reasoning = reasoningOf(current.message)
     views.push({
       id: views.length,
+      // The turn, since there is exactly one assistant row per turn and turn
+      // numbers are stable. Swiping changes the text behind this key rather
+      // than the key, which is what keeps a UI from remounting the row.
+      key: `a${messageTurn}`,
       role: 'assistant',
       name: names.character,
       text: textOf(current.message),
@@ -111,6 +119,9 @@ export function projectMessages(
     // working one. The partial text is real host state, so it is shown.
     views.push({
       id: views.length,
+      // Same key the settled row will carry: the streaming row becomes that row
+      // rather than being replaced by it, so nothing remounts mid-reply.
+      key: `a${pending.turn}`,
       role: 'assistant',
       name: names.character,
       text: pending.text,

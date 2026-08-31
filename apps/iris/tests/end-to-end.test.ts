@@ -26,6 +26,12 @@ before(async () => {
   mock = await startMockProvider()
   process.env.IRIS_BASE_URL = mock.baseURL
   process.env.IRIS_MODEL = 'mock-model'
+  // An ephemeral port, because this boots the real composition and that file
+  // defaults to 8787: without it the suite dies with EADDRINUSE for anyone who
+  // happens to have `pnpm start` running in another terminal.
+  process.env.IRIS_PORT = '0'
+  // Headless: no interface, which keeps the static row out of the tree.
+  delete process.env.IRIS_WEB_DIST
   ctx = await boot('iris-e2e', fileURLToPath(new URL('../cordis.yml', import.meta.url)))
 })
 
@@ -73,7 +79,13 @@ async function generate(system: string, messages: readonly { role: string, text:
   })) {
     assembler.push(chunk)
   }
-  return assembler.message({ kind: 'model', provider: 'default', model: 'mock-model' })
+  // Built from the assembled blocks rather than `assembler.message()`, which is
+  // typed as a bare Message: a candidate is specifically model-produced. Same
+  // correction as the turn driver's.
+  return createAssistantMessage({
+    content: assembler.blocks(),
+    source: { provider: 'default', model: 'mock-model' },
+  })
 }
 
 test('a preset and a character assemble into a prompt with post-history instructions last', () => {

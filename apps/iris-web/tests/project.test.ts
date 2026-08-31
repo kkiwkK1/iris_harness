@@ -9,7 +9,7 @@ function view(messages: MessageView[]): ChatView {
   return { chatId: 'c1', title: 'A scene', messages }
 }
 
-const userLine: MessageView = { id: 0, role: 'user', name: 'You', text: 'Go on.', turn: 1 }
+const userLine: MessageView = { id: 0, key: 'u0', role: 'user', name: 'You', text: 'Go on.', turn: 1 }
 
 test('a stream for a turn with no message yet is shown against a synthesized one', () => {
   // This is the case that decides whether a reply appears while it is being
@@ -26,7 +26,7 @@ test('a stream for a turn with no message yet is shown against a synthesized one
 })
 
 test('the synthesized message borrows the last speaker, not the chat title', () => {
-  const earlier: MessageView = { id: 0, role: 'assistant', name: '络络', text: 'Earlier.', turn: 0 }
+  const earlier: MessageView = { id: 0, key: 'a0', role: 'assistant', name: '络络', text: 'Earlier.', turn: 0 }
   const messages = withStream(view([earlier, { ...userLine, id: 1 }]), {
     turn: 1,
     text: '…',
@@ -39,6 +39,7 @@ test('the synthesized message borrows the last speaker, not the chat title', () 
 test('a stream for an existing message overwrites its text in place', () => {
   const placeholder: MessageView = {
     id: 1,
+    key: 'a1',
     role: 'assistant',
     name: '络络',
     text: 'stale',
@@ -69,9 +70,9 @@ test('with no stream the settled view is passed through unchanged', () => {
 
 test('messages sharing a turn become one group', () => {
   const groups = groupByTurn([
-    { id: 0, role: 'assistant', name: 'A', text: 'greeting', turn: 0 },
-    { id: 1, role: 'user', name: 'You', text: 'hi', turn: 1 },
-    { id: 2, role: 'assistant', name: 'A', text: 'reply', turn: 1 },
+    { id: 0, key: 'a0', role: 'assistant', name: 'A', text: 'greeting', turn: 0 },
+    { id: 1, key: 'u1', role: 'user', name: 'You', text: 'hi', turn: 1 },
+    { id: 2, key: 'a2', role: 'assistant', name: 'A', text: 'reply', turn: 1 },
   ])
 
   assert.deepEqual(
@@ -86,8 +87,8 @@ test('messages sharing a turn become one group', () => {
 test('messages with no turn each stand alone', () => {
   // A rule between them would claim a grouping the host never asserted.
   const groups = groupByTurn([
-    { id: 0, role: 'system', name: 'Iris', text: 'a' },
-    { id: 1, role: 'system', name: 'Iris', text: 'b' },
+    { id: 0, key: 's0', role: 'system', name: 'Iris', text: 'a' },
+    { id: 1, key: 's1', role: 'system', name: 'Iris', text: 'b' },
   ])
 
   assert.equal(groups.length, 2)
@@ -95,9 +96,9 @@ test('messages with no turn each stand alone', () => {
 
 test('only the last reply can be retried', () => {
   const messages: MessageView[] = [
-    { id: 0, role: 'assistant', name: 'A', text: 'first', turn: 0 },
-    { id: 1, role: 'user', name: 'You', text: 'more', turn: 1 },
-    { id: 2, role: 'assistant', name: 'A', text: 'second', turn: 1 },
+    { id: 0, key: 'a0', role: 'assistant', name: 'A', text: 'first', turn: 0 },
+    { id: 1, key: 'u1', role: 'user', name: 'You', text: 'more', turn: 1 },
+    { id: 2, key: 'a2', role: 'assistant', name: 'A', text: 'second', turn: 1 },
   ]
 
   assert.equal(lastReplyId(messages), 2)
@@ -106,9 +107,9 @@ test('only the last reply can be retried', () => {
 
 test('the keyboard swipe target is the newest reply that has alternates', () => {
   const messages: MessageView[] = [
-    { id: 0, role: 'assistant', name: 'A', text: 'x', turn: 0, swipes: { count: 3, index: 2 } },
-    { id: 1, role: 'user', name: 'You', text: 'y', turn: 1 },
-    { id: 2, role: 'assistant', name: 'A', text: 'z', turn: 1, swipes: { count: 2, index: 1 } },
+    { id: 0, key: 'a0', role: 'assistant', name: 'A', text: 'x', turn: 0, swipes: { count: 3, index: 2 } },
+    { id: 1, key: 'u1', role: 'user', name: 'You', text: 'y', turn: 1 },
+    { id: 2, key: 'a2', role: 'assistant', name: 'A', text: 'z', turn: 1, swipes: { count: 2, index: 1 } },
   ]
 
   assert.deepEqual(swipeTarget(messages), { turn: 1, count: 2, index: 1 })

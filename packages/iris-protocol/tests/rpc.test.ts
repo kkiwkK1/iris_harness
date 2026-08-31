@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { isEvent, parseRequest, requestSchemas, type IrisEvent } from '../src/index.ts'
+import { isEvent, parseRequest, requestSchemas, RpcCallError, type IrisEvent } from '../src/index.ts'
 
 test('a well-formed request parses', () => {
   const result = parseRequest('chat.send', { chatId: 'c1', text: '你好' })
@@ -55,4 +55,16 @@ test('events narrow by type', () => {
   assert.equal(isEvent(event, 'stream.text'), true)
   assert.equal(isEvent(event, 'stream.end'), false)
   if (isEvent(event, 'stream.text')) assert.equal(event.delta, 'hi')
+})
+
+test('a call rejection is a real Error that still carries its code', () => {
+  // Rejecting with a bare shape loses the stack, and every tool that formats
+  // errors degrades to printing `[object Object]`.
+  const error = new RpcCallError({ code: 'busy', message: 'that chat is generating' })
+
+  assert.ok(error instanceof Error)
+  assert.equal(error.code, 'busy')
+  assert.equal(error.message, 'that chat is generating')
+  assert.equal(error.name, 'RpcCallError')
+  assert.match(String(error.stack), /RpcCallError/)
 })

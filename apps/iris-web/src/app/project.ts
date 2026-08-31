@@ -38,6 +38,10 @@ export function withStream(view: ChatView | undefined, stream: StreamBuffer | un
   const at = view.messages.findIndex(row => row.role === 'assistant' && row.turn === stream.turn)
   const live = (base: Pick<MessageView, 'id' | 'name'>): MessageView => ({
     id: base.id,
+    // The key the host will give this turn's settled row, so React updates the
+    // row in place when the reply lands instead of unmounting a half-written
+    // one and mounting a finished one in its place.
+    key: `a${stream.turn}`,
     role: 'assistant',
     name: base.name,
     text: stream.text,

@@ -9,6 +9,12 @@ function stubClient(): { client: IrisClient, push: (event: IrisEvent) => void } 
   const listeners = new Set<(event: IrisEvent) => void>()
   const client: IrisClient = {
     connected: true,
+    // The stub never goes offline, so this only has to satisfy the interface;
+    // the disposer is still real, because a stub that leaks would hide a leak
+    // in the code under test.
+    onConnectionChange() {
+      return () => {}
+    },
     subscribe(listener) {
       listeners.add(listener)
       return () => {
@@ -37,7 +43,7 @@ function openedStore(): { store: IrisStore, push: (event: IrisEvent) => void, di
 const settled: ChatView = {
   chatId: 'c1',
   title: 'A scene',
-  messages: [{ id: 0, role: 'assistant', name: 'A', text: 'the whole reply', turn: 0 }],
+  messages: [{ id: 0, key: 'a0', role: 'assistant', name: 'A', text: 'the whole reply', turn: 0 }],
 }
 
 test('deltas accumulate into the stream buffer', () => {

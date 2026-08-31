@@ -81,6 +81,10 @@ export function toMessageView(message: FakeMessage, id: number, streaming: boole
   const candidate = selected(message)
   return {
     id,
+    // Mirrors the host's scheme so the interface cannot come to depend on a
+    // shape only the fake produces: user rows key off position, assistant rows
+    // off the turn, and a streaming row shares its settled row's key.
+    key: message.role === 'assistant' ? `a${message.turn}` : `u${id}`,
     role: message.role,
     name: message.name,
     text: candidate.text,

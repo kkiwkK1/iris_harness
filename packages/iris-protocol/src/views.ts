@@ -18,6 +18,16 @@ export type ViewRole = 'system' | 'user' | 'assistant'
 export interface MessageView {
   /** Stable index in the conversation, matching what a card script would see. */
   id: number
+  /**
+   * Identity for the lifetime of one open chat.
+   *
+   * `id` cannot serve: it is a position, so deleting a message shifts every
+   * later one and a UI keyed on it reuses component instances across what are
+   * now different messages — an open inline editor ends up attached to the
+   * neighbouring turn. This need not survive a reload or match anything the
+   * host stores; it only has to stay put while the chat is open.
+   */
+  key: string
   role: ViewRole
   /** Speaker name, for group chats and instruct-mode display. */
   name: string

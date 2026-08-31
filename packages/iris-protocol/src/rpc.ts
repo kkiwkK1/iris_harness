@@ -54,6 +54,15 @@ export const requestSchemas = {
   'character.delete': z.object({ characterId: z.string().min(1) }),
 
   'settings.get': z.object({ chatId: z.string().min(1).optional() }),
+  /**
+   * A partial patch, with three cases the two halves must read alike:
+   * an omitted key leaves that field alone, an explicit `null` clears the
+   * optional field so the host's own default applies, and an unrecognized key
+   * is dropped rather than stored — a typo must not look supported.
+   *
+   * `null` carries that meaning because omission is already spoken for: a patch
+   * has no other way to say "stop overriding this".
+   */
   'settings.set': z.object({
     chatId: z.string().min(1).optional(),
     settings: z.record(z.string(), z.unknown()),
@@ -76,6 +85,13 @@ export interface RpcResponseMap {
 
   /** Resolves when the turn is open, not when the reply is finished. */
   'chat.send': { turn: number }
+  /**
+   * Produces another candidate for the LAST turn only.
+   *
+   * Regenerating an earlier turn would mean discarding everything after it,
+   * which is a different operation with different consequences; it is
+   * deliberately absent rather than implied.
+   */
   'chat.regenerate': { turn: number }
   'chat.abort': Record<string, never>
   'chat.swipe': { view: ChatView }
@@ -105,6 +121,28 @@ export interface RpcError {
     | 'internal'
   /** Human-readable detail. Safe to show; must not carry a credential. */
   message: string
+}
+
+/**
+ * The rejection `IrisClient.call` produces.
+ *
+ * A real `Error`, not a bare shape: a promise rejected with a plain object
+ * loses its stack and every tool that formats errors — the console, a test
+ * runner, an error boundary — degrades to printing `[object Object]`. The
+ * machine-readable half rides alongside so a caller can still branch on
+ * `code` without parsing prose.
+ */
+export class RpcCallError extends Error implements RpcError {
+  readonly code: RpcError['code']
+
+  /**
+   * @param error - the failure the host reported.
+   */
+  constructor(error: RpcError) {
+    super(error.message)
+    this.name = 'RpcCallError'
+    this.code = error.code
+  }
 }
 
 /** One request frame on the wire. */

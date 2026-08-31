@@ -95,6 +95,7 @@ class InMemoryClient implements FakeClient {
   #characters: CharacterSummary[]
   #globalSettings: GenerationSettings
   #listeners = new Set<(event: IrisEvent) => void>()
+  #connectionListeners = new Set<(connected: boolean) => void>()
   #streams = new Map<string, Streaming>()
   #connected = true
   #chunkDelayMs: number
@@ -114,10 +115,24 @@ class InMemoryClient implements FakeClient {
   }
 
   setConnected(value: boolean): void {
+    if (this.#connected === value) return
     this.#connected = value
+    // Notify, because an offline banner that waits for the next unrelated frame
+    // is the thing `onConnectionChange` exists to prevent — and a fake that
+    // only flips the flag would let the interface pass its tests and still fail
+    // against the real transport.
+    for (const listener of [...this.#connectionListeners]) listener(value)
+  }
+
+  onConnectionChange(listener: (connected: boolean) => void): () => void {
+    this.#connectionListeners.add(listener)
+    return () => {
+      this.#connectionListeners.delete(listener)
+    }
   }
 
   dispose(): void {
+    this.#connectionListeners.clear()
     for (const stream of this.#streams.values()) {
       stream.aborted = true
       for (const timer of stream.timers) clearTimeout(timer)
