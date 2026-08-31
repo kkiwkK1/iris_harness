@@ -1,0 +1,14 @@
+{
+  "name": "@iris/rpc-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser IrisClient over fetch and WebSocket, with reconnect.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  },
+  "dependencies": {
+    "@iris/protocol": "workspace:*"
+  }
+}

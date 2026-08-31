@@ -1,9 +1,17 @@
 # `spike/` is deliberately excluded: those are throwaway phase-0 harnesses with
 # their own installs, and folding them in would let a spike dependency drift
 # into the product tree.
+#
+# `apps/iris-web` is excluded because pnpm cannot extract esbuild in this
+# environment (see spike/RESULTS.md): the rename step it uses races something
+# holding the freshly written binary, deterministically. npm writes in place and
+# succeeds, so the browser app is npm-managed and reaches workspace code through
+# Vite aliases rather than `workspace:*`.
 packages:
   - 'packages/*'
   - 'apps/*'
+  - '!apps/iris-web'
+
 minimumReleaseAgeExclude:
   - '@deepseek-ai/cordis@4.0.2'
   - '@deepseek-ai/cosmokit@1.8.3'

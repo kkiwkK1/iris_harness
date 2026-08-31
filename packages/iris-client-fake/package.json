@@ -1,0 +1,14 @@
+{
+  "name": "@iris/client-fake",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "In-memory IrisClient, so the interface can be built and tested without a host.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  },
+  "dependencies": {
+    "@iris/protocol": "workspace:*"
+  }
+}
