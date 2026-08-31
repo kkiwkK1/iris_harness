@@ -27,6 +27,7 @@ import { checkScriptFetch, extractScripts } from '@iris/script'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
 import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } from '@iris/turn'
 
+import { ConnectionStore } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
@@ -78,6 +79,13 @@ export interface AppServiceOptions {
    */
   extensionSettings?: ExtensionSettingsStore
   /**
+   * The user's saved connections.
+   *
+   * Optional like the other stores: absent means an empty list, which is what a
+   * host with nowhere to keep them should report.
+   */
+  connections?: ConnectionStore
+  /**
    * Fetches a remote script dependency. Defaults to global `fetch`.
    *
    * Injectable so the whitelist can be tested without a network, and so a
@@ -111,8 +119,13 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings'>>
-    & { onError: (error: Error) => void, scripts?: ScriptPolicyStore, extensionSettings?: ExtensionSettingsStore }
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'connections'>>
+    & {
+      onError: (error: Error) => void
+      scripts?: ScriptPolicyStore
+      extensionSettings?: ExtensionSettingsStore
+      connections?: ConnectionStore
+    }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
 
   /**
@@ -134,6 +147,7 @@ export class IrisAppService {
       fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
       ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
+      ...options.connections === undefined ? {} : { connections: options.connections },
     }
   }
 
@@ -252,6 +266,29 @@ export class IrisAppService {
         // whose record went when the chat last closed. `preview` says which.
         const recorded = turn === undefined ? undefined : entry.itemizations.get(turn)
         return { itemization: recorded ?? this.#previewItemization(entry) }
+      },
+
+      'connection.list': async () => this.#connections().list(),
+
+      'connection.save': async (input) => this.#connections().save({
+        provider: input.provider,
+        model: input.model,
+        ...input.id === undefined ? {} : { id: input.id },
+        ...input.label === undefined ? {} : { label: input.label },
+        ...input.preset === undefined ? {} : { preset: input.preset },
+        ...input.sampling === undefined ? {} : { sampling: input.sampling },
+      }),
+
+      'connection.delete': async ({ id }) => this.#connections().delete(id),
+
+      'connection.activate': async ({ id, chatId }) => {
+        const store = this.#connections()
+        const profile = await store.get(id)
+        // Applied through `settings.set`, so a profile cannot install a value
+        // that setting it by hand would have been refused.
+        const applied = await settings.set(chatId, ConnectionStore.patchOf(profile))
+        await store.markActive(id)
+        return { settings: applied, activeId: id }
       },
 
       'character.list': async () => ({ characters: await library.list() }),
@@ -400,6 +437,15 @@ export class IrisAppService {
         }
       },
     }
+  }
+
+  /** The connection store, or a refusal naming why there is none. */
+  #connections(): ConnectionStore {
+    const store = this.#options.connections
+    if (store === undefined) {
+      throw new AppError('unsupported', 'connection profiles are not configured on this host')
+    }
+    return store
   }
 
   /**

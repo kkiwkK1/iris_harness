@@ -28,6 +28,12 @@ import {
 import { chunk, replyFor, reasoningFor } from './corpus.ts'
 import { readCard } from './card.ts'
 import { fakeItemization } from './prompt.ts'
+import {
+  activateConnection,
+  deleteConnection,
+  listConnections,
+  saveConnection,
+} from './connections.ts'
 import { mergeSettings } from './settings.ts'
 import { DEFAULT_SETTINGS, seedCharacters, seedChats } from './seed.ts'
 import { toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
@@ -307,6 +313,31 @@ class InMemoryClient implements FakeClient {
         this.#emit({ type: 'chat.updated', chatId, view })
         this.#emit({ type: 'chats.updated', chats: this.#summaries() })
         return { view }
+      }
+
+      case 'connection.list':
+        return listConnections()
+
+      case 'connection.save':
+        return saveConnection(params as RpcRequest<'connection.save'>)
+
+      case 'connection.delete': {
+        const { id } = params as RpcRequest<'connection.delete'>
+        const result = deleteConnection(id)
+        if (result === undefined) throw new FakeRpcError('not-found', `no connection "${id}"`)
+        return result
+      }
+
+      case 'connection.activate': {
+        const { id, chatId } = params as RpcRequest<'connection.activate'>
+        const result = activateConnection(id)
+        if (result === undefined) throw new FakeRpcError('not-found', `no connection "${id}"`)
+        // Activating writes through to whichever settings scope was named, so the
+        // interface sees the same effect the real host would produce rather than a
+        // list that changed and a chat that did not.
+        if (chatId === undefined) this.#globalSettings = { ...result.settings }
+        else this.#require(chatId).settings = { ...result.settings }
+        return result
       }
 
       case 'prompt.itemize': {

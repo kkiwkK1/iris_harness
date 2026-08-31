@@ -134,6 +134,14 @@ export interface ProfilePaths {
   scriptPolicy: string
   /** What cards have stored under `extension_settings`. */
   extensionSettings: string
+  /**
+   * Saved connections.
+   *
+   * Its own file, not a section of `settings.json`: settings are what a chat is
+   * using now, these are the sets the user assembled. Clearing one should not
+   * empty the other.
+   */
+  connections: string
 }
 
 /**
@@ -163,5 +171,6 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     settings: join(root, 'settings.json'),
     scriptPolicy: join(root, 'script-policy.json'),
     extensionSettings: join(root, 'extension-settings.json'),
+    connections: join(root, 'connections.json'),
   }
 }

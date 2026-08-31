@@ -12,6 +12,13 @@
 export { createFakeClient, FakeRpcError, type FakeClient, type FakeClientOptions } from './client.ts'
 export { readCard, type ReadCard } from './card.ts'
 export { fakeItemization } from './prompt.ts'
+export {
+  activateConnection,
+  deleteConnection,
+  listConnections,
+  saveConnection,
+  summarize,
+} from './connections.ts'
 export { mergeSettings } from './settings.ts'
 export { DEFAULT_SETTINGS, seedCharacters, seedChats } from './seed.ts'
 export {

@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, GenerationSettings, PromptItemization, ScriptContext, ScriptView } from './views.ts'
+import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, GenerationSettings, PromptItemization, ScriptContext, ScriptView } from './views.ts'
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -68,6 +68,40 @@ export const requestSchemas = {
    * is open, and answers with a preview (`preview: true`) when the record is
    * gone.
    */
+  /**
+   * Saved connections: an endpoint, a model and a preset switched as a set.
+   *
+   * Measured on the user's install, their two profiles differ in endpoint URL
+   * *and* credential as well as model — switching a connection is switching all
+   * of it, which is why this is one object rather than a model picker.
+   *
+   * The endpoint itself is a composition row (`provider`), not a field here.
+   * That is a real limit: a new endpoint means editing the composition, not
+   * adding one in the interface. Lifting it is not blocked on registering an
+   * adapter at runtime, which is mechanical — it is blocked on **where a
+   * credential added through the interface would be stored**. Today the answer
+   * is the gitignored `.env`; putting one in a profile file needs a deliberate
+   * secret-storage decision, and SillyTavern's plaintext `secrets.json` is a
+   * counter-example rather than a precedent. Whoever lifts this passes that gate
+   * first.
+   */
+  'connection.list': z.object({}),
+  'connection.save': z.object({
+    /** Absent creates; present replaces that profile. */
+    id: z.string().min(1).optional(),
+    label: z.string().max(200).optional(),
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    preset: z.string().max(255).optional(),
+    sampling: z.record(z.string(), z.unknown()).optional(),
+  }),
+  'connection.delete': z.object({ id: z.string().min(1) }),
+  /** Apply a profile: globally, or to one chat when `chatId` is given. */
+  'connection.activate': z.object({
+    id: z.string().min(1),
+    chatId: z.string().min(1).optional(),
+  }),
+
   'prompt.itemize': z.object({
     chatId: z.string().min(1),
     turn: z.number().int().min(0).optional(),
@@ -261,6 +295,11 @@ export interface RpcResponseMap {
   /** The new branch, already open, plus the refreshed list it now appears in. */
   'chat.branch': { view: ChatView, chats: ChatSummary[] }
   'prompt.itemize': { itemization: PromptItemization }
+
+  'connection.list': { profiles: ConnectionProfile[], activeId?: string }
+  'connection.save': { profiles: ConnectionProfile[], activeId?: string }
+  'connection.delete': { profiles: ConnectionProfile[], activeId?: string }
+  'connection.activate': { settings: GenerationSettings, activeId: string }
 
   'character.list': { characters: CharacterSummary[] }
   'character.import': { character: CharacterSummary }

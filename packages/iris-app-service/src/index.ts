@@ -24,12 +24,14 @@ import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
 import { IrisAppService } from './service.ts'
+import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
 import { ScriptPolicyStore } from './scripts.ts'
 import { SettingsStore } from './settings.ts'
 
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
+export { ConnectionStore, summarize, type ProfileInput } from './connections.ts'
 export {
   assertStorable,
   buildCardContext,
@@ -271,6 +273,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Kept apart from `script-policy.json` because they answer to different
   // owners: the policy file is the user's decisions, this is data cards wrote.
   const extensionSettings = new ExtensionSettingsStore(paths.extensionSettings)
+  const connections = new ConnectionStore(paths.connections)
 
   // The folders are created on first write, not on boot: a host that has never
   // been used should leave nothing behind, and both stores already tolerate a
@@ -284,6 +287,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     settings,
     scripts,
     extensionSettings,
+    connections,
     preset: await loadPreset(config.presetPath),
     broadcast: event => { ctx.irisRpc.broadcast(event) },
     ...config.userName === undefined ? {} : { userName: config.userName },
@@ -313,6 +317,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.deleteMessage', handlers['chat.deleteMessage']),
       ctx.irisRpc.register('chat.branch', handlers['chat.branch']),
       ctx.irisRpc.register('prompt.itemize', handlers['prompt.itemize']),
+      ctx.irisRpc.register('connection.list', handlers['connection.list']),
+      ctx.irisRpc.register('connection.save', handlers['connection.save']),
+      ctx.irisRpc.register('connection.delete', handlers['connection.delete']),
+      ctx.irisRpc.register('connection.activate', handlers['connection.activate']),
       ctx.irisRpc.register('character.list', handlers['character.list']),
       ctx.irisRpc.register('character.import', handlers['character.import']),
       ctx.irisRpc.register('character.delete', handlers['character.delete']),

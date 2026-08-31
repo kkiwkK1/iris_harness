@@ -248,6 +248,35 @@ export interface PromptItemization {
   preview: boolean
 }
 
+/**
+ * One saved connection: an endpoint, a model and a preset, switched together.
+ *
+ * Upstream stores a display name generated once at creation, from the values as
+ * they were then. Measured on the user's own install, the profile they have
+ * selected is called `deepseek deepseek-chat - Default` and points at a Gemini
+ * model, a different endpoint and a different preset — the name was true when it
+ * was written and has been wrong ever since.
+ *
+ * So there is no stored name here. {@link label} is the user's own words, which
+ * cannot go stale, and {@link summary} is derived on every read. Disagreement
+ * between a profile's name and its contents is not prevented by discipline; it
+ * is unrepresentable.
+ */
+export interface ConnectionProfile {
+  id: string
+  /** What the user called it. Absent means they never named it. */
+  label?: string
+  /** Derived from the current values on every read, never stored. */
+  summary: string
+  /** Which registered adapter route to generate through. */
+  provider: string
+  model: string
+  /** Preset file to assemble with, by name. */
+  preset?: string
+  /** Sampling overrides applied when this profile is activated. */
+  sampling?: Partial<GenerationSettings>
+}
+
 /** The model route and sampling a chat is running with. */
 export interface GenerationSettings {
   provider: string
