@@ -15,6 +15,15 @@ test('the frame policy allows eval and pins where code comes from', () => {
   assert.doesNotMatch(policy, /script-src[^;]*https:(?!\/\/)/, 'script-src must not admit all of https')
 })
 
+test('blob: scripts are allowed, because the injection layer arrives that way', () => {
+  // Measured in a live network trace: Tavern Helper delivers `predefine`,
+  // `adjust_iframe_height` and `adjust_viewport` as blob URLs, not inline text.
+  // Without this the injection layer is blocked before any card code exists, and
+  // the symptom looks like a broken card rather than a wrong policy.
+  const policy = framePolicy()
+  assert.match(policy, /script-src[^;]*blob:/, 'the injected layer would be blocked')
+})
+
 test('the frame cannot open a nested context or post a form', () => {
   // Both are routes out of a frame whose entire purpose is not having one.
   const policy = framePolicy()

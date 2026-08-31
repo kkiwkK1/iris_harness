@@ -38,6 +38,7 @@ export function Masthead({
   const settings = useIris(state => state.settings)
   const generating = useIris(state => state.stream !== undefined)
   const characters = useIris(state => state.characters)
+  const transport = useIris(state => state.transport)
 
   const character = characters.find(row => row.characterId === view?.characterId)
   // Turns rather than messages: a turn is the unit the reader thinks in, and the
@@ -61,6 +62,21 @@ export function Masthead({
           Settings
         </Button>
       </div>
+      {transport === 'fake' ? (
+        /*
+          Said permanently, and only in this direction.
+          
+          An observer once checked that the host served this app and that its RPC
+          answered — both true — and concluded the page was showing real data,
+          while seeded character names sat on screen for two days. "This is
+          invented data" is cheap to say and expensive to leave unsaid; the
+          opposite is the expectation and needs no decoration.
+        */
+        <p className="iris-masthead__stub">
+          Seeded data — this page is not talking to a host. Add{' '}
+          <code>?transport=rpc</code> to use one.
+        </p>
+      ) : null}
       {view === undefined ? null : (
         <p className="iris-masthead__meta iris-meta">
           {[

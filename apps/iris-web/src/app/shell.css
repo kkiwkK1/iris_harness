@@ -323,3 +323,30 @@
     padding-left: 0;
   }
 }
+
+/*
+ * The seeded-data marker.
+ *
+ * Warn-coloured rather than accent: it is not a feature of the page, it is a
+ * statement that the page is not showing the truth. It sits on the masthead
+ * because that is where the reader looks to learn what they are reading.
+ */
+.iris-masthead__stub {
+  max-width: calc(var(--iris-gutter) + var(--iris-measure) + 40px);
+  margin: 6px auto 0;
+  padding-left: var(--iris-gutter);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--iris-warn);
+}
+
+.iris-masthead__stub code {
+  font-family: var(--iris-font-mono);
+  font-size: 0.95em;
+}
+
+@media (max-width: 880px) {
+  .iris-masthead__stub {
+    padding-left: 0;
+  }
+}

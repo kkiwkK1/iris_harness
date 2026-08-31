@@ -20,6 +20,7 @@ import type { ScriptContext } from '@iris/protocol'
 import { frameSandbox } from './policy.ts'
 import { mintToken, parseFromFrame, type FromFrame, type ToFrame } from './protocol.ts'
 import { buildSrcdoc } from './srcdoc.ts'
+import { rewriteViewportUnits } from './viewport-units.ts'
 
 /** What one running card needs from the shell. */
 export interface RunnerHost {
@@ -39,6 +40,14 @@ export interface RunnerHost {
   onSettings: (settings: Record<string, unknown>) => void
   /** The card threw, or was refused a member. */
   onError: (message: string, member?: string) => void
+  /**
+   * The frame reported its content height, already bounded by the protocol.
+   *
+   * The runner applies it either way; this is for a caller that needs to know it
+   * happened — which so far is the dev harness, whose whole job is observing
+   * that the mechanism works.
+   */
+  onHeight?: (pixels: number) => void
 }
 
 /** A running card. */
@@ -98,11 +107,15 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         post({ iris: token, type: 'context', context: host.context })
         const size = host.viewport()
         post({ iris: token, type: 'viewport', width: size.width, height: size.height })
-        post({ iris: token, type: 'run', code: host.code })
+        // Rewritten on the way in, which is where upstream does it too: a card
+        // sized in `vh` is measuring its own frame, and a frame sized to its
+        // content would collapse `100vh` to nothing.
+        post({ iris: token, type: 'run', code: rewriteViewportUnits(host.code) })
         return
       }
       case 'height':
         frame.style.height = `${message.pixels}px`
+        host.onHeight?.(message.pixels)
         return
       case 'settings':
         host.onSettings(message.settings)

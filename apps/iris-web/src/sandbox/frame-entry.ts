@@ -31,16 +31,48 @@ function token(): string {
 /**
  * Report the content height to the shell, so it can size the frame.
  *
- * `ResizeObserver` on the body rather than a poll: card UI changes height when
- * the card decides to, not on a schedule, and a poll would either lag or burn a
- * frame budget inside every card on the page.
+ * `ResizeObserver` on the body rather than a poll — the same source upstream
+ * observes. Card UI changes height when the card decides to, not on a schedule.
+ *
+ * **A known divergence from upstream lives here.** Tavern Helper's injected
+ * script writes the parent's `frameElement.style.height` directly from inside the
+ * child. That requires same-origin, and Iris's frames are deliberately
+ * cross-origin, so the height has to travel as a message and be applied by the
+ * shell. Semantically equivalent, one frame later. Nothing can remove that frame
+ * without giving up the isolation, so it is a cost, not a bug to fix.
+ *
+ * Coalesced through `requestAnimationFrame`, with upstream's 500ms throttle as
+ * the fallback where rAF is unavailable: an observer callback per layout pass,
+ * each posting a message across a frame boundary, is a real cost inside every
+ * card on the page.
  */
 function reportHeight(run: string, post: (message: FromFrame) => void): void {
+  let scheduled = false
   const send = (): void => {
+    scheduled = false
     post({ iris: run, type: 'height', pixels: document.documentElement.scrollHeight })
   }
-  new ResizeObserver(send).observe(document.body)
+  const schedule = (): void => {
+    if (scheduled) return
+    scheduled = true
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(send)
+    else setTimeout(send, 500)
+  }
+
+  new ResizeObserver(schedule).observe(document.body)
   send()
+}
+
+/**
+ * Publish the viewport height as the custom property card CSS reads.
+ *
+ * `--TH-viewport-height` is upstream's name and is kept verbatim: card stylesheets
+ * reference it by that spelling, and a compatibility layer that renames what it
+ * is compatible with is not one.
+ * @param size - the host viewport as the shell reported it.
+ */
+function applyViewport(size: { width: number, height: number }): void {
+  document.documentElement.style.setProperty('--TH-viewport-height', `${size.height}px`)
 }
 
 const run = token()
@@ -69,6 +101,7 @@ installSandbox({
   },
   realWindow: window,
   post,
+  applyViewport,
   onMessage: listener => {
     listeners.push(message => {
       if (message !== undefined) listener(message)

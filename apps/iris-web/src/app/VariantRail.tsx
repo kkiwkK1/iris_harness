@@ -14,6 +14,13 @@
  * stay up and later ones stay down — the ladder's axis survives the change of
  * form, which is what keeps the two from feeling like different controls.
  *
+ * On any turn but the last it is a **record, not a control**. That is not a
+ * borrowed convention — SillyTavern hardcodes `.last_mes` in its swipe handlers —
+ * it is what the data allows: switching an earlier beat's reading would leave
+ * every later turn answering words the transcript no longer shows. An apparatus
+ * criticus records the variants of a passage; it does not rewrite the passage.
+ * So the ticks stay, dimmed and inert, and still answer "how many, which one".
+ *
  * @module iris-web/app/VariantRail
  */
 
@@ -25,22 +32,44 @@ import { railMode, stepReading } from './rail.ts'
  * Render the rail for one message.
  * @param props.count - how many readings exist.
  * @param props.index - the visible reading, zero-based.
+ * @param props.interactive - whether this turn's readings can still be changed.
  * @param props.onSelect - called with the reading to show.
  * @returns the rail, or null when there is nothing to choose between.
  */
 export function VariantRail({
   count,
   index,
+  interactive,
   onSelect,
 }: {
   count: number
   index: number
+  interactive: boolean
   onSelect: (index: number) => void
 }): ReactElement | null {
   const mode = railMode(count)
   if (mode === 'hidden') return null
 
-  const label = `${count} readings of this reply`
+  const label = interactive
+    ? `${count} readings of this reply`
+    : `${count} readings were generated for this reply; the current one is ${index + 1}`
+
+  if (!interactive) {
+    return (
+      <div className="iris-rail iris-rail--record" role="group" aria-label={label}>
+        {Array.from({ length: mode === 'compact' ? 1 : count }, (_unused, at) => (
+          <span
+            key={at}
+            className="iris-rail__tick"
+            aria-current={mode === 'compact' ? undefined : at === index}
+          />
+        ))}
+        <span className="iris-rail__count">
+          {index + 1}/{count}
+        </span>
+      </div>
+    )
+  }
 
   if (mode === 'compact') {
     const earlier = stepReading(index, count, -1)

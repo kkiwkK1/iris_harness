@@ -17,12 +17,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createFakeClient } from '@iris/client-fake'
-import type { IrisClient } from '@iris/protocol'
 
 import { App } from './app/App.tsx'
 import { StoreProvider } from './client/provider.tsx'
 import { createIrisStore } from './client/store.ts'
+import { createClient } from './client/create-client.ts'
 import { SlotProvider } from './slots/Slot.tsx'
 import { createIrisSlots } from './slots/slots.ts'
 
@@ -42,27 +41,27 @@ declare module '@deepseek-ai/cordis' {
 export const name = 'iris-client-shell'
 
 /**
- * Choose the transport.
- *
- * The fake until `@iris/rpc-client` lands, and the swap is this function. Every
- * component above it programs against `IrisClient` alone, which is what let the
- * interface be built while the transport was being written in parallel.
- * @returns the client the application talks to.
- */
-function createClient(): IrisClient {
-  return createFakeClient()
-}
-
-/**
  * Provide the renderer for this context's fiber.
  * @param ctx - the client plugin context.
  */
 export function apply(ctx: Context): void {
-  const client = createClient()
+  // A transport failure has to reach the reader, not the console: a dead socket
+  // in a local-first app looks exactly like an app that has stopped working, and
+  // the person looking at it is the one who can restart the host.
+  //
+  // Deferred through a holder because the client is built before the store that
+  // will display its failures — the alternative is a circular construction.
+  let report: ((error: Error) => void) | undefined
+  const built = createClient(error => {
+    report?.(error)
+  })
   const slots = createIrisSlots()
   ctx.effect(() => slots.dispose, 'iris-client-shell.slots')
 
-  const wired = createIrisStore(client)
+  const wired = createIrisStore(built.client, { transport: built.transport, origin: built.origin })
+  report = error => {
+    wired.store.getState().notify('error', error.message)
+  }
   ctx.effect(() => wired.dispose, 'iris-client-shell.store')
 
   const renderer: UiRenderer = {

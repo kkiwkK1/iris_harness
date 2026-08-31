@@ -11,6 +11,23 @@ npm run build          # the app, then the sandbox bootstrap
 npm run build:sandbox  # the bootstrap alone (dist-sandbox/bootstrap.js)
 ```
 
+## Which data you are looking at
+
+The transport is chosen by `src/client/transport.ts`: **a production build talks
+to a host, a dev build uses the fake.** `?transport=rpc` or `?transport=fake`
+overrides either way — the first works in `npm run dev` because `vite.config.ts`
+proxies `/iris/rpc` and `/iris/events` to `127.0.0.1:8787`.
+
+**The page says so when its data is invented.** A seeded-data line sits on the
+masthead whenever the fake is in use, and there is deliberately no equivalent for
+the real transport: the reason is a failure that already happened here. A
+host-served build ran on the fake for two days while an observer checked that the
+assets were reachable and that RPC answered — both true, neither of them the
+question of whether the *page* was using RPC. Two green checks composed into a
+false conclusion, and the seeded character names were on screen the whole time.
+That is why the disclosure is permanent and one-directional, and why
+`chooseTransport` is a pure function with tests rather than an inline ternary.
+
 **The build has two outputs and they are not interchangeable.** `dist/` is the
 app; `dist-sandbox/bootstrap.js` is the card-sandbox bootstrap, built by a second
 config as a *classic IIFE* because a card's frame has an opaque origin where a
@@ -161,6 +178,32 @@ around from here. All are additions; nothing existing needs to change shape.
 5. **`chat.regenerate` addresses only the last reply**, which is what this UI
    offers. Regenerating an earlier turn would mean discarding everything after
    it; that is a different operation and the protocol does not have one.
+
+## Running something in a real frame
+
+`npm run build:sandbox`, then `npm run dev`, then Settings → **Sandbox probe
+(dev)**. The panel is gated on `import.meta.env.DEV`, so the branch is statically
+dead in a production build and the harness and runner drop out of the bundle
+entirely (verified by grepping the built chunks).
+
+It runs a purpose-written probe body rather than a real card, and that is the
+point: OVERLORD's nine scripts would fail in nine unrelated ways, none of which
+would say whether the *frame* works. The probe answers only what a browser is
+required for —
+
+| question | why only a browser can answer it |
+| --- | --- |
+| does `new Function` / `eval` run in an opaque-origin frame under `unsafe-eval`? | if not, no real card runs at all, and CSP was ruled out as the *isolation* mechanism precisely because these blobs need eval |
+| does the `ResizeObserver` height report size the frame? | the whole card-UI surface depends on it |
+| does `parent.document.documentElement.clientWidth` return the host viewport? | ten of the fourteen measured `parent.document` sites read exactly this; zero would mean the push never landed |
+
+It also checks that a refusal arrives as a throw naming the member rather than as
+`undefined`, and that an extension-settings write reaches the shell.
+
+The probe renders its findings into its own body because the frame is
+cross-origin — the shell cannot read the frame's DOM, and card code has no channel
+of its own. What the shell *can* observe (that the body ran, the height it
+reported, any refusal) is shown beside the frame.
 
 ## Known gaps in this half
 

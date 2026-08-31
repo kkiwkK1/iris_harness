@@ -73,6 +73,7 @@ export function Message({
           <VariantRail
             count={swipes.count}
             index={swipes.index}
+            interactive={canRegenerate}
             onSelect={index => handlers.onSwipe(turn, index)}
           />
         ) : null}

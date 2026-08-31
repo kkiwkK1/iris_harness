@@ -34,6 +34,23 @@ export default defineConfig({
       { find: /^node:module$/, replacement: src('./src/node-module-stub.ts') },
     ],
   },
+  server: {
+    /*
+     * The two host paths, proxied so `?transport=rpc` works against a running
+     * host during development.
+     *
+     * The real client defaults to the page's own origin, which is the right
+     * default — the host serves both the page and these paths in production, so
+     * the browser stays same-origin and the host needs no cross-origin exception.
+     * A dev server should therefore proxy rather than have the client point
+     * elsewhere, or the two setups would differ in exactly the way that hides
+     * bugs. `ws: true` because the event channel is a WebSocket.
+     */
+    proxy: {
+      '/iris/rpc': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+      '/iris/events': { target: 'ws://127.0.0.1:8787', ws: true, changeOrigin: true },
+    },
+  },
   define: {
     // The vendored Cordis loader probes the Node major to pick an internal
     // module-loader shape; "0.0.0" takes neither branch and leaves the slot

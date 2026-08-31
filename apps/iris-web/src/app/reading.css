@@ -355,6 +355,22 @@
   color: var(--iris-ink-secondary);
 }
 
+/*
+ * Editing is a mode, and a mode should look like one. SillyTavern makes the same
+ * distinction with a different mechanism — its edit row swaps to filled buttons
+ * while its normal row stays bare icons — and the reason holds here: a reader who
+ * cannot tell they are in edit mode will lose an edit to a stray click.
+ */
+.iris-actions--shown .iris-act {
+  color: var(--iris-ink-secondary);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  padding: 3px 10px 4px;
+}
+
+.iris-actions--shown .iris-act:hover {
+  border-color: var(--iris-rule-strong);
+}
+
 .iris-act:hover {
   background: var(--iris-bg-sunken);
   color: var(--iris-ink);
@@ -400,4 +416,29 @@
   .iris-caret {
     animation: none;
   }
+}
+
+/*
+ * A rail that is a record rather than a control.
+ *
+ * Only the last turn's readings can still be changed — swapping an earlier beat
+ * would leave every later turn answering words the transcript no longer shows.
+ * So the ticks stay and go quiet: they still report how many readings a passage
+ * had and which one is in the text, which is the apparatus doing its actual job.
+ */
+.iris-rail--record {
+  border-right-color: var(--iris-rule-faint);
+}
+
+.iris-rail--record .iris-rail__tick {
+  background: var(--iris-rule);
+  cursor: default;
+}
+
+.iris-rail--record .iris-rail__tick[aria-current='true'] {
+  background: var(--iris-accent-quiet);
+}
+
+.iris-rail--record .iris-rail__count {
+  color: var(--iris-ink-faint);
 }

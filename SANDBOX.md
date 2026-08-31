@@ -66,11 +66,15 @@ was too broad: CSP's other job — pinning *where code may come from* — is int
 and worth having.
 
 ```
-script-src 'unsafe-inline' 'unsafe-eval' https://*.jsdelivr.net https://raw.githubusercontent.com
+script-src 'unsafe-inline' 'unsafe-eval' blob: https://*.jsdelivr.net https://raw.githubusercontent.com
 ```
 
 That permits the eval these cards need while confining remote sources to the
-whitelist below. It is defence in depth and nothing more: **the host-side check
+whitelist below. `blob:` is not a loosening — live capture of the upstream
+extension shows its own injection layer (predefine, height and viewport
+adjusters) arrives via blob URLs, and a blob can only carry what is already in
+the frame's memory; without it the machinery is blocked before any card code
+exists, with symptoms that read as a broken card rather than a wrong policy. It is defence in depth and nothing more: **the host-side check
 remains the one that counts**, because a page cannot be relied on to police its
 own fetches, and the two are not equivalent.
 
@@ -158,6 +162,38 @@ card. Requirements:
 
 Default-deny is what makes the default safe; the grant exists so that "Iris
 cannot run this card" is never the final answer.
+
+## Scope: `script-src` governs code, and cards load more than code
+
+Measured against the live instance (2026-09-01): real cards also pull
+stylesheets and fonts (`fonts.googleapis.com` — six cards), images and textures
+(catbox, ibb.co), and in one case an **entire card interface fetched at runtime**
+(`$('body').load('https://files.yuzuki-rii.xyz/…')`). None of that is touched by
+`script-src`; each has its own directive. Policy:
+
+- **Default**: `style-src`/`font-src` additionally allow `fonts.googleapis.com`
+  and `fonts.gstatic.com` — high coverage, no execution. `img-src` stays
+  `data: blob:` and `connect-src` stays closed, because an open image or fetch
+  channel is an exfiltration path for everything card-visible in the frame.
+- **Per-card network grant**: a second grant beside the document grant, user
+  set, never card requested, widening `img-src`/`connect-src`/`style-src` to
+  `https:` for that card. This is what makes a card whose whole UI lives on its
+  author's host usable without opening the channel for every card. `http:` URLs
+  stay refused even under the grant (one measured casualty: a card's version
+  check; recorded, accepted).
+- **Refusals must out-shout the card's fallback.** Live finding: a blocked card
+  showed its author's own "your Tavern is broken, check the console" message
+  while Iris said nothing visible — the policy said "refused with a message
+  naming the host" and the product delivered the opposite. The frame bootstrap
+  listens for `securitypolicyviolation` and posts the blocked host to the
+  shell, which displays the refusal beside the frame, naming the host and the
+  grant that would allow it. A refusal the user cannot see is indistinguishable
+  from a bug in whatever the card does next.
+
+Cards that solicit credentials (three measured carry settings panels asking the
+user for an API endpoint and key) get no special channel: there is no "card
+holds credentials" tier, and the network grant does not create one — a granted
+card can call out, but Iris never hands it anything of the user's.
 
 ## Deliberate divergences from upstream
 

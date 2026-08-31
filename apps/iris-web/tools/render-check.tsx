@@ -95,7 +95,7 @@ async function generated(store: IrisStore, work: () => Promise<void>): Promise<v
 async function main(): Promise<void> {
   const client = createFakeClient({ chunkDelayMs: 4, chunkCount: 6 })
   const slots = createIrisSlots()
-  const wired = createIrisStore(client)
+  const wired = createIrisStore(client, { transport: 'fake', origin: 'render check' })
   await wired.store.getState().boot()
 
   // ---------------------------------------------------------------- settled
@@ -103,8 +103,15 @@ async function main(): Promise<void> {
   assert.match(settled, /class="iris-shell"/, 'the shell did not render')
   assert.match(settled, /雨夜的第三次点数/, 'the open conversation title is missing')
   assert.match(settled, /MarkdownText_markdown/, 'assistant prose did not go through the Markdown renderer')
-  assert.match(settled, /aria-label="2 readings of this reply"/, 'the variant rail is missing')
-  assert.match(settled, /aria-label="Reading 2 of 2"/, 'the rail is missing a tick')
+  // The seeded chat's alternates sit on an earlier turn, so its rail is a record:
+  // ticks and a count, no controls. The interactive form is asserted after the
+  // regenerate below, where the alternates are on the turn that can still change.
+  assert.match(settled, /iris-rail--record/, 'the variant rail is missing')
+  assert.match(
+    settled,
+    /aria-label="2 readings were generated for this reply; the current one is 1"/,
+    'a recorded rail should still report how many readings a passage had',
+  )
   assert.match(settled, /iris-composer__field/, 'the composer is missing')
   assert.match(settled, /value="openai-compat"/, 'settings fields did not populate')
   // Only the last reply offers a retry; more than one would mean discarding
@@ -124,6 +131,11 @@ async function main(): Promise<void> {
   // and 293px of empty paper above the first line once short conversations were
   // anchored to the composer.
   assert.match(settled, /class="iris-masthead"/, 'the masthead is missing')
+  // The page must admit when its data is invented. A host-served build once ran
+  // on seeded names for two days while "assets reachable" and "RPC answers" were
+  // both true and neither was the question.
+  assert.match(settled, /Seeded data/, 'the fake transport is not disclosed')
+  assert.match(settled, /transport=rpc/, 'the disclosure does not say how to use a host')
   assert.doesNotMatch(settled, /iris-topbar/, 'the topbar band should be gone')
   // Real facts, not decoration: which model answers and how far in the scene is.
   assert.match(settled, /iris-masthead__meta/, 'the masthead carries no meta line')
@@ -215,6 +227,24 @@ async function main(): Promise<void> {
   assert.match(withScripts, /cannot read your other conversations/, 'the default state is not explained')
   assert.match(withScripts, /A card has no way to ask/, 'the panel does not say a card cannot request this')
   assert.doesNotMatch(withScripts, /document access/i, 'the grant is worded as an API, not a consequence')
+
+  // ----------------------------------------------------- rail as a record
+  // Only the last turn's readings can still be changed. Swapping an earlier
+  // beat's reading would leave every later turn answering words the transcript
+  // no longer shows — SillyTavern hardcodes the same restriction in its swipe
+  // handlers, for the same reason. The earlier rails stay as a record.
+  const recorded = render(wired.store, slots.core)
+  const records = recorded.match(/iris-rail--record/g)?.length ?? 0
+  assert.ok(records >= 1, 'an earlier turn with alternates should show an inert rail')
+  // An inert rail must not offer controls. Asserted on the tick's own labelled
+  // button rather than on a character window after the wrapper class: a window
+  // is a guess about markup length, and it passes for the wrong reason the moment
+  // the markup grows.
+  assert.doesNotMatch(
+    recorded,
+    /<button[^>]*aria-label="Reading /,
+    'a recorded rail rendered a tick as a control',
+  )
 
   // ------------------------------------------------------------------ slots
   const registered = slots.core.register(

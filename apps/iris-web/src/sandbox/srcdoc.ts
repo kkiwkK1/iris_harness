@@ -31,8 +31,20 @@ export function framePolicy(): string {
   const remotes = REMOTE_ALLOWLIST.map(host => `https://${host}`).join(' ')
   return [
     "default-src 'none'",
-    `script-src 'unsafe-inline' 'unsafe-eval' ${remotes}`,
-    `connect-src ${remotes}`,
+    /*
+     * `blob:` is not a widening — it is the difference between this working and
+     * not working at all.
+     *
+     * Tavern Helper delivers its own injected layer (`predefine`,
+     * `adjust_iframe_height`, `adjust_viewport`) as `blob:` URLs rather than
+     * inline text, confirmed in a live network trace. A policy without `blob:`
+     * blocks the injection layer before any card code exists, so nothing would
+     * run and the failure would look like a broken card rather than a wrong
+     * policy. It grants nothing extra: a blob URL can only carry what this frame
+     * already had in memory.
+     */
+    `script-src 'unsafe-inline' 'unsafe-eval' blob: ${remotes}`,
+    `connect-src ${remotes} blob: data:`,
     // Inline styles are how a card draws; images from anywhere plus data URIs is
     // what card UI actually uses, and neither is a way out of the frame.
     "style-src 'unsafe-inline' https: data:",

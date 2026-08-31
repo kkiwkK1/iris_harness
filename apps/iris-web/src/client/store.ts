@@ -21,6 +21,7 @@ import type {
   GenerationSettings,
   IrisClient,
   IrisEvent,
+  ScriptContext,
   ScriptView,
 } from '@iris/protocol'
 
@@ -64,6 +65,17 @@ export interface IrisState {
   notice: Notice | undefined
   /** True during the first load, so the shell can hold its layout still. */
   booting: boolean
+  /**
+   * Which transport the page is actually running on, and where its data comes
+   * from.
+   *
+   * In the store because the interface has to be able to say it. A page that
+   * cannot report whether its data is real is a page whose observers will
+   * eventually check two true things and conclude a false one — which is exactly
+   * what happened before this field existed.
+   */
+  transport: 'rpc' | 'fake'
+  dataOrigin: string
 
   /**
    * Card scripts of the open chat's character.
@@ -99,6 +111,23 @@ export interface IrisActions {
   loadScripts(characterId: string): Promise<void>
   setScriptEnabled(scriptId: string, enabled: boolean): Promise<void>
   setDocumentGrant(granted: boolean): Promise<void>
+  /**
+   * The host's snapshot for one chat, or undefined when the host will not give
+   * one.
+   *
+   * Returned rather than stored: it is a per-run payload for a frame, not shell
+   * state, and keeping it in the store would mean holding a whole conversation's
+   * worth of card-visible data long after the run that needed it.
+   */
+  scriptContext(chatId: string, characterId: string): Promise<ScriptContext | undefined>
+  /**
+   * One script's body, or undefined when the host will not give one.
+   *
+   * Returned rather than stored for the same reason as the context, and more
+   * so: a body can be megabytes of webpack output, and the shell has no use for
+   * it once the frame has it.
+   */
+  scriptBody(characterId: string, scriptId: string): Promise<string | undefined>
   notify(kind: Notice['kind'], text: string): void
   dismissNotice(): void
 }
@@ -115,7 +144,10 @@ export type IrisStore = StoreApi<IrisState & IrisActions>
  * plugin that leaves a listener behind is precisely the failure Iris exists to
  * avoid.
  */
-export function createIrisStore(client: IrisClient): { store: IrisStore, dispose: () => void } {
+export function createIrisStore(
+  client: IrisClient,
+  source: { transport: 'rpc' | 'fake', origin: string } = { transport: 'fake', origin: 'unknown' },
+): { store: IrisStore, dispose: () => void } {
   let noticeSeq = 0
 
   const store: IrisStore = createStore<IrisState & IrisActions>((set, get) => {
@@ -139,6 +171,8 @@ export function createIrisStore(client: IrisClient): { store: IrisStore, dispose
       settings: undefined,
       notice: undefined,
       booting: true,
+      transport: source.transport,
+      dataOrigin: source.origin,
       scripts: [],
       scriptsFor: undefined,
       documentGranted: false,
@@ -332,6 +366,34 @@ export function createIrisStore(client: IrisClient): { store: IrisStore, dispose
               : 'Page access revoked. It stops at the next run.',
           )
         })
+      },
+
+      async scriptContext(chatId: string, characterId: string): Promise<ScriptContext | undefined> {
+        try {
+          const { context } = await client.call('script.context', { chatId, characterId })
+          return context
+        } catch {
+          // Swallowed on purpose, and the only place in this store that does. A
+          // refused context is an expected answer — the fake client refuses
+          // rather than inventing one — and the caller decides what to do about
+          // it, so raising a notice here would put a message in front of the user
+          // about something the caller may be handling fine.
+          return undefined
+        }
+      },
+
+      async scriptBody(characterId: string, scriptId: string): Promise<string | undefined> {
+        // Same shape and same reason as `scriptContext`: a per-run payload that
+        // has no business living in shell state, and a refusal that is an
+        // expected answer rather than an error to announce. The fake client
+        // refuses bodies on purpose — an invented one would let a runner pass in
+        // development and fail on the first real card.
+        try {
+          const { content } = await client.call('script.body', { characterId, scriptId })
+          return content
+        } catch {
+          return undefined
+        }
       },
 
       notify(kind: Notice['kind'], text: string): void {

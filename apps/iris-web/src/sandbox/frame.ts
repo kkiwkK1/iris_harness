@@ -42,6 +42,17 @@ export interface FrameEnv {
    * exact names and values a card would see, which is the thing worth asserting.
    */
   evaluate: (source: string, names: readonly string[], values: readonly unknown[]) => void
+  /**
+   * Publish the viewport into the frame's own realm.
+   *
+   * Card CSS reads `--TH-viewport-height`, which upstream sets on the child's
+   * `<html>` from `window.parent.innerHeight` — a same-origin read Iris cannot
+   * make. Carrying the number in the message and setting the variable here is
+   * the equivalent, and cleaner: the value is pushed rather than reached for.
+   *
+   * Optional so a test can install without a DOM.
+   */
+  applyViewport?: (size: { width: number, height: number }) => void
 }
 
 /** A running frame's handle. */
@@ -257,6 +268,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   env.onMessage(message => {
     if (message.type === 'viewport') {
       viewport = { width: message.width, height: message.height }
+      env.applyViewport?.(viewport)
       return
     }
     if (message.type === 'context') {

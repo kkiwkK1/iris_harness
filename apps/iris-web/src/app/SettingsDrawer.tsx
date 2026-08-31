@@ -21,6 +21,7 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
 import { ChoiceField, NumberField, Section, TextField } from './fields.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
+import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { READING_LIMITS, type ReadingPrefs, type ThemeChoice } from '../theme/theme.ts'
 
 /** Reading preferences and their setter, owned by the shell because they are per-device. */
@@ -241,6 +242,13 @@ export function SettingsDrawer({
         </Section>
 
         <ScriptPanel />
+
+        {/*
+          Dev only, and written so the branch is statically dead in a production
+          build: `import.meta.env.DEV` is replaced with `false`, so the whole
+          harness — and the runner it pulls in — drops out of the bundle.
+        */}
+        {import.meta.env.DEV ? <SandboxProbe /> : null}
 
         <Slot name="iris.settings.sections" owner={{}} />
       </div>

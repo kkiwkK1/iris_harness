@@ -33,6 +33,14 @@ try {
     target: 'node24',
     jsx: 'automatic',
     loader: { '.css': 'empty' },
+    // Vite replaces these; esbuild does not, and `import.meta.env.DEV` would
+    // throw on an undefined `env`. `false` is also the correct value: this check
+    // should see the tree a production build produces, which excludes the dev
+    // sandbox harness.
+    define: {
+      'import.meta.env.DEV': 'false',
+      'import.meta.env.PROD': 'true',
+    },
     // The same two aliases vite.config.ts declares. Kept in step by hand; a
     // third alias appearing there without appearing here shows up as a resolve
     // error, not as a silent divergence.

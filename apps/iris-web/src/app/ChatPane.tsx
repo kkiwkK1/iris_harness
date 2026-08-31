@@ -30,6 +30,7 @@ export function ChatPane(): ReactElement {
   const booting = useIris(state => state.booting)
   const actions = useIrisActions()
 
+  const generating = stream !== undefined
   const messages = useMemo(() => withStream(view, stream), [view, stream])
   const groups = useMemo(() => groupByTurn(messages), [messages])
   const retryId = lastReplyId(messages)
@@ -64,6 +65,22 @@ export function ChatPane(): ReactElement {
       if (!event.altKey || event.metaKey || event.ctrlKey) return
       const step = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
       if (step === 0) return
+      // Not while the reader is typing. SillyTavern gates its own arrow-key
+      // swipe on an empty composer and on focus being outside every input; the
+      // second is the one that matters here, because it also covers an open
+      // inline editor — changing a reading out from under a half-finished edit
+      // would discard it silently.
+      const focused = document.activeElement
+      if (
+        focused instanceof HTMLTextAreaElement ||
+        focused instanceof HTMLInputElement ||
+        (focused instanceof HTMLElement && focused.isContentEditable)
+      ) {
+        return
+      }
+      // Not while generating, for the same reason SillyTavern refuses: the turn
+      // being written is about to replace what a swipe would have selected.
+      if (generating) return
       // Same clamp the rail's own stepper uses, so the keyboard and the margin
       // cannot disagree about where the set ends.
       const next = stepReading(target.index, target.count, step)
@@ -73,7 +90,7 @@ export function ChatPane(): ReactElement {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [actions, target?.turn, target?.count, target?.index])
+  }, [actions, generating, target?.turn, target?.count, target?.index])
 
   const handlers: MessageHandlers = useMemo(
     () => ({
@@ -133,7 +150,7 @@ export function ChatPane(): ReactElement {
                     // have, so a finished reply updates in place.
                     key={message.key}
                     message={message}
-                    canRegenerate={message.id === retryId && stream === undefined}
+                    canRegenerate={message.id === retryId && !generating}
                     handlers={handlers}
                   />
                 ))}
@@ -144,7 +161,7 @@ export function ChatPane(): ReactElement {
       </div>
       <Composer
         chatId={chatId}
-        generating={stream !== undefined}
+        generating={generating}
         onSend={text => void actions.send(text)}
         onStop={() => void actions.abort()}
       />
