@@ -37,6 +37,8 @@ export interface HarnessState {
   blocked: { host: string, directive: string }[]
   /** What the frame managed to publish onto its own window, as it reported it. */
   globals?: string
+  /** Slash commands the card invoked, raw. */
+  slash: string[]
   /**
    * The last run's ending, persisting past the run itself.
    *
@@ -46,7 +48,7 @@ export interface HarnessState {
   lastRun?: RunOutcome
 }
 
-const FRESH: HarnessState = { status: 'idle', errors: [], blocked: [] }
+const FRESH: HarnessState = { status: 'idle', errors: [], blocked: [], slash: [] }
 
 /**
  * The record lives on `globalThis`, not in this module's scope.
@@ -121,7 +123,7 @@ export function setHarness(patch: Partial<HarnessState> | ((before: HarnessState
 export function resetObservations(status: string): void {
   const here = slot()
   const kept = here.state.lastRun
-  here.state = { status, errors: [], blocked: [], ...(kept === undefined ? {} : { lastRun: kept }) }
+  here.state = { status, errors: [], blocked: [], slash: [], ...(kept === undefined ? {} : { lastRun: kept }) }
   for (const listener of [...here.listeners]) listener()
 }
 

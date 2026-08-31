@@ -255,6 +255,30 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * use throw. (A `typeof x !== 'undefined'` probe still fails quietly, which is
    * a blind spot no shadowing can close — noted in the README.)
    */
+  /**
+   * `triggerSlash`, as a card sees it.
+   *
+   * Defined even though nothing executes the command yet, and that is the point:
+   * the measured call site is
+   * `if (typeof triggerSlash === 'function') triggerSlash(...)`, so an undefined
+   * global makes the card skip the branch **silently**. A definition that hands
+   * the string onward is a card that visibly does something; an absence is a card
+   * that quietly does nothing, which is the failure mode this sandbox keeps
+   * choosing against.
+   *
+   * The raw string travels unparsed — upstream's pipe escaping lives host-side
+   * and a second copy here would be two ideas of one convention.
+   *
+   * Returns a promise that resolves on **dispatch, not completion**. Upstream's
+   * returns one that resolves when the command has run; matching that needs an
+   * acknowledgement round trip, and there is nothing to acknowledge until the
+   * shell can execute one. Documented rather than papered over.
+   */
+  const triggerSlash = (command: unknown): Promise<void> => {
+    env.post({ iris: env.token, type: 'slash', command: String(command) })
+    return Promise.resolve()
+  }
+
   const shadowed = [
     'window',
     'self',
@@ -263,6 +287,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     'top',
     'SillyTavern',
     'extension_settings',
+    'triggerSlash',
   ] as const
 
   /**
@@ -280,6 +305,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     virtualParent,
     context === undefined ? undefined : sillyTavern,
     extensionSettings,
+    triggerSlash,
   ]
 
   env.onMessage(message => {

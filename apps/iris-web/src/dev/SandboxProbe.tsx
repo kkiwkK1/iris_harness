@@ -36,6 +36,7 @@ import { Section } from '../app/fields.tsx'
 import { runCard } from '../sandbox/runner.ts'
 import { PROBE_SCRIPT } from './probe-script.ts'
 import { modeFor, stripCodeFence } from '../sandbox/script-source.ts'
+import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import {
   getHarness,
   resetObservations,
@@ -115,14 +116,29 @@ export function SandboxProbe(): ReactElement | null {
 
       let bootstrap: string
       try {
-        // In dev Vite serves the project root, so the built bootstrap is
-        // reachable at its own path. Production inlines it host-side instead.
-        const response = await fetch('/dist-sandbox/bootstrap.js')
+        // `/sandbox/` — under `public/`, the one directory Vite serves verbatim.
+        // Fetched from anywhere else in the project root it comes back rewritten
+        // as an ES module, and the `import` that adds is a parse error in the
+        // classic script it ends up inside.
+        const response = await fetch('/sandbox/bootstrap.js')
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         bootstrap = await response.text()
       } catch (error: unknown) {
         const why = error instanceof Error ? error.message : String(error)
         setHarness({ status: `no bootstrap: ${why} — run "npm run build:sandbox"` })
+        return
+      }
+
+      // Checked before injection, because after it there is nobody left to check.
+      // A transformed bootstrap fails at PARSE time, so the frame's own reporter —
+      // which is runtime — never exists, and the frame goes silent instead of
+      // saying what went wrong.
+      const unusable = checkBootstrap(bootstrap)
+      if (unusable !== undefined) {
+        setHarness({
+          status: 'the bootstrap is not usable',
+          lastRun: { label, result: 'bad bootstrap', detail: unusable },
+        })
         return
       }
 
@@ -150,6 +166,9 @@ export function SandboxProbe(): ReactElement | null {
           viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
           fetch: async url => {
             throw new Error(`the probe does not fetch (${url})`)
+          },
+          onSlash: command => {
+            setHarness(before => ({ slash: [...before.slash, command] }))
           },
           onSettings: settings => {
             setHarness({ settings: JSON.stringify(settings) })
@@ -329,6 +348,12 @@ export function SandboxProbe(): ReactElement | null {
         <div className="iris-state__row">
           <dt className="iris-state__key">globals published</dt>
           <dd className="iris-state__value">{observed.globals ?? 'not reported'}</dd>
+        </div>
+        <div className="iris-state__row">
+          <dt className="iris-state__key">slash commands</dt>
+          <dd className="iris-state__value">
+            {observed.slash.length === 0 ? 'none' : observed.slash.join(' / ')}
+          </dd>
         </div>
       </dl>
 

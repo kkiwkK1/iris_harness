@@ -21,10 +21,24 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   configFile: false,
   build: {
-    // Written beside the app's own output, not into it: `emptyOutDir` would
-    // otherwise have to be reasoned about every time either build runs.
-    outDir: 'dist-sandbox',
-    emptyOutDir: true,
+    /*
+     * Emitted into `public/`, and that is the whole fix for a real failure.
+     *
+     * It used to go to `dist-sandbox/`, which sits inside the Vite project root —
+     * so a `fetch('/dist-sandbox/bootstrap.js')` in dev came back **transformed
+     * into an ES module**, with `import … from "/@vite/client"` prepended. Injected
+     * into a `srcdoc` classic script that is a parse error, the block never runs,
+     * and the frame's own runtime reporter never exists to say so. The symptom was
+     * a frame that sent nothing at all.
+     *
+     * `public/` is the one directory Vite serves verbatim and copies untouched,
+     * which is exactly the guarantee this file needs. It also gives the host a
+     * stable path inside `dist/` for the production inline.
+     */
+    outDir: 'public/sandbox',
+    // NOT emptied: `public/` is a served directory, and emptying a slice of it on
+    // every build is a footgun aimed at whatever else ends up there.
+    emptyOutDir: false,
     target: 'es2022',
     // Inlined into markup, so a sourcemap comment would point at a file that is
     // not served and the frame would log a fetch failure for every card.

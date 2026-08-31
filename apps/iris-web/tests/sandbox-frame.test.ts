@@ -100,6 +100,7 @@ test('exactly the outward-reaching names are shadowed', () => {
     'top',
     'SillyTavern',
     'extension_settings',
+    'triggerSlash',
   ])
 })
 
@@ -398,7 +399,13 @@ test('the bridged globals are published, and the window aliases are not', () => 
   scope.send({ iris: 'tok', type: 'context', context: snapshot() })
   evaluate(scope, () => undefined)
 
-  assert.deepEqual(scope.publishedNames(), ['parent', 'top', 'SillyTavern', 'extension_settings'])
+  assert.deepEqual(scope.publishedNames(), [
+    'parent',
+    'top',
+    'SillyTavern',
+    'extension_settings',
+    'triggerSlash',
+  ])
 })
 
 test('a module body reports ran only after it has loaded', async () => {
@@ -431,4 +438,53 @@ test('a module that fails to load is reported as an error, not as a run', async 
   const last = scope.posted.at(-1)
   assert.ok(last?.type === 'error')
   assert.match(last.message, /import statement/)
+})
+
+test('triggerSlash exists so the probe that guards it cannot fail silently', () => {
+  // The measured call site is `if (typeof triggerSlash === 'function')`. An
+  // undefined global makes the card skip the branch without a sound, which is the
+  // failure mode this sandbox keeps choosing against. A definition that hands the
+  // string onward is a card that visibly did something.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    assert.equal(typeof globals['triggerSlash'], 'function')
+  })
+
+  assert.equal(scope.posted.at(-1)?.type, 'ran')
+})
+
+test('a slash command travels raw, unparsed', () => {
+  // Parsing means reproducing upstream's pipe escaping, and that semantic already
+  // exists once host-side. A second copy in the browser is the shape that caused
+  // this project's worst bug, where two halves each held their own idea of a
+  // convention and agreed only in tests.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    const trigger = globals['triggerSlash'] as (command: string) => Promise<void>
+    void trigger('/send 你好|/trigger')
+  })
+
+  const sent = scope.posted.find(message => message.type === 'slash')
+  assert.ok(sent?.type === 'slash')
+  assert.equal(sent.command, '/send 你好|/trigger', 'the shell must receive exactly what the card wrote')
+})
+
+test('triggerSlash returns something awaitable', () => {
+  // Upstream's returns a promise. Returning undefined would make `.then()` on it
+  // a TypeError in any card that chains — even though the measured call site does
+  // not. The promise resolves on dispatch, not completion, which is a documented
+  // deviation rather than a hidden one.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  let returned: unknown
+  evaluate(scope, globals => {
+    returned = (globals['triggerSlash'] as (command: string) => unknown)('/trigger')
+  })
+
+  assert.ok(returned instanceof Promise)
 })

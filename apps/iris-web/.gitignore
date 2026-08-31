@@ -1,9 +1,9 @@
 # The card-sandbox bootstrap's build output.
 #
-# Its own directory rather than `dist/sandbox/`, which the repository root
-# already ignores, because the app build runs with `emptyOutDir` and would wipe
-# it. `npm run build` orders the two builds correctly, but a bare `vite build`
-# afterwards would silently delete the bootstrap and leave a `dist/` that looks
-# complete and cannot run a single card. A separate directory cannot be emptied
-# by accident.
-dist-sandbox/
+# It lives under `public/` because that is the one directory Vite serves
+# byte-for-byte: emitted anywhere else inside the project root, a dev-time fetch
+# comes back transformed into an ES module, which is a parse error in the classic
+# script it gets injected into — and a parse error cannot be reported by the
+# script that failed to parse. `npm run build` builds it before the app so the
+# copy into `dist/` is never stale.
+public/sandbox/

@@ -93,6 +93,16 @@ export type FromFrame =
   | { iris: string, type: 'error', message: string, member?: string }
   /** The card asked for a remote dependency. */
   | { iris: string, type: 'fetch', id: string, url: string }
+  /**
+   * The card invoked a slash command.
+   *
+   * The **raw string**, unparsed. Parsing it means reproducing upstream's pipe
+   * escaping — an odd number of backslashes escapes, an even number does not —
+   * and that semantic already exists once, host-side. A second copy in the
+   * browser is the shape that produced this project's worst bug so far, where two
+   * halves each held their own idea of a convention and agreed only in tests.
+   */
+  | { iris: string, type: 'slash', command: string }
   /** The card's content changed height; the shell sizes the frame to it. */
   | { iris: string, type: 'height', pixels: number }
 
@@ -214,6 +224,12 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
         message: message['message'].slice(0, 2000),
         ...(typeof member === 'string' ? { member: member.slice(0, 200) } : {}),
       }
+    }
+    case 'slash': {
+      const command = message['command']
+      // Bounded like every card-controlled string. Generous, because a `/send`
+      // carries a user's message.
+      return typeof command === 'string' ? { iris: token, type: 'slash', command: command.slice(0, 32_000) } : undefined
     }
     case 'fetch':
       return typeof message['id'] === 'string' && typeof message['url'] === 'string'

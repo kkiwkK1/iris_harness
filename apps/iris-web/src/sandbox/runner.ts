@@ -48,6 +48,14 @@ export interface RunnerHost {
   fetch: (url: string) => Promise<string>
   /** A card wrote its extension settings; persist them. */
   onSettings: (settings: Record<string, unknown>) => void
+  /**
+   * The card invoked a slash command, raw and unparsed.
+   *
+   * Required rather than optional, on the same reasoning as `onBlocked`: a card
+   * that asked the application to send a message and was silently ignored is
+   * indistinguishable, from the reader's side, from a card that is broken.
+   */
+  onSlash: (command: string) => void
   /** The card threw, or was refused a member. */
   onError: (message: string, member?: string) => void
   /**
@@ -168,6 +176,9 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         return
       case 'settings':
         host.onSettings(message.settings)
+        return
+      case 'slash':
+        host.onSlash(message.command)
         return
       case 'error':
         host.onError(message.message, message.member)
