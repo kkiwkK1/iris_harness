@@ -35,6 +35,8 @@ export interface HarnessState {
   settings?: string
   errors: string[]
   blocked: { host: string, directive: string }[]
+  /** What the frame managed to publish onto its own window, as it reported it. */
+  globals?: string
   /**
    * The last run's ending, persisting past the run itself.
    *
@@ -46,16 +48,41 @@ export interface HarnessState {
 
 const FRESH: HarnessState = { status: 'idle', errors: [], blocked: [] }
 
-let state: HarnessState = FRESH
-let card: RunningCard | undefined
-const listeners = new Set<() => void>()
+/**
+ * The record lives on `globalThis`, not in this module's scope.
+ *
+ * Moving it out of React stopped a remount from erasing it. That was not far
+ * enough: Vite replaces a module on edit, and a module-scoped record is replaced
+ * with it — so in development, where this harness only ever runs, "the record
+ * survives" was still false whenever anyone touched the file. An observer lost a
+ * run to exactly that, with an HMR update logged at the moment they pressed Run.
+ *
+ * A global slot is immune to both. It is the right amount of ugly for a dev-only
+ * tool whose entire job is to still be holding what it saw.
+ */
+interface HarnessSlot {
+  state: HarnessState
+  card: RunningCard | undefined
+  listeners: Set<() => void>
+}
+
+const SLOT = '__irisHarness__'
+
+function slot(): HarnessSlot {
+  const host = globalThis as unknown as Record<string, HarnessSlot | undefined>
+  const existing = host[SLOT]
+  if (existing !== undefined) return existing
+  const fresh: HarnessSlot = { state: FRESH, card: undefined, listeners: new Set() }
+  host[SLOT] = fresh
+  return fresh
+}
 
 /**
  * Read the current record.
  * @returns the state; a stable reference between changes, as `useSyncExternalStore` requires.
  */
 export function getHarness(): HarnessState {
-  return state
+  return slot().state
 }
 
 /**
@@ -64,9 +91,10 @@ export function getHarness(): HarnessState {
  * @returns a disposer.
  */
 export function subscribeHarness(listener: () => void): () => void {
-  listeners.add(listener)
+  const here = slot()
+  here.listeners.add(listener)
   return () => {
-    listeners.delete(listener)
+    here.listeners.delete(listener)
   }
 }
 
@@ -75,9 +103,10 @@ export function subscribeHarness(listener: () => void): () => void {
  * @param patch - fields to replace, or a function of the current state.
  */
 export function setHarness(patch: Partial<HarnessState> | ((before: HarnessState) => Partial<HarnessState>)): void {
-  const next = typeof patch === 'function' ? patch(state) : patch
-  state = { ...state, ...next }
-  for (const listener of [...listeners]) listener()
+  const here = slot()
+  const next = typeof patch === 'function' ? patch(here.state) : patch
+  here.state = { ...here.state, ...next }
+  for (const listener of [...here.listeners]) listener()
 }
 
 /**
@@ -90,14 +119,15 @@ export function setHarness(patch: Partial<HarnessState> | ((before: HarnessState
  * @param status - the status line to show while the run starts.
  */
 export function resetObservations(status: string): void {
-  const kept = state.lastRun
-  state = { status, errors: [], blocked: [], ...(kept === undefined ? {} : { lastRun: kept }) }
-  for (const listener of [...listeners]) listener()
+  const here = slot()
+  const kept = here.state.lastRun
+  here.state = { status, errors: [], blocked: [], ...(kept === undefined ? {} : { lastRun: kept }) }
+  for (const listener of [...here.listeners]) listener()
 }
 
 /** The frame currently running, if any. */
 export function runningCard(): RunningCard | undefined {
-  return card
+  return slot().card
 }
 
 /**
@@ -109,6 +139,7 @@ export function runningCard(): RunningCard | undefined {
  * @param next - the new frame, or undefined to clear.
  */
 export function setRunningCard(next: RunningCard | undefined): void {
-  card?.dispose()
-  card = next
+  const here = slot()
+  here.card?.dispose()
+  here.card = next
 }

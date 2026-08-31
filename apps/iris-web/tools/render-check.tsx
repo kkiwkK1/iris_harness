@@ -283,6 +283,34 @@ async function main(): Promise<void> {
     'the fixture should carry a UUID-identified prompt, since 29 of 41 real ones are',
   )
 
+  // -------------------------------------------------------- connections
+  // The property this panel exists for: a stored display name is a snapshot and
+  // goes stale. Measured on a real install, the selected profile was called
+  // `deepseek deepseek-chat` and pointed at Gemini. The fake reproduces that trap,
+  // so a panel rendering only the label fails here rather than in production.
+  await wired.store.getState().loadConnections()
+  const withConnections = render(wired.store, slots.core)
+
+  const misnamed = wired.store.getState().connections.find(row => row.id === 'misnamed')
+  assert.ok(misnamed !== undefined, 'the fixture should keep its misnamed profile')
+  assert.ok(
+    misnamed.label !== undefined && !misnamed.label.includes(misnamed.model),
+    'the misnamed fixture must contradict its own route, or it tests nothing',
+  )
+  // Substring checks, not constructed regexes: these values contain dots and
+  // slashes, and escaping them in a heredoc-authored file is a layer that has
+  // already produced three silently-dead assertions in this project.
+  assert.ok(withConnections.includes(misnamed.label), 'the label is not shown')
+  // And the derived truth beside it, which is the whole point.
+  assert.ok(withConnections.includes(misnamed.summary), 'the derived summary is not shown')
+  assert.ok(withConnections.includes(misnamed.model), 'the real route must be on screen')
+
+  // A profile the user never named falls back to the summary rather than to an id.
+  const unnamed = wired.store.getState().connections.find(row => row.label === undefined)
+  assert.ok(unnamed !== undefined, 'the fixture should keep an unnamed profile')
+  assert.equal(withConnections.includes(`>${unnamed.id}<`), false, 'an id reached the interface')
+  assert.ok(withConnections.includes(unnamed.summary), 'an unnamed profile should fall back to its summary')
+
   // ------------------------------------------------------------------ slots
   const registered = slots.core.register(
     { name: 'iris.message.actions' satisfies IrisSlotName, id: 'probe', registrant: 'render-check' },

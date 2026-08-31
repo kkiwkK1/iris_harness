@@ -110,9 +110,13 @@ function attribute(value: string): string {
  * @param token - the run token for this frame, minted per run.
  * @param bootstrap - the built bootstrap source.
  * @param networkGranted - whether the user let this card reach the network.
+ * Required, with no default: a caller that forgot it would build the restrictive
+ * policy for a card the user had granted, and the reader would see "Iris refused
+ * <host>" and conclude the grant control was broken. A hidden default does not
+ * just hide a decision, it points the resulting failure at the wrong thing.
  * @returns the `srcdoc` value.
  */
-export function buildSrcdoc(token: string, bootstrap: string, networkGranted = false): string {
+export function buildSrcdoc(token: string, bootstrap: string, networkGranted: boolean): string {
   // The bootstrap is placed inside a script element, so the one sequence that
   // could break out of it is a literal `</script`. Split rather than escaped:
   // the string is JavaScript, and an HTML escape inside it would change the code.

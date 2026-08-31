@@ -100,7 +100,42 @@ function reportBlocked(run: string, post: (message: FromFrame) => void): void {
   })
 }
 
-const run = token()
+/*
+ * Everything below runs inside a try/catch that can report without a token.
+ *
+ * The blind spot this closes: a cross-origin frame's uncaught errors do not reach
+ * the parent's console. So a bootstrap that threw before its first `post` looked
+ * from outside exactly like a bootstrap that had never been asked to run —
+ * console clean, no frames, status stuck. An observer hit precisely that and had
+ * no way to tell it from a torn hot-reload.
+ *
+ * A failure before the token is known cannot be stamped with one, so it is sent
+ * unstamped and the shell accepts it on the strength of `event.source` alone. That
+ * is weaker than the token, and it is only ever believed as a diagnostic — it can
+ * neither run code nor change state.
+ */
+function fail(error: unknown): void {
+  try {
+    window.parent.postMessage(
+      {
+        iris: '',
+        type: 'bootstrap-error',
+        message: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      },
+      '*',
+    )
+  } catch {
+    // Nothing left to try. The frame is beyond reporting.
+  }
+}
+
+let run: string
+try {
+  run = token()
+} catch (error: unknown) {
+  fail(error)
+  throw error
+}
 const post = (message: FromFrame): void => {
   // The shell's origin cannot be named: this frame has an opaque origin, so the
   // only usable target is `'*'`. That is safe in this direction because nothing
@@ -116,7 +151,8 @@ window.addEventListener('message', event => {
   for (const listener of listeners) listener(message)
 })
 
-installSandbox({
+try {
+  installSandbox({
   token: run,
   container: document.body,
   factory: {
@@ -132,17 +168,69 @@ installSandbox({
       if (message !== undefined) listener(message)
     })
   },
-  /**
-   * Card bodies are scripts, not modules, so a function wrapper is the right
-   * shape: it gives the shadowed names their scope and leaves `eval()` inside
-   * webpack output working, which CSP could not have allowed away anyway.
-   */
-  evaluate: (source, names, values) => {
-    // eslint-disable-next-line no-new-func
-    const compiled = new Function(...names, source) as (...args: unknown[]) => void
-    compiled(...values)
+  publishGlobals: entries => {
+    const published: string[] = []
+    const refused: string[] = []
+    for (const [name, value] of entries) {
+      try {
+        // `defineProperty` rather than assignment: `parent` and `top` are
+        // accessors on Window, and whether they can be redefined at all is a
+        // browser question this project cannot answer from outside a browser. So
+        // it is attempted and the result reported, instead of the code assuming.
+        Object.defineProperty(window, name, { value, writable: false, configurable: true })
+        published.push(name)
+      } catch {
+        refused.push(name)
+      }
+    }
+    post({ iris: run, type: 'globals', published, refused })
   },
-})
 
-reportBlocked(run, post)
-reportHeight(run, post)
+  /**
+   * Two execution shapes, chosen by the caller.
+   *
+   * **Module** is what card scripts get, because it is what upstream gives them:
+   * `panel/script/iframe.ts` builds every script iframe with
+   * `<script type="module">`, unconditionally. A module cannot be handed shadowed
+   * parameters, so its bridge is the published globals above — again matching
+   * upstream, whose `predefine` classic script flattens its API onto the child
+   * window before the module runs.
+   *
+   * The body reaches the module system as a `blob:` URL, which needs no new CSP
+   * allowance: `blob:` is already in `script-src` for the injected layer.
+   *
+   * **Classic** stays for Iris's own probe, which exercises the shadowed globals
+   * a module cannot receive, and for any body that turns out to need
+   * function-scope semantics. `new Function` also keeps the `unsafe-eval`
+   * coverage the probe reports on.
+   */
+  evaluate: (source, mode, names, values) => {
+    if (mode === 'classic') {
+      const compiled = new Function(...names, source) as (...args: unknown[]) => void
+      compiled(...values)
+      return undefined
+    }
+
+    const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
+    return import(/* @vite-ignore */ url).then(
+      () => {
+        URL.revokeObjectURL(url)
+      },
+      (error: unknown) => {
+        // Revoked on both paths: a failed module still holds the blob, and a card
+        // that throws on every run would otherwise leak one per attempt.
+        URL.revokeObjectURL(url)
+        throw error
+      },
+    )
+  },
+  })
+
+  reportBlocked(run, post)
+  reportHeight(run, post)
+} catch (error: unknown) {
+  // Same reasoning: an install that throws is invisible from the outside, and
+  // "nothing happened" is the most expensive answer a sandbox can give.
+  fail(error)
+  throw error
+}

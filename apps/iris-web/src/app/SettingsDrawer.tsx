@@ -20,6 +20,7 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
 import { ChoiceField, NumberField, Section, TextField } from './fields.tsx'
+import { ConnectionPanel } from './ConnectionPanel.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { READING_LIMITS, type ReadingPrefs, type ThemeChoice } from '../theme/theme.ts'
@@ -80,6 +81,8 @@ export function SettingsDrawer({
           <p className="iris-list__empty">Settings have not loaded.</p>
         ) : (
           <>
+            <ConnectionPanel />
+
             <Section title="Route">
               <TextField
                 label="Provider"

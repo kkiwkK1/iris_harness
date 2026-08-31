@@ -28,8 +28,16 @@ export type ToFrame =
    * whole context once and then read members off it.
    */
   | { iris: string, type: 'context', context: ScriptContext }
-  /** Run a script body. Sent once per frame, after the frame reports ready. */
-  | { iris: string, type: 'run', code: string }
+  /**
+   * Run a script body. Sent once per frame, after the frame reports ready.
+   *
+   * `mode` is carried rather than sniffed. Upstream runs every card script as
+   * `<script type="module">` with no per-script branch, so guessing from the
+   * source would make cards behave differently for reasons no card author could
+   * predict. `classic` exists for Iris's own probe, which exercises the shadowed
+   * globals a module cannot be handed.
+   */
+  | { iris: string, type: 'run', code: string, mode: 'classic' | 'module' }
   /** The host page's viewport, at boot and on every resize. */
   | { iris: string, type: 'viewport', width: number, height: number }
   /** Answer to a `fetch` request, resolved or refused. */
@@ -38,6 +46,15 @@ export type ToFrame =
 
 /** Frame → host. */
 export type FromFrame =
+  /**
+   * The bootstrap failed before it could stamp a token.
+   *
+   * Deliberately outside the token scheme, because the failure it reports may be
+   * "the token never arrived". Accepted on `event.source` alone, and only ever as
+   * a diagnostic: it can neither run code nor change state, so the weaker check
+   * buys visibility without buying authority.
+   */
+  | { iris: string, type: 'bootstrap-error', message: string }
   /**
    * The frame's own policy refused a request.
    *
@@ -59,6 +76,17 @@ export type FromFrame =
   | { iris: string, type: 'settings', settings: Record<string, unknown> }
   /** The bootstrap is installed and waiting for `run`. */
   | { iris: string, type: 'ready' }
+  /**
+   * Which bridged globals the frame managed to publish onto its own window.
+   *
+   * Module code cannot be handed shadowed parameters, so in module mode the
+   * bridge has to be real properties — which is how upstream does it too, via a
+   * classic script that runs before the module. Whether `parent` and `top` can be
+   * redefined at all is a browser question this project cannot answer from
+   * outside one, so the frame reports what it actually achieved instead of the
+   * code assuming an answer.
+   */
+  | { iris: string, type: 'globals', published: string[], refused: string[] }
   /** The script body evaluated without throwing. */
   | { iris: string, type: 'ran' }
   /** The script threw, or refused a member. `member` is set for a policy refusal. */
@@ -95,10 +123,12 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
         ? { iris: token, type: 'context', context: context as ScriptContext }
         : undefined
     }
-    case 'run':
-      return typeof message['code'] === 'string'
-        ? { iris: token, type: 'run', code: message['code'] }
+    case 'run': {
+      const mode = message['mode']
+      return typeof message['code'] === 'string' && (mode === 'classic' || mode === 'module')
+        ? { iris: token, type: 'run', code: message['code'], mode }
         : undefined
+    }
     case 'viewport':
       return typeof message['width'] === 'number' && typeof message['height'] === 'number'
         ? { iris: token, type: 'viewport', width: message['width'], height: message['height'] }
@@ -130,6 +160,16 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
 export function parseFromFrame(token: string, data: unknown): FromFrame | undefined {
   if (typeof data !== 'object' || data === null) return undefined
   const message = data as Record<string, unknown>
+
+  // Checked before the token, because this is the one frame whose whole purpose
+  // is to report that the token never got that far.
+  if (message['type'] === 'bootstrap-error') {
+    const detail = message['message']
+    return typeof detail === 'string'
+      ? { iris: token, type: 'bootstrap-error', message: detail.slice(0, 2000) }
+      : undefined
+  }
+
   if (message['iris'] !== token) return undefined
 
   switch (message['type']) {
@@ -137,6 +177,15 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
       return { iris: token, type: 'ready' }
     case 'ran':
       return { iris: token, type: 'ran' }
+    case 'globals': {
+      const published = message['published']
+      const refused = message['refused']
+      const names = (value: unknown): string[] =>
+        Array.isArray(value) ? value.filter((row): row is string => typeof row === 'string').slice(0, 32) : []
+      return Array.isArray(published) && Array.isArray(refused)
+        ? { iris: token, type: 'globals', published: names(published), refused: names(refused) }
+        : undefined
+    }
     case 'blocked': {
       const host = message['host']
       const directive = message['directive']

@@ -18,6 +18,7 @@ import type {
   CharacterSummary,
   ChatSummary,
   ChatView,
+  ConnectionProfile,
   GenerationSettings,
   IrisClient,
   IrisEvent,
@@ -99,6 +100,10 @@ export interface IrisState {
   scriptsFor: string | undefined
   /** Whether that character's scripts may touch the real page. */
   documentGranted: boolean
+
+  /** Saved connection profiles, and which one was last activated. */
+  connections: ConnectionProfile[]
+  activeConnectionId: string | undefined
 }
 
 /** What the interface calls. Every one of these is a host round trip. */
@@ -147,6 +152,17 @@ export interface IrisActions {
    * would mean holding a stale answer that looks current.
    */
   itemize(turn?: number): Promise<ItemizationResult>
+  loadConnections(): Promise<void>
+  activateConnection(id: string): Promise<void>
+  saveConnection(patch: {
+    id?: string
+    label?: string
+    provider: string
+    model: string
+    preset?: string
+    sampling?: Record<string, unknown>
+  }): Promise<void>
+  deleteConnection(id: string): Promise<void>
   notify(kind: Notice['kind'], text: string): void
   dismissNotice(): void
 }
@@ -165,7 +181,17 @@ export type IrisStore = StoreApi<IrisState & IrisActions>
  */
 export function createIrisStore(
   client: IrisClient,
-  source: { transport: 'rpc' | 'fake', origin: string } = { transport: 'fake', origin: 'unknown' },
+  /**
+   * Which transport this store is fed by, and where its data comes from.
+   *
+   * Required, with no default. A default here would be a hidden decision, and the
+   * failure it hides is worse than the one the disclosure was built to prevent: a
+   * caller that forgot the argument would get a page announcing "seeded data"
+   * while talking to a real host, or the reverse. Either way the reader is told a
+   * confident falsehood about the one thing they cannot otherwise check, and the
+   * blame lands on the disclosure rather than on the missing argument.
+   */
+  source: { transport: 'rpc' | 'fake', origin: string },
 ): { store: IrisStore, dispose: () => void } {
   let noticeSeq = 0
 
@@ -195,6 +221,8 @@ export function createIrisStore(
       scripts: [],
       scriptsFor: undefined,
       documentGranted: false,
+      connections: [],
+      activeConnectionId: undefined,
 
       async boot(): Promise<void> {
         await guard(async () => {
@@ -416,6 +444,44 @@ export function createIrisStore(
         }
       },
 
+      async loadConnections(): Promise<void> {
+        await guard(async () => {
+          const listed = await client.call('connection.list', {})
+          set({ connections: listed.profiles, activeConnectionId: listed.activeId })
+        })
+      },
+
+      async activateConnection(id: string): Promise<void> {
+        const chatId = get().chatId
+        await guard(async () => {
+          // Scoped like every other settings write: activating while a chat is
+          // open means "for this scene". Otherwise the reader would change a
+          // conversation's route by touching what looks like a global list.
+          const result = await client.call('connection.activate', {
+            id,
+            ...(chatId === undefined ? {} : { chatId }),
+          })
+          set({ settings: result.settings, activeConnectionId: result.activeId })
+        })
+      },
+
+      async saveConnection(patch): Promise<void> {
+        await guard(async () => {
+          const listed = await client.call('connection.save', patch)
+          set({ connections: listed.profiles, activeConnectionId: listed.activeId })
+        })
+      },
+
+      async deleteConnection(id: string): Promise<void> {
+        await guard(async () => {
+          const listed = await client.call('connection.delete', { id })
+          // `activeId` is taken from the response rather than kept: deleting the
+          // active profile clears it host-side, and holding the old value would
+          // leave the interface reporting a current connection nobody can open.
+          set({ connections: listed.profiles, activeConnectionId: listed.activeId })
+        })
+      },
+
       async itemize(turn?: number): Promise<ItemizationResult> {
         const chatId = get().chatId
         if (chatId === undefined) {
@@ -527,4 +593,40 @@ export function applyEvent(store: IrisStore, event: IrisEvent): void {
     // later turn generates must not blank the text arriving for it.
     store.setState({ view: event.view })
   }
+}
+
+/** Stable action facades, one per store. */
+const FACADES = new WeakMap<IrisStore, IrisActions>()
+
+/**
+ * The action set, with an identity that does not change.
+ *
+ * zustand's `getState()` returns a **new object after every write**, so anything
+ * using it as a `useEffect` dependency re-fires on every store change — and an
+ * effect that calls an action then becomes an infinite loop: action writes,
+ * identity changes, effect re-runs, action writes.
+ *
+ * That loop wedged a browser renderer hard enough to survive a tab close. It had
+ * been latent for days in `App`'s boot effect and never fired, purely because
+ * `App` selects primitives that happen not to change; the panel that finally
+ * triggered it selects an array whose identity changes on every load. "Safe
+ * because of what the neighbouring selector returns" is not a property worth
+ * relying on, so the fix is here rather than at the call sites.
+ *
+ * Actions are the function-valued members of the state and are never replaced,
+ * so capturing them once is sound. Picked by type rather than listed, because a
+ * hand-written list is a second place for the action set to be declared and
+ * would drift the first time one is added.
+ * @param store - the store to read.
+ * @returns the same object on every call for a given store.
+ */
+export function actionsOf(store: IrisStore): IrisActions {
+  const cached = FACADES.get(store)
+  if (cached !== undefined) return cached
+  const state = store.getState() as unknown as Record<string, unknown>
+  const facade = Object.fromEntries(
+    Object.entries(state).filter(([, value]) => typeof value === 'function'),
+  ) as unknown as IrisActions
+  FACADES.set(store, facade)
+  return facade
 }

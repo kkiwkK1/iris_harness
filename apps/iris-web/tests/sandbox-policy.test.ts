@@ -57,12 +57,26 @@ test('a message without the run token is not ours', () => {
 })
 
 test('a well-formed message survives the round trip', () => {
-  assert.deepEqual(parseToFrame('tok', { iris: 'tok', type: 'run', code: 'let a = 1' }), {
+  assert.deepEqual(
+    parseToFrame('tok', { iris: 'tok', type: 'run', code: 'let a = 1', mode: 'classic' }),
+    { iris: 'tok', type: 'run', code: 'let a = 1', mode: 'classic' },
+  )
+  assert.deepEqual(parseFromFrame('tok', { iris: 'tok', type: 'ready' }), { iris: 'tok', type: 'ready' })
+})
+
+test('a run without an execution mode is refused', () => {
+  // `mode` is required rather than defaulted. Defaulting would mean a frame
+  // silently picking classic or module semantics for a card whose author had no
+  // say in it, and the failure — `Cannot use import statement outside a module` —
+  // points at the card rather than at the choice.
+  assert.equal(parseToFrame('tok', { iris: 'tok', type: 'run', code: 'x' }), undefined)
+  assert.equal(parseToFrame('tok', { iris: 'tok', type: 'run', code: 'x', mode: 'esm' }), undefined)
+  assert.deepEqual(parseToFrame('tok', { iris: 'tok', type: 'run', code: 'x', mode: 'module' }), {
     iris: 'tok',
     type: 'run',
-    code: 'let a = 1',
+    code: 'x',
+    mode: 'module',
   })
-  assert.deepEqual(parseFromFrame('tok', { iris: 'tok', type: 'ready' }), { iris: 'tok', type: 'ready' })
 })
 
 test('a malformed field is rejected rather than coerced', () => {
@@ -129,4 +143,36 @@ test('a card-influenced refusal report is bounded before it reaches the UI', () 
 test('a malformed refusal report is dropped rather than half-rendered', () => {
   assert.equal(parseFromFrame('tok', { iris: 'tok', type: 'blocked', host: 'x' }), undefined)
   assert.equal(parseFromFrame('tok', { iris: 'tok', type: 'blocked', directive: 'img-src' }), undefined)
+})
+
+test('a bootstrap failure is accepted without a matching token', () => {
+  // The one frame that must bypass the token check, because what it reports may
+  // be "the token never arrived". A cross-origin frame's uncaught errors do not
+  // reach the parent console, so without this a crashed bootstrap is
+  // indistinguishable from one that was never asked to run.
+  const parsed = parseFromFrame('tok', {
+    iris: '',
+    type: 'bootstrap-error',
+    message: 'Error: iris sandbox: the frame was built without a run token',
+  })
+
+  assert.ok(parsed?.type === 'bootstrap-error')
+  assert.match(parsed.message, /without a run token/)
+})
+
+test('a bootstrap failure is still bounded, and still needs its field', () => {
+  // Weaker authentication, not none: it is believed as a diagnostic only, so it
+  // gets the same field checking and truncation as everything else.
+  assert.equal(parseFromFrame('tok', { iris: '', type: 'bootstrap-error' }), undefined)
+  const long = parseFromFrame('tok', { iris: '', type: 'bootstrap-error', message: 'x'.repeat(9000) })
+  assert.ok(long?.type === 'bootstrap-error')
+  assert.equal(long.message.length, 2000)
+})
+
+test('every other frame still requires the token', () => {
+  // The bypass is one message wide. A `run` or a `ready` without the token stays
+  // refused, because those can move state and the diagnostic cannot.
+  assert.equal(parseFromFrame('tok', { iris: '', type: 'ready' }), undefined)
+  assert.equal(parseFromFrame('tok', { iris: '', type: 'ran' }), undefined)
+  assert.equal(parseFromFrame('tok', { iris: '', type: 'height', pixels: 10 }), undefined)
 })

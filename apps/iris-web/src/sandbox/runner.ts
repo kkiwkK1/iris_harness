@@ -28,6 +28,14 @@ export interface RunnerHost {
   bootstrap: string
   /** The card's script body. */
   code: string
+  /**
+   * How to execute it.
+   *
+   * Carried from the caller rather than sniffed here: upstream runs every card
+   * script as a module unconditionally, and a sniffer would make cards behave
+   * differently for reasons their authors could not predict.
+   */
+  mode: 'classic' | 'module'
   /** Whether the user granted this card the real page. */
   documentGranted: boolean
   /** Whether the user granted this card the network. */
@@ -60,6 +68,23 @@ export interface RunnerHost {
    * first run asks.
    */
   onRan?: () => void
+  /** The frame's bootstrap installed and is waiting for a body. */
+  onReady?: () => void
+  /**
+   * The bootstrap failed before it could stamp a token.
+   *
+   * Its own callback because it means something different from every other
+   * failure: nothing in the frame is running, so no card behaviour is implicated.
+   */
+  onBootstrapError?: (message: string) => void
+  /**
+   * Which bridged globals the frame could publish onto its own window.
+   *
+   * Reported because `parent` and `top` may not be redefinable, and the answer is
+   * a browser fact rather than a design decision. A caller that shows this turns
+   * an assumption into an observation.
+   */
+  onGlobals?: (published: readonly string[], refused: readonly string[]) => void
   /**
    * The frame reported its content height, already bounded by the protocol.
    *
@@ -122,7 +147,11 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
 
   const handle = (message: FromFrame): void => {
     switch (message.type) {
+      case 'bootstrap-error':
+        host.onBootstrapError?.(message.message)
+        return
       case 'ready': {
+        host.onReady?.()
         // The order that matters. Context, then viewport, then the card.
         post({ iris: token, type: 'context', context: host.context })
         const size = host.viewport()
@@ -130,7 +159,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         // Rewritten on the way in, which is where upstream does it too: a card
         // sized in `vh` is measuring its own frame, and a frame sized to its
         // content would collapse `100vh` to nothing.
-        post({ iris: token, type: 'run', code: rewriteViewportUnits(host.code) })
+        post({ iris: token, type: 'run', code: rewriteViewportUnits(host.code), mode: host.mode })
         return
       }
       case 'height':
@@ -163,6 +192,9 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         return
       case 'ran':
         host.onRan?.()
+        return
+      case 'globals':
+        host.onGlobals?.(message.published, message.refused)
         return
       default:
         return

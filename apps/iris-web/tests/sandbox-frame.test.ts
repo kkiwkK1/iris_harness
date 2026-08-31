@@ -11,14 +11,20 @@ function realm(): {
   send: (message: ToFrame) => void
   /** The globals the last evaluation was handed, by name. */
   globals: () => Record<string, unknown>
+  /** Names the frame tried to define on its own window. */
+  publishedNames: () => string[]
   /** What the next evaluation does with its globals. */
   run: (body: (globals: Record<string, unknown>) => void) => void
+  /** Make the next module evaluation return this promise. */
+  runAsync: (next: () => Promise<void>) => void
   container: { id: string }
 } {
   const posted: FromFrame[] = []
   const listeners: ((message: ToFrame) => void)[] = []
   let handed: Record<string, unknown> = {}
+  let published: string[] = []
   let body: (globals: Record<string, unknown>) => void = () => undefined
+  let asyncBody: (() => Promise<void>) | undefined
   const container = { id: 'card-root', querySelector: () => null, querySelectorAll: () => [] }
 
   const env: FrameEnv = {
@@ -39,9 +45,14 @@ function realm(): {
     },
     post: message => posted.push(message),
     onMessage: listener => listeners.push(listener),
-    evaluate: (_source, names, values) => {
+    evaluate: (_source, mode, names, values) => {
       handed = Object.fromEntries(names.map((name, at) => [name, values[at]]))
+      if (mode === 'module' && asyncBody !== undefined) return asyncBody()
       body(handed)
+      return undefined
+    },
+    publishGlobals: entries => {
+      published = entries.map(([name]) => name)
     },
   }
 
@@ -50,8 +61,12 @@ function realm(): {
     posted,
     send: message => listeners.forEach(listener => listener(message)),
     globals: () => handed,
+    publishedNames: () => published,
     run: next => {
       body = next
+    },
+    runAsync: next => {
+      asyncBody = next
     },
     container,
   }
@@ -60,7 +75,7 @@ function realm(): {
 /** Ask the sandbox to evaluate, with `body` deciding what the "card" does. */
 function evaluate(scope: ReturnType<typeof realm>, body: (globals: Record<string, unknown>) => void): void {
   scope.run(body)
-  scope.send({ iris: 'tok', type: 'run', code: '/* card */' })
+  scope.send({ iris: 'tok', type: 'run', code: '/* card */', mode: 'classic' })
 }
 
 test('the frame announces itself before any card code exists', () => {
@@ -370,4 +385,50 @@ test('a member the bridge does not carry is refused by name', () => {
 
   assert.ok(caught instanceof UnsupportedApiError)
   assert.equal(caught.member, 'SillyTavern.generateQuietPrompt')
+})
+
+test('the bridged globals are published, and the window aliases are not', () => {
+  // Module code cannot be handed shadowed parameters, so in module mode the
+  // published globals are the only bridge — which is how upstream does it too: a
+  // classic script flattens its API onto the child window before the module runs.
+  //
+  // `window` / `self` / `globalThis` are excluded because redefining them is not
+  // ours to do and would be circular anyway.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  evaluate(scope, () => undefined)
+
+  assert.deepEqual(scope.publishedNames(), ['parent', 'top', 'SillyTavern', 'extension_settings'])
+})
+
+test('a module body reports ran only after it has loaded', async () => {
+  // A module loads asynchronously, so `ran` cannot be posted on the next line.
+  // Getting this wrong would report success before the card had done anything.
+  const scope = realm()
+  let release: (() => void) | undefined
+  scope.runAsync(
+    () =>
+      new Promise<void>(resolve => {
+        release = resolve
+      }),
+  )
+  scope.send({ iris: 'tok', type: 'run', code: 'export {}', mode: 'module' })
+
+  assert.equal(scope.posted.some(message => message.type === 'ran'), false, 'ran was posted too early')
+  release?.()
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(scope.posted.at(-1)?.type, 'ran')
+})
+
+test('a module that fails to load is reported as an error, not as a run', async () => {
+  const scope = realm()
+  scope.runAsync(() => Promise.reject(new SyntaxError('Cannot use import statement outside a module')))
+  scope.send({ iris: 'tok', type: 'run', code: 'import "x"', mode: 'module' })
+
+  await Promise.resolve()
+  await Promise.resolve()
+  const last = scope.posted.at(-1)
+  assert.ok(last?.type === 'error')
+  assert.match(last.message, /import statement/)
 })

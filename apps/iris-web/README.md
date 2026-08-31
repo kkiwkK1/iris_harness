@@ -150,6 +150,61 @@ synchronously and a cross-origin frame can only be addressed asynchronously, so 
 card that ran first would see no host at all. `runner.ts` posts context, then
 viewport, then `run`.
 
+## Two ways a card body runs
+
+Card scripts run as **modules**; Iris's own probe runs **classic**. That is not a
+heuristic — `panel/script/iframe.ts` in the installed Tavern Helper builds every
+script iframe with `<script type="module">`, unconditionally, and sniffing the
+source instead would make cards behave differently for reasons their authors
+could not predict. `mode` therefore travels on the `run` message and is required:
+defaulting it would mean a frame silently choosing semantics, and the resulting
+`Cannot use import statement outside a module` points at the card rather than at
+the choice.
+
+A module cannot be handed shadowed parameters, so its bridge is **real properties
+on the frame's own window** — which is again how upstream does it, via a classic
+`predefine` script that flattens its API onto the child before the module runs.
+The body reaches the module system as a `blob:` URL, needing no new CSP
+allowance because `blob:` is already in `script-src` for the injected layer.
+
+Whether `parent` and `top` can be redefined at all is a browser fact this project
+cannot settle from outside a browser, so the frame **attempts it and reports what
+it achieved** (`globals` message) rather than assuming either answer. The classic
+path stays for the probe, which exercises the shadowed globals a module cannot
+receive, and it is what keeps `unsafe-eval` covered.
+
+## Why the sandbox reports so much about itself
+
+A card frame is cross-origin, and **a cross-origin frame's uncaught errors never
+reach the parent's console**. That single fact shapes the diagnostics: from
+outside, a bootstrap that threw before its first message is indistinguishable
+from one that was never asked to run — clean console, no frames, a status stuck
+on "running". Someone lost a verification run to exactly that ambiguity.
+
+So three things report rather than assume:
+
+| signal | what it settles |
+| --- | --- |
+| `bootstrap-error` | the frame died before it could speak. Sent **without** a run token, because what it reports may be "the token never arrived"; accepted on `event.source` alone and believed only as a diagnostic — it can neither run code nor change state. Three tests pin that this bypass is exactly one message wide |
+| `globals` | which of `parent`, `top`, `SillyTavern`, `extension_settings` the frame could actually define on its own window. Whether `parent` is redefinable is a browser fact this project cannot settle from outside a browser, so the frame attempts it and says what it achieved |
+| the 8-second silence timeout | "stuck at running" was the one state that could not explain itself. Readiness now splits it in two: stalled before `frame ready` means the frame never started; stalled after means the body never finished |
+
+### The harness record lives on `globalThis`
+
+Not tidiness — three rounds of the same lesson. It started in component state and a
+remount erased it. Moving it out of React was not enough: I could not determine
+what was unmounting, and guessed wrong twice. Moving it out of the module was the
+third step, because Vite replaces a module on edit and takes any module-scoped
+record with it — so "the record survives" was false in development, which is the
+only place this harness runs. A global slot is immune to all three, and for a tool
+whose entire job is to still be holding what it saw, that is the right amount of
+ugly.
+
+The same reasoning changed the frame's lifetime here: in the harness it lives
+until Stop, not until the panel unmounts. "A frame must not outlive its owner" is
+right for the product and wrong for an observation tool, where losing the window
+destroys the observation.
+
 ## Contract notes for the host half
 
 Requests against `@iris/protocol`, in rough order of how much they cost to work

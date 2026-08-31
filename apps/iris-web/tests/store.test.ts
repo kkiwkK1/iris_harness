@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { applyEvent, createIrisStore, type IrisStore } from '../src/client/store.ts'
+import { actionsOf, applyEvent, createIrisStore, type IrisStore } from '../src/client/store.ts'
 import type { ChatView, IrisClient, IrisEvent } from '@iris/protocol'
 
 /** A client that records calls and lets a test push frames by hand. */
@@ -52,10 +52,13 @@ function openedStore(): {
   dispose: () => void
 } {
   const stub = stubClient()
-  const { store, dispose } = createIrisStore(stub.client)
+  const { store, dispose } = createIrisStore(stub.client, TEST_SOURCE)
   store.setState({ chatId: 'c1', view: { chatId: 'c1', title: 'A scene', messages: [] } })
   return { store, push: stub.push, setConnected: stub.setConnected, dispose }
 }
+
+/** Stated rather than defaulted, so a test never silently claims a transport. */
+const TEST_SOURCE = { transport: 'fake' as const, origin: 'test' }
 
 const settled: ChatView = {
   chatId: 'c1',
@@ -183,7 +186,7 @@ test('the connection state arrives on its own channel, not inferred from traffic
 
 test('disposing the store also drops its connection subscription', () => {
   const stub = stubClient()
-  const { store, dispose } = createIrisStore(stub.client)
+  const { store, dispose } = createIrisStore(stub.client, TEST_SOURCE)
   dispose()
 
   stub.setConnected(false)
@@ -193,7 +196,7 @@ test('disposing the store also drops its connection subscription', () => {
 
 test('disposing the store drops its event subscription', () => {
   const stub = stubClient()
-  const { store, dispose } = createIrisStore(stub.client)
+  const { store, dispose } = createIrisStore(stub.client, TEST_SOURCE)
   store.setState({ chatId: 'c1' })
   dispose()
 
@@ -217,7 +220,7 @@ test('boot opens the most recent conversation', async () => {
       throw new Error(`unexpected ${method}`)
     },
   }
-  const { store, dispose } = createIrisStore(client)
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
 
   await store.getState().boot()
 
@@ -234,7 +237,7 @@ test('a refused call becomes a notice instead of an unhandled rejection', async 
       throw Object.assign(new Error('no chat "gone"'), { code: 'not-found' })
     },
   }
-  const { store, dispose } = createIrisStore(client)
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
 
   await store.getState().openChat('gone')
 
@@ -261,7 +264,7 @@ test('a refused script body reports the host that refused it, not a guess', () =
   // sent someone to debug a transport that was already working. An explanation
   // that does not depend on the failure is a guess in a confident voice.
   const client = refusingClient({ code: 'unsupported', message: 'the script provider is not wired' })
-  const { store, dispose } = createIrisStore(client)
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
 
   return store
     .getState()
@@ -277,7 +280,7 @@ test('a refused script body reports the host that refused it, not a guess', () =
 
 test('a refusal of any code arrives intact, not normalised to one story', () => {
   const client = refusingClient({ code: 'not-found', message: 'no script "gone"' })
-  const { store, dispose } = createIrisStore(client)
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
 
   return store
     .getState()
@@ -298,11 +301,66 @@ test('a body that arrives is handed back whole', async () => {
       throw new Error(`unexpected ${method}`)
     },
   }
-  const { store, dispose } = createIrisStore(client)
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
 
   const result = await store.getState().scriptBody('char-1', 'var_update')
 
   assert.ok(result.ok)
   assert.equal(result.content, 'console.log(1)')
   dispose()
+})
+
+test('the action set keeps one identity across writes', () => {
+  /*
+   * The bug this pins wedged a browser renderer.
+   *
+   * `getState()` returns a new object after every write. Anything using it as a
+   * `useEffect` dependency therefore re-fires on every store change, and an
+   * effect that calls an action becomes a loop with no exit: action writes,
+   * identity changes, effect re-runs, action writes. The page never finishes
+   * loading and the console stays empty, because nothing has thrown.
+   *
+   * It sat latent for days in the boot effect without firing, only because that
+   * component selects primitives that happen not to change. Depending on what a
+   * neighbouring selector returns is not a property worth having.
+   */
+  const stub = stubClient()
+  const { store, dispose } = createIrisStore(stub.client, TEST_SOURCE)
+
+  const before = actionsOf(store)
+  store.setState({ booting: false })
+  store.setState({ chats: [{ chatId: 'x', title: 'x', updatedAt: 1, messageCount: 0 }] })
+
+  assert.equal(actionsOf(store), before, 'an effect keyed on the actions would re-fire')
+  // And the raw state object does change, which is why the facade has to exist.
+  assert.notEqual(store.getState(), before)
+  dispose()
+})
+
+test('the facade carries every action and nothing else', () => {
+  // Picked by type rather than listed: a hand-written list would be a second
+  // declaration of the action set and would drift the first time one is added.
+  const stub = stubClient()
+  const { store, dispose } = createIrisStore(stub.client, TEST_SOURCE)
+  const facade = actionsOf(store) as unknown as Record<string, unknown>
+  const state = store.getState() as unknown as Record<string, unknown>
+
+  const functionKeys = Object.entries(state)
+    .filter(([, value]) => typeof value === 'function')
+    .map(([key]) => key)
+    .sort()
+
+  assert.deepEqual(Object.keys(facade).sort(), functionKeys)
+  assert.ok(functionKeys.includes('boot') && functionKeys.includes('loadConnections'))
+  // No state leaked in: a facade carrying `chats` would go stale silently.
+  assert.equal('chats' in facade, false)
+  dispose()
+})
+
+test('two stores get their own facades', () => {
+  const a = createIrisStore(stubClient().client, TEST_SOURCE)
+  const b = createIrisStore(stubClient().client, TEST_SOURCE)
+  assert.notEqual(actionsOf(a.store), actionsOf(b.store))
+  a.dispose()
+  b.dispose()
 })

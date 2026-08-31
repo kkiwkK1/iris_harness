@@ -35,19 +35,19 @@ test('the frame cannot open a nested context or post a form', () => {
 test('the bootstrap is inlined, not fetched', () => {
   // An opaque-origin frame has no useful same-origin path, and a stable public
   // URL would be one more answer that could be substituted.
-  const doc = buildSrcdoc('tok', 'console.log(1)')
+  const doc = buildSrcdoc('tok', 'console.log(1)', false)
 
   assert.match(doc, /<script>console\.log\(1\)<\/script>/)
   assert.doesNotMatch(doc, /<script[^>]+src=/, 'the frame should load nothing')
 })
 
 test('the run token reaches the bootstrap through the markup', () => {
-  const doc = buildSrcdoc('abc123', '')
+  const doc = buildSrcdoc('abc123', '', false)
   assert.match(doc, /<meta name="iris-token" content="abc123">/)
 })
 
 test('a token containing markup cannot escape its attribute', () => {
-  const doc = buildSrcdoc('a"><script>bad()</script>', '')
+  const doc = buildSrcdoc('a"><script>bad()</script>', '', false)
 
   assert.doesNotMatch(doc, /content="a"><script>bad/)
   assert.match(doc, /&quot;&gt;&lt;script&gt;/)
@@ -62,7 +62,7 @@ test('a bootstrap containing a closing script tag cannot break out', () => {
   // escaping, a literal backslash in the pattern is one more layer to reason
   // about than the thing under test.
   const BACKSLASH = String.fromCharCode(92)
-  const doc = buildSrcdoc('tok', `const s = "</script><img onerror=bad()>"`)
+  const doc = buildSrcdoc('tok', `const s = "</script><img onerror=bad()>"`, false)
 
   assert.equal(doc.includes('</script><img'), false, 'the payload broke out of its element')
   assert.equal(doc.includes(`<${BACKSLASH}/script`), true, 'the sequence was not neutralised')
@@ -73,7 +73,7 @@ test('a bootstrap containing a closing script tag cannot break out', () => {
 test('the policy travels in the document, not as an attribute the host must set', () => {
   // The frame is built from `srcdoc`, so there is no response whose headers could
   // carry this. A meta element is the only place it can live.
-  const doc = buildSrcdoc('tok', '')
+  const doc = buildSrcdoc('tok', '', false)
   assert.match(doc, /<meta http-equiv="Content-Security-Policy" content="[^"]+">/)
 })
 

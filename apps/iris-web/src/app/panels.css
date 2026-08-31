@@ -686,3 +686,58 @@
   color: var(--iris-ink-faint);
   font-style: italic;
 }
+
+/* ------------------------------------------------------------- connections */
+
+.iris-conn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-left: 2px solid transparent;
+  padding-left: 8px;
+}
+
+.iris-conn[aria-current='true'] {
+  border-left-color: var(--iris-accent);
+  background: var(--iris-accent-wash);
+}
+
+.iris-conn__pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  background: none;
+  border: 0;
+  padding: 8px 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.iris-conn__name {
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Always shown, never replaced by the label. A profile named after a model it no
+ * longer routes to is a measured real-world failure, and the derived summary is
+ * the only thing on this row that cannot be out of date.
+ */
+.iris-conn__summary {
+  font-family: var(--iris-font-mono);
+  font-size: 11px;
+  color: var(--iris-ink-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.iris-conn__save {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}

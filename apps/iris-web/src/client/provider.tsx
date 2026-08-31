@@ -13,6 +13,7 @@ import { createContext, useContext } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import { useStore } from 'zustand'
 
+import { actionsOf } from './store.ts'
 import type { IrisActions, IrisState, IrisStore } from './store.ts'
 
 const StoreContext = createContext<IrisStore | undefined>(undefined)
@@ -46,10 +47,12 @@ export function useIris<T>(select: (state: IrisState & IrisActions) => T): T {
 /**
  * Read the action set.
  *
- * Separate from `useIris` because the actions never change identity, so a
- * component that only dispatches should never re-render on state.
- * @returns every action.
+ * Returns a **stable** object — see `actionsOf`. The obvious implementation,
+ * `store.getState()`, returns a new object after every write, which turns any
+ * `useEffect(..., [actions])` that calls an action into an infinite loop. That is
+ * not a hypothetical: it wedged a browser renderer.
+ * @returns every action, with an identity that does not change.
  */
 export function useIrisActions(): IrisActions {
-  return useIrisStore().getState()
+  return actionsOf(useIrisStore())
 }

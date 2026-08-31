@@ -35,6 +35,7 @@ import { describeBytes } from '../app/format.ts'
 import { Section } from '../app/fields.tsx'
 import { runCard } from '../sandbox/runner.ts'
 import { PROBE_SCRIPT } from './probe-script.ts'
+import { modeFor, stripCodeFence } from '../sandbox/script-source.ts'
 import {
   getHarness,
   resetObservations,
@@ -78,6 +79,7 @@ export function SandboxProbe(): ReactElement | null {
 
   const observed = useSyncExternalStore(subscribeHarness, getHarness, getHarness)
   const mount = useRef<HTMLDivElement>(null)
+  const silence = useRef<number | undefined>(undefined)
   // Dev-only until `networkGranted` reaches the contract. Here so the granted
   // policy can be exercised in a browser now: the policy is what is worth
   // checking, not the plumbing that will eventually carry the flag.
@@ -105,9 +107,11 @@ export function SandboxProbe(): ReactElement | null {
   }, [])
 
   const start = useCallback(
-    async (code: string, label: string) => {
+    async (code: string, label: string, kind: 'card-script' | 'probe') => {
       setRunningCard(undefined)
+      window.clearTimeout(silence.current)
       resetObservations('loading bootstrap…')
+      setHarness({ lastRun: { label, result: 'started' } })
 
       let bootstrap: string
       try {
@@ -138,7 +142,8 @@ export function SandboxProbe(): ReactElement | null {
       const card = runCard(
         {
           bootstrap,
-          code,
+          code: stripCodeFence(code),
+          mode: modeFor(kind),
           documentGranted: granted,
           networkGranted,
           context,
@@ -151,6 +156,25 @@ export function SandboxProbe(): ReactElement | null {
           },
           onHeight: pixels => {
             setHarness({ height: pixels })
+          },
+          onReady: () => {
+            window.clearTimeout(silence.current)
+            setHarness({ status: `running ${label} · frame ready` })
+          },
+          onBootstrapError: message => {
+            window.clearTimeout(silence.current)
+            setHarness({
+              status: 'the frame never started',
+              lastRun: { label, result: 'bootstrap failed', detail: message },
+            })
+          },
+          onGlobals: (published, refused) => {
+            setHarness({
+              globals:
+                refused.length === 0
+                  ? `all published: ${published.join(', ')}`
+                  : `refused: ${refused.join(', ')} · published: ${published.join(', ')}`,
+            })
           },
           onRan: () => {
             setHarness({ lastRun: { label, result: 'ran to completion' } })
@@ -178,6 +202,25 @@ export function SandboxProbe(): ReactElement | null {
       setRunningCard(card)
       mount.current?.replaceChildren(card.element)
       setHarness({ status: `running ${label} · ${source}` })
+
+      // "Stuck at running" was the one state that could not explain itself, and
+      // it is exactly the state a torn hot-reload or a dead bootstrap produces.
+      // A frame that has not even said `ready` in eight seconds is not slow.
+      window.clearTimeout(silence.current)
+      silence.current = window.setTimeout(() => {
+        setHarness(before =>
+          before.status.includes('frame ready') || before.lastRun?.label !== label
+            ? {}
+            : {
+                status: 'no frames received',
+                lastRun: {
+                  label,
+                  result: 'silent',
+                  detail: 'the frame sent nothing within 8s — bootstrap missing, stale, or torn by a reload',
+                },
+              },
+        )
+      }, 8000)
     },
     [actions, chatId, characterId, granted, networkGranted],
   )
@@ -190,7 +233,7 @@ export function SandboxProbe(): ReactElement | null {
         sizes the frame, and whether a viewport read returns the host&rsquo;s numbers.
       </p>
       <div className="iris-probe__actions">
-        <Button variant="outline" size="sm" onClick={() => void start(PROBE_SCRIPT, 'the probe')}>
+        <Button variant="outline" size="sm" onClick={() => void start(PROBE_SCRIPT, 'the probe', 'probe')}>
           Run the probe
         </Button>
         <Button variant="ghost" size="sm" onClick={() => stop('asked')}>
@@ -248,7 +291,7 @@ export function SandboxProbe(): ReactElement | null {
                       })
                       return
                     }
-                    await start(body.content, script.name)
+                    await start(body.content, script.name, 'card-script')
                   })()
                 }}
               >
@@ -267,7 +310,7 @@ export function SandboxProbe(): ReactElement | null {
               event.target.value = ''
               if (file === undefined) return
               void (async () => {
-                await start(await file.text(), file.name)
+                await start(await file.text(), file.name, 'card-script')
               })()
             }}
           />
@@ -282,6 +325,10 @@ export function SandboxProbe(): ReactElement | null {
         <div className="iris-state__row">
           <dt className="iris-state__key">settings write seen</dt>
           <dd className="iris-state__value">{observed.settings ?? 'none'}</dd>
+        </div>
+        <div className="iris-state__row">
+          <dt className="iris-state__key">globals published</dt>
+          <dd className="iris-state__value">{observed.globals ?? 'not reported'}</dd>
         </div>
       </dl>
 

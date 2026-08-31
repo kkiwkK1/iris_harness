@@ -41,7 +41,24 @@ export interface FrameEnv {
    * Injected rather than calling `new Function` here so a test can observe the
    * exact names and values a card would see, which is the thing worth asserting.
    */
-  evaluate: (source: string, names: readonly string[], values: readonly unknown[]) => void
+  evaluate: (
+    source: string,
+    mode: 'classic' | 'module',
+    names: readonly string[],
+    values: readonly unknown[],
+  ) => void | Promise<void>
+  /**
+   * Put the bridged globals on the frame's own window.
+   *
+   * Module code cannot be handed shadowed parameters, so in module mode this is
+   * the only bridge there is — which is also how upstream does it: a classic
+   * script runs before the module and flattens its API onto the child window.
+   *
+   * Called in both modes. Publishing is harmless for classic code, which finds
+   * the same objects through its parameters, and having one path fewer is worth
+   * more than saving two property definitions.
+   */
+  publishGlobals?: (entries: readonly [string, unknown][]) => void
   /**
    * Publish the viewport into the frame's own realm.
    *
@@ -278,10 +295,19 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     }
     if (message.type !== 'run') return
 
-    try {
-      env.evaluate(message.code, shadowed, resolveValues())
-      env.post({ iris: env.token, type: 'ran' })
-    } catch (error: unknown) {
+    const values = resolveValues()
+    // Published before evaluation in both modes, because a module has no other
+    // way to see them and a classic body loses nothing by having both routes.
+    env.publishGlobals?.(
+      shadowed.map((name, at) => [name, values[at]] as [string, unknown]).filter(
+        // The window aliases are not ours to redefine and would be circular
+        // anyway; `parent`/`top` are attempted because whether they can be
+        // redefined is a browser question the frame answers empirically.
+        ([name]) => name !== 'window' && name !== 'self' && name !== 'globalThis',
+      ),
+    )
+
+    const failed = (error: unknown): void => {
       // A refusal and a bug in the card both land here, and the shell shows them
       // differently: `member` is what tells them apart.
       const member = error instanceof UnsupportedApiError ? error.member : undefined
@@ -291,6 +317,23 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         message: error instanceof Error ? error.message : String(error),
         ...(member === undefined ? {} : { member }),
       })
+    }
+
+    try {
+      const running = env.evaluate(message.code, message.mode, shadowed, values)
+      if (running instanceof Promise) {
+        // A module loads asynchronously, so `ran` cannot be posted on the next
+        // line. The distinction matters for what `ran` means: the body finished
+        // evaluating, not the card finished working.
+        void running.then(
+          () => env.post({ iris: env.token, type: 'ran' }),
+          (error: unknown) => failed(error),
+        )
+      } else {
+        env.post({ iris: env.token, type: 'ran' })
+      }
+    } catch (error: unknown) {
+      failed(error)
     }
   })
 
