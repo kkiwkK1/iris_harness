@@ -198,6 +198,7 @@ const PROBES: Record<string, unknown> = {
   'chat.swipe': { chatId: 'no-such-chat', turn: 0, index: 0 },
   'chat.editMessage': { chatId: 'no-such-chat', id: 0, text: 'x' },
   'chat.deleteMessage': { chatId: 'no-such-chat', id: 0 },
+  'chat.branch': { chatId: 'no-such-chat', id: 0 },
   'character.list': {},
   'character.import': { filename: 'x.json', content: 'e30=' },
   'character.delete': { characterId: 'no-such-card' },

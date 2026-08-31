@@ -377,6 +377,14 @@ class InMemoryClient implements FakeClient {
         return { documentGranted: this.#grants.has(characterId) }
       }
 
+      case 'chat.branch': {
+        // Refused until the interface grows branch UI, at which point the fake
+        // should implement it for real — branching is chat-shape work the fake
+        // can model honestly, unlike the script bridge below. Whoever builds
+        // that UI upgrades this arm; a refusal today beats a wrong model.
+        throw new FakeRpcError('unsupported', 'the fake client does not implement chat.branch yet')
+      }
+
       case 'script.context':
       case 'script.saveMetadata':
       case 'script.saveChat':

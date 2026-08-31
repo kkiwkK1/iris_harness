@@ -25,7 +25,7 @@ import {
 import type { ChatSummary } from '@iris/protocol'
 
 import { ChatEntry, createSession, readMeta } from './entry.ts'
-import { notFound } from './errors.ts'
+import { invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
 import { fileFor, toId, uniqueId } from './paths.ts'
 
@@ -188,6 +188,95 @@ export class ChatStore {
   }
 
   /**
+   * Branch a conversation at a message, into a new one.
+   *
+   * The cut is INCLUSIVE and made on the chat-file projection, which is both
+   * what upstream does (`chat.slice(0, mesId + 1)` in `bookmarks.js`) and what
+   * this codebase already does for editing and deleting. It is deliberately NOT
+   * `dsh-session`'s `fork()`: that lives on `SessionStore` and rejects anything
+   * but a live store session, while these are detached — and its lineage is
+   * carried in a `SessionHeader` this project never persists, since the durable
+   * form here is SillyTavern's chat file.
+   * @param chatId - the conversation to branch.
+   * @param id - the last message the branch keeps.
+   * @param swipeId - branch from this alternate generation instead of the shown one.
+   * @returns the new conversation, already open.
+   * @throws {AppError} `not-found` for an unknown chat, `invalid-request` for a
+   *   message or swipe index that is not there.
+   */
+  async branch(chatId: string, id: number, swipeId?: number): Promise<ChatEntry> {
+    const parent = await this.open(chatId)
+    const { messages } = parent.toFile()
+    const at = messages[id]
+    if (at === undefined) throw invalid(`this chat has no message ${String(id)}`)
+
+    // Cloned before anything is changed, exactly as upstream does
+    // (`structuredClone(chat.slice(...))`). Selecting a swipe edits the branch
+    // point, and doing that on the shared array would move the PARENT onto the
+    // generation the user chose for the branch — the branch would work and the
+    // conversation it came from would silently change underneath.
+    const lines = structuredClone(messages.slice(0, id + 1))
+
+    if (swipeId !== undefined) {
+      const swipes = at.swipes ?? []
+      const chosen = swipes[swipeId]
+      if (chosen === undefined) {
+        throw invalid(`message ${String(id)} has ${String(swipes.length)} swipes; no index ${String(swipeId)}`)
+      }
+      // Upstream syncs the chosen swipe into `mes` before slicing, so the branch
+      // opens on the generation the user picked rather than the one on screen.
+      const branchPoint = lines[id]
+      if (branchPoint !== undefined) {
+        branchPoint.mes = chosen
+        branchPoint.swipe_id = swipeId
+      }
+    }
+
+    const parentMeta = parent.meta
+    await this.ensure()
+    const taken = new Set(await this.ids())
+    const titles = new Set((await this.list()).map(summary => summary.title))
+    const title = branchTitle(parentMeta.title, existing => titles.has(existing))
+    const now = new Date()
+    const childId = uniqueId(`${toId(title)}-${stamp(now)}`, candidate => taken.has(candidate))
+
+    const header: SillyTavernChatHeader = {
+      ...parent.header,
+      create_date: formatCreateDate(now),
+      chat_metadata: {
+        ...structuredClone(parent.header.chat_metadata),
+        // Upstream's own lineage field, kept for interoperability: a branch
+        // exported to SillyTavern still knows where it came from.
+        main_chat: parentMeta.title,
+      },
+      iris: {
+        chatId: childId,
+        ...parentMeta.characterId === undefined ? {} : { characterId: parentMeta.characterId },
+        title,
+        updatedAt: now.getTime(),
+        parentChatId: chatId,
+      },
+    }
+
+    const session = importChat({ header, messages: lines }, childId)
+    const child = new ChatEntry({ chatId: childId, header, session, card: parent.card })
+    child.hydrateVariables(lines)
+
+    this.#entries.set(childId, child)
+    await this.save(child)
+
+    // Upstream records the child on the message it was branched from, so the
+    // parent can show where its branches leave. Same field, same shape.
+    const branches = Array.isArray(at.extra?.['branches']) ? at.extra['branches'] as unknown[] : []
+    at.extra = { ...at.extra, branches: [...branches, title] }
+    parent.rebuild(messages, index => index)
+    parent.touch()
+    await this.save(parent)
+
+    return child
+  }
+
+  /**
    * Write a conversation to disk.
    * @param entry - the live conversation.
    */
@@ -228,6 +317,7 @@ export class ChatStore {
         chatId,
         title: meta.title,
         ...meta.characterId === undefined ? {} : { characterId: meta.characterId },
+        ...meta.parentChatId === undefined ? {} : { parentChatId: meta.parentChatId },
         updatedAt: meta.updatedAt,
         messageCount: Math.max(0, lines.length - 1),
       }
@@ -268,4 +358,31 @@ export function seedGreeting(
   if (greetings.length > 1) selectCandidate(session, 0, 0)
   session.append('step/end', { turn: 0, step: 0 })
   session.append('turn/end', { turn: 0, reason: { kind: 'completed' } })
+}
+
+/**
+ * Strip any branch suffix a name already carries.
+ *
+ * Upstream removes both spellings before adding its own, so branching a branch
+ * gives `Aria - Branch #2` rather than `Aria - Branch #1 - Branch #2`. Verified
+ * against `bookmarks.js`, which strips the modern suffix and a legacy prefix.
+ * @param name - the parent conversation's title.
+ * @returns the title without a branch marker.
+ */
+export function stripBranchSuffix(name: string): string {
+  return name.replace(/ - Branch #\d+$/u, '').replace(/^Branch #\d+ - /u, '')
+}
+
+/**
+ * The next free branch title for a parent.
+ * @param parentTitle - the conversation being branched.
+ * @param taken - reports whether a title is already used.
+ * @returns e.g. `Aria - Branch #1`.
+ */
+export function branchTitle(parentTitle: string, taken: (title: string) => boolean): string {
+  const base = stripBranchSuffix(parentTitle)
+  for (let index = 1; ; index += 1) {
+    const candidate = `${base} - Branch #${String(index)}`
+    if (!taken(candidate)) return candidate
+  }
 }

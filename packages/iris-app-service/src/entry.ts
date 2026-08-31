@@ -42,6 +42,8 @@ export interface IrisChatMeta {
   title: string
   /** Unix epoch milliseconds of the last activity. */
   updatedAt: number
+  /** The conversation this one was branched from, when it was. */
+  parentChatId?: string
 }
 
 /** An empty MVU tree, before any book has declared anything. */
@@ -63,6 +65,7 @@ export function readMeta(header: SillyTavernChatHeader): IrisChatMeta {
     ...typeof meta.characterId === 'string' ? { characterId: meta.characterId } : {},
     title: typeof meta.title === 'string' && meta.title.length > 0 ? meta.title : header.character_name,
     updatedAt: typeof meta.updatedAt === 'number' ? meta.updatedAt : 0,
+    ...typeof meta.parentChatId === 'string' ? { parentChatId: meta.parentChatId } : {},
   }
 }
 
@@ -512,6 +515,7 @@ export class ChatEntry {
       chatId: this.chatId,
       title: meta.title,
       ...meta.characterId === undefined ? {} : { characterId: meta.characterId },
+      ...meta.parentChatId === undefined ? {} : { parentChatId: meta.parentChatId },
       updatedAt: meta.updatedAt,
       messageCount: lineTurns(this.session).length,
     }

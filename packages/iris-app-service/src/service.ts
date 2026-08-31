@@ -235,6 +235,17 @@ export class IrisAppService {
         return { view }
       },
 
+      'chat.branch': async ({ chatId, id, swipeId }) => {
+        // Idle only: branching reads the chat-file projection and rewrites the
+        // parent's `extra.branches`, and a turn landing mid-way would put the
+        // branch point somewhere the user did not choose.
+        await this.#idle(chatId, 'branched')
+        const child = await chats.branch(chatId, id, swipeId)
+        const view = child.toView()
+        this.#options.broadcast({ type: 'chat.updated', chatId, view: (await chats.open(chatId)).toView() })
+        return { view, chats: await chats.list() }
+      },
+
       'character.list': async () => ({ characters: await library.list() }),
 
       'character.import': async ({ filename, content }) => ({

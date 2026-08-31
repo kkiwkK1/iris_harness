@@ -45,6 +45,23 @@ export const requestSchemas = {
   }),
   'chat.deleteMessage': z.object({ chatId: z.string().min(1), id: z.number().int().min(0) }),
 
+  /**
+   * Branch the conversation at a message, into a new chat.
+   *
+   * `id` is INCLUSIVE, matching upstream: `chat.slice(0, mesId + 1)`. The
+   * branch keeps the message you branched at, because a user picks the last
+   * message they want to keep, not the first they want gone.
+   *
+   * `swipeId` branches from an alternate generation rather than the one showing,
+   * which is what makes branching useful next to swipes: keep this reply here,
+   * and explore that one over there.
+   */
+  'chat.branch': z.object({
+    chatId: z.string().min(1),
+    id: z.number().int().min(0),
+    swipeId: z.number().int().min(0).optional(),
+  }),
+
   'character.list': z.object({}),
   'character.import': z.object({
     filename: z.string().min(1).max(255),
@@ -210,6 +227,8 @@ export interface RpcResponseMap {
   'chat.swipe': { view: ChatView }
   'chat.editMessage': { view: ChatView }
   'chat.deleteMessage': { view: ChatView }
+  /** The new branch, already open, plus the refreshed list it now appears in. */
+  'chat.branch': { view: ChatView, chats: ChatSummary[] }
 
   'character.list': { characters: CharacterSummary[] }
   'character.import': { character: CharacterSummary }

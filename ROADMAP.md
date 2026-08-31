@@ -77,11 +77,13 @@ substitute_find_regex = { NONE: 0, RAW: 1, ESCAPED: 2 }
 
 ## Tier 1：日常使用的硬缺口
 
-### 1.1 分支与检查点
+### 1.1 分支与检查点 ✅（2026-09-01，宿主侧完成，UI 待接）
 
-ST 用户切分支像呼吸一样频繁。`dsh-session` 的 `fork(source, boundary, childSessionId)` **正好就是这个功能**——包含式 seq 边界、拒绝在未闭合回合中间分叉、子 header 记 `parentSession`——我们只是还没接。协议里加两个方法、UI 加两个按钮就完事。
+~~`dsh-session` 的 `fork()` 正好就是这个功能,只差接线~~——**这个前提是错的,实现前查证 API 时被推翻**（教训记档）:`fork()` 挂在 `SessionStore` 上而我们用 detached 的 `Session.create()`,会被 `SESSION_NOT_LIVE` 拒绝;而且它的血缘记在从不持久化的 `SessionHeader` 里,存盘即蒸发。
 
-**投入产出比最高的一项**：能力已经在依赖里躺着了。
+实际做法照上游 `bookmarks.js` 复刻:聊天文件级切割(`structuredClone` + 包含式 slice)、可选 swipe 同步、`chat_metadata.main_chat` 记父名、父消息 `extra.branches` 记子。额外记 `iris.parentChatId`——上游用**名字**做链接,父一改名链接就断,断链比没链接更糟。
+
+「切分支像呼吸一样频繁」是从社区行为推的,不是从本机数据量的——d7 正在核用户 18 个聊天里的真实分支痕迹,结果出来后这段的排位理由要按事实改写。
 
 ### 1.2 作者注释
 

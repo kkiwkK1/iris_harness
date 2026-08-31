@@ -67,6 +67,15 @@ export interface ChatSummary {
   /** Unix epoch milliseconds of the last activity. */
   updatedAt: number
   messageCount: number
+  /**
+   * The conversation this one was branched from, when it was.
+   *
+   * Present so a list can group a branch under its parent. Upstream records the
+   * same relationship as a chat *name* in `chat_metadata.main_chat`; this is the
+   * id, because a name changes when the user renames the parent and a broken
+   * link is worse than no link.
+   */
+  parentChatId?: string
 }
 
 /** A character in the library. */
