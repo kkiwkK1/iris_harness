@@ -15,7 +15,7 @@ import type { Message } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { listCandidates, selectedCandidate } from '@iris/chat'
 import type { ChatView, MessageView } from '@iris/protocol'
-import type { RegexScript } from '@iris/regex'
+import type { MacroSubstitute, RegexScript } from '@iris/regex'
 
 import { runScripts } from './regex.ts'
 
@@ -66,7 +66,12 @@ export function reasoningOf(message: { content: readonly { type: string, text?: 
 export function projectMessages(
   session: Session,
   names: Names,
-  options: { keys: readonly string[], pending?: PendingTurn | undefined, scripts?: readonly RegexScript[] },
+  options: {
+    keys: readonly string[]
+    pending?: PendingTurn | undefined
+    scripts?: readonly RegexScript[]
+    substitute?: MacroSubstitute | undefined
+  },
 ): MessageView[] {
   const pending = options.pending
   const keyAt = (index: number): string => options.keys[index] ?? `m-orphan-${String(index)}`
@@ -148,7 +153,11 @@ export function projectMessages(
   // conversation, which is what a script's minDepth/maxDepth is measured in.
   return views.map((view, index) => ({
     ...view,
-    text: runScripts(view.text, view.role, scripts, { isMarkdown: true, depth: views.length - 1 - index }),
+    text: runScripts(view.text, view.role, scripts, {
+      isMarkdown: true,
+      depth: views.length - 1 - index,
+      substitute: options.substitute,
+    }),
   }))
 }
 
@@ -166,6 +175,7 @@ export function toChatView(input: {
   keys: readonly string[]
   pending?: PendingTurn | undefined
   scripts?: readonly RegexScript[] | undefined
+  substitute?: MacroSubstitute | undefined
   variables?: Record<string, unknown> | undefined
 }): ChatView {
   return {
@@ -176,6 +186,7 @@ export function toChatView(input: {
       keys: input.keys,
       pending: input.pending,
       ...input.scripts === undefined ? {} : { scripts: input.scripts },
+      substitute: input.substitute,
     }),
     ...input.variables === undefined ? {} : { variables: input.variables },
   }

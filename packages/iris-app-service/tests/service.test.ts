@@ -693,3 +693,54 @@ test('clearing a global field falls back to what the composition configured', as
   assert.equal(cleared.settings.model, 'test-model')
   assert.equal(cleared.settings.maxTokens, undefined)
 })
+
+test('an escaped macro in a pattern matches the name literally', async (t) => {
+  // A character whose name contains a regex metacharacter. Under
+  // `SUBSTITUTE.ESCAPED` the expanded value is escaped before it is read as
+  // syntax, so `A.B` matches itself and not `AxB` — which is the whole reason
+  // the mode exists, and the reason the macro package had to grow a
+  // per-expanded-value hook for it.
+  const escaped = [{
+    scriptName: 'mark the character by name',
+    findRegex: '{{char}}',
+    replaceString: '[NAME]',
+    placement: [2],
+    markdownOnly: true,
+    substituteRegex: 2,
+  }]
+  const { handlers, sink } = await fixture(t, {
+    card: cardFile({ name: 'A.B', extensions: { regex_scripts: escaped } }),
+    replies: ['AxB and A.B walked in.'],
+  })
+
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  await handlers['chat.send']({ chatId: created.view.chatId, text: 'Who?' })
+  const end = await sink.waitFor('stream.end')
+
+  assert.equal(last(end.view).text, 'AxB and [NAME] walked in.')
+})
+
+test('an unescaped macro in a pattern is still regex syntax', async (t) => {
+  // The contrast that proves the escaping above is doing something. Under
+  // `SUBSTITUTE.RAW` the same name expands into a pattern whose `.` is a
+  // wildcard, so it matches `AxB` — the neighbour — and, with no `g` flag on a
+  // bare pattern, stops there without ever touching the character's own name.
+  const raw = [{
+    scriptName: 'mark the character by name',
+    findRegex: '{{char}}',
+    replaceString: '[NAME]',
+    placement: [2],
+    markdownOnly: true,
+    substituteRegex: 1,
+  }]
+  const { handlers, sink } = await fixture(t, {
+    card: cardFile({ name: 'A.B', extensions: { regex_scripts: raw } }),
+    replies: ['AxB and A.B walked in.'],
+  })
+
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  await handlers['chat.send']({ chatId: created.view.chatId, text: 'Who?' })
+  const end = await sink.waitFor('stream.end')
+
+  assert.equal(last(end.view).text, '[NAME] and A.B walked in.', 'the wildcard hit the wrong text')
+})

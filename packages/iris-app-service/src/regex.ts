@@ -18,8 +18,17 @@
  */
 
 import type { CharacterCard } from '@iris/character'
+import { createMacroContext, toRegexSubstitute } from '@iris/macro'
 import type { ViewRole } from '@iris/protocol'
-import { applyRegexScripts, orderScripts, PLACEMENT, SCRIPT_TYPE, type Placement, type RegexScript } from '@iris/regex'
+import {
+  applyRegexScripts,
+  orderScripts,
+  PLACEMENT,
+  SCRIPT_TYPE,
+  type MacroSubstitute,
+  type Placement,
+  type RegexScript,
+} from '@iris/regex'
 
 /**
  * Which placement a message's text belongs to.
@@ -46,6 +55,21 @@ export function scriptsOf(card: CharacterCard | undefined): RegexScript[] {
 }
 
 /**
+ * The macro expander a chat's regex scripts should use.
+ *
+ * Needed for `SUBSTITUTE.ESCAPED`, where a pattern's macros expand and the
+ * expanded values are escaped before they are read as regex syntax — so a
+ * character named `A.B` matches itself and not `AxB`. `@iris/regex` stays
+ * dependency-free and `@iris/macro` supplies the adapter, so the two packages
+ * meet by shape rather than by import.
+ * @param names - what `{{char}}` and `{{user}}` expand to.
+ * @returns the substitute to hand the regex engine.
+ */
+export function substituteFor(names: { user: string, character: string }): MacroSubstitute {
+  return toRegexSubstitute(createMacroContext({ char: names.character, user: names.user }))
+}
+
+/**
  * Run the scripts for one direction.
  *
  * A thin wrapper, but it is the only place the role-to-placement mapping and
@@ -62,8 +86,17 @@ export function runScripts(
   text: string,
   role: ViewRole,
   scripts: readonly RegexScript[],
-  params: { isMarkdown?: boolean, isPrompt?: boolean, depth?: number } = {},
+  params: {
+    isMarkdown?: boolean
+    isPrompt?: boolean
+    depth?: number
+    substitute?: MacroSubstitute | undefined
+  } = {},
 ): string {
   if (scripts.length === 0) return text
-  return applyRegexScripts(text, placementFor(role), scripts, params)
+  const { substitute, ...rest } = params
+  return applyRegexScripts(text, placementFor(role), scripts, {
+    ...rest,
+    ...substitute === undefined ? {} : { substitute },
+  })
 }
