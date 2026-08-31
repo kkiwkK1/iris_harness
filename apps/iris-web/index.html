@@ -4,6 +4,32 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Iris</title>
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      /*
+       * Theme before first paint.
+       *
+       * The stored preference has to reach the root element before any stylesheet
+       * paints, or every reload flashes the wrong ground colour behind a page of
+       * prose. Ground colours are duplicated here on purpose — this runs before
+       * tokens.css exists, so it cannot read a custom property.
+       */
+      (function paintGround() {
+        var stored = null
+        try {
+          stored = window.localStorage.getItem('iris.theme')
+        } catch (error) {
+          stored = null
+        }
+        var dark =
+          stored === 'dark' ||
+          (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+        var root = document.documentElement
+        root.setAttribute('data-iris-theme', dark ? 'dark' : 'light')
+        root.style.backgroundColor = dark ? '#12171d' : '#f5f6f7'
+        root.style.colorScheme = dark ? 'dark' : 'light'
+      })()
+    </script>
     <script>
       /*
        * The registration facade, installed before any bundle runs.
@@ -25,12 +51,12 @@
           },
           create: function (options) {
             var index = pendingQueue.findIndex(function (row) { return row.id === MODULES_ID })
-            if (index === -1) throw new Error('iris spike: the modules bundle never registered')
+            if (index === -1) throw new Error('iris: the modules bundle never registered')
             var registration = pendingQueue.splice(index, 1)[0]
             // Materialize the bootstrap bundle by hand — the one module that
             // cannot arrive through the module system it defines.
             var exports = registration.factory(function (spec) {
-              throw new Error('iris spike: modules bootstrap required "' + spec + '"')
+              throw new Error('iris: modules bootstrap required "' + spec + '"')
             })
             return exports.createClientModuleSystem(target, { id: registration.id, exports: exports }, options)
           },

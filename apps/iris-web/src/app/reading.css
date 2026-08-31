@@ -1,0 +1,277 @@
+/*
+ * The reading surface.
+ *
+ * No bubbles, no avatars, no rule between every message. A message is a
+ * two-column row — a 46px margin for marginalia, then the text at the measure —
+ * and the only hairline is between *turns*, because a turn is what swipe and
+ * regenerate address. The reader's own lines are set in the UI sans and
+ * subordinated; the model's are typeset in the prose serif. That contrast
+ * replaces every piece of chat chrome this file does not have.
+ */
+
+.iris-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.iris-column {
+  /* Margin + measure, plus breathing room at the right edge. */
+  max-width: calc(var(--iris-gutter) + var(--iris-measure) + 40px);
+  margin: 0 auto;
+  padding: 26px 20px 56px;
+}
+
+.iris-turn {
+  padding: 22px 0;
+}
+
+.iris-turn + .iris-turn {
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-msg {
+  display: grid;
+  grid-template-columns: var(--iris-gutter) minmax(0, 1fr);
+}
+
+.iris-msg + .iris-msg {
+  margin-top: 22px;
+}
+
+.iris-msg__margin {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 4px 15px 0 0;
+}
+
+.iris-msg__body {
+  min-width: 0;
+}
+
+.iris-msg__who {
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  text-transform: uppercase;
+  color: var(--iris-ink-tertiary);
+  margin-bottom: 7px;
+}
+
+.iris-msg__text {
+  font: var(--iris-prose-size) / var(--iris-prose-leading) var(--iris-font-prose);
+  color: var(--iris-ink);
+  overflow-wrap: break-word;
+}
+
+.iris-msg__text > :first-child {
+  margin-top: 0;
+}
+
+.iris-msg__text > :last-child {
+  margin-bottom: 0;
+}
+
+/* The reader's own voice: an editor's query in the margin of a proof, not
+   typeset prose. Smaller, sans, and one step back in the ink. */
+.iris-msg--user .iris-msg__text {
+  font: 15px / 1.62 var(--iris-font-ui);
+  color: var(--iris-ink-secondary);
+  white-space: pre-wrap;
+}
+
+.iris-msg--system .iris-msg__text {
+  font: 13.5px / 1.6 var(--iris-font-ui);
+  color: var(--iris-ink-tertiary);
+  font-style: italic;
+}
+
+/* ------------------------------------------------------------- variant rail */
+
+/*
+ * The signature. Alternate generations are variant readings of the same beat,
+ * so they are notated the way a critical edition notates them: a quiet ladder
+ * in the margin, one tick per reading, the current one filled. It reports the
+ * count and the position at a glance and costs no chrome when there is only
+ * one reading to report.
+ */
+.iris-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.iris-rail__tick {
+  width: 11px;
+  height: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 1px;
+  background: var(--iris-rule-strong);
+  cursor: pointer;
+  transition:
+    width var(--iris-fast) var(--iris-ease),
+    background var(--iris-fast) var(--iris-ease);
+}
+
+.iris-rail__tick:hover {
+  width: 15px;
+  background: var(--iris-ink-tertiary);
+}
+
+.iris-rail__tick[aria-current='true'] {
+  width: 19px;
+  background: var(--iris-accent);
+}
+
+.iris-rail__count {
+  margin-top: 5px;
+  font-family: var(--iris-font-mono);
+  font-size: 10px;
+  color: var(--iris-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The one animated moment. Message text is keyed by its visible reading, so
+ * switching readings remounts it and replays this — changing reading feels like
+ * flipping between takes rather than like a re-fetch. The same mount animation
+ * doubles as the page's load reveal, which is why it is attached to mount rather
+ * than toggled by a class: a class that has to be turned on for "switched" and
+ * off for "first render" is a second source of truth waiting to disagree.
+ */
+@keyframes iris-slip {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.iris-msg__text--enter {
+  animation: iris-slip var(--iris-slip) var(--iris-ease);
+}
+
+/* ---------------------------------------------------------------- reasoning */
+
+.iris-reason {
+  margin-bottom: 13px;
+}
+
+.iris-reason__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  text-transform: uppercase;
+  color: var(--iris-ink-faint);
+}
+
+.iris-reason__toggle:hover {
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-reason__chevron {
+  transition: transform var(--iris-fast) var(--iris-ease);
+}
+
+.iris-reason__chevron--open {
+  transform: rotate(90deg);
+}
+
+.iris-reason__body {
+  margin-top: 9px;
+  padding-left: 14px;
+  border-left: var(--iris-hairline) solid var(--iris-rule);
+  font-size: 13.5px;
+  line-height: 1.66;
+  color: var(--iris-ink-tertiary);
+  white-space: pre-wrap;
+}
+
+/* ----------------------------------------------------------------- actions */
+
+.iris-actions {
+  display: flex;
+  gap: 1px;
+  margin-top: 11px;
+  margin-left: -7px;
+  opacity: 0;
+  transition: opacity var(--iris-fast) var(--iris-ease);
+}
+
+.iris-msg:hover .iris-actions,
+.iris-msg:focus-within .iris-actions,
+.iris-actions--shown {
+  opacity: 1;
+}
+
+.iris-act {
+  background: none;
+  border: 0;
+  padding: 3px 7px 4px;
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-act:hover {
+  background: var(--iris-bg-sunken);
+  color: var(--iris-ink);
+}
+
+.iris-act--danger:hover {
+  background: var(--iris-danger-wash);
+  color: var(--iris-danger);
+}
+
+.iris-edit {
+  width: 100%;
+  resize: vertical;
+  min-height: 9rem;
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink);
+  border: var(--iris-hairline) solid var(--iris-rule-strong);
+  border-radius: var(--iris-radius);
+  padding: 10px 12px;
+  font: var(--iris-prose-size) / var(--iris-prose-leading) var(--iris-font-prose);
+}
+
+/* ---------------------------------------------------------------- streaming */
+
+@keyframes iris-blink {
+  50% {
+    opacity: 0.15;
+  }
+}
+
+.iris-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.14em;
+  background: var(--iris-accent);
+  animation: iris-blink 1.15s var(--iris-ease) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iris-msg__text--enter,
+  .iris-caret {
+    animation: none;
+  }
+}

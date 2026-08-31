@@ -1,0 +1,122 @@
+/**
+ * Just enough character-card reading to make an import demo honest.
+ *
+ * This is NOT the card decoder — `@iris/character` is, and the host owns it.
+ * What the fake needs is the one field the library row shows, pulled out of a
+ * real file, so that dragging an actual card onto the page produces the actual
+ * name. A fake that named every import after its filename would let a broken
+ * base64 hand-off look like a success.
+ *
+ * @module @iris/client-fake/card
+ */
+
+/** PNG's fixed magic prefix. */
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const
+
+/**
+ * Decode base64 to bytes without Node or DOM specifics.
+ *
+ * `atob` rather than `Buffer`: this package is aliased straight into the
+ * browser bundle, so anything Node-only here would build and then fail at run
+ * time in the one place it matters.
+ * @param base64 - the encoded payload.
+ * @returns the bytes, or undefined when the input is not valid base64.
+ */
+function bytesOf(base64: string): Uint8Array | undefined {
+  let binary: string
+  try {
+    binary = atob(base64.replace(/^data:[^,]*,/, ''))
+  } catch {
+    return undefined
+  }
+  const out = new Uint8Array(binary.length)
+  for (let at = 0; at < binary.length; at += 1) out[at] = binary.charCodeAt(at) & 0xff
+  return out
+}
+
+/** Read a big-endian uint32. */
+function u32(bytes: Uint8Array, at: number): number {
+  return (
+    ((bytes[at] ?? 0) << 24) | ((bytes[at + 1] ?? 0) << 16) | ((bytes[at + 2] ?? 0) << 8) | (bytes[at + 3] ?? 0)
+  ) >>> 0
+}
+
+/**
+ * Pull the card JSON out of a PNG's tEXt chunks.
+ *
+ * `ccv3` wins over `chara` when both are present, which is the same precedence
+ * the real decoder uses: a V3 writer keeps the V2 block around for older
+ * readers, so preferring `chara` would silently downgrade every V3 card.
+ * @param bytes - the PNG file.
+ * @returns the decoded JSON text, or undefined when the file carries no card.
+ */
+function cardTextFromPng(bytes: Uint8Array): string | undefined {
+  if (PNG_MAGIC.some((byte, at) => bytes[at] !== byte)) return undefined
+  const decoder = new TextDecoder()
+  const found = new Map<string, string>()
+
+  let at = 8
+  while (at + 8 <= bytes.length) {
+    const length = u32(bytes, at)
+    const type = decoder.decode(bytes.subarray(at + 4, at + 8))
+    const body = bytes.subarray(at + 8, at + 8 + length)
+    if (type === 'tEXt') {
+      const split = body.indexOf(0)
+      if (split > 0) {
+        const keyword = decoder.decode(body.subarray(0, split))
+        if (keyword === 'chara' || keyword === 'ccv3') {
+          const payload = decoder.decode(body.subarray(split + 1))
+          const inner = bytesOf(payload)
+          if (inner !== undefined) found.set(keyword, new TextDecoder().decode(inner))
+        }
+      }
+    }
+    if (type === 'IEND') break
+    at += 12 + length
+  }
+  return found.get('ccv3') ?? found.get('chara')
+}
+
+/** What the fake manages to learn about an imported file. */
+export interface ReadCard {
+  name: string
+  tags: string[]
+  creator?: string
+}
+
+/**
+ * Read the display fields of an imported card.
+ *
+ * Falls back to the filename rather than failing: the import path should still
+ * be exercisable with a placeholder file, and a fake that refused everything
+ * but a well-formed V2 card would make the drop target untestable.
+ * @param filename - the dropped file's name, used as the fallback identity.
+ * @param base64 - the file's bytes, base64-encoded, as `character.import` sends them.
+ * @returns the fields the library row needs.
+ */
+export function readCard(filename: string, base64: string): ReadCard {
+  const fallback = filename.replace(/\.(png|json|charx)$/i, '').trim()
+  const bytes = bytesOf(base64)
+  if (bytes === undefined) return { name: fallback === '' ? filename : fallback, tags: [] }
+
+  const json = /\.json$/i.test(filename) ? new TextDecoder().decode(bytes) : cardTextFromPng(bytes)
+  if (json === undefined) return { name: fallback === '' ? filename : fallback, tags: [] }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    return { name: fallback === '' ? filename : fallback, tags: [] }
+  }
+
+  // V2/V3 nest under `data`; V1 is flat. Reading both is two lines here and
+  // saves the UI from having to care which era a card came from.
+  const root = parsed as Record<string, unknown>
+  const data = (root['data'] ?? root) as Record<string, unknown>
+  const name = typeof data['name'] === 'string' && data['name'].trim() !== '' ? data['name'] : fallback
+  const rawTags = data['tags']
+  const tags = Array.isArray(rawTags) ? rawTags.filter((tag): tag is string => typeof tag === 'string') : []
+  const creator = typeof data['creator'] === 'string' && data['creator'].trim() !== '' ? data['creator'] : undefined
+
+  return { name, tags, ...(creator === undefined ? {} : { creator }) }
+}

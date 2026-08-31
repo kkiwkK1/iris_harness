@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+
+    // Same rules as the rest of the repo, plus what a bundled browser target
+    // needs. `allowImportingTsExtensions` is not a bundler concession here: the
+    // workspace packages this app aliases are Node-type-stripped sources, and
+    // their own imports carry real `.ts` extensions.
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+
+    "paths": {
+      "@iris/protocol": ["../../packages/iris-protocol/src/index.ts"],
+      "@iris/client-fake": ["../../packages/iris-client-fake/src/index.ts"],
+      "@iris/rpc-client": ["../../packages/iris-rpc-client/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "tools/**/*.tsx", "vite.config.ts"]
+}

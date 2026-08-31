@@ -1,0 +1,101 @@
+/*
+ * The `--dsw-*` bridge.
+ *
+ * `dsh-client-ui-primitives` is styled exclusively through these token names,
+ * so mapping them onto the Iris palette is the whole cost of adopting its
+ * Button, Menu, Modal, Toast, CodeBlock and incremental Markdown renderer. The
+ * alternative — restyling each component — would fork them, and the streaming
+ * Markdown parser is the last thing in this app worth forking.
+ *
+ * Every value below is an Iris token. Nothing is authored twice.
+ */
+
+:root {
+  --dsw-font-family: var(--iris-font-ui);
+
+  /* ------------------------------------------------------------ background */
+  --dsw-alias-bg-base: var(--iris-bg-page);
+  --dsw-alias-bg-layer-1: var(--iris-bg-raised);
+  --dsw-alias-bg-layer-2: var(--iris-bg-sunken);
+  --dsw-alias-bg-mask-1: var(--iris-bg-mask);
+  --dsw-mask-blur: blur(2px);
+  --dsw-hovercard-bg: var(--iris-bg-raised);
+  --dsw-specific-menu: var(--iris-bg-raised);
+  --dsw-alias-tooltip-bg: var(--iris-bg-raised);
+  --dsw-shadow-lv3: var(--iris-shadow);
+
+  /* ---------------------------------------------------------------- border */
+  --dsw-alias-border-l1: var(--iris-rule-faint);
+  --dsw-alias-border-l2: var(--iris-rule);
+  --dsw-alias-border-l3: var(--iris-rule-strong);
+  --dsw-alias-border-l4: var(--iris-rule-strong);
+  --dsw-alias-border-inverted: var(--iris-ink);
+
+  /* ----------------------------------------------------------------- label */
+  --dsw-alias-label-primary: var(--iris-ink);
+  --dsw-alias-label-secondary: var(--iris-ink-secondary);
+  --dsw-alias-label-tertiary: var(--iris-ink-tertiary);
+  --dsw-alias-label-dimmed: var(--iris-ink-faint);
+  --dsw-alias-label-caption: var(--iris-ink-tertiary);
+  --dsw-alias-label-primary-inverted: var(--iris-ink-inverted);
+  --dsw-alias-label-primary-foreground: var(--iris-ink-inverted);
+
+  /* ---------------------------------------------------------------- accent */
+  --dsw-alias-brand-primary: var(--iris-accent);
+  --dsw-static-blue-400: var(--iris-accent);
+  --dsw-static-deepseek-450: var(--iris-accent);
+  --dsw-static-neutral-bluish-00: var(--iris-bg-raised);
+
+  /* ---------------------------------------------------------------- button */
+  /* Iris buttons are text-weight by default; only the primary one takes fill,
+     and it takes the accent rather than a brand blue. */
+  --dsw-alias-button-primary-fill: var(--iris-accent);
+  --dsw-alias-button-primary-hover: var(--iris-accent-quiet);
+  --dsw-alias-button-contrast-fill: var(--iris-ink-inverted);
+  --dsw-alias-button-ghost-active-fill: var(--iris-accent-wash);
+  --dsw-alias-button-ghost-active-border: var(--iris-rule-strong);
+  --dsw-alias-button-tool-bar-fill: transparent;
+  --dsw-alias-button-tool-bar-hover: var(--iris-bg-sunken);
+
+  /* ----------------------------------------------------------- interactive */
+  --dsw-alias-interactive-bg-hover: var(--iris-bg-sunken);
+  --dsw-alias-interactive-bg-active: var(--iris-accent-wash);
+  --dsw-alias-interactive-bg-hover-danger: var(--iris-danger-wash);
+
+  /* ------------------------------------------------------------------ state */
+  --dsw-alias-state-error-primary: var(--iris-danger);
+  --dsw-alias-state-error-secondary: var(--iris-danger-wash);
+  --dsw-alias-state-success-primary: var(--iris-accent);
+  --dsw-alias-state-success-secondary: var(--iris-accent-wash);
+  --dsw-alias-state-warn-primary: var(--iris-warn);
+  --dsw-alias-state-warn-secondary: rgb(207 164 87 / 14%);
+  --dsw-alias-state-warn-label: var(--iris-warn);
+  --dsw-alias-state-business-primary: var(--iris-accent);
+
+  /* -------------------------------------------------------------- scrollbar */
+  --dsw-alias-scrollbar-bg-l2: var(--iris-rule);
+  --dsw-alias-scrollbar-hover-l2: var(--iris-rule-strong);
+
+  /* --------------------------------------------------------------- markdown */
+  /*
+   * The one place the bridge is opinionated rather than mechanical: the
+   * primitives' Markdown renderer inherits its body font, so pointing its
+   * base font at the prose serif is what makes a streamed reply read as prose
+   * instead of as UI text. Code keeps the mono stack.
+   */
+  --dsw-font-markdown-base: var(--iris-prose-size) / var(--iris-prose-leading) var(--iris-font-prose);
+  --dsw-font-markdown-base-strong: 600 var(--iris-prose-size) / var(--iris-prose-leading) var(--iris-font-prose);
+  --dsw-font-markdown-h1: 600 1.44em / 1.32 var(--iris-font-prose);
+  --dsw-font-markdown-h2: 600 1.24em / 1.36 var(--iris-font-prose);
+  --dsw-font-markdown-h3: 600 1.1em / 1.4 var(--iris-font-prose);
+  --dsw-font-markdown-h4: 600 1em / 1.44 var(--iris-font-prose);
+  --dsw-font-markdown-code: 0.86em / 1.5 var(--iris-font-mono);
+  --dsw-font-markdown-code-block: 12.5px / 1.62 var(--iris-font-mono);
+  --dsw-font-markdown-table: var(--iris-ui-size) / 1.5 var(--iris-font-ui);
+  --dsw-font-markdown-table-head: 600 var(--iris-ui-size) / 1.5 var(--iris-font-ui);
+  --dsw-alias-markdown-code-block: var(--iris-code-bg);
+  --dsw-alias-markdown-code-block-banner: var(--iris-bg-sunken);
+  --dsw-alias-markdown-inline-code: var(--iris-code-inline);
+
+  --dsw-font-xs-13: var(--iris-ui-size) / 1.45 var(--iris-font-ui);
+}

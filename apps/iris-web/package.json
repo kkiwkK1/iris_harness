@@ -7,7 +7,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:render": "node tools/render-check.mjs"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.2",

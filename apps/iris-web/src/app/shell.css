@@ -1,0 +1,245 @@
+/*
+ * The shell: sidebar, reading column, composer, drawer.
+ *
+ * The one structural decision everything else follows from: the reading column
+ * is capped at a book measure and centred, and nothing is allowed to reflow it.
+ * That is why the settings drawer overlays the page instead of squeezing it —
+ * re-wrapping a page of prose while someone drags a temperature slider is
+ * disorienting in a way no amount of animation smoothing fixes.
+ */
+
+.iris-shell {
+  /* Positioned, because the card-import overlay covers the whole shell. */
+  position: relative;
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr);
+  height: 100%;
+  background: var(--iris-bg-base);
+  color: var(--iris-ink);
+  font-family: var(--iris-font-ui);
+  font-size: var(--iris-ui-size);
+}
+
+:focus-visible {
+  outline: 2px solid var(--iris-accent);
+  outline-offset: 2px;
+  border-radius: var(--iris-radius);
+}
+
+/* -------------------------------------------------------------- typography */
+
+.iris-label {
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  text-transform: uppercase;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-meta {
+  font-family: var(--iris-font-mono);
+  font-size: var(--iris-meta-size);
+  color: var(--iris-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----------------------------------------------------------------- sidebar */
+
+.iris-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: var(--iris-hairline) solid var(--iris-rule);
+}
+
+.iris-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 18px 20px 14px;
+}
+
+.iris-brand__name {
+  font-family: var(--iris-font-prose);
+  font-size: 20px;
+  letter-spacing: 0.02em;
+  color: var(--iris-ink);
+}
+
+.iris-brand__mark {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--iris-accent);
+  margin-bottom: 4px;
+}
+
+.iris-tabs {
+  display: flex;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule);
+}
+
+.iris-tab {
+  flex: 1;
+  padding: 9px 4px 10px;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  text-transform: uppercase;
+  color: var(--iris-ink-tertiary);
+  transition: color var(--iris-fast) var(--iris-ease);
+}
+
+.iris-tab:hover {
+  color: var(--iris-ink-secondary);
+}
+
+.iris-tab[aria-selected='true'] {
+  color: var(--iris-ink);
+  border-bottom-color: var(--iris-accent);
+}
+
+.iris-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 16px;
+}
+
+.iris-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 9px 12px;
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+  font: inherit;
+  color: var(--iris-ink-secondary);
+}
+
+.iris-row:hover {
+  background: var(--iris-bg-sunken);
+}
+
+.iris-row[aria-current='true'] {
+  background: var(--iris-accent-wash);
+  color: var(--iris-ink);
+}
+
+.iris-row__title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-row__meta {
+  display: block;
+  margin-top: 3px;
+}
+
+.iris-row__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 5px;
+}
+
+.iris-tag {
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  color: var(--iris-ink-faint);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: 999px;
+  padding: 1px 7px 2px;
+}
+
+.iris-sidebar__foot {
+  border-top: var(--iris-hairline) solid var(--iris-rule);
+  padding: 10px 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ---------------------------------------------------------------- main pane */
+
+.iris-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--iris-bg-page);
+}
+
+.iris-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 49px;
+  padding: 0 18px;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-topbar__title {
+  font-family: var(--iris-font-prose);
+  font-size: 15px;
+  color: var(--iris-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-topbar__spacer {
+  flex: 1;
+}
+
+.iris-nav-toggle {
+  display: none;
+}
+
+/* One list row plus its overflow menu; the menu must not steal the row's width. */
+.iris-row-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.iris-row-group .iris-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.iris-list__empty {
+  padding: 18px 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--iris-ink-faint);
+}
+
+/* The tap-to-dismiss layer behind the small-screen sidebar. */
+.iris-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+}
+
+.iris-title-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: text;
+  text-align: left;
+}
+
+.iris-title-input {
+  max-width: 280px;
+  font-family: var(--iris-font-ui);
+  font-size: 14px;
+}

@@ -1,18 +1,30 @@
 /**
- * The Iris-authored browser plugin the shell mounts.
+ * The Iris browser plugin the DSH shell mounts.
  *
- * The point of this file: the DSH web shell's only service dependency is
- * `uiRenderer`. Whoever provides it owns the entire application surface. So a
- * product that is not the coding agent supplies its own renderer here and never
- * loads `dsh-client-runtime`, `dsh-client-ui-conversation`, or the rest of the
- * coding-agent client stack.
+ * The shell's only service dependency is `uiRenderer`, so whoever provides it
+ * owns the entire application surface. That is the seam this whole app hangs
+ * from: Iris provides its own renderer and never loads `dsh-client-runtime`,
+ * `dsh-client-ui-conversation` or the rest of the coding-agent client stack.
+ *
+ * Everything created here is created through `ctx.effect`, which means an
+ * unmount takes the React root, the store's event subscription and the slot
+ * declarations with it, in reverse order. That reversibility is Iris's central
+ * claim against SillyTavern, and it starts here rather than being retrofitted.
+ *
+ * @module iris-web/ui-plugin
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { ReactNode } from 'react'
-import React from 'react'
+import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
+import { createFakeClient } from '@iris/client-fake'
+import type { IrisClient } from '@iris/protocol'
+
+import { App } from './app/App.tsx'
+import { StoreProvider } from './client/provider.tsx'
+import { createIrisStore } from './client/store.ts'
+import { SlotProvider } from './slots/Slot.tsx'
+import { createIrisSlots } from './slots/slots.ts'
 
 /** What the shell mounts: `scope.uiRenderer.mount(container)` returns a disposer. */
 export interface UiRenderer {
@@ -29,30 +41,16 @@ declare module '@deepseek-ai/cordis' {
 /** Cordis plugin name. */
 export const name = 'iris-client-shell'
 
-/** One line of evidence rendered into the page and read back by the browser check. */
-function Line({ id, children }: { id: string, children: ReactNode }): React.ReactElement {
-  return React.createElement('li', { id }, children)
-}
-
-/** The spike's application surface. */
-function App({ slotCoreOk }: { slotCoreOk: boolean }): React.ReactElement {
-  return React.createElement(
-    'main',
-    { style: { fontFamily: 'system-ui, sans-serif', padding: '2rem', lineHeight: 1.7 } },
-    React.createElement('h1', { id: 'iris-heading' }, 'Iris shell spike'),
-    React.createElement(
-      'ul',
-      null,
-      React.createElement(Line, { id: 'evidence-shell', key: 'shell' }, 'DSH web shell booted this plugin tree.'),
-      React.createElement(Line, { id: 'evidence-renderer', key: 'renderer' }, 'uiRenderer was provided by an Iris plugin, not by dsh-client-runtime.'),
-      React.createElement(
-        Line,
-        { id: 'evidence-slots', key: 'slots' },
-        `SlotCore instantiated standalone: ${slotCoreOk ? 'yes' : 'no'}.`,
-      ),
-    ),
-    React.createElement('p', { id: 'iris-verdict' }, 'IRIS_SHELL_SPIKE_OK'),
-  )
+/**
+ * Choose the transport.
+ *
+ * The fake until `@iris/rpc-client` lands, and the swap is this function. Every
+ * component above it programs against `IrisClient` alone, which is what let the
+ * interface be built while the transport was being written in parallel.
+ * @returns the client the application talks to.
+ */
+function createClient(): IrisClient {
+  return createFakeClient()
 }
 
 /**
@@ -60,21 +58,25 @@ function App({ slotCoreOk }: { slotCoreOk: boolean }): React.ReactElement {
  * @param ctx - the client plugin context.
  */
 export function apply(ctx: Context): void {
-  // The slot registry service lives in dsh-client-runtime, which we are
-  // replacing — but its pure core is a separate, dependency-free package, so
-  // confirm we can build a registry on it ourselves.
-  let slotCoreOk = false
-  try {
-    void new SlotCore()
-    slotCoreOk = true
-  } catch {
-    slotCoreOk = false
-  }
+  const client = createClient()
+  const slots = createIrisSlots()
+  ctx.effect(() => slots.dispose, 'iris-client-shell.slots')
+
+  const wired = createIrisStore(client)
+  ctx.effect(() => wired.dispose, 'iris-client-shell.store')
 
   const renderer: UiRenderer = {
     mount(container: HTMLElement): () => void {
       const root = createRoot(container)
-      root.render(React.createElement(App, { slotCoreOk }))
+      root.render(
+        <StrictMode>
+          <SlotProvider core={slots.core}>
+            <StoreProvider store={wired.store}>
+              <App />
+            </StoreProvider>
+          </SlotProvider>
+        </StrictMode>,
+      )
       return () => root.unmount()
     },
   }

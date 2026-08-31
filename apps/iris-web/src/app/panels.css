@@ -1,0 +1,315 @@
+/*
+ * Composer, settings drawer, notices, empty states, and the small-screen
+ * arrangement.
+ *
+ * The density rule for the settings drawer: SillyTavern's most common complaint
+ * is that everything is on screen at once, so here the four controls that
+ * change a scene live at the top, and the twelve that are tuned once live
+ * behind one disclosure. Nothing is removed — it is ordered.
+ */
+
+/* ---------------------------------------------------------------- composer */
+
+.iris-composer {
+  border-top: var(--iris-hairline) solid var(--iris-rule);
+  padding: 13px 20px 18px;
+}
+
+.iris-composer__inner {
+  max-width: calc(var(--iris-gutter) + var(--iris-measure) + 40px);
+  margin: 0 auto;
+  padding-left: var(--iris-gutter);
+}
+
+.iris-composer__field {
+  display: block;
+  width: 100%;
+  resize: none;
+  max-height: 40vh;
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius-lg);
+  padding: 11px 13px;
+  font-family: var(--iris-font-ui);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.iris-composer__field::placeholder {
+  color: var(--iris-ink-faint);
+}
+
+.iris-composer__field:focus-visible {
+  outline: none;
+  border-color: var(--iris-accent-quiet);
+  box-shadow: 0 0 0 3px var(--iris-accent-wash);
+}
+
+.iris-composer__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.iris-composer__hint {
+  flex: 1;
+  color: var(--iris-ink-faint);
+  font-size: 11.5px;
+}
+
+/* ------------------------------------------------------------------ drawer */
+
+.iris-drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: min(392px, 92vw);
+  background: var(--iris-bg-page);
+  border-left: var(--iris-hairline) solid var(--iris-rule);
+  box-shadow: var(--iris-shadow);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition:
+    transform 180ms var(--iris-ease),
+    visibility 180ms;
+}
+
+.iris-drawer--open {
+  transform: none;
+  visibility: visible;
+}
+
+.iris-drawer__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 18px 13px;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule);
+}
+
+.iris-drawer__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 18px 32px;
+}
+
+.iris-section {
+  padding: 18px 0 4px;
+}
+
+.iris-section + .iris-section {
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-section__head {
+  margin-bottom: 12px;
+}
+
+.iris-field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 7px 0;
+}
+
+.iris-field__label {
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+}
+
+.iris-field__value {
+  font-family: var(--iris-font-mono);
+  font-size: var(--iris-meta-size);
+  color: var(--iris-ink-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-field__control {
+  grid-column: 1 / -1;
+}
+
+.iris-field__note {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--iris-ink-faint);
+}
+
+.iris-range {
+  width: 100%;
+  accent-color: var(--iris-accent);
+}
+
+.iris-text {
+  width: 100%;
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  padding: 6px 9px;
+  font-family: var(--iris-font-mono);
+  font-size: 12px;
+}
+
+.iris-text:focus-visible {
+  outline: none;
+  border-color: var(--iris-accent-quiet);
+  box-shadow: 0 0 0 3px var(--iris-accent-wash);
+}
+
+.iris-choice {
+  display: flex;
+  gap: 0;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  overflow: hidden;
+}
+
+.iris-choice__option {
+  flex: 1;
+  background: none;
+  border: 0;
+  padding: 6px 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-choice__option + .iris-choice__option {
+  border-left: var(--iris-hairline) solid var(--iris-rule);
+}
+
+.iris-choice__option[aria-pressed='true'] {
+  background: var(--iris-accent-wash);
+  color: var(--iris-ink);
+}
+
+/* ------------------------------------------------------------------ notice */
+
+.iris-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 18px;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule);
+  font-size: 12.5px;
+}
+
+.iris-notice--error {
+  background: var(--iris-danger-wash);
+  color: var(--iris-danger);
+}
+
+.iris-notice--info {
+  background: var(--iris-accent-wash);
+  color: var(--iris-ink-secondary);
+}
+
+.iris-notice__dismiss {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  opacity: 0.7;
+}
+
+/* ------------------------------------------------------------- empty states */
+
+.iris-empty {
+  max-width: 46ch;
+  margin: 14vh auto 0;
+  text-align: center;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-empty__line {
+  font-family: var(--iris-font-prose);
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--iris-ink-secondary);
+}
+
+.iris-empty__hint {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--iris-ink-faint);
+}
+
+/* ------------------------------------------------------------------- import */
+
+.iris-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  background: var(--iris-bg-mask);
+  backdrop-filter: blur(2px);
+  border: 2px dashed var(--iris-accent-quiet);
+  color: var(--iris-ink);
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------- small screen */
+
+@media (max-width: 880px) {
+  .iris-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .iris-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 20;
+    width: 288px;
+    background: var(--iris-bg-base);
+    box-shadow: var(--iris-shadow);
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition:
+      transform 180ms var(--iris-ease),
+      visibility 180ms;
+  }
+
+  .iris-sidebar--open {
+    transform: none;
+    visibility: visible;
+  }
+
+  .iris-nav-toggle {
+    display: inline-flex;
+  }
+
+  .iris-column {
+    padding-inline: 12px;
+  }
+
+  .iris-composer__inner {
+    padding-left: 0;
+  }
+
+  :root {
+    --iris-gutter: 34px;
+  }
+}
+
+.iris-drawer__title {
+  flex: 1;
+}
+
+/* An action set inside running text, so it must not carry the row's padding. */
+.iris-act--inline {
+  padding: 0 4px;
+}
