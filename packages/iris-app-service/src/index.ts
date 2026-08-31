@@ -14,6 +14,7 @@ import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { existsSync } from 'node:fs'
 
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -24,6 +25,7 @@ import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
 import { IrisAppService } from './service.ts'
 import { ExtensionSettingsStore } from './context.ts'
+import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
 import { ScriptPolicyStore } from './scripts.ts'
 import { SettingsStore } from './settings.ts'
 
@@ -38,7 +40,15 @@ export {
 export { ChatEntry, lineTurns, metadataBackend, readMeta, type IrisChatMeta } from './entry.ts'
 export { AppError, busy, invalid, notFound } from './errors.ts'
 export { CharacterLibrary, type CardFileRef } from './library.ts'
-export { fileFor, isSafeId, toId, uniqueId } from './paths.ts'
+export {
+  DEFAULT_PROFILE,
+  fileFor,
+  isSafeId,
+  profilePaths,
+  toId,
+  uniqueId,
+  type ProfilePaths,
+} from './paths.ts'
 export {
   applyCardOverrides,
   buildPrompt,
@@ -77,6 +87,16 @@ export interface Config {
    * @default './data'
    */
   dataDir?: string
+  /**
+   * Which profile's data to open.
+   *
+   * Multi-profile is a founding decision: the storage layer is shaped for it
+   * even though this build selects a profile by configuration rather than
+   * offering a switcher. The default matches SillyTavern's own `data/<user>/`
+   * layout, so pointing `dataDir` at an existing install finds its characters.
+   * @default 'default-user'
+   */
+  profile?: string
   /** Provider route new chats generate with. @default 'default' */
   provider?: string
   /** Model id new chats generate with. @default 'local-model' */
@@ -98,6 +118,7 @@ export interface Config {
 /** Runtime schema for the application row. */
 export const Config: z<Config> = z.object({
   dataDir: z.string().default('./data'),
+  profile: z.string().default(DEFAULT_PROFILE),
   provider: z.string().default('default'),
   model: z.string().default('local-model'),
   userName: z.string().default('User'),
@@ -198,6 +219,28 @@ async function loadPreset(path: string | undefined): Promise<ChatCompletionPrese
 }
 
 /**
+ * Say something when data is sitting in the pre-profile layout.
+ *
+ * Earlier builds wrote straight into `dataDir`. Moving it automatically would be
+ * worse than saying so: a silent migration of someone's chats is unreviewable,
+ * and the failure mode of saying nothing — an empty library where there used to
+ * be one — reads as data loss.
+ * @param ctx - the plugin context, for its logger.
+ * @param dataDir - the root holding every profile.
+ * @param profileRoot - where this profile's data is expected.
+ */
+function warnOnPreProfileLayout(ctx: Context, dataDir: string, profileRoot: string): void {
+  if (existsSync(profileRoot)) return
+  const legacy = join(dataDir, 'characters')
+  if (!existsSync(legacy)) return
+  ctx.logger.warn(
+    `iris: found characters directly in ${dataDir}, which is the pre-profile layout. `
+    + `This build reads ${profileRoot}. Move the contents there, or set the composition's `
+    + '`profile` to the folder they are already in.',
+  )
+}
+
+/**
  * Mount the application.
  * @param ctx - context carrying `irisRpc`, `llm` and `webServer`.
  * @param config - data folder, model route and budget.
@@ -208,19 +251,25 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const dataDir = resolve(root, config.dataDir ?? './data')
   const avatarPath = config.avatarPath ?? '/iris/avatar'
 
-  const library = new CharacterLibrary(join(dataDir, 'characters'), avatarPath)
-  const chats = new ChatStore(join(dataDir, 'chats'), library)
-  const settings = new SettingsStore(join(dataDir, 'settings.json'), {
+  // Every path comes from one derivation, so a profile is one segment rather
+  // than a change in five places — and so a store added later cannot be the one
+  // that forgot to be profile-scoped.
+  const paths = profilePaths(dataDir, config.profile ?? DEFAULT_PROFILE)
+  warnOnPreProfileLayout(ctx, dataDir, paths.root)
+
+  const library = new CharacterLibrary(paths.characters, avatarPath)
+  const chats = new ChatStore(paths.chats, library)
+  const settings = new SettingsStore(paths.settings, {
     provider: config.provider ?? 'default',
     model: config.model ?? 'local-model',
   })
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset
   // cannot hand a card the page document.
-  const scripts = new ScriptPolicyStore(join(dataDir, 'script-policy.json'))
+  const scripts = new ScriptPolicyStore(paths.scriptPolicy)
   // Kept apart from `script-policy.json` because they answer to different
   // owners: the policy file is the user's decisions, this is data cards wrote.
-  const extensionSettings = new ExtensionSettingsStore(join(dataDir, 'extension-settings.json'))
+  const extensionSettings = new ExtensionSettingsStore(paths.extensionSettings)
 
   // The folders are created on first write, not on boot: a host that has never
   // been used should leave nothing behind, and both stores already tolerate a

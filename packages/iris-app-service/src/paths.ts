@@ -10,7 +10,7 @@
  * @module @iris/app-service/paths
  */
 
-import { resolve, sep } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 
 import { invalid } from './errors.ts'
 
@@ -91,4 +91,59 @@ export function fileFor(dir: string, id: string, extension: string): string {
     throw invalid(`"${id}" is not a valid identifier`)
   }
   return path
+}
+
+/**
+ * The default profile's name.
+ *
+ * SillyTavern's own layout is `data/default-user/…`, and the local card corpus
+ * lives at exactly that path. Matching it means a user can point `dataDir` at an
+ * existing SillyTavern `data/` folder and find their characters already there.
+ */
+export const DEFAULT_PROFILE = 'default-user'
+
+/** Every path one profile's data lives at. */
+export interface ProfilePaths {
+  /** The profile's own directory. */
+  root: string
+  /** Card files. */
+  characters: string
+  /** Conversation files. */
+  chats: string
+  /** Generation settings, global and per chat. */
+  settings: string
+  /** The user's decisions about card scripts, including document grants. */
+  scriptPolicy: string
+  /** What cards have stored under `extension_settings`. */
+  extensionSettings: string
+}
+
+/**
+ * Derive every storage path for one profile.
+ *
+ * The single place a `dataDir` becomes concrete paths. Multi-profile was a
+ * founding decision, and keeping the derivation in one function is what makes
+ * it one segment rather than a redesign — every store that grows later gets its
+ * path from here, so no store can be the one that forgot.
+ *
+ * The profile name is validated exactly as a chat or character id is: it
+ * reaches this process from configuration, becomes a directory, and an
+ * unchecked `..` in it would put one profile's data inside another's.
+ * @param dataDir - the root holding every profile.
+ * @param profile - the profile's name.
+ * @returns the paths that profile's stores use.
+ * @throws {AppError} `invalid-request` when the name would escape `dataDir`.
+ */
+export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE): ProfilePaths {
+  // Reuses `fileFor`'s guard by asking it for the directory itself: the name has
+  // to survive the same whitelist and the same containment check a chat id does.
+  const root = fileFor(dataDir, profile, '')
+  return {
+    root,
+    characters: join(root, 'characters'),
+    chats: join(root, 'chats'),
+    settings: join(root, 'settings.json'),
+    scriptPolicy: join(root, 'script-policy.json'),
+    extensionSettings: join(root, 'extension-settings.json'),
+  }
 }

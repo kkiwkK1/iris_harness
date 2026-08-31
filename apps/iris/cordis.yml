@@ -65,6 +65,10 @@
   name: '@iris/app-service'
   config:
     dataDir: !!js process.env.IRIS_DATA_DIR ?? './data'
+    # Storage is profile-scoped. The default matches SillyTavern's own
+    # `data/<user>/` layout, so pointing IRIS_DATA_DIR at an existing install
+    # finds its characters where they already are.
+    profile: !!js process.env.IRIS_PROFILE ?? 'default-user'
     provider: default
     model: !!js process.env.IRIS_MODEL ?? 'local-model'
     userName: !!js process.env.IRIS_USER_NAME ?? 'User'

@@ -63,8 +63,10 @@ async function waitUntil(predicate: () => boolean, what: string): Promise<void> 
 before(async () => {
   mock = await startMockProvider()
   dataDir = await mkdtemp(join(tmpdir(), 'iris-transport-'))
-  await mkdir(join(dataDir, 'characters'), { recursive: true })
-  await writeFile(join(dataDir, 'characters', 'aria.json'), ARIA, 'utf8')
+  // Under the profile segment: storage is profile-scoped, and the default
+  // profile matches SillyTavern's own `data/<user>/` layout.
+  await mkdir(join(dataDir, 'default-user', 'characters'), { recursive: true })
+  await writeFile(join(dataDir, 'default-user', 'characters', 'aria.json'), ARIA, 'utf8')
 
   process.env.IRIS_TEST_BASE_URL = mock.baseURL
   process.env.IRIS_TEST_DATA_DIR = dataDir

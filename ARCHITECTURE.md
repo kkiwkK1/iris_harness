@@ -82,12 +82,19 @@ The cost is rule 2 becoming invisible to tooling, which is why it is tested.
 
 Stated here rather than discovered later.
 
-- **Multi-profile was a founding decision and is not built.** Every store takes a
-  path (`SettingsStore`, `ScriptPolicyStore`, `ExtensionSettingsStore`) and
-  `ChatStore` takes a directory, all derived from one `dataDir`. That is
-  single-profile with a seam in the right place — adding a profile dimension
-  means one more path segment, not a redesign — but it is not done, and nothing
-  currently prevents a second profile's data being written into the first's.
+- **Multi-profile is built in the storage layer; there is no switcher.** Every
+  path comes from `profilePaths(dataDir, profile)` in `@iris/app-service`, so a
+  store added later gets its path from the same derivation and cannot be the one
+  that forgot to be scoped. The profile name is validated exactly as a chat id
+  is, because it arrives from configuration and becomes a directory. The default
+  is `default-user`, matching SillyTavern's own `data/<user>/` layout, so
+  pointing `dataDir` at an existing install finds its characters in place.
+
+  What is *not* built is choosing a profile at runtime: this build selects one
+  by configuration, and there is no contract method to list or switch. That is a
+  product decision nobody has asked for yet, not a missing piece of the layer —
+  the founding decision was that the storage layer be shaped for profiles, while
+  multi-user authentication is an explicit non-goal (`PLAN.md`).
 - **No CI.** Every green claim in this repo is a local run.
 - **The browser has never been exercised beyond the reading surface.** The
   sandbox has 41 tests and has never run a card's script in a real frame.
