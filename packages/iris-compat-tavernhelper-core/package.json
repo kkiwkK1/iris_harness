@@ -1,0 +1,11 @@
+{
+  "name": "@iris/compat-tavernhelper-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Tavern Helper's vocabulary: the verbatim event tables both trust domains must share. Zero dependencies, by contract.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  }
+}

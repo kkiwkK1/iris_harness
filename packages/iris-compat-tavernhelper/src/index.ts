@@ -39,4 +39,4 @@ export {
   TAVERN_EVENTS,
   type Listener,
   type Subscription,
-} from './events.ts'
+} from '@iris/compat-tavernhelper-core'

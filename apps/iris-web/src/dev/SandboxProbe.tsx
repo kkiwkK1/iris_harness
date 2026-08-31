@@ -109,7 +109,7 @@ export function SandboxProbe(): ReactElement | null {
   }, [])
 
   const start = useCallback(
-    async (code: string, label: string, kind: 'card-script' | 'probe') => {
+    async (code: string, label: string, kind: 'card-script' | 'probe', scriptId?: string) => {
       // A second Run while the first is still in flight used to start a frame
       // beside the one already posting into the same shell listener. Stopping the
       // old one first is what makes the second run mean something.
@@ -119,7 +119,10 @@ export function SandboxProbe(): ReactElement | null {
       resetObservations('loading bootstrap…')
       // "dispatched", not "started": this is set before the frame exists, so
       // calling it started would claim the body had begun when nothing had.
-      setHarness({ lastRun: { label, result: 'dispatched' } })
+      setHarness({
+        lastRun: { label, result: 'dispatched' },
+        ...(scriptId === undefined ? {} : { scriptId }),
+      })
 
       let bootstrap: string
       try {
@@ -167,6 +170,7 @@ export function SandboxProbe(): ReactElement | null {
           bootstrap,
           code: stripCodeFence(code),
           mode: modeFor(kind),
+          scriptId,
           libraries: librariesFor(kind, window.location.origin),
           documentGranted: granted,
           networkGranted,
@@ -277,6 +281,12 @@ export function SandboxProbe(): ReactElement | null {
         The last run's ending, kept after the run. An observation that exists only
         while a panel happens to be open is an observation you get one chance at.
       */}
+      {observed.scriptId === undefined ? null : (
+        <p className="iris-meta">
+          getScriptId() answers <code>{observed.scriptId}</code>
+        </p>
+      )}
+
       {observed.lastRun === undefined ? null : (
         <p className="iris-probe__outcome">
           Last run: <strong>{observed.lastRun.label}</strong> — {observed.lastRun.result}
@@ -322,7 +332,7 @@ export function SandboxProbe(): ReactElement | null {
                       })
                       return
                     }
-                    await start(body.content, script.name, 'card-script')
+                    await start(body.content, script.name, 'card-script', script.id)
                   })()
                 }}
               >

@@ -40,6 +40,14 @@ export interface HarnessState {
   /** Slash commands the card invoked, raw. */
   slash: string[]
   /**
+   * The identity handed to the running body, as `getScriptId()` will answer it.
+   *
+   * Recorded because "the card has no identity" and "the card has the wrong
+   * identity" produce the same downstream symptom — a variable scope that reads
+   * back empty — and neither names itself in the failure.
+   */
+  scriptId?: string
+  /**
    * The last run's ending, persisting past the run itself.
    *
    * The point of this field: an observation that only exists while a panel

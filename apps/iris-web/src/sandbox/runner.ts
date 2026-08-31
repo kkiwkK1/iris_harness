@@ -37,6 +37,12 @@ export interface RunnerHost {
    */
   mode: 'classic' | 'module'
   /**
+   * Which entry of `script.list` the body came from, for the card's
+   * `getScriptId()`. `undefined` for a body with no entry — a file from disk, or
+   * Iris's own probe.
+   */
+  scriptId: string | undefined
+  /**
    * Preset libraries to load before the card, in order.
    *
    * Upstream's list for the frame type, not a guess: a card written against
@@ -186,7 +192,13 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         // Rewritten on the way in, which is where upstream does it too: a card
         // sized in `vh` is measuring its own frame, and a frame sized to its
         // content would collapse `100vh` to nothing.
-        post({ iris: token, type: 'run', code: rewriteViewportUnits(host.code), mode: host.mode })
+        post({
+          iris: token,
+          type: 'run',
+          code: rewriteViewportUnits(host.code),
+          mode: host.mode,
+          scriptId: host.scriptId,
+        })
         return
       }
       case 'height':

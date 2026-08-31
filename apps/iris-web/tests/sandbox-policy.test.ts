@@ -59,7 +59,7 @@ test('a message without the run token is not ours', () => {
 test('a well-formed message survives the round trip', () => {
   assert.deepEqual(
     parseToFrame('tok', { iris: 'tok', type: 'run', code: 'let a = 1', mode: 'classic' }),
-    { iris: 'tok', type: 'run', code: 'let a = 1', mode: 'classic' },
+    { iris: 'tok', type: 'run', code: 'let a = 1', mode: 'classic', scriptId: undefined },
   )
   assert.deepEqual(parseFromFrame('tok', { iris: 'tok', type: 'ready' }), { iris: 'tok', type: 'ready' })
 })
@@ -76,6 +76,7 @@ test('a run without an execution mode is refused', () => {
     type: 'run',
     code: 'x',
     mode: 'module',
+    scriptId: undefined,
   })
 })
 
@@ -175,4 +176,26 @@ test('every other frame still requires the token', () => {
   assert.equal(parseFromFrame('tok', { iris: '', type: 'ready' }), undefined)
   assert.equal(parseFromFrame('tok', { iris: '', type: 'ran' }), undefined)
   assert.equal(parseFromFrame('tok', { iris: '', type: 'height', pixels: 10 }), undefined)
+})
+
+test('a run carries the script id, and refuses one that is not a string', () => {
+  /*
+   * Absent is legitimate — a body from disk has no entry in `script.list` — so
+   * the id cannot simply be required. What must not pass is a *present* id of
+   * the wrong type: `getScriptId()` is what a card keys its own variable scope
+   * by, and a number arriving where a string was expected would be stringified
+   * somewhere downstream rather than rejected here.
+   */
+  assert.deepEqual(
+    parseToFrame('tok', { iris: 'tok', type: 'run', code: 'x', mode: 'module', scriptId: 's1' }),
+    { iris: 'tok', type: 'run', code: 'x', mode: 'module', scriptId: 's1' },
+  )
+  assert.equal(
+    parseToFrame('tok', { iris: 'tok', type: 'run', code: 'x', mode: 'module', scriptId: 7 }),
+    undefined,
+  )
+  assert.equal(
+    parseToFrame('tok', { iris: 'tok', type: 'run', code: 'x', mode: 'module', scriptId: null }),
+    undefined,
+  )
 })

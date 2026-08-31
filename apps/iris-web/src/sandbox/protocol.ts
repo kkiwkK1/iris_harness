@@ -37,7 +37,22 @@ export type ToFrame =
    * predict. `classic` exists for Iris's own probe, which exercises the shadowed
    * globals a module cannot be handed.
    */
-  | { iris: string, type: 'run', code: string, mode: 'classic' | 'module' }
+  | {
+      iris: string
+      type: 'run'
+      code: string
+      mode: 'classic' | 'module'
+      /**
+       * Which entry of `script.list` this body came from, for `getScriptId()`.
+       *
+       * Always present, `undefined` when the body has no identity in the host's
+       * list — a file dragged in from disk, or Iris's own probe. That is the
+       * host's own answer for an unidentified caller, and synthesising an id
+       * here would give `getVariables({type:'script'})` a scope named after
+       * something that will not exist on the next run.
+       */
+      scriptId: string | undefined
+    }
   /** The host page's viewport, at boot and on every resize. */
   | { iris: string, type: 'viewport', width: number, height: number }
   /** Answer to a `fetch` request, resolved or refused. */
@@ -159,8 +174,10 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
     }
     case 'run': {
       const mode = message['mode']
+      const scriptId = message['scriptId']
+      if (scriptId !== undefined && typeof scriptId !== 'string') return undefined
       return typeof message['code'] === 'string' && (mode === 'classic' || mode === 'module')
-        ? { iris: token, type: 'run', code: message['code'], mode }
+        ? { iris: token, type: 'run', code: message['code'], mode, scriptId }
         : undefined
     }
     case 'viewport':

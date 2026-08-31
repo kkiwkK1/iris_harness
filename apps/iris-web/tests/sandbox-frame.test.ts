@@ -73,9 +73,13 @@ function realm(): {
 }
 
 /** Ask the sandbox to evaluate, with `body` deciding what the "card" does. */
-function evaluate(scope: ReturnType<typeof realm>, body: (globals: Record<string, unknown>) => void): void {
+function evaluate(
+  scope: ReturnType<typeof realm>,
+  body: (globals: Record<string, unknown>) => void,
+  scriptId?: string,
+): void {
   scope.run(body)
-  scope.send({ iris: 'tok', type: 'run', code: '/* card */', mode: 'classic' })
+  scope.send({ iris: 'tok', type: 'run', code: '/* card */', mode: 'classic', scriptId })
 }
 
 test('installing announces nothing, because readiness is not this module to judge', () => {
@@ -110,6 +114,7 @@ test('exactly the outward-reaching names are shadowed', () => {
     'SillyTavern',
     'extension_settings',
     'triggerSlash',
+    'getScriptId',
   ])
 })
 
@@ -414,6 +419,7 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'SillyTavern',
     'extension_settings',
     'triggerSlash',
+    'getScriptId',
   ])
 })
 
@@ -428,7 +434,7 @@ test('a module body reports ran only after it has loaded', async () => {
         release = resolve
       }),
   )
-  scope.send({ iris: 'tok', type: 'run', code: 'export {}', mode: 'module' })
+  scope.send({ iris: 'tok', type: 'run', code: 'export {}', mode: 'module', scriptId: undefined })
 
   assert.equal(scope.posted.some(message => message.type === 'ran'), false, 'ran was posted too early')
   release?.()
@@ -440,7 +446,7 @@ test('a module body reports ran only after it has loaded', async () => {
 test('a module that fails to load is reported as an error, not as a run', async () => {
   const scope = realm()
   scope.runAsync(() => Promise.reject(new SyntaxError('Cannot use import statement outside a module')))
-  scope.send({ iris: 'tok', type: 'run', code: 'import "x"', mode: 'module' })
+  scope.send({ iris: 'tok', type: 'run', code: 'import "x"', mode: 'module' , scriptId: undefined })
 
   await Promise.resolve()
   await Promise.resolve()
@@ -579,4 +585,50 @@ test('a member outside the measured set is still refused', () => {
 
   assert.ok(caught instanceof UnsupportedApiError)
   assert.equal(caught.member, 'SillyTavern.deleteAllChats')
+})
+
+test('getScriptId answers with the id the runner dispatched', () => {
+  const scope = realm()
+  let answered: unknown
+  evaluate(
+    scope,
+    globals => {
+      answered = (globals['getScriptId'] as () => unknown)()
+    },
+    'script-7',
+  )
+
+  assert.equal(answered, 'script-7', 'the card must be able to name the script it is')
+})
+
+test('getScriptId answers undefined for a body with no entry in the list', () => {
+  /*
+   * A file dragged in from disk has no id, and neither does the probe. Answering
+   * with a synthesised one would be worse than answering with nothing: cards use
+   * this to key `getVariables({type:'script'})`, so an id invented per run would
+   * write state into a scope that cannot be read back on the next one.
+   */
+  const scope = realm()
+  let answered: unknown = 'unset'
+  evaluate(scope, globals => {
+    answered = (globals['getScriptId'] as () => unknown)()
+  })
+
+  assert.equal(answered, undefined, 'an unidentified body must not be given an id')
+})
+
+test('a second run re-answers getScriptId rather than keeping the first id', () => {
+  /*
+   * The frame is reused across runs in the probe. An id captured at install
+   * would make every later script claim to be the first one.
+   */
+  const scope = realm()
+  const seen: unknown[] = []
+  const record = (globals: Record<string, unknown>): void => {
+    seen.push((globals['getScriptId'] as () => unknown)())
+  }
+  evaluate(scope, record, 'first')
+  evaluate(scope, record, 'second')
+
+  assert.deepEqual(seen, ['first', 'second'], 'each run must answer with its own id')
 })

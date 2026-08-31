@@ -227,9 +227,14 @@ importers:
       '@iris/chat':
         specifier: workspace:*
         version: link:../iris-chat
+      '@iris/compat-tavernhelper-core':
+        specifier: workspace:*
+        version: link:../iris-compat-tavernhelper-core
       '@iris/variables':
         specifier: workspace:*
         version: link:../iris-variables
+
+  packages/iris-compat-tavernhelper-core: {}
 
   packages/iris-llm-openai-compat:
     dependencies:

@@ -107,7 +107,12 @@ test('the browser sees the contract and nothing else', async () => {
   // and itself depends only on the contract. The list happened to be written
   // while the interface still ran on the fake alone, which is exactly how an
   // allowlist goes stale: it encodes the day it was written.
-  const allowed = new Set(['@iris/protocol', '@iris/client-fake', '@iris/rpc-client'])
+  // `compat-tavernhelper-core` is allowlisted because the frame needs THE SAME
+  // event-name tables the host uses — a hand-copied string that drifts produces
+  // a listener that never fires, with no error. It qualifies only because it is
+  // dependency-free, and its own purity test pins that; the slash grammar was
+  // deliberately left out of it so the browser cannot grow a second parser.
+  const allowed = new Set(['@iris/protocol', '@iris/client-fake', '@iris/rpc-client', '@iris/compat-tavernhelper-core'])
   const imported = await sourceImports(join(ROOT, 'apps', 'iris-web'))
   const forbidden = [...imported].filter(name => !allowed.has(name)).sort()
 

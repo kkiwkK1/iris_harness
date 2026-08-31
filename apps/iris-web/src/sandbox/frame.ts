@@ -358,6 +358,23 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     })
   }
 
+  /**
+   * Which entry of `script.list` is running, carried in on the `run` message.
+   *
+   * The frame cannot derive this: the body it is handed is just source, and two
+   * enabled scripts on one card are indistinguishable by their text. The runner
+   * is the only party that knows which one it dispatched.
+   */
+  let scriptId: string | undefined
+
+  /**
+   * Upstream's `getScriptId`, the one member a card uses to name its own
+   * variable scope. Returns `undefined` for a body with no entry in the host's
+   * list, matching what the host answers for an unidentified caller.
+   * @returns the running script's id, or `undefined` when it has none.
+   */
+  const getScriptId = (): string | undefined => scriptId
+
   const shadowed = [
     'window',
     'self',
@@ -367,6 +384,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     'SillyTavern',
     'extension_settings',
     'triggerSlash',
+    'getScriptId',
   ] as const
 
   /**
@@ -385,6 +403,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     context === undefined ? undefined : sillyTavern,
     extensionSettings,
     triggerSlash,
+    getScriptId,
   ]
 
   env.onMessage(message => {
@@ -416,6 +435,9 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       return
     }
     if (message.type !== 'run') return
+
+    // Before `resolveValues`, which closes over it.
+    scriptId = message.scriptId
 
     const values = resolveValues()
 

@@ -26,7 +26,7 @@ import {
   type GetChatMessagesOptions,
   type SpeakerNames,
 } from './chat-messages.ts'
-import { EventBus, IFRAME_EVENTS, MVU_EVENTS, TAVERN_EVENTS, type Listener, type Subscription } from './events.ts'
+import { EventBus, IFRAME_EVENTS, MVU_EVENTS, TAVERN_EVENTS, type Listener, type Subscription } from '@iris/compat-tavernhelper-core'
 
 /** What a generation request carries. */
 export interface GenerateConfig {
