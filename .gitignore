@@ -12,3 +12,7 @@ dist/
 key.txt
 *.key
 secrets.json
+
+# Runtime data: imported cards, chat logs, settings. Belongs to whoever runs
+# the app, never to the repository.
+data/

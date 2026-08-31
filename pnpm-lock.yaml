@@ -41,6 +41,9 @@ importers:
       '@deepseek-ai/dsh-app-boot':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(d152608df991a5a21b2e95fd36ee716f)
+      '@deepseek-ai/dsh-host-frontend-static':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-host-webserver@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))
       '@deepseek-ai/dsh-host-webserver':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))
@@ -89,6 +92,9 @@ importers:
       '@iris/protocol':
         specifier: workspace:*
         version: link:../../packages/iris-protocol
+      '@iris/regex':
+        specifier: workspace:*
+        version: link:../../packages/iris-regex
       '@iris/rpc-client':
         specifier: workspace:*
         version: link:../../packages/iris-rpc-client
@@ -146,6 +152,9 @@ importers:
       '@iris/protocol':
         specifier: workspace:*
         version: link:../iris-protocol
+      '@iris/regex':
+        specifier: workspace:*
+        version: link:../iris-regex
       '@iris/rpc-host':
         specifier: workspace:*
         version: link:../iris-rpc-host
@@ -424,6 +433,13 @@ packages:
       '@deepseek-ai/cordis': ^4.0.1
       '@deepseek-ai/dsh-invariants': ^0.1.1-rc.2
 
+  '@deepseek-ai/dsh-host-frontend-static@0.1.1-rc.2':
+    resolution: {integrity: sha512-KmdcBiprbRPuCK2d5e6VmXbXmT6fwd6nwGtqU6iOxh/Tl3/1V3c/lg7dvJu1LeOmyw8epXFbzgEQNw5ATJtaBA==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ^4.0.1
+      '@deepseek-ai/dsh-host-webserver': ^0.1.1-rc.2
+      '@deepseek-ai/dsh-invariants': ^0.1.1-rc.2
+
   '@deepseek-ai/dsh-host-webserver@0.1.1-rc.2':
     resolution: {integrity: sha512-t9MrjC65QHiiWhG9V8UZxgfE/aWYhJHHrIM0kbTvtXxg4tLGIKo/upHp7iiag65F3HTkVLrH/DUyPMi4v2ZA7g==}
     peerDependencies:
@@ -657,6 +673,13 @@ snapshots:
     dependencies:
       '@deepseek-ai/cordis': 4.0.2(@deepseek-ai/cordis-plugin-include@1.0.7)(@deepseek-ai/cordis-plugin-loader@1.0.3)
       '@deepseek-ai/dsh-invariants': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)
+
+  '@deepseek-ai/dsh-host-frontend-static@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-host-webserver@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.2(@deepseek-ai/cordis-plugin-include@1.0.7)(@deepseek-ai/cordis-plugin-loader@1.0.3)
+      '@deepseek-ai/dsh-host-webserver': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))
+      '@deepseek-ai/dsh-invariants': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)
+      '@deepseek-ai/schemastery': 3.18.2
 
   '@deepseek-ai/dsh-host-webserver@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))':
     dependencies:

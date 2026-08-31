@@ -11,7 +11,8 @@
     "test": "node --test \"packages/*/tests/**/*.test.ts\" \"apps/*/tests/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "test:live": "node scripts/test-live.mjs",
-    "demo:mvu": "node apps/iris/demo/mvu-roleplay.ts"
+    "demo:mvu": "node apps/iris/demo/mvu-roleplay.ts",
+    "build:web": "npm --prefix apps/iris-web run build"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

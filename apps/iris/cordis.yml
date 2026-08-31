@@ -40,3 +40,44 @@
     models:
       - id: !!js process.env.IRIS_MODEL ?? 'local-model'
         contextWindow: 32768
+
+# The browser carrier. `dsh-host-webserver` ships no TLS and no authentication —
+# its own README says so — so this binds to loopback and trusts the machine.
+# Serving Iris to a network needs a reverse proxy in front, not `0.0.0.0` here.
+- id: webserver
+  name: '@deepseek-ai/dsh-host-webserver'
+  config:
+    host: '127.0.0.1'
+    port: !!js Number(process.env.IRIS_PORT ?? 8787)
+
+# HTTP + WebSocket transport for the Iris protocol. Domain-free: it only routes
+# frames to whatever registered a handler.
+- id: rpc
+  name: '@iris/rpc-host'
+  config:
+    # Only for a browser dev server on another origin. Prefer proxying
+    # /iris/rpc and /iris/events from that server instead, which keeps the page
+    # same-origin and leaves this empty.
+    allowedOrigins: !!js (process.env.IRIS_DEV_ORIGIN ?? '').split(',').filter(Boolean)
+
+# The application half: the protocol handlers over the domain packages.
+- id: app
+  name: '@iris/app-service'
+  config:
+    dataDir: !!js process.env.IRIS_DATA_DIR ?? './data'
+    provider: default
+    model: !!js process.env.IRIS_MODEL ?? 'local-model'
+    userName: !!js process.env.IRIS_USER_NAME ?? 'User'
+    contextWindow: !!js Number(process.env.IRIS_CONTEXT_WINDOW ?? 32768)
+    presetPath: !!js process.env.IRIS_PRESET
+
+# The built interface, served from the same origin as the transport — which is
+# what keeps the page out of CORS entirely. Disabled when there is no build, so
+# a fresh checkout still boots and the headless tests still run.
+- id: frontend
+  name: '@deepseek-ai/dsh-host-frontend-static'
+  # Spelled as a comparison, not `!process.env...`: a `!` straight after the
+  # `!!js` tag reads as a second YAML tag and the document fails to parse.
+  disabled: !!js process.env.IRIS_WEB_DIST === undefined
+  config:
+    distIndex: !!js process.env.IRIS_WEB_DIST

@@ -1,0 +1,38 @@
+# A minimal composition for the transport integration test: the carrier, the
+# RPC transport, one model route pointed at the mock provider, and the
+# application. Kept separate from the product's own `cordis.yml` so the test can
+# bind an ephemeral port and write to a throwaway data folder.
+
+- id: webserver
+  name: '@deepseek-ai/dsh-host-webserver'
+  config:
+    host: '127.0.0.1'
+    port: 0
+
+- id: rpc
+  name: '@iris/rpc-host'
+  config:
+    heartbeatMs: 0
+    allowedOrigins:
+      - 'http://iris.test'
+
+- id: llm
+  name: '@deepseek-ai/dsh-llm'
+
+- id: llm-openai-compat
+  name: '@iris/llm-openai-compat'
+  config:
+    provider: default
+    displayName: mock
+    baseURL: !!js process.env.IRIS_TEST_BASE_URL
+    models:
+      - id: mock-model
+        contextWindow: 32768
+
+- id: app
+  name: '@iris/app-service'
+  config:
+    dataDir: !!js process.env.IRIS_TEST_DATA_DIR
+    provider: default
+    model: mock-model
+    userName: Traveller
