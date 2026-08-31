@@ -1,0 +1,11 @@
+{
+  "name": "@iris/script",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Card script extraction: the three storage shapes real cards use, normalized to one.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  }
+}
