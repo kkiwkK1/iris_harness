@@ -156,3 +156,90 @@ test('a turn with no reply cannot hold variables', () => {
 
   assert.throws(() => store.getVariables({ type: 'message' }), VariableScopeError)
 })
+
+/** A log with `turns` settled turns, one candidate each. */
+function chatWithTurns(turns: number) {
+  const session = Session.create(SessionId(`vars-${Math.random().toString(36).slice(2)}`))
+  for (let turn = 0; turn < turns; turn += 1) {
+    session.append('turn/start', { turn })
+    session.append('step/start', { turn, step: 0 })
+    session.append(
+      'user/message',
+      createUserMessage({ content: [{ type: 'text', text: `q${String(turn)}` }], source: { kind: 'user' } }),
+      { surfaceOp: 'append' },
+    )
+    appendCandidate(session, {
+      turn,
+      step: 0,
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: `a${String(turn)}` }],
+        source: { provider: 'test', model: 'test' },
+      }),
+    })
+  }
+  return session
+}
+
+/** How many variable tables the log is actually carrying. */
+function storedTables(session: Session): number {
+  return session.events.filter(event => event.type === 'iris/variables').length
+}
+
+test('a turn that changed nothing stores nothing and reads what the last one settled', () => {
+  const session = chatWithTurns(4)
+  const store = new VariableStore({ message: sessionMessageBackend(session) })
+
+  store.replaceVariables({ mood: 'calm' }, { type: 'message', message_id: 0 })
+  // Turns 1–3 write the same table they already read. Upstream stores a table
+  // only where its variable engine ran, and so should we.
+  for (const turn of [1, 2, 3]) {
+    store.replaceVariables({ mood: 'calm' }, { type: 'message', message_id: turn })
+  }
+
+  assert.equal(storedTables(session), 1, 'three redundant copies were not written')
+  // And every turn still reads the state, because the read inherits it.
+  for (const turn of [0, 1, 2, 3]) {
+    assert.deepEqual(store.getVariables({ type: 'message', message_id: turn }), { mood: 'calm' })
+  }
+})
+
+test('inheritance walks back by turn, so one swipe never inherits the other’s change', () => {
+  const session = chatWithTurns(1)
+  // Add a second turn with two candidates.
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 0 })
+  const reply = (text: string) => createAssistantMessage({
+    content: [{ type: 'text', text }],
+    source: { provider: 'test', model: 'test' },
+  })
+  appendCandidate(session, { turn: 1, step: 0, message: reply('first take') })
+  const store = new VariableStore({ message: sessionMessageBackend(session) })
+
+  store.replaceVariables({ score: 10 }, { type: 'message', message_id: 0 })
+  store.replaceVariables({ score: 15 }, { type: 'message', message_id: 1 })
+
+  // A second candidate for the same turn, which changes nothing.
+  appendCandidate(session, { turn: 1, step: 0, message: reply('second take') })
+  store.replaceVariables({ score: 10 }, { type: 'message', message_id: 1 })
+
+  // The second take must see turn 0's settled state, not the first take's — two
+  // candidates of one turn are alternatives, not a sequence.
+  assert.deepEqual(store.getVariables({ type: 'message', message_id: 1 }), { score: 10 })
+
+  selectCandidate(session, 1, 0)
+  assert.deepEqual(store.getVariables({ type: 'message', message_id: 1 }), { score: 15 }, 'the first take kept its own')
+})
+
+test('a candidate’s own table always wins over what it would inherit', () => {
+  const session = chatWithTurns(2)
+  const store = new VariableStore({ message: sessionMessageBackend(session) })
+
+  store.replaceVariables({ n: 1 }, { type: 'message', message_id: 0 })
+  store.replaceVariables({ n: 2 }, { type: 'message', message_id: 1 })
+  assert.deepEqual(store.getVariables({ type: 'message', message_id: 1 }), { n: 2 })
+
+  // Writing back the inherited value on a candidate that already has its own is
+  // a real change and must be recorded, not skipped as "same as inherited".
+  store.replaceVariables({ n: 1 }, { type: 'message', message_id: 1 })
+  assert.deepEqual(store.getVariables({ type: 'message', message_id: 1 }), { n: 1 })
+})

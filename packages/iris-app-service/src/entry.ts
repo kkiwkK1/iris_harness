@@ -483,7 +483,11 @@ export class ChatEntry {
     const messages = exportMessages(this.session, this.header)
     for (const [index, saved] of this.#snapshotVariables()) {
       const line = messages[index]
-      if (line === undefined) continue
+      // Assistant lines only. A turn's user line and its reply share a turn
+      // number, so writing the candidate's table to both would put the reply's
+      // state on the user's message — and would clobber whatever the imported
+      // file had there, which `iris/st-meta` has already restored verbatim.
+      if (line === undefined || line.is_user) continue
       line['variables'] = saved.map(variables => variables ?? {})
     }
     return { header: this.header, messages }
@@ -501,7 +505,12 @@ export class ChatEntry {
   hydrateVariables(lines: readonly SillyTavernMessage[]): void {
     const turns = lineTurns(this.session)
     for (let index = 0; index < lines.length; index += 1) {
-      const stored = lines[index]?.['variables']
+      const line = lines[index]
+      // Only a reply's table belongs to a candidate. A user line's own
+      // `variables` ride through untouched as an unmodelled field; attaching
+      // them here would overwrite the reply's state for the same turn.
+      if (line === undefined || line.is_user) continue
+      const stored = line['variables']
       if (!Array.isArray(stored)) continue
       const turn = turns[index]
       if (turn === undefined) continue
