@@ -1,0 +1,17 @@
+{
+  "name": "@iris/compat-tavernhelper",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Tavern Helper (酒馆助手) API surface, so community card scripts run unmodified.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-session": "0.1.1-rc.2",
+    "@iris/chat": "workspace:*",
+    "@iris/variables": "workspace:*",
+    "@deepseek-ai/dsh-llm": "0.1.1-rc.2"
+  }
+}

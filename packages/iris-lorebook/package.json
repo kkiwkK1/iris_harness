@@ -1,0 +1,11 @@
+{
+  "name": "@iris/lorebook",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SillyTavern world books: the data contract and the keyword activation engine.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  }
+}

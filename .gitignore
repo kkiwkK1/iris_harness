@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+
+# Reference checkout of deepseek-harness: read-only, not part of this project.
+.reference/
+
+# Test credentials. Never commit.
+key.txt
+*.key
+secrets.json

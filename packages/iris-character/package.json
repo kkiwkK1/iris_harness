@@ -1,0 +1,11 @@
+{
+  "name": "@iris/character",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Character cards: the V1/V2/V3 data model and the PNG tEXt codec SillyTavern cards travel in.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  }
+}

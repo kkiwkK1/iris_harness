@@ -1,0 +1,144 @@
+import assert from 'node:assert/strict'
+import { after, before, test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+
+import type { Context } from '@deepseek-ai/cordis'
+import { boot } from '@deepseek-ai/dsh-app-boot'
+import { BlockAssembler, createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { appendCandidate, listCandidates, selectCandidate } from '@iris/chat'
+import { exportChatFile, parseChatFile } from '@iris/persistence'
+import { assemble, type HistoryEntry } from '@iris/pipeline'
+import { resolvePreset, type ChatCompletionPreset } from '@iris/preset'
+
+import { startMockProvider, type MockProvider } from './mock-provider.ts'
+
+/**
+ * The whole product spine in one test: a preset and a character become a
+ * prompt, the prompt becomes a streamed reply, the reply becomes a swipeable
+ * turn, and the turn exports as a SillyTavern chat file.
+ */
+
+let mock: MockProvider
+let ctx: Context
+
+before(async () => {
+  mock = await startMockProvider()
+  process.env.IRIS_BASE_URL = mock.baseURL
+  process.env.IRIS_MODEL = 'mock-model'
+  ctx = await boot('iris-e2e', fileURLToPath(new URL('../cordis.yml', import.meta.url)))
+})
+
+after(async () => {
+  await ctx.fiber.dispose()
+  await mock.close()
+})
+
+/** A minimal Chat Completion preset with a post-history instruction. */
+const PRESET: ChatCompletionPreset = {
+  prompts: [
+    { identifier: 'main', role: 'system', content: "Write Aria's next reply." },
+    { identifier: 'charDescription', marker: true },
+    { identifier: 'chatHistory', marker: true },
+    { identifier: 'jailbreak', role: 'system', content: 'Stay in character.' },
+  ],
+  prompt_order: [{
+    character_id: 100000,
+    order: [
+      { identifier: 'main', enabled: true },
+      { identifier: 'charDescription', enabled: true },
+      { identifier: 'chatHistory', enabled: true },
+      { identifier: 'jailbreak', enabled: true },
+    ],
+  }],
+}
+
+/** Text of an assembled message list, for assertions. */
+function texts(messages: readonly { text: string }[]): string[] {
+  return messages.map(message => message.text)
+}
+
+/** Stream one reply through the registered adapter. */
+async function generate(system: string, messages: readonly { role: string, text: string }[]) {
+  const assembler = new BlockAssembler()
+  for await (const chunk of ctx.llm.stream({
+    provider: 'default',
+    model: 'mock-model',
+    system,
+    messages: messages.map(message => createUserMessage({
+      content: [{ type: 'text', text: message.text }],
+      source: { kind: 'user' },
+    })),
+    sampling: { topP: 0.92, minP: 0.05 },
+  })) {
+    assembler.push(chunk)
+  }
+  return assembler.message({ kind: 'model', provider: 'default', model: 'mock-model' })
+}
+
+test('a preset and a character assemble into a prompt with post-history instructions last', () => {
+  const contributions = resolvePreset(PRESET, {
+    markers: { charDescription: 'Aria is a retired cartographer.' },
+  })
+  const history: HistoryEntry[] = [{ role: 'user', text: 'Hello?', pinned: true }]
+
+  const request = assemble({
+    contributions,
+    history,
+    budget: { context: 4096, reserve: 512, count: text => Math.ceil(text.length / 4) },
+  })
+
+  assert.match(request.system, /Write Aria's next reply\./)
+  assert.match(request.system, /retired cartographer/)
+  assert.deepEqual(texts(request.messages), ['Hello?', 'Stay in character.'])
+})
+
+test('the composition streams a reply through the Iris adapter', async () => {
+  const message = await generate('You are Aria.', [{ role: 'user', text: 'Hello?' }])
+  const text = message.content.filter(block => block.type === 'text').map(block => block.text).join('')
+
+  assert.match(text, /Hello, traveller\./)
+  assert.equal(message.content.some(block => block.type === 'reasoning'), true, 'reasoning stays its own block')
+  assert.equal((mock.capture.body ?? {}).top_p, 0.92, 'Iris sampling reaches the wire')
+})
+
+test('a streamed reply becomes a swipeable turn that exports as a SillyTavern chat', async () => {
+  const session = Session.create(SessionId('iris-e2e'))
+  session.append('turn/start', { turn: 0 })
+  session.append('step/start', { turn: 0, step: 0 })
+  session.append(
+    'user/message',
+    createUserMessage({ content: [{ type: 'text', text: 'Hello?' }], source: { kind: 'user' } }),
+    { surfaceOp: 'append' },
+  )
+
+  // Two generations: the second is a regenerate, which becomes a second swipe.
+  const first = await generate('You are Aria.', [{ role: 'user', text: 'Hello?' }])
+  appendCandidate(session, { turn: 0, step: 0, message: first })
+  appendCandidate(session, {
+    turn: 0,
+    step: 0,
+    message: createAssistantMessage({
+      content: [{ type: 'text', text: 'A second take.' }],
+      source: { provider: 'default', model: 'mock-model' },
+    }),
+  })
+
+  assert.equal(listCandidates(session, 0).length, 2)
+
+  // The user swipes back to the first.
+  selectCandidate(session, 0, 0)
+
+  const header = {
+    user_name: 'Traveller',
+    character_name: 'Aria',
+    create_date: '2026-08-31 @00h00m00s',
+    chat_metadata: {},
+  }
+  const file = parseChatFile(exportChatFile(session, header))
+
+  assert.equal(file.messages.length, 2)
+  assert.equal(file.messages[1]?.swipes?.length, 2, 'both generations survive as swipes')
+  assert.equal(file.messages[1]?.swipe_id, 0, 'the swipe the user chose is the selected one')
+  assert.match(String(file.messages[1]?.mes), /Hello, traveller\./)
+})

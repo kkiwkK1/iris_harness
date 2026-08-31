@@ -1,0 +1,100 @@
+/**
+ * The vocabulary of prompt assembly.
+ *
+ * @module @iris/pipeline/types
+ */
+
+/** Conversation roles as providers see them. */
+export type Role = 'system' | 'user' | 'assistant'
+
+/** One message in the assembled request. */
+export interface PipelineMessage {
+  role: Role
+  text: string
+  /**
+   * Speaker name, when the surface distinguishes one. Group chats need it, and
+   * instruct-mode templates render it into the wire text.
+   */
+  name?: string
+}
+
+/** One turn of existing conversation, oldest first. */
+export interface HistoryEntry extends PipelineMessage {
+  /**
+   * Exempt from budget trimming. The first message of a chat is usually the
+   * greeting, and dropping it costs the model the character's voice.
+   */
+  pinned?: boolean
+}
+
+/**
+ * Where a contribution lands.
+ *
+ * `system` sections are concatenated in ascending `order` into the system
+ * prompt. `depth` placements are spliced into the chat history instead, which
+ * is the whole reason Iris assembles messages itself: author's notes, world-info
+ * `atDepth` entries and `/inject` all have to sit a fixed number of turns from
+ * the END of the conversation, and a system-prompt registry cannot express that.
+ */
+export type Placement =
+  | { kind: 'system', order: number }
+  | {
+    kind: 'depth'
+    /**
+     * Distance from the end of the conversation, using SillyTavern's
+     * convention: **0 is after the last message, 1 is before it**. A depth
+     * deeper than the conversation clamps to the front.
+     */
+    depth: number
+    role: Role
+    /** Tie-break among contributions at the same depth; ascending. */
+    order?: number
+  }
+
+/** One piece of text contributed to the prompt. */
+export interface Contribution {
+  /** Stable identity, for diagnostics and for a later itemization view. */
+  id: string
+  placement: Placement
+  text: string
+}
+
+/** Counts tokens for a piece of text. Supplied by the caller — no tokenizer is bundled. */
+export type TokenCounter = (text: string) => number
+
+/** What the assembler is allowed to spend. */
+export interface Budget {
+  /** Total context window in tokens. */
+  context: number
+  /** Tokens held back for the model's reply. */
+  reserve: number
+  count: TokenCounter
+}
+
+/** Everything one assembly needs. */
+export interface AssembleInput {
+  contributions: readonly Contribution[]
+  history: readonly HistoryEntry[]
+  budget: Budget
+}
+
+/** Why an assembly could not fit everything. */
+export interface Overflow {
+  /** History entries dropped from the oldest end. */
+  droppedHistory: number
+  /**
+   * True when the non-negotiable part — system sections, depth injections and
+   * pinned history — already exceeds the budget. The request is still returned
+   * so the caller can decide; refusing to build it would just move the failure.
+   */
+  overBudget: boolean
+}
+
+/** The assembled request. */
+export interface AssembleResult {
+  system: string
+  messages: PipelineMessage[]
+  /** Tokens the assembled request is estimated to occupy. */
+  tokens: number
+  overflow: Overflow
+}

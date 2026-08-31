@@ -1,0 +1,20 @@
+{
+  "name": "iris",
+  "private": true,
+  "type": "module",
+  "description": "A SillyTavern alternative built on the Cordis plugin architecture.",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node apps/iris/bin.ts",
+    "test": "node --test \"packages/*/tests/**/*.test.ts\" \"apps/*/tests/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "test:live": "node scripts/test-live.mjs",
+    "demo:mvu": "node apps/iris/demo/mvu-roleplay.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

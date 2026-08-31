@@ -1,0 +1,11 @@
+{
+  "name": "@iris/pipeline",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Prompt assembly: ordered system sections, depth-injected chat content, and token budgeting.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  }
+}

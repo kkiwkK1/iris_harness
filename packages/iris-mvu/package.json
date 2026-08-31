@@ -1,0 +1,20 @@
+{
+  "name": "@iris/mvu",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MVU (MagVarUpdate) compatibility: the variable-update command dialect LLMs emit.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  },
+  "dependencies": {
+    "@iris/variables": "workspace:*",
+    "lodash-es": "^4.17.21",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/lodash-es": "^4.17.12",
+    "@types/js-yaml": "^4.0.9"
+  }
+}

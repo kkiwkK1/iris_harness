@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Iris Web Shell Spike</title>
+    <script>
+      /*
+       * The registration facade, installed before any bundle runs.
+       *
+       * This has to be a classic inline script: `@deepseek-ai/dsh-client-modules/client`
+       * is not an ordinary module — its body IS a bundle registration
+       * (`window.__ModuleLoader__.load({id, factory})`), so the facade must
+       * already exist the moment that bundle executes. In a real deployment the
+       * host injects this same shim into the served index.
+       */
+      (function installModuleLoaderFacade() {
+        var MODULES_ID = '@deepseek-ai/dsh-client-modules'
+        var pendingQueue = []
+        var target = {
+          mode: 'queue',
+          pendingQueue: pendingQueue,
+          load: function (registration) {
+            pendingQueue.push(registration)
+          },
+          create: function (options) {
+            var index = pendingQueue.findIndex(function (row) { return row.id === MODULES_ID })
+            if (index === -1) throw new Error('iris spike: the modules bundle never registered')
+            var registration = pendingQueue.splice(index, 1)[0]
+            // Materialize the bootstrap bundle by hand — the one module that
+            // cannot arrive through the module system it defines.
+            var exports = registration.factory(function (spec) {
+              throw new Error('iris spike: modules bootstrap required "' + spec + '"')
+            })
+            return exports.createClientModuleSystem(target, { id: registration.id, exports: exports }, options)
+          },
+        }
+        window.__ModuleLoader__ = target
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

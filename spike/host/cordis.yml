@@ -1,0 +1,40 @@
+# Phase-0 spike composition: the smallest tree that proves an Iris-shaped
+# product boots on the DSH packages outside the dsh CLI.
+#
+# Entries start concurrently — order here guarantees nothing. Load order comes
+# from service dependencies (`inject`).
+
+- id: logger
+  name: '@deepseek-ai/cordis-plugin-logger-console'
+
+- id: timer
+  name: '@deepseek-ai/cordis-plugin-timer'
+
+# The prompt registry. Iris will register character, persona, scenario and
+# lorebook sections into this.
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config:
+    includeHarnessIdentity: false
+    includeRuntimeContext: false
+    persona: |-
+      You are {{char}}, speaking to {{user}}. Stay in character.
+
+# The model registry.
+- id: llm
+  name: '@deepseek-ai/dsh-llm'
+
+# Our own adapter, pointed at whatever endpoint the launcher provides. The
+# `!!js` expression is resolved lazily by the loader, after this row's
+# injections activate — which is how a real deployment would read a configured
+# base URL.
+- id: llm-openai-compat
+  name: './src/openai/index.ts'
+  config:
+    provider: mock
+    displayName: Mock OpenAI-compatible endpoint
+    baseURL: !!js process.env.IRIS_SPIKE_BASE_URL
+    models:
+      - id: mock-model
+        name: Mock Model
+        contextWindow: 32768

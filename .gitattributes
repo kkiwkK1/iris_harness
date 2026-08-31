@@ -1,0 +1,7 @@
+# Source stays LF in the repository regardless of the checkout platform, so a
+# Windows and a Linux contributor never produce whole-file diffs against each
+# other.
+* text=auto eol=lf
+
+*.png binary
+*.woff2 binary

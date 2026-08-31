@@ -1,0 +1,14 @@
+{
+  "name": "@iris/preset",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SillyTavern preset compatibility: the Chat Completion prompt manager, mapped onto pipeline contributions.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  },
+  "dependencies": {
+    "@iris/pipeline": "workspace:*"
+  }
+}

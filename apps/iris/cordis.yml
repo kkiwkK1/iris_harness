@@ -1,0 +1,42 @@
+# The Iris host composition.
+#
+# Everything is a row. Swapping the model provider, the prompt registry or the
+# persistence backend is an edit here, not a code change — which is the whole
+# reason Iris sits on Cordis rather than on a monolith.
+#
+# Entries start concurrently: order in this file guarantees nothing, and load
+# order comes from service dependencies (`inject`).
+
+- id: logger
+  name: '@deepseek-ai/cordis-plugin-logger-console'
+
+- id: timer
+  name: '@deepseek-ai/cordis-plugin-timer'
+
+# The ordered system-prompt registry. Iris registers the persona here and
+# assembles the rest itself, because roleplay needs depth injection that a
+# system-prompt registry cannot express.
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config:
+    includeHarnessIdentity: false
+    includeRuntimeContext: false
+    persona: ''
+
+# The model registry.
+- id: llm
+  name: '@deepseek-ai/dsh-llm'
+
+# One adapter covers OpenAI, OpenRouter, Ollama, llama.cpp, TextGen WebUI,
+# DeepSeek and anything else speaking the same wire. Point it somewhere with
+# IRIS_BASE_URL; a local llama.cpp or Ollama needs no key.
+- id: llm-openai-compat
+  name: '@iris/llm-openai-compat'
+  config:
+    provider: default
+    displayName: OpenAI-compatible endpoint
+    baseURL: !!js process.env.IRIS_BASE_URL ?? 'http://127.0.0.1:11434/v1'
+    apiKeyEnv: !!js process.env.IRIS_API_KEY_ENV
+    models:
+      - id: !!js process.env.IRIS_MODEL ?? 'local-model'
+        contextWindow: 32768

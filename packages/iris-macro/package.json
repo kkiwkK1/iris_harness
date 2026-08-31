@@ -1,0 +1,11 @@
+{
+  "name": "@iris/macro",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Iris macro engine: {{char}}, {{getvar}}, {{pick}} and the rest of SillyTavern's macro vocabulary.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  }
+}
