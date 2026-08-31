@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { boot } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import type { IrisEvent } from '@iris/protocol'
+import { requestSchemas, type IrisEvent } from '@iris/protocol'
 import { IrisHttpClient } from '@iris/rpc-client'
 
 import { startMockProvider, type MockProvider } from './mock-provider.ts'
@@ -173,4 +173,76 @@ test('the avatar route answers only for cards that have a picture', async () => 
   const traversal = await fetch(`${origin}/iris/avatar/..%2F..%2Fsettings`)
   assert.equal(traversal.status, 404, 'an id that would escape the folder finds nothing')
   await traversal.arrayBuffer()
+})
+
+/**
+ * Valid-shaped params for every method, so the call reaches a handler.
+ *
+ * Params must satisfy each schema: validation runs before the handler lookup,
+ * so a malformed body answers `invalid-request` and proves nothing about
+ * whether anything is registered. The ids are deliberately bogus — reaching a
+ * handler is the whole assertion, and what it then says about a chat that does
+ * not exist is not this test's business.
+ */
+const PROBES: Record<string, unknown> = {
+  'chat.list': {},
+  'chat.create': { characterId: 'no-such-card' },
+  'chat.open': { chatId: 'no-such-chat' },
+  'chat.delete': { chatId: 'no-such-chat' },
+  'chat.rename': { chatId: 'no-such-chat', title: 'x' },
+  'chat.send': { chatId: 'no-such-chat', text: 'x' },
+  'chat.regenerate': { chatId: 'no-such-chat' },
+  'chat.abort': { chatId: 'no-such-chat' },
+  'chat.swipe': { chatId: 'no-such-chat', turn: 0, index: 0 },
+  'chat.editMessage': { chatId: 'no-such-chat', id: 0, text: 'x' },
+  'chat.deleteMessage': { chatId: 'no-such-chat', id: 0 },
+  'character.list': {},
+  'character.import': { filename: 'x.json', content: 'e30=' },
+  'character.delete': { characterId: 'no-such-card' },
+  'settings.get': {},
+  'settings.set': { settings: {} },
+  'script.list': { characterId: 'no-such-card' },
+  'script.setEnabled': { characterId: 'no-such-card', scriptId: 'x', enabled: true },
+  'script.setDocumentGrant': { characterId: 'no-such-card', granted: false },
+  'script.fetch': { url: 'https://blocked.example/x.js' },
+  'script.context': { chatId: 'no-such-chat', characterId: 'no-such-card' },
+  'script.saveMetadata': { chatId: 'no-such-chat', metadata: {} },
+  'script.saveChat': { chatId: 'no-such-chat' },
+  'script.setExtensionPrompt': { chatId: 'no-such-chat', key: 'k', value: 'v' },
+  'script.setExtensionSettings': { characterId: 'no-such-card', settings: {} },
+  'script.generateRaw': { chatId: 'no-such-chat', prompt: 'x' },
+}
+
+test('every method in the contract is actually reachable over the wire', async () => {
+  // Implementing a handler and registering it are two different lists, and
+  // only one of them was being checked: five bridge methods were written,
+  // tested through the handler table, and unreachable from a browser, while
+  // the suite stayed green. This asserts the property that was missing —
+  // reachability — against a running host rather than against source text.
+  const methods = Object.keys(requestSchemas)
+  assert.ok(methods.length > 20, `read ${String(methods.length)} methods from the contract`)
+
+  const unreachable: string[] = []
+  for (const method of methods) {
+    const params = PROBES[method]
+    // A method with no probe cannot be checked, so the absence is the failure:
+    // this is what makes the table maintain itself when the contract grows.
+    assert.ok(params !== undefined, `no probe for "${method}" — add one so it is covered`)
+
+    const response = await fetch(`${origin}/iris/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: `probe-${method}`, method, params }),
+    })
+    const frame = await response.json() as { ok: boolean, error?: { code: string, message: string } }
+
+    // Matched on the transport's own words rather than on `unsupported`: some
+    // handlers legitimately answer `unsupported` (a blocked fetch host), and
+    // conflating the two would let a genuinely missing registration hide.
+    if (frame.ok === false && /no handler is registered/.test(frame.error?.message ?? '')) {
+      unreachable.push(method)
+    }
+  }
+
+  assert.deepEqual(unreachable, [], `methods with no handler registered: ${unreachable.join(', ')}`)
 })

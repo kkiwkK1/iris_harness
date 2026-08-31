@@ -311,25 +311,15 @@ export class IrisAppService {
       },
 
       'script.setExtensionSettings': async ({ characterId, settings }) => {
-
         const store = this.#options.extensionSettings
-
         if (store === undefined) throw new AppError('unsupported', 'extension settings are not configured on this host')
-
         // The card must exist. A partition written for a card that is not there
-
         // is storage nobody can find to clear.
-
         await library.load(characterId)
-
         assertStorable(settings, 'extensionSettings')
-
         await store.set(characterId, settings)
-
         return { settings: await store.get(characterId) }
-
       },
-
 
       'script.saveChat': async ({ chatId }) => {
         const entry = await chats.open(chatId)
