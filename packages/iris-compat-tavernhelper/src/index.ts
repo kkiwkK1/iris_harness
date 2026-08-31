@@ -25,6 +25,14 @@ export {
 } from './chat-messages.ts'
 
 export {
+  parseSlashCommands,
+  splitPipeline,
+  unescapeArgument,
+  UnsupportedSlashCommandError,
+  type SlashCommand,
+} from './slash.ts'
+
+export {
   EventBus,
   IFRAME_EVENTS,
   MVU_EVENTS,
