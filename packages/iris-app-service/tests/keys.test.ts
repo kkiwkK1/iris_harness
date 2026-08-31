@@ -224,3 +224,51 @@ test('a streaming row keeps its key when the reply settles', async (t) => {
   // not tear down and rebuild the bubble at the moment it finishes.
   assert.equal(settledRow?.key, streamingKey)
 })
+
+test('a reroll announces the identity of the row it streams into', async (t) => {
+  // A reroll writes into the row that is already there rather than adding one,
+  // so the identity it announces is that row's — not the slot a fresh reply
+  // would have taken. Getting this wrong is invisible on the send path and
+  // remounts the bubble on every regenerate.
+  const dir = await mkdtemp(join(tmpdir(), 'iris-keys-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const chats = new ChatStore(join(dir, 'chats'), library)
+  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
+  const seen: IrisEvent[] = []
+  let ends = 0
+  const handlers = new IrisAppService({
+    stream: scripted(['First take.', 'Second take.']),
+    library,
+    chats,
+    settings,
+    broadcast: (event: IrisEvent) => {
+      seen.push(event)
+      if (event.type === 'stream.end') ends += 1
+    },
+    userName: 'Traveller',
+  }).handlers()
+
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+  await handlers['chat.send']({ chatId, text: 'Hello?' })
+  while (ends < 1) await new Promise(resolve => setTimeout(resolve, 1))
+
+  const rows = (await handlers['chat.open']({ chatId })).view.messages
+  const replyKey = rows[rows.length - 1]?.key
+
+  seen.length = 0
+  await handlers['chat.regenerate']({ chatId })
+  while (ends < 2) await new Promise(resolve => setTimeout(resolve, 1))
+
+  const opening = seen.find(event => event.type === 'stream.start')
+  assert.ok(opening?.type === 'stream.start')
+  assert.equal(opening.key, replyKey, 'a reroll streams into the row that is already showing')
+
+  const settled = (await handlers['chat.open']({ chatId })).view.messages
+  assert.equal(settled[settled.length - 1]?.key, replyKey, 'and the row keeps that identity')
+  assert.equal(settled[settled.length - 1]?.text, 'Second take.')
+})

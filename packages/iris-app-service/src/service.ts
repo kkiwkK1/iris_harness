@@ -291,7 +291,7 @@ export class IrisAppService {
     // slot belongs to that line rather than to the reply. Nothing can have been
     // emitted yet — the first delta waits on the network — and the ordering is
     // pinned by test rather than argued.
-    this.#options.broadcast({ type: 'stream.start', chatId, turn, key: entry.streamingKey })
+    this.#options.broadcast({ type: 'stream.start', chatId, turn, key: entry.streamingKeyFor(turn) })
 
     void running.then(
       candidate => this.#settle(entry, turn, textOf(candidate.message)),

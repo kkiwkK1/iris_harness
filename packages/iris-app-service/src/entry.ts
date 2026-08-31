@@ -242,15 +242,23 @@ export class ChatEntry {
   /**
    * Identity of the row a generation streams into.
    *
-   * The spare `keys` mints past the end: a streaming row occupies it and the
-   * settled row lands in the same slot. Only meaningful once the turn's user
-   * line is in the log — before that the spare belongs to that line instead,
-   * so a caller reads this after the driver has appended, not before.
+   * Two cases, and they land in different slots. A new turn has no row yet, so
+   * it takes the spare `keys` mints past the end. A reroll writes into the row
+   * the turn already has, which is the last chat-file line — announcing the
+   * spare there would name a row no view contains, and the bubble would remount
+   * the moment the reply settled.
+   *
+   * Only meaningful once the turn's user line is in the log: before that the
+   * spare belongs to that line instead, so a caller reads this after the driver
+   * has appended, not before.
+   * @param turn - the turn about to be generated.
    * @returns the identity to announce with `stream.start`.
    */
-  get streamingKey(): string {
+  streamingKeyFor(turn: number): string {
     const keys = this.keys
-    return keys[keys.length - 1] as string
+    const rerolling = listCandidates(this.session, turn).length > 0
+    const index = rerolling ? keys.length - 2 : keys.length - 1
+    return keys[index] ?? keys[keys.length - 1] as string
   }
 
   /**
