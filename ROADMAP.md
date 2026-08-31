@@ -106,12 +106,16 @@ profile 且当前顶层值与两者都不一致——**用户确实在手动切�
 但实测本机 `extension_settings.note` 的内容字段**全部为空**——用户从没写过全局或角色注释。
 分支有 7 处真实痕迹，这个是 0 处，不该同级。降到 Tier 1 末位，等有痕迹的用户再提。
 
-### 1.5 Instruct / Context 模板（拆成两件事）
+### 1.5 Instruct / Context 模板【2026-09-01 二次更正：整体后置，Tier 1 就此收尾】
 
-原文把两者当一件事,实测是两件:**instruct 用户从没开过**（`instruct.enabled=false`，
-preset 停在出厂 Alpaca，走纯 Chat Completion 自定义端点）;**context 模板用户动过**
-（`story_string` 前加了 `{{#if anchorBefore}}`）。所以 context 模板先做、instruct 后置。
-llama.cpp 和 Ollama 都给 `/chat/completions`，instruct 不是第一天必须——这个判断实测成立。
+上一版说"context 用户动过手、先做"——**又错了，被第二轮核对推翻**：那个"改过"的
+`story_string` 逐字节等于另一份出厂文件（`simple-proxy-for-tavern.json`），和 `Default.json`
+的差异是出厂版本差异不是用户编辑。**"git diff 式的比对只告诉你'不同'，不告诉你'和什么相同'。"**
+且 `story_string` 在 Chat Completion 路径上一次都没被引用——对本机用户它和 instruct 一样零效果。
+
+**两者在"谁会用"上是一体的**（都只对文本补全用户生效，没有用户只要其中一个），将来若立项，
+依据是"TC 用户"这个社区构成，且前置是 Iris 先有裸 `/completions` 管线——那是独立立项，
+context+instruct 作为一体跟着它走。在那之前不做：一个没人能验证的功能不该进树。
 
 字段清单在 `PLAN.md` 的数据契约一节。
 
