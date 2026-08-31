@@ -55,13 +55,13 @@
   display: flex;
   align-items: baseline;
   gap: 9px;
-  padding: 18px 20px 14px;
+  padding: 20px 20px 18px;
 }
 
 .iris-brand__name {
   font-family: var(--iris-font-prose);
-  font-size: 20px;
-  letter-spacing: 0.02em;
+  font-size: var(--iris-size-brand);
+  letter-spacing: 0.015em;
   color: var(--iris-ink);
 }
 
@@ -80,16 +80,14 @@
 
 .iris-tab {
   flex: 1;
-  padding: 9px 4px 10px;
+  padding: 9px 4px 11px;
   background: none;
   border: 0;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   cursor: pointer;
   font: inherit;
-  font-size: var(--iris-label-size);
-  letter-spacing: var(--iris-label-tracking);
-  text-transform: uppercase;
+  font-size: var(--iris-ui-size);
   color: var(--iris-ink-tertiary);
   transition: color var(--iris-fast) var(--iris-ease);
 }
@@ -100,6 +98,7 @@
 
 .iris-tab[aria-selected='true'] {
   color: var(--iris-ink);
+  font-weight: 600;
   border-bottom-color: var(--iris-accent);
 }
 
@@ -116,8 +115,11 @@
   text-align: left;
   background: none;
   border: 0;
-  padding: 9px 12px;
-  border-radius: var(--iris-radius);
+  /* A 2px well on the left that only the current row fills: the selected state
+     was previously carried by a tint so faint it read as a rendering artefact. */
+  border-left: 2px solid transparent;
+  padding: 8px 12px 9px 10px;
+  border-radius: 0 var(--iris-radius) var(--iris-radius) 0;
   cursor: pointer;
   font: inherit;
   color: var(--iris-ink-secondary);
@@ -129,14 +131,22 @@
 
 .iris-row[aria-current='true'] {
   background: var(--iris-accent-wash);
+  border-left-color: var(--iris-accent);
   color: var(--iris-ink);
 }
 
 .iris-row__title {
   display: block;
+  font-size: var(--iris-size-row);
+  line-height: 1.35;
+  color: var(--iris-ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.iris-row[aria-current='true'] .iris-row__title {
+  font-weight: 600;
 }
 
 .iris-row__meta {
@@ -160,12 +170,19 @@
   padding: 1px 7px 2px;
 }
 
+/*
+ * Full width and on its own rule. It used to sit as a small pill in the corner,
+ * which read as something left over from development rather than as the way you
+ * add a character — and adding a character is how the product starts.
+ */
 .iris-sidebar__foot {
   border-top: var(--iris-hairline) solid var(--iris-rule);
-  padding: 10px 12px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
+  padding: 12px;
+}
+
+.iris-sidebar__foot button {
+  width: 100%;
+  justify-content: center;
 }
 
 /* ---------------------------------------------------------------- main pane */
@@ -175,29 +192,45 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--iris-bg-page);
+  /* The desk. Deliberately the darker of the two grounds, so the sheet on top
+     of it reads as a sheet. */
+  background: var(--iris-bg-base);
 }
 
-.iris-topbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 49px;
-  padding: 0 18px;
-  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
-}
-
-.iris-topbar__title {
-  font-family: var(--iris-font-prose);
-  font-size: 15px;
-  color: var(--iris-ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.iris-topbar__spacer {
+/*
+ * The stage accounts for a wide window.
+ *
+ * The reading column must NOT grow — 30 characters a line is right and widening
+ * it would undo the thing that works. But 1000px of unexplained emptiness reads
+ * as a page that failed to load. So the column keeps its measure and sits on a
+ * bounded sheet, and the emptiness becomes the desk around it: the same
+ * proof-sheet-under-a-lamp figure the palette is built on, made literal.
+ *
+ * Past 1360px the desk earns a second column instead of more void — the chat's
+ * own variables, which is real content the protocol already carries.
+ */
+.iris-stage {
   flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, var(--iris-sheet));
+  justify-content: center;
+  gap: 0;
+}
+
+.iris-sheet {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--iris-bg-page);
+  border-inline: var(--iris-hairline) solid var(--iris-rule);
+}
+
+@media (min-width: 1360px) {
+  .iris-stage {
+    grid-template-columns: minmax(0, var(--iris-sheet)) var(--iris-aside);
+  }
 }
 
 .iris-nav-toggle {
@@ -242,4 +275,51 @@
   max-width: 280px;
   font-family: var(--iris-font-ui);
   font-size: 14px;
+}
+
+/* ---------------------------------------------------------------- masthead */
+
+/*
+ * Printed on the paper, not floating above it. Also where the conversation's
+ * facts live — the character, how many turns in, which model is answering — none
+ * of which had anywhere to be before.
+ */
+.iris-masthead {
+  padding: 22px 20px 16px;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule);
+}
+
+.iris-masthead__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(var(--iris-gutter) + var(--iris-measure) + 40px);
+  margin: 0 auto;
+  padding-left: var(--iris-gutter);
+}
+
+.iris-masthead__spacer {
+  flex: 1;
+}
+
+.iris-masthead__title {
+  font-family: var(--iris-font-prose);
+  font-size: var(--iris-size-title);
+  color: var(--iris-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-masthead__meta {
+  max-width: calc(var(--iris-gutter) + var(--iris-measure) + 40px);
+  margin: 5px auto 0;
+  padding-left: var(--iris-gutter);
+}
+
+@media (max-width: 880px) {
+  .iris-masthead__row,
+  .iris-masthead__meta {
+    padding-left: 0;
+  }
 }

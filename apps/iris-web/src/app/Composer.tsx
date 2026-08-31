@@ -53,6 +53,8 @@ export function Composer({
     field.current?.focus()
   }, [chatId])
 
+  const empty = draft.trim() === ''
+
   const submit = (): void => {
     const text = draft.trim()
     if (text === '' || generating) return
@@ -88,7 +90,16 @@ export function Composer({
               Stop
             </Button>
           ) : (
-            <Button variant="primary" size="sm" onClick={submit} disabled={draft.trim() === ''}>
+            // Quiet until there is something to send, saturated once there is.
+            // A permanently-disabled primary button was the first thing on the
+            // page and it read as broken; this way the single saturated element
+            // in the interface appears exactly when it has a job.
+            <Button
+              variant={empty ? 'outline' : 'primary'}
+              size="sm"
+              onClick={submit}
+              disabled={empty}
+            >
               Send
             </Button>
           )}

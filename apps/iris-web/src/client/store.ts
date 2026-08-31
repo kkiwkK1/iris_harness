@@ -21,6 +21,7 @@ import type {
   GenerationSettings,
   IrisClient,
   IrisEvent,
+  ScriptView,
 } from '@iris/protocol'
 
 import { describeError } from './errors.ts'
@@ -63,6 +64,19 @@ export interface IrisState {
   notice: Notice | undefined
   /** True during the first load, so the shell can hold its layout still. */
   booting: boolean
+
+  /**
+   * Card scripts of the open chat's character.
+   *
+   * Held against the character rather than the chat, because that is what the
+   * grant is stored against — two chats with the same card share one decision,
+   * and showing it per chat would imply otherwise.
+   */
+  scripts: ScriptView[]
+  /** Which character `scripts` describes, so a stale list is never shown. */
+  scriptsFor: string | undefined
+  /** Whether that character's scripts may touch the real page. */
+  documentGranted: boolean
 }
 
 /** What the interface calls. Every one of these is a host round trip. */
@@ -82,6 +96,9 @@ export interface IrisActions {
   importCard(filename: string, base64: string): Promise<void>
   deleteCharacter(characterId: string): Promise<void>
   patchSettings(patch: Record<string, unknown>): Promise<void>
+  loadScripts(characterId: string): Promise<void>
+  setScriptEnabled(scriptId: string, enabled: boolean): Promise<void>
+  setDocumentGrant(granted: boolean): Promise<void>
   notify(kind: Notice['kind'], text: string): void
   dismissNotice(): void
 }
@@ -122,6 +139,9 @@ export function createIrisStore(client: IrisClient): { store: IrisStore, dispose
       settings: undefined,
       notice: undefined,
       booting: true,
+      scripts: [],
+      scriptsFor: undefined,
+      documentGranted: false,
 
       async boot(): Promise<void> {
         await guard(async () => {
@@ -270,6 +290,47 @@ export function createIrisStore(client: IrisClient): { store: IrisStore, dispose
             settings: patch,
           })
           set({ settings })
+        })
+      },
+
+      async loadScripts(characterId: string): Promise<void> {
+        if (get().scriptsFor === characterId) return
+        // Cleared first: the previous card's scripts must not sit under the new
+        // card's name for the length of a round trip, because the one thing this
+        // panel exists to answer is "what does THIS card run".
+        set({ scripts: [], scriptsFor: characterId, documentGranted: false })
+        await guard(async () => {
+          const listed = await client.call('script.list', { characterId })
+          if (get().scriptsFor !== characterId) return
+          set({ scripts: listed.scripts, documentGranted: listed.documentGranted })
+        })
+      },
+
+      async setScriptEnabled(scriptId: string, enabled: boolean): Promise<void> {
+        const characterId = get().scriptsFor
+        if (characterId === undefined) return
+        await guard(async () => {
+          const { scripts } = await client.call('script.setEnabled', { characterId, scriptId, enabled })
+          if (get().scriptsFor === characterId) set({ scripts })
+        })
+      },
+
+      async setDocumentGrant(granted: boolean): Promise<void> {
+        const characterId = get().scriptsFor
+        if (characterId === undefined) return
+        await guard(async () => {
+          const result = await client.call('script.setDocumentGrant', { characterId, granted })
+          if (get().scriptsFor !== characterId) return
+          set({ documentGranted: result.documentGranted })
+          // Said plainly, because the policy is that a grant takes effect on the
+          // next run and a user who expects it to apply now would draw the wrong
+          // conclusion from a card that keeps failing.
+          get().notify(
+            'info',
+            granted
+              ? 'Page access granted. It takes effect the next time the card runs.'
+              : 'Page access revoked. It stops at the next run.',
+          )
         })
       },
 

@@ -11,7 +11,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import {
@@ -25,7 +24,9 @@ import {
 } from '../theme/theme.ts'
 import { ChatPane } from './ChatPane.tsx'
 import { SettingsDrawer } from './SettingsDrawer.tsx'
+import { Masthead } from './Masthead.tsx'
 import { Sidebar } from './Sidebar.tsx'
+import { StatePanel } from './StatePanel.tsx'
 import { toBase64 } from './format.ts'
 
 import '../theme/tokens.css'
@@ -42,7 +43,6 @@ export function App(): ReactElement {
   const actions = useIrisActions()
   const notice = useIris(state => state.notice)
   const connected = useIris(state => state.connected)
-  const generating = useIris(state => state.stream !== undefined)
 
   const [theme, setThemeState] = useState<ThemeChoice>(loadTheme)
   const [reading, setReadingState] = useState<ReadingPrefs>(loadReading)
@@ -129,24 +129,16 @@ export function App(): ReactElement {
           </div>
         )}
 
-        <header className="iris-topbar">
-          <button
-            type="button"
-            className="iris-act iris-nav-toggle"
-            aria-label="Show conversations"
-            onClick={() => setNavOpen(!navOpen)}
-          >
-            ☰
-          </button>
-          <ChatTitle />
-          <span className="iris-topbar__spacer" />
-          {generating ? <span className="iris-meta">writing…</span> : null}
-          <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(true)}>
-            Settings
-          </Button>
-        </header>
-
-        <ChatPane />
+        <div className="iris-stage">
+          <div className="iris-sheet">
+            <Masthead
+              onOpenSettings={() => setSettingsOpen(true)}
+              onToggleNav={() => setNavOpen(!navOpen)}
+            />
+            <ChatPane />
+          </div>
+          <StatePanel />
+        </div>
       </main>
 
       <SettingsDrawer
@@ -171,56 +163,5 @@ export function App(): ReactElement {
       ) : null}
 
     </div>
-  )
-}
-
-/**
- * The conversation's title, renamable in place.
- *
- * In place rather than in a dialog: a title is one field, and a modal for one
- * field is a modal too many.
- * @returns the title, as text or as an input.
- */
-function ChatTitle(): ReactElement | null {
-  const view = useIris(state => state.view)
-  const actions = useIrisActions()
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
-
-  if (view === undefined) return null
-
-  if (editing) {
-    return (
-      <input
-        className="iris-text iris-title-input"
-        autoFocus
-        value={draft}
-        aria-label="Conversation title"
-        onChange={event => setDraft(event.target.value)}
-        onBlur={() => setEditing(false)}
-        onKeyDown={event => {
-          if (event.key === 'Escape') setEditing(false)
-          if (event.key === 'Enter') {
-            setEditing(false)
-            const title = draft.trim()
-            if (title !== '' && title !== view.title) void actions.renameChat(view.chatId, title)
-          }
-        }}
-      />
-    )
-  }
-
-  return (
-    <button
-      type="button"
-      className="iris-topbar__title iris-title-button"
-      title="Rename this conversation"
-      onClick={() => {
-        setDraft(view.title)
-        setEditing(true)
-      }}
-    >
-      {view.title}
-    </button>
   )
 }

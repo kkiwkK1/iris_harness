@@ -20,15 +20,62 @@
   /* Margin + measure, plus breathing room at the right edge. */
   max-width: calc(var(--iris-gutter) + var(--iris-measure) + 40px);
   margin: 0 auto;
-  padding: 26px 20px 56px;
+  padding: 26px 20px 28px;
+  /*
+   * A short conversation sits ON the composer instead of floating above it. It
+   * used to start at the top of the scroller, which left a hundred-plus pixels
+   * of nothing between the last reply and the box you answer it in — the reply
+   * and the answer are one exchange and should not be separated by the largest
+   * gap on the page.
+   *
+   * `justify-content` only does anything when there is free space, so a long
+   * conversation scrolls normally and nothing is clipped.
+   */
+  box-sizing: border-box;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
 .iris-turn {
+  position: relative;
   padding: 22px 0;
 }
 
 .iris-turn + .iris-turn {
   border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+/*
+ * The turn's number sits ON the rule that opens it, in the margin.
+ *
+ * It used to be stamped beside each user message, which put it on half the rows
+ * and none of the assistant ones — inconsistency that reads as a bug rather than
+ * as a system. A turn is the thing being numbered, so the number belongs to the
+ * boundary between turns, once.
+ */
+.iris-turn__ordinal {
+  position: absolute;
+  top: -0.62em;
+  left: 0;
+  width: var(--iris-gutter);
+  padding-right: 15px;
+  box-sizing: border-box;
+  text-align: right;
+  font-family: var(--iris-font-mono);
+  /*
+   * Measured at 1.59:1 against the paper in light when this was `--iris-ink-faint`
+   * at 10px — which is not a page number, it is a grey smudge. It is also the
+   * only locating mark on the page while the rule beside it is merely a divider,
+   * so the two must not read at the same weight: same weight means no mark.
+   */
+  font-size: var(--iris-meta-size);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--iris-ink-secondary);
+  background: var(--iris-bg-page);
+  font-variant-numeric: tabular-nums;
 }
 
 .iris-msg {
@@ -51,12 +98,27 @@
   min-width: 0;
 }
 
+/*
+ * The two voices are labelled differently on purpose. The character's name is
+ * the one worth reading — it changes, and it is who is speaking. "You" never
+ * changes and is only there for orientation, so it stays a label while the
+ * character's name becomes a small heading.
+ */
 .iris-msg__who {
   font-size: var(--iris-label-size);
   letter-spacing: var(--iris-label-tracking);
   text-transform: uppercase;
-  color: var(--iris-ink-tertiary);
+  color: var(--iris-ink-faint);
   margin-bottom: 7px;
+}
+
+.iris-msg--assistant .iris-msg__who {
+  font-family: var(--iris-font-prose);
+  font-size: var(--iris-ui-size);
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--iris-ink-secondary);
+  margin-bottom: 5px;
 }
 
 .iris-msg__text {
@@ -96,15 +158,24 @@
  * count and the position at a glance and costs no chrome when there is only
  * one reading to report.
  */
+/*
+ * The ticks were the same mark at different widths, which made the current one
+ * read as a mis-drawn divider rather than as the marked member of a set. Two
+ * changes fix that: every tick is now the same width, so difference means
+ * "selected" rather than "longer"; and the stack sits against a spine, which is
+ * what makes it a rail at all instead of dashes floating in a margin.
+ */
 .iris-rail {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 5px;
+  padding-right: 5px;
+  border-right: var(--iris-hairline) solid var(--iris-rule);
 }
 
 .iris-rail__tick {
-  width: 11px;
+  width: 13px;
   height: 2px;
   padding: 0;
   border: 0;
@@ -112,25 +183,24 @@
   background: var(--iris-rule-strong);
   cursor: pointer;
   transition:
-    width var(--iris-fast) var(--iris-ease),
+    height var(--iris-fast) var(--iris-ease),
     background var(--iris-fast) var(--iris-ease);
 }
 
 .iris-rail__tick:hover {
-  width: 15px;
   background: var(--iris-ink-tertiary);
 }
 
 .iris-rail__tick[aria-current='true'] {
-  width: 19px;
+  height: 3px;
   background: var(--iris-accent);
 }
 
 .iris-rail__count {
-  margin-top: 5px;
+  margin-top: 4px;
   font-family: var(--iris-font-mono);
-  font-size: 10px;
-  color: var(--iris-ink-faint);
+  font-size: var(--iris-meta-size);
+  color: var(--iris-ink-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -242,10 +312,17 @@
 
 /* ----------------------------------------------------------------- actions */
 
+/*
+ * Hidden but still holding its place. Revealing it by reflow would shift the
+ * prose under the cursor, which is worse in a reading surface than a little
+ * reserved air — so the row keeps its box and only its opacity changes. It is
+ * kept tight for the same reason: five messages of invisible 35px rows was a
+ * real part of why the page felt empty.
+ */
 .iris-actions {
   display: flex;
   gap: 1px;
-  margin-top: 11px;
+  margin-top: 7px;
   margin-left: -7px;
   opacity: 0;
   transition: opacity var(--iris-fast) var(--iris-ease);
@@ -257,6 +334,12 @@
   opacity: 1;
 }
 
+/*
+ * Three equally-weighted words under every message competed with the prose for
+ * a job done rarely. They are now the faintest text on the page until the
+ * message is hovered, and Regenerate — the only one that changes the
+ * conversation — is the one that reads as an action.
+ */
 .iris-act {
   background: none;
   border: 0;
@@ -265,7 +348,11 @@
   cursor: pointer;
   font: inherit;
   font-size: 12px;
-  color: var(--iris-ink-tertiary);
+  color: var(--iris-ink-faint);
+}
+
+.iris-act--primary {
+  color: var(--iris-ink-secondary);
 }
 
 .iris-act:hover {

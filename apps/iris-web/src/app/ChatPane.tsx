@@ -113,6 +113,17 @@ export function ChatPane(): ReactElement {
           ) : (
             groups.map((group, at) => (
               <section className="iris-turn" key={group.turn ?? `loose-${at}`}>
+                {/*
+                  On the boundary, and only where there is one. The number names
+                  the turn — the thing swipe and regenerate address — so it marks
+                  where turns divide rather than being stamped on whichever rows
+                  happen to be the reader's.
+                */}
+                {at > 0 && group.turn !== undefined ? (
+                  <span className="iris-turn__ordinal" aria-hidden="true">
+                    {group.turn}
+                  </span>
+                ) : null}
                 {group.messages.map(message => (
                   <Message
                     // `key`, not `id`: `id` is a position, so a delete shifts

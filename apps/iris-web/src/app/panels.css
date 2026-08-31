@@ -13,6 +13,7 @@
 .iris-composer {
   border-top: var(--iris-hairline) solid var(--iris-rule);
   padding: 13px 20px 18px;
+  background: var(--iris-bg-page);
 }
 
 .iris-composer__inner {
@@ -312,4 +313,161 @@
 /* An action set inside running text, so it must not carry the row's padding. */
 .iris-act--inline {
   padding: 0 4px;
+}
+
+/* ------------------------------------------------------------ card scripts */
+
+/*
+ * A script row is a small dossier, not a settings row: what it is, how big it
+ * is, what its author said about it, and who switched it off. The size matters
+ * enough to sit on the title line — telling "a few lines someone wrote" from "a
+ * megabyte of compiled output" is most of what a reader wants to know before
+ * letting it run.
+ */
+.iris-script__summary {
+  margin-bottom: 10px;
+}
+
+.iris-script {
+  padding: 10px 0;
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-script__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.iris-script__name {
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink);
+  overflow-wrap: anywhere;
+}
+
+.iris-script__info {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-script__switch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 7px;
+  font-size: 12px;
+  color: var(--iris-ink-secondary);
+  cursor: pointer;
+}
+
+.iris-script__switch input {
+  accent-color: var(--iris-accent);
+}
+
+/*
+ * The grant block is set apart by a rule and a little more air than the rows
+ * above it. It is the only control in the product that can hand a third party
+ * the whole page, and it should not read as one more row in a list.
+ */
+.iris-grant {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: var(--iris-hairline) solid var(--iris-rule);
+}
+
+.iris-grant__state {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.iris-grant__value {
+  font-family: var(--iris-font-mono);
+  font-size: var(--iris-meta-size);
+  color: var(--iris-ink-tertiary);
+}
+
+/* Granted is the exceptional state, so it is the one that carries colour —
+   and the warning colour, not the accent: this is not an achievement. */
+.iris-grant__value--on {
+  color: var(--iris-warn);
+}
+
+.iris-grant .iris-field__note {
+  margin-bottom: 8px;
+}
+
+/* ------------------------------------------------------------ state margin */
+
+/*
+ * Hidden until there is genuinely room for it. Below 1360px the sheet takes the
+ * whole stage, so this must not merely shrink — a 120px column of key/value
+ * pairs would be worse than the emptiness it replaced.
+ */
+.iris-aside {
+  display: none;
+}
+
+@media (min-width: 1360px) {
+  .iris-aside {
+    display: block;
+    min-width: 0;
+    overflow-y: auto;
+  }
+}
+
+.iris-aside__inner {
+  padding: 26px 22px 40px 24px;
+}
+
+.iris-aside__head {
+  margin: 0 0 12px;
+}
+
+.iris-aside__empty {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--iris-ink-faint);
+}
+
+.iris-state {
+  margin: 0;
+}
+
+.iris-state__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-state__key {
+  font-size: 12px;
+  color: var(--iris-ink-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.iris-state__value {
+  margin: 0;
+  font-family: var(--iris-font-mono);
+  font-size: 12px;
+  color: var(--iris-ink);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.iris-state__nested {
+  margin-top: 16px;
+}
+
+.iris-state__nested .iris-state__key {
+  margin-bottom: 6px;
 }

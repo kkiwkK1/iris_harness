@@ -38,10 +38,26 @@
   --iris-prose-leading: 1.72;
   --iris-measure: 68ch;
 
+  /*
+   * A real scale, because restraint is only legible against contrast. The first
+   * pass had exactly one size relationship on the page — 17px prose against 11px
+   * labels — and everything else sat at 11-13px. With no second step, the
+   * quietness read as unfinished rather than as deliberate.
+   *
+   * 22 / 17 / 15 / 14 / 13 / 11. Each step has one job.
+   */
+  --iris-size-brand: 22px;
+  --iris-size-title: 17px;
+  --iris-size-row: 14px;
   --iris-ui-size: 13px;
   --iris-label-size: 11px;
   --iris-label-tracking: 0.075em;
   --iris-meta-size: 11px;
+
+  /* The reading surface's own width, and the desk it sits on. The column stays
+     at a book measure; the SHEET is what accounts for a wide window. */
+  --iris-sheet: 1040px;
+  --iris-aside: 260px;
 
   /* ---------------------------------------------------------------- rhythm */
 
@@ -64,10 +80,18 @@
  * this product is actually used in, so it gets the more careful values.
  */
 :root {
-  --iris-bg-base: #e9ecee;
-  --iris-bg-page: #f5f6f7;
+  /*
+   * Light is the weaker of the two themes and the one that needs the work. The
+   * paper/desk separation measured 11 points of luminance, which reads but only
+   * just; widening it to about 20 lets the sheet's edge carry itself instead of
+   * leaning entirely on one hairline. Not wider than that — past a certain
+   * delta a bounded sheet stops being paper on a desk and becomes a card on a
+   * grey app background, which is the look this whole direction is avoiding.
+   */
+  --iris-bg-base: #e2e6ea;
+  --iris-bg-page: #f7f8f9;
   --iris-bg-raised: #ffffff;
-  --iris-bg-sunken: #dfe3e6;
+  --iris-bg-sunken: #dde2e6;
   --iris-bg-mask: rgb(20 26 32 / 38%);
 
   --iris-rule: #d3d9dd;

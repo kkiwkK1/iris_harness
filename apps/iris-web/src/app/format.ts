@@ -64,3 +64,22 @@ export async function toBase64(file: File): Promise<string> {
   }
   return btoa(binary)
 }
+
+/**
+ * Describe a script's size.
+ *
+ * Rounded hard and never below a kilobyte's precision: the number exists so a
+ * reader can tell "a few lines someone wrote" from "a megabyte of compiled
+ * output", and a byte count spelled out in full invites a precision that
+ * decision does not need. `0` is reported as such, because a zero-byte script is
+ * a real thing in the corpus and hiding it would make an empty row unexplainable.
+ * @param bytes - the size.
+ * @returns a short human size.
+ */
+export function describeBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return 'unknown size'
+  if (bytes === 0) return 'empty'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} kB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}

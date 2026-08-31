@@ -7,8 +7,17 @@ the DSH web shell.
 npm run dev            # vite dev server
 npm run typecheck      # tsc --noEmit, same strictness as the repo root
 npm run check:render   # server-render the tree and assert it produced a page
-npm run build          # production bundle
+npm run build          # the app, then the sandbox bootstrap
+npm run build:sandbox  # the bootstrap alone (dist-sandbox/bootstrap.js)
 ```
+
+**The build has two outputs and they are not interchangeable.** `dist/` is the
+app; `dist-sandbox/bootstrap.js` is the card-sandbox bootstrap, built by a second
+config as a *classic IIFE* because a card's frame has an opaque origin where a
+module script would be CORS-checked. The host reads that file's text and inlines
+it into each frame's `srcdoc`. A `dist/` without it looks complete and cannot run
+a single card, which is why the bootstrap has its own directory: the app build
+runs with `emptyOutDir` and would otherwise wipe it.
 
 `node --test "apps/iris-web/tests/**/*.test.ts"` from the repo root runs the unit
 tests (they are also picked up by the root `pnpm test`).
@@ -77,6 +86,53 @@ cards on the development machine carry `0,0,0,0,0,0,0,0,0,0,0,1,1,2,4,6,10,10,13
 alternate greetings, so one already needs fourteen cells, and regenerations stack
 on top with no ceiling.
 
+## The card-script sandbox, browser side
+
+Policy is `SANDBOX.md`. What lives here is its implementation, plus one
+architectural decision that document leaves open.
+
+**The frame is cross-origin.** `sandbox="allow-scripts"` with no
+`allow-same-origin` puts a card in an opaque origin, so the browser itself
+refuses its reach into the host page. That decision is what makes the rest
+legible: shadowing `window`, `parent`, `self`, `globalThis` and `top` as
+function parameters (`sandbox/frame.ts`) is the **compatibility** layer, not the
+boundary. It exists so a card reaching for `parent.document.body` gets something
+useful. A card that evades it — `Function('return this')()`, `frameElement` —
+reaches the real, cross-origin parent and is stopped by the browser. The sandbox
+fails closed.
+
+A same-origin frame with only shadowed identifiers is the opposite: one
+`Function('return this')()` and the card is in the host page. That is what
+upstream ships, and it is the reason for the divergence.
+
+A grant therefore means the frame runs with `allow-scripts allow-same-origin` —
+the one combination that is knowingly not a sandbox. `frameSandbox()` is the
+single place that string is assembled.
+
+| file | what |
+| --- | --- |
+| `sandbox/errors.ts` | `UnsupportedApiError` / `ReadOnlyApiError`. A refusal throws and names the member, because `undefined` from a DOM lookup is indistinguishable from "not found" |
+| `sandbox/virtual-document.ts` | `parent.document`: the real viewport size, the card's own container as `body`, three scoped lookups, three node factories, and a wall |
+| `sandbox/policy.ts` | frame origin per grant, the remote allowlist, and the globals that are planned-but-unbridged |
+| `sandbox/protocol.ts` | the host↔frame messages, validated in both directions against a per-run token |
+| `sandbox/frame.ts` | the frame-side installer, dependency-injected so the decisions it makes are testable under `node --test` |
+| `sandbox/frame-entry.ts` | the second build entry: adapts the real frame realm to `FrameEnv` and holds no policy of its own |
+| `sandbox/srcdoc.ts` | the frame's markup, including its own CSP and the inlined bootstrap |
+| `sandbox/runner.ts` | host side: create, feed, size, dispose. The thinnest module here, because it is the only one a browser is required to exercise |
+
+**CSP does work here, just not the work it was ruled out for.** It cannot forbid
+`eval` — the card blobs are webpack output that evals per module — but pinning
+where code may come *from* is a separate capability, and the frame's policy
+allows eval while restricting script origins to the measured allowlist. It is a
+second line: a page cannot police its own fetches, so the host's `script.fetch`
+stays the enforcement that counts.
+
+**One sequencing rule is load-bearing.** The context snapshot must reach the
+frame before the card body does. Cards call `SillyTavern.getContext()`
+synchronously and a cross-origin frame can only be addressed asynchronously, so a
+card that ran first would see no host at all. `runner.ts` posts context, then
+viewport, then `run`.
+
 ## Contract notes for the host half
 
 Requests against `@iris/protocol`, in rough order of how much they cost to work
@@ -107,6 +163,25 @@ around from here. All are additions; nothing existing needs to change shape.
    it; that is a different operation and the protocol does not have one.
 
 ## Known gaps in this half
+
+- **The sandbox's host-side frame lifecycle is designed, not built.** Creating
+  the iframe, getting the bootstrap into it, sizing it and disposing it is the
+  one part that cannot be exercised without a browser, and it has an open
+  dependency: the bootstrap has to reach an opaque-origin frame, which means
+  either a classic script served from a stable same-origin path or the host
+  inlining that text into `srcdoc`. Both need the host half to serve an asset.
+- **`UNBRIDGED_GLOBALS` is deliberately stale-able.** It lists globals that are
+  planned but unwired so a refusal can say "not yet" rather than "no". Each entry
+  must be deleted as its bridge lands — `SillyTavern` and `extension_settings`
+  already have. What remains: `eventSource`, `event_types`, `TavernHelper`.
+- **A `typeof` probe on an unbridged bare global still fails quietly**, and no
+  amount of shadowing closes that. `if (parent.eventSource)` throws and names the
+  member; `if (typeof eventSource !== 'undefined')` simply takes the false branch.
+  The only fix is to bridge the name.
+- **Extension-settings write tracking is shallow.** A top-level assignment
+  (`extension_settings.x = computed`, the shape the corpus was measured to use) is
+  reported to the shell. A mutation deeper inside an object that already exists is
+  not, and would need either a deep proxy or an explicit save call from the card.
 
 - **Nothing here has been looked at in a browser.** `npm run check:render` is a
   substitute, not a replacement: it proves the tree renders and that a disposed

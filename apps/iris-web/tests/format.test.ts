@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { approximateWords, since } from '../src/app/format.ts'
+import { approximateWords, describeBytes, since } from '../src/app/format.ts'
 import { asRpcError, describeError } from '../src/client/errors.ts'
 
 const NOON = Date.UTC(2026, 7, 31, 12, 0, 0)
@@ -57,4 +57,23 @@ test('a provider refusal keeps its own words, because those are the information'
     describeError({ code: 'provider-error', message: 'context length exceeded' }),
     'context length exceeded',
   )
+})
+
+test('a script size reads as an order of magnitude, not a byte count', () => {
+  // The decision it informs is "a few lines someone wrote" versus "a megabyte of
+  // compiled output". Both real sizes from the corpus are here.
+  assert.equal(describeBytes(4_820), '5 kB')
+  assert.equal(describeBytes(1_792_316), '1.7 MB')
+  assert.equal(describeBytes(140), '140 B')
+})
+
+test('an empty script says so instead of showing 0', () => {
+  // A zero-byte script exists in the corpus; rendering "0 B" would leave the row
+  // looking like a display bug rather than like the card it came from.
+  assert.equal(describeBytes(0), 'empty')
+})
+
+test('a nonsense size is admitted rather than rendered as a number', () => {
+  assert.equal(describeBytes(-1), 'unknown size')
+  assert.equal(describeBytes(Number.NaN), 'unknown size')
 })

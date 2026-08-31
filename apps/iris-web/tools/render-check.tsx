@@ -111,6 +111,39 @@ async function main(): Promise<void> {
   // history the protocol has no operation for.
   assert.equal(settled.match(/>Regenerate</g)?.length, 1, 'exactly one Regenerate expected')
 
+  // ------------------------------------------------------------- hierarchy
+  // The layout decisions from the browser review, pinned. Each of these was a
+  // specific observation: the reading column sits on a bounded sheet so a wide
+  // window reads as a desk rather than as a page that failed to load; the turn
+  // number marks the boundary between turns instead of being stamped on
+  // whichever rows are the reader's; and the state margin gives the space beside
+  // the sheet real content.
+  assert.match(settled, /class="iris-stage"/, 'the stage is missing')
+  // The head is printed on the paper, not floating above it: the browser review
+  // measured the title 1270px from the Settings button it shared a band with,
+  // and 293px of empty paper above the first line once short conversations were
+  // anchored to the composer.
+  assert.match(settled, /class="iris-masthead"/, 'the masthead is missing')
+  assert.doesNotMatch(settled, /iris-topbar/, 'the topbar band should be gone')
+  // Real facts, not decoration: which model answers and how far in the scene is.
+  assert.match(settled, /iris-masthead__meta/, 'the masthead carries no meta line')
+  assert.match(settled, /local\/qwen3-8b/, 'the meta line does not report the model')
+  assert.match(settled, /class="iris-sheet"/, 'the sheet is missing')
+  assert.match(settled, /class="iris-aside"/, 'the state margin is missing')
+
+  const ordinals = settled.match(/iris-turn__ordinal/g)?.length ?? 0
+  const turns = settled.match(/class="iris-turn"/g)?.length ?? 0
+  assert.ok(turns >= 2, 'the fixture needs more than one turn')
+  assert.equal(ordinals, turns - 1, 'a turn number should mark each boundary, and only a boundary')
+
+  // The state margin reads the chat's own variables, which the protocol already
+  // carries and nothing else in the interface was using.
+  assert.match(settled, /好感度/, 'the state margin does not show the chat variables')
+
+  // Quiet until there is something to send. A permanently disabled primary
+  // button was the first thing on the page and read as broken.
+  assert.match(settled, /Button_outline[^"]*"[^>]*disabled/, 'Send is not quiet while the composer is empty')
+
   // -------------------------------------------------------------- streaming
   await wired.store.getState().send('那你说，我该怎么办。')
   await until(wired.store, () => (wired.store.getState().stream?.text.length ?? 0) > 0, 'the first delta')
@@ -149,12 +182,39 @@ async function main(): Promise<void> {
   assert.match(crowded, /aria-label="Earlier reading"/, 'the compact rail has no stepper')
   // Scoped to this message's count: other turns in the fixture have two or three
   // readings and are still entitled to their ladders.
-  assert.doesNotMatch(
-    crowded,
-    new RegExp(`aria-label="Reading \d+ of ${readings}"`),
+  //
+  // A substring rather than a built regex. The regex version of this assertion
+  // was dead for its whole life: written inside a template literal, its `\d`
+  // collapsed to a literal `d`, so it matched nothing and passed unconditionally.
+  // Tick labels read `Reading {n} of {count}`, and the compact rail's own group
+  // label reads `{count} readings of this reply`, so this fragment appears only
+  // on a tick.
+  assert.equal(
+    crowded.includes(` of ${readings}"`),
+    false,
     'ticks were drawn for a message past the threshold',
   )
   assert.match(crowded, new RegExp(`>${readings}<`), 'the compact rail does not report the count')
+
+  // ---------------------------------------------------------- card scripts
+  // The panel's effect does not run in a server render, so the load is driven
+  // here. Worth rendering rather than trusting: the fake's three scripts are
+  // shaped after the real corpus — a 1.7 MB bundle, a hand-written few kB, and
+  // one its author shipped switched off at zero bytes — so all three row states
+  // appear at once.
+  const character = wired.store.getState().view?.characterId
+  assert.ok(character !== undefined, 'the fixture chat has no character')
+  await wired.store.getState().loadScripts(character)
+
+  const withScripts = render(wired.store, slots.core)
+  assert.match(withScripts, /Card scripts/, 'the script section is missing')
+  assert.match(withScripts, /1\.7 MB/, 'the largest script does not report its size')
+  assert.match(withScripts, /Off in the card/, 'a card-disabled script is not distinguished')
+  assert.match(withScripts, /Runs with this card/, 'an enabled script has no switch')
+  // The grant must be worded by consequence, and must say a card cannot ask.
+  assert.match(withScripts, /cannot read your other conversations/, 'the default state is not explained')
+  assert.match(withScripts, /A card has no way to ask/, 'the panel does not say a card cannot request this')
+  assert.doesNotMatch(withScripts, /document access/i, 'the grant is worded as an API, not a consequence')
 
   // ------------------------------------------------------------------ slots
   const registered = slots.core.register(

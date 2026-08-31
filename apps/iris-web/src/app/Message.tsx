@@ -76,11 +76,6 @@ export function Message({
             onSelect={index => handlers.onSwipe(turn, index)}
           />
         ) : null}
-        {message.role === 'user' && turn !== undefined ? (
-          <span className="iris-meta" title={`Turn ${turn + 1}`}>
-            {turn + 1}
-          </span>
-        ) : null}
       </div>
 
       <div className="iris-msg__body">
@@ -145,7 +140,11 @@ export function Message({
                 Edit
               </button>
               {canRegenerate ? (
-                <button type="button" className="iris-act" onClick={handlers.onRegenerate}>
+                <button
+                  type="button"
+                  className="iris-act iris-act--primary"
+                  onClick={handlers.onRegenerate}
+                >
                   Regenerate
                 </button>
               ) : null}
