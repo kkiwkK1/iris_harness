@@ -98,7 +98,17 @@ Stated here rather than discovered later.
   the founding decision was that the storage layer be shaped for profiles, while
   multi-user authentication is an explicit non-goal (`PLAN.md`).
 - **No CI.** Every green claim in this repo is a local run.
-- **The sandbox mechanism is verified in a real frame; real cards are not yet.**
+- **A real card's production bundle has run to completion in the sandbox**
+  (2026-09-01, eleventh live run): a real card's MVU import fetched the actual
+  bundle from the whitelisted CDN into an opaque-origin frame, through module
+  semantics, the preset libraries, the 28-member Tavern Helper surface and the
+  audited event vocabulary, and finished without error. "Ran to completion" is
+  the load path's verdict, not the feature's: MVU installs listeners and
+  returns, so its work starts at generation time, and the write path stops by
+  design at a named refusal until `script.setVariables` lands. The remaining
+  absences announce themselves (the missing-library banner, refusals by name).
+- ~~The sandbox mechanism is verified in a real frame; real cards are not yet.~~
+  (superseded by the line above; kept for the record)
   On 2026-09-01 a probe body ran in an actual opaque-origin srcdoc frame in
   Chrome: `new Function` and indirect eval both run under the frame's CSP,
   `ResizeObserver` height reports size the frame (559px observed), viewport
