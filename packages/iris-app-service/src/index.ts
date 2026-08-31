@@ -311,6 +311,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.editMessage', handlers['chat.editMessage']),
       ctx.irisRpc.register('chat.deleteMessage', handlers['chat.deleteMessage']),
       ctx.irisRpc.register('chat.branch', handlers['chat.branch']),
+      ctx.irisRpc.register('prompt.itemize', handlers['prompt.itemize']),
       ctx.irisRpc.register('character.list', handlers['character.list']),
       ctx.irisRpc.register('character.import', handlers['character.import']),
       ctx.irisRpc.register('character.delete', handlers['character.delete']),

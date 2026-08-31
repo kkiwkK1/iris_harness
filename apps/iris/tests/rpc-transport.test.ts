@@ -199,6 +199,7 @@ const PROBES: Record<string, unknown> = {
   'chat.editMessage': { chatId: 'no-such-chat', id: 0, text: 'x' },
   'chat.deleteMessage': { chatId: 'no-such-chat', id: 0 },
   'chat.branch': { chatId: 'no-such-chat', id: 0 },
+  'prompt.itemize': { chatId: 'no-such-chat' },
   'character.list': {},
   'character.import': { filename: 'x.json', content: 'e30=' },
   'character.delete': { characterId: 'no-such-card' },

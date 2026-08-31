@@ -191,6 +191,9 @@ export function resolvePreset(
     if (absolute) {
       contributions.push({
         id: identifier,
+        // The preset's own name, which is what upstream's UI shows and what the
+        // itemization view needs: most identifiers in a real preset are UUIDs.
+        ...item.name === undefined ? {} : { label: item.name },
         placement: {
           kind: 'depth',
           depth: item.injection_depth ?? 0,
@@ -204,6 +207,7 @@ export function resolvePreset(
 
     contributions.push({
       id: identifier,
+      ...item.name === undefined ? {} : { label: item.name },
       placement: afterHistory
         ? { kind: 'depth', depth: 0, role: item.role ?? 'system', order }
         : { kind: 'system', order },

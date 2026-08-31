@@ -25,7 +25,17 @@ import type {
   ScriptView,
 } from '@iris/protocol'
 
-import { describeError } from './errors.ts'
+import { asRpcError, describeError } from './errors.ts'
+
+/** A prompt breakdown, or why there is not one. */
+export type ItemizationResult =
+  | { ok: true, itemization: import('@iris/protocol').PromptItemization }
+  | { ok: false, error: import('@iris/protocol').RpcError }
+
+/** A script body, or why there is not one. */
+export type ScriptBodyResult =
+  | { ok: true, content: string }
+  | { ok: false, error: import('@iris/protocol').RpcError }
 
 /** Text arriving for a turn that has not settled yet. */
 export interface StreamBuffer {
@@ -127,7 +137,16 @@ export interface IrisActions {
    * so: a body can be megabytes of webpack output, and the shell has no use for
    * it once the frame has it.
    */
-  scriptBody(characterId: string, scriptId: string): Promise<string | undefined>
+  scriptBody(characterId: string, scriptId: string): Promise<ScriptBodyResult>
+  /**
+   * How a request assembles: a record of one already sent, or a preview of the
+   * next.
+   *
+   * Returned rather than stored, like the other two per-request payloads. A
+   * breakdown is a few dozen rows about one moment; keeping it in shell state
+   * would mean holding a stale answer that looks current.
+   */
+  itemize(turn?: number): Promise<ItemizationResult>
   notify(kind: Notice['kind'], text: string): void
   dismissNotice(): void
 }
@@ -382,17 +401,34 @@ export function createIrisStore(
         }
       },
 
-      async scriptBody(characterId: string, scriptId: string): Promise<string | undefined> {
-        // Same shape and same reason as `scriptContext`: a per-run payload that
-        // has no business living in shell state, and a refusal that is an
-        // expected answer rather than an error to announce. The fake client
-        // refuses bodies on purpose — an invented one would let a runner pass in
-        // development and fail on the first real card.
+      async scriptBody(characterId: string, scriptId: string): Promise<ScriptBodyResult> {
         try {
           const { content } = await client.call('script.body', { characterId, scriptId })
-          return content
-        } catch {
-          return undefined
+          return { ok: true, content }
+        } catch (error: unknown) {
+          // The reason travels. The first version returned a bare `undefined` and
+          // its one caller printed a fixed sentence blaming the fake client —
+          // which was then shown for a refusal from a real host, sending someone
+          // to debug the transport they had already got working. An explanation
+          // that does not depend on the failure is a guess with a confident
+          // voice.
+          return { ok: false, error: asRpcError(error) }
+        }
+      },
+
+      async itemize(turn?: number): Promise<ItemizationResult> {
+        const chatId = get().chatId
+        if (chatId === undefined) {
+          return { ok: false, error: { code: 'not-found', message: 'no chat is open' } }
+        }
+        try {
+          const { itemization } = await client.call('prompt.itemize', {
+            chatId,
+            ...(turn === undefined ? {} : { turn }),
+          })
+          return { ok: true, itemization }
+        } catch (error: unknown) {
+          return { ok: false, error: asRpcError(error) }
         }
       },
 

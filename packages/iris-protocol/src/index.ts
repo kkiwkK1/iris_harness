@@ -33,6 +33,8 @@ export type {
   CharacterSummary,
   GenerationSettings,
   MessageView,
+  PromptItemEntry,
+  PromptItemization,
   ScriptChatMessage,
   ScriptContext,
   ScriptPromptPosition,

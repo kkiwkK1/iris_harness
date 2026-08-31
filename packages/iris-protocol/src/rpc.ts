@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, GenerationSettings, ScriptContext, ScriptView } from './views.ts'
+import type { ChatSummary, ChatView, CharacterSummary, GenerationSettings, PromptItemization, ScriptContext, ScriptView } from './views.ts'
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -56,6 +56,23 @@ export const requestSchemas = {
    * which is what makes branching useful next to swipes: keep this reply here,
    * and explore that one over there.
    */
+  /**
+   * Where an assembled prompt's tokens went.
+   *
+   * Upstream hangs this off a message's ⋯ menu (`mes_prompt`, 📊), which is
+   * where a SillyTavern user will look for it.
+   *
+   * Omitting `turn` asks how the NEXT request would assemble — a preview, which
+   * needs no stored record because assembly is pure. Giving one asks for the
+   * request that turn actually sent; the host keeps those only while the chat
+   * is open, and answers with a preview (`preview: true`) when the record is
+   * gone.
+   */
+  'prompt.itemize': z.object({
+    chatId: z.string().min(1),
+    turn: z.number().int().min(0).optional(),
+  }),
+
   'chat.branch': z.object({
     chatId: z.string().min(1),
     id: z.number().int().min(0),
@@ -243,6 +260,7 @@ export interface RpcResponseMap {
   'chat.deleteMessage': { view: ChatView }
   /** The new branch, already open, plus the refreshed list it now appears in. */
   'chat.branch': { view: ChatView, chats: ChatSummary[] }
+  'prompt.itemize': { itemization: PromptItemization }
 
   'character.list': { characters: CharacterSummary[] }
   'character.import': { character: CharacterSummary }

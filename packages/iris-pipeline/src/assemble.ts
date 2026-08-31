@@ -12,11 +12,13 @@
  */
 
 import type {
+  AssembledItem,
   AssembleInput,
   AssembleResult,
   Contribution,
   HistoryEntry,
   PipelineMessage,
+  TokenCounter,
   Placement,
 } from './types.ts'
 
@@ -171,5 +173,41 @@ export function assemble(input: AssembleInput): AssembleResult {
     messages,
     tokens,
     overflow: { droppedHistory: dropped, overBudget: available < 0 },
+    items: itemize(contributions, kept, count),
   }
+}
+
+/**
+ * Attribute the assembled tokens to the parts that produced them.
+ *
+ * Counted from the contributions rather than from the rendered request, so a
+ * part that contributed nothing still appears with a zero — a user looking for
+ * why a section is missing is better served by a zero than by an absence.
+ * @param contributions - the parts offered.
+ * @param kept - the history that survived the budget.
+ * @param count - the token counter.
+ * @returns one row per contribution, plus one aggregate row for the conversation.
+ */
+export function itemize(
+  contributions: readonly Contribution[],
+  kept: readonly HistoryEntry[],
+  count: TokenCounter,
+): AssembledItem[] {
+  const items: AssembledItem[] = contributions.map(contribution => ({
+    id: contribution.id,
+    ...contribution.label === undefined ? {} : { label: contribution.label },
+    kind: contribution.placement.kind,
+    tokens: count(contribution.text),
+    ...contribution.placement.kind === 'depth'
+      ? { depth: contribution.placement.depth, role: contribution.placement.role }
+      : {},
+  }))
+
+  items.push({
+    id: 'chatHistory',
+    label: 'Chat History',
+    kind: 'history',
+    tokens: kept.reduce((total, entry) => total + count(entry.text), 0),
+  })
+  return items
 }

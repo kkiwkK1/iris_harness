@@ -184,6 +184,70 @@ export interface ScriptContext {
 /** Where a script's injected prompt goes. Mirrors upstream's positions. */
 export type ScriptPromptPosition = 'before' | 'after' | 'at-depth'
 
+/** One part of an assembled prompt, and what it cost. */
+export interface PromptItemEntry {
+  /**
+   * The contribution's stable id.
+   *
+   * Machine-facing, and frequently a UUID: measured over a real preset, 29 of
+   * its 41 prompts identify themselves that way. Which is exactly why this is
+   * not the thing to render.
+   */
+  id: string
+  /**
+   * What to show a person.
+   *
+   * The preset's own `name` (`"写作模式（二选一）"`), or the identifier for a
+   * built-in. The same string SillyTavern's own UI displays, so a user who
+   * imported the preset recognises the row.
+   *
+   * Both this and {@link id} are carried because neither alone is enough: ids
+   * are unreadable, and real presets reuse names across different prompts.
+   */
+  label: string
+  kind: 'system' | 'depth' | 'history'
+  tokens: number
+  /** For a depth injection, how many messages from the end it sits. */
+  depth?: number
+  role?: ViewRole
+}
+
+/**
+ * Where an assembled prompt's tokens went.
+ *
+ * The feature exists because the answer is routinely surprising. Measured on a
+ * real preset and card: of 2929 prompt tokens, **1920 — 66% — were a single
+ * world-info depth injection**. Nothing else in the product can show that.
+ */
+export interface PromptItemization {
+  turn: number
+  entries: PromptItemEntry[]
+  /** Sum of the entries. */
+  tokens: number
+  /**
+   * What the provider reported this prompt actually cost, when it has.
+   *
+   * Shown beside {@link tokens} so a user can see whether the estimate is
+   * trustworthy. Absent in preview, and absent for a turn whose provider
+   * reported no usage.
+   */
+  actualTokens?: number
+  budget: { context: number, reserve: number }
+  /** History entries dropped to make the request fit. */
+  droppedHistory: number
+  overBudget: boolean
+  /**
+   * True when this is how the NEXT request would assemble, rather than a record
+   * of one already sent.
+   *
+   * A record lives only as long as the host holds the chat open, so a UI asking
+   * for an old turn can get a preview instead. Say so rather than showing
+   * nothing: "the record for this turn was lost when the chat closed; here is
+   * how it would assemble now" is useful, and a blank panel is not.
+   */
+  preview: boolean
+}
+
 /** The model route and sampling a chat is running with. */
 export interface GenerationSettings {
   provider: string

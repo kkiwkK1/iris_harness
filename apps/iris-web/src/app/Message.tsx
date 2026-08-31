@@ -26,6 +26,8 @@ export interface MessageHandlers {
   onEdit: (id: number, text: string) => void
   onDelete: (id: number) => void
   onNotify: (text: string) => void
+  /** Show how this turn's request was assembled. */
+  onExplain: (turn: number) => void
 }
 
 /**
@@ -140,6 +142,11 @@ export function Message({
               <button type="button" className="iris-act" onClick={beginEdit}>
                 Edit
               </button>
+              {message.role === 'assistant' && turn !== undefined ? (
+                <button type="button" className="iris-act" onClick={() => handlers.onExplain(turn)}>
+                  Prompt
+                </button>
+              ) : null}
               {canRegenerate ? (
                 <button
                   type="button"

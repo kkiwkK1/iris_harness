@@ -4,9 +4,10 @@
  * @module @iris/pipeline
  */
 
-export { assemble, injectAtDepth, renderSystem, trimHistory } from './assemble.ts'
+export { assemble, injectAtDepth, itemize, renderSystem, trimHistory } from './assemble.ts'
 
 export type {
+  AssembledItem,
   AssembleInput,
   AssembleResult,
   Budget,

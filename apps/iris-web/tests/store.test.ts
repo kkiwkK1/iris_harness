@@ -242,3 +242,67 @@ test('a refused call becomes a notice instead of an unhandled rejection', async 
   assert.match(store.getState().notice?.text ?? '', /not there any more/)
   dispose()
 })
+
+/** A client whose `script.body` fails the way a host would. */
+function refusingClient(error: { code: string, message: string }): IrisClient {
+  const stub = stubClient()
+  return {
+    ...stub.client,
+    call: async method => {
+      if (method === 'script.body') throw Object.assign(new Error(error.message), { code: error.code })
+      throw new Error(`unexpected ${method}`)
+    },
+  }
+}
+
+test('a refused script body reports the host that refused it, not a guess', () => {
+  // The bug this pins: the caller printed "the fake client refuses bodies"
+  // whatever the cause, and then showed it for a refusal from a real host — which
+  // sent someone to debug a transport that was already working. An explanation
+  // that does not depend on the failure is a guess in a confident voice.
+  const client = refusingClient({ code: 'unsupported', message: 'the script provider is not wired' })
+  const { store, dispose } = createIrisStore(client)
+
+  return store
+    .getState()
+    .scriptBody('char-1', 'var_update')
+    .then(result => {
+      assert.equal(result.ok, false)
+      assert.ok(!result.ok)
+      assert.equal(result.error.code, 'unsupported')
+      assert.match(result.error.message, /not wired/)
+      dispose()
+    })
+})
+
+test('a refusal of any code arrives intact, not normalised to one story', () => {
+  const client = refusingClient({ code: 'not-found', message: 'no script "gone"' })
+  const { store, dispose } = createIrisStore(client)
+
+  return store
+    .getState()
+    .scriptBody('char-1', 'gone')
+    .then(result => {
+      assert.ok(!result.ok)
+      assert.equal(result.error.code, 'not-found')
+      dispose()
+    })
+})
+
+test('a body that arrives is handed back whole', async () => {
+  const stub = stubClient()
+  const client: IrisClient = {
+    ...stub.client,
+    call: async method => {
+      if (method === 'script.body') return { content: 'console.log(1)' } as never
+      throw new Error(`unexpected ${method}`)
+    },
+  }
+  const { store, dispose } = createIrisStore(client)
+
+  const result = await store.getState().scriptBody('char-1', 'var_update')
+
+  assert.ok(result.ok)
+  assert.equal(result.content, 'console.log(1)')
+  dispose()
+})

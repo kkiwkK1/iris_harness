@@ -19,9 +19,9 @@
 import { BlockAssembler, createAssistantMessage, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, selectCandidate, SwipeError } from '@iris/chat'
-import type { Contribution, HistoryEntry } from '@iris/pipeline'
+import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
 import type { ChatCompletionPreset } from '@iris/preset'
-import type { GenerationSettings, IrisEvent, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import type { GenerationSettings, IrisEvent, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { checkScriptFetch, extractScripts } from '@iris/script'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
@@ -244,6 +244,14 @@ export class IrisAppService {
         const view = child.toView()
         this.#options.broadcast({ type: 'chat.updated', chatId, view: (await chats.open(chatId)).toView() })
         return { view, chats: await chats.list() }
+      },
+
+      'prompt.itemize': async ({ chatId, turn }) => {
+        const entry = await chats.open(chatId)
+        // A record when there is one, a preview otherwise — including for a turn
+        // whose record went when the chat last closed. `preview` says which.
+        const recorded = turn === undefined ? undefined : entry.itemizations.get(turn)
+        return { itemization: recorded ?? this.#previewItemization(entry) }
       },
 
       'character.list': async () => ({ characters: await library.list() }),
@@ -545,7 +553,7 @@ export class IrisAppService {
     const names = entry.names
 
     return new TurnDriver({
-      stream: options => this.#stream(options),
+      stream: options => this.#stream(options, entry),
       provider: settings.provider,
       model: settings.model,
       contributions: session => this.#contributions(entry, session, count),
@@ -587,7 +595,78 @@ export class IrisAppService {
     // a cooldown would never elapse — the state exists precisely to span turns.
     entry.timedEffects = built.timedEffects
 
-    return [...built.contributions, ...injectedContributions(entry)]
+    const contributions = [...built.contributions, ...injectedContributions(entry)]
+
+    // Recorded here because this is the only moment the parts and the history
+    // agree with what is about to be sent: by the time the turn settles, the
+    // reply is on the log and the same assembly would produce something else.
+    const turn = entry.pending?.turn
+    if (turn !== undefined) {
+      entry.itemizations.set(turn, this.#itemizationOf(
+        assemble({ contributions, history: this.#history(entry, session), budget: this.#budget(count) }),
+        turn,
+        false,
+      ))
+    }
+
+    return contributions
+  }
+
+  /** The budget every assembly for this host runs under. */
+  #budget(count: (text: string) => number): { context: number, reserve: number, count: (text: string) => number } {
+    return { context: this.#options.contextWindow, reserve: this.#options.reserveTokens, count }
+  }
+
+  /** Project an assembly onto the wire shape. */
+  #itemizationOf(result: AssembleResult, turn: number, preview: boolean): PromptItemization {
+    return {
+      turn,
+      entries: result.items.map(item => ({
+        id: item.id,
+        // The id is frequently a UUID; the label is what a person reads.
+        label: item.label ?? item.id,
+        kind: item.kind,
+        tokens: item.tokens,
+        ...item.depth === undefined ? {} : { depth: item.depth },
+        ...item.role === undefined || item.role === 'system' ? {} : { role: item.role },
+      })),
+      tokens: result.tokens,
+      budget: { context: this.#options.contextWindow, reserve: this.#options.reserveTokens },
+      droppedHistory: result.overflow.droppedHistory,
+      overBudget: result.overflow.overBudget,
+      preview,
+    }
+  }
+
+  /**
+   * How the next request for this chat would assemble.
+   *
+   * Needs no stored record because assembly is pure: the same inputs produce
+   * the same answer, so a preview is always available even for a chat the host
+   * has only just opened.
+   * @param entry - the conversation.
+   * @returns the itemization of a request that has not been sent.
+   */
+  #previewItemization(entry: ChatEntry): PromptItemization {
+    const count = (text: string): number => this.#counter.count(text)
+    const names = entry.names
+    const built = buildPrompt({
+      card: entry.card,
+      preset: this.#options.preset,
+      userName: names.user,
+      characterName: names.character,
+      history: this.#history(entry, entry.session),
+      count,
+      worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
+      ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
+    })
+    const contributions = [...built.contributions, ...injectedContributions(entry)]
+    const result = assemble({
+      contributions,
+      history: this.#history(entry, entry.session),
+      budget: this.#budget(count),
+    })
+    return this.#itemizationOf(result, entry.lastTurn + 1, true)
   }
 
   /**
@@ -686,7 +765,7 @@ export class IrisAppService {
    * a character-class estimator converges, because the residual is vocabulary
    * dependent and no static table fixes it.
    */
-  async *#stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+  async *#stream(options: GenerateOptions, entry?: ChatEntry): AsyncIterable<StreamChunk> {
     const messages = [
       ...options.system === undefined ? [] : [{ text: options.system }],
       ...options.messages.map(message => ({ text: textOf(message) })),
@@ -696,7 +775,13 @@ export class IrisAppService {
     const estimated = this.#counter.countRequest(messages, { templateOverhead: this.#options.templateOverhead })
 
     for await (const chunk of this.#options.stream(options)) {
-      if (chunk.type === 'usage') this.#counter.observe(estimated, chunk.usage.inputTokens)
+      if (chunk.type === 'usage') {
+        this.#counter.observe(estimated, chunk.usage.inputTokens)
+        // Recorded beside the estimate so a user can see whether to trust it.
+        const turn = entry?.pending?.turn
+        const recorded = turn === undefined ? undefined : entry?.itemizations.get(turn)
+        if (recorded !== undefined) recorded.actualTokens = chunk.usage.inputTokens
+      }
       yield chunk
     }
   }

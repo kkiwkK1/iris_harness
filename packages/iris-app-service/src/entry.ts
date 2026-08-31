@@ -27,7 +27,7 @@ import {
   type SillyTavernChatHeader,
   type SillyTavernMessage,
 } from '@iris/persistence'
-import type { ChatSummary, ChatView, ScriptPromptPosition } from '@iris/protocol'
+import type { ChatSummary, ChatView, PromptItemization, ScriptPromptPosition } from '@iris/protocol'
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 import { memoryBackend, sessionMessageBackend, VariableStore, type ScopeBackend, type Variables } from '@iris/variables'
 
@@ -151,6 +151,15 @@ export class ChatEntry {
    * is not running should not still be shaping the prompt.
    */
   readonly extensionPrompts = new Map<string, { value: string, position: ScriptPromptPosition, depth: number }>()
+  /**
+   * What each turn's prompt was made of, recorded as it was assembled.
+   *
+   * In memory only, and deliberately so for now: persisting it would mean
+   * inventing a storage format for debugging output, and the preview mode
+   * covers the case that matters without any record at all. A turn whose record
+   * is gone is answered with a preview rather than with nothing.
+   */
+  readonly itemizations = new Map<number, PromptItemization>()
 
   #initVars: MvuData | undefined
   #scripts: RegexScript[] | undefined

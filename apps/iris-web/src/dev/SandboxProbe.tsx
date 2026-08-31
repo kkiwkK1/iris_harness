@@ -89,7 +89,14 @@ export function SandboxProbe(): ReactElement | null {
    * `stopped (unmounted)` or `stopped (asked)` and settles it.
    */
   const stop = useCallback((reason: string) => {
-    running.current?.dispose()
+    // Nothing running is not an event. React's StrictMode mounts, tears down and
+    // remounts every effect in development, so the unmount cleanup fires once
+    // before anything has been started — which is what put a permanent
+    // `stopped (unmounted)` in the status line and made the instrument report a
+    // teardown that never happened. Now the line only appears when a frame was
+    // genuinely disposed, which is the signal it was added for.
+    if (running.current === undefined) return
+    running.current.dispose()
     running.current = undefined
     setStatus(`stopped (${reason})`)
   }, [])
@@ -229,13 +236,15 @@ export function SandboxProbe(): ReactElement | null {
                     if (characterId === undefined) return
                     setStatus(`fetching ${script.name}…`)
                     const body = await actions.scriptBody(characterId, script.id)
-                    if (body === undefined) {
-                      setStatus(
-                        `no body for ${script.name} — the fake client refuses bodies; this needs the real transport`,
-                      )
+                    if (!body.ok) {
+                      // The host's own words, and its code. The first version of
+                      // this line said "the fake client refuses bodies" whatever
+                      // the cause, which sent someone to debug a transport that
+                      // was already working.
+                      setStatus(`no body for ${script.name} — ${body.error.code}: ${body.error.message}`)
                       return
                     }
-                    await start(body, script.name)
+                    await start(body.content, script.name)
                   })()
                 }}
               >

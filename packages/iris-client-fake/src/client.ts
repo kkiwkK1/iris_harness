@@ -27,6 +27,7 @@ import {
 
 import { chunk, replyFor, reasoningFor } from './corpus.ts'
 import { readCard } from './card.ts'
+import { fakeItemization } from './prompt.ts'
 import { mergeSettings } from './settings.ts'
 import { DEFAULT_SETTINGS, seedCharacters, seedChats } from './seed.ts'
 import { toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
@@ -306,6 +307,18 @@ class InMemoryClient implements FakeClient {
         this.#emit({ type: 'chat.updated', chatId, view })
         this.#emit({ type: 'chats.updated', chats: this.#summaries() })
         return { view }
+      }
+
+      case 'prompt.itemize': {
+        const { chatId, turn } = params as RpcRequest<'prompt.itemize'>
+        const chat = this.#require(chatId)
+        // A record exists only while the host holds the chat open, so an old turn
+        // legitimately answers with a preview. Modelled rather than refused: the
+        // arithmetic is real and a panel built against it will not learn anything
+        // that the real host would contradict.
+        const newest = chat.messages.reduce((highest, message) => Math.max(highest, message.turn), 0)
+        const isRecord = turn !== undefined && turn === newest
+        return { itemization: fakeItemization(turn ?? newest + 1, !isRecord) }
       }
 
       case 'character.list':

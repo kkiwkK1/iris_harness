@@ -53,8 +53,16 @@ export type Placement =
 
 /** One piece of text contributed to the prompt. */
 export interface Contribution {
-  /** Stable identity, for diagnostics and for a later itemization view. */
+  /** Stable identity, for diagnostics and for the itemization view. */
   id: string
+  /**
+   * What to call this when showing it to a person.
+   *
+   * Carried separately because `id` is often unreadable: 29 of the 41 prompts in
+   * a real preset identify themselves by UUID. The preset's own `name` is what
+   * SillyTavern displays and what a user will recognise.
+   */
+  label?: string
   placement: Placement
   text: string
 }
@@ -90,6 +98,16 @@ export interface Overflow {
   overBudget: boolean
 }
 
+/** One part of an assembled request, with what it cost. */
+export interface AssembledItem {
+  id: string
+  label?: string
+  kind: 'system' | 'depth' | 'history'
+  tokens: number
+  depth?: number
+  role?: Role
+}
+
 /** The assembled request. */
 export interface AssembleResult {
   system: string
@@ -97,4 +115,12 @@ export interface AssembleResult {
   /** Tokens the assembled request is estimated to occupy. */
   tokens: number
   overflow: Overflow
+  /**
+   * Where those tokens went, part by part.
+   *
+   * The conversation is one aggregate row rather than one row per message,
+   * matching upstream's single `ActualChatHistoryTokens`: splitting it would
+   * put a UI's hypothetical need into the assembler.
+   */
+  items: AssembledItem[]
 }
