@@ -1,0 +1,14 @@
+{
+  "name": "@iris/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The host/browser contract. Frozen surface both halves are written against.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}
