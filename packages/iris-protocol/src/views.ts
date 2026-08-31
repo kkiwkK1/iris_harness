@@ -79,6 +79,34 @@ export interface CharacterSummary {
   creator?: string
 }
 
+/**
+ * One of a card's scripts, as a script list shows it.
+ *
+ * Carries no `content`. A script body runs in the page, but it reaches the
+ * frame through the runner, not through this view: putting 3 MB of webpack
+ * output in a list response would make opening a settings pane the most
+ * expensive call in the product, and the list exists so the user can see and
+ * govern what a card contains.
+ */
+export interface ScriptView {
+  id: string
+  name: string
+  /** Author's notes, when the card carries them. */
+  info?: string
+  /** What the card's author shipped it as. Not the user's decision. */
+  enabledByCard: boolean
+  /**
+   * Whether it will actually run: the card's switch and the user's, combined.
+   *
+   * Both are reported because they answer different questions — "why is this
+   * off" is answered by which of the two is off, and a UI showing only the
+   * result leaves the user unable to tell a card's own choice from their own.
+   */
+  enabled: boolean
+  /** Size of the body, so a list can say what it is about to run. */
+  bytes: number
+}
+
 /** The model route and sampling a chat is running with. */
 export interface GenerationSettings {
   provider: string

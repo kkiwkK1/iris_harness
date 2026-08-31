@@ -23,6 +23,7 @@ import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
 import { IrisAppService } from './service.ts'
+import { ScriptPolicyStore } from './scripts.ts'
 import { SettingsStore } from './settings.ts'
 
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
@@ -40,6 +41,7 @@ export {
 } from './prompt.ts'
 export { placementFor, runScripts, scriptsOf, substituteFor } from './regex.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
+export { ScriptPolicyStore } from './scripts.ts'
 export { SettingsStore, sanitize, type SettingsPatch } from './settings.ts'
 export {
   projectMessages,
@@ -204,6 +206,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     provider: config.provider ?? 'default',
     model: config.model ?? 'local-model',
   })
+  // Its own file, not a section of `settings.json`: sampling is a preference and
+  // this is a permission record. Keeping them apart means a settings reset
+  // cannot hand a card the page document.
+  const scripts = new ScriptPolicyStore(join(dataDir, 'script-policy.json'))
 
   // The folders are created on first write, not on boot: a host that has never
   // been used should leave nothing behind, and both stores already tolerate a
@@ -215,6 +221,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     library,
     chats,
     settings,
+    scripts,
     preset: await loadPreset(config.presetPath),
     broadcast: event => { ctx.irisRpc.broadcast(event) },
     ...config.userName === undefined ? {} : { userName: config.userName },
@@ -247,6 +254,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('character.delete', handlers['character.delete']),
       ctx.irisRpc.register('settings.get', handlers['settings.get']),
       ctx.irisRpc.register('settings.set', handlers['settings.set']),
+      ctx.irisRpc.register('script.list', handlers['script.list']),
+      ctx.irisRpc.register('script.setEnabled', handlers['script.setEnabled']),
+      ctx.irisRpc.register('script.setDocumentGrant', handlers['script.setDocumentGrant']),
+      ctx.irisRpc.register('script.fetch', handlers['script.fetch']),
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()

@@ -24,6 +24,7 @@
     "@iris/protocol": "workspace:*",
     "@iris/regex": "workspace:*",
     "@iris/rpc-host": "workspace:*",
+    "@iris/script": "workspace:*",
     "@iris/tokenizer": "workspace:*",
     "@iris/turn": "workspace:*",
     "@iris/variables": "workspace:*"

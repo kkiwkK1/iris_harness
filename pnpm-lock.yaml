@@ -158,6 +158,9 @@ importers:
       '@iris/rpc-host':
         specifier: workspace:*
         version: link:../iris-rpc-host
+      '@iris/script':
+        specifier: workspace:*
+        version: link:../iris-script
       '@iris/tokenizer':
         specifier: workspace:*
         version: link:../iris-tokenizer
@@ -299,6 +302,8 @@ importers:
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
+
+  packages/iris-script: {}
 
   packages/iris-tokenizer: {}
 

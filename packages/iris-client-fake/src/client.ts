@@ -22,6 +22,7 @@ import {
   type RpcMethod,
   type RpcRequest,
   type RpcResponse,
+  type ScriptView,
 } from '@iris/protocol'
 
 import { chunk, replyFor, reasoningFor } from './corpus.ts'
@@ -29,6 +30,20 @@ import { readCard } from './card.ts'
 import { mergeSettings } from './settings.ts'
 import { DEFAULT_SETTINGS, seedCharacters, seedChats } from './seed.ts'
 import { toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
+
+/**
+ * Scripts the fake reports for every character.
+ *
+ * Shaped after what the real corpus holds — one large webpack bundle, one small
+ * hand-written script, one the card's own author disabled — so a list built
+ * against this meets the cases that exist rather than three identical rows. The
+ * byte sizes are real orders of magnitude: card scripts run to megabytes.
+ */
+const FAKE_SCRIPTS: { id: string, name: string, info?: string, enabledByCard: boolean, bytes: number }[] = [
+  { id: 'f0f993f6', name: 'ERA 核心', info: '状态栏与变量写入', enabledByCard: true, bytes: 1_792_316 },
+  { id: 'acf69655', name: 'ERA 经验值系统', enabledByCard: true, bytes: 4_820 },
+  { id: '3fc1e259', name: 'ERA 以上待修改', info: '', enabledByCard: false, bytes: 0 },
+]
 
 /** How the fake is tuned for a given consumer. */
 export interface FakeClientOptions {
@@ -93,6 +108,10 @@ export function createFakeClient(options?: FakeClientOptions): FakeClient {
 class InMemoryClient implements FakeClient {
   #chats: FakeChat[]
   #characters: CharacterSummary[]
+  /** Cards the user granted the real document, in this fake's memory only. */
+  readonly #grants = new Set<string>()
+  /** User overrides of a script's on/off, keyed `characterId/scriptId`. */
+  readonly #scriptOverrides = new Map<string, boolean>()
   #globalSettings: GenerationSettings
   #listeners = new Set<(event: IrisEvent) => void>()
   #connectionListeners = new Set<(connected: boolean) => void>()
@@ -331,6 +350,41 @@ class InMemoryClient implements FakeClient {
         return { settings: { ...chat.settings } }
       }
 
+      case 'script.list': {
+        const { characterId } = params as RpcRequest<'script.list'>
+        this.#requireCharacter(characterId)
+        return {
+          scripts: this.#scriptViews(characterId),
+          documentGranted: this.#grants.has(characterId),
+        }
+      }
+
+      case 'script.setEnabled': {
+        const { characterId, scriptId, enabled } = params as RpcRequest<'script.setEnabled'>
+        this.#requireCharacter(characterId)
+        if (!FAKE_SCRIPTS.some(script => script.id === scriptId)) {
+          throw new FakeRpcError('not-found', `no script "${scriptId}"`)
+        }
+        this.#scriptOverrides.set(`${characterId}/${scriptId}`, enabled)
+        return { scripts: this.#scriptViews(characterId) }
+      }
+
+      case 'script.setDocumentGrant': {
+        const { characterId, granted } = params as RpcRequest<'script.setDocumentGrant'>
+        this.#requireCharacter(characterId)
+        if (granted) this.#grants.add(characterId)
+        else this.#grants.delete(characterId)
+        return { documentGranted: this.#grants.has(characterId) }
+      }
+
+      case 'script.fetch': {
+        // Refused rather than answered with invented code. The fake exists so
+        // the interface can be built without a host; handing back a plausible
+        // script body would let a runner appear to work here and fail against a
+        // real host, which is the failure the fake is supposed to prevent.
+        throw new FakeRpcError('unsupported', 'the fake client does not fetch remote scripts')
+      }
+
       default: {
         // Exhaustiveness guard: a method added to the protocol without an arm
         // here becomes a type error rather than a runtime surprise.
@@ -341,6 +395,26 @@ class InMemoryClient implements FakeClient {
   }
 
   // ----------------------------------------------------------------- helpers
+
+  /** Refuse a character the fake does not have. */
+  #requireCharacter(characterId: string): void {
+    if (!this.#characters.some(row => row.characterId === characterId)) {
+      throw new FakeRpcError('not-found', `no character "${characterId}"`)
+    }
+  }
+
+  /** The script list, with both switches reported as the contract asks. */
+  #scriptViews(characterId: string): ScriptView[] {
+    return FAKE_SCRIPTS.map(script => ({
+      id: script.id,
+      name: script.name,
+      ...script.info === undefined ? {} : { info: script.info },
+      enabledByCard: script.enabledByCard,
+      enabled: this.#scriptOverrides.get(`${characterId}/${script.id}`) ?? script.enabledByCard,
+      bytes: script.bytes,
+    }))
+  }
+
 
   #summaries(): ChatSummary[] {
     return [...this.#chats].sort((left, right) => right.updatedAt - left.updatedAt).map(toChatSummary)

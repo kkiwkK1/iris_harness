@@ -23,6 +23,7 @@ import type { HistoryEntry } from '@iris/pipeline'
 import type { ChatCompletionPreset } from '@iris/preset'
 import type { GenerationSettings, IrisEvent, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
+import { checkScriptFetch } from '@iris/script'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
 import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } from '@iris/turn'
 
@@ -32,6 +33,7 @@ import { AppError, invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
 import { buildPrompt, DEFAULT_PRESET } from './prompt.ts'
 import { runScripts } from './regex.ts'
+import type { ScriptPolicyStore } from './scripts.ts'
 import type { SettingsStore } from './settings.ts'
 import { textOf } from './views.ts'
 
@@ -59,6 +61,21 @@ export interface AppServiceOptions {
   library: CharacterLibrary
   chats: ChatStore
   settings: SettingsStore
+  /**
+   * The user's decisions about card scripts.
+   *
+   * Optional so that a host with no page attached — a test, a headless run —
+   * need not carry one. Absent means every script list is empty and no card
+   * holds a document grant, which is the safe reading of "not configured".
+   */
+  scripts?: ScriptPolicyStore
+  /**
+   * Fetches a remote script dependency. Defaults to global `fetch`.
+   *
+   * Injectable so the whitelist can be tested without a network, and so a
+   * deployment can route these through its own proxy.
+   */
+  fetchRemote?: (url: string) => Promise<{ ok: boolean, status: number, text: () => Promise<string>, headers: { get: (name: string) => string | null } }>
   /** Pushes one frame to every attached page. */
   broadcast: (event: IrisEvent) => void
   /** The preset every chat is assembled with. */
@@ -82,7 +99,12 @@ export interface AppServiceOptions {
 
 /** The application half of Iris. */
 export class IrisAppService {
-  readonly #options: Required<Omit<AppServiceOptions, 'onError'>> & { onError: (error: Error) => void }
+  // `scripts` stays optional through the defaulting: it is the one option with
+  // no safe default value, only a safe absent behaviour — an empty script list
+  // and no grants. Inventing a store here would put a policy file somewhere the
+  // caller did not choose.
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts'>>
+    & { onError: (error: Error) => void, scripts?: ScriptPolicyStore }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
 
   /**
@@ -101,6 +123,8 @@ export class IrisAppService {
       reserveTokens: options.reserveTokens ?? 1024,
       templateOverhead: options.templateOverhead ?? 0,
       onError: options.onError ?? (() => {}),
+      fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
+      ...options.scripts === undefined ? {} : { scripts: options.scripts },
     }
   }
 
@@ -115,6 +139,7 @@ export class IrisAppService {
    */
   handlers(): Handlers {
     const { chats, library, settings } = this.#options
+    const scripts = this.#options.scripts
 
     return {
       'chat.list': async () => ({ chats: await chats.list() }),
@@ -217,6 +242,61 @@ export class IrisAppService {
       'settings.set': async ({ chatId, settings: patch }) => ({
         settings: await settings.set(chatId, patch),
       }),
+
+      'script.list': async ({ characterId }) => {
+        if (scripts === undefined) return { scripts: [], documentGranted: false }
+        const card = await library.load(characterId)
+        return {
+          scripts: await scripts.view(characterId, card),
+          documentGranted: await scripts.documentGranted(characterId),
+        }
+      },
+
+      'script.setEnabled': async ({ characterId, scriptId, enabled }) => {
+        if (scripts === undefined) throw new AppError('unsupported', 'script policy is not configured on this host')
+        const card = await library.load(characterId)
+        // Refused for a script the card does not have, rather than stored: a
+        // policy file that accumulates ids from typos and stale cards is a
+        // policy file nobody can audit.
+        const known = await scripts.view(characterId, card)
+        if (!known.some(row => row.id === scriptId)) {
+          throw notFound(`${characterId} has no script "${scriptId}"`)
+        }
+        await scripts.setEnabled(characterId, scriptId, enabled)
+        return { scripts: await scripts.view(characterId, card) }
+      },
+
+      'script.setDocumentGrant': async ({ characterId, granted }) => {
+        if (scripts === undefined) throw new AppError('unsupported', 'script policy is not configured on this host')
+        // Loaded first so a grant cannot be stored against a card that is not
+        // there — a grant outliving its card is a permission with no subject.
+        await library.load(characterId)
+        return { documentGranted: await scripts.setDocumentGrant(characterId, granted) }
+      },
+
+      'script.fetch': async ({ url }) => {
+        const verdict = checkScriptFetch(url)
+        // `unsupported` and not `invalid-request`: the URL is well-formed and
+        // the request is understood, it is the source that is not allowed, and
+        // the message names the host so the person holding the card can see why.
+        if (!verdict.allowed) throw new AppError('unsupported', verdict.reason)
+
+        const fetcher = this.#options.fetchRemote
+        let response: Awaited<ReturnType<NonNullable<AppServiceOptions['fetchRemote']>>>
+        try {
+          response = await fetcher(verdict.url)
+        } catch (cause: unknown) {
+          throw new AppError('provider-error', `could not reach ${new URL(verdict.url).hostname}: ${String(cause)}`)
+        }
+        if (!response.ok) {
+          throw new AppError('provider-error', `${new URL(verdict.url).hostname} answered ${String(response.status)}`)
+        }
+        const contentType = response.headers.get('content-type')
+        return {
+          content: await response.text(),
+          ...contentType === null ? {} : { contentType },
+        }
+      },
     }
   }
 

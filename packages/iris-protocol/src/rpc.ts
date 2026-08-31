@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, GenerationSettings } from './views.ts'
+import type { ChatSummary, ChatView, CharacterSummary, GenerationSettings, ScriptView } from './views.ts'
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -67,6 +67,43 @@ export const requestSchemas = {
     chatId: z.string().min(1).optional(),
     settings: z.record(z.string(), z.unknown()),
   }),
+
+  /** Every script a character's card carries, enabled or not. */
+  'script.list': z.object({ characterId: z.string().min(1) }),
+  /**
+   * The user's own on/off for one script, independent of the card's `enabled`.
+   *
+   * Two switches rather than one: the card author's is a fact about the card and
+   * survives re-import, the user's is a decision about this installation. Fusing
+   * them would let a re-import quietly revive a script the user turned off.
+   */
+  'script.setEnabled': z.object({
+    characterId: z.string().min(1),
+    scriptId: z.string().min(1),
+    enabled: z.boolean(),
+  }),
+  /**
+   * Grant or revoke one card's access to the real page document.
+   *
+   * Per-card and user-driven. There is deliberately no method by which a script
+   * can request this: a request is text the card authored, and a card that can
+   * put words in front of the user can argue for its own privileges.
+   */
+  'script.setDocumentGrant': z.object({
+    characterId: z.string().min(1),
+    granted: z.boolean(),
+  }),
+  /**
+   * Fetch a remote script dependency through the host.
+   *
+   * The whitelist is enforced here and not in the page, because a page cannot
+   * police its own fetches. A refusal names the host rather than reporting a
+   * generic failure — a card that cannot load a dependency has to be
+   * diagnosable by whoever holds the card.
+   */
+  'script.fetch': z.object({
+    url: z.string().min(1).max(2048),
+  }),
 } as const
 
 /** Every callable method. */
@@ -104,6 +141,12 @@ export interface RpcResponseMap {
 
   'settings.get': { settings: GenerationSettings }
   'settings.set': { settings: GenerationSettings }
+
+  'script.list': { scripts: ScriptView[], documentGranted: boolean }
+  'script.setEnabled': { scripts: ScriptView[] }
+  'script.setDocumentGrant': { documentGranted: boolean }
+  /** The fetched body. Refusals arrive as an `unsupported` rejection. */
+  'script.fetch': { content: string, contentType?: string }
 }
 
 /** The response of one method. */

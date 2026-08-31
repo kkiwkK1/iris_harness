@@ -33,6 +33,7 @@ export type {
   CharacterSummary,
   GenerationSettings,
   MessageView,
+  ScriptView,
   ViewRole,
 } from './views.ts'
 
