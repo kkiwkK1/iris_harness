@@ -99,17 +99,17 @@ export class ChatStore {
    * @returns summaries, newest activity first.
    */
   async list(): Promise<ChatSummary[]> {
-    const summaries: ChatSummary[] = []
+    const rows: ImportedRow[] = []
     for (const chatId of await this.ids()) {
       const live = this.#entries.get(chatId)
       if (live !== undefined) {
-        summaries.push(live.toSummary())
+        rows.push({ summary: live.toSummary(), mainChat: mainChatOf(live.header) })
         continue
       }
-      const summary = await this.#summarize(chatId)
-      if (summary !== undefined) summaries.push(summary)
+      const row = await this.#summarize(chatId)
+      if (row !== undefined) rows.push(row)
     }
-    return summaries.sort((a, b) => b.updatedAt - a.updatedAt)
+    return linkImportedParents(rows).sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
   /** A cached conversation, without touching the disk. */
@@ -302,7 +302,7 @@ export class ChatStore {
   }
 
   /** Read one chat's header without materializing its log. */
-  async #summarize(chatId: string): Promise<ChatSummary | undefined> {
+  async #summarize(chatId: string): Promise<ImportedRow | undefined> {
     let text: string
     try {
       text = await readFile(fileFor(this.#dir, chatId, '.jsonl'), 'utf8')
@@ -314,12 +314,15 @@ export class ChatStore {
       const header = JSON.parse(lines[0] ?? '{}') as SillyTavernChatHeader
       const meta = readMeta(header)
       return {
-        chatId,
-        title: meta.title,
-        ...meta.characterId === undefined ? {} : { characterId: meta.characterId },
-        ...meta.parentChatId === undefined ? {} : { parentChatId: meta.parentChatId },
-        updatedAt: meta.updatedAt,
-        messageCount: Math.max(0, lines.length - 1),
+        summary: {
+          chatId,
+          title: meta.title,
+          ...meta.characterId === undefined ? {} : { characterId: meta.characterId },
+          ...meta.parentChatId === undefined ? {} : { parentChatId: meta.parentChatId },
+          updatedAt: meta.updatedAt,
+          messageCount: Math.max(0, lines.length - 1),
+        },
+        mainChat: mainChatOf(header),
       }
     } catch {
       return undefined
@@ -358,6 +361,52 @@ export function seedGreeting(
   if (greetings.length > 1) selectCandidate(session, 0, 0)
   session.append('step/end', { turn: 0, step: 0 })
   session.append('turn/end', { turn: 0, reason: { kind: 'completed' } })
+}
+
+/**
+ * SillyTavern's own lineage field, when the file carries one.
+ * @param header - the chat header.
+ * @returns the parent's chat name, or undefined.
+ */
+export function mainChatOf(header: SillyTavernChatHeader): string | undefined {
+  const value = header.chat_metadata['main_chat']
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/**
+ * Resolve the parent of a branch that came from SillyTavern rather than Iris.
+ *
+ * A chat Iris created records `iris.parentChatId` — an id, so renaming the
+ * parent cannot break the link. A chat imported from SillyTavern has no `iris`
+ * block at all; its only lineage is `chat_metadata.main_chat`, which is the
+ * parent's chat *name*. Without this the imported branch reports no parent, and
+ * the relationship the user actually has on disk is invisible.
+ *
+ * Matched against the chat id first (the file stem, which is what a SillyTavern
+ * chat name becomes when the file is dropped in) and then the title. An
+ * unresolvable name is left alone rather than guessed at: a wrong parent is
+ * worse than none.
+ * @param summaries - every conversation, with whatever lineage it declared.
+ * @returns the same list, with imported branches linked where they resolve.
+ */
+export function linkImportedParents(rows: readonly ImportedRow[]): ChatSummary[] {
+  const byId = new Set(rows.map(row => row.summary.chatId))
+  const byTitle = new Map(rows.map(row => [row.summary.title, row.summary.chatId]))
+
+  return rows.map(({ summary, mainChat }) => {
+    if (summary.parentChatId !== undefined) return summary
+    if (mainChat === undefined) return summary
+    const resolved = byId.has(mainChat) ? mainChat : byTitle.get(mainChat)
+    if (resolved === undefined || resolved === summary.chatId) return summary
+    return { ...summary, parentChatId: resolved }
+  })
+}
+
+/** One conversation's summary plus the upstream lineage field it declared. */
+export interface ImportedRow {
+  summary: ChatSummary
+  /** `chat_metadata.main_chat`, the parent's chat *name*, when the file has one. */
+  mainChat?: string | undefined
 }
 
 /**

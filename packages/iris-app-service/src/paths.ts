@@ -15,25 +15,43 @@ import { join, resolve, sep } from 'node:path'
 import { invalid } from './errors.ts'
 
 /**
- * Characters an id may contain.
+ * Characters no id may contain, whatever else it holds.
  *
- * Unicode letters are allowed on purpose — a Chinese character card should keep
- * its name in its filename — while everything Windows or POSIX treats specially
- * is not. `.` is permitted inside but a bare `.` or `..` is rejected below.
+ * A blacklist, not a whitelist, and that is a deliberate reversal. The
+ * whitelist this replaced (`\p{L}\p{N}._-`) rejected **every one of the 31 real
+ * SillyTavern chat filenames on this machine and 4 of the 19 cards** — a chat is
+ * named `Aria - 2026-01-18@05h53m41s311ms`, and a card `【Sgw】又看一集`. Pointing
+ * Iris at a real install showed an empty library, which is the opposite of the
+ * interoperability the storage layout was chosen for.
+ *
+ * What is listed here is what a filesystem or a path parser actually treats
+ * specially. Measured against the corpus: the characters that caused those
+ * rejections were space, `@`, `#` and fullwidth CJK punctuation — `：` is U+FF1A,
+ * a letterlike character Windows stores happily, and a rule written from memory
+ * as "no colons" would have refused it too.
  */
-const SAFE_ID = /^[\p{L}\p{N}._-]{1,120}$/u
+const FORBIDDEN = /[/\\:*?"<>|]|[\p{Cc}\p{Cf}]/u
 
 /** Windows reserves these device names in every directory, extension or not. */
 const RESERVED = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i
 
 /**
  * Whether an id may be turned into a filename.
- * @param id - the candidate, straight off the wire.
+ *
+ * The containment check in {@link fileFor} is the guard that actually stops a
+ * traversal; this rejects the shapes that are wrong before a path is even built,
+ * so a bad id is refused with its own name rather than as a path error.
+ * @param id - the candidate, straight off the wire or off the disk.
  * @returns true when it names a file and nothing else.
  */
 export function isSafeId(id: string): boolean {
-  if (!SAFE_ID.test(id)) return false
+  if (id.length === 0 || id.length > 120) return false
+  if (FORBIDDEN.test(id)) return false
+  // `.` and `..` are directories, not names; a leading or trailing dot or space
+  // is silently stripped by Windows, so the id on disk would not be the id asked
+  // for — and two different ids could then name one file.
   if (id === '.' || id === '..') return false
+  if (/^[.\s]|[.\s]$/u.test(id)) return false
   if (RESERVED.test(id.split('.')[0] ?? '')) return false
   return true
 }

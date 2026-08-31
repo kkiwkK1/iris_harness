@@ -211,3 +211,43 @@ test('an out-of-range message or swipe is refused', async (t) => {
     (error: unknown) => (error as { code?: string }).code === 'not-found',
   )
 })
+
+test('a branch imported from SillyTavern is linked by its own lineage field', async (t) => {
+  const fix = await fixture(t)
+  await fix.chats.ensure()
+
+  // Exactly the shape real SillyTavern data has: no `iris` block at all, and
+  // the only lineage is `chat_metadata.main_chat` naming the parent chat. The
+  // user's own library is all like this — `extra.branches` is absent from every
+  // one of it, so a reader that only understood Iris's own field would show
+  // these as unrelated conversations.
+  const header = (name: string, mainChat?: string): string => JSON.stringify({
+    user_name: 'Traveller',
+    character_name: 'Aria',
+    create_date: '2026-01-04 @10h00m00s',
+    chat_metadata: mainChat === undefined ? {} : { main_chat: mainChat },
+  })
+  const line = JSON.stringify({ name: 'Aria', is_user: false, mes: 'Hello.' })
+  const write = async (id: string, mainChat?: string): Promise<void> => {
+    await writeFile(join(fix.dir, 'chats', `${id}.jsonl`), `${header(id, mainChat)}\n${line}\n`, 'utf8')
+  }
+
+  await write('Aria - 2026-01-04@10h00m00s')
+  await write('Branch #6 - 2026-01-04@11h00m00s', 'Aria - 2026-01-04@10h00m00s')
+  await write('Orphan - 2026-01-04@12h00m00s', 'a chat that is not here')
+
+  const chats = await fix.chats.list()
+  const child = chats.find(entry => entry.chatId.startsWith('Branch #6'))
+  const orphan = chats.find(entry => entry.chatId.startsWith('Orphan'))
+
+  assert.equal(child?.parentChatId, 'Aria - 2026-01-04@10h00m00s')
+  // A name nothing answers to is left unlinked: a wrong parent is worse than none.
+  assert.equal(orphan?.parentChatId, undefined)
+})
+
+test('the old prefix naming is stripped as well as the modern suffix', () => {
+  // The user's real branches are the legacy `Branch #N - <timestamp>` form, and
+  // upstream keeps a stripper for it precisely because that data still exists.
+  assert.equal(stripBranchSuffix('Branch #6 - 2026-01-04@11h00m00s'), '2026-01-04@11h00m00s')
+  assert.equal(branchTitle('Branch #6 - Aria', () => false), 'Aria - Branch #1')
+})
