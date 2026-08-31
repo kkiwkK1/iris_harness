@@ -44,15 +44,23 @@ test('swipe addresses a turn, not a message index', async () => {
   const turn = last.turn
   assert.ok(turn !== undefined)
 
-  await client.call('chat.regenerate', { chatId: 'chat-lamplighter' })
-  await nextEvent(client, 'stream.end', 'chat-lamplighter')
+  // The text of reading 0, captured before anything shifts. This is the oracle:
+  // asserting that the index came back as the 0 we asked for proves nothing,
+  // because the caller supplied that number. Asserting the TEXT proves the swipe
+  // landed on the right row.
+  const readingZero = last.text
 
-  // Delete an earlier message so every index shifts, then swipe by turn. If the
-  // fake addressed by index this would land on the wrong message or throw.
+  await client.call('chat.regenerate', { chatId: 'chat-lamplighter' })
+  const regenerated = await nextEvent(client, 'stream.end', 'chat-lamplighter')
+  assert.notEqual(regenerated.view.messages.at(-1)?.text, readingZero, 'the fixture needs two distinct readings')
+
+  // Delete an earlier message so every index shifts under the turn we are about
+  // to address. Addressing by index would now reach a different row.
   await client.call('chat.deleteMessage', { chatId: 'chat-lamplighter', id: 0 })
   const swiped = await client.call('chat.swipe', { chatId: 'chat-lamplighter', turn, index: 0 })
 
   const target = swiped.view.messages.find(message => message.turn === turn && message.role === 'assistant')
+  assert.equal(target?.text, readingZero, 'the swipe landed on the wrong row')
   assert.equal(target?.swipes?.index, 0)
 
   client.dispose()

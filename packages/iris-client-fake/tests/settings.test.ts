@@ -97,3 +97,58 @@ test('connection state is reported and can be flipped for the offline banner', (
   assert.equal(client.connected, false)
   client.dispose()
 })
+
+test('a connection change notifies subscribers, it does not just flip a flag', () => {
+  // The flag alone is not enough, and this is the one place to prove it: the
+  // interface's only route to the connection state is this channel, so a fake
+  // that mutated `connected` silently would let the offline banner pass every
+  // test here and never appear against a real transport.
+  const client = testClient()
+  const seen: boolean[] = []
+  const off = client.onConnectionChange(connected => seen.push(connected))
+
+  client.setConnected(false)
+  client.setConnected(true)
+
+  assert.deepEqual(seen, [false, true])
+  off()
+  client.dispose()
+})
+
+test('setting the state it already has notifies nobody', () => {
+  // Otherwise a transport that polls would repaint the banner on every poll.
+  const client = testClient()
+  let calls = 0
+  const off = client.onConnectionChange(() => {
+    calls += 1
+  })
+
+  client.setConnected(true)
+  assert.equal(calls, 0)
+
+  client.setConnected(false)
+  client.setConnected(false)
+  assert.equal(calls, 1)
+
+  off()
+  client.dispose()
+})
+
+test('the connection disposer and dispose both drop the listener', () => {
+  const client = testClient()
+  let calls = 0
+  const off = client.onConnectionChange(() => {
+    calls += 1
+  })
+
+  off()
+  client.setConnected(false)
+  assert.equal(calls, 0, 'the disposer did not remove the listener')
+
+  client.onConnectionChange(() => {
+    calls += 1
+  })
+  client.dispose()
+  client.setConnected(true)
+  assert.equal(calls, 0, 'dispose left a connection listener behind')
+})

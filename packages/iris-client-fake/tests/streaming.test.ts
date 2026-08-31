@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { nextEvent, recorder, testClient } from './helpers.ts'
 import { isEvent } from '@iris/protocol'
+import { reasoningFor } from '../src/index.ts'
 
 test('chat.send resolves with a turn before any text exists', async () => {
   const client = testClient()
@@ -53,12 +54,61 @@ test('reasoning streams on its own channel and lands on the message', async () =
 
   const settled = end.view.messages.at(-1)
   assert.ok(settled !== undefined)
-  // The fake deliberately omits reasoning on some turns, so this asserts the
-  // relationship rather than the presence: whatever streamed is what settled.
-  assert.equal(settled.reasoning ?? '', reasoned)
+  assert.ok(settled.turn !== undefined)
+
+  // Asking the corpus what this turn owes, instead of comparing the streamed
+  // text to the settled text and calling that a pass. Those are both empty on a
+  // turn that emits no reasoning, so the earlier version of this test could not
+  // fail even with the whole reasoning channel disconnected.
+  const owed = reasoningFor(settled.turn, 0)
+  assert.ok(owed !== undefined, 'fixture drifted: this turn no longer emits reasoning')
+
+  assert.notEqual(reasoned, '', 'nothing arrived on the reasoning channel')
+  assert.equal(reasoned, owed)
+  assert.equal(settled.reasoning, owed)
 
   off()
   client.dispose()
+})
+
+test('a turn that owes no reasoning produces no reasoning block', async () => {
+  // The other branch, and the reason the assertion above cannot be "reasoning is
+  // always present": a UI that only ever sees messages with a thinking block
+  // never gets its no-block layout exercised.
+  const client = testClient()
+  let sawReasoning = false
+  const off = client.subscribe(event => {
+    if (isEvent(event, 'stream.reasoning')) sawReasoning = true
+  })
+
+  // Regenerate until the corpus reaches a candidate slot it withholds reasoning
+  // for, rather than hard-coding which slot that is.
+  await client.call('chat.send', { chatId: 'chat-survey', text: 'Again.' })
+  let end = await nextEvent(client, 'stream.end', 'chat-survey')
+  let last = end.view.messages.at(-1)
+  assert.ok(last?.turn !== undefined)
+  const turn = last.turn
+
+  for (let candidate = 1; candidate < 6; candidate += 1) {
+    if (reasoningFor(turn, candidate) !== undefined) {
+      await client.call('chat.regenerate', { chatId: 'chat-survey' })
+      end = await nextEvent(client, 'stream.end', 'chat-survey')
+      continue
+    }
+    sawReasoning = false
+    await client.call('chat.regenerate', { chatId: 'chat-survey' })
+    end = await nextEvent(client, 'stream.end', 'chat-survey')
+    last = end.view.messages.at(-1)
+    assert.equal(sawReasoning, false, 'reasoning was streamed for a turn that owes none')
+    assert.equal(last?.reasoning, undefined)
+    off()
+    client.dispose()
+    return
+  }
+
+  off()
+  client.dispose()
+  assert.fail('no candidate slot without reasoning was reached')
 })
 
 test('the streaming message is flagged until the turn settles', async () => {
