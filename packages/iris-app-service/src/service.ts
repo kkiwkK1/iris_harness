@@ -806,6 +806,7 @@ export function injectedContributions(entry: ChatEntry): Contribution[] {
   for (const [key, injection] of entry.extensionPrompts) {
     contributions.push({
       id: `script.${key}`,
+      label: `Script injection (${key})`,
       placement: injection.position === 'at-depth'
         ? { kind: 'depth', depth: injection.depth, role: 'system', order: 2 }
         : { kind: 'system', order: injection.position === 'before' ? 850 : 950 },

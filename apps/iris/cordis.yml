@@ -9,6 +9,15 @@
 
 - id: logger
   name: '@deepseek-ai/cordis-plugin-logger-console'
+  config:
+    # The exporter's own default threshold is 1 (INFO), which silently drops
+    # every `ctx.logger.warn` in the composition — the pre-profile layout
+    # warning, the app service's survived-failure reports, the transport's
+    # socket and internal-error warnings, and the carrier's per-request
+    # failures. All of them are things someone is meant to read, and a warning
+    # nobody can see is indistinguishable from a bug.
+    levels:
+      default: 2
 
 - id: timer
   name: '@deepseek-ai/cordis-plugin-timer'

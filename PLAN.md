@@ -389,7 +389,7 @@ iris（pnpm workspace monorepo）
 
 ## 诊断备忘
 
-Cordis 有两种静默失败，调试时先查：模块**解析**失败（路径或包名拼错）只经 logger 上报、不会 crash，启动早期可能在 console exporter 就绪前丢失；`inject` 了未提供服务的插件会永远停在 `PENDING` 且不打印任何东西。排查方法是遍历 `ctx.registry.values()` → `runtime.fibers`，找 `fiber.state === FiberState.PENDING`。
+Cordis 有两种静默失败，调试时先查：模块**解析**失败（路径或包名拼错）只经 logger 上报、不会 crash——~~启动早期可能在 console exporter 就绪前丢失~~ **2026-09-01 探针实测更正：不是时机问题，是级别阈值**。cordis 的 exporter 解析式 `levels?.[name] ?? levels?.default ?? logger.level ?? 1` 默认阈值 1，而 `WARN=2` —— **整个 warn 通道默认是黑的**（error 打得出、warn 打不出，boot 前后皆然）。组合里必须给 logger 配 `levels.default: 2`，否则所有「出错但撑住了」的上报（onError、socket 失败、逐请求警告）都无痕消失；`inject` 了未提供服务的插件会永远停在 `PENDING` 且不打印任何东西。排查方法是遍历 `ctx.registry.values()` → `runtime.fibers`，找 `fiber.state === FiberState.PENDING`。
 
 另外记住 Cordis 4 的两个事实，网上大量资料是过时的 v3：**没有 `Service.start()`/`stop()`**（构造函数即加载钩子，`ctx.effect()` 的 disposer 即卸载钩子，异步启动用 `[Service.init]()`），**没有 `ctx.scope`**（v4 叫 `ctx.fiber`；`@deepseek-ai/dsh-scope` 是另一回事）。
 

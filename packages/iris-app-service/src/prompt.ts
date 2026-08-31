@@ -211,6 +211,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
   if (authorNote.length > 0) {
     contributions.push({
       id: 'worldInfo.authorNote',
+      label: 'World Info (author’s note)',
       placement: { kind: 'system', order: 900 },
       text: joinEntries(authorNote),
     })
@@ -224,6 +225,10 @@ export function buildPrompt(input: PromptInput): PromptResult {
     if (text.trim().length === 0) continue
     contributions.push({
       id: `worldInfo.depth.${String(bucket.depth)}.${String(bucket.role)}`,
+      // Labelled because the itemization view renders labels, and a row reading
+      // `worldInfo.depth.0.0` tells a user nothing about what is in it — this is
+      // routinely the largest single part of the prompt.
+      label: `World Info (depth ${String(bucket.depth)})`,
       placement: { kind: 'depth', depth: bucket.depth, role: roleOf(bucket.role), order: 0 },
       text,
     })
@@ -234,6 +239,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
   if (depthPrompt !== undefined && depthPrompt.prompt.trim().length > 0) {
     contributions.push({
       id: 'card.depthPrompt',
+      label: 'Character’s Note',
       // A card's depth prompt names its role in words, unlike a world-info
       // entry, which uses the numeric `promptRole` enum.
       placement: { kind: 'depth', depth: depthPrompt.depth, role: depthPrompt.role, order: 1 },

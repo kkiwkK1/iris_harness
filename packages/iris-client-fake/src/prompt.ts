@@ -6,16 +6,23 @@
  * false. The script context was the opposite — a fabricated one would let a
  * runner pass here and fail on the first real card.
  *
- * The fixture reproduces the **shape** measured on a real preset and card, not a
- * tidy one. Two properties of that measurement drive the design and so are
- * deliberately preserved here:
+ * The fixture reproduces properties measured across six real presets, not a tidy
+ * shape. Three of them exist here specifically to give the design something to be
+ * wrong about:
  *
- * 1. **It is not a list of comparable parts.** 1920 of 2929 tokens — 66% — sat in
- *    a single world-info injection. The panel is mostly one column and a pile of
- *    rubble, so a uniform bar chart would answer the wrong question.
- * 2. **Most identifiers are UUIDs.** 29 of the preset's 41 prompts identify
+ * 1. **Skew.** The largest single part held 23%–92% of the prompt depending on the
+ *    preset, so a uniform bar chart answers the wrong question at one end and a
+ *    "one column plus rubble" assumption is wrong at the other. This fixture sits
+ *    at the skewed end, because that is the end where a naive equal-width list
+ *    looks fine and is useless.
+ * 2. **Most identifiers are UUIDs.** 29 of one preset's 41 prompts identify
  *    themselves that way, which is why the contract carries a separate `label`
- *    and why a panel rendering `id` would be unreadable.
+ *    and why a panel rendering `id` would be unreadable. Two entries here share a
+ *    label with different ids, so the reason for carrying both is visible in
+ *    development rather than discovered on a real preset.
+ * 3. **Zero-token entries are normal.** 14 of one preset's 53 were zero — markers
+ *    with nothing to fill them, enabled prompts with empty content. A panel that
+ *    hides them cannot answer "why did my part not get through".
  *
  * @module @iris/client-fake/prompt
  */
@@ -35,6 +42,9 @@ const ENTRIES: readonly PromptItemEntry[] = [
   { id: 'worldInfoAfter', label: 'World Info (after)', kind: 'system', tokens: 37 },
   { id: 'd5b8c3a1-2f47-4e69-9a05-8b6d1c4f7e23', label: '状态栏格式', kind: 'depth', tokens: 84, depth: 0, role: 'system' },
   { id: 'authorsNote', label: "Author's Note", kind: 'depth', tokens: 29, depth: 2, role: 'system' },
+  // Parsed, enabled, and contributing nothing. The case a reader goes looking for.
+  { id: 'nsfw', label: 'Auxiliary Prompt', kind: 'system', tokens: 0 },
+  { id: 'e4a7c209-6b31-4f85-a0d2-3c9e7b1a5f68', label: '开场引导', kind: 'system', tokens: 0 },
   { id: 'chatHistory', label: 'Chat History', kind: 'history', tokens: 27 },
 ]
 
