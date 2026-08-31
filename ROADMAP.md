@@ -85,21 +85,40 @@ substitute_find_regex = { NONE: 0, RAW: 1, ESCAPED: 2 }
 
 「切分支像呼吸一样频繁」是从社区行为推的,不是从本机数据量的——d7 正在核用户 18 个聊天里的真实分支痕迹,结果出来后这段的排位理由要按事实改写。
 
-### 1.2 作者注释
+### 1.2 连接配置档（connectionManager）【2026-09-01 按实测新增】
 
-按深度注入的机制 `iris-pipeline` 已经有了（`{kind:'depth', depth, role}`），作者注释就是在它之上加一个"存储 + 界面"的概念：全局 / 角色 / 单聊三层，可设深度与角色。同样很便宜。
+一个 profile 打包「端点 + 模型 + 预设」三件事，一键切换。本机 settings.json 里有 2 个
+profile 且当前顶层值与两者都不一致——**用户确实在手动切换加载**。这是每次换模型都要碰的
+东西，按真实触碰频率排在原 1.2/1.3 之前。注意上游的坑照抄前先想清楚：profile 显示名是
+创建时的快照，改了模型名字不跟着变（实测一个叫 deepseek 的 profile 实际指向 gemini）。
 
-顺带把角色卡 `extensions.depth_prompt`（角色注释，`{depth, prompt, role}`）一起接上——这个字段我们已经在解析了。
+### 1.3 MVU 长局变量清理【2026-09-01 按实测新增】
 
-### 1.3 Instruct / Context 模板（文本补全路径）
+上游 MVU 有「自动清理旧变量」：每 50 楼留快照、只保留最近 20 楼变量，**本机用户开着它**，
+而他有 677 楼和 143 楼的长局。我们把「变量按候选存储」列为比 ST 好的地方——方向对，但
+**没有对应的清理/快照策略,长局下我们的存储只会更大**。另外 MVU 还有「用第二个模型做
+额外解析」的路径（本机配置指向本地 1234 端口，自动请求 + 重试 3），我们的兼容层只实现了
+「解析模型自身输出」这一条。
 
-我们目前只有 Chat Completion 预设。缺 instruct 模板意味着用户无法精确控制发给本地模型的格式化方式。
+### 1.4 作者注释【2026-09-01 降级：本机零使用】
 
-**没有我最初估计的那么阻塞**：llama.cpp 和 Ollama 都提供 `/chat/completions`，服务端会套自己的 chat template，所以本地模型是能用的。真正需要 instruct 模板的是走裸 `/completions` 端点、或者想自己掌控每个分隔符的用户——在 ST 社区里这是相当大的一群人，但不是第一天就必须。
+机制上仍然便宜（`iris-pipeline` 已有 depth 注入，卡的 `extensions.depth_prompt` 已在解析）。
+但实测本机 `extension_settings.note` 的内容字段**全部为空**——用户从没写过全局或角色注释。
+分支有 7 处真实痕迹，这个是 0 处，不该同级。降到 Tier 1 末位，等有痕迹的用户再提。
 
-字段清单在 `PLAN.md` 的数据契约一节，已经整理好了。
+### 1.5 Instruct / Context 模板（拆成两件事）
 
-### 1.4 提示词逐条计费视图
+原文把两者当一件事,实测是两件:**instruct 用户从没开过**（`instruct.enabled=false`，
+preset 停在出厂 Alpaca，走纯 Chat Completion 自定义端点）;**context 模板用户动过**
+（`story_string` 前加了 `{{#if anchorBefore}}`）。所以 context 模板先做、instruct 后置。
+llama.cpp 和 Ollama 都给 `/chat/completions`，instruct 不是第一天必须——这个判断实测成立。
+
+字段清单在 `PLAN.md` 的数据契约一节。
+
+另一条实测降级：**采样参数封装**。本机用户一个采样参数都没调（temp=1、top_p=1、罚项全 0），
+「ST 暴露 76 个采样键」的对齐工作按真实触碰频率排不进 Tier 1。
+
+### 1.6 提示词逐条计费视图（72 进行中）
 
 ST 的 prompt itemization：点开一条消息，看到这次请求里每个部分各占多少 token。调试提示词时不可替代。
 

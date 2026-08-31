@@ -102,7 +102,12 @@ test('the browser sees the contract and nothing else', async () => {
   //
   // A browser that could reach `@iris/persistence` could build a chat file, and
   // a chat file it built would bypass every check the host makes on the way in.
-  const allowed = new Set(['@iris/protocol', '@iris/client-fake'])
+  // `rpc-client` was missing from the first version of this list — an omission,
+  // not a decision: it is the browser's real transport, implements `IrisClient`,
+  // and itself depends only on the contract. The list happened to be written
+  // while the interface still ran on the fake alone, which is exactly how an
+  // allowlist goes stale: it encodes the day it was written.
+  const allowed = new Set(['@iris/protocol', '@iris/client-fake', '@iris/rpc-client'])
   const imported = await sourceImports(join(ROOT, 'apps', 'iris-web'))
   const forbidden = [...imported].filter(name => !allowed.has(name)).sort()
 

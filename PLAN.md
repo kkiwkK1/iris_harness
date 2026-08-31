@@ -408,7 +408,12 @@ Cordis 有两种静默失败，调试时先查：模块**解析**失败（路径
 ### 计划中被实测纠正的地方
 
 - **世界书激活顺序**写错了。真实顺序是 filter → 关键词 → selectiveLogic → 排序（sticky 优先 + 调用方预排序，**不是** order/uid）→ **包含组** → **概率** → 预算；`order` 只在最后分桶时才重新应用。组筛选发生在概率判定**之前**，所以组内落选者即使赢家随后掷点失败也已出局。
-- **全词匹配默认值**写反了。ST 的 `world_info_match_whole_words` 默认是 `false`。
+- **全词匹配的「默认」有三档,别混**（2026-09-01 实测更正,此前这条只说对了一半）:
+  代码变量初始值 `false`（`world-info.js:78`）;**全新安装实际拿到 `true`**（出厂
+  `default/content/settings.json` 会覆盖初始值）;本机用户手动关成 `false`。Iris 若照
+  「代码默认 false」设,行为会和新装 ST 不一致。另:条目级 `matchWholeWords` 是**三态**
+  （显式开/显式关/`null`=跟随全局,`entry.matchWholeWords ?? 全局`）,引擎只存布尔会丢
+  「跟随全局」一态。
 - **`[值, 描述]` 的解包只发生在 `set` 和 `add`**，`insert`/`delete` 不解包——这才是 v2 提示词强制路径带 `[0]` 后缀的原因。且 `set` 的解包额外要求首元素非数组。
 - **MVU 命令不以 `<UpdateVariable>` 为界**，是全文扫描；真正的护栏是闭括号后必须紧跟 `;`。
 - **`mag_variable_initialized`**：抓取上游 bundle 确认拼写正确，酒馆助手的 `.d.ts` 写错了。

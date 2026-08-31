@@ -318,6 +318,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('settings.set', handlers['settings.set']),
       ctx.irisRpc.register('script.list', handlers['script.list']),
       ctx.irisRpc.register('script.setEnabled', handlers['script.setEnabled']),
+      ctx.irisRpc.register('script.body', handlers['script.body']),
       ctx.irisRpc.register('script.setDocumentGrant', handlers['script.setDocumentGrant']),
       ctx.irisRpc.register('script.fetch', handlers['script.fetch']),
       ctx.irisRpc.register('script.context', handlers['script.context']),

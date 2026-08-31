@@ -32,7 +32,9 @@ and neither drags the other.
 
 ### 2. The browser may only see the contract
 
-`apps/iris-web` imports `@iris/protocol` and `@iris/client-fake`. Nothing else.
+`apps/iris-web` imports `@iris/protocol`, `@iris/rpc-client` (the real
+transport, which itself depends only on the contract) and `@iris/client-fake`.
+Nothing else.
 
 This is the rule most worth enforcing and the one least visible: the browser app
 reaches workspace code through **Vite aliases, not package.json**, so it appears

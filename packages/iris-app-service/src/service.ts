@@ -23,7 +23,7 @@ import type { Contribution, HistoryEntry } from '@iris/pipeline'
 import type { ChatCompletionPreset } from '@iris/preset'
 import type { GenerationSettings, IrisEvent, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
-import { checkScriptFetch } from '@iris/script'
+import { checkScriptFetch, extractScripts } from '@iris/script'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
 import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } from '@iris/turn'
 
@@ -284,6 +284,24 @@ export class IrisAppService {
         }
         await scripts.setEnabled(characterId, scriptId, enabled)
         return { scripts: await scripts.view(characterId, card) }
+      },
+
+      'script.body': async ({ characterId, scriptId }) => {
+        const card = await library.load(characterId)
+        const script = extractScripts(card).scripts.find(row => row.id === scriptId)
+        if (script === undefined) throw notFound(`${characterId} has no script "${scriptId}"`)
+        // The card's own switch and the user's are both honoured here, not only
+        // in the list: a runner that could fetch a disabled script's body would
+        // make the switches advisory.
+        if (scripts !== undefined) {
+          const view = (await scripts.view(characterId, card)).find(row => row.id === scriptId)
+          if (view !== undefined && !view.enabled) {
+            throw new AppError('unsupported', `"${script.name}" is switched off`)
+          }
+        } else if (!script.enabled) {
+          throw new AppError('unsupported', `"${script.name}" is switched off by the card`)
+        }
+        return { content: script.content }
       },
 
       'script.setDocumentGrant': async ({ characterId, granted }) => {

@@ -206,6 +206,7 @@ const PROBES: Record<string, unknown> = {
   'settings.set': { settings: {} },
   'script.list': { characterId: 'no-such-card' },
   'script.setEnabled': { characterId: 'no-such-card', scriptId: 'x', enabled: true },
+  'script.body': { characterId: 'no-such-card', scriptId: 'x' },
   'script.setDocumentGrant': { characterId: 'no-such-card', granted: false },
   'script.fetch': { url: 'https://blocked.example/x.js' },
   'script.context': { chatId: 'no-such-chat', characterId: 'no-such-card' },

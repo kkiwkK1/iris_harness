@@ -165,6 +165,20 @@ export const requestSchemas = {
     depth: z.number().int().min(0).max(1000).default(0),
   }),
   /**
+   * One script's body, for the runner about to execute it.
+   *
+   * Separate from `script.list` on purpose: the list answers "what does this
+   * card contain" and stays cheap enough to open in a settings pane, while a
+   * body can be megabytes of webpack output. One script per call, because the
+   * runner starts scripts one at a time and a card's whole payload is only
+   * needed by the card that is actually being run.
+   */
+  'script.body': z.object({
+    characterId: z.string().min(1),
+    scriptId: z.string().min(1),
+  }),
+
+  /**
    * Write back this card's extension settings.
    *
    * The read side alone was not enough, and the corpus is what showed it: a
@@ -239,6 +253,7 @@ export interface RpcResponseMap {
 
   'script.list': { scripts: ScriptView[], documentGranted: boolean }
   'script.setEnabled': { scripts: ScriptView[] }
+  'script.body': { content: string }
   'script.setDocumentGrant': { documentGranted: boolean }
   /** The fetched body. Refusals arrive as an `unsupported` rejection. */
   'script.fetch': { content: string, contentType?: string }
