@@ -14,7 +14,7 @@
  * @module @iris/rpc-client
  */
 
-import type { IrisClient, IrisEvent, RpcError, RpcMethod, RpcRequest, RpcResponse, RpcResponseFrame } from '@iris/protocol'
+import { RpcCallError, type IrisClient, type IrisEvent, type RpcMethod, type RpcRequest, type RpcResponse, type RpcResponseFrame } from '@iris/protocol'
 
 import { DEFAULT_BACKOFF, backoffDelay, type BackoffOptions } from './backoff.ts'
 
@@ -72,25 +72,10 @@ export interface IrisClientOptions {
   onError?: (error: Error) => void
 }
 
-/**
- * A refusal from the host, or a failure reaching it.
- *
- * An `Error` so it carries a stack, and structurally an {@link RpcError} so the
- * contract's `@throws` holds: `catch (error) { error.code }` works either way.
- */
-export class IrisRpcError extends Error implements RpcError {
-  /** The wire code. */
-  readonly code: RpcError['code']
-
-  /**
-   * @param error - the wire error to raise.
-   */
-  constructor(error: RpcError) {
-    super(error.message)
-    this.name = 'IrisRpcError'
-    this.code = error.code
-  }
-}
+// The rejection type is the contract's, not this package's: a caller that wants
+// to branch on a failure should not have to know which client implementation
+// produced it.
+export { RpcCallError } from '@iris/protocol'
 
 /** Default request id source; a counter fallback keeps old runtimes working. */
 let counter = 0
@@ -175,7 +160,7 @@ export class IrisHttpClient implements IrisClient {
    * @param method - the method name.
    * @param params - its params; the host validates them again on arrival.
    * @returns the method's response.
-   * @throws {IrisRpcError} when the host refuses, or when it cannot be reached.
+   * @throws {RpcCallError} when the host refuses, or when it cannot be reached.
    */
   async call<M extends RpcMethod>(method: M, params: RpcRequest<M>): Promise<RpcResponse<M>> {
     const id = nextId()
@@ -191,7 +176,7 @@ export class IrisHttpClient implements IrisClient {
         body: JSON.stringify({ id, method, params }),
       })
     } catch (cause: unknown) {
-      throw new IrisRpcError({
+      throw new RpcCallError({
         code: 'internal',
         message: `could not reach the Iris host: ${cause instanceof Error ? cause.message : String(cause)}`,
       })
@@ -202,15 +187,15 @@ export class IrisHttpClient implements IrisClient {
     try {
       frame = JSON.parse(text) as RpcResponseFrame<M>
     } catch {
-      throw new IrisRpcError({
+      throw new RpcCallError({
         code: 'internal',
         message: `the Iris host answered ${String(response.status)} with a body that is not a response frame`,
       })
     }
 
-    if (frame.ok === false) throw new IrisRpcError(frame.error)
+    if (frame.ok === false) throw new RpcCallError(frame.error)
     if (frame.id !== id) {
-      throw new IrisRpcError({ code: 'internal', message: 'the Iris host answered a different request' })
+      throw new RpcCallError({ code: 'internal', message: 'the Iris host answered a different request' })
     }
     return frame.result
   }

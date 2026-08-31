@@ -55,6 +55,33 @@ test('a stream for an existing message overwrites its text in place', () => {
   assert.equal(messages[1]?.swipes, undefined)
 })
 
+test('the streaming row carries the key its settled row will have', () => {
+  // This is what makes a finished reply update its row in place. If the keys
+  // differed, React would unmount the half-written message and mount the
+  // finished one next to it — visible as a flicker, and it would discard any
+  // local state on that row.
+  const synthesized = withStream(view([userLine]), { turn: 1, text: 'x', reasoning: '' })
+  assert.equal(synthesized.at(-1)?.key, 'a1')
+})
+
+test('an existing row keeps its own key rather than a recomputed one', () => {
+  // Copying the row's key instead of rebuilding it from the host's naming
+  // convention means a change to that convention cannot silently start
+  // remounting streaming messages.
+  const placeholder: MessageView = {
+    id: 1,
+    key: 'whatever-the-host-chose',
+    role: 'assistant',
+    name: '络络',
+    text: '',
+    turn: 1,
+  }
+  const messages = withStream(view([userLine, placeholder]), { turn: 1, text: 'fresh', reasoning: '' })
+
+  assert.equal(messages[1]?.key, 'whatever-the-host-chose')
+  assert.equal(messages[1]?.text, 'fresh')
+})
+
 test('reasoning only appears once some has arrived', () => {
   const none = withStream(view([userLine]), { turn: 1, text: 'x', reasoning: '' })
   assert.equal(none[1]?.reasoning, undefined)

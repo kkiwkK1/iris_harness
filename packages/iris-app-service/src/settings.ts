@@ -36,9 +36,22 @@ interface SettingsFile {
   chats: Record<string, Partial<GenerationSettings>>
 }
 
+/** Fields of {@link GenerationSettings} that may simply be absent. */
+type OptionalField = Exclude<keyof GenerationSettings, 'provider' | 'model'>
+
+/** What one `settings.set` patch asks for. */
+export interface SettingsPatch {
+  /** Fields to write. */
+  set: Partial<GenerationSettings>
+  /** Fields whose override is being removed, so the layer below shows through. */
+  clear: (keyof GenerationSettings)[]
+}
+
 /** Reads, merges and persists generation settings. */
 export class SettingsStore {
   readonly #path: string
+  /** The configured route, kept so a cleared global field has something to fall back to. */
+  readonly #defaults: GenerationSettings
   #file: SettingsFile
 
   /**
@@ -47,6 +60,7 @@ export class SettingsStore {
    */
   constructor(path: string, defaults: GenerationSettings) {
     this.#path = path
+    this.#defaults = defaults
     this.#file = { global: defaults, chats: {} }
   }
 
@@ -87,19 +101,40 @@ export class SettingsStore {
 
   /**
    * Apply a patch and persist it.
+   *
+   * Three cases, per the contract: an omitted key leaves the field alone, an
+   * explicit `null` removes the override so the layer below shows through, and
+   * an unknown key is dropped. The middle one is what a "use host default"
+   * control sends, and without it that control would silently do nothing.
    * @param chatId - the chat to scope the patch to, or absent for the global layer.
-   * @param patch - the fields to change; unknown keys are ignored.
+   * @param patch - the fields to change.
    * @returns the merged settings after the change.
    * @throws {AppError} `invalid-request` when a known field has the wrong type
    *   or falls outside its range.
    */
   async set(chatId: string | undefined, patch: Record<string, unknown>): Promise<GenerationSettings> {
-    const clean = sanitize(patch)
+    const { set, clear } = sanitize(patch)
+
     if (chatId === undefined) {
-      this.#file.global = { ...this.#file.global, ...clean }
+      const global: GenerationSettings = { ...this.#file.global, ...set }
+      for (const key of clear) {
+        // Nothing sits below the global layer, so clearing here means returning
+        // to what the composition configured. `provider` and `model` are not
+        // optional in the wire shape, so they are restored rather than removed;
+        // everything else goes absent and the adapter's own default applies.
+        if (key === 'provider' || key === 'model') global[key] = this.#defaults[key]
+        else delete global[key as OptionalField]
+      }
+      this.#file.global = global
     } else {
-      this.#file.chats[chatId] = { ...this.#file.chats[chatId], ...clean }
+      const override: Partial<GenerationSettings> = { ...this.#file.chats[chatId], ...set }
+      for (const key of clear) delete override[key]
+      // An empty override is noise in the file, and would otherwise accumulate
+      // one entry per chat the user ever opened a settings panel on.
+      if (Object.keys(override).length === 0) delete this.#file.chats[chatId]
+      else this.#file.chats[chatId] = override
     }
+
     await this.save()
     return this.get(chatId)
   }
@@ -122,40 +157,57 @@ export class SettingsStore {
 }
 
 /**
- * Keep the fields the contract defines and refuse ones that are malformed.
+ * Split a wire patch into writes and clears, refusing malformed values.
  *
  * Silently dropping a bad value would be worse than refusing it: the user would
- * see their temperature change reported as saved and then not applied.
+ * see their temperature change reported as saved and then not applied. An
+ * unknown key is a different matter — it is not a value at all, so it is
+ * ignored rather than refused.
+ *
+ * Presence is tested with `hasOwn` rather than against `undefined`, so a key
+ * that is genuinely absent and a key explicitly set to `null` stay
+ * distinguishable — that distinction is the whole feature.
  * @param patch - the raw patch from the wire.
- * @returns the fields worth storing.
+ * @returns the fields to write and the fields to un-set.
  * @throws {AppError} `invalid-request` for a known field of the wrong shape.
  */
-export function sanitize(patch: Record<string, unknown>): Partial<GenerationSettings> {
-  const clean: Partial<GenerationSettings> = {}
+export function sanitize(patch: Record<string, unknown>): SettingsPatch {
+  const set: Partial<GenerationSettings> = {}
+  const clear: (keyof GenerationSettings)[] = []
 
   for (const key of ['provider', 'model'] as const) {
+    if (!Object.hasOwn(patch, key)) continue
     const value = patch[key]
-    if (value === undefined) continue
+    if (value === null) {
+      clear.push(key)
+      continue
+    }
     if (typeof value !== 'string' || value.length === 0) throw invalid(`"${key}" must be a non-empty string`)
-    clean[key] = value
+    set[key] = value
   }
 
   for (const [key, [min, max]] of Object.entries(NUMERIC_FIELDS)) {
+    if (!Object.hasOwn(patch, key)) continue
     const value = patch[key]
-    if (value === undefined) continue
+    if (value === null) {
+      clear.push(key as keyof GenerationSettings)
+      continue
+    }
     if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
       throw invalid(`"${key}" must be a number between ${String(min)} and ${String(max)}`)
     }
-    Object.assign(clean, { [key]: key === 'maxTokens' || key === 'topK' || key === 'seed' ? Math.round(value) : value })
+    Object.assign(set, { [key]: key === 'maxTokens' || key === 'topK' || key === 'seed' ? Math.round(value) : value })
   }
 
-  const stop = patch['stop']
-  if (stop !== undefined) {
-    if (!Array.isArray(stop) || stop.some(entry => typeof entry !== 'string')) {
+  if (Object.hasOwn(patch, 'stop')) {
+    const stop = patch['stop']
+    if (stop === null) clear.push('stop')
+    else if (!Array.isArray(stop) || stop.some(entry => typeof entry !== 'string')) {
       throw invalid('"stop" must be an array of strings')
+    } else {
+      set.stop = stop as string[]
     }
-    clean.stop = stop as string[]
   }
 
-  return clean
+  return { set, clear }
 }

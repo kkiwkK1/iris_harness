@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import type { IrisEvent, RpcResponseFrame } from '@iris/protocol'
 
-import { IrisHttpClient, IrisRpcError, backoffDelay, type FetchLike, type SocketLike } from '../src/index.ts'
+import { IrisHttpClient, RpcCallError, backoffDelay, type FetchLike, type SocketLike } from '../src/index.ts'
 
 /**
  * The client against fakes.
@@ -148,7 +148,7 @@ test('a refusal rejects with the host’s own code', async () => {
   await assert.rejects(
     () => client.call('chat.send', { chatId: 'c1', text: 'Hi' }),
     (error: unknown) => {
-      assert.ok(error instanceof IrisRpcError)
+      assert.ok(error instanceof RpcCallError)
       assert.equal(error.code, 'busy')
       assert.equal(error.message, 'that chat is already generating')
       return true
@@ -162,7 +162,7 @@ test('an unreachable host is an internal failure, not a hang', async () => {
 
   await assert.rejects(
     () => client.call('chat.list', {}),
-    (error: unknown) => error instanceof IrisRpcError && error.code === 'internal',
+    (error: unknown) => error instanceof RpcCallError && error.code === 'internal',
   )
 })
 
@@ -172,7 +172,7 @@ test('a body that is not a frame does not resolve as one', async () => {
 
   await assert.rejects(
     () => client.call('chat.list', {}),
-    (error: unknown) => error instanceof IrisRpcError && /not a response frame/.test(error.message),
+    (error: unknown) => error instanceof RpcCallError && /not a response frame/.test(error.message),
   )
 })
 
@@ -186,7 +186,7 @@ test('an answer to a different request is refused rather than returned', async (
 
   await assert.rejects(
     () => client.call('chat.list', {}),
-    (error: unknown) => error instanceof IrisRpcError && /different request/.test(error.message),
+    (error: unknown) => error instanceof RpcCallError && /different request/.test(error.message),
   )
 })
 

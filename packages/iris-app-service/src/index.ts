@@ -40,7 +40,7 @@ export {
 } from './prompt.ts'
 export { placementFor, runScripts, scriptsOf } from './regex.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
-export { SettingsStore, sanitize } from './settings.ts'
+export { SettingsStore, sanitize, type SettingsPatch } from './settings.ts'
 export {
   projectMessages,
   reasoningOf,

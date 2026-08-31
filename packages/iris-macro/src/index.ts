@@ -38,6 +38,7 @@ export {
 
 export {
   expandMacros,
+  toRegexSubstitute,
   type ExpandOptions,
 } from './expand.ts'
 

@@ -80,6 +80,20 @@ export interface ExpandOptions {
    * input unchanged. Guards mutually-referential card fields.
    */
   readonly maxDepth?: number
+  /**
+   * Transform each resolved macro value before it is written into the result.
+   *
+   * Applies to what a macro EXPANDED TO, never to the literal text around it —
+   * which is the distinction the caller needs. A regex script built from
+   * `{{char}}` has to escape the name so a character called `A.B` does not also
+   * match `AxB`, while the pattern's own regex syntax must survive untouched.
+   *
+   * Applied only at the outermost level. A handler that composes its value from
+   * `invocation.expand` would otherwise see its inner values transformed once on
+   * the way in and again on the way out — escaping twice, yielding `\.` where
+   * `\.` was meant.
+   */
+  readonly postProcess?: (value: string) => string
 }
 
 /**
@@ -116,6 +130,7 @@ interface ExpandState {
   readonly source: string
   readonly scratch: Map<string, unknown>
   readonly maxDepth: number
+  readonly postProcess?: (value: string) => string
   depth: number
 }
 
@@ -332,7 +347,11 @@ function expandText(text: string, base: number, state: ExpandState): string {
       value = state.registry.resolve(invocation)
     }
 
-    out += value ?? raw
+    // `raw` is an unresolved macro passing through verbatim, not a substituted
+    // value, so it is never post-processed. Depth 0 only: see `postProcess`.
+    out += value === undefined
+      ? raw
+      : (state.postProcess !== undefined && state.depth === 0 ? state.postProcess(value) : value)
     index = close
   }
 
@@ -364,6 +383,7 @@ export function expandMacros(text: string, context: MacroContext, options: Expan
 
   const state: ExpandState = {
     registry,
+    ...options.postProcess === undefined ? {} : { postProcess: options.postProcess },
     context,
     // Hashed by `{{pick}}`: the text as the caller wrote it, so rewriting a
     // legacy marker does not silently reroll every pick in the document.
@@ -383,4 +403,28 @@ export function expandMacros(text: string, context: MacroContext, options: Expan
   result = result.replace(TRIM_PATTERN, '')
   result = result.replace(ESCAPED_BRACE, '$1')
   return result
+}
+
+/**
+ * The macro expander a regex script wants.
+ *
+ * `@iris/regex` needs a `substitute` that can escape each expanded value
+ * (its `SUBSTITUTE.ESCAPED` mode), and it stays dependency-free, so the two
+ * meet by shape rather than by import: this returns exactly the function that
+ * package's `MacroSubstitute` describes. Supplying it here rather than leaving
+ * each caller to write it keeps one subtlety in one place — `postProcess`
+ * applies to expanded values only, and only at the outermost level.
+ * @param context - what the macros may read.
+ * @param options - registry and recursion limit; any `postProcess` here is
+ *   overridden per call by the regex engine's own.
+ * @returns a substitute function the regex engine can take as-is.
+ */
+export function toRegexSubstitute(
+  context: MacroContext,
+  options: Omit<ExpandOptions, 'postProcess'> = {},
+): (text: string, callOptions?: { postProcess?: (value: string) => string }) => string {
+  return (text, callOptions) => expandMacros(text, context, {
+    ...options,
+    ...callOptions?.postProcess === undefined ? {} : { postProcess: callOptions.postProcess },
+  })
 }

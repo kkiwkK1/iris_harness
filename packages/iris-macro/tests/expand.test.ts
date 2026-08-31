@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import {
   createMacroContext,
   createMacroRegistry,
+  toRegexSubstitute,
   createMemoryVariableStore,
   expandMacros,
   MacroRegistry,
@@ -140,4 +141,53 @@ test('regex macros run after named expansion, so they see the leftovers', () => 
 
   assert.equal(expandMacros('x {{leftover}} y', context, { registry }), 'x caught y')
   assert.deepEqual(seen, ['{{leftover}}'])
+})
+
+test('postProcess transforms what a macro expanded to, not the text around it', () => {
+  // The distinction a regex script depends on: a pattern built from `{{char}}`
+  // must transform the NAME and leave the pattern's own syntax alone. Escaping
+  // itself is `@iris/regex`'s job and is tested there; what matters here is
+  // which characters the hook is even shown.
+  const { context, registry } = fixture({ char: 'Seraphina' })
+
+  const marked = expandMacros('^{{char}}.*$', context, {
+    registry,
+    postProcess: value => `<${value}>`,
+  })
+
+  assert.equal(marked, '^<Seraphina>.*$')
+})
+
+test('postProcess leaves an unresolved macro alone', () => {
+  // An unrecognized macro passes through verbatim, so it is not a substituted
+  // value and must not be handed to the hook.
+  const { context, registry } = fixture()
+
+  assert.equal(
+    expandMacros('{{nobody_registered_this}}', context, { registry, postProcess: () => 'TOUCHED' }),
+    '{{nobody_registered_this}}',
+  )
+})
+
+test('a value composed from nested expansion is transformed once, not twice', () => {
+  // Applying at every level would escape an inner value on the way in and again
+  // on the way out, which is how a pattern ends up double-escaped.
+  const { context, registry } = fixture({ char: 'Seraphina' })
+  const dispose = registry.register('wrap', invocation => `[${invocation.expand('{{char}}')}]`)
+
+  const result = expandMacros('{{wrap}}', context, {
+    registry,
+    postProcess: value => `<${value}>`,
+  })
+  dispose()
+
+  assert.equal(result, '<[Seraphina]>', 'the outer value once; the inner not on its own')
+})
+
+test('toRegexSubstitute hands the regex engine the shape it asks for', () => {
+  const { context, registry } = fixture({ char: 'Seraphina' })
+  const substitute = toRegexSubstitute(context, { registry })
+
+  assert.equal(substitute('{{char}}'), 'Seraphina', 'no hook means verbatim expansion')
+  assert.equal(substitute('{{char}}', { postProcess: value => value.toUpperCase() }), 'SERAPHINA')
 })

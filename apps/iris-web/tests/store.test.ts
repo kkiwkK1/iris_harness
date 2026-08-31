@@ -5,15 +5,23 @@ import { applyEvent, createIrisStore, type IrisStore } from '../src/client/store
 import type { ChatView, IrisClient, IrisEvent } from '@iris/protocol'
 
 /** A client that records calls and lets a test push frames by hand. */
-function stubClient(): { client: IrisClient, push: (event: IrisEvent) => void } {
+function stubClient(): {
+  client: IrisClient
+  push: (event: IrisEvent) => void
+  setConnected: (connected: boolean) => void
+} {
   const listeners = new Set<(event: IrisEvent) => void>()
+  const connectionListeners = new Set<(connected: boolean) => void>()
   const client: IrisClient = {
     connected: true,
-    // The stub never goes offline, so this only has to satisfy the interface;
-    // the disposer is still real, because a stub that leaks would hide a leak
-    // in the code under test.
-    onConnectionChange() {
-      return () => {}
+    // Drivable rather than inert: the store's only route to the connection state
+    // is now this channel, so a stub that never fires would leave the offline
+    // banner untested.
+    onConnectionChange(listener) {
+      connectionListeners.add(listener)
+      return () => {
+        connectionListeners.delete(listener)
+      }
     },
     subscribe(listener) {
       listeners.add(listener)
@@ -29,15 +37,24 @@ function stubClient(): { client: IrisClient, push: (event: IrisEvent) => void } 
       return { view: empty } as never
     },
   }
-  return { client, push: event => listeners.forEach(listener => listener(event)) }
+  return {
+    client,
+    push: event => listeners.forEach(listener => listener(event)),
+    setConnected: connected => connectionListeners.forEach(listener => listener(connected)),
+  }
 }
 
 /** A store with a chat already open, so chat-scoped frames are not filtered out. */
-function openedStore(): { store: IrisStore, push: (event: IrisEvent) => void, dispose: () => void } {
+function openedStore(): {
+  store: IrisStore
+  push: (event: IrisEvent) => void
+  setConnected: (connected: boolean) => void
+  dispose: () => void
+} {
   const stub = stubClient()
   const { store, dispose } = createIrisStore(stub.client)
   store.setState({ chatId: 'c1', view: { chatId: 'c1', title: 'A scene', messages: [] } })
-  return { store, push: stub.push, dispose }
+  return { store, push: stub.push, setConnected: stub.setConnected, dispose }
 }
 
 const settled: ChatView = {
@@ -148,15 +165,30 @@ test('chats.updated is not filtered by the open chat', () => {
   dispose()
 })
 
-test('the connection state follows the client on every frame', () => {
-  const { store, dispose } = openedStore()
+test('the connection state arrives on its own channel, not inferred from traffic', () => {
+  const { store, setConnected, dispose } = openedStore()
 
-  applyEvent(store, { type: 'chats.updated', chats: [] }, false)
+  setConnected(false)
   assert.equal(store.getState().connected, false)
 
-  applyEvent(store, { type: 'chats.updated', chats: [] }, true)
+  // The point of the dedicated channel: the banner must not have to wait for
+  // unrelated traffic to notice, and unrelated traffic must not clear it.
+  applyEvent(store, { type: 'chats.updated', chats: [] })
+  assert.equal(store.getState().connected, false)
+
+  setConnected(true)
   assert.equal(store.getState().connected, true)
   dispose()
+})
+
+test('disposing the store also drops its connection subscription', () => {
+  const stub = stubClient()
+  const { store, dispose } = createIrisStore(stub.client)
+  dispose()
+
+  stub.setConnected(false)
+
+  assert.equal(store.getState().connected, true)
 })
 
 test('disposing the store drops its event subscription', () => {

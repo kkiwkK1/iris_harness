@@ -36,12 +36,14 @@ export function withStream(view: ChatView | undefined, stream: StreamBuffer | un
   if (stream === undefined) return view.messages
 
   const at = view.messages.findIndex(row => row.role === 'assistant' && row.turn === stream.turn)
-  const live = (base: Pick<MessageView, 'id' | 'name'>): MessageView => ({
+  // The key must be the one the settled row will carry, so React updates that
+  // row in place when the reply lands rather than unmounting a half-written one
+  // and mounting a finished one beside it. Where the row already exists its own
+  // key is reused; only the synthesized case has to know the host's convention,
+  // which keeps that knowledge to one line instead of two.
+  const live = (base: Pick<MessageView, 'id' | 'name' | 'key'>): MessageView => ({
     id: base.id,
-    // The key the host will give this turn's settled row, so React updates the
-    // row in place when the reply lands instead of unmounting a half-written
-    // one and mounting a finished one in its place.
-    key: `a${stream.turn}`,
+    key: base.key,
     role: 'assistant',
     name: base.name,
     text: stream.text,
@@ -56,7 +58,9 @@ export function withStream(view: ChatView | undefined, stream: StreamBuffer | un
 
   if (at === -1) {
     const name = [...view.messages].reverse().find(row => row.role === 'assistant')?.name ?? view.title
-    return [...view.messages, live({ id: view.messages.length, name })]
+    // `a${turn}` is the host's key for an assistant row. The one place the
+    // browser has to know it, because there is no row yet to copy it from.
+    return [...view.messages, live({ id: view.messages.length, name, key: `a${stream.turn}` })]
   }
 
   const existing = view.messages[at] as MessageView

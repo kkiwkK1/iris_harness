@@ -112,7 +112,12 @@ export function ChatPane(): ReactElement {
               <section className="iris-turn" key={group.turn ?? `loose-${at}`}>
                 {group.messages.map(message => (
                   <Message
-                    key={message.id}
+                    // `key`, not `id`: `id` is a position, so a delete shifts
+                    // every later one and React would carry this row's local
+                    // state (an open editor) onto its neighbour. The streaming
+                    // row deliberately shares the key its settled row will
+                    // have, so a finished reply updates in place.
+                    key={message.key}
                     message={message}
                     canRegenerate={message.id === retryId && stream === undefined}
                     handlers={handlers}

@@ -1,10 +1,17 @@
 /**
  * Turning a rejection into something a reader can act on.
  *
- * The protocol says `IrisClient.call` rejects with an `RpcError` shape but does
- * not say whether that value is also an `Error`, and the two halves of this
- * product are being built in parallel — so the browser normalizes here rather
- * than assuming. Everything the UI shows a reader goes through this function.
+ * The contract now settles this: `call` rejects with `RpcCallError`, which is an
+ * `Error` and carries a `code`. The duck-typed check below is kept anyway, and
+ * not out of distrust of the transport — it costs three lines and it is what
+ * keeps a bare-object rejection from reaching the reader as "[object Object]",
+ * which is the worst possible failure for the one surface whose whole job is to
+ * explain a failure. Deliberately NOT an `instanceof RpcCallError` check: that
+ * would add a value import from `@iris/protocol` to this module, and `store.ts`
+ * imports it — which is what would cost the streaming state machine its ability
+ * to run under plain `node --test`.
+ *
+ * Everything the UI shows a reader goes through this function.
  *
  * @module iris-web/client/errors
  */

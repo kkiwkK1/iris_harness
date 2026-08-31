@@ -140,6 +140,9 @@ export class ChatEntry {
   #initVars: MvuData | undefined
   #scripts: RegexScript[] | undefined
   #abort: AbortController | undefined
+  /** Row identities, one per chat-file line, plus one spare for a streaming row. */
+  #keys: string[] = []
+  #nextKey = 0
 
   /**
    * @param input - identity, the restored log, its header, and the character.
@@ -199,6 +202,29 @@ export class ChatEntry {
    */
   touch(patch: Partial<IrisChatMeta> = {}): void {
     this.header['iris'] = { ...this.meta, ...patch, updatedAt: Date.now() }
+  }
+
+  /**
+   * Stable identity for each row of the view.
+   *
+   * Minted here rather than derived in the projection because nothing in the
+   * log survives a rebuild: `importChat` reassigns every `seq`, and removing a
+   * user line renumbers the turns after it. A UI keyed on either would reattach
+   * an open editor to the neighbouring message the moment something is deleted,
+   * which is the failure `MessageView.key` exists to prevent.
+   *
+   * One spare is always minted past the end. A streaming row occupies that slot
+   * and the settled row then lands in the same one, so a reply keeps a single
+   * identity from its first token to its last.
+   * @returns one key per row, in row order.
+   */
+  get keys(): readonly string[] {
+    const wanted = lineTurns(this.session).length + 1
+    while (this.#keys.length < wanted) {
+      this.#keys.push(`m${String(this.#nextKey)}`)
+      this.#nextKey += 1
+    }
+    return this.#keys
   }
 
   /**
@@ -318,6 +344,19 @@ export class ChatEntry {
    */
   rebuild(lines: SillyTavernMessage[], sourceOf: (index: number) => number | undefined): void {
     const before = this.#snapshotVariables()
+
+    // Row identities travel the same mapping as the variables, and for the same
+    // reason: the rebuilt log cannot say which of its lines used to be which.
+    const previousKeys = this.#keys
+    this.#keys = lines.map((_line, index) => {
+      const source = sourceOf(index)
+      const carried = source === undefined ? undefined : previousKeys[source]
+      if (carried !== undefined) return carried
+      const minted = `m${String(this.#nextKey)}`
+      this.#nextKey += 1
+      return minted
+    })
+
     const rebuilt = importChat({ header: this.header, messages: lines }, this.chatId)
     const turns = lineTurns(rebuilt)
 
@@ -397,6 +436,7 @@ export class ChatEntry {
       characterId: meta.characterId,
       session: this.session,
       names: this.names,
+      keys: this.keys,
       pending: this.pending,
       scripts: this.scripts,
       variables: this.currentVariables(),

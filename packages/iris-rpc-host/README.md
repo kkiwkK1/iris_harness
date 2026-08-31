@@ -85,7 +85,17 @@ real state rather than a gap.
 
 `MessageView.id` is the message's index in the SillyTavern projection of the
 chat — the same number `chat.editMessage` and `chat.deleteMessage` address, and
-the same one a card script sees.
+the same one a card script sees. **Render with `key`, not `id`**: `id` is a
+position, so a delete shifts every later one. `key` is minted by the host and
+carried across the log rebuild that a delete performs, and a streaming row keeps
+the key it settles into, so a reply has one identity from its first token
+onward.
+
+`settings.set` distinguishes three cases: an omitted key leaves the field alone,
+an explicit `null` removes the override so the layer below shows through (that
+is what a "use host default" control sends), and an unknown key is dropped.
+Clearing on the global layer restores what the composition configured, since
+nothing sits below it.
 
 `stream.error.code` is free-form, unlike `RpcError['code']`. The host emits
 `'aborted'` for a turn the user stopped and `'provider-error'` for a real

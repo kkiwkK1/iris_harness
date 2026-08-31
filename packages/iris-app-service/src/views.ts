@@ -53,16 +53,23 @@ export function reasoningOf(message: { content: readonly { type: string, text?: 
  * walks aligned is what makes the view index and the chat-file index the same
  * number.
  * @param session - the chat log.
+ * Row identity is supplied rather than derived, because it cannot be derived:
+ * every candidate — the log `seq`, the turn number — is reassigned when the log
+ * is rebuilt, which is exactly what deleting a message does. Only something the
+ * caller carries across that rebuild stays put, and staying put across a delete
+ * is the entire reason `key` exists.
+ * @param session - the chat log.
  * @param names - speaker names.
- * @param options - the streaming turn, if any, and the chat's regex scripts.
+ * @param options - row keys, the streaming turn if any, and the chat's regex scripts.
  * @returns messages in conversation order, already rewritten for display.
  */
 export function projectMessages(
   session: Session,
   names: Names,
-  options: { pending?: PendingTurn | undefined, scripts?: readonly RegexScript[] } = {},
+  options: { keys: readonly string[], pending?: PendingTurn | undefined, scripts?: readonly RegexScript[] },
 ): MessageView[] {
   const pending = options.pending
+  const keyAt = (index: number): string => options.keys[index] ?? `m-orphan-${String(index)}`
   const views: MessageView[] = []
   const seenTurns = new Set<number>()
   let turn = 0
@@ -76,10 +83,7 @@ export function projectMessages(
     if (event.type === 'user/message') {
       views.push({
         id: views.length,
-        // The log seq, not the position: seqs never shift, so a deletion
-        // earlier in the chat does not slide this row's identity onto its
-        // neighbour.
-        key: `u${event.seq}`,
+        key: keyAt(views.length),
         role: 'user',
         name: names.user,
         text: textOf(event.data as Message),
@@ -100,10 +104,7 @@ export function projectMessages(
     const reasoning = reasoningOf(current.message)
     views.push({
       id: views.length,
-      // The turn, since there is exactly one assistant row per turn and turn
-      // numbers are stable. Swiping changes the text behind this key rather
-      // than the key, which is what keeps a UI from remounting the row.
-      key: `a${messageTurn}`,
+      key: keyAt(views.length),
       role: 'assistant',
       name: names.character,
       text: textOf(current.message),
@@ -119,9 +120,10 @@ export function projectMessages(
     // working one. The partial text is real host state, so it is shown.
     views.push({
       id: views.length,
-      // Same key the settled row will carry: the streaming row becomes that row
-      // rather than being replaced by it, so nothing remounts mid-reply.
-      key: `a${pending.turn}`,
+      // The same slot the settled row will occupy, so it inherits this key: the
+      // streaming row becomes that row rather than being replaced by it, and
+      // nothing remounts mid-reply.
+      key: keyAt(views.length),
       role: 'assistant',
       name: names.character,
       text: pending.text,
@@ -161,6 +163,7 @@ export function toChatView(input: {
   characterId?: string | undefined
   session: Session
   names: Names
+  keys: readonly string[]
   pending?: PendingTurn | undefined
   scripts?: readonly RegexScript[] | undefined
   variables?: Record<string, unknown> | undefined
@@ -170,6 +173,7 @@ export function toChatView(input: {
     title: input.title,
     ...input.characterId === undefined ? {} : { characterId: input.characterId },
     messages: projectMessages(input.session, input.names, {
+      keys: input.keys,
       pending: input.pending,
       ...input.scripts === undefined ? {} : { scripts: input.scripts },
     }),

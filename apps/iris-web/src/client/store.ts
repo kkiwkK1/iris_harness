@@ -276,11 +276,23 @@ export function createIrisStore(client: IrisClient): { store: IrisStore, dispose
     }
   })
 
-  const dispose = client.subscribe(event => {
-    applyEvent(store, event, client.connected)
+  const offEvents = client.subscribe(event => {
+    applyEvent(store, event)
+  })
+  // The connection has its own channel because the host cannot report its own
+  // silence. Inferring it from arriving frames means the banner only appears
+  // once some unrelated traffic happens to show up.
+  const offConnection = client.onConnectionChange(connected => {
+    store.setState({ connected })
   })
 
-  return { store, dispose }
+  return {
+    store,
+    dispose: () => {
+      offConnection()
+      offEvents()
+    },
+  }
 }
 
 /**
@@ -290,17 +302,14 @@ export function createIrisStore(client: IrisClient): { store: IrisStore, dispose
  * place, and so they can be tested without a client.
  * @param store - the store to update.
  * @param event - the frame.
- * @param connected - the transport's live connection state. Refreshed on every
- * frame because `IrisClient` has no connection-change notification of its own.
  *
  * Narrowed on `event.type` directly rather than through the protocol's `isEvent`
  * helper. The union's own discriminant reads no worse, and it leaves this module
  * with no value imports from the protocol — which is what lets the streaming
  * state machine be tested under plain `node --test`, with no bundler.
  */
-export function applyEvent(store: IrisStore, event: IrisEvent, connected: boolean): void {
+export function applyEvent(store: IrisStore, event: IrisEvent): void {
   const state = store.getState()
-  if (state.connected !== connected) store.setState({ connected })
 
   if (event.type === 'chats.updated') {
     store.setState({ chats: event.chats })

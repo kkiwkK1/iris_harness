@@ -663,3 +663,33 @@ test('a chat with no scripts is left exactly as it was', async (t) => {
 
   assert.equal(last(end.view).text, reply)
 })
+
+test('clearing a chat override lets the global layer show through again', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await handlers['settings.set']({ settings: { temperature: 0.7, model: 'global-model' } })
+  await handlers['settings.set']({ chatId, settings: { temperature: 1.2, topP: 0.8 } })
+  assert.equal((await handlers['settings.get']({ chatId })).settings.temperature, 1.2)
+
+  // `null` is the "use host default" control. It removes the override rather
+  // than storing a null, so the global value becomes visible again.
+  const cleared = await handlers['settings.set']({ chatId, settings: { temperature: null } })
+  assert.equal(cleared.settings.temperature, 0.7, 'the global layer shows through')
+  assert.equal(cleared.settings.topP, 0.8, 'the other override is untouched')
+  assert.equal((await handlers['settings.get']({})).settings.temperature, 0.7, 'the global layer is unchanged')
+})
+
+test('clearing a global field falls back to what the composition configured', async (t) => {
+  const { handlers } = await fixture(t)
+
+  await handlers['settings.set']({ settings: { model: 'something-else', maxTokens: 4096 } })
+  assert.equal((await handlers['settings.get']({})).settings.model, 'something-else')
+
+  const cleared = await handlers['settings.set']({ settings: { model: null, maxTokens: null } })
+  // Nothing sits below the global layer, so `provider` and `model` return to the
+  // configured route while an optional field simply goes absent.
+  assert.equal(cleared.settings.model, 'test-model')
+  assert.equal(cleared.settings.maxTokens, undefined)
+})
