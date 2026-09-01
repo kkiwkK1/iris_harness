@@ -390,8 +390,12 @@ reported, any refusal) is shown beside the frame.
   frames. The variable panel has since rendered a real MVU
   state tree without breaking — three top-level keys, three levels of nesting,
   CJK keys, 31 lines of YAML — which until then had only ever been fed the fake's
-  seeds. **Not exercised in a browser**: the per-script failure lines, the notice
-  bar, and the `silent` timeout firing, because no run has yet failed. Those are carried by unit
+  seeds. The **per-script failure lines** have been seen with real
+  content — four of them at once on a nine-script card's first run, carrying the
+  missing-globals banner and `waitGlobalInitialized is not defined`, which is how
+  that gap was found. **Still not exercised in a browser**: the notice bar, and
+  the `silent` timeout firing. No run has yet gone quiet rather than failing
+  loudly, and those two are the surfaces for the quiet case. Those are carried by unit
   tests, which is exactly the coverage that let the first version ship without
   attaching a single frame.
 
