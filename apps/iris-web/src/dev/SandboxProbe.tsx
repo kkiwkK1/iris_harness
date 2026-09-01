@@ -219,6 +219,8 @@ export function SandboxProbe(): ReactElement | null {
           mode: modeFor(kind),
           libraries: librariesFor(kind, window.location.origin),
           documentGranted: granted,
+          // Same origin as the page: the host serves both the interface and the proxy.
+          bundleOrigin: window.location.origin,
           networkGranted,
           context,
           viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),

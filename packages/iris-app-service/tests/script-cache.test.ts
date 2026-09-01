@@ -226,3 +226,52 @@ test('the default upstream adapter behaves the way the cache assumes', async (t)
   server.close()
   await assert.rejects(() => nodeFetch(`${base}/target`, { redirect: 'manual', headers: { accept: '*/*' } }))
 })
+
+test('asking why something failed does not repeat the failure', async (t) => {
+  const { cache, asked } = await cacheIn(t, { [BUNDLE]: { status: 503 } })
+
+  const first = await cache.load(BUNDLE)
+  assert.ok(!Buffer.isBuffer(first))
+  assert.equal(first.status, 502)
+
+  // The shell reads the reason by requesting the same URL again — a failed
+  // `import()` gives its caller no response to inspect, so there is no other
+  // way to learn it. Re-running an unreachable fetch to produce an error string
+  // would cost exactly what the error cost, which on a dead CDN is the 9–12 s
+  // this module exists to stop paying.
+  const second = await cache.load(BUNDLE)
+  assert.ok(!Buffer.isBuffer(second))
+  assert.equal(second.status, 502)
+  assert.equal(second.reason, first.reason, 'the second answer was not the remembered one')
+  assert.deepEqual(asked, [BUNDLE], 'the diagnostic request went back to the network')
+})
+
+test('a refusal needs no network either time', async (t) => {
+  const { cache, asked } = await cacheIn(t, {})
+  const url = 'https://evil.example/x.js'
+  const first = await cache.load(url)
+  const second = await cache.load(url)
+  assert.ok(!Buffer.isBuffer(first) && !Buffer.isBuffer(second))
+  // A 403 is a property of the URL alone, so both answers come from the
+  // whitelist and neither is remembered work.
+  assert.equal(second.reason, first.reason)
+  assert.deepEqual(asked, [])
+})
+
+test('a remembered failure does not lock out a recovery', async (t) => {
+  // The window is short so a CDN that comes back is reachable again. Without a
+  // bound this would be a negative cache, and a transient blip would look like
+  // a permanent outage for as long as the host stayed up.
+  const routes: Record<string, { status: number, body?: string }> = { [BUNDLE]: { status: 503 } }
+  const { cache, asked } = await cacheIn(t, routes)
+  assert.ok(!Buffer.isBuffer(await cache.load(BUNDLE)))
+
+  await new Promise(resolve => setTimeout(resolve, 5))
+  routes[BUNDLE] = { status: 200, body: 'recovered' }
+
+  // Still inside the window, so still the remembered failure — asserted so the
+  // bound is a real bound rather than an accident of timing.
+  const stillFailing = await cache.load(BUNDLE)
+  assert.ok(!Buffer.isBuffer(stillFailing))
+  assert.deepEqual(asked, [BUNDLE])
+})

@@ -12,6 +12,7 @@
  *
  * @module iris-web/sandbox/script-source
  */
+import { fromProxied } from './bundle-proxy.ts'
 
 /** How a body is executed. */
 export type ScriptMode = 'classic' | 'module'
@@ -87,7 +88,13 @@ export function remoteImports(source: string): string[] {
         const end = line.indexOf(quote, at + 1)
         if (end === -1) break
         const value = line.slice(at + 1, end)
-        if (value.startsWith('http://') || value.startsWith('https://')) found.add(value)
+        if (value.startsWith('http://') || value.startsWith('https://')) {
+          // Reported as the card wrote it, not as we route it. A stalled import
+          // is read by someone who cares which bundle is missing; our proxy in
+          // that sentence would name the wrong resource and send them to the
+          // wrong place.
+          found.add(fromProxied(value) ?? value)
+        }
         at = line.indexOf(quote, end + 1)
       }
     }

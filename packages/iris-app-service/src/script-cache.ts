@@ -107,6 +107,20 @@ export const nodeFetch: FetchLike = async (url, init) => {
 /** Redirect hops followed before giving up. jsDelivr uses one. */
 const MAX_HOPS = 5
 
+/**
+ * How long a failure is remembered, in milliseconds.
+ *
+ * Short on purpose. It exists so that **reading why something failed does not
+ * cost what failing cost**: a failed `import()` hands its caller no response, so
+ * the reason is read by asking this route again from the shell — and without
+ * this window, diagnosing a 502 would repeat the whole unreachable-upstream
+ * attempt, which is the 9–12 s this module was built to stop paying.
+ *
+ * Thirty seconds covers a follow-up that happens immediately and expires long
+ * before a person retries by hand, so a CDN that comes back is not locked out.
+ */
+const FAILURE_MEMORY_MS = 30_000
+
 /** Seven days. See {@link ScriptCacheOptions.ttlSeconds}. */
 const DEFAULT_TTL_SECONDS = 604_800
 
@@ -143,6 +157,8 @@ export class ScriptCache {
   readonly #onError: (error: Error) => void
   /** In-flight fetches, so ten frames opening at once cause one request. */
   readonly #inflight = new Map<string, Promise<Buffer | CacheFailure>>()
+  /** Recent failures, so asking why costs less than failing did. */
+  readonly #failures = new Map<string, { failure: CacheFailure, at: number }>()
 
   /**
    * @param options - where to cache, how to fetch, and the limits.
@@ -205,13 +221,27 @@ export class ScriptCache {
     const cached = await this.#readCached(url)
     if (cached !== undefined) return cached
 
+    // A failure the shell is coming back to read. It has to be answered from
+    // memory: the browser gives a failed `import()` no response to inspect, so
+    // the only way to learn the reason is a second request, and re-running an
+    // unreachable fetch to produce an error message costs exactly what the error
+    // cost in the first place.
+    const remembered = this.#failures.get(url)
+    if (remembered !== undefined) {
+      if (Date.now() - remembered.at < FAILURE_MEMORY_MS) return remembered.failure
+      this.#failures.delete(url)
+    }
+
     // One request per URL even when several frames open together: without this
     // the first chat open after a restart fetches the same 300 KB bundle once
     // per script that imports it.
     const existing = this.#inflight.get(url)
     if (existing !== undefined) return existing
 
-    const work = this.#fetchAndStore(url).finally(() => { this.#inflight.delete(url) })
+    const work = this.#fetchAndStore(url).then((result) => {
+      if (!Buffer.isBuffer(result)) this.#failures.set(url, { failure: result, at: Date.now() })
+      return result
+    }).finally(() => { this.#inflight.delete(url) })
     this.#inflight.set(url, work)
     return work
   }
@@ -221,7 +251,12 @@ export class ScriptCache {
     const base = join(this.#dir, cacheKey(url))
     try {
       const meta = JSON.parse(await readFile(`${base}.json`, 'utf8')) as CacheMeta
-      if (Date.now() - meta.fetchedAt > this.#ttlMs) return undefined
+      // `>=`, not `>`: a TTL of zero has to mean "never fresh", and with `>` an
+      // entry written and read inside the same millisecond is served from a
+      // window of length zero. The difference is one millisecond at seven days
+      // and the whole meaning at zero — and it showed up as a test that passed
+      // most of the time, which is worse than one that fails.
+      if (Date.now() - meta.fetchedAt >= this.#ttlMs) return undefined
       const body = await readFile(`${base}.js`)
       await stat(`${base}.js`)
       return body

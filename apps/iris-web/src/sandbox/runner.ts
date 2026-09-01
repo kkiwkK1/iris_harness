@@ -21,6 +21,7 @@ import { frameSandbox } from './policy.ts'
 import { mintToken, parseFromFrame, type FromFrame, type ToFrame } from './protocol.ts'
 import { buildSrcdoc } from './srcdoc.ts'
 import { rewriteViewportUnits } from './viewport-units.ts'
+import { rewriteBundleImports } from './bundle-proxy.ts'
 
 /** What one running card needs from the shell. */
 export interface RunnerHost {
@@ -58,6 +59,14 @@ export interface RunnerHost {
   documentGranted: boolean
   /** Whether the user granted this card the network. */
   networkGranted: boolean
+  /**
+   * The origin serving the host's bundle proxy.
+   *
+   * Passed in rather than read from `location` here: this module builds frames
+   * and should not also decide where the host lives, and a test that could not
+   * vary it could not check that an unallowed URL is left alone.
+   */
+  bundleOrigin: string
   /** The host snapshot, fetched once and pushed before the card runs. */
   context: ScriptContext
   /** The host page's viewport, read on demand. */
@@ -230,7 +239,19 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
           post({
             iris: token,
             type: 'run',
-            code: rewriteViewportUnits(script.code),
+            /*
+             * Two source transformations, both on the way in, both for reasons
+             * the card cannot know about.
+             *
+             * `vh` is rewritten because a card sized to its own frame would
+             * collapse `100vh` to nothing. Remote imports are routed through the
+             * host because every chat is a fresh opaque origin and HTTP caching
+             * is partitioned by origin, so a card's bundle would be a cold fetch
+             * every time — 307 KB at 9–12s, measured, four timeouts in six
+             * openings. Only URLs already allowed are routed; anything else is
+             * left as written so the frame's CSP refuses it exactly as before.
+             */
+            code: rewriteBundleImports(rewriteViewportUnits(script.code), host.bundleOrigin),
             mode: host.mode,
             scriptId: script.id,
           })

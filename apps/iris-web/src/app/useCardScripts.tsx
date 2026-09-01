@@ -29,7 +29,8 @@ import { startCardScripts } from '../sandbox/card-scripts.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import { librariesFor } from '../sandbox/libraries.ts'
 import { runCard } from '../sandbox/runner.ts'
-import { modeFor, stripCodeFence } from '../sandbox/script-source.ts'
+import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
+import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun } from '../sandbox/script-run-state.ts'
 
 /**
@@ -110,6 +111,8 @@ export function CardScriptFrames(): ReactElement {
               mode: modeFor('card-script'),
               libraries: librariesFor('card-script', window.location.origin),
               documentGranted: input.documentGranted,
+              // Same origin as the page: the host serves both the interface and the proxy.
+              bundleOrigin: window.location.origin,
               // Not in the contract yet, and not defaulted to `true` on the way
               // there: a grant nobody has been asked for is not a grant.
               networkGranted: false,
@@ -149,13 +152,35 @@ export function CardScriptFrames(): ReactElement {
                   input.onPhase(script.id, { phase: 'bootstrap-failed', detail: message })
                 }
               },
-              onError: (message, member, scriptId) =>
+              onError: (message, member, scriptId) => {
                 input.onPhase(
                   scriptId,
                   member === undefined
                     ? { phase: 'threw', detail: message }
                     : { phase: 'refused', member },
-                ),
+                )
+                if (member !== undefined) return
+                /*
+                 * Then ask the host why, if this was a bundle it fetched.
+                 *
+                 * Reported first and enriched after: the reader gets the failure
+                 * immediately, and the reason replaces the browser's
+                 * "failed to fetch dynamically imported module" — a sentence that
+                 * names nothing — as soon as the host answers. The frame cannot
+                 * make this request itself; from an opaque origin the header is
+                 * not on the CORS safelist even when the response is readable.
+                 */
+                void (async () => {
+                  for (const url of remoteImports(input.scripts.find(s => s.id === scriptId)?.code ?? '')) {
+                    const reason = await bundleFailureReason(url, window.location.origin, target =>
+                      fetch(target),
+                    )
+                    if (reason === undefined) continue
+                    input.onPhase(scriptId, { phase: 'threw', detail: `${message} — ${reason}` })
+                    return
+                  }
+                })()
+              },
             },
             host.ownerDocument,
           ),
