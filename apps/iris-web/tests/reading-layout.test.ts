@@ -88,13 +88,21 @@ test('the recorded rail is legible, not merely present', () => {
    * still reports how many readings a passage had, and a mark below the threshold
    * of being seen reports nothing.
    *
-   * Pinned by token rather than by measured ratio: the ratio lives in the token,
-   * and asserting the number here would duplicate a value that belongs to the
-   * palette and would go stale the moment the palette moved.
+   * This test used to pin the token *name* and argued, in this comment, that
+   * asserting a ratio here would duplicate something owned by the palette. That
+   * was wrong in a way worth keeping: a name says which colour is used, never
+   * whether it can be seen. The palette moved under this assertion and it stayed
+   * green across the entire period the tick was invisible — a test named "is
+   * legible" that could not observe legibility.
+   *
+   * The ratio is now computed in `contrast.test.ts`, from the token itself, so
+   * the two halves are split honestly: that file asserts the mark clears 3:1,
+   * and this one asserts the rail is still wired to the token that carries the
+   * floor rather than to a decorative hairline.
    */
   const record = block(".iris-rail--record .iris-rail__tick")
   assert.ok(record !== undefined, 'the recorded tick rule is missing')
-  assert.match(record, /background:\s*var\(--iris-rule-strong\)/, 'the recorded tick is back below visibility')
+  assert.match(record, /background:\s*var\(--iris-tick\)/, 'the recorded tick is back on a decorative colour')
 
   const count = block(".iris-rail--record .iris-rail__count")
   assert.ok(count !== undefined, 'the recorded count rule is missing')

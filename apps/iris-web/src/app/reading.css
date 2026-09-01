@@ -180,7 +180,7 @@
   padding: 0;
   border: 0;
   border-radius: 1px;
-  background: var(--iris-rule-strong);
+  background: var(--iris-tick);
   cursor: pointer;
   transition:
     height var(--iris-fast) var(--iris-ease),
@@ -435,12 +435,17 @@
  * `--iris-rule` — 1.34:1 against the paper in light, which is the same range a
  * reviewer measured this project's turn ordinal at and correctly called a grey
  * smudge rather than a mark. A record nobody can see is not a record, so it
- * carries the same tick colour as the live rail (1.66:1) and the distinction is
+ * carries the same tick colour as the live rail and the distinction is
  * made where it costs nothing: the selected tick takes the quiet accent instead
  * of the full one, and the spine thins.
+ *
+ * That tick colour is now `--iris-tick`, held to 3:1 — see the token. The
+ * version this comment originally described sat at 1.66:1, and a reviewer
+ * reading the live page found it visible only *by comparison* with the brighter
+ * current tick. Legible-only-beside-something-brighter is not legible.
  */
 .iris-rail--record .iris-rail__tick {
-  background: var(--iris-rule-strong);
+  background: var(--iris-tick);
   cursor: default;
 }
 

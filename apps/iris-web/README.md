@@ -336,14 +336,28 @@ reported, any refusal) is shown beside the frame.
   reported to the shell. A mutation deeper inside an object that already exists is
   not, and would need either a deep proxy or an explicit save call from the card.
 
-- **The visual design has still not been looked at in a browser.** The sandbox
-  has — eleven runs of it — but that exercised the frame, not the interface.
-  `npm run check:render` remains a substitute, not a replacement: it proves the
-  tree renders and that a disposed slot contribution leaves nothing behind, and
-  it is blind to layout, colour, motion, scrolling and drag-and-drop. Open
-  `npx vite preview` before trusting the visual design. (Note: killing the `npx`
-  wrapper leaves the child `node` process holding the port — kill it by PID, or
-  the next build cannot write.)
+- **The visual design has now been looked at, within a stated range.** A ten-item
+  pass ran against the production build on a real host, real card and real model,
+  in both themes at 1440-class width: reading-first type, bottom anchoring
+  (28px from the last message to the composer on a two-message chat),
+  hover-revealed actions, theme parity (body 13.9:1, turn ordinal 8.28:1 in
+  dark), the rail's ladder form, paper-and-desk, panel copy, the connection
+  route, and streaming. **Two things in that list are still unverified**: the
+  rail's *compact* form, which needs nine real generations to reach and was not
+  worth the tokens, and the *mid-stream* state, which the model outran — a 2.5s
+  sampling window caught only the settled result, and "no flicker was seen" is
+  not "no flicker occurs". Both are still carried by `check:render` and the unit
+  tests alone. Nothing outside that range — narrow widths, motion, drag-and-drop
+  — has been seen either. `npm run check:render` remains a substitute, not a
+  replacement. (Note: killing the `npx` wrapper leaves the child `node` process
+  holding the port — kill it by PID, or the next build cannot write.)
+- **The renderer stalls intermittently on chats with very large highlighted code
+  blocks.** Observed as repeated screenshot timeouts against a card whose opening
+  message is a full-page HTML block; retrying always worked, and nothing else
+  misbehaved. Left alone deliberately: when card UI moves into the message frame
+  that block stops being syntax-highlighted page content, so the likeliest fix is
+  a pipeline that is already planned. Worth re-checking rather than pre-emptively
+  optimising.
 - The lorebook editor is not built; `PLAN.md` schedules it after the core path.
 - **A card's frame does not survive edit mode.** Re-rendering the message a card
   lives in tears the frame down and builds a new one, which restarts the card:

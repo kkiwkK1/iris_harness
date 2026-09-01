@@ -98,6 +98,24 @@
   --iris-rule-strong: #bcc4ca;
   --iris-rule-faint: #e2e6e9;
 
+  /*
+   * The variant rail's ticks, and the one colour here held to a contrast floor.
+   *
+   * Separate from `--iris-rule-strong` because the two are different kinds of
+   * mark. A hairline border is decoration and is allowed to be quiet; a tick
+   * *carries information* — how many readings a passage had, and which one is in
+   * the text — so it is a non-text UI indicator and takes the 3:1 that implies.
+   * It also needs the margin more than text does: at 2px tall there is almost no
+   * ink to judge an edge by.
+   *
+   * Twice wrong before this. First at `--iris-rule`, 1.34:1, which was a number
+   * on paper and nothing on screen. Then "fixed" to 1.66:1 — 0.07 above the very
+   * ratio this project had already called a grey smudge, which is a nudge
+   * wearing a fix's clothes. A reviewer found it still legible only by contrast
+   * with the brighter tick beside it, which means it was not legible.
+   */
+  --iris-tick: #828e98;
+
   --iris-ink: #161b22;
   --iris-ink-secondary: #414b55;
   --iris-ink-tertiary: #6c7781;
@@ -131,6 +149,9 @@
   --iris-rule: #232c35;
   --iris-rule-strong: #33404b;
   --iris-rule-faint: #1a222a;
+
+  /** 3.22:1 on `--iris-bg-page`. See the light theme for why this is its own token. */
+  --iris-tick: #586a79;
 
   /* Warm ink on a cool ground: the lamplight half of the metaphor, and it
      measurably reduces the glare of a white-on-blue-black page at night. */
