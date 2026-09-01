@@ -170,9 +170,25 @@ if (existsSync(`${SAMPLE}/战锤群星闪耀.json`)) {
  * @returns {number} how many times it is reached for.
  */
 function reachesFor(code, name) {
-  const pattern = new RegExp(`(^|[^A-Za-z0-9_$.])(TavernHelper\\s*\\.\\s*)?${name}\\s*[(.]`, 'g')
+  const pattern = new RegExp(
+    `(^|[^A-Za-z0-9_$.])${WINDOW_CHAIN}${NAMESPACE}${name}\\s*(\\?\\s*)?[(.]`,
+    'g',
+  )
   return [...code.matchAll(pattern)].length
 }
+
+/**
+ * The window hops a card takes to get out of its iframe.
+ *
+ * Card scripts run inside a frame, so the API is routinely reached as
+ * `window.parent.TavernHelper.x` or `window.top.TavernHelper.x` rather than
+ * bare. Measured in this corpus for `extension_settings`, whose readers are
+ * written exactly this way. Repeated, because `window.parent.top` happens.
+ */
+const WINDOW_CHAIN = '((?:window|parent|top|self|globalThis)\\s*(?:\\?\\s*)?\\.\\s*)*'
+
+/** The namespace object itself, optionally, with optional chaining. */
+const NAMESPACE = '(TavernHelper\\s*(?:\\?\\s*)?\\.\\s*)?'
 
 /**
  * Shapes the detector must see, and shapes it must not.
@@ -196,12 +212,32 @@ const DETECTOR_FIXTURE = {
     'chained off the result': 'getWorldbook(n).then(x => x)',
     'after a destructure': 'const { getWorldbook } = TavernHelper; getWorldbook(n)',
     'at the very start of the body': 'getWorldbook(n)',
+    /*
+     * Multi-path arrival. The same member is reachable by several routes, and a
+     * detector that knows one route reports the others as absent — which is the
+     * same output as "nobody calls it". Card scripts run in a frame, so the
+     * window hops below are the normal way out of it, not exotica: this corpus's
+     * `extension_settings` readers are written exactly this way.
+     */
+    'out through window': 'window.TavernHelper.getWorldbook("book")',
+    'out through the parent frame': 'window.parent.TavernHelper.getWorldbook("book")',
+    'out through the top frame': 'window.top.TavernHelper.getWorldbook("book")',
+    'a window hop to the bare global': 'window.parent.getWorldbook("book")',
+    'optional chaining on the namespace': 'TavernHelper?.getWorldbook("book")',
+    'optional chaining on the call': 'getWorldbook?.("book")',
   },
   mustNotSee: {
     'another object with the same method': 'myCache.getWorldbook("book")',
     'a longer identifier that contains it': 'getWorldbookNames("book")',
     'a prefixed identifier': 'myGetWorldbook("book")',
     'bare mention with no call or access': 'typeof getWorldbook === "function"',
+    /*
+     * Widening for the window hops must not widen to *any* receiver — the whole
+     * point of the boundary is that a card's own cache object named `x` calling
+     * `x.getWorldbook()` is not this API. These stay excluded.
+     */
+    'an unrelated receiver reached through window': 'window.myCache.getWorldbook("b")',
+    'a deep unrelated path': 'a.b.c.getWorldbook("b")',
   },
 }
 
