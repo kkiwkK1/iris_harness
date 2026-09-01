@@ -343,8 +343,10 @@ reported, any refusal) is shown beside the frame.
   hover-revealed actions, theme parity (body 13.9:1, turn ordinal 8.28:1 in
   dark), the rail's ladder form, paper-and-desk, panel copy, the connection
   route, and streaming. **Two things in that list are still unverified**: the
-  rail's *compact* form, which needs nine real generations to reach and was not
-  worth the tokens, and the *mid-stream* state, which the model outran — a 2.5s
+  rail's *compact* form — reachable now without spending anything, via the
+  **Variant rail preview** in the settings drawer under `npm run dev`, which
+  hands the real component a count instead of generating nine readings — and the
+  *mid-stream* state, which the model outran — a 2.5s
   sampling window caught only the settled result, and "no flicker was seen" is
   not "no flicker occurs". Both are still carried by `check:render` and the unit
   tests alone. Nothing outside that range — narrow widths, motion, drag-and-drop

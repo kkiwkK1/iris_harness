@@ -23,6 +23,7 @@ import { ChoiceField, NumberField, Section, TextField } from './fields.tsx'
 import { ConnectionPanel } from './ConnectionPanel.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
+import { RailPreview } from '../dev/RailPreview.tsx'
 import { READING_LIMITS, type ReadingPrefs, type ThemeChoice } from '../theme/theme.ts'
 
 /** Reading preferences and their setter, owned by the shell because they are per-device. */
@@ -252,6 +253,7 @@ export function SettingsDrawer({
           harness — and the runner it pulls in — drops out of the bundle.
         */}
         {import.meta.env.DEV ? <SandboxProbe /> : null}
+        {import.meta.env.DEV ? <RailPreview /> : null}
 
         <Slot name="iris.settings.sections" owner={{}} />
       </div>
