@@ -60,6 +60,11 @@ test('an artifact is served with the header the frame needs', async (t) => {
   // the deployment inside a cache only the browser can see, which is exactly how
   // the bundle route's missing CORS header survived several restarts.
   assert.equal(headers()['cache-control'], 'no-cache')
+  // Resource Timing is origin-restricted: without this an opaque-origin frame
+  // reads zeroes, and a judgement built on those can say a request was sent but
+  // not whether it finished or is still hanging.
+  assert.equal(headers()['timing-allow-origin'], '*')
+  assert.equal(headers()['vary'], 'Origin')
 })
 
 test('every answer carries the header, not only the successful one', async (t) => {
@@ -76,6 +81,8 @@ test('every answer carries the header, not only the successful one', async (t) =
     // A route whose CORS behaviour depends on the outcome is a route where what
     // failure looks like depends on who is asking.
     assert.equal(headers()['access-control-allow-origin'], '*', `${what} answered without the header`)
+    assert.equal(headers()['timing-allow-origin'], '*', `${what} answered without timing access`)
+    assert.equal(headers()['vary'], 'Origin', `${what} answered without the vary net`)
   }
 
   const { res, status, headers } = capture()

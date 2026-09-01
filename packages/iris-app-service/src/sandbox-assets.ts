@@ -26,6 +26,24 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 
+/**
+ * What every answer on this route carries.
+ *
+ * `access-control-allow-origin` is the reason the route exists apart from the
+ * frontend plugin. `timing-allow-origin` is what lets an opaque-origin frame
+ * read a real Resource Timing entry instead of the zeroes a cross-origin fetch
+ * reports — the difference between "the request was sent" and "the request
+ * finished", which is the whole question when a card stops loading. `vary` is a
+ * net: nothing varies by origin while the allowance is a constant `*`, and a
+ * cache that had not been told to key on it would be wrong the moment that
+ * changed.
+ */
+const SHARED_HEADERS = {
+  'access-control-allow-origin': '*',
+  'timing-allow-origin': '*',
+  vary: 'Origin',
+} as const
+
 /** Content types for what this directory actually holds. */
 const TYPES: Readonly<Record<string, string>> = {
   '.js': 'application/javascript; charset=utf-8',
@@ -49,7 +67,7 @@ export async function serveSandboxAsset(
   res: ServerResponse,
 ): Promise<void> {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
-    res.writeHead(405, { 'access-control-allow-origin': '*', allow: 'GET, HEAD' })
+    res.writeHead(405, { ...SHARED_HEADERS, allow: 'GET, HEAD' })
     res.end()
     return
   }
@@ -61,7 +79,7 @@ export async function serveSandboxAsset(
   // three characters of an unrelated path and look *that* up: it happens to miss,
   // but by arithmetic rather than by a rule.
   if (!pathname.startsWith(base)) {
-    res.writeHead(404, { 'access-control-allow-origin': '*' })
+    res.writeHead(404, SHARED_HEADERS)
     res.end()
     return
   }
@@ -70,7 +88,7 @@ export async function serveSandboxAsset(
   try {
     rest = decodeURIComponent(pathname.slice(base.length)).replace(/^\/+/, '')
   } catch {
-    res.writeHead(400, { 'access-control-allow-origin': '*' })
+    res.writeHead(400, SHARED_HEADERS)
     res.end()
     return
   }
@@ -83,7 +101,7 @@ export async function serveSandboxAsset(
   const root = resolve(dir)
   const file = resolve(join(root, rest))
   if (file !== root && !file.startsWith(root + sep)) {
-    res.writeHead(403, { 'access-control-allow-origin': '*' })
+    res.writeHead(403, SHARED_HEADERS)
     res.end()
     return
   }
@@ -92,14 +110,14 @@ export async function serveSandboxAsset(
   try {
     body = await readFile(file)
   } catch {
-    res.writeHead(404, { 'access-control-allow-origin': '*' })
+    res.writeHead(404, SHARED_HEADERS)
     res.end()
     return
   }
 
   const dot = file.lastIndexOf('.')
   res.writeHead(200, {
-    'access-control-allow-origin': '*',
+    ...SHARED_HEADERS,
     'content-type': TYPES[file.slice(dot).toLowerCase()] ?? 'application/octet-stream',
     'content-length': body.byteLength,
     // Revalidated, not held. These are build artifacts that change whenever the

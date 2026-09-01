@@ -314,7 +314,22 @@ test('every response carries the header a module fetch needs', async (t) => {
       '*',
       `status ${String(entry.status)} answered without the header a module fetch needs`,
     )
+    assert.equal(entry.headers['timing-allow-origin'], '*', `status ${String(entry.status)} withheld timing`)
+    assert.equal(entry.headers['vary'], 'Origin', `status ${String(entry.status)} answered without the vary net`)
   }
+
+  // The browser holds nothing. The cold-CDN cost this route exists to avoid is
+  // already paid by the disk cache; a browser copy would save the ~46 ms it now
+  // costs and buy back the failure this route has already paid for twice — a
+  // response whose correctness depends on a header, held past the header
+  // changing. `no-cache` is revalidate-before-use, so copies already poisoned in
+  // the wild are replaced on next use instead of expiring on their own schedule.
+  assert.equal(seen[0]?.headers['cache-control'], 'no-cache')
+  assert.equal(
+    String(seen[0]?.headers['cache-control']).includes('max-age'),
+    false,
+    'the browser was told it may hold this response',
+  )
 })
 
 test('the cache stops growing at its budget instead of evicting', async (t) => {

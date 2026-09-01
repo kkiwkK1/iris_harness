@@ -190,7 +190,19 @@ const FAILURE_MEMORY_MS = 30_000
  * doing it. `SANDBOX.md` carries the same warning; it is repeated here because
  * this is where someone editing the header is standing.
  */
-const CORS_HEADER = { 'access-control-allow-origin': '*' } as const
+const CORS_HEADER = {
+  'access-control-allow-origin': '*',
+  // Resource Timing is origin-restricted, so without this every timing an
+  // opaque-origin frame reads back is zero — and a judgement built on it can say
+  // a request was *sent* but not whether it finished or is still hanging. Those
+  // are the two readings that matter when a card stops loading.
+  'timing-allow-origin': '*',
+  // A safety net rather than a present need: the allowance is a constant `*`, so
+  // nothing varies by origin today. If it ever becomes origin-dependent, a cache
+  // that had not been told to key on `Origin` would serve one origin's answer to
+  // another — and this route already cost two rounds to a cached header.
+  vary: 'Origin',
+} as const
 
 /** Seven days. See {@link ScriptCacheOptions.ttlSeconds}. */
 const DEFAULT_TTL_SECONDS = 604_800
@@ -278,9 +290,20 @@ export class ScriptCache {
       // type would let it choose what the browser does with the bytes.
       'content-type': 'application/javascript; charset=utf-8',
       'content-length': body.byteLength,
-      // The body is keyed by the full URL and a pinned URL never changes, so the
-      // browser may hold it as long as the host does.
-      'cache-control': `public, max-age=${String(Math.floor(this.#ttlMs / 1000))}`,
+      // **The browser holds nothing; the host's disk still holds it for the TTL.**
+      //
+      // The 9–12 s cold CDN fetch this route exists to avoid is already paid by
+      // the disk cache, which answers in about 46 ms. A browser copy would save
+      // that 46 ms and buy back the failure mode this route has now paid for
+      // twice: a response whose correctness depends on a header that can change
+      // must not be held past the change. A missing CORS header lived a full week
+      // in Chrome's partition once already, invisible to every check the host can
+      // run on itself.
+      //
+      // `no-cache` is revalidate-before-use, not "do not store": the poisoned
+      // copies still in the wild get replaced on their next use rather than
+      // expiring on their own schedule.
+      'cache-control': 'no-cache',
     })
     res.end(req.method === 'HEAD' ? undefined : body)
   }

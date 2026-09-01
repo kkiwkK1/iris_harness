@@ -414,5 +414,17 @@ test('the bundle route is mounted, and refuses on the host side', async () => {
       '*',
       `${what} answered without the header a module fetch needs`,
     )
+    // Without this an opaque-origin frame reads zeroes from Resource Timing, and
+    // a judgement built on those can say a request was sent but not whether it
+    // finished — the two readings that matter when a card stops loading.
+    assert.equal(response.headers.get('timing-allow-origin'), '*', `${what} withheld timing`)
+    assert.equal(response.headers.get('vary'), 'Origin', `${what} answered without the vary net`)
+    // Nothing on this route may be held past a header change. The cold-CDN cost
+    // it exists to avoid is already paid on the host's disk.
+    assert.equal(
+      (response.headers.get('cache-control') ?? '').includes('max-age'),
+      false,
+      `${what} told the browser it may hold this response`,
+    )
   }
 })
