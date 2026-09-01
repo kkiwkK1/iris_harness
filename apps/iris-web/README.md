@@ -139,7 +139,7 @@ single place that string is assembled.
 | `sandbox/card-scripts.ts` | the set of frames one chat runs: card order, failure isolation, teardown, and the checks that a frame really entered the document and really became ready |
 | `sandbox/consent.ts` | the three-state run-scripts answer. Absent is not a decline, and the field beside it uses the opposite convention |
 | `sandbox/script-run-state.ts` | what a script is doing, in the probe's vocabulary — `dispatched` is not `running`, and `ran` is not `working` |
-| `sandbox/tavern-helper.ts` | the 28-member card API over a pushed snapshot: synchronous reads, asynchronous writes, and the operation rather than a merged tree on the wire |
+| `sandbox/tavern-helper.ts` | the 36-member card API over a pushed snapshot: synchronous reads, asynchronous writes, and the operation rather than a merged tree on the wire |
 | `sandbox/host-events.ts` | which host events reach a card and under which upstream names — deliberately smaller than the table |
 
 **CSP does work here, just not the work it was ruled out for.** It cannot forbid
@@ -191,7 +191,7 @@ So three things report rather than assume:
 | signal | what it settles |
 | --- | --- |
 | `bootstrap-error` | the frame died before it could speak. Sent **without** a run token, because what it reports may be "the token never arrived"; accepted on `event.source` alone and believed only as a diagnostic — it can neither run code nor change state. Three tests pin that this bypass is exactly one message wide |
-| `globals` | which of the published names — `parent`, `top`, `SillyTavern`, `extension_settings`, and the 27 Tavern Helper members — the frame could actually define on its own window. Whether `parent` is redefinable is a browser fact this project cannot settle from outside a browser, so the frame attempts it and says what it achieved |
+| `globals` | which of the published names — `parent`, `top`, `SillyTavern`, `extension_settings`, and the 35 Tavern Helper members — the frame could actually define on its own window. Whether `parent` is redefinable is a browser fact this project cannot settle from outside a browser, so the frame attempts it and says what it achieved |
 | the 8-second silence timeout | "stuck at running" was the one state that could not explain itself. Readiness now splits it in two: stalled before `frame ready` means the frame never started; stalled after means the body never finished |
 
 ### What the instrumentation actually bought
@@ -211,7 +211,7 @@ progress from repetition.
 | 4 | the frame severed its own voice | `publishGlobals` redefined `window.parent`, and `post()` read the channel late. Now captured at boot, pinned by a build assertion |
 | 5 | module vs classic semantics | upstream runs every card as a module; the mode is carried, never sniffed |
 | 6 | six library globals missing | one crash per round became one report naming all six |
-| 7–8 | the 28-member facade, then `getScriptId` | the facade seam turned out to be a package boundary, not a missing function |
+| 7–8 | the card-API facade, then `getScriptId` | the facade seam turned out to be a package boundary, not a missing function |
 | 9 | `YAML is not defined` | zero diagnosis cost: the banner had named it three runs earlier |
 | 10 | `$ is not defined` | not a missing library — a missing *injection source*. See below |
 | 11 | — | ran to completion |
@@ -381,21 +381,39 @@ reported, any refusal) is shown beside the frame.
   land in the panel and the notice bar, never in the conversation. The policy is
   `AUTORUN.md` and the reasoning behind its permission clauses is `GRANTS.md`.
 
-  **Verified on a real host, and only this far**: the consent gate (wording, real
-  byte count, both answers, the decision surviving a reload) and the happy path
-  (two of a real card's scripts reaching `loaded`, two frames reporting
-  `isConnected`). The declined path was verified separately on a
-  nine-script card: an explicit `false` stored, no re-ask after a reload, the
-  panel naming the state with a way back, all nine scripts still listed, and no
-  frames. The variable panel has since rendered a real MVU
-  state tree without breaking — three top-level keys, three levels of nesting,
-  CJK keys, 31 lines of YAML — which until then had only ever been fed the fake's
-  seeds. The **per-script failure lines** have been seen with real
-  content — four of them at once on a nine-script card's first run, carrying the
-  missing-globals banner and `waitGlobalInitialized is not defined`, which is how
-  that gap was found. **Still not exercised in a browser**: the notice bar, and
-  the `silent` timeout firing. No run has yet gone quiet rather than failing
-  loudly, and those two are the surfaces for the quiet case. Those are carried by unit
+  **Verified on a real host.** The consent gate (wording, real byte count, both
+  answers, the decision surviving a reload). The declined path on a nine-script
+  card: an explicit `false` stored, no re-ask after a reload, the panel naming the
+  state with a way back, all nine scripts still listed, and no frames. The
+  variable panel rendering a real MVU state tree — three top-level keys, three
+  levels of nesting, CJK keys, 31 lines of YAML — which until then had only ever
+  been fed the fake's seeds. The **per-script failure lines** with real content,
+  four at once on a first run, carrying the missing-globals banner and
+  `waitGlobalInitialized is not defined`, which is how that gap was found.
+
+  And, as of 2026-09-01, **the whole point of the thing**: the hardest card in
+  the corpus reporting *4 of 4 loaded and listening*. MagVarUpdate's production
+  bundle fetched through the host proxy, its provider registering, winning the
+  unique-script election against the parent-page DOM, reaching its `Vue.watch`
+  gate, publishing `Mvu` into the shared card namespace, and all three consumer
+  scripts waking on it. That chain is the reason this sandbox exists, and until
+  that run every part of it had been argued rather than observed.
+
+  The distance between those two paragraphs was eleven rounds, and almost none of
+  it was the sandbox refusing anything. It was **a blocked preset behind a
+  `crossorigin` attribute whose host sent no CORS header; `process.env.NODE_ENV`
+  unreplaced in a config that inherited no defaults; a lodash namespace that had
+  every method and could not be called; a CDN response cached for seven days
+  before the header that made it valid; and five API members upstream declares
+  and this port had not built.** Each was found by an instrument that had to be
+  built first, and several of those instruments were wrong on their first
+  attempt — the timing check compared against a URL the browser was never asked
+  for, and the preset check ran where Node's `process` exists. What is written in
+  `METHODS.md` about verifying that a check can fail was paid for here.
+
+  **Still not exercised in a browser**: the notice bar, and the `silent` timeout
+  firing. No run has yet gone quiet rather than failing loudly, and those two are
+  the surfaces for the quiet case. Those are carried by unit
   tests, which is exactly the coverage that let the first version ship without
   attaching a single frame.
 
