@@ -208,24 +208,40 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     }
 
     /*
-     * Absent rather than `undefined`: the host defaults an unnamed script
-     * partition to `anonymous`, and sending an explicit undefined would be a
-     * different statement from not saying.
+     * A script scope with no id is refused here, not sent.
+     *
+     * Upstream throws in both directions rather than inventing an owner —
+     * `JS-Slash-Runner/src/function/variables.ts` at the read and the write —
+     * and the host now answers `invalid-request` for the same reason: an
+     * `anonymous` catch-all would merge two unidentified callers into one
+     * partition, and that partition is persisted. Refusing here rather than one
+     * round trip later is what makes the message name the member instead of the
+     * request.
+     *
+     * Normal script execution never reaches this: upstream fills the id from the
+     * iframe's name, and Iris carries it on the `run` message. What reaches it is
+     * a card calling `{type:'script'}` explicitly while the frame has no identity
+     * — a body from disk, or the probe.
      *
      * Worth knowing before building on this scope: **the id travels with the
-     * card, the values do not.** Upstream stores script identity on the card
-     * (`data.extensions.tavern_helper.scripts[].data`) but keeps enabled-state
-     * keyed by character name in `extension_settings`, and measured across the
-     * local corpus the 22 script ids appear zero times in `settings.json` and
-     * zero times in 31 chat files. 20 of those 22 carry an empty `data`; the two
-     * that do not hold a display toggle and a build timestamp. There is no
-     * accumulated runtime state in this scope anywhere in the corpus, and MVU
-     * never writes it — its settings go to `extension_settings`, its gameplay
-     * state to the chat and message scopes.
+     * card, the values do not.** Upstream keeps a script's `data` on the card
+     * (`data.extensions.tavern_helper.scripts[].data`) while enabled-state lives
+     * in `extension_settings`, keyed by character name. Across the local corpus —
+     * 19 cards, 14 of them with scripts, 47 scripts — 8 carry a non-empty `data`,
+     * and every one of those is a switch or an annotation (`{statusRule}`,
+     * `{isEnabled}`, a build timestamp). Nothing in the corpus grows with play,
+     * and MVU never writes this scope at all: its settings go to
+     * `extension_settings`, its gameplay state to the chat and message scopes.
      */
     if (scope === 'script') {
       const scriptId = option?.script_id ?? host.scriptId()
-      if (scriptId !== undefined) fields['scriptId'] = scriptId
+      if (scriptId === undefined) {
+        throw new UnsupportedApiError(
+          `${member}({type:'script'})`,
+          'A script scope needs a script_id, and this body has no identity of its own.',
+        )
+      }
+      fields['scriptId'] = scriptId
     }
 
     return fields

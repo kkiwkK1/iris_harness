@@ -240,3 +240,32 @@ test("a source's own failure is reported as the source's, not as a refusal", asy
     /cdn\.jsdelivr\.net answered 404/,
   )
 })
+
+test('a deleted card does not leave its document grant for the next card to inherit', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+  const { handlers, policyPath } = makeService(dir)
+
+  await handlers['script.setDocumentGrant']({ characterId: 'aria', granted: true })
+  await handlers['script.setEnabled']({ characterId: 'aria', scriptId: 'core', enabled: false })
+  assert.equal((await handlers['script.list']({ characterId: 'aria' })).documentGranted, true)
+
+  await handlers['character.delete']({ characterId: 'aria' })
+
+  // Ids are minted from the card's name against the cards that exist, so
+  // deleting "Aria" frees `aria` and the next card named Aria takes it. A
+  // policy left behind is not orphaned — it is inherited, and it carries the
+  // grant the user gave to a card that no longer exists.
+  await handlers['character.import']({ filename: 'aria.json', content: Buffer.from(CARD, 'utf8').toString('base64') })
+
+  const after = await handlers['script.list']({ characterId: 'aria' })
+  assert.equal(after.documentGranted, false, 'a new card inherited a grant the user never gave it')
+  assert.deepEqual(
+    after.scripts.map(row => row.enabled),
+    [true, true, false],
+    'a new card inherited the previous card’s script switches',
+  )
+  assert.equal((await readFile(policyPath, 'utf8')).includes('aria'), false)
+})

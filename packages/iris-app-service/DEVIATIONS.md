@@ -54,6 +54,14 @@ writes this scope at all — its settings go to `extension_settings.mvu_settings
 (per-installation) and its gameplay state to the `chat` and `message` scopes.
 So the deviation costs no behaviour today.
 
+Upstream already splits identity from value here, which is the other half of the
+argument: **all 47 script ids appear 0 times in `settings.json` and 0 times
+across the 31 chat files**, while script *enablement* is stored per-installation
+in `extension_settings.tavern_helper.script.enabled.characters` — keyed by
+character **name**. A script's id travels with the card; what the installation
+decided about it does not. (This search was first run over an undercounted 22 of
+the 47 ids; re-run over all 47, the result is unchanged.)
+
 **What would overturn it.** One real card that writes player progress into
 `scripts[].data`. `tests/script-variables.test.ts` re-measures the corpus on
 every run and fails when a key appears that was not there when this was decided.

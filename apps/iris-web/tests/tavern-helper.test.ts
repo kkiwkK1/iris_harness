@@ -222,6 +222,28 @@ test('a script-scoped write is partitioned by the running script', async () => {
   assert.equal(calls[0]?.params['scriptId'], 'card-7')
 })
 
+test('a script scope with no identity is refused, not sent as anonymous', async () => {
+  /*
+   * Upstream throws in both directions rather than inventing an owner
+   * (`JS-Slash-Runner/src/function/variables.ts`), and the host refuses for the
+   * concrete reason: an `anonymous` catch-all merges two unidentified callers
+   * into one persisted partition, so they would share state on disk without
+   * either asking to.
+   *
+   * The frame refuses first so the message names the member rather than the
+   * request. Reachable only from a body with no entry in `script.list` — a file
+   * from disk, or the probe.
+   */
+  const { api, calls } = surface()
+  await assert.rejects(
+    () => (api['replaceVariables'] as (v: object, o: object) => Promise<void>)({}, { type: 'script' }),
+    (error: unknown) =>
+      error instanceof UnsupportedApiError && error.member === "replaceVariables({type:'script'})",
+  )
+
+  assert.deepEqual(calls, [], 'nothing should reach the host')
+})
+
 test('a scope the host does not store is refused before it becomes a round trip', async () => {
   // `preset` and `character` are real scopes in the domain but not in the
   // contract's enum. Sending one earns an `invalid-request` that names the

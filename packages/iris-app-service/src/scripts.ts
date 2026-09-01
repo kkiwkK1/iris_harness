@@ -68,6 +68,24 @@ export class ScriptPolicyStore {
   }
 
   /**
+   * Drop a card's policy, when its character is deleted.
+   *
+   * Load-bearing rather than tidy. Ids are derived from the card's name —
+   * `library.ts` mints `uniqueId(toId(name), …)` against the cards **present** —
+   * so deleting "Aria" frees the id `aria`, and the next card imported under
+   * that name takes it. A policy left behind is therefore not orphaned, it is
+   * inherited, and one of the things it carries is `documentGranted`: a grant
+   * the user gave to one card would silently apply to a different one.
+   * @param characterId - the card being deleted.
+   */
+  async forget(characterId: string): Promise<void> {
+    await this.#load()
+    if (this.#file.characters[characterId] === undefined) return
+    delete this.#file.characters[characterId]
+    await this.#save()
+  }
+
+  /**
    * Whether a card may reach the real page document.
    * @param characterId - the card.
    * @returns the grant, defaulting to denied.

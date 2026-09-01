@@ -407,12 +407,15 @@ export class IrisAppService {
 
       'character.delete': async ({ characterId }) => {
         await library.delete(characterId)
-        // Both stores have carried a `forget` since they were written and
-        // nothing called either, so a deleted card left its partitions behind.
-        // They are keyed by character id, so the next card to take that id would
-        // have inherited them.
+        // Every per-character store, not just the ones that happened to have a
+        // `forget`. Ids are minted from the card's name against the cards that
+        // exist, so deleting one frees its id and the next card imported under
+        // that name inherits whatever was left behind. For the script policy
+        // that includes `documentGranted` — a grant the user gave to one card
+        // would silently apply to another.
         await this.#options.extensionSettings?.forget(characterId)
         await this.#options.scriptVariables?.forget(characterId)
+        await scripts?.forget(characterId)
         return {}
       },
 
