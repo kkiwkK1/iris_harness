@@ -113,6 +113,17 @@ export function CardScriptFrames(): ReactElement {
             },
             host.ownerDocument,
           ),
+        /*
+         * Into the document, which is what makes it run at all.
+         *
+         * `runCard` builds the iframe and stops there; an iframe that is never
+         * inserted never loads, so the bootstrap never parses and the frame never
+         * says anything. This was missing on the first pass and produced a
+         * perfectly quiet failure: two scripts stuck on `starting…`, no frames,
+         * no console errors, no notices — nothing had failed, because nothing had
+         * begun.
+         */
+        attach: card => host.append(card.element),
         onState: states => actionsOf(store).setRunStates(states),
         onFailure: state => {
           /*

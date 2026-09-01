@@ -61,6 +61,25 @@ export interface CardScriptsEnv {
     documentGranted: boolean
     onPhase: (state: Omit<ScriptRunState, 'scriptId' | 'name'>) => void
   }) => RunningCard
+  /**
+   * Put a started frame into the document.
+   *
+   * Part of the contract rather than the caller's business, because forgetting
+   * it fails **silently in every direction**: `runCard` builds the iframe but
+   * does not insert it, and an iframe outside the document never loads. No
+   * parse, no bootstrap, no `ready` — so no frame, no error, no notice, and every
+   * script sitting on `dispatched` forever. That is exactly what shipped.
+   */
+  attach: (frame: RunningCard) => void
+  /**
+   * How long a frame may take to report `ready` before that silence is a finding.
+   *
+   * Anchored at *dispatch*, not at the end of the body. Quiet after `ran` is
+   * normal here — a card that registers listeners and returns is working
+   * correctly — but quiet before `ready` means the frame never started, and that
+   * is the one silence with no innocent reading.
+   */
+  readyTimeoutMs?: number
   /** Called whenever any script's state changes. */
   onState: (states: readonly ScriptRunState[]) => void
   /** Called once per failure, for the notice bar. */
@@ -86,6 +105,7 @@ export function startCardScripts(
   characterId: string,
 ): RunningCardScripts {
   const cards: RunningCard[] = []
+  const timers: { unref?: () => void }[] = []
   const states = new Map<string, ScriptRunState>()
   let disposed = false
 
@@ -102,6 +122,30 @@ export function startCardScripts(
     // put the same failure in the notice bar every time anything else changed.
     if (isFailure(state.phase)) env.onFailure(state)
     publish()
+  }
+
+  /**
+   * Report a frame that never became ready.
+   *
+   * The failure this catches has no other symptom. A frame that was never
+   * inserted, or whose bootstrap died before it could speak, produces silence
+   * that is indistinguishable from "still starting" — and `starting…` is not
+   * allowed to be a state something can rest in forever.
+   * @param script - the script whose frame to watch.
+   */
+  const watchForReady = (script: ScriptView): void => {
+    const timer = setTimeout(() => {
+      const current = states.get(script.id)
+      if (current === undefined || current.phase !== 'dispatched') return
+      move(script, {
+        phase: 'silent',
+        detail: 'never became ready — the frame was never created, or setup was torn down',
+      })
+    }, env.readyTimeoutMs ?? 8_000)
+    // Never keeps a process alive on its own; the chat closing must not be held
+    // open by a timer waiting to report on a frame that has gone.
+    timer.unref?.()
+    timers.push(timer)
   }
 
   void (async () => {
@@ -169,16 +213,36 @@ export function startCardScripts(
       }
 
       try {
-        cards.push(
-          env.start({
-            script,
-            code: source.content,
-            context,
-            bootstrap,
-            documentGranted: resolved.documentGranted,
-            onPhase: next => move(script, next),
-          }),
-        )
+        const card = env.start({
+          script,
+          code: source.content,
+          context,
+          bootstrap,
+          documentGranted: resolved.documentGranted,
+          onPhase: next => move(script, next),
+        })
+        cards.push(card)
+        env.attach(card)
+        /*
+         * Verify the outcome, not the call.
+         *
+         * Requiring `attach` in the contract makes a caller supply one; it does
+         * not make the one they supplied work. A no-op satisfies the compiler and
+         * reproduces the original failure exactly — an iframe that never enters
+         * the document, never loads, and never says anything.
+         *
+         * `isConnected` is the DOM answering whether the thing actually happened,
+         * which is a source independent of the code that claimed to do it.
+         */
+        const connected = (card.element as { isConnected?: unknown }).isConnected
+        if (connected === false) {
+          move(script, {
+            phase: 'bootstrap-failed',
+            detail: 'the frame was never put into the document, so it will never load',
+          })
+          continue
+        }
+        watchForReady(script)
       } catch (error: unknown) {
         // `continue`, not `return`: one script that cannot be started must not
         // decide the fate of the ones after it.
@@ -194,6 +258,8 @@ export function startCardScripts(
     dispose: () => {
       if (disposed) return
       disposed = true
+      for (const timer of timers) clearTimeout(timer as Parameters<typeof clearTimeout>[0])
+      timers.length = 0
       for (const card of cards) card.dispose()
       cards.length = 0
     },

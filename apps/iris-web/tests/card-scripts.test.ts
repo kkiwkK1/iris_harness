@@ -38,6 +38,7 @@ function scripts(): ScriptView[] {
 /** A harness recording what the controller did, with every step overridable. */
 function harness(overrides: Partial<CardScriptsEnv> = {}) {
   const started: string[] = []
+  const attached: string[] = []
   const disposed: string[] = []
   const failures: ScriptRunState[] = []
   let latest: readonly ScriptRunState[] = []
@@ -50,11 +51,21 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
     start: input => {
       started.push(input.script.id)
       return {
-        element: undefined as never,
+        // Models the DOM's own answer, so the controller's check is exercised
+        // rather than skipped for want of the property.
+        element: { id: input.script.id, isConnected: false } as never,
         emit: () => undefined,
         dispose: () => disposed.push(input.script.id),
       }
     },
+    attach: card => {
+      const element = card.element as unknown as { id: string, isConnected: boolean }
+      element.isConnected = true
+      attached.push(element.id)
+    },
+    // Short enough to assert on, long enough that the ordinary path finishes
+    // first. The production default is eight seconds.
+    readyTimeoutMs: 20,
     onState: states => {
       latest = states
     },
@@ -65,6 +76,7 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
   return {
     env,
     started,
+    attached,
     disposed,
     failures,
     states: () => latest,
@@ -112,7 +124,11 @@ test('a frame that throws on creation does not stop the next either', async () =
   const bench = harness({
     start: input => {
       if (input.script.id === 'a') throw new Error('no iframe for you')
-      return { element: undefined as never, emit: () => undefined, dispose: () => undefined }
+      return {
+        element: { id: input.script.id } as never,
+        emit: () => undefined,
+        dispose: () => undefined,
+      }
     },
   })
   startCardScripts(bench.env, 'chat-1', 'card-1')
@@ -214,4 +230,80 @@ test('states are published for every script that got as far as being tried', asy
     ['dispatched', 'dispatched'],
     'a frame that has not answered yet is dispatched, never running',
   )
+})
+
+test('every started frame is put into the document', async () => {
+  /*
+   * The failure this pins had no symptom at all. `runCard` builds an iframe and
+   * stops; one that is never inserted never loads, so the bootstrap never parses,
+   * the frame never says `ready`, and every script rests on `starting…` forever —
+   * with no frame, no console error and no notice, because nothing failed. It
+   * only looked like the orchestration had stalled.
+   *
+   * Attaching is part of the controller's contract for exactly that reason: a
+   * caller cannot forget it, because there is no longer a caller who could.
+   */
+  const bench = harness()
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.deepEqual(bench.attached, bench.started, 'a frame that started but was never attached is inert')
+})
+
+test('a frame that never reports ready stops being "starting" and says so', async () => {
+  /*
+   * The one silence with no innocent reading. Quiet *after* a body has run is
+   * normal here — a card that registers listeners and returns is working — but
+   * quiet before `ready` means the frame never started at all.
+   *
+   * `starting…` must not be a state something can rest in forever, which is the
+   * rule that would have named the missing-attach bug in one run instead of six
+   * rounds of elimination.
+   */
+  const bench = harness()
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+  assert.deepEqual(bench.states().map(state => state.phase), ['dispatched', 'dispatched'])
+
+  await new Promise(resolve => setTimeout(resolve, 40))
+
+  assert.deepEqual(
+    bench.states().map(state => state.phase),
+    ['silent', 'silent'],
+  )
+  assert.match(bench.failures[0]?.detail ?? '', /never became ready/)
+})
+
+test('a frame that did report ready is never called silent', async () => {
+  // Otherwise every working card would be reported as a failure eight seconds in.
+  const bench = harness({
+    start: input => {
+      input.onPhase({ phase: 'running' })
+      return { element: { id: input.script.id } as never, emit: () => undefined, dispose: () => undefined }
+    },
+  })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+  await new Promise(resolve => setTimeout(resolve, 40))
+
+  assert.deepEqual(bench.states().map(state => state.phase), ['running', 'running'])
+  assert.deepEqual(bench.failures, [], 'a card that started and went quiet is working, not failing')
+})
+
+test('an attach that does nothing is caught, not trusted', async () => {
+  /*
+   * The contract can require an `attach`; it cannot require that the one supplied
+   * works. A no-op satisfies the compiler and reproduces the original silent
+   * failure exactly, so the controller asks the DOM whether the frame really
+   * arrived instead of believing the call it just made.
+   */
+  const bench = harness({ attach: () => undefined })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.deepEqual(
+    bench.failures.map(state => state.scriptId),
+    ['a', 'c'],
+  )
+  assert.match(bench.failures[0]?.detail ?? '', /never put into the document/)
 })
