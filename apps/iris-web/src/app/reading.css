@@ -462,24 +462,33 @@
 /*
  * A card interface inside a message.
  *
- * The frame reports its own height and the shell applies it, so nothing here
- * sets one — a fixed height would fight the measurement and win, leaving the
- * card cut off at whatever this file guessed. `overflow:hidden` inside the frame
- * means anything past the reported height does not exist, so the height is the
- * card's, not the layout's.
+ * The height here is a **starting viewport**, not decoration, and the selector
+ * has to reach the frame or the whole thing collapses. It once did not: the
+ * frames moved into per-instance slots and this rule still named the container
+ * they had left, so nothing matched and the interface had no height at all.
+ *
+ * Why the shell supplies a height rather than letting the card size itself: a
+ * card whose root is `html,body{height:100%}` has no intrinsic height, and the
+ * one mechanism it has for asking — `window.frameElement`, which the sample
+ * card's `fit()` uses — is **null across origins**. So the card cannot break out
+ * of "100% of nothing" from inside. The frame reports growth beyond this and the
+ * shell applies it inline, which overrides this rule in both directions.
  */
-.iris-interfaces {
-  margin: 12px 0 0;
-}
-
-.iris-interfaces__frames iframe {
+.iris-interfaces__slot iframe {
   display: block;
   width: 100%;
   border: 0;
-  /* Until the first height arrives. Small rather than zero, so a frame that
-     never reports is a visible sliver rather than an invisible absence. */
-  min-height: 24px;
+  /*
+   * Roughly a screenful, chosen to match what these interfaces ask for — the
+   * sample card caps itself at `86vh`. A card with less to show reports a
+   * smaller height and shrinks; one with more grows.
+   */
+  height: 60vh;
   color-scheme: normal;
+}
+
+.iris-interfaces__slot {
+  margin: 12px 0 0;
 }
 
 /*

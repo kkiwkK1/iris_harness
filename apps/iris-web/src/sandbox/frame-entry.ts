@@ -137,7 +137,36 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
   let scheduled = false
   const send = (): void => {
     scheduled = false
-    post({ iris: run, type: 'height', pixels: document.documentElement.scrollHeight })
+
+    /*
+     * `body`, not `documentElement` — and never a non-positive number.
+     *
+     * Both halves are upstream's (`iframe/adjust_iframe_height.js:15-21`), and
+     * both were missing here. Together they cost an acceptance round, in a way
+     * worth writing down because it is a **self-reinforcing zero**:
+     *
+     * 1. the frame element starts with no height;
+     * 2. the sample card's root is `html,body{height:100%}`, so its content is
+     *    100% of nothing;
+     * 3. `documentElement.scrollHeight` is therefore 0, and this posted it;
+     * 4. the shell wrote `height: 0px` **inline**, which beats any CSS floor —
+     *    so the frame could never recover, and the card was invisible rather
+     *    than merely small.
+     *
+     * Upstream refuses at step 3, which is why it never reaches step 4. It also
+     * measures `body`, which can exceed the frame's own height, where
+     * `documentElement` on a card with `html{height:100%}` simply reports the
+     * frame back to itself — a measurement that can only ever confirm whatever
+     * height the frame already had.
+     *
+     * The card cannot break the loop from inside: its own `fit()` sizes the frame
+     * through `window.frameElement`, which is **null** across origins. So the
+     * shell supplies the starting viewport (`reading.css`), and this reports
+     * growth beyond it.
+     */
+    const pixels = document.body.scrollHeight
+    if (!Number.isFinite(pixels) || pixels <= 0) return
+    post({ iris: run, type: 'height', pixels })
   }
   const schedule = (): void => {
     if (scheduled) return

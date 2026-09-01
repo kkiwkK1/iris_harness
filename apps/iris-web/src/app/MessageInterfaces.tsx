@@ -262,7 +262,14 @@ export function MessageInterfaces({
   const byInstance = new Map(states.map(state => [state.instance, state]))
 
   return (
-    <div className="iris-interfaces">
+    /*
+     * A fragment, not a wrapper element. The segments belong directly to the
+     * message body's own layout, and an extra block box would be one more thing
+     * between the prose and the interface that replaced part of it — plus a
+     * class name with no rule behind it, which `interface-styles.test.ts` now
+     * refuses on the grounds that a selector matching nothing is silent.
+     */
+    <>
       {segments.map(segment =>
         segment.kind === 'text' ? (
           <MarkdownText key={`t-${segment.text.length}-${segment.text.slice(0, 16)}`} text={segment.text} />
@@ -275,7 +282,7 @@ export function MessageInterfaces({
           />
         ),
       )}
-    </div>
+    </>
   )
 }
 

@@ -11,6 +11,9 @@
  */
 import { strict as assert } from 'node:assert'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 
 import { claimFrontendBlocks } from '../src/sandbox/frontend-blocks.ts'
 import {
@@ -190,3 +193,47 @@ test('the reader line says "live", not "rendered"', () => {
 
   assert.equal(describeInterface({ floor: 1, instance: 0, phase: 'claimed', bytes: 0 }), 'starting…')
 })
+
+test('a height of zero is refused at both ends, because applying it is unrecoverable', () => {
+  /*
+   * The self-reinforcing zero that made an interface invisible, pinned at the
+   * two places it has to be stopped.
+   *
+   * The loop: the frame starts with no height → a card whose root is
+   * `html,body{height:100%}` renders 100% of nothing → the frame measures 0 and
+   * reports it → the shell writes `height: 0px` **inline**, which beats every
+   * CSS floor → the frame can never be seen again. Upstream refuses at the
+   * reporting end (`iframe/adjust_iframe_height.js:17-19`); this project needs
+   * it at the applying end too, because "the frame will not send zero" is a
+   * property of our bootstrap and not of whatever document is in there.
+   *
+   * Asserted against the sources rather than a live DOM: both guards are one
+   * line in a file that has no unit harness, and the property worth protecting
+   * is that **neither line goes away**.
+   */
+  const frameEntry = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
+    'utf8',
+  )
+  const runner = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'runner.ts'),
+    'utf8',
+  )
+
+  assert.match(
+    frameEntry,
+    /pixels <= 0\) return/u,
+    'the frame would report a zero height, which the shell then makes permanent',
+  )
+  assert.match(
+    runner,
+    /message\.pixels > 0/u,
+    'the shell would apply a zero height inline, beating any CSS floor',
+  )
+  assert.match(
+    frameEntry,
+    /document\.body\.scrollHeight/u,
+    'documentElement on a card with html{height:100%} reports the frame back to itself',
+  )
+})
+

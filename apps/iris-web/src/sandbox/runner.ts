@@ -331,7 +331,18 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         host.onWaiting?.(message.scriptId, message.global, 'arrived', 0)
         return
       case 'height':
-        frame.style.height = `${message.pixels}px`
+        /*
+         * Refused at the applying end as well as at the reporting end.
+         *
+         * A frame is untrusted, so "the frame will not send zero" is a property
+         * of our bootstrap rather than of every document that could be in there.
+         * And applying it is unrecoverable: an inline `height: 0px` beats any CSS
+         * floor, so the frame cannot be seen again — which is how one card went
+         * from visible-but-clipped to invisible.
+         */
+        if (Number.isFinite(message.pixels) && message.pixels > 0) {
+          frame.style.height = `${message.pixels}px`
+        }
         host.onHeight?.(message.pixels)
         return
       case 'settings':
