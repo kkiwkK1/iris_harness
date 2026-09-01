@@ -236,7 +236,16 @@ export function buildSrcdoc(
       : '<style>*,*::before,*::after{box-sizing:border-box}' +
         'html,body{margin:0!important;padding:0;overflow:hidden!important;max-width:100%!important;' +
         'background:transparent;color-scheme:inherit}</style>',
-    '</head><body>',
+    /*
+     * A marker on the body when this frame holds a card **interface**.
+     *
+     * The blank-body detector needs it: a *script* frame's body is script tags
+     * and nothing else, so "has drawn nothing" is its normal and correct state.
+     * Without this the detector would put a false finding under every card
+     * script frame — a noisy instrument teaches a reader to skip the whole list,
+     * which costs more than the silence it was meant to fix.
+     */
+    body === undefined ? '</head><body>' : '</head><body data-iris-interface>',
     /*
      * The bootstrap first, then the card's libraries.
      *

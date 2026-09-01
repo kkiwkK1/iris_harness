@@ -345,6 +345,180 @@ function shortenAssetName(url: string): string {
   return at === -1 ? url : url.slice(at + 1)
 }
 
+
+/**
+ * Which storage APIs this frame does not really have.
+ *
+ * An opaque origin has no storage: `localStorage` throws on access, and
+ * `indexedDB` is the dangerous one — depending on the browser it may throw, or it
+ * may hand back a request that **fires neither `onsuccess` nor `onerror`**. A card
+ * awaiting that promise waits forever.
+ *
+ * That is not hypothetical. The sample card's boot does
+ * `await refreshContinue()` → `await idb.get('auto')`, and its wrapper handles a
+ * throw but has no `onblocked` and no timeout. The frame stayed live, reported a
+ * height, raised no error and rendered nothing: the first genuinely *silent*
+ * failure this project has produced, and it was invisible at every layer that
+ * watches for errors, because nothing failed — something simply never answered.
+ *
+ * Upstream never meets this: its message iframes carry **no `sandbox` attribute**,
+ * so they are same-origin with the page and storage works. Isolation is the
+ * deliberate difference, and this is its bill.
+ *
+ * Probed rather than assumed, because "present" and "usable" are different
+ * things here and the gap between them is exactly where the hang lives.
+ * @param run - the run token.
+ * @param post - the channel to the shell.
+ */
+function reportStorage(run: string, post: (message: FromFrame) => void): void {
+  const say = (message: string): void => {
+    post({ iris: run, type: 'error', scriptId: undefined, message })
+  }
+
+  try {
+    void window.localStorage.length
+  } catch {
+    say(
+      'localStorage is not available in this frame — an opaque origin has no storage, so a card' +
+        ' that remembers anything between openings will not',
+    )
+  }
+
+  let database: IDBFactory | undefined
+  try {
+    database = window.indexedDB
+  } catch {
+    say('indexedDB is not available in this frame — an opaque origin has no storage')
+    return
+  }
+  if (database === undefined || database === null) {
+    say('indexedDB is not available in this frame — an opaque origin has no storage')
+    return
+  }
+
+  /*
+   * Present is not the same as working. The probe opens a database and waits a
+   * moment for **any** answer; silence is the finding, because silence is what a
+   * card's own await would get.
+   */
+  let answered = false
+  const probe = (): void => {
+    if (answered) return
+    answered = true
+    say(
+      'indexedDB answered neither success nor error in this frame — a card awaiting it will wait' +
+        ' forever, with nothing to report and no error anywhere. An opaque origin has no storage.',
+    )
+  }
+
+  try {
+    const request = database.open('iris-storage-probe')
+    request.onsuccess = () => {
+      answered = true
+      try {
+        request.result.close()
+        database.deleteDatabase('iris-storage-probe')
+      } catch {
+        // Cleaning up is courtesy; failing to is not worth a second report.
+      }
+    }
+    request.onerror = () => {
+      answered = true
+      say('indexedDB refused to open in this frame — an opaque origin has no storage')
+    }
+    request.onblocked = () => {
+      answered = true
+      say('indexedDB reported the probe blocked, so a card awaiting it may never be answered')
+    }
+    setTimeout(probe, 1_500)
+  } catch {
+    say('indexedDB refused to open in this frame — an opaque origin has no storage')
+  }
+}
+
+/** How long an interface may be blank before that is a finding. */
+const BLANK_AFTER_MS = 6_000
+
+/**
+ * Say something when a frame is alive and has drawn nothing.
+ *
+ * The coordinator's question was whether this deserves a判据 at all, and the
+ * answer is yes for one reason: **every other instrument here watches for
+ * something going wrong, and this failure is nothing going wrong.** The frame
+ * loaded, reported a height, raised no error, refused nothing, and rendered a
+ * blank rectangle — a card stopped on an `await` that will never resolve. Every
+ * error-shaped detector is silent, correctly.
+ *
+ * Deliberately a *symptom* detector, kept alongside the cause-level probe rather
+ * than instead of it. `reportStorage` names the specific thing an opaque origin
+ * cannot provide; this one catches the class — any hang, for any reason, in code
+ * this project did not write and cannot inspect.
+ *
+ * The threshold is generous and one-shot. A card that legitimately takes a
+ * while to draw should not be accused, and a card that never draws should be
+ * named exactly once.
+ * @param run - the run token.
+ * @param post - the channel to the shell.
+ */
+function reportBlankBody(run: string, post: (message: FromFrame) => void): void {
+  /*
+   * Only for a frame that was given markup. A script frame's body is script tags
+   * and nothing else, so blankness there is correct — reporting it would put a
+   * false finding under every card.
+   */
+  if (document.body?.hasAttribute('data-iris-interface') !== true) return
+
+  setTimeout(() => {
+    const body = document.body
+    if (body === null) return
+
+    /*
+     * Elements, not text. A frame whose body holds only whitespace between the
+     * script tags it was given has drawn nothing, and counting characters would
+     * call that content.
+     */
+    const drawn = [...body.children].some(child => {
+      if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE') return false
+      const box = child.getBoundingClientRect()
+      return box.width > 0 && box.height > 0
+    })
+    if (drawn) return
+
+    /*
+     * What the body actually holds, because "blank" has two very different
+     * causes and the sentence alone cannot tell them apart:
+     *
+     * - **no elements** — the markup never arrived, so the problem is upstream
+     *   of the card entirely;
+     * - **elements present, none with a box** — the markup is there and the card
+     *   has not shown it, which is the card's own code stopping somewhere.
+     *
+     * Reported as a count and a few tag names rather than a verdict: a reader
+     * who can see `12 elements (div, style, script)` knows which half of the
+     * world to look at, and a guess in the message would decide that for them
+     * wrongly half the time.
+     */
+    const children = [...body.children]
+    const tags = [...new Set(children.map(child => child.tagName.toLowerCase()))].slice(0, 6)
+    const inventory =
+      children.length === 0
+        ? 'its body is empty, so the markup never arrived'
+        : `its body holds ${String(children.length)} elements (${tags.join(', ')}) and none of them` +
+          ' has a visible box, so the markup arrived and the card has not shown it'
+
+    post({
+      iris: run,
+      type: 'error',
+      scriptId: undefined,
+      message:
+        'this interface loaded and has drawn nothing after ' +
+        `${BLANK_AFTER_MS / 1000}s — ${inventory}. Code that stops without failing reports` +
+        ' nothing anywhere; storage is the usual cause in a sandboxed frame, so check any storage' +
+        ' note above first.',
+    })
+  }, BLANK_AFTER_MS)
+}
+
 function reportBlocked(run: string, post: (message: FromFrame) => void): void {
   document.addEventListener('securitypolicyviolation', event => {
     let host = event.blockedURI
@@ -749,6 +923,8 @@ try {
 
   reportAsyncFailures(run, post, () => bodyStarted)
   reportBlocked(run, post)
+  reportStorage(run, post)
+  reportBlankBody(run, post)
   reportHeight(run, post)
   announceReady(run, post)
 } catch (error: unknown) {
