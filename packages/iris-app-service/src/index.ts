@@ -28,6 +28,7 @@ import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
 import { ScriptPolicyStore } from './scripts.ts'
+import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
 
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
@@ -62,6 +63,7 @@ export {
 export { placementFor, runScripts, scriptsOf, substituteFor } from './regex.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
 export { ScriptPolicyStore } from './scripts.ts'
+export { ScriptVariableStore, scriptIdOf } from './script-variables.ts'
 export { SettingsStore, sanitize, type SettingsPatch } from './settings.ts'
 export { applyOps, buildSnapshot, scalarsOf, worldInfoOf, writePath } from './template.ts'
 export {
@@ -281,7 +283,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   warnOnPreProfileLayout(ctx, dataDir, paths.root)
 
   const library = new CharacterLibrary(paths.characters, avatarPath)
-  const chats = new ChatStore(paths.chats, library)
+  const scriptVariables = new ScriptVariableStore(paths.scriptVariables, error => { ctx.logger.warn(error) })
+  const chats = new ChatStore(paths.chats, library, scriptVariables)
   const settings = new SettingsStore(paths.settings, {
     provider: config.provider ?? 'default',
     model: config.model ?? 'local-model',
@@ -308,6 +311,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     scripts,
     extensionSettings,
     connections,
+    scriptVariables,
     preset: await loadPreset(config.presetPath),
     broadcast: event => { ctx.irisRpc.broadcast(event) },
     ...config.userName === undefined ? {} : { userName: config.userName },

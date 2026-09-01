@@ -220,6 +220,28 @@ config (MVU declares its externals as `$`, `_`, `showdown`, `toastr`, `Vue`,
 `VueRouter`, `YAML`, `z`) is a better source for "what does a card expect to
 exist" than reading the injector, because it is the side that has to be right.
 
+### Why a refusal beats a plausible default
+
+The rule this half keeps returning to: **when the honest answer is unavailable,
+refuse by name rather than substitute something reasonable-looking.** It reads
+as pedantry until you follow one case through.
+
+`updateVariablesWith` reads a variable scope, hands it to the card's updater, and
+stores the result. When the frame could not read a scope, the tempting fallback
+was to pass the updater an empty object. That does not merely lose data — the
+updater returns a tree built from nothing, the write succeeds, and the call
+**returns normally**. The card is told its update was applied. State is destroyed
+and success is announced in the same breath, so the caller has no reason to retry
+and no signal that anything went wrong. A thrown refusal at least leaves a handle.
+
+The same shape appears in `getVariables` answering `{}` for a scope it cannot
+see: a card reads that as "not initialised yet" and writes its defaults over
+whatever was really there. Both are cases where being helpful costs more than
+being unhelpful, because the failure is silent and the damage is upstream of
+where anyone would look. (The host settled the honest version of this: an empty
+scope the host *reports* as empty is a legitimate starting point. Empty because
+you could not look is the one that lies.)
+
 The same run produced a false positive from `check-preset.mjs` — `$ (present but
 not usable)` against a bundle that was fine, because jQuery's UMD picks its
 export shape from `window.document` at load and the checker deliberately supplies

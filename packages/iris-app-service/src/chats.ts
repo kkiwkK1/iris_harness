@@ -23,11 +23,13 @@ import {
   type SillyTavernChatHeader,
 } from '@iris/persistence'
 import type { ChatSummary } from '@iris/protocol'
+import type { ScopeBackend } from '@iris/variables'
 
 import { ChatEntry, createSession, readMeta } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
 import { fileFor, toId, uniqueId } from './paths.ts'
+import type { ScriptVariableStore } from './script-variables.ts'
 
 /** Provenance stamped on a greeting, which no model produced. */
 const GREETING_SOURCE = { provider: 'iris', model: 'greeting' } as const
@@ -64,15 +66,35 @@ function stamp(when: Date): string {
 export class ChatStore {
   readonly #dir: string
   readonly #library: CharacterLibrary
+  readonly #scriptVariables: ScriptVariableStore | undefined
   readonly #entries = new Map<string, ChatEntry>()
 
   /**
    * @param dir - the folder holding chat files.
    * @param library - where the cards live, for reopening a chat's character.
+   * @param scriptVariables - where the `script` scope persists. Absent keeps it
+   *   in memory, which is what a host with nowhere to store it should do.
    */
-  constructor(dir: string, library: CharacterLibrary) {
+  constructor(dir: string, library: CharacterLibrary, scriptVariables?: ScriptVariableStore) {
     this.#dir = dir
     this.#library = library
+    this.#scriptVariables = scriptVariables
+  }
+
+  /**
+   * The `script` scope backend for one card.
+   *
+   * Keyed by the character rather than by the chat: two conversations with the
+   * same card share one script table, because upstream keeps it on the card and
+   * a script that forgot its state on every new chat would be a different thing.
+   * @param characterId - whose partition, absent for a chat with no card.
+   * @param card - the card, for the defaults its author shipped.
+   * @returns the backend, or undefined to leave it in memory.
+   */
+  async #scriptScope(characterId: string | undefined, card: CharacterCard | undefined): Promise<ScopeBackend | undefined> {
+    const store = this.#scriptVariables
+    if (store === undefined || characterId === undefined) return undefined
+    return store.backendFor(await store.open(characterId, card))
   }
 
   /** Create the folder if this is a first run. */
@@ -142,7 +164,11 @@ export class ChatStore {
       : await this.#library.load(meta.characterId).catch(() => undefined)
 
     const session = importChat(file, chatId)
-    const entry = new ChatEntry({ chatId, header: file.header, session, card })
+    const scriptScope = await this.#scriptScope(meta.characterId, card)
+    const entry = new ChatEntry({
+      chatId, header: file.header, session, card,
+      ...scriptScope === undefined ? {} : { scriptScope },
+    })
     // The log carries the conversation; the variables ride alongside it and
     // have to be put back explicitly.
     entry.hydrateVariables(file.messages)
@@ -179,7 +205,11 @@ export class ChatStore {
     }
 
     const session = createSession(chatId)
-    const entry = new ChatEntry({ chatId, header, session, card })
+    const scriptScope = await this.#scriptScope(characterId, card)
+    const entry = new ChatEntry({
+      chatId, header, session, card,
+      ...scriptScope === undefined ? {} : { scriptScope },
+    })
     seedGreeting(entry, card, { user: userName, char: name })
 
     this.#entries.set(chatId, entry)
@@ -259,7 +289,14 @@ export class ChatStore {
     }
 
     const session = importChat({ header, messages: lines }, childId)
-    const child = new ChatEntry({ chatId: childId, header, session, card: parent.card })
+    // The branch shares its parent's card, so it shares the parent's script
+    // tables too — branching a conversation does not fork a script's state, any
+    // more than starting a second chat with the same character does.
+    const scriptScope = await this.#scriptScope(parentMeta.characterId, parent.card)
+    const child = new ChatEntry({
+      chatId: childId, header, session, card: parent.card,
+      ...scriptScope === undefined ? {} : { scriptScope },
+    })
     child.hydrateVariables(lines)
 
     this.#entries.set(childId, child)

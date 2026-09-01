@@ -32,6 +32,8 @@ import type { ChatSummary, ChatView, PromptItemization, ScriptPromptPosition } f
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore, type ScopeBackend, type Variables } from '@iris/variables'
 
+import { scriptIdOf } from './script-variables.ts'
+
 import { busy } from './errors.ts'
 import { scriptsOf, substituteFor } from './regex.ts'
 import { toChatView, type Names, type PendingTurn } from './views.ts'
@@ -165,6 +167,8 @@ export class ChatEntry {
   #initVars: MvuData | undefined
   #initialVariables: Record<string, unknown> | undefined
   #scripts: RegexScript[] | undefined
+  /** Storage for the `script` scope; outlives `rebuild`, so it is held here. */
+  readonly #scriptScope: ScopeBackend
   #substitute: MacroSubstitute | undefined
   #abort: AbortController | undefined
   /** Row identities, one per chat-file line, plus one spare for a streaming row. */
@@ -179,11 +183,27 @@ export class ChatEntry {
     header: SillyTavernChatHeader
     session: Session
     card: CharacterCard | undefined
+    /**
+     * Storage for the `script` scope.
+     *
+     * Injected rather than made here because it outlives the chat: script
+     * variables belong to the card, and two conversations with the same
+     * character share them. Absent means in-memory, which is what a host with
+     * nowhere to keep them should do.
+     */
+    scriptScope?: ScopeBackend
   }) {
     this.chatId = input.chatId
     this.header = input.header
     this.session = input.session
     this.card = input.card
+    // Assigned before the first `#makeStore`, and held, because `rebuild` makes
+    // a new store: a backend created inside `#makeStore` would drop every script
+    // table the moment a message was edited.
+    // The fallback refuses a missing `script_id` exactly as the persistent
+    // backend does, so a test running in memory cannot pass on a selector a real
+    // deployment rejects.
+    this.#scriptScope = input.scriptScope ?? keyedMemoryBackend(scriptIdOf)
     this.variables = this.#makeStore(input.session)
   }
 
@@ -562,10 +582,8 @@ export class ChatEntry {
       chat: metadataBackend(this.header),
       global: memoryBackend(),
       // Partitioned by script id, so one card's script cannot read another's
-      // bookkeeping. In memory for now: persisting these needs a decision about
-      // whether script state belongs to the installation or to the card, and
-      // guessing it silently would put the answer somewhere hard to move.
-      script: keyedMemoryBackend(option => (option.type === 'script' ? option.script_id ?? 'anonymous' : 'anonymous')),
+      // bookkeeping. Supplied by the caller — see the constructor.
+      script: this.#scriptScope,
     })
   }
 

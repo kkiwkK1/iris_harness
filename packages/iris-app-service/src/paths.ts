@@ -135,6 +135,14 @@ export interface ProfilePaths {
   /** What cards have stored under `extension_settings`. */
   extensionSettings: string
   /**
+   * What card scripts have stored in their own variable scope.
+   *
+   * Its own file, beside the installation rather than inside the card, which is
+   * where SillyTavern puts it. `script-variables.ts` carries the measurement and
+   * the reason.
+   */
+  scriptVariables: string
+  /**
    * Saved connections.
    *
    * Its own file, not a section of `settings.json`: settings are what a chat is
@@ -171,6 +179,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     settings: join(root, 'settings.json'),
     scriptPolicy: join(root, 'script-policy.json'),
     extensionSettings: join(root, 'extension-settings.json'),
+    scriptVariables: join(root, 'script-variables.json'),
     connections: join(root, 'connections.json'),
   }
 }

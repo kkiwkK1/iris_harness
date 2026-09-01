@@ -395,3 +395,27 @@ test('getVariables reads back what each scope holds, and reads an empty scope as
   // for: an updater applied to the wrong scope's table stores the wrong tree.
   assert.deepEqual((await handlers['script.getVariables']({ chatId, scope: 'global' })).variables, { elsewhere: true })
 })
+
+test('a script scope with no script id is refused over the wire too', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  // Upstream throws 未指定 script_id in both directions
+  // (`JS-Slash-Runner/src/function/variables.ts:85` and `:175`). Iris used to
+  // invent an 'anonymous' partition here, which would have put every
+  // unidentified caller's state in one shared table — and that table is now on
+  // disk.
+  for (const call of [
+    () => handlers['script.getVariables']({ chatId, scope: 'script' }),
+    () => handlers['script.setVariables']({ chatId, scope: 'script', op: 'replace', variables: { a: 1 } }),
+  ]) {
+    await assert.rejects(call, (error: unknown) => (error as { code?: string }).code === 'invalid-request')
+  }
+
+  // Named, it works — this is the shape the frame actually sends.
+  const named = await handlers['script.setVariables']({
+    chatId, scope: 'script', scriptId: 'panel', op: 'replace', variables: { a: 1 },
+  })
+  assert.deepEqual(named.variables, { a: 1 })
+})

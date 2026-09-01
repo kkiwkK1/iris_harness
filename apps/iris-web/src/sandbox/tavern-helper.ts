@@ -207,9 +207,22 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       fields['messageId'] = resolved
     }
 
-    // Absent rather than `undefined`: `exactOptionalPropertyTypes` aside, the
-    // host defaults an unnamed script partition to `anonymous`, and sending an
-    // explicit undefined would be a different statement from not saying.
+    /*
+     * Absent rather than `undefined`: the host defaults an unnamed script
+     * partition to `anonymous`, and sending an explicit undefined would be a
+     * different statement from not saying.
+     *
+     * Worth knowing before building on this scope: **the id travels with the
+     * card, the values do not.** Upstream stores script identity on the card
+     * (`data.extensions.tavern_helper.scripts[].data`) but keeps enabled-state
+     * keyed by character name in `extension_settings`, and measured across the
+     * local corpus the 22 script ids appear zero times in `settings.json` and
+     * zero times in 31 chat files. 20 of those 22 carry an empty `data`; the two
+     * that do not hold a display toggle and a build timestamp. There is no
+     * accumulated runtime state in this scope anywhere in the corpus, and MVU
+     * never writes it — its settings go to `extension_settings`, its gameplay
+     * state to the chat and message scopes.
+     */
     if (scope === 'script') {
       const scriptId = option?.script_id ?? host.scriptId()
       if (scriptId !== undefined) fields['scriptId'] = scriptId

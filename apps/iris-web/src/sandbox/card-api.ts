@@ -17,9 +17,18 @@
  *
  * @module iris-web/sandbox/card-api
  */
+import type { RpcMethod } from '@iris/protocol'
 
-/** Card-facing action name → the wire method that performs it. */
-export const CARD_METHODS: Readonly<Record<string, string>> = {
+/**
+ * Card-facing action name → the wire method that performs it.
+ *
+ * The values are `RpcMethod`, not `string`, and that is the whole point of the
+ * annotation: the shell reaches `client.call` through a cast, so a misspelled
+ * wire method here would compile, ship, and fail only when a card asked for it.
+ * A type error at the table is the only place that mistake is cheap. (Type-only
+ * import — it costs the frame bundle nothing.)
+ */
+export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
   saveChat: 'script.saveChat',
   saveMetadata: 'script.saveMetadata',
   generateRaw: 'script.generateRaw',
@@ -42,6 +51,6 @@ export function isCardMethod(name: string): boolean {
  * @param name - the card-facing name.
  * @returns the wire method, or undefined when the card may not invoke it.
  */
-export function wireMethodFor(name: string): string | undefined {
+export function wireMethodFor(name: string): RpcMethod | undefined {
   return isCardMethod(name) ? CARD_METHODS[name] : undefined
 }

@@ -524,7 +524,9 @@ export function createIrisStore(
         // Not wrapped in `guard`: a card is awaiting this, and turning a refusal
         // into a notice would resolve its promise as though the action had run.
         const params_ = (typeof params === 'object' && params !== null ? params : {}) as Record<string, unknown>
-        return client.call(wire as never, { chatId, ...params_ } as never)
+        // The method is typed now; only the params still need the cast, because
+        // their shape depends on which method this turned out to be.
+        return client.call(wire, { chatId, ...params_ } as never)
       },
 
       async itemize(turn?: number): Promise<ItemizationResult> {

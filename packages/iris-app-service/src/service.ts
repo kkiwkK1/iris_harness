@@ -40,6 +40,7 @@ import { runScripts } from './regex.ts'
 import { evaluatePrompt, promptHasTemplate } from './templates.ts'
 import { applyOps, buildSnapshot } from './template.ts'
 import type { ScriptPolicyStore } from './scripts.ts'
+import type { ScriptVariableStore } from './script-variables.ts'
 import type { SettingsStore } from './settings.ts'
 import { textOf } from './views.ts'
 
@@ -114,6 +115,14 @@ export interface AppServiceOptions {
    */
   templateOverhead?: number
   /**
+   * Where the `script` scope persists.
+   *
+   * Optional like the other stores. It is passed here as well as to the
+   * `ChatStore` because deleting a character has to drop its partition, and the
+   * chat store is not told about deletions.
+   */
+  scriptVariables?: ScriptVariableStore
+  /**
    * EJS prompt templates, off unless this is present.
    *
    * Presence is the switch rather than a boolean, because there is no useful
@@ -139,13 +148,14 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'connections' | 'templates'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'connections' | 'templates' | 'scriptVariables'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
       extensionSettings?: ExtensionSettingsStore
       connections?: ConnectionStore
       templates?: TemplateOptions
+      scriptVariables?: ScriptVariableStore
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -172,6 +182,7 @@ export class IrisAppService {
       ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
       ...options.connections === undefined ? {} : { connections: options.connections },
       ...options.templates === undefined ? {} : { templates: options.templates },
+      ...options.scriptVariables === undefined ? {} : { scriptVariables: options.scriptVariables },
     }
   }
 
@@ -396,6 +407,12 @@ export class IrisAppService {
 
       'character.delete': async ({ characterId }) => {
         await library.delete(characterId)
+        // Both stores have carried a `forget` since they were written and
+        // nothing called either, so a deleted card left its partitions behind.
+        // They are keyed by character id, so the next card to take that id would
+        // have inherited them.
+        await this.#options.extensionSettings?.forget(characterId)
+        await this.#options.scriptVariables?.forget(characterId)
         return {}
       },
 
