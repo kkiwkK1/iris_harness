@@ -1788,3 +1788,90 @@ test('the chat-write arms are routable but not on the SillyTavern surface', () =
     )
   }
 })
+
+/**
+ * Whether a surface hands back a live reference into the snapshot.
+ *
+ * One fresh realm per probe, and that is not fastidiousness: sharing a realm
+ * across probes let an earlier `push` move which floor `getSwipes()` addressed,
+   and two of six answers came back wrong **in opposite directions**. A
+ * contaminated probe does not error; it produces a complete-looking table.
+ * @param read - how to obtain the value under test.
+ * @param mutate - how to mark it.
+ * @returns true when the mark survives into a second read.
+ */
+function handsBackLiveState(
+  read: (globals: Record<string, unknown>) => unknown,
+  mutate: (value: never) => void,
+): boolean {
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({ variableLayers: { global: { g: 1 }, character: {}, script: {}, chat: {} } }),
+  })
+  let live = false
+  evaluate(scope, globals => {
+    const first = read(globals) as never
+    mutate(first)
+    live = JSON.stringify(read(globals) ?? null).includes('IRIS_PROBE')
+  })
+  return live
+}
+
+test('the two surfaces have opposite rules about live state, on purpose', () => {
+  /*
+   * Not one rule with an exception — two surfaces whose upstreams disagree, and
+   * getting either backwards is silent.
+   *
+   * **Tavern Helper clones on the way out** (21 `klona` calls across 10
+   * modules). Handing a live reference there is Iris-only behaviour in the
+   * worse direction: the card's mutation works here and does nothing on real
+   * SillyTavern, so it invites a dependency no other host honours.
+   *
+   * **The SillyTavern context object is live upstream**, and cards mutate it as
+   * the documented idiom. Cloning `chat` here would not make Iris safer, it
+   * would break `chat.push(...)` — which the journal exists to carry to the
+   * host.
+   */
+  assert.equal(
+    handsBackLiveState(g => (g['getVariables'] as (o: unknown) => unknown)({ type: 'global' }),
+      v => { (v as Record<string, unknown>)['IRIS_PROBE'] = 1 }),
+    false,
+    'getVariables is a Tavern Helper member; upstream klonas it',
+  )
+  assert.equal(
+    handsBackLiveState(g => (g['getChatMessages'] as (r: unknown) => unknown[])(0),
+      v => { ((v as Record<string, unknown>[])[0] ?? {})['mes'] = 'IRIS_PROBE' }),
+    false,
+    'the array was already fresh; its elements were not',
+  )
+  assert.equal(
+    handsBackLiveState(g => (g['getSwipes'] as () => unknown)(),
+      v => { (v as string[]).push('IRIS_PROBE') }),
+    false,
+  )
+
+  assert.equal(
+    handsBackLiveState(g => (g['SillyTavern'] as Record<string, unknown>)['chat'],
+      v => { (v as Record<string, unknown>[]).push({ mes: 'IRIS_PROBE' }) }),
+    true,
+    'context.chat must stay live — cloning it would break the idiom, not protect it',
+  )
+})
+
+test('the shared tables keep their identity through the clone layer', () => {
+  /*
+   * The reason the clone layer copies **call results** and not properties. A
+   * card may subscribe through one name and emit through another; two equal but
+   * separate event tables would satisfy every equality check a card is likely to
+   * write and then match nothing at dispatch.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    assert.equal(parent['event_types'], globals['tavern_events'], 'one table, two names')
+    assert.equal(parent['TavernHelper'], globals['TavernHelper'], 'one surface, two routes')
+  })
+})

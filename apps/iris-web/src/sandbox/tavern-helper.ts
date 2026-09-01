@@ -1199,8 +1199,92 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     mvu_events: MVU_EVENTS,
   }
 
+  /*
+   * Upstream's house rule, applied once at the exit rather than member by member.
+   *
+   * Tavern Helper clones what it hands back — 21 `klona` calls across 10 modules,
+   * `getVariables` / `getChatMessages` / `getPreset` / `getCharacter` among them.
+   * Iris was handing out live references into the frame's snapshot, which is
+   * **Iris-only behaviour in the worse direction**: a card mutating a return
+   * value changes our state and changes nothing on real SillyTavern, so it
+   * invites a dependency no other host honours. Corpus mutations of these return
+   * values: zero, so this breaks nothing measured.
+   *
+   * Done here, in one place, because a per-member `klona` makes "the new member
+   * forgot to clone" a regression that can happen. There is no list to keep.
+   */
+  const detached = detachReturns(api, host.reportGap)
+
   // Upstream exposes the same members twice: bare, and under `TavernHelper`.
   // Both spellings appear in real cards, so both have to resolve.
-  api['TavernHelper'] = { ...api }
-  return api
+  detached['TavernHelper'] = { ...detached }
+  return detached
+}
+
+/**
+ * Copy an API surface so that every **call** hands back detached data.
+ *
+ * Only call results are copied. Properties are passed through untouched, and
+ * that distinction is load-bearing rather than an optimisation:
+ *
+ * - `tavern_events`, `iframe_events` and `mvu_events` are shared constant tables,
+ *   and a card comparing `parent.event_types` with the bare `tavern_events`
+ *   must find the same object — there is a test asserting exactly that. Cloning
+ *   them would break a name-matching that has no error to report when it fails.
+ * - `eventSource` carries methods, so it is not structured-cloneable at all, and
+ *   an event bus that were copied would deliver to nobody.
+ *
+ * Neither exclusion needs listing, because neither is a function return.
+ *
+ * The frame's own members (`initializeGlobal`, `waitGlobalInitialized`) are built
+ * elsewhere and deliberately outside this: what they hand back is a value one of
+ * the card's own scripts published for its siblings, and copying it would break
+ * cohabitation — the shared bag exists precisely so those references are shared.
+ * @param api - the surface as built.
+ * @param report - where to say that something could not be detached.
+ * @returns the same surface, with call results copied.
+ */
+function detachReturns(
+  api: Record<string, unknown>,
+  report: (message: string) => void,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [name, member] of Object.entries(api)) {
+    if (typeof member !== 'function') {
+      out[name] = member
+      continue
+    }
+    out[name] = (...args: unknown[]): unknown => {
+      const result = (member as (...rest: unknown[]) => unknown)(...args)
+      if (result instanceof Promise) return result.then(value => detach(value, name, report))
+      return detach(result, name, report)
+    }
+  }
+  return out
+}
+
+/**
+ * A structured copy, or the original with a report if it cannot be copied.
+ *
+ * The fallback is reported rather than silent. A member returning something
+ * uncloneable is returning a live reference — the exact condition this exists to
+ * end — so passing it through quietly would reinstate the problem for whichever
+ * member happens to hold a function or a proxy. A card sees no difference; the
+ * report is for whoever added that member.
+ * @param value - what the member returned.
+ * @param member - its name, for the report.
+ * @param report - where to say it.
+ * @returns a detached copy where one is possible.
+ */
+function detach(value: unknown, member: string, report: (message: string) => void): unknown {
+  if (value === null || typeof value !== 'object') return value
+  try {
+    return structuredClone(value)
+  } catch {
+    report(
+      `${member} returned a value Iris could not copy, so the card holds a live reference`
+        + ' into the frame’s snapshot — upstream would have handed back a copy',
+    )
+    return value
+  }
 }
