@@ -281,6 +281,21 @@ export class ChatEntry {
     // The trees are read at call time rather than captured, because they change
     // every turn and this getter is resolved once.
     if (this.#substitute === undefined) {
+      // No variable store is supplied, and that is measured rather than
+      // overlooked. `createMacroContext` then makes one in-memory store, and
+      // because this getter caches its expander, **that one store is shared by
+      // every expansion in this chat** — which is what a preset needs: its
+      // `{{setvar}}` prompts run before the `{{getvar}}` prompt that reads them
+      // back, inside one assembly.
+      //
+      // Binding it to the chat's persistent scopes was tried and reverted. It
+      // was not needed (the preset works without it, verified end to end) and it
+      // turned `prompt.itemize` — a read — into a write: previewing a prompt
+      // stored three menu選択 into `chat_metadata.variables`. The fidelity gap it
+      // would have closed is real but unmeasured: `{{setvar}}` here does not
+      // survive a restart and is invisible to a card reading
+      // `getVariables({type: 'chat'})`. Nothing in the corpus depends on either,
+      // so the side effect was the only certain consequence.
       const tavern = substituteFor(this.names)
       this.#substitute = (text, options) => {
         const expanded = tavern(text, options)

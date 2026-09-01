@@ -18,7 +18,7 @@
  */
 
 import type { CharacterCard } from '@iris/character'
-import { createMacroContext, toRegexSubstitute } from '@iris/macro'
+import { createMacroContext, toRegexSubstitute, type MacroVariableStore } from '@iris/macro'
 import type { ViewRole } from '@iris/protocol'
 import {
   applyRegexScripts,
@@ -65,9 +65,21 @@ export function scriptsOf(card: CharacterCard | undefined): RegexScript[] {
  * @param names - what `{{char}}` and `{{user}}` expand to.
  * @returns the substitute to hand the regex engine.
  */
-export function substituteFor(names: { user: string, character: string }): MacroSubstitute {
-  return toRegexSubstitute(createMacroContext({ char: names.character, user: names.user }))
+export function substituteFor(
+  names: { user: string, character: string },
+  variables?: MacroVariableStore,
+): MacroSubstitute {
+  return toRegexSubstitute(createMacroContext({
+    char: names.character,
+    user: names.user,
+    // Optional, and unused today: a caller that supplies one binds the macro
+    // tier to a store of its choosing. `entry.substitute` deliberately does not
+    // — see the note there for what binding it to the chat's persistent scopes
+    // cost when it was tried.
+    ...variables === undefined ? {} : { variables },
+  }))
 }
+
 
 /**
  * Run the scripts for one direction.
