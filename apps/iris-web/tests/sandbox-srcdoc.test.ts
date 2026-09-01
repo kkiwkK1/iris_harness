@@ -221,3 +221,105 @@ test('a library tag requests CORS, so its errors arrive with names', () => {
       ' stops a card\u2019s publish chain arrives carrying nothing',
   )
 })
+
+test('a message frame carries its markup in the document, after the libraries', () => {
+  /*
+   * Order is load-bearing in both directions. The bootstrap first, so anything
+   * the markup throws is something the frame can *say*. The libraries before the
+   * markup, because a card's inline script calls `$()` on its first line and an
+   * external `<script src>` without `defer` blocks parsing until it has run.
+   */
+  const doc = buildSrcdoc('tok', 'BOOTSTRAP', {
+    networkGranted: false,
+    libraries: [`${SELF}/sandbox/message-preset-abc.js`],
+    selfOrigin: SELF,
+    body: '<body><h1 id="bridge">console</h1></body>',
+  })
+
+  assert.ok(doc.includes('id="bridge"'), 'the card markup must be in the document')
+  assert.ok(
+    doc.indexOf('BOOTSTRAP') < doc.indexOf('message-preset-abc.js'),
+    'the bootstrap installs the channel before anything can fail',
+  )
+  assert.ok(
+    doc.indexOf('message-preset-abc.js') < doc.indexOf('id="bridge"'),
+    'a card calls $() on its first line, so the libraries must have run',
+  )
+})
+
+test('a message frame cannot scroll itself, which is why height sync is existence', () => {
+  const doc = buildSrcdoc('tok', '', {
+    networkGranted: false,
+    libraries: [],
+    selfOrigin: SELF,
+    body: '<div>x</div>',
+  })
+
+  // Upstream's reset (`render/iframe.ts:88-89`). Without it a card that sized
+  // itself expecting no inner scrollbar lays out differently.
+  assert.ok(doc.includes('overflow:hidden!important'))
+  assert.ok(doc.includes('box-sizing:border-box'))
+})
+
+test('a script frame keeps the minimal reset and gets no markup', () => {
+  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
+
+  // Script bodies arrive as `run` messages, so there is nothing to place — and
+  // `overflow:hidden` would be a rule about a document nobody looks at.
+  assert.ok(!doc.includes('overflow:hidden'))
+  assert.ok(doc.includes('color-scheme:inherit'))
+})
+
+test('the inlined snapshot is a string literal, so card data cannot become code', () => {
+  /*
+   * A card's variables are author-written and model-influenced text, and this
+   * puts them into a document as source. Embedded as an object literal, a value
+   * containing `</script>` — or anything that parses — would end the element or
+   * run. As a JSON string literal parsed once at run time, no character in the
+   * data is ever read as syntax.
+   */
+  const hostile = {
+    variables: { note: '</script><img src=x onerror=alert(1)>' },
+    nested: { deep: 'also "quoted" and \ escaped' },
+  }
+  const doc = buildSrcdoc('tok', '', {
+    networkGranted: false,
+    libraries: [],
+    selfOrigin: SELF,
+    body: '<div>x</div>',
+    context: hostile,
+  })
+
+  assert.ok(doc.includes('__iris_context__'), 'the seed must be present')
+  assert.ok(doc.includes('JSON.parse('), 'the value must be parsed, not evaluated')
+  // The dangerous sequence must not appear able to close the seed's script.
+  const seedAt = doc.indexOf('__iris_context__')
+  const seedEnd = doc.indexOf('</script>', seedAt)
+  const seed = doc.slice(seedAt, seedEnd)
+  /*
+   * Two properties, and the first draft of this test asserted the wrong one.
+   *
+   * It required that `onerror=` not appear at all — but the payload is a card's
+   * *variable*, and it is supposed to survive verbatim. Had it been absent, the
+   * card's data would have been silently corrupted, which is a worse bug than
+   * the one being guarded against. **Data preserved, syntax neutralised** is
+   * the property: the text is there, and the sequence that could end the
+   * element is not.
+   */
+  assert.ok(
+    !seed.includes('</script'),
+    'the payload could close its own script element, so it would escape into markup',
+  )
+  assert.ok(
+    seed.includes('onerror='),
+    'the payload was altered — a card variable must arrive as the card wrote it',
+  )
+})
+
+test('a frame with no inlined snapshot has no seed at all', () => {
+  // A script frame's snapshot arrives over the channel, and an empty seed global
+  // would give the frame a second, always-stale source for it.
+  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  assert.ok(!doc.includes('__iris_context__'))
+})
+

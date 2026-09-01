@@ -1,0 +1,235 @@
+/**
+ * One sandboxed frame per card interface found in a message.
+ *
+ * Step two of the pipeline. The predicate (`frontend-blocks.ts`) decides *which*
+ * blocks are claimed; this puts each claimed block into a frame and reports what
+ * happened to it.
+ *
+ * ## Reusing the script-frame machinery rather than paralleling it
+ *
+ * The frame itself is `runCard` — the same builder, the same CSP, the same
+ * channel, the same virtual `parent`, the same per-card grants. A message frame
+ * is **another frame of the same card**, not a new trust domain, so anything
+ * that looked like a second implementation would be a second place for the wall
+ * to be wrong.
+ *
+ * Three things do differ, and each is a fact about *when card code runs* rather
+ * than a preference:
+ *
+ * 1. **The body is markup, not script.** A script body can be handed over a
+ *    channel because it is code; markup only runs by being parsed, so it goes
+ *    into the document. `scripts` is therefore empty and no `run` message is
+ *    ever sent — the interface's own `<script>` tags execute themselves.
+ * 2. **The snapshot is inlined.** Because the markup runs during parsing and
+ *    reads its variables immediately, the pushed `context` cannot arrive in
+ *    time; see `srcdoc.ts`. The pushed channel still carries updates.
+ * 3. **Libraries are the message preset.** Upstream injects eight into a message
+ *    frame against two into a script frame, so this is a different bundle.
+ *
+ * ## What is instrumented, and why these three
+ *
+ * Every discriminator here was paid for by a silent failure in the script-frame
+ * work, and each catches something the others cannot see:
+ *
+ * - `attach` is part of the contract, because `runCard` builds an iframe and
+ *   does not insert it. An un-inserted iframe never loads, so the bootstrap
+ *   never parses and the frame never says anything — the quietest failure this
+ *   project has produced.
+ * - `isConnected` is checked *after* attaching, because requiring an `attach`
+ *   makes a caller supply one and does not make theirs work. A no-op satisfies
+ *   the compiler and reproduces the original failure exactly.
+ * - A frame that never reports `ready` is reported, because "still starting" is
+ *   not a state anything may rest in forever.
+ *
+ * @module iris-web/sandbox/message-frames
+ */
+import type { FrontendBlock } from './frontend-blocks.ts'
+
+
+/** Where one interface has got to. */
+export type InterfacePhase =
+  /** Claimed, no frame yet. */
+  | 'claimed'
+  /** The frame answered `ready`; its markup has parsed. */
+  | 'live'
+  /** The frame never became ready. */
+  | 'never-started'
+  /** Torn down because its message stopped being displayed. */
+  | 'closed'
+
+/** One interface's state, as a reader sees it. */
+export interface InterfaceState {
+  /** Which floor the interface belongs to. */
+  floor: number
+  /**
+   * Which interface of that floor, as an opaque identity.
+   *
+   * Deliberately not "the Nth interface". Upstream's own id carries a number
+   * whose meaning differs between its two render paths — element index in one,
+   * chunk index in the other — and upstream never parses it either, taking only
+   * the floor. Anything deriving meaning from this would be reading a number
+   * that changes for reasons unrelated to the interface.
+   */
+  instance: number
+  phase: InterfacePhase
+  /** Why, for `never-started`. */
+  detail?: string
+  /** How big the markup was, which is the frame's construction cost. */
+  bytes: number
+}
+
+/** One running frame, as this controller needs to see it. */
+export interface StartedInterface {
+  element: { isConnected?: unknown }
+  dispose: () => void
+}
+
+/** What this controller needs from the world. */
+export interface MessageFramesEnv {
+  /**
+   * Build and start one frame for a block's markup.
+   *
+   * Injected rather than called directly, following `card-scripts.ts`. The
+   * reason is not only testability: it keeps every reference to `runCard`,
+   * `window` and the srcdoc in **one** place — the caller — so this file cannot
+   * grow a second, quieter opinion about how a frame is constructed. A message
+   * frame is another frame of the same card, and the way to keep that true is to
+   * not have a second constructor.
+   */
+  start: (input: {
+    markup: string
+    floor: number
+    instance: number
+    onReady: () => void
+  }) => StartedInterface
+  /**
+   * Put the frame into the document.
+   *
+   * In the contract rather than left to a convention, because the convention was
+   * the bug: `runCard` returns an iframe and every existing caller happened to
+   * append it, so nothing failed until one did not.
+   */
+  attach: (frame: { element: { isConnected?: unknown }, floor: number, instance: number }) => void
+  onState: (states: readonly InterfaceState[]) => void
+  /** How long a frame may take to become ready before silence is a finding. */
+  readyTimeoutMs?: number
+}
+
+/** A running set of interfaces for one message. */
+export interface RunningInterfaces {
+  dispose: () => void
+}
+
+/**
+ * Put every claimed block of one message into its own frame.
+ *
+ * @param blocks - the claimed blocks, from `claimFrontendBlocks`.
+ * @param floor - which message these belong to.
+ * @param env - the world.
+ * @returns a handle that tears the whole set down.
+ */
+export function runMessageInterfaces(
+  blocks: readonly FrontendBlock[],
+  floor: number,
+  env: MessageFramesEnv,
+): RunningInterfaces {
+  const states = new Map<number, InterfaceState>()
+  const running: StartedInterface[] = []
+  const timers: ReturnType<typeof setTimeout>[] = []
+  let disposed = false
+
+  const publish = (): void => {
+    if (disposed) return
+    env.onState([...states.values()])
+  }
+
+  const move = (instance: number, next: Partial<InterfaceState>): void => {
+    if (disposed) return
+    const current = states.get(instance)
+    if (current === undefined) return
+    states.set(instance, { ...current, ...next })
+    publish()
+  }
+
+  blocks.forEach((block, instance) => {
+    states.set(instance, {
+      floor,
+      instance,
+      phase: 'claimed',
+      bytes: block.body.length,
+    })
+  })
+  publish()
+
+  blocks.forEach((block, instance) => {
+    if (disposed) return
+
+    const started = env.start({
+      markup: block.body,
+      floor,
+      instance,
+      onReady: () => move(instance, { phase: 'live' }),
+    })
+    running.push(started)
+
+    env.attach({ element: started.element, floor, instance })
+
+    /*
+     * The DOM answering whether the attach happened, which is a source
+     * independent of the code that claimed to do it.
+     */
+    if (started.element.isConnected === false) {
+      move(instance, {
+        phase: 'never-started',
+        detail: 'the frame was never put into the document, so it will never load',
+      })
+      return
+    }
+
+    const timer = setTimeout(() => {
+      const current = states.get(instance)
+      if (current === undefined || current.phase !== 'claimed') return
+      move(instance, {
+        phase: 'never-started',
+        detail: 'the frame never reported ready — its bootstrap did not run, or it was torn down',
+      })
+    }, env.readyTimeoutMs ?? 8_000)
+    timers.push(timer)
+  })
+
+  return {
+    dispose: () => {
+      disposed = true
+      for (const timer of timers) clearTimeout(timer)
+      for (const card of running) card.dispose()
+      /*
+       * States are dropped rather than marked `closed` and kept. A message that
+       * scrolled out of view has no interfaces, and leaving their last state
+       * behind would let a reader take a stale row for a live one — the same
+       * mistake the report list's generations exist to prevent.
+       */
+      states.clear()
+    },
+  }
+}
+
+/**
+ * One line for a reader, per interface.
+ *
+ * @param state - the interface's state.
+ * @returns the sentence to show.
+ */
+export function describeInterface(state: InterfaceState): string {
+  switch (state.phase) {
+    case 'claimed':
+      return 'starting…'
+    case 'live':
+      // Deliberately not "rendered". The frame's markup parsed; whether the card
+      // drew anything is its own business and not observable from here.
+      return `live (${Math.round(state.bytes / 1024)} KB of markup)`
+    case 'never-started':
+      return `never started: ${state.detail ?? 'no reason given'}`
+    case 'closed':
+      return 'closed with its message'
+  }
+}

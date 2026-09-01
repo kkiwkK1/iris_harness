@@ -210,7 +210,32 @@ export function buildSrcdoc(
     // The card's container is this document's own body: `parent.document.body`
     // resolves here, which is what makes the two measured mount sites work
     // without the card ever reaching the host page.
-    '<style>html,body{margin:0;padding:0;background:transparent;color-scheme:inherit}</style>',
+    /*
+     * A message frame gets upstream's reset; a script frame keeps the minimal one.
+     *
+     * The load-bearing line is `overflow:hidden` on `html,body`
+     * (`render/iframe.ts:88-89`), and it is what turns height sync from a layout
+     * concern into an **existence** one: the frame cannot scroll itself, so
+     * anything past the reported height is not clipped-with-a-scrollbar, it is
+     * simply not there. Copied deliberately — a card that sized itself expecting
+     * no inner scrollbar would lay out differently against one.
+     *
+     * It interacts with a divergence already recorded in `SANDBOX.md`: Iris
+     * cannot write `frameElement.style.height` across origins and posts the
+     * height out instead, one frame later. So during that one frame a growing
+     * interface is cut off rather than scrollable. Upstream has no such lag
+     * because its write is same-origin and synchronous.
+     *
+     * `box-sizing` and `max-width` come from the same block. The avatar
+     * background rules upstream also injects are **not** copied: they need the
+     * user's and character's real avatar paths, which is host data a frame only
+     * gets through the document grant.
+     */
+    body === undefined
+      ? '<style>html,body{margin:0;padding:0;background:transparent;color-scheme:inherit}</style>'
+      : '<style>*,*::before,*::after{box-sizing:border-box}' +
+        'html,body{margin:0!important;padding:0;overflow:hidden!important;max-width:100%!important;' +
+        'background:transparent;color-scheme:inherit}</style>',
     '</head><body>',
     /*
      * The bootstrap first, then the card's libraries.
