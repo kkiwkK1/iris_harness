@@ -34,6 +34,7 @@ import type { ChatEntry } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
+import { lineTurns } from './entry.ts'
 import { buildPrompt, DEFAULT_PRESET } from './prompt.ts'
 import { runScripts } from './regex.ts'
 import type { ScriptPolicyStore } from './scripts.ts'
@@ -267,6 +268,48 @@ export class IrisAppService {
         // whose record went when the chat last closed. `preview` says which.
         const recorded = turn === undefined ? undefined : entry.itemizations.get(turn)
         return { itemization: recorded ?? this.#previewItemization(entry) }
+      },
+
+      'script.setVariables': async ({ chatId, scope, messageId, scriptId, op, variables, path }) => {
+        const entry = await chats.open(chatId)
+        const option = variableOptionFor(scope, messageId, scriptId)
+
+        if (op === 'delete') {
+          if (path === undefined) throw invalid('a delete needs the path to remove')
+          entry.variables.deleteVariable(path, option)
+        } else {
+          if (variables === undefined) throw invalid(`"${op}" needs a variables object`)
+          // Through the host's own guard, like every other write a card makes.
+          assertStorable(variables, 'variables')
+          // The merge rules stay here, where they are already tested: incoming
+          // wins for insertOrAssign (arrays replaced whole, not merged),
+          // existing wins for insert.
+          if (op === 'replace') entry.variables.replaceVariables(variables, option)
+          else if (op === 'insertOrAssign') entry.variables.insertOrAssignVariables(variables, option)
+          else entry.variables.insertVariables(variables, option)
+        }
+
+        entry.touch()
+        await chats.save(entry)
+        this.#options.broadcast({ type: 'chat.updated', chatId, view: entry.toView() })
+        return { variables: entry.variables.getVariables(option) }
+      },
+
+      'script.swipeTo': async ({ chatId, messageId, swipeIndex }) => {
+        const entry = await this.#idle(chatId, 'swiped')
+        // A card addresses a message by its index; swiping addresses a turn.
+        const turn = lineTurns(entry.session)[messageId]
+        if (turn === undefined) throw notFound(`this chat has no message ${String(messageId)}`)
+
+        try {
+          selectCandidate(entry.session, turn, swipeIndex)
+        } catch (cause: unknown) {
+          if (cause instanceof SwipeError) throw invalid(cause.message)
+          throw cause
+        }
+        entry.touch()
+        await chats.save(entry)
+        return { view: this.#announceChat(entry) }
       },
 
       'script.slash': async ({ chatId, command }) => {
@@ -887,6 +930,27 @@ export function injectedContributions(entry: ChatEntry): Contribution[] {
     })
   }
   return contributions
+}
+
+/**
+ * Map a card's scope selector onto a variable store option.
+ * @param scope - the scope the card named.
+ * @param messageId - the turn, for the message scope.
+ * @param scriptId - the partition, for the script scope.
+ * @returns the option the store addresses.
+ */
+export function variableOptionFor(
+  scope: 'message' | 'chat' | 'global' | 'script',
+  messageId?: number,
+  scriptId?: string,
+): Parameters<ChatEntry['variables']['getVariables']>[0] {
+  if (scope === 'message') {
+    return messageId === undefined ? { type: 'message' } : { type: 'message', message_id: messageId }
+  }
+  if (scope === 'script') {
+    return scriptId === undefined ? { type: 'script' } : { type: 'script', script_id: scriptId }
+  }
+  return { type: scope }
 }
 
 /**

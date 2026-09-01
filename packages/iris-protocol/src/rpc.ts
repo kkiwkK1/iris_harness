@@ -98,6 +98,46 @@ export const requestSchemas = {
    * Measured: four call sites in the corpus, all one snippet, two commands
    * (`/send` and `/trigger`). Anything else is refused by name.
    */
+  /**
+   * Write a card script's variables.
+   *
+   * The **operation** crosses the wire, not a pre-merged tree. Tavern Helper's
+   * five writers differ in ways that matter — `insertOrAssign` lets the incoming
+   * value win and replaces an array wholesale rather than merging it, `insert`
+   * lets the existing value win — and folding them into "read, merge, replace"
+   * in the browser would put those rules in a second implementation. That is the
+   * shape of this project's most expensive bug, and of the slash-parsing mistake
+   * that preceded this method.
+   *
+   * `updateVariablesWith` is the exception and stays in the frame: it takes a
+   * function, which cannot cross a process boundary. The frame reads, applies
+   * the card's function, and sends the result as `replace`.
+   */
+  'script.setVariables': z.object({
+    chatId: z.string().min(1),
+    scope: z.enum(['message', 'chat', 'global', 'script']),
+    /** For `message`: which turn's candidate. Absent means the newest. */
+    messageId: z.number().int().min(0).optional(),
+    /** For `script`: whose partition. */
+    scriptId: z.string().min(1).optional(),
+    op: z.enum(['replace', 'insertOrAssign', 'insert', 'delete']),
+    /** The tree, for every op but `delete`. */
+    variables: z.record(z.string(), z.unknown()).optional(),
+    /** The lodash path, for `delete`. */
+    path: z.string().min(1).max(500).optional(),
+  }),
+  /**
+   * Show a different alternate generation.
+   *
+   * `messageId` is a {@link ScriptChatMessage} index, the same number a card
+   * script sees; the host maps it to the turn that owns it.
+   */
+  'script.swipeTo': z.object({
+    chatId: z.string().min(1),
+    messageId: z.number().int().min(0),
+    swipeIndex: z.number().int().min(0),
+  }),
+
   'script.slash': z.object({
     chatId: z.string().min(1),
     command: z.string().min(1).max(32_000),
@@ -314,6 +354,9 @@ export interface RpcResponseMap {
   'chat.branch': { view: ChatView, chats: ChatSummary[] }
   'prompt.itemize': { itemization: PromptItemization }
 
+  /** The stored table, so a card sees what its write actually produced. */
+  'script.setVariables': { variables: Record<string, unknown> }
+  'script.swipeTo': { view: ChatView }
   /** Upstream's `triggerSlash` resolves with the pipeline's result. */
   'script.slash': { result: string }
 

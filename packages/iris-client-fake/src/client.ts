@@ -446,10 +446,23 @@ class InMemoryClient implements FakeClient {
       case 'script.saveChat':
       case 'script.setExtensionPrompt':
       case 'script.setExtensionSettings':
-      case 'script.generateRaw': {
-        // Refused, not faked. A context assembled here would be the fake's
-        // invention of SillyTavern's shape, and a runner built against it would
-        // pass in development and break on the first real card.
+      case 'script.generateRaw':
+      case 'script.setVariables':
+      case 'script.swipeTo': {
+        /*
+         * Refused, not faked. A context assembled here would be the fake's
+         * invention of SillyTavern's shape, and a runner built against it would
+         * pass in development and break on the first real card.
+         *
+         * The two write methods belong here for the same reason, stated twice
+         * over. `setVariables` carries an *operation* — `insertOrAssign` lets the
+         * incoming value win and replaces arrays wholesale, `insert` lets the
+         * existing one win — and faking it means writing that subtle rule a
+         * second time, in the half that is not authoritative. `swipeTo` needs the
+         * `messageId`-to-turn mapping, which is domain logic the host owns. A
+         * card that appeared to persist state here and lost it against a real
+         * host is precisely the failure the fake exists to prevent.
+         */
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 

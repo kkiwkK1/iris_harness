@@ -30,7 +30,7 @@ import {
 } from '@iris/persistence'
 import type { ChatSummary, ChatView, PromptItemization, ScriptPromptPosition } from '@iris/protocol'
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
-import { memoryBackend, sessionMessageBackend, VariableStore, type ScopeBackend, type Variables } from '@iris/variables'
+import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore, type ScopeBackend, type Variables } from '@iris/variables'
 
 import { busy } from './errors.ts'
 import { scriptsOf, substituteFor } from './regex.ts'
@@ -560,9 +560,12 @@ export class ChatEntry {
     return new VariableStore({
       message: sessionMessageBackend(session),
       chat: metadataBackend(this.header),
-      // Global variables are not reachable through the protocol yet, so nothing
-      // would read a persisted copy back.
       global: memoryBackend(),
+      // Partitioned by script id, so one card's script cannot read another's
+      // bookkeeping. In memory for now: persisting these needs a decision about
+      // whether script state belongs to the installation or to the card, and
+      // guessing it silently would put the answer somewhere hard to move.
+      script: keyedMemoryBackend(option => (option.type === 'script' ? option.script_id ?? 'anonymous' : 'anonymous')),
     })
   }
 

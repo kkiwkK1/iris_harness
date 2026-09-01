@@ -201,6 +201,8 @@ const PROBES: Record<string, unknown> = {
   'chat.branch': { chatId: 'no-such-chat', id: 0 },
   'prompt.itemize': { chatId: 'no-such-chat' },
   'script.slash': { chatId: 'no-such-chat', command: '/send hi|/trigger' },
+  'script.setVariables': { chatId: 'no-such-chat', scope: 'chat', op: 'replace', variables: {} },
+  'script.swipeTo': { chatId: 'no-such-chat', messageId: 0, swipeIndex: 0 },
   'connection.list': {},
   'connection.save': { provider: 'default', model: 'mock-model' },
   'connection.delete': { id: 'no-such-profile' },

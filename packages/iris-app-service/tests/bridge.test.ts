@@ -281,3 +281,94 @@ test('an unimplemented command is refused by name', async (t) => {
     (error: unknown) => /\/setvar/.test((error as Error).message),
   )
 })
+
+test('each writer keeps its own merge rule, on the host', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await handlers['script.setVariables']({
+    chatId, scope: 'chat', op: 'replace',
+    variables: { keep: 'original', list: [1, 2, 3] },
+  })
+
+  // insertOrAssign: the incoming value wins, and an array is replaced whole
+  // rather than merged element-wise.
+  const assigned = await handlers['script.setVariables']({
+    chatId, scope: 'chat', op: 'insertOrAssign',
+    variables: { keep: 'replaced', list: [9] },
+  })
+  assert.equal(assigned.variables['keep'], 'replaced')
+  assert.deepEqual(assigned.variables['list'], [9])
+
+  // insert: the existing value wins.
+  const inserted = await handlers['script.setVariables']({
+    chatId, scope: 'chat', op: 'insert',
+    variables: { keep: 'ignored', fresh: 'added' },
+  })
+  assert.equal(inserted.variables['keep'], 'replaced')
+  assert.equal(inserted.variables['fresh'], 'added')
+
+  const deleted = await handlers['script.setVariables']({
+    chatId, scope: 'chat', op: 'delete', path: 'fresh',
+  })
+  assert.equal('fresh' in deleted.variables, false)
+})
+
+test('a script’s variables are partitioned by script id', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await handlers['script.setVariables']({
+    chatId, scope: 'script', scriptId: 'status-bar', op: 'replace', variables: { secret: 'mine' },
+  })
+  const other = await handlers['script.setVariables']({
+    chatId, scope: 'script', scriptId: 'another', op: 'replace', variables: { own: 'theirs' },
+  })
+
+  // One card's script must not read another's bookkeeping.
+  assert.deepEqual(other.variables, { own: 'theirs' })
+  const mine = await handlers['script.setVariables']({
+    chatId, scope: 'script', scriptId: 'status-bar', op: 'insert', variables: {},
+  })
+  assert.deepEqual(mine.variables, { secret: 'mine' })
+})
+
+test('a card cannot store through setVariables what the file could not hold', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+
+  await assert.rejects(
+    () => handlers['script.setVariables']({
+      chatId: created.view.chatId, scope: 'chat', op: 'replace',
+      variables: { when: Number.POSITIVE_INFINITY },
+    }),
+    (error: unknown) => (error as { code?: string }).code === 'invalid-request',
+  )
+})
+
+test('swipeTo addresses a message the way a card does', async (t) => {
+  const { handlers, settled } = await fixture(t, ['First take.', 'Second take.'])
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+  await handlers['chat.send']({ chatId, text: 'Hello?' })
+  await settled()
+  await handlers['chat.regenerate']({ chatId })
+  await settled()
+
+  assert.equal((await handlers['chat.open']({ chatId })).view.messages[2]?.text, 'Second take.')
+
+  // messageId is the index a card script sees; the host maps it to the turn.
+  const { view } = await handlers['script.swipeTo']({ chatId, messageId: 2, swipeIndex: 0 })
+  assert.equal(view.messages[2]?.text, 'First take.')
+
+  await assert.rejects(
+    () => handlers['script.swipeTo']({ chatId, messageId: 99, swipeIndex: 0 }),
+    (error: unknown) => (error as { code?: string }).code === 'not-found',
+  )
+  await assert.rejects(
+    () => handlers['script.swipeTo']({ chatId, messageId: 2, swipeIndex: 7 }),
+    (error: unknown) => (error as { code?: string }).code === 'invalid-request',
+  )
+})
