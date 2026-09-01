@@ -498,7 +498,7 @@ export class IrisAppService {
       // the host-side context provider is wired, and throwing is deliberate —
       // a stub that answered plausibly could ship unnoticed, and a card reading
       // an empty context misbehaves silently instead of failing loudly.
-      'script.context': async ({ chatId, characterId }) => {
+      'script.context': async ({ chatId, characterId, messageId }) => {
         const entry = await chats.open(chatId)
         return {
           context: buildCardContext(entry, {
@@ -506,6 +506,7 @@ export class IrisAppService {
             // reading another's settings would defeat the per-card grant.
             extensionSettings: await this.#options.extensionSettings?.get(characterId) ?? {},
             characters: await library.list(),
+            ...messageId === undefined ? {} : { messageId },
             onReport: message => { this.#report(new Error(`script.context: ${message}`)) },
           }),
         }

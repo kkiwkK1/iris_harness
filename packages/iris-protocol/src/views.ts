@@ -222,6 +222,25 @@ export interface ScriptContext {
    * `getVariables({type: 'chat'})` needs that layer alone, and a pre-merged tree
    * cannot be taken apart again.
    */
+  /**
+   * The floor a message frame is rendered in, and that floor's own variables.
+   *
+   * Present only when `script.context` was asked for a `messageId`; a script
+   * frame has no floor. `variables` here is **that floor's own layer** and does
+   * not inherit from earlier floors — upstream reads
+   * `chat_message.variables[swipe_id] ?? {}` with no walk backwards, so a floor
+   * that wrote nothing reports an empty table rather than the newest state it
+   * could reach. Inheriting would make the anchoring decorative.
+   *
+   * It follows the **selected** swipe, `variables` being an array parallel to
+   * `swipes`.
+   */
+  floor?: {
+    /** The chat-file line index — what `getCurrentMessageId()` should answer. */
+    messageId: number
+    /** That floor's own layer, empty when it has none. */
+    variables: Record<string, unknown>
+  }
   variableLayers: {
     /** Installation-wide. Upstream's `extension_settings.variables.global`. */
     global: Record<string, unknown>

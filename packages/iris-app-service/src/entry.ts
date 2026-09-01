@@ -708,6 +708,42 @@ export class ChatEntry {
     })
   }
 
+  /**
+   * One floor's own variable layer, as a message frame reads it.
+   *
+   * Upstream, in `JS-Slash-Runner/src/function/variables.ts`:
+   *
+   * ```js
+   * return chat_message?.variables?.[chat_message?.swipe_id ?? 0] ?? {};
+   * ```
+   *
+   * Three things in that line are load-bearing and none of them is what the
+   * `message` **scope** does here:
+   *
+   * - It reads **that floor's own slot**, with no walk backwards. The scope
+   *   inherits from earlier turns so that a turn which wrote nothing still reads
+   *   the running state; a floor anchor must not, or every floor would report
+   *   the newest state it could reach and the anchoring would be decorative.
+   * - It follows the **selected** swipe, `variables` being an array parallel to
+   *   `swipes`.
+   * - An absent layer is `{}` — an empty table, not `null` and not a refusal.
+   *   A floor genuinely may have no variables, and that is not an error.
+   * @param messageId - the chat-file line index, which is what a card counts.
+   * @returns that floor's table, empty when it has none.
+   */
+  floorVariables(messageId: number): Variables {
+    const turn = lineTurns(this.session)[messageId]
+    if (turn === undefined) return {}
+    const candidate = selectedCandidate(this.session, turn)
+    if (candidate === undefined) return {}
+    for (const event of this.session.events) {
+      if (event.type === 'iris/variables' && event.data.candidateSeq === candidate.seq) {
+        return event.data.variables as Variables
+      }
+    }
+    return {}
+  }
+
   /** Per-candidate variables, keyed by the chat-file line they belong to. */
   #snapshotVariables(): Map<number, (Variables | undefined)[]> {
     const byCandidate = new Map<number, Variables>()

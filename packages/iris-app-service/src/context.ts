@@ -81,6 +81,8 @@ export function buildCardContext(
   extras: {
     extensionSettings: Record<string, unknown>
     characters: CharacterSummary[]
+    /** The floor a message frame belongs to; absent for a script frame. */
+    messageId?: number
     /** Reports a growth alarm; see {@link variableLayersOf}. */
     onReport?: (message: string) => void
   },
@@ -102,6 +104,9 @@ export function buildCardContext(
     extensionSettings: extras.extensionSettings,
     // The newest turn's message-scope table, which is where MVU keeps its tree.
     variables: entry.currentVariables() ?? {},
+    ...extras.messageId === undefined
+      ? {}
+      : { floor: { messageId: extras.messageId, variables: entry.floorVariables(extras.messageId) } },
     variableLayers: variableLayersOf(entry, extras.onReport),
   }
 }

@@ -278,6 +278,22 @@ export const requestSchemas = {
     chatId: z.string().min(1),
     /** Whose partition of extension settings to include. */
     characterId: z.string().min(1),
+    /**
+     * The floor this context belongs to, for a **message** frame.
+     *
+     * Absent for a script frame, which belongs to the card rather than to any
+     * one message. When present the context carries that floor's own variable
+     * layer, so a frame rendered inside a message answers
+     * `getCurrentMessageId()` with its real floor and reads
+     * `{type: 'message', message_id: <its own floor>}` from what it was given
+     * instead of asking again.
+     *
+     * Requested rather than always included: the layer is per floor, and pushing
+     * every floor's was measured at 22x the newest one with no upper bound —
+     * 8.29 MiB on the corpus's longest chat. One floor's worst case is 282.8 KiB
+     * and is bounded by construction.
+     */
+    messageId: z.number().int().min(0).optional(),
   }),
   /**
    * Write back the chat metadata a card has been mutating.
