@@ -1575,3 +1575,101 @@ test('the bus reached through getContext is the same bus as everywhere else', ()
     assert.deepEqual(heard, ['via getContext'], 'the subscription did not reach the emitting bus')
   })
 })
+
+/** The params of the one `setExtensionPrompt` call a scope recorded. */
+function promptCall(scope: ReturnType<typeof realm>) {
+  const call = scope.posted.find(
+    message => message.type === 'call' && message.method === 'setExtensionPrompt',
+  )
+  assert.ok(call?.type === 'call', 'no setExtensionPrompt reached the host')
+  return call.params as Record<string, unknown>
+}
+
+test('the corpus call shape reaches the host translated', () => {
+  /*
+   * Measured, verbatim, from `银麒赎世 · 手机UI` — the only caller:
+   *
+   *   ctx.setExtensionPrompt("yinqi-npc-messages", header + summary, 1, 0)
+   *
+   * A bare `1`, meaning `IN_CHAT`.
+   */
+  const { scope, bridge } = withBridge()
+  const set = bridge['setExtensionPrompt'] as (...args: unknown[]) => unknown
+
+  void set('yinqi-npc-messages', 'body text', 1, 0)
+
+  assert.deepEqual(promptCall(scope), {
+    key: 'yinqi-npc-messages',
+    value: 'body text',
+    position: 'at-depth',
+    depth: 0,
+  })
+})
+
+test('the positions upstream uses map to the ones this contract names', () => {
+  /*
+   * The test that stops this working by luck. The corpus only ever passes `1`,
+   * which happens to be the contract’s own default — so an implementation that
+   * forwarded the raw number, or dropped it entirely, would satisfy every
+   * measured call and be wrong for the other two.
+   *
+   * The mapping is read off upstream’s use of the enum rather than its names:
+   * `script.js:4641-4642` fetches BEFORE_PROMPT as the anchor’s before and
+   * IN_PROMPT as its after.
+   */
+  for (const [upstream, named] of [[2, 'before'], [0, 'after'], [1, 'at-depth']] as const) {
+    const { scope, bridge } = withBridge()
+    void (bridge['setExtensionPrompt'] as (...args: unknown[]) => unknown)('k', 'v', upstream, 3)
+    assert.equal(
+      promptCall(scope)['position'],
+      named,
+      `upstream position ${String(upstream)} must arrive as ${named}`,
+    )
+  }
+})
+
+test('an omitted position is left to the contract rather than guessed', () => {
+  // One place decides the default. Sending a value here would be a second.
+  const { scope, bridge } = withBridge()
+  void (bridge['setExtensionPrompt'] as (...args: unknown[]) => unknown)('k', 'v')
+
+  const params = promptCall(scope)
+  assert.equal('position' in params, false)
+  assert.equal('depth' in params, false)
+})
+
+test('NONE is refused by name instead of landing somewhere', () => {
+  /*
+   * `-1` means "registered but not positionally injected". This vocabulary
+   * cannot express that at all, and the alternative to refusing is putting the
+   * card's text exactly where it asked for it not to go.
+   */
+  const { bridge } = withBridge()
+  const set = bridge['setExtensionPrompt'] as (...args: unknown[]) => unknown
+
+  assert.throws(() => set('k', 'v', -1, 0), (error: unknown) => {
+    assert.ok(error instanceof UnsupportedApiError)
+    assert.match(String(error.message), /no counterpart/u)
+    return true
+  })
+})
+
+test('arguments this contract does not carry are reported, not dropped quietly', () => {
+  /*
+   * Upstream takes seven; this contract carries four. No measured card passes
+   * the others, but one that did would have `scan` and `role` silently ignored
+   * — and those change where and how the prompt is scanned, so the symptom
+   * would be a worse reply rather than an error.
+   */
+  const { scope, bridge } = withBridge()
+  const set = bridge['setExtensionPrompt'] as (...args: unknown[]) => unknown
+
+  void set('k', 'v', 1, 0, true, 1, null)
+
+  assert.ok(
+    scope.posted.some(
+      message => message.type === 'error' && message.message.includes('setExtensionPrompt'),
+    ),
+    'the dropped arguments went unmentioned',
+  )
+})

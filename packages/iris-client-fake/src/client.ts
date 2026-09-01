@@ -669,6 +669,33 @@ class InMemoryClient implements FakeClient {
         return { primary: null, additional: [] }
       }
 
+      case 'worldbook.globalSelect': {
+        /*
+         * An empty selection, which is a true answer here for the same reason
+         * `worldbook.names` returns nothing: this client holds no world books, so
+         * none of them can be globally selected. Reporting an absence invents
+         * nothing.
+         */
+        return { names: [] }
+      }
+
+      case 'worldbook.setGlobalSelect': {
+        const { names } = params as RpcRequest<'worldbook.setGlobalSelect'>
+        /*
+         * Refused, on the same line the reads and writes were split along: a
+         * selection is a **write**, and "this host has no books" is not a true
+         * answer to one. The contract says a name with no file behind it is
+         * skipped, so accepting an arbitrary list against an empty store would
+         * skip every entry and answer `{names: []}` — a success that looks
+         * exactly like the caller having selected nothing, when in fact nothing
+         * could ever have been selected.
+         */
+        throw new FakeRpcError(
+          'not-found',
+          `the fake client has no world books, so none of [${names.join(', ')}] can be selected`,
+        )
+      }
+
       case 'worldbook.replace': {
         const { name } = params as RpcRequest<'worldbook.replace'>
         /*

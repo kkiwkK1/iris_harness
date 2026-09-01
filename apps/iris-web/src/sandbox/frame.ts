@@ -328,6 +328,65 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
           return () => callAction('saveMetadata', { metadata: context?.chatMetadata ?? {} })
         }
         if (property === 'saveChat') return () => callAction('saveChat', {})
+
+        /*
+         * Upstream numbers its positions; this contract names them. The map is
+         * read off upstream's own use of the enum, not off the names:
+         * `script.js:4641-4642` fetches `BEFORE_PROMPT` as the anchor's before
+         * and `IN_PROMPT` as its after, and `:5588` is where `IN_CHAT` is
+         * inserted by depth.
+         *
+         *   2  BEFORE_PROMPT  → 'before'
+         *   0  IN_PROMPT      → 'after'
+         *   1  IN_CHAT        → 'at-depth'
+         *  -1  NONE           → no counterpart; refused by name
+         *
+         * The corpus passes a bare `1` twice and nothing else, which happens to
+         * be this contract's default — so leaving the argument untranslated would
+         * work today by luck and fail the moment a card passes `0` or `2`.
+         * Translating is cheaper than remembering that.
+         *
+         * `NONE` is refused rather than defaulted. It means "registered but not
+         * positionally injected", which this vocabulary cannot express at all,
+         * and the alternative is putting the card's text somewhere it explicitly
+         * asked for it not to go.
+         */
+        if (property === 'setExtensionPrompt') {
+          const POSITIONS = new Map<number, string>([[2, 'before'], [0, 'after'], [1, 'at-depth']])
+          return (key: unknown, value: unknown, position?: unknown, depth?: unknown, ...rest: unknown[]) => {
+            /*
+             * `scan`, `role` and `filter` exist upstream and this contract carries
+             * none of them. No measured card passes any, so they are not built —
+             * but a card that does must be told, because silently dropping an
+             * argument that changes where and how a prompt is scanned is the kind
+             * of difference that surfaces as a bad reply rather than as an error.
+             */
+            if (rest.length > 0) {
+              reportGap(
+                `a card called SillyTavern.setExtensionPrompt with ${String(rest.length + 4)} arguments;` +
+                  ' Iris carries key, value, position and depth, and ignored the rest',
+              )
+            }
+
+            const named = position === undefined ? undefined : POSITIONS.get(Number(position))
+            if (position !== undefined && named === undefined) {
+              throw new UnsupportedApiError(
+                'SillyTavern.setExtensionPrompt',
+                `Iris has no counterpart for extension prompt position ${String(position)}`
+                  + ' — it carries before (2), after (0) and at-depth (1).',
+              )
+            }
+
+            return callAction('setExtensionPrompt', {
+              key: String(key),
+              value: String(value),
+              // Omitted rather than guessed, so the contract's own default applies
+              // and there is one place that decides it.
+              ...(named === undefined ? {} : { position: named }),
+              ...(depth === undefined ? {} : { depth: Number(depth) }),
+            })
+          }
+        }
         return (...args: unknown[]) => {
           // `generateRaw`'s upstream signature varies by caller, and guessing
           // wrong here would send a malformed request that fails as a host error

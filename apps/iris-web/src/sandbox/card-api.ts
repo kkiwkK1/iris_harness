@@ -59,6 +59,13 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
    * same way the bare `getVariables()` does. Listing it here would be a second,
    * wrong way to reach it.
    */
+  /*
+   * Reached only through the `SillyTavern` surface, which translates its
+   * arguments first — upstream's `position` is a number and this contract's is a
+   * string. The entry is here because the wire method is real; the translation is
+   * in `frame.ts` because that is where the card's own call shape arrives.
+   */
+  setExtensionPrompt: 'script.setExtensionPrompt',
   getWorldbook: 'worldbook.get',
   /*
    * `updateWorldbookWith` is deliberately absent and is **not** a gap.
