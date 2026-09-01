@@ -21,7 +21,7 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, selectCandidate, SwipeError } from '@iris/chat'
 import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
 import type { ChatCompletionPreset } from '@iris/preset'
-import type { GenerationSettings, IrisEvent, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import type { ChatView, GenerationSettings, IrisEvent, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
 import { checkScriptFetch, extractScripts } from '@iris/script'
@@ -265,20 +265,17 @@ export class IrisAppService {
 
       'chat.editMessage': async ({ chatId, id, text }) => {
         const entry = await this.#idle(chatId, 'edited')
-        const { messages } = entry.toFile()
-        const line = messages[id]
-        if (line === undefined) throw notFound(`this chat has no message ${String(id)}`)
+        return { view: await this.#rewriteLines(entry, [{ messageId: id, message: text }]) }
+      },
 
-        line.mes = text
-        // A reply's text lives in its swipe list; `mes` only points at one of
-        // them. Editing without updating the list would be undone by the next
-        // swipe back and forth.
-        if (line.swipes !== undefined) line.swipes[line.swipe_id ?? 0] = text
-
-        entry.rebuild(messages, index => index)
-        entry.touch()
-        await chats.save(entry)
-        return { view: this.#announceChat(entry) }
+      'script.setChatMessages': async ({ chatId, messages }) => {
+        // Through `#idle` like a user's edit. A card rewriting the floor it just
+        // produced runs after `stream.end`, and `entry.finish()` is called before
+        // that event goes out — checked, not assumed — so the guard does not
+        // stand in the way of the ordinary case while still refusing a rewrite
+        // that would race a turn.
+        const entry = await this.#idle(chatId, 'rewritten by a script')
+        return { view: await this.#rewriteLines(entry, messages) }
       },
 
       'chat.deleteMessage': async ({ chatId, id }) => {
@@ -1192,6 +1189,47 @@ export class IrisAppService {
       this.#report(error)
       return options
     }
+  }
+
+  /**
+   * Replace the text of one or more lines, through the one path that knows how.
+   *
+   * A floor's text lives in its swipe list and `mes` only points at one entry;
+   * writing `mes` alone is undone by the next swipe back and forth. That is why
+   * a card's `setChatMessages` and a user's edit share this rather than having
+   * one each — the rule is subtle enough that a second implementation would get
+   * it wrong, and the failure would look like a swipe losing an edit rather than
+   * like a missing line of code.
+   *
+   * Every id is checked before anything is written: a batch that rewrote three
+   * floors and then refused the fourth would leave a conversation half-edited
+   * with no record of which half.
+   * @param entry - the conversation, already known idle.
+   * @param edits - the lines to replace.
+   * @returns the view, already announced.
+   * @throws {AppError} `not-found` when any id names no line.
+   */
+  async #rewriteLines(
+    entry: ChatEntry,
+    edits: readonly { messageId: number, message: string }[],
+  ): Promise<ChatView> {
+    const { messages } = entry.toFile()
+    for (const edit of edits) {
+      if (messages[edit.messageId] === undefined) {
+        throw notFound(`this chat has no message ${String(edit.messageId)}`)
+      }
+    }
+
+    for (const edit of edits) {
+      const line = messages[edit.messageId] as { mes: string, swipes?: string[], swipe_id?: number }
+      line.mes = edit.message
+      if (line.swipes !== undefined) line.swipes[line.swipe_id ?? 0] = edit.message
+    }
+
+    entry.rebuild(messages, index => index)
+    entry.touch()
+    await this.#options.chats.save(entry)
+    return this.#announceChat(entry)
   }
 
   /** Hand a survived failure to the composition's logger. */

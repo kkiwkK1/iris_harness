@@ -372,6 +372,39 @@ export const requestSchemas = {
     systemPrompt: z.string().max(32_000).optional(),
   }),
   /**
+   * Rewrite the text of one or more floors, as a card script does.
+   *
+   * Upstream's `setChatMessages`, and it is on MVU's generation-time path rather
+   * than being an editing convenience: `update_variables.ts:1563` appends a
+   * status placeholder or strips a `<status_current_variable>` block from the
+   * reply that just arrived, and `on_message_received.ts:56` appends an
+   * extra-model result to it. A card that cannot do this cannot render a status
+   * panel, which is what most of the corpus's scripts exist to do.
+   *
+   * **The same write path as `chat.editMessage`**, not a second one: a floor's
+   * text lives in its swipe list and `mes` only points at one entry, so an edit
+   * that misses the list is undone by the next swipe back and forth. That rule
+   * is already implemented once and this goes through it.
+   *
+   * Batched because upstream's signature is, and because a script appending a
+   * panel to several floors should not be able to leave half of them rewritten:
+   * every id is checked before anything is written.
+   *
+   * `refresh` is accepted and ignored — upstream's `'none' | 'affected' | 'all'`
+   * is a hint about repainting its own DOM, and this host tells every attached
+   * page what changed regardless. Rejecting the field would make a caller
+   * written against upstream fail on an argument that means nothing here.
+   */
+  'script.setChatMessages': z.object({
+    chatId: z.string().min(1),
+    messages: z.array(z.object({
+      /** The chat-file line index, which is what a card counts. */
+      messageId: z.number().int().min(0),
+      message: z.string().max(32_000),
+    })).min(1).max(200),
+    refresh: z.enum(['none', 'affected', 'all']).optional(),
+  }),
+  /**
    * Generate the way a real turn would, without becoming one.
    *
    * Upstream has two of these and the difference is not cosmetic.
@@ -479,6 +512,7 @@ export interface RpcResponseMap {
   'script.setExtensionSettings': { settings: Record<string, unknown> }
   'script.generateRaw': { text: string }
   'script.generate': { text: string }
+  'script.setChatMessages': { view: ChatView }
 }
 
 /** The response of one method. */

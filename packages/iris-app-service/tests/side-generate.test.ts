@@ -200,3 +200,59 @@ test('a system prompt from the card replaces the assembled one', async (t) => {
   // on, and the card asked for one.
   assert.equal(sent(seen[0]).includes('retired cartographer'), false)
 })
+
+test('a script rewrites a floor through the same path a user edit takes', async (t) => {
+  const { handlers, chats } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+  await handlers['chat.send']({ chatId, text: 'Hello?' })
+  const entry = await chats.open(chatId)
+  while (entry.generating) await new Promise(resolve => setTimeout(resolve, 1))
+
+  const before = (await handlers['chat.open']({ chatId })).view.messages[2]?.text ?? ''
+  await handlers['script.setChatMessages']({
+    chatId,
+    messages: [{ messageId: 2, message: `${before}\n\n<StatusPlaceHolderImpl/>` }],
+    refresh: 'none',
+  })
+
+  // Upstream's generation-time path: `update_variables.ts:1563` appends a status
+  // placeholder to the reply that just arrived. A card that cannot do this
+  // cannot render a status panel.
+  const after = (await handlers['chat.open']({ chatId })).view.messages[2]?.text ?? ''
+  assert.match(after, /StatusPlaceHolderImpl/u)
+
+  // And it went through the swipe list, not only `mes`. A floor's text lives in
+  // its swipes and `mes` merely points at one; an edit that misses the list is
+  // undone by the next swipe back and forth — which looks like a swipe eating an
+  // edit rather than like a missing line of code.
+  const file = entry.toFile().messages[2] as { mes: string, swipes?: string[], swipe_id?: number }
+  assert.equal(file.swipes?.[file.swipe_id ?? 0], after, 'the swipe list still holds the old text')
+})
+
+test('a batch that names a missing floor writes nothing at all', async (t) => {
+  const { handlers, chats } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+  await handlers['chat.send']({ chatId, text: 'Hello?' })
+  const entry = await chats.open(chatId)
+  while (entry.generating) await new Promise(resolve => setTimeout(resolve, 1))
+
+  const before = JSON.stringify((await handlers['chat.open']({ chatId })).view.messages)
+  await assert.rejects(
+    () => handlers['script.setChatMessages']({
+      chatId,
+      messages: [{ messageId: 0, message: 'rewritten' }, { messageId: 99, message: 'nowhere' }],
+    }),
+    (error: unknown) => (error as { code?: string }).code === 'not-found',
+  )
+
+  // All ids are checked before any is written. A batch that rewrote the first
+  // floor and then refused the second would leave the conversation half-edited,
+  // with nothing recording which half.
+  assert.equal(
+    JSON.stringify((await handlers['chat.open']({ chatId })).view.messages),
+    before,
+    'a refused batch left part of its edits behind',
+  )
+})

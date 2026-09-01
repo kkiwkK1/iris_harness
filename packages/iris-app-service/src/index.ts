@@ -429,6 +429,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('script.setExtensionSettings', handlers['script.setExtensionSettings']),
       ctx.irisRpc.register('script.generateRaw', handlers['script.generateRaw']),
       ctx.irisRpc.register('script.generate', handlers['script.generate']),
+      ctx.irisRpc.register('script.setChatMessages', handlers['script.setChatMessages']),
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()
