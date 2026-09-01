@@ -671,4 +671,29 @@ test('an unaddressed read still works, because that is what a script frame can a
   assert.doesNotThrow(() => read({ type: 'message', message_id: 'latest' }))
 })
 
+test('generate says that it is not the generate a card asked for', () => {
+  /*
+   * Upstream has two generates: `generate` assembles preset, worldbook and
+   * history; `generateRaw` leaves the prompt to the caller. Iris's host method
+   * has the second semantics and this member is wired to it, so a card asking
+   * for the first gets a reply with no persona, no worldbook and no history —
+   * text back, nothing thrown, on a path that costs money.
+   *
+   * Pinned as a *report* rather than a refusal on purpose, and pinned at all so
+   * that whoever rewires it to the assembling host method has to come here and
+   * delete an assertion that explains why the note existed.
+   */
+  const { api, gaps } = surface()
+  const generate = api['generate'] as (config: unknown) => Promise<unknown>
+
+  assert.doesNotThrow(() => void generate({ user_input: 'hello' }))
+  assert.ok(
+    gaps.some(gap => gap.includes('without persona, worldbook or chat history')),
+    'a card must be told its generation is missing its context',
+  )
+  assert.ok(
+    gaps.some(gap => gap.includes('streaming is not simulated')),
+    'the streaming difference is named too, since a progress bar depends on it',
+  )
+})
 

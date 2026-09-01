@@ -643,8 +643,43 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       host.call('swipeTo', { messageId, swipeIndex: swipeId }),
 
     // ── host capabilities that were already asynchronous ─────────────────
-    generate: async (config: Record<string, unknown>): Promise<unknown> =>
-      host.call('generateRaw', config),
+    /**
+     * Upstream has **two** generate functions with different semantics, and this
+     * is currently wired to the wrong one.
+     *
+     * | upstream member | what it does |
+     * | --- | --- |
+     * | `generate({user_input})` | assembles preset, worldbook and chat history, with `user_input` as the last user message |
+     * | `generateRaw(...)` | the **caller** orders the prompt; nothing is assembled |
+     *
+     * Iris's host method `script.generateRaw` has the second semantics. So this
+     * mapping answers a card that asked for the first with the second: text
+     * comes back, nothing throws, and the reply has **no persona, no worldbook
+     * and no history**. A wrong answer that looks like a right one, on a path
+     * that costs the user money.
+     *
+     * Reported rather than refused, and the asymmetry with the floor-addressed
+     * read is deliberate: that one **persisted** a merge built on a wrong value,
+     * so refusing was cheaper than the damage. This one returns a bad reply and
+     * writes nothing, and refusing would take a capability away from every card
+     * that calls it today. So it stays connected and says what it is.
+     *
+     * The fix is a host method with the assembling semantics
+     * (`script.generate{chatId, userInput, systemPrompt?, maxHistory?}`); when
+     * that lands, this maps to it and the note goes away. `generateRaw`, if a card
+     * ever calls it, maps to `script.generateRaw` — **two names, two meanings**,
+     * written down here because getting them the wrong way round is silent in
+     * both directions.
+     * @param config - upstream's config object, passed through.
+     * @returns whatever the host answers.
+     */
+    generate: async (config: Record<string, unknown>): Promise<unknown> => {
+      host.reportGap(
+        'a card called generate() — Iris currently routes it to a raw-prompt call, so the reply is' +
+          ' assembled without persona, worldbook or chat history; streaming is not simulated either',
+      )
+      return host.call('generateRaw', config)
+    },
     triggerSlash: async (command: string): Promise<string> => host.triggerSlash(command),
     /**
      * Upstream's spelling, kept wrong on purpose — cards call it.

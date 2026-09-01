@@ -510,6 +510,23 @@ class InMemoryClient implements FakeClient {
       case 'script.setExtensionPrompt':
       case 'script.setExtensionSettings':
       case 'script.generateRaw':
+      /*
+       * `script.generate` refuses for the same reason as `generateRaw`, only more
+       * so: it is the one that **assembles** the preset, the world info and the
+       * history. Faking that would be this package inventing SillyTavern's
+       * assembly, and a card built against the invention would pass here and
+       * produce a differently-shaped prompt against a real host.
+       *
+       * Refusing both also keeps a real mistake legible. Upstream has two
+       * generates with different semantics, and Iris's façade was wired to the
+       * wrong one — a card asking for the assembled generate was served the raw
+       * one, which returns text with no persona and no history and **succeeds**.
+       * Because the refusal names the method that was actually called, a
+       * developer whose card called `generate()` and sees
+       * "does not implement script.generateRaw" is being told about the
+       * mis-mapping rather than about a missing feature.
+       */
+      case 'script.generate':
       case 'script.setVariables':
       case 'script.swipeTo': {
         /*
