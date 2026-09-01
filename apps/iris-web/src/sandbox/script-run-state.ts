@@ -41,15 +41,7 @@ export type ScriptRunPhase =
    * visibly fine, so the card reads as healthy while one of them is stopped.
    */
   | 'waiting'
-  /**
-   * A wait ended without the global ever arriving.
-   *
-   * Upstream swallows the timeout and the script carries on, so this is not a
-   * crash — but it is not success either, and reporting it as `ran` would make a
-   * card whose provider never came indistinguishable from one whose provider
-   * did. The script is running with a dependency it never got.
-   */
-  | 'gave-up'
+
   /** The sandbox refused a member the card reached for. */
   | 'refused'
   /** The body threw. */
@@ -72,12 +64,13 @@ export interface ScriptRunState {
   detail?: string
   /** What it is blocked on, for `waiting`. */
   waitingFor?: string
+  /** How long it has been blocked, once that is worth saying. */
+  waitingMs?: number
 }
 
 /** Phases that mean the script is no longer going to change on its own. */
 const SETTLED: ReadonlySet<ScriptRunPhase> = new Set<ScriptRunPhase>([
   'ran',
-  'gave-up',
   'refused',
   'threw',
   'bootstrap-failed',
@@ -126,12 +119,23 @@ export function describeRun(state: ScriptRunState): string {
       // Deliberately not "finished". The body evaluated; a card that registered
       // listeners is still waiting to do its work.
       return 'loaded'
-    case 'waiting':
-      // Names what it is blocked on, because "waiting" alone is what
-      // `starting…` already was: a state you cannot act on.
-      return `waiting for ${state.waitingFor ?? 'another script'}`
-    case 'gave-up':
-      return `${state.waitingFor ?? 'a dependency'} never arrived — running without it`
+    case 'waiting': {
+      /*
+       * Names what it is blocked on, because "waiting" alone is what
+       * `starting…` already was: a state you cannot act on.
+       *
+       * There is no companion "gave up" phase any more. That distinction existed
+       * only because this frame used to abandon a wait after five seconds — a
+       * deadline borrowed from upstream's `stat_data` poll and applied to its
+       * event wait, which upstream never bounds. Removing the invented deadline
+       * removes the state it invented; a wait that is taking a long time says
+       * how long instead.
+       */
+      const seconds = Math.round((state.waitingMs ?? 0) / 1000)
+      const target = state.waitingFor ?? 'another script'
+      return seconds > 0 ? `still waiting for ${target} (${String(seconds)}s)` : `waiting for ${target}`
+    }
+
     case 'refused':
       return `refused ${state.member ?? 'a member'} — the sandbox does not allow it`
     case 'threw':
@@ -172,12 +176,6 @@ export function summariseRuns(states: readonly ScriptRunState[]): string {
    * while one of its scripts is stopped indefinitely. Sibling success must not
    * paper over a hang.
    */
-  const abandoned = states.filter(state => state.phase === 'gave-up')
-  if (abandoned.length > 0) {
-    const names = [...new Set(abandoned.map(state => state.waitingFor ?? 'a dependency'))]
-    return `${abandoned.length} of ${total} started without ${names.join(', ')}.`
-  }
-
   const blocked = states.filter(state => state.phase === 'waiting')
   if (blocked.length > 0) {
     const names = [...new Set(blocked.map(state => state.waitingFor ?? 'another script'))]

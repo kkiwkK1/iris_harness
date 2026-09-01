@@ -1040,17 +1040,33 @@ test('a waited-for global becomes usable, and follows the provider if it is with
   assert.equal(scope.forwarded('Mvu'), undefined, 'a copy would still be handing out a dead object')
 })
 
-test('a wait that timed out does not define the name', async () => {
-  // Otherwise a card gets `undefined` where it would have got a ReferenceError,
-  // and `undefined.foo` fails further from the cause than the bare reference did.
+test('a wait that has not been answered stays open, and defines nothing yet', async () => {
+  /*
+   * There is no timeout to test any more, and its removal was the fix. Upstream
+   * never bounds this wait; the five seconds here came from the Mvu `stat_data`
+   * poll, which runs *after* the global is present. Applied to the wait itself
+   * it became a race that a cold fetch loses — and every chat is a fresh opaque
+   * origin, so a card's bundle is always a cold fetch.
+   *
+   * So an unanswered wait simply stays open. It reports that it is waiting, and
+   * it defines nothing: a getter over an absent value would hand the card
+   * `undefined` where a `ReferenceError` names the problem.
+   */
   const scope = realm()
   scope.send({ iris: 'tok', type: 'context', context: snapshot() })
-  let waited: Promise<void> | undefined
+  let settled = false
   evaluate(scope, () => {
     const registry = scope.publishedValue('__iris_script__') as (id: string) => Record<string, unknown>
-    waited = (registry('consumer')['waitGlobalInitialized'] as (n: string) => Promise<void>)('Absent')
+    void (registry('consumer')['waitGlobalInitialized'] as (n: string) => Promise<void>)('Absent').then(
+      () => {
+        settled = true
+      },
+    )
   })
-  await waited
+  await new Promise(resolve => setTimeout(resolve, 20))
 
-  assert.equal(scope.forwarded('Absent'), undefined)
+  assert.equal(settled, false, 'the wait must not resolve on its own')
+  assert.equal(scope.forwarded('Absent'), undefined, 'and must not define an absent name')
+  const reported = scope.posted.filter(m => m.type === 'waiting')
+  assert.equal(reported.length, 1, 'it says once that it is waiting')
 })

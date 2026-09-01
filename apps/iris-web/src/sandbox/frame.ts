@@ -489,8 +489,22 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   const events = new EventBus()
   const eventSource = createEventSource(events)
 
-  /** Upstream's `async-wait-until` default, copied rather than chosen. */
-  const WAIT_DEADLINE_MS = 5_000
+  /**
+   * How long a wait may run before it is worth *saying* it is still waiting.
+   *
+   * A report threshold, not a deadline. Upstream's `waitGlobalInitialized` has
+   * **no timeout at all** — it resolves when `global_X_initialized` fires and
+   * otherwise waits forever. The five seconds this project used to apply here
+   * were borrowed from the wrong place: `async-wait-until`'s default belongs to
+   * the Mvu-specific `stat_data` poll, which runs *after* the global is already
+   * present and whose timeout upstream catches and ignores.
+   *
+   * Mis-siting it turned a patient wait into a race. Every chat opens a fresh
+   * opaque origin, so a card's bundle is always a cold fetch; upstream's frames
+   * are same-origin and share the page cache, so its providers are effectively
+   * always warm. A cap that upstream never pays cost us the window.
+   */
+  const WAIT_NOTICE_MS = 5_000
 
   /**
    * A global's name must be a non-empty string.
@@ -583,25 +597,37 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         makeUsable()
         return
       }
-      env.post({ iris: env.token, type: 'waiting', scriptId: forScript, global })
-      const arrived = await new Promise<boolean>(resolve => {
-        const done = (value: boolean): void => {
-          clearTimeout(deadline)
+      env.post({ iris: env.token, type: 'waiting', scriptId: forScript, global, elapsedMs: 0 })
+      const started = Date.now()
+      await new Promise<void>(resolve => {
+        const done = (): void => {
+          clearTimeout(notice)
           events.eventRemoveListener(`global_${global}_initialized`, announced)
-          resolve(value)
+          resolve()
         }
-        const announced = (): void => done(true)
-        const deadline = setTimeout(() => done(false), WAIT_DEADLINE_MS)
+        const announced = (): void => done()
+        /*
+         * Says so, and keeps waiting. Upstream is silent about a wait and never
+         * abandons one; this frame is unwilling to be silent — a hang is the
+         * failure with no voice — but abandoning it was never upstream's
+         * behaviour and is not something to invent on upstream's behalf.
+         */
+        const notice = setTimeout(() => {
+          env.post({
+            iris: env.token,
+            type: 'waiting',
+            scriptId: forScript,
+            global,
+            elapsedMs: Date.now() - started,
+          })
+        }, WAIT_NOTICE_MS)
         events.eventOn(`global_${global}_initialized`, announced)
         // Re-checked after subscribing: a provider that published between the
         // first check and the subscription would otherwise never be noticed.
-        if (published.has(global)) done(true)
+        if (published.has(global)) done()
       })
-      // Only when it actually arrived: after a timeout there is nothing to
-      // forward to, and defining a getter over an absent value would turn a
-      // `ReferenceError` the card can act on into `undefined` it cannot.
-      if (arrived) makeUsable()
-      env.post({ iris: env.token, type: 'waited', scriptId: forScript, global, arrived })
+      makeUsable()
+      env.post({ iris: env.token, type: 'waited', scriptId: forScript, global, arrived: true })
     },
   })
 

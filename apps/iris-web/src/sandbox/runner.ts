@@ -112,7 +112,8 @@ export interface RunnerHost {
   onWaiting?: (
     scriptId: string | undefined,
     global: string,
-    state: 'waiting' | 'arrived' | 'gave-up',
+    state: 'waiting' | 'arrived',
+    elapsedMs: number,
   ) => void
   /** The frame's bootstrap installed and is waiting for a body. */
   onReady?: () => void
@@ -237,13 +238,10 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         return
       }
       case 'waiting':
-        host.onWaiting?.(message.scriptId, message.global, 'waiting')
+        host.onWaiting?.(message.scriptId, message.global, 'waiting', message.elapsedMs)
         return
       case 'waited':
-        // Three outcomes, not two. A wait that timed out is not a wait that
-        // succeeded, and upstream swallowing the timeout is exactly why the
-        // difference has to be reported here.
-        host.onWaiting?.(message.scriptId, message.global, message.arrived ? 'arrived' : 'gave-up')
+        host.onWaiting?.(message.scriptId, message.global, 'arrived', 0)
         return
       case 'height':
         frame.style.height = `${message.pixels}px`

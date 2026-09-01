@@ -143,7 +143,14 @@ export type FromFrame =
    * one that is working — and under co-location its siblings are visibly fine,
    * so the card reads as healthy while one of its scripts is stopped forever.
    */
-  | { iris: string, type: 'waiting', scriptId: string | undefined, global: string }
+  | {
+      iris: string
+      type: 'waiting'
+      scriptId: string | undefined
+      global: string
+      /** Sent again once the wait is long enough to be worth remarking on. */
+      elapsedMs: number
+    }
   /** The wait ended — the global arrived, or the deadline passed. */
   | { iris: string, type: 'waited', scriptId: string | undefined, global: string, arrived: boolean }
   /** The card asked for a remote dependency. */
@@ -336,7 +343,13 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
       const scriptId = stringOrUndefined(message['scriptId'])
       const name = global.slice(0, 100)
       return message['type'] === 'waiting'
-        ? { iris: token, type: 'waiting', scriptId, global: name }
+        ? {
+            iris: token,
+            type: 'waiting',
+            scriptId,
+            global: name,
+            elapsedMs: typeof message['elapsedMs'] === 'number' ? message['elapsedMs'] : 0,
+          }
         : { iris: token, type: 'waited', scriptId, global: name, arrived: message['arrived'] === true }
     }
     case 'call': {

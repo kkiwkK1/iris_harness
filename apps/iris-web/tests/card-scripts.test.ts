@@ -332,24 +332,33 @@ test('a blocked script is named in the summary, not averaged into "starting"', a
   assert.doesNotMatch(summary, /still starting/)
 })
 
-test('a dependency that never arrived is not reported as success', async () => {
+test('a long wait says how long, and is never abandoned', async () => {
   /*
-   * Upstream bounds the wait at five seconds and swallows the timeout, so the
-   * script continues — but it continues *without* what it asked for. Reporting
-   * that as `ran` would make a card whose provider never came look exactly like
-   * one whose provider did, which is the single thing a reader of this panel
-   * needs to tell apart.
+   * This replaces a test that asserted a *timeout*. There is no timeout any
+   * more, and removing it was the fix: upstream's `waitGlobalInitialized` has no
+   * deadline at all — it resolves when the event fires and otherwise waits. The
+   * five seconds this frame used to enforce came from `async-wait-until`'s
+   * default, which upstream applies to the Mvu `stat_data` poll *after* the
+   * global is present, not to the wait for it.
+   *
+   * Mis-siting it turned a patient wait into a race that a cold fetch loses:
+   * every chat is a fresh opaque origin, so a card's bundle is never cached,
+   * while upstream's same-origin frames see a warm one. So the wait is patient
+   * again, and the panel says how long it has been waiting rather than giving up
+   * on the card's behalf.
    */
-  const { describeRun, summariseRuns, isSettled } = await import(
+  const { describeRun, isSettled, summariseRuns } = await import(
     '../src/sandbox/script-run-state.ts'
   )
 
-  const state = { scriptId: 'b', name: 'consumer', phase: 'gave-up' as const, waitingFor: 'Mvu' }
+  const fresh = { scriptId: 'b', name: 'consumer', phase: 'waiting' as const, waitingFor: 'Mvu' }
+  const slow = { ...fresh, waitingMs: 5_000 }
 
-  assert.match(describeRun(state), /Mvu never arrived — running without it/)
-  assert.equal(isSettled('gave-up'), true, 'nothing further happens without a new run')
+  assert.equal(describeRun(fresh), 'waiting for Mvu')
+  assert.equal(describeRun(slow), 'still waiting for Mvu (5s)')
+  assert.equal(isSettled('waiting'), false, 'a wait is not an ending')
   assert.match(
-    summariseRuns([{ scriptId: 'a', name: 'provider', phase: 'ran' }, state]),
-    /started without Mvu/,
+    summariseRuns([{ scriptId: 'a', name: 'provider', phase: 'ran' }, slow]),
+    /waiting for Mvu/,
   )
 })

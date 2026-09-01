@@ -137,18 +137,12 @@ export function CardScriptFrames(): ReactElement {
                * When it ends the script goes back to `ran` — the body did finish
                * evaluating; it was its continuation that was parked.
                */
-              onWaiting: (scriptId, global, state) =>
+              onWaiting: (scriptId, global, state, elapsedMs) =>
                 input.onPhase(
                   scriptId,
                   state === 'waiting'
-                    ? { phase: 'waiting', waitingFor: global }
-                    : state === 'arrived'
-                      ? { phase: 'ran' }
-                      : // Not `ran`. The script continues — upstream swallows the
-                        // timeout — but it is running without the dependency it
-                        // asked for, and calling that success hides the one thing
-                        // a reader needs to know.
-                        { phase: 'gave-up', waitingFor: global },
+                    ? { phase: 'waiting', waitingFor: global, waitingMs: elapsedMs }
+                    : { phase: 'ran' },
                 ),
               onBootstrapError: message => {
                 for (const script of input.scripts) {
