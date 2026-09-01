@@ -278,3 +278,103 @@ will call, and that a card written for Iris cannot take elsewhere.
 **What would overturn it.** Upstream adding members of the same name with
 different semantics, which the `IRIS_OWN` guard would catch as a failure rather
 than a silent collision.
+
+---
+
+## 8. Three Tavern Helper members left the SillyTavern surface
+
+**Kind:** compatibility fix, with a predicted side effect.
+
+**Upstream.** `st-context.js` returns 145 keys. `getVariables`, `getWorldbook`
+and `replaceWorldbook` are not among them — they are Tavern Helper members, and
+a card reading `SillyTavern.getVariables` on real SillyTavern gets `undefined`.
+
+**Iris** carried them on that surface, because `CARD_METHODS` answered one
+question — *may the shell route this* — where there were two, the other being
+*does a card find it on `SillyTavern`*. They were the same question until the
+chat journal needed to reach an arm that does not belong on the surface at all.
+
+**The predicted side effect, written down on purpose.** These names now return
+`undefined` **and file a report**, so logs will start carrying lines like *"a card
+read SillyTavern.getVariables, which Iris has not built"*. That is the correct
+new behaviour, not a regression. It is recorded here because **a predicted noise
+and an unpredicted regression are indistinguishable in a log** — the only thing
+that separates them is having said so in advance.
+
+**Deliberately not moved**, though they look like the same case: `generate`,
+`generateRaw` and `macros` exist on **both** upstream surfaces with different
+meanings, and `generateRaw` is one of the legitimate 145. Removing them would be
+a compatibility break dressed as tidying.
+
+**What would overturn it.** A corpus card reading one of the three off
+`SillyTavern` rather than off Tavern Helper — none does today; the reports would
+say so if one appeared.
+
+---
+
+## 9. Members Iris adds that upstream does not have
+
+**Kind:** deliberate improvement. Collected in one place because an addition has
+to be visible *as* an addition — that is the whole of the upgrade discipline, and
+until now the provenance of these lived in a test comment or nowhere.
+
+| member | why it exists | what it costs |
+| --- | --- | --- |
+| `getSwipes`, `swipeTo` | a swipe is a first-class object here; upstream reaches swipes through the message that holds them, so there is no name to copy | two names no upstream-written card will call, and that an Iris-written card cannot take elsewhere |
+| `charWorldbooks` | lets `getCharWorldbookNames('current')` answer **synchronously**, which upstream's declaration requires and an RPC cannot do (§3) | a snapshot field with no upstream counterpart |
+| `floor`, `variableLayers` | the four variable scopes arrive unmerged and floor-addressed, which is what makes `getAllVariables` and per-floor reads both answerable from one payload | a wider snapshot than upstream sends |
+| `setVariables` | see below — this one is a mistake, not a feature | |
+
+`identity.test.ts` holds an `IRIS_OWN` allowlist with a paired guard: any name in
+it that upstream *does* have fails the build. So these are enforced as additions
+rather than merely asserted to be.
+
+### `setVariables` is an invented verb, and should not stay one
+
+Upstream has no member of this name. Its vocabulary is five verbs —
+`replaceVariables`, `insertOrAssignVariables`, `insertVariables`,
+`deleteVariable`, `updateVariablesWith` — and every upstream write funnels into
+`replaceVariables`.
+
+So `setVariables` is not an Iris capability upstream lacks; it is **a sixth verb
+for something upstream already names**. That is the one kind of addition the
+upgrade discipline does not cover: it adds no capability and costs
+interoperability, since a card written against it works nowhere else.
+
+**When this is next touched, fold it into `replaceVariables` rather than keeping
+both — and do not add a seventh.** Recorded here rather than fixed now because
+the rename has callers and belongs in its own change.
+
+**What would overturn it.** Nothing about the naming. The entry closes when the
+member is folded in.
+
+---
+
+## 10. `role` has a fourth value, and filtering silently drops it
+
+**Kind:** faithful copy of an upstream defect, recorded so it is not read as ours.
+
+**Upstream** derives the role (`chat_message.ts:91-103`):
+
+```
+extra.type === 'narrator' ? (is_user ? 'unknown' : 'system')
+                          : (is_user ? 'user'    : 'assistant')
+```
+
+Two consequences, both upstream's:
+
+1. **`'unknown'` exists at runtime and upstream's own type says it cannot.** The
+   declared return is a three-value union, populated through an `as` assertion
+   (`:137`, `:148`) that validates nothing. **Iris types the runtime value, not
+   the declaration** — a contract that repeats the lie makes the fourth value
+   unrepresentable in every consumer while it keeps arriving.
+2. **A narrator message on a user row disappears from every filtered read.** The
+   filter compares against the derived role and its parameter type has no
+   `'unknown'`, so no argument returns those floors. Copied rather than repaired:
+   a card relying on `role: 'user'` to skip them would start seeing them.
+
+**What it costs.** Cards cannot reach those floors through a filtered read here
+either. The cost of *not* copying it is higher and less visible.
+
+**What would overturn it.** Upstream widening the filter, or a corpus card that
+depends on those floors being reachable — none does today.

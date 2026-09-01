@@ -928,3 +928,54 @@ test('the renamed fields carry the values upstream says they do', () => {
     data: {},
   })
 })
+
+test('a narrator row on a user message is role "unknown", and filtering loses it', () => {
+  /*
+   * Two holes, one test, by 3e's design — and it goes red under the obvious
+   * wrong implementation (deriving role from `is_user` alone, per upstream's
+   * *declared* three-value union).
+   *
+   * Upstream (`chat_message.ts:91-103`):
+   *
+   *   role = extra.type === 'narrator' ? (is_user ? 'unknown' : 'system')
+   *                                    : (is_user ? 'user'    : 'assistant')
+   *
+   * **Hole one:** `'unknown'` exists at runtime and upstream's own type says it
+   * cannot. The declaration is a three-value union populated through an `as`
+   * assertion (`:137`, `:148`), which validates nothing. Our type follows the
+   * runtime, because a contract that repeats the lie makes the value
+   * unrepresentable downstream while it keeps arriving.
+   *
+   * **Hole two:** the role filter compares against that derived role, and its
+   * parameter type has no `'unknown'` — so those floors match no passable
+   * argument and disappear from every filtered read. Inherited, not ours, and
+   * copied deliberately.
+   */
+  const { api } = surface({
+    context: {
+      ...context(),
+      chat: [
+        { name: 'You', is_user: true, mes: 'plain user' },
+        { name: 'Sys', is_user: true, mes: 'narrated', extra: { type: 'narrator' } },
+        { name: 'Sys', is_user: false, mes: 'narrator note', extra: { type: 'narrator' } },
+      ],
+    } as ScriptContext,
+  })
+  const read = api['getChatMessages'] as (
+    range: string,
+    options?: { role?: string },
+  ) => { role: string, message: string }[]
+
+  assert.deepEqual(
+    read('all').map(one => one.role),
+    ['user', 'unknown', 'system'],
+    'the narrator branch is missing — both of its outcomes',
+  )
+
+  const users = read('all', { role: 'user' })
+  assert.deepEqual(
+    users.map(one => one.message),
+    ['plain user'],
+    'the narrator-on-user floor must not come back under role:user',
+  )
+})

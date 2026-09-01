@@ -296,7 +296,19 @@ function flattenWorldbookEntry(entry: unknown): unknown {
 export interface CardChatMessage {
   message_id: number
   name: string
-  role: 'user' | 'assistant' | 'system'
+  /**
+   * Four values, not three.
+   *
+   * Upstream declares this as a three-value union and then assigns to it through
+   * an `as` assertion (`chat_message.ts:137`, `:148`), which checks nothing — so
+   * the declaration is wrong about its own function's output. A narrator message
+   * on a user row produces `'unknown'` at runtime.
+   *
+   * Typed here from the **runtime behaviour**, not the declaration. A contract
+   * that repeats a lie is worse than no contract: it makes the fourth value
+   * unrepresentable in every consumer downstream, and the value still arrives.
+   */
+  role: 'user' | 'assistant' | 'system' | 'unknown'
   is_hidden: boolean
   message: string
   extra: Record<string, unknown>
@@ -347,13 +359,21 @@ function swipeVariables(
 /**
  * Convert one stored message into the shape Tavern Helper hands a card.
  *
- * `is_hidden` is `is_system` and `message` is `mes ?? ''`, both verbatim from
- * upstream's own line. **`role` is the one field not verified against upstream**
- * — the derivation here matches this repo's other implementation
- * (`packages/iris-compat-tavernhelper/src/chat-messages.ts`), which is a second
- * in-repo source rather than a reading of upstream, and upstream's `system` role
- * appears to relate to a narrator marker in `extra` that has not been measured.
- * Recorded as an assumption rather than presented as a copy.
+ * Every field here is now upstream's own line rather than a reading of it.
+ * `is_hidden` is `is_system`, `message` is `mes ?? ''`, and `role` is
+ * (`chat_message.ts:91-103`):
+ *
+ * ```
+ * extra.type === 'narrator' ? (is_user ? 'unknown' : 'system')
+ *                           : (is_user ? 'user'    : 'assistant')
+ * ```
+ *
+ * The narrator marker's literal is `'narrator'` (`system-messages.js:23`).
+ *
+ * This began as an assumption — the compat package's two-value derivation, the
+ * best in-repo source available — and was labelled as one rather than presented
+ * as a copy. The assumption was directionally right and missed a whole branch,
+ * which is the usual outcome and the reason the label mattered.
  * @param message - the stored message.
  * @param index - its floor number, which is upstream's `message_id`.
  * @param withSwipes - whether the caller asked for every swipe.
@@ -364,6 +384,7 @@ function toCardChatMessage(
   index: number,
   withSwipes: boolean,
 ): CardChatMessage {
+  const narrator = (message.extra as { type?: unknown } | undefined)?.type === 'narrator'
   const swipes = message.swipes ?? [message.mes]
   const swipesData = swipeVariables(message, swipes)
   const swipeId = message.swipe_id ?? 0
@@ -371,7 +392,9 @@ function toCardChatMessage(
   const base: CardChatMessage = {
     message_id: index,
     name: message.name,
-    role: message.is_user ? 'user' : 'assistant',
+    role: narrator
+      ? (message.is_user ? 'unknown' : 'system')
+      : (message.is_user ? 'user' : 'assistant'),
     is_hidden: message.is_system === true,
     message: message.mes ?? '',
     extra: message.extra ?? {},
@@ -817,14 +840,25 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      */
     getChatMessages: (
       range: string | number,
-      options?: { include_swipes?: boolean },
+      options?: { include_swipes?: boolean, role?: 'all' | 'user' | 'assistant' | 'system' },
     ): CardChatMessage[] => {
       const chat = chatOf('getChatMessages')
       const withSwipes = options?.include_swipes === true
+      const wanted = options?.role ?? 'all'
       return resolveRange(range, chat.length).flatMap(index => {
         const message = chat[index]
         if (message === undefined) return []
-        return [toCardChatMessage(message, index, withSwipes)]
+        const shaped = toCardChatMessage(message, index, withSwipes)
+        /*
+         * Filtered on the **derived** role, which is what makes a narrator
+         * message on a user row (`role: 'unknown'`) match no passable value and
+         * vanish from every filtered read. That silent drop is upstream's — the
+         * filter's parameter type cannot express `'unknown'`, so there is no
+         * argument that returns those floors — and it is inherited rather than
+         * repaired. Noted in `DEVIATIONS.md` so it is not read as ours.
+         */
+        if (wanted !== 'all' && shaped.role !== wanted) return []
+        return [shaped]
       })
     },
     /**

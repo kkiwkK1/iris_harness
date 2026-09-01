@@ -105,6 +105,25 @@ export const OFF_ST_SURFACE: readonly string[] = [
   'setChatMessages',
   'createChatMessages',
   'deleteChatMessages',
+  /*
+   * Tavern Helper members that were reachable on the SillyTavern object because
+   * this table used to answer one question instead of two. Measured against
+   * `st-context.js`'s 145 keys: none of the three is among them.
+   *
+   * A card reading `SillyTavern.getVariables` now gets `undefined` and a report,
+   * which is the correct answer — the same card on real SillyTavern gets
+   * `undefined` and silence. **The reports are expected new noise, not a
+   * regression**; see `DEVIATIONS.md`, which says so in writing precisely because
+   * predicted noise and an unpredicted regression look identical in a log.
+   *
+   * Deliberately *not* moved, though the names invite it: `generate`,
+   * `generateRaw` and `macros` exist on **both** upstream surfaces meaning
+   * different things, and `generateRaw` is a legitimate one of the 145. Removing
+   * them would be a compatibility break dressed as tidying.
+   */
+  'getVariables',
+  'getWorldbook',
+  'replaceWorldbook',
 ]
 
 /** Whether a card may invoke this action. */
