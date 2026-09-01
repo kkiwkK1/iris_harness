@@ -26,6 +26,7 @@ import { ChatPane } from './ChatPane.tsx'
 import { SettingsDrawer } from './SettingsDrawer.tsx'
 import { Masthead } from './Masthead.tsx'
 import { Sidebar } from './Sidebar.tsx'
+import { CardScriptFrames } from './useCardScripts.tsx'
 import { StatePanel } from './StatePanel.tsx'
 import { toBase64 } from './format.ts'
 
@@ -140,6 +141,13 @@ export function App(): ReactElement {
           <StatePanel />
         </div>
       </main>
+
+      {/*
+        The foreground chat's card scripts. Renders nothing — card UI inside a
+        message is a separate piece — but it lives here rather than inside
+        `ChatPane` so a re-render of the conversation cannot restart a card.
+      */}
+      <CardScriptFrames />
 
       <SettingsDrawer
         open={settingsOpen}

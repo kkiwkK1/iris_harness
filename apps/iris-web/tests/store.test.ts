@@ -523,3 +523,56 @@ test('the browser half of delete → reimport → open: nothing is inherited', a
   assert.equal(store.getState().documentGranted, false, 'the shell cache answered for the dead card')
   dispose()
 })
+
+test('consent is read through the gate, so an unanswered card is not a declined one', async () => {
+  /*
+   * The store is where `?? false` would most naturally be written, because the
+   * field beside it — `documentGranted` — is read exactly that way. Getting it
+   * wrong here disables the whole feature with no error: the question is never
+   * put, so nothing ever runs, so it looks like a card with no scripts.
+   */
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+  const { character } = await client.call('character.import', {
+    filename: 'Nadia.png',
+    content: 'AAAA',
+  })
+
+  await actions.loadScripts(character.characterId)
+  assert.equal(store.getState().scriptsAllowed, 'unasked', 'nobody has been asked yet')
+
+  await actions.answerScriptsAllowed(false)
+  assert.equal(store.getState().scriptsAllowed, 'declined')
+
+  // Re-read from the host: a decline must survive, or the question returns on
+  // every chat the user opens.
+  await actions.loadScripts('other')
+  await actions.loadScripts(character.characterId)
+  assert.equal(store.getState().scriptsAllowed, 'declined', 'the decline was not stored')
+
+  await actions.answerScriptsAllowed(true)
+  assert.equal(store.getState().scriptsAllowed, 'allowed')
+  dispose()
+})
+
+test('switching cards does not carry the previous answer across', async () => {
+  // A consent state left standing while the card underneath changes is the same
+  // fault as a grant that outlives its subject — the panel would offer to run
+  // one card's scripts on the strength of an answer given about another.
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+  const first = await client.call('character.import', { filename: 'One.png', content: 'AAAA' })
+  const second = await client.call('character.import', { filename: 'Two.png', content: 'AAAA' })
+
+  await actions.loadScripts(first.character.characterId)
+  await actions.answerScriptsAllowed(true)
+  assert.equal(store.getState().scriptsAllowed, 'allowed')
+
+  await actions.loadScripts(second.character.characterId)
+
+  assert.equal(store.getState().scriptsAllowed, 'unasked', 'the second card was never asked')
+  assert.deepEqual(store.getState().runStates, [], "and it is not showing the first card's runs")
+  dispose()
+})

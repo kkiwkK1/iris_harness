@@ -137,6 +137,28 @@ export interface IrisActions {
   patchSettings(patch: Record<string, unknown>): Promise<void>
   loadScripts(characterId: string): Promise<void>
   setScriptEnabled(scriptId: string, enabled: boolean): Promise<void>
+  /**
+   * Record the user's answer to the run-scripts question.
+   *
+   * A decline is stored, never cleared: clearing it would read back as "never
+   * asked" and put the question again on the next chat they open, which is how a
+   * permission prompt becomes something people dismiss without reading.
+   */
+  answerScriptsAllowed(allowed: boolean): Promise<void>
+  /** Replace what the running scripts are reported to be doing. */
+  setRunStates(states: readonly ScriptRunState[]): void
+  /**
+   * The card's scripts and grants, straight from the host.
+   *
+   * Separate from `loadScripts` and deliberately uncached: that one fills the
+   * panel and returns early when it already holds the character, which is right
+   * for a panel and wrong for starting code. Character ids are reused when a card
+   * is deleted, so a cached answer can belong to a card that no longer exists —
+   * and the auto-run path has nobody watching to notice.
+   */
+  resolveScripts(characterId: string): Promise<{ scripts: ScriptView[], documentGranted: boolean }>
+  /** Fetch a card's remote dependency through the host, which owns the allowlist. */
+  fetchScriptDependency(url: string): Promise<string>
   setDocumentGrant(granted: boolean): Promise<void>
   /**
    * The host's snapshot for one chat, or undefined when the host will not give
@@ -476,6 +498,44 @@ export function createIrisStore(
             scriptsAllowed: consentState(listed),
           })
         })
+      },
+
+      async answerScriptsAllowed(allowed: boolean): Promise<void> {
+        const characterId = get().scriptsFor
+        if (characterId === undefined) return
+        await guard(async () => {
+          const { scriptsAllowed } = await client.call('script.setScriptsAllowed', {
+            characterId,
+            allowed,
+          })
+          // Guarded on the card still being the one in front of the user: the
+          // answer belongs to the card it was given about, and an await is long
+          // enough to change cards.
+          if (get().scriptsFor === characterId) {
+            set({ scriptsAllowed: scriptsAllowed ? 'allowed' : 'declined' })
+          }
+        })
+      },
+
+      setRunStates(states: readonly ScriptRunState[]): void {
+        set({ runStates: [...states] })
+      },
+
+      async resolveScripts(
+        characterId: string,
+      ): Promise<{ scripts: ScriptView[], documentGranted: boolean }> {
+        // Not wrapped in `guard`: the caller is about to decide whether to run
+        // code, and a refusal turned into a notice would resolve as though the
+        // host had answered.
+        const listed = await client.call('script.list', { characterId })
+        return { scripts: listed.scripts, documentGranted: listed.documentGranted }
+      },
+
+      async fetchScriptDependency(url: string): Promise<string> {
+        // The allowlist is the host's; a page cannot police its own fetches. The
+        // refusal names the host it declined rather than being softened here.
+        const { content } = await client.call('script.fetch', { url })
+        return content
       },
 
       async setScriptEnabled(scriptId: string, enabled: boolean): Promise<void> {

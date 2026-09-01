@@ -25,6 +25,13 @@ import type { ScriptView } from '@iris/protocol'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { describeBytes } from './format.ts'
 import { Section } from './fields.tsx'
+import { totalBytes } from '../sandbox/consent.ts'
+import {
+  describeRun,
+  isFailure,
+  summariseRuns,
+  type ScriptRunState,
+} from '../sandbox/script-run-state.ts'
 
 /**
  * Render the card-script section.
@@ -35,6 +42,8 @@ export function ScriptPanel(): ReactElement | null {
   const scripts = useIris(state => state.scripts)
   const scriptsFor = useIris(state => state.scriptsFor)
   const granted = useIris(state => state.documentGranted)
+  const consent = useIris(state => state.scriptsAllowed)
+  const runStates = useIris(state => state.runStates)
   const actions = useIrisActions()
 
   const [asking, setAsking] = useState(false)
@@ -58,23 +67,41 @@ export function ScriptPanel(): ReactElement | null {
       ) : (
         <>
           {/*
-            States what is true today, not what is planned.
-            `runCard` is reached from the sandbox probe alone — opening a chat
-            runs nothing — so "will run when you open a chat" was a promise the
-            product does not keep. A settings panel is where a user decides what
-            a card is allowed to do; copy that describes an unbuilt pipeline as
-            current behaviour makes that decision on false information, which is
-            the same fault as a permission control whose label overstates its
-            scope. Restore the original sentence when the pipeline lands.
+            The heading answers what is happening, not what is configured.
+            "2 of 2 enabled" and "2 of 2 running" are different answers, and the
+            difference is the whole question this panel is opened to settle — so
+            once scripts start on their own, a static count is the wrong sentence.
+
+            Each of the three consent states says something different, and none of
+            them is silence: a card whose scripts have never been offered must not
+            look the same as one whose scripts were declined.
           */}
-          <p className="iris-field__note iris-script__summary">
-            {runnable} of {scripts.length} enabled. Scripts do not run on their own yet — the
-            sandbox panel is the only thing that runs them.
-          </p>
+          {consent === 'unasked' ? (
+            <ConsentGate
+              count={runnable}
+              bytes={totalBytes(scripts)}
+              onAnswer={allowed => void actions.answerScriptsAllowed(allowed)}
+            />
+          ) : consent === 'declined' ? (
+            <p className="iris-field__note iris-script__summary">
+              Not running. You declined this card&rsquo;s scripts — turn them on below if you
+              change your mind.
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void actions.answerScriptsAllowed(true)}
+              >
+                Allow scripts
+              </Button>
+            </p>
+          ) : (
+            <p className="iris-field__note iris-script__summary">{summariseRuns(runStates)}</p>
+          )}
           {scripts.map(script => (
             <ScriptRow
               key={script.id}
               script={script}
+              run={runStates.find(state => state.scriptId === script.id)}
               onToggle={enabled => void actions.setScriptEnabled(script.id, enabled)}
             />
           ))}
@@ -146,9 +173,11 @@ export function ScriptPanel(): ReactElement | null {
  */
 function ScriptRow({
   script,
+  run,
   onToggle,
 }: {
   script: ScriptView
+  run?: ScriptRunState | undefined
   onToggle: (enabled: boolean) => void
 }): ReactElement {
   const cardOff = !script.enabledByCard
@@ -162,6 +191,16 @@ function ScriptRow({
       {script.info !== undefined && script.info.trim() !== '' ? (
         <p className="iris-script__info">{script.info}</p>
       ) : null}
+      {/*
+        What this script is actually doing. A refusal names the member it reached
+        for, which is the reason refusals throw instead of returning undefined —
+        the name is the only part that tells a card's author what to change.
+      */}
+      {run === undefined ? null : (
+        <p className={isFailure(run.phase) ? 'iris-script__failed' : 'iris-field__note'}>
+          {describeRun(run)}
+        </p>
+      )}
       {cardOff ? (
         <p className="iris-field__note">
           Off in the card. Its author shipped it switched off, so Iris does not run it.
@@ -176,6 +215,52 @@ function ScriptRow({
           <span>{script.enabled ? 'Runs with this card' : 'You turned this off'}</span>
         </label>
       )}
+    </div>
+  )
+}
+
+/**
+ * The one-time question, asked when a card's scripts have never been offered.
+ *
+ * Worded by consequence, like the page grant beside it: what a user needs is
+ * what running this costs them, not the name of the mechanism. The size is
+ * included because it is the only proxy a reader has for how much code they are
+ * agreeing to, and it counts every script rather than the enabled ones — the
+ * answer covers scripts they may switch on later without being asked again.
+ *
+ * **A card cannot reach this.** It is not triggered, accelerated or pre-filled by
+ * anything the card does, which is what makes an in-card plea to allow scripts
+ * recognisable as a lie. Declining is recorded, so the question is asked once and
+ * not on every chat the user opens.
+ * @param props.count - how many scripts would run.
+ * @param props.bytes - their total size.
+ * @param props.onAnswer - called with the user's decision.
+ * @returns the question.
+ */
+function ConsentGate({
+  count,
+  bytes,
+  onAnswer,
+}: {
+  count: number
+  bytes: number
+  onAnswer: (allowed: boolean) => void
+}): ReactElement {
+  return (
+    <div className="iris-grant">
+      <p className="iris-field__note">
+        This card ships {count === 1 ? '1 script' : `${String(count)} scripts`} (
+        {describeBytes(bytes)}). Scripts run in an isolated sandbox and cannot read your other
+        chats unless you also grant page access below.
+      </p>
+      <div className="iris-grant__actions">
+        <Button size="sm" onClick={() => onAnswer(true)}>
+          Run them
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => onAnswer(false)}>
+          Don&rsquo;t run them
+        </Button>
+      </div>
     </div>
   )
 }

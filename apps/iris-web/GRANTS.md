@@ -94,7 +94,10 @@ rendered, the count was correct.
 
 **Constraint on auto-run.** This is the trap that *inverts* when auto-run lands —
 the sentence becomes true, which is exactly why it needs a clause rather than a
-fix:
+fix. **Discharged**: the panel and the wiring changed together, and the heading
+now reports what the scripts are doing rather than how many are switched on.
+
+The clauses stand for whatever replaces it:
 
 - **Copy and wiring land in the same change.** A settings panel is where a user
   decides what a card may do; copy describing an unbuilt pipeline as current

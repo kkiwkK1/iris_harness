@@ -361,6 +361,13 @@ reported, any refusal) is shown beside the frame.
   a pipeline that is already planned. Worth re-checking rather than pre-emptively
   optimising.
 - The lorebook editor is not built; `PLAN.md` schedules it after the core path.
+- **Card scripts now start when a chat opens**, once the user has answered the
+  run-scripts question for that card. The frame set's lifetime is "this chat is
+  in the foreground"; leaving tears it down completely. Grants are re-resolved
+  from the host at the moment of running rather than read from the store, because
+  that cache is keyed on a character id and character ids are reused. Failures
+  land in the panel and the notice bar, never in the conversation. The policy is
+  `AUTORUN.md` and the reasoning behind its permission clauses is `GRANTS.md`.
 - **A card's frame does not survive edit mode.** Re-rendering the message a card
   lives in tears the frame down and builds a new one, which restarts the card:
   its listeners, its Vue app and any state it kept in the frame are gone, and a

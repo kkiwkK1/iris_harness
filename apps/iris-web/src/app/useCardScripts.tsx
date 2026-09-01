@@ -1,0 +1,153 @@
+/**
+ * Card scripts, bound to the chat that is in front of the user.
+ *
+ * The lifetime is the point. A frame set belongs to "this chat is in the
+ * foreground" — switching chats, switching cards, or closing the drawer on the
+ * way out all tear it down completely, which is the same Cordis invariant the
+ * rest of this project runs on and the same shape the future
+ * card-UI-in-a-message pipeline will need for "this message is on screen".
+ *
+ * Three rules from `AUTORUN.md` are enforced here rather than downstream:
+ *
+ * - **Only an explicit yes runs anything.** `unasked` and `declined` both run
+ *   nothing; they differ in what the panel shows, never in what executes.
+ * - **Grants are re-resolved from the host** every time a set starts. Nothing
+ *   here reads the store's cached `documentGranted`, because that cache is keyed
+ *   on a character id and character ids are reused.
+ * - **Failures land somewhere.** A script that fails on chat open has no panel
+ *   in front of it, so the state goes to the store and the failure goes to the
+ *   notice bar. Silence would be indistinguishable from a card with no scripts.
+ *
+ * @module iris-web/app/useCardScripts
+ */
+import { useEffect, useRef } from 'react'
+import type { ReactElement } from 'react'
+
+import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
+import { actionsOf } from '../client/store.ts'
+import { startCardScripts } from '../sandbox/card-scripts.ts'
+import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
+import { librariesFor } from '../sandbox/libraries.ts'
+import { runCard } from '../sandbox/runner.ts'
+import { modeFor, stripCodeFence } from '../sandbox/script-source.ts'
+import { describeRun } from '../sandbox/script-run-state.ts'
+
+/**
+ * Run the foreground chat's card scripts, and tear them down when it leaves.
+ *
+ * Returns the element the frames live in. They render nothing today — card UI
+ * inside a message is a separate piece — so it is present in the layout but
+ * carries no space.
+ * @returns the mount point for this chat's frames.
+ */
+export function CardScriptFrames(): ReactElement {
+  const chatId = useIris(state => state.chatId)
+  const characterId = useIris(state => state.view?.characterId)
+  const consent = useIris(state => state.scriptsAllowed)
+  const store = useIrisStore()
+  const actions = useIrisActions()
+  const mount = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (chatId === undefined || characterId === undefined) return
+    if (consent !== 'allowed') return
+
+    const host = mount.current
+    if (host === null) return
+
+    const running = startCardScripts(
+      {
+        /*
+         * Asked of the host now, not read from `state.documentGranted`. The
+         * store's copy is keyed on a character id, and a deleted card frees its
+         * id for the next card of that name — so a cached grant can belong to a
+         * card that no longer exists, and nobody is watching this path.
+         */
+        resolve: async id => actionsOf(store).resolveScripts(id),
+        context: async (chat, character) => actionsOf(store).scriptContext(chat, character),
+        body: async (character, scriptId) => actionsOf(store).scriptBody(character, scriptId),
+        bootstrap: async () => {
+          // `/sandbox/` is the one directory served verbatim. A stale path here
+          // returns the SPA fallback at status 200, so `response.ok` proves
+          // nothing and the source is checked before it is injected.
+          const response = await fetch('/sandbox/bootstrap.js')
+          if (!response.ok) throw new Error(`bootstrap: HTTP ${String(response.status)}`)
+          const source = await response.text()
+          const unusable = checkBootstrap(source)
+          if (unusable !== undefined) throw new Error(`bootstrap: ${unusable}`)
+          return source
+        },
+        start: input =>
+          runCard(
+            {
+              bootstrap: input.bootstrap,
+              code: stripCodeFence(input.code),
+              mode: modeFor('card-script'),
+              scriptId: input.script.id,
+              libraries: librariesFor('card-script', window.location.origin),
+              documentGranted: input.documentGranted,
+              // Not in the contract yet, and not defaulted to `true` on the way
+              // there: a grant nobody has been asked for is not a grant.
+              networkGranted: false,
+              context: input.context,
+              viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+              fetch: async url => actionsOf(store).fetchScriptDependency(url),
+              onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
+              onSlash: async command => actionsOf(store).runSlash(command),
+              onSettings: () => undefined,
+              // Reported, not swallowed: a blocked subresource is the policy
+              // doing its job, and the card author needs the host and directive
+              // to know what they reached for.
+              onBlocked: (blocked, directive) =>
+                actionsOf(store).notify('info', `blocked ${blocked} (${directive})`),
+              onReady: () => input.onPhase({ phase: 'running' }),
+              onRan: () => input.onPhase({ phase: 'ran' }),
+              onBootstrapError: message =>
+                input.onPhase({ phase: 'bootstrap-failed', detail: message }),
+              onError: (message, member) =>
+                input.onPhase(
+                  member === undefined
+                    ? { phase: 'threw', detail: message }
+                    : { phase: 'refused', member },
+                ),
+            },
+            host.ownerDocument,
+          ),
+        onState: states => actionsOf(store).setRunStates(states),
+        onFailure: state => {
+          /*
+           * One notice per failure, naming the script and what it reached for.
+           * A card that fails must not take the conversation with it, so this is
+           * a notice rather than anything that interrupts reading.
+           */
+          actionsOf(store).notify('error', `${state.name}: ${describeRun(state)}`)
+        },
+      },
+      chatId,
+      characterId,
+    )
+
+    return () => {
+      running.dispose()
+      actionsOf(store).setRunStates([])
+    }
+  }, [chatId, characterId, consent, store, actions])
+
+  /*
+   * Off-screen, not `hidden`.
+   *
+   * `hidden` is `display: none`, and that is observable from inside a frame: a
+   * card measuring itself gets zeros, and the viewport height the bootstrap
+   * publishes as `--TH-viewport-height` stops describing anything real. These
+   * scripts render nothing today, so it would not bite yet — but "it does not
+   * matter yet" is how a frame ends up behaving differently here than in the
+   * message pipeline that will reuse this shape.
+   */
+  return (
+    <div
+      ref={mount}
+      aria-hidden="true"
+      style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden', left: '-9999px' }}
+    />
+  )
+}
