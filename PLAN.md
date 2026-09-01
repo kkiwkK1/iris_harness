@@ -260,6 +260,29 @@ Cordis 在这里是直接得分项：每个脚本是一个可逆挂载的单元�
 - 变量存储位置要精确对应：`message` → `chat[i].variables[swipe_id]`（**与 swipes 平行的数组**）、`chat` → `chat_metadata.variables`、`character` → `data.extensions.tavern_helper.variables`、`global` → `extension_settings.variables.global`。
 - `getVariables` 返回深拷贝；`insertOrAssignVariables`/`insertVariables` 的合并规则是**数组整体替换而非合并**。
 - `getAllVariables()` 的合并顺序：global → character →（脚本 iframe 内才有的 script）→ chat →（消息 iframe 内）当前楼层及之前每层的变量。
+  **这条已实测复核为正确**，行号：`src/function/variables.ts:110-124`（global `:111`、character `:112`、script `:115`、chat `:117`、逐楼 `:118-124`）。
+- **锚点不对称：两个 API 两种锚法。**（2026-09-01 补记，非更正——上一条一直是对的，这一条是它旁边一直缺的。）
+
+  | API | 楼层锚点 | 出处 |
+  | --- | --- | --- |
+  | `getVariables({type:'message'})` **不传 `message_id`** | **最新一楼** | `variables.ts:59-60` 归一成 `-1` |
+  | `getAllVariables()` 在楼层 iframe 内 | **本楼及之前每一楼** | `variables.ts:121` `chat.slice(0, 本楼 + 1)` |
+
+  即：楼层 iframe 里调 `getVariables({type:'message'})` 读到的**不是自己那一楼**，而是最新一楼。
+  要读本楼必须显式传 `{type:'message', message_id: getCurrentMessageId()}`。
+  源码里没有任何地方把 frame 自身楼层号作为该 API 的默认值。
+
+  连带两条容易漏的：
+
+  - **`'latest'` 与显式数字的索引基准不同**：`'latest'`/`undefined` 分支**先滤掉 `is_system` 再取 `-1`**（`variables.ts:66`），
+    显式数字分支直接 `chat.at(id)`、**不滤**（`:68`）。而写路径 `replaceVariables` 全程不滤（`:135`）。
+    所以聊天里有系统消息时，**读的 'latest' 与写的 'latest' 指向不同楼层**。这是上游的不一致，
+    按「兼容层不纠正它的源」照搬，不要"修好"。
+  - **写前有一次形状归一**：`variables.ts:139-146` 注释写着「与提示词模板的兼容性」——
+    ST-Prompt-Template 会把 `variables` 写成**普通对象**而不是按 swipe 索引的数组，
+    上游在写入前把对象转回数组。只认数组形状的实现，读被 ST-Prompt-Template 碰过的聊天会出错。
+
+  发现经过：测量楼层渲染管线时顺带读到，不是从文档推出来的。三处行号可复核。
 - 脚本存在角色卡的 `data.extensions.tavern_helper` 里（`setting_field = 'tavern_helper'`），有 `Script` / `ScriptFolder` 两种节点的树形结构，还要兼容 `TavernHelper_scripts` 旧字段的迁移。
 - 事件名字符串照抄，包括 `'GENERATION_AFTER_COMMANDS'`（值是大写）、`'characterDeleted'`、`'charManagementDropdown'` 这些不规则的。
 
