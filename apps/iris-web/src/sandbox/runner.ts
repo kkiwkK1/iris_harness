@@ -110,7 +110,7 @@ export interface RunnerHost {
    * answers exactly one question — did the body execute — which is the question a
    * first run asks.
    */
-  onRan?: (scriptId: string | undefined) => void
+  onRan?: (scriptId: string | undefined, lateMs?: number) => void
   /**
    * A script blocked on, or released by, a sibling's global.
    *
@@ -358,7 +358,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
           })
         return
       case 'ran':
-        host.onRan?.(message.scriptId)
+        host.onRan?.(message.scriptId, message.lateMs)
         return
       case 'globals':
         host.onGlobals?.(message.published, message.refused)

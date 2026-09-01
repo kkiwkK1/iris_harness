@@ -69,6 +69,14 @@ export interface ScriptRunState {
   waitingFor?: string
   /** How long it has been blocked, once that is worth saying. */
   waitingMs?: number
+  /**
+   * How long a module took, when it finished after the frame gave up on it.
+   *
+   * Set only on a `ran` that corrects an earlier timeout. Its presence is the
+   * record that a verdict was withdrawn, which is worth saying out loud rather
+   * than quietly repainting the row green.
+   */
+  lateMs?: number
 }
 
 /** Phases that mean the script is no longer going to change on its own. */
@@ -118,10 +126,29 @@ export function describeRun(state: ScriptRunState): string {
       return 'starting…'
     case 'running':
       return 'running'
-    case 'ran':
+    case 'ran': {
+      /*
+       * A module that arrives after the deadline says so, and says how long.
+       *
+       * The deadline abandons the promise but cannot cancel the import, and a
+       * real card proved the difference matters: three consumers woke up and
+       * worked while the panel still called their provider failed. A verdict
+       * that outlives its own refutation is worse than no verdict — it tells a
+       * user a working card is broken.
+       *
+       * Not silently repainted to plain `loaded` either. Fifteen seconds of
+       * dead air before a card starts is a real defect even when it resolves,
+       * and erasing the evidence would remove the only signal that the fetch is
+       * slow.
+       */
+      if (state.lateMs !== undefined) {
+        const seconds = Math.round(state.lateMs / 1000)
+        return `loaded, but only after ${String(seconds)}s — reported as failed before it arrived`
+      }
       // Deliberately not "finished". The body evaluated; a card that registered
       // listeners is still waiting to do its work.
       return 'loaded'
+    }
     case 'waiting': {
       /*
        * Names what it is blocked on, because "waiting" alone is what

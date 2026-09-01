@@ -14,7 +14,11 @@ import test from 'node:test'
 import type { ScriptContext, ScriptView } from '@iris/protocol'
 
 import { startCardScripts, type CardScriptsEnv } from '../src/sandbox/card-scripts.ts'
-import type { ScriptRunState } from '../src/sandbox/script-run-state.ts'
+import {
+  describeRun,
+  summariseRuns,
+  type ScriptRunState,
+} from '../src/sandbox/script-run-state.ts'
 
 const CONTEXT = {
   chat: [],
@@ -505,3 +509,45 @@ test('an outcome naming a script this card does not have is still dropped', asyn
 
   assert.equal(bench.failures.length, 0)
 })
+
+test('a module that arrives after the deadline is described as late, not as loaded', () => {
+  /*
+   * Both halves of this matter and they pull against each other.
+   *
+   * Left as `failed`, the panel mourns a card that works — a real provider was
+   * declared dead at fifteen seconds, then arrived, published, and woke all
+   * three of its consumers while the row still said failed.
+   *
+   * Repainted to a plain `loaded`, the fifteen seconds of dead air before the
+   * card started vanish from the record, and that delay is the actual remaining
+   * defect. So the row says both: it worked, and it was late.
+   */
+  const late = describeRun({
+    scriptId: 's1',
+    name: 'MVU',
+    phase: 'ran',
+    lateMs: 17_400,
+  })
+
+  assert.ok(late.includes('loaded'))
+  assert.ok(late.includes('17s'), 'the duration is the evidence that the fetch is slow')
+  assert.ok(late.includes('reported as failed'), 'the withdrawn verdict is stated, not hidden')
+
+  const onTime = describeRun({ scriptId: 's1', name: 'MVU', phase: 'ran' })
+  assert.equal(onTime, 'loaded', 'an ordinary load gains no ceremony')
+})
+
+test('a late arrival stops the card being counted as failed', () => {
+  // The summary is what a reader checks first; leaving it at "1 of 4 failed"
+  // would keep the headline wrong after the row beneath it was corrected.
+  const states: ScriptRunState[] = [
+    { scriptId: 'a', name: 'provider', phase: 'ran', lateMs: 17_000 },
+    { scriptId: 'b', name: 'one', phase: 'ran' },
+    { scriptId: 'c', name: 'two', phase: 'ran' },
+  ]
+  const summary = summariseRuns(states)
+
+  assert.ok(!summary.includes('failed'), `still reporting a failure: ${summary}`)
+  assert.ok(summary.includes('3 of 3'))
+})
+

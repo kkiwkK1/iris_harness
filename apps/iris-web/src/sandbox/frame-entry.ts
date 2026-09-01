@@ -17,7 +17,7 @@
 
 import { installSandbox } from './frame.ts'
 import { remoteImports, requestedImports } from './script-source.ts'
-import { describeAttempts } from './import-attempts.ts'
+import { describeAttempts, type TimedResource } from './import-attempts.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import { PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
@@ -72,7 +72,14 @@ const IMPORT_TIMEOUT_MS = 15_000
  * only the part that must touch the real realm.
  * @returns the entries, or undefined.
  */
-function timedResources(): readonly { name: string }[] | undefined {
+function timedResources(): readonly TimedResource[] | undefined {
+  /*
+   * Typed as `TimedResource` rather than `{ name: string }` so the timing numbers
+   * survive the trip. They were always present at runtime — `PerformanceResourceTiming`
+   * carries them — but a narrower declared type meant the one consumer could
+   * only see the name, and a later reader would have had every reason to think
+   * the numbers simply were not available.
+   */
   try {
     return performance.getEntriesByType('resource')
   } catch {
@@ -508,7 +515,7 @@ try {
    * function-scope semantics. `new Function` also keeps the `unsafe-eval`
    * coverage the probe reports on.
    */
-  evaluate: (source, mode, names, values) => {
+  evaluate: (source, mode, names, values, scriptId) => {
     /*
      * Set before evaluation, not after, and that is the point: an error thrown
      * *by* a body is still an error after a body ran. Recording it on completion
@@ -579,7 +586,53 @@ try {
       }, IMPORT_TIMEOUT_MS)
     })
 
-    return Promise.race([import(/* @vite-ignore */ url), deadline]).then(
+    /*
+     * The deadline abandons the import; it cannot cancel it.
+     *
+     * That was always in the comment above as an untidiness worth accepting.
+     * A real card turned it into a wrong answer: the provider's bundle arrived
+     * a few seconds past fifteen, ran, published, and woke all three of its
+     * consumers — while the panel went on calling it failed. **A verdict that
+     * has been refuted by later evidence is worse than no verdict**, because it
+     * tells someone a working card is broken.
+     *
+     * So the import is still watched after the race is lost, and the record is
+     * corrected under the same script id. The correction keeps the duration
+     * rather than quietly repainting the row: fifteen seconds of dead air before
+     * a card starts is a real defect even when it resolves, and erasing it would
+     * remove the only evidence that the fetch is slow.
+     */
+    const started = Date.now()
+    let timedOut = false
+    deadline.catch(() => {
+      timedOut = true
+    })
+
+    const loading = import(/* @vite-ignore */ url)
+
+    loading.then(
+      () => {
+        if (!timedOut) return
+        post({ iris: run, type: 'ran', scriptId, lateMs: Date.now() - started })
+      },
+      (error: unknown) => {
+        // A late *failure* is not left to the timeout's guess. The row already
+        // says failed, but "timed out waiting for the network" and the module's
+        // actual error send a reader to different places, and only one of them
+        // is true.
+        if (!timedOut) return
+        post({
+          iris: run,
+          type: 'error',
+          scriptId,
+          message:
+            `the module finished after the ${IMPORT_TIMEOUT_MS / 1000}s deadline and failed: ` +
+            String(error instanceof Error ? `${error.name}: ${error.message}` : error),
+        })
+      },
+    )
+
+    return Promise.race([loading, deadline]).then(
       () => {
         URL.revokeObjectURL(url)
       },

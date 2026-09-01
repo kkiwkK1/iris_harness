@@ -53,6 +53,11 @@ export interface FrameEnv {
     mode: 'classic' | 'module',
     names: readonly string[],
     values: readonly unknown[],
+    /**
+     * Whose body this is, so a module that finishes after the frame gave up on
+     * it can correct the record under the right name.
+     */
+    scriptId?: string,
   ) => void | Promise<void>
   /**
    * Put the bridged globals on the frame's own window.
@@ -992,7 +997,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        */
       const source =
         message.mode === 'module' ? withPreamble(message.scriptId, message.code) : message.code
-      const running = env.evaluate(source, message.mode, shadowed, values)
+      const running = env.evaluate(source, message.mode, shadowed, values, message.scriptId)
       if (running instanceof Promise) {
         // A module loads asynchronously, so `ran` cannot be posted on the next
         // line. The distinction matters for what `ran` means: the body finished

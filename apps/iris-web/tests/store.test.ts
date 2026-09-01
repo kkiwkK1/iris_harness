@@ -733,3 +733,60 @@ test('a repeat within one run does not re-date anything', () => {
   dispose()
 })
 
+test('a report is withdrawn when the script it condemned turns out to have worked', () => {
+  /*
+   * Observed on a real card. The provider's bundle arrived a few seconds past
+   * the fifteen-second deadline, ran, published, and woke all three consumers —
+   * and the panel went on saying it had failed. A verdict that later evidence
+   * refutes is worse than no verdict: it tells someone a working card is broken.
+   */
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+
+  actions.beginCardRun()
+  actions.addCardReport('MVU: failed: import timed out after 15s', 'provider')
+  actions.addCardReport('another script: failed: something else', 'other')
+
+  actions.withdrawReportsFor('provider')
+
+  const reports = store.getState().cardReports
+  assert.equal(reports.length, 2, 'withdrawn is marked, not deleted')
+  assert.equal(reports[0]?.withdrawn, true)
+  assert.equal(
+    reports[1]?.withdrawn,
+    undefined,
+    'withdrawing one script\u2019s verdict must not touch another\u2019s',
+  )
+  dispose()
+})
+
+test('withdrawal keeps the record, because the delay was real even though it resolved', () => {
+  // Deleting would erase the only evidence that something took long enough to
+  // be declared dead, and that delay is a genuine defect even when it resolves.
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+
+  actions.beginCardRun()
+  actions.addCardReport('MVU: failed: import timed out after 15s', 'provider')
+  actions.withdrawReportsFor('provider')
+
+  assert.match(reportText(store.getState().cardReports), /timed out after 15s/)
+  dispose()
+})
+
+test('withdrawing when there is nothing to withdraw changes nothing', () => {
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+
+  actions.beginCardRun()
+  actions.addCardReport('a note', 'a')
+  const before = store.getState().cardReports
+  actions.withdrawReportsFor('nobody')
+
+  assert.equal(store.getState().cardReports, before, 'no needless re-render')
+  dispose()
+})
+

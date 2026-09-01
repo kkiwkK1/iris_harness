@@ -21,10 +21,12 @@ const BUNDLE = 'https://testingcf.jsdelivr.net/gh/x/y@beta/bundle.js'
 const OTHER = 'https://cdn.jsdelivr.net/npm/z/index.js'
 
 test('a request that reached the wire points away from the frame', () => {
+  // Bare entry: no readable timings, which is what a cross-origin resource
+  // without `Timing-Allow-Origin` looks like. The answer must still be useful.
   const said = describeAttempts([BUNDLE], [{ name: BUNDLE }])
 
   assert.match(said, /did send the request/)
-  assert.match(said, /not the frame/)
+  assert.match(said, /cannot read its timings/)
 })
 
 test('a request that never reached the wire points at the frame', () => {
@@ -73,3 +75,68 @@ test('an empty entry list with real targets is still "never sent"', () => {
 
   assert.match(said, /never sent the request/)
 })
+
+test('a completed fetch is distinguished from one still in flight', () => {
+  /*
+   * "Did send" was true and useless. A real provider sat at fifteen seconds
+   * while curl answered the same URL in 46ms, and the verdict pointed at "the
+   * network or the server" — correct as far as it went, and it sent a reader to
+   * the wrong half of the problem. Sent-and-finished means the delay is *after*
+   * the fetch; sent-and-outstanding means it is *in* it.
+   */
+  const url = 'https://cdn.example/bundle.js'
+  const done = describeAttempts([url], [
+    { name: url, startTime: 100, responseEnd: 146, requestStart: 105, responseStart: 140, transferSize: 307765 },
+  ])
+  assert.ok(done.includes('completed in 46ms'))
+  assert.ok(done.includes('not where the time went'), 'the reader needs the conclusion, not just numbers')
+
+  const pending = describeAttempts([url], [{ name: url, startTime: 100, responseEnd: 0, responseStart: 0 }])
+  assert.ok(pending.includes('has not completed'))
+  assert.ok(!pending.includes('completed in'))
+})
+
+test('an opaque entry says it cannot be read, rather than reporting zeroes', () => {
+  /*
+   * Without `Timing-Allow-Origin` every number on a cross-origin entry reads
+   * zero. "0ms dns, 0ms connect" looks like data and is an absence — the exact
+   * shape of confident wrongness this whole module exists to avoid.
+   */
+  const url = 'https://cdn.example/bundle.js'
+  const opaque = describeAttempts([url], [{ name: url, startTime: 0, responseEnd: 0, responseStart: 0 }])
+
+  assert.ok(opaque.includes('cannot read its timings'))
+  assert.ok(opaque.includes('Timing-Allow-Origin'), 'the reader is told what would fix the blindness')
+  assert.ok(!opaque.includes('0ms'))
+})
+
+test('the phase breakdown names where the time actually went', () => {
+  const url = 'https://cdn.example/bundle.js'
+  const slow = describeAttempts([url], [
+    {
+      name: url,
+      startTime: 0,
+      domainLookupStart: 1,
+      domainLookupEnd: 21,
+      connectStart: 21,
+      connectEnd: 51,
+      requestStart: 51,
+      responseStart: 9051,
+      responseEnd: 9500,
+      transferSize: 307765,
+    },
+  ])
+  assert.ok(slow.includes('20ms dns'))
+  assert.ok(slow.includes('30ms connect'))
+  assert.ok(slow.includes('9000ms waiting for the server'))
+  assert.ok(slow.includes('449ms downloading'))
+})
+
+test('a cache hit is named as one, so zero bytes is not read as a failure', () => {
+  const url = 'https://cdn.example/bundle.js'
+  const cached = describeAttempts([url], [
+    { name: url, startTime: 0, responseEnd: 3, requestStart: 1, responseStart: 2, transferSize: 0 },
+  ])
+  assert.ok(cached.includes('came from a cache'))
+})
+

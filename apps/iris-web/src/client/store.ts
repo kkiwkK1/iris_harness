@@ -74,6 +74,16 @@ export interface Notice {
 export interface CardReport {
   text: string
   generation: number
+  /** Which script it was about, so a corrected verdict can be found again. */
+  scriptId?: string
+  /**
+   * Set when later evidence refuted this report.
+   *
+   * Marked rather than deleted. The frame really did say it, and the fact that
+   * a module took long enough to be declared dead is worth keeping even once it
+   * arrives — but left unmarked it makes the panel mourn a card that works.
+   */
+  withdrawn?: boolean
 }
 
 export interface IrisState {
@@ -187,7 +197,8 @@ export interface IrisActions {
   answerScriptsAllowed(allowed: boolean): Promise<void>
   /** Record a frame-level report for this card, once. */
   beginCardRun(): void
-  addCardReport(text: string): void
+  addCardReport(text: string, scriptId?: string): void
+  withdrawReportsFor(scriptId: string): void
   /** Replace what the running scripts are reported to be doing. */
   setRunStates(states: readonly ScriptRunState[]): void
   /**
@@ -588,7 +599,7 @@ export function createIrisStore(
         set({ cardRunGeneration: get().cardRunGeneration + 1 })
       },
 
-      addCardReport(text: string): void {
+      addCardReport(text: string, scriptId?: string): void {
         const generation = get().cardRunGeneration
         const seen = get().cardReports
 
@@ -607,13 +618,34 @@ export function createIrisStore(
          */
         const at = seen.findIndex(report => report.text === text)
         if (at === -1) {
-          set({ cardReports: [...seen, { text, generation }] })
+          set({ cardReports: [...seen, { text, generation, ...(scriptId === undefined ? {} : { scriptId }) }] })
           return
         }
         if (seen[at]?.generation === generation) return
         const updated = [...seen]
-        updated[at] = { text, generation }
+        updated[at] = { text, generation, ...(scriptId === undefined ? {} : { scriptId }) }
         set({ cardReports: updated })
+      },
+
+      withdrawReportsFor(scriptId: string): void {
+        /*
+         * Called when a script that was reported failed turns out to have
+         * succeeded — a module that finished after the frame's deadline had
+         * already given up on it.
+         *
+         * Marked, not removed. Deleting would leave no trace that anything took
+         * long enough to be declared dead, and that delay is the actual defect
+         * even when it resolves. Leaving it unmarked is the other error: three
+         * consumers ran happily while the panel still said their provider had
+         * failed.
+         */
+        const seen = get().cardReports
+        if (!seen.some(report => report.scriptId === scriptId && report.withdrawn !== true)) return
+        set({
+          cardReports: seen.map(report =>
+            report.scriptId === scriptId ? { ...report, withdrawn: true } : report,
+          ),
+        })
       },
 
       setRunStates(states: readonly ScriptRunState[]): void {

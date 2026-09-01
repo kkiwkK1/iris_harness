@@ -132,7 +132,7 @@ export type FromFrame =
    * several bodies in flight, an outcome that did not say whose it was would be
    * attributed to whichever script the shell happened to be tracking.
    */
-  | { iris: string, type: 'ran', scriptId: string | undefined }
+  | { iris: string, type: 'ran', scriptId: string | undefined, lateMs?: number }
   /** The script threw, or refused a member. `member` is set for a policy refusal. */
   | { iris: string, type: 'error', message: string, member?: string, scriptId: string | undefined }
   /**
@@ -296,7 +296,15 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
     case 'ready':
       return { iris: token, type: 'ready' }
     case 'ran':
-      return { iris: token, type: 'ran', scriptId: stringOrUndefined(message['scriptId']) }
+      return {
+        iris: token,
+        type: 'ran',
+        scriptId: stringOrUndefined(message['scriptId']),
+        // Present only when the module finished *after* the frame had already
+        // declared it timed out, which makes an earlier verdict wrong rather
+        // than merely incomplete.
+        ...(typeof message['lateMs'] === 'number' ? { lateMs: message['lateMs'] } : {}),
+      }
     case 'globals': {
       const published = message['published']
       const refused = message['refused']

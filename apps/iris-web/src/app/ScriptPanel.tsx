@@ -121,6 +121,9 @@ export function ScriptPanel(): ReactElement | null {
                 separating them took a person who remembered the order of the
                 afternoon.
               */}
+              {report.withdrawn === true ? (
+                <span className="iris-script__stale"> · withdrawn — it arrived after all</span>
+              ) : null}
               {report.generation === generation ? null : (
                 <span className="iris-script__stale"> · from an earlier run</span>
               )}

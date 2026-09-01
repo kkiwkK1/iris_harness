@@ -144,7 +144,22 @@ export function CardScriptFrames(): ReactElement {
               onReady: () => {
                 for (const script of input.scripts) input.onPhase(script.id, { phase: 'running' })
               },
-              onRan: scriptId => input.onPhase(scriptId, { phase: 'ran' }),
+              onRan: (scriptId, lateMs) => {
+                input.onPhase(scriptId, {
+                  phase: 'ran',
+                  ...(lateMs === undefined ? {} : { lateMs }),
+                })
+                /*
+                 * A late arrival refutes the verdict the deadline already
+                 * published. The row fixes itself, but the report list is
+                 * durable by design, so without this the panel keeps mourning a
+                 * script that is up and working — which is exactly what a real
+                 * card did while all three of its consumers ran fine.
+                 */
+                if (lateMs !== undefined && scriptId !== undefined) {
+                  actionsOf(store).withdrawReportsFor(scriptId)
+                }
+              },
               /*
                * A wait shows as its own phase and names what it is blocked on.
                * When it ends the script goes back to `ran` — the body did finish
@@ -224,7 +239,7 @@ export function CardScriptFrames(): ReactElement {
            * destroys itself — which once read, from outside, as the reports never
            * having been sent.
            */
-          actionsOf(store).addCardReport(text)
+          actionsOf(store).addCardReport(text, state.scriptId)
           actionsOf(store).notify('error', text)
         },
       },
