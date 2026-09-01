@@ -179,7 +179,28 @@ function reportAsyncFailures(run: string, post: (message: FromFrame) => void): v
     announce('an unhandled rejection', event.reason)
   })
   window.addEventListener('error', event => {
-    announce('an uncaught error', event.error ?? event.message)
+    /*
+     * `event.error` first, and the masked case named as masked.
+     *
+     * For a script the browser considers cross-origin without CORS credentials,
+     * `onerror` is redacted to the literal `Script error.` with no error object,
+     * file or line. Passing that on as if it were the card's own message wastes
+     * a verification round: it looks like a diagnosis and carries nothing.
+     * `crossorigin="anonymous"` on the library tags is what lifts the mask; when
+     * something still arrives masked, this says so rather than repeating it.
+     */
+    if (event.error === null || event.error === undefined) {
+      const masked = typeof event.message === 'string' && event.message.includes('Script error')
+      announce(
+        'an uncaught error',
+        masked
+          ? 'the browser redacted it (cross-origin script without CORS) — the throw is real,' +
+            ' the detail was withheld, and an unhandledrejection from the same code would carry it'
+          : event.message,
+      )
+      return
+    }
+    announce('an uncaught error', event.error)
   })
 }
 

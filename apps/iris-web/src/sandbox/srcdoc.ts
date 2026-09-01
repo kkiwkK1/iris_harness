@@ -171,7 +171,20 @@ export function buildSrcdoc(
      * other half of why they come second.
      */
     `<script>${safe}</script>`,
-    ...libraries.map(url => `<script src="${attribute(url)}" data-iris-lib></script>`),
+    /*
+     * `crossorigin="anonymous"` is here for the error reporting, not the load.
+     *
+     * Without it the browser masks any exception thrown by a cross-origin script
+     * to the literal string `Script error.` with no file, line, or stack — and a
+     * card's real work happens in callbacks these libraries schedule, so that is
+     * precisely where the useful name lives. A whole verification round produced
+     * exactly one word of evidence because of this: the frame's listener reached
+     * the scene and the browser had already redacted the testimony.
+     *
+     * Safe to request: every allowed origin serves `Access-Control-Allow-Origin:
+     * *`, so the fetch behaves identically and only the error detail changes.
+     */
+    ...libraries.map(url => `<script src="${attribute(url)}" crossorigin="anonymous" data-iris-lib></script>`),
     '</body></html>',
   ].join('')
 }

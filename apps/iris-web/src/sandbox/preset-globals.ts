@@ -60,4 +60,28 @@ export const EXPECTED_GLOBALS: readonly string[] = [
   'showdown',
   'toastr',
   'EjsTemplate',
+  /*
+   * Vue and vue-router were missing from this list while the documentation
+   * directly above named them twice — as injected script #1 and in MVU's own
+   * externals. The list had been read off the table, and the table is organised
+   * by *where upstream gets each one*: seven are borrowed from the parent
+   * window, and these two are the only pair upstream loads by CDN tag.
+   * Following the table meant inheriting a distinction that was never about
+   * whether a card needs the library.
+   *
+   * The cost was not the absence — it was that the absence became unsayable.
+   * The frame reports the missing names from this array, so leaving them out
+   * did not merely fail to provide Vue, it made the banner's silence about Vue
+   * mean nothing, while reading exactly like a clean bill of health. A card
+   * whose provider died on `Vue` was reported as missing `showdown, toastr,
+   * EjsTemplate` — three names, none of which that bundle references at all.
+   *
+   * That is the same unfalsifiable silence written about in
+   * `import-attempts.ts`, rebuilt in a second place: an instrument whose quiet
+   * cannot be distinguished from a passing result. A checklist has it by
+   * construction, because anything absent from the list is also absent from
+   * every report the list produces.
+   */
+  'Vue',
+  'VueRouter',
 ]
