@@ -51,6 +51,14 @@ export interface TavernHelperFrameHost {
   call: (method: string, params: Record<string, unknown>) => Promise<unknown>
   /** Run a slash command through the host's parser. */
   triggerSlash: (command: string) => Promise<string>
+  /**
+   * Adopt the variable table the host returned after a write.
+   *
+   * Only ever called with a table the host has already stored, which is what
+   * separates this from the optimistic local write it replaced: that one would
+   * have answered the next read with a value nobody had agreed to.
+   */
+  adoptVariables: (variables: Record<string, unknown>) => void
   /** The bus shared with the shell's forwarding. */
   events: EventBus
 }
@@ -161,24 +169,81 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     return snapshot(member).variables
   }
 
+  /** The scopes `script.setVariables` accepts. */
+  const WIRE_SCOPES = new Set(['message', 'chat', 'global', 'script'])
+
+  /**
+   * Turn upstream's `option` into the contract's scope fields.
+   *
+   * Two translations the host cannot do for itself. `message_id: 'latest'` is
+   * upstream syntax and the contract wants an index, so it is resolved here
+   * against the snapshot. And a `script` scope with no explicit `script_id`
+   * belongs to *the caller*, which is what upstream's `withScript` means and
+   * which only the frame knows.
+   * @param member - the member being called, for refusals.
+   * @param option - whatever the card passed.
+   * @returns the scope half of the request.
+   */
+  const scopeOf = (member: string, option?: VariableOption): Record<string, unknown> => {
+    const scope = option?.type ?? 'message'
+    if (!WIRE_SCOPES.has(scope)) {
+      throw new UnsupportedApiError(
+        `${member}({type:'${scope}'})`,
+        `The host stores ${[...WIRE_SCOPES].join(', ')}.`,
+      )
+    }
+
+    const fields: Record<string, unknown> = { scope }
+
+    if (scope === 'message') {
+      const raw = option?.message_id
+      const resolved = raw === 'latest' || raw === undefined ? chatOf(member).length - 1 : raw
+      if (typeof resolved !== 'number' || !Number.isInteger(resolved) || resolved < 0) {
+        throw new UnsupportedApiError(
+          `${member}({message_id:${String(raw)}})`,
+          'A message id must be a whole number, or "latest".',
+        )
+      }
+      fields['messageId'] = resolved
+    }
+
+    // Absent rather than `undefined`: `exactOptionalPropertyTypes` aside, the
+    // host defaults an unnamed script partition to `anonymous`, and sending an
+    // explicit undefined would be a different statement from not saying.
+    if (scope === 'script') {
+      const scriptId = option?.script_id ?? host.scriptId()
+      if (scriptId !== undefined) fields['scriptId'] = scriptId
+    }
+
+    return fields
+  }
+
   /**
    * Every write goes to the host and nowhere else.
    *
-   * Not applied to a local copy first. An optimistic copy would answer the next
-   * read with a value the host may have rejected, and a card that writes then
-   * reads — which MVU does within one turn — would be told its write succeeded
-   * before anyone had agreed to it.
+   * The *operation* crosses, not a merged tree. `insertOrAssign` lets the
+   * incoming value win and replaces arrays wholesale where `insert` lets the
+   * existing one win, and folding that here would be a second implementation of
+   * a rule subtle enough to diverge quietly.
+   *
+   * What comes back is the whole table for that scope, already stored — so
+   * adopting it is not the optimistic write this used to refuse to do. It is the
+   * host's answer, and without it a card that writes then reads is told about a
+   * state that no longer exists.
    */
-  const write = async (member: string, params: Record<string, unknown>): Promise<void> => {
-    // Card-facing name, not a wire method: the shell owns that mapping and is the
-    // side that enforces it. `setVariables` is not in `CARD_METHODS` yet because
-    // the protocol has no `script.setVariables`, so this refuses — by name, from
-    // the shell, saying which member a card reached for.
-    //
-    // Deliberately not caught and reworded. A hint invented here would claim to
-    // know why the call failed, and would go on claiming it after the method
-    // exists and the failure means something else.
-    await host.call('setVariables', { member, ...params })
+  const write = async (
+    member: string,
+    op: string,
+    option: VariableOption | undefined,
+    payload: Record<string, unknown>,
+  ): Promise<void> => {
+    const scope = scopeOf(member, option)
+    // Card-facing name, not a wire method: the shell owns that mapping and is
+    // the side that enforces it.
+    const answer = await host.call('setVariables', { ...scope, op, ...payload })
+    if (scope['scope'] !== 'message') return
+    const variables = (answer as { variables?: Record<string, unknown> } | undefined)?.variables
+    if (variables !== undefined) host.adoptVariables(variables)
   }
 
   const events = host.events
@@ -244,13 +309,27 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
 
     // ── writes, which their callers already await ────────────────────────
     replaceVariables: async (variables: Record<string, unknown>, option?: VariableOption) =>
-      write('replaceVariables', { variables, option: option ?? {} }),
+      write('replaceVariables', 'replace', option, { variables }),
     insertOrAssignVariables: async (variables: Record<string, unknown>, option?: VariableOption) =>
-      write('insertOrAssignVariables', { variables, option: option ?? {} }),
+      write('insertOrAssignVariables', 'insertOrAssign', option, { variables }),
     insertVariables: async (variables: Record<string, unknown>, option?: VariableOption) =>
-      write('insertVariables', { variables, option: option ?? {} }),
-    deleteVariable: async (path: unknown, option?: VariableOption) =>
-      write('deleteVariable', { path, option: option ?? {} }),
+      write('insertVariables', 'insert', option, { variables }),
+    /**
+     * Deletion names a path, not a value.
+     *
+     * Refused here rather than sent as a non-string, because the host rejects a
+     * `delete` without a `path` as `invalid-request` — a correct answer that
+     * arrives one round trip later and names the request instead of the member.
+     */
+    deleteVariable: async (path: unknown, option?: VariableOption) => {
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new UnsupportedApiError(
+          `deleteVariable(${String(path)})`,
+          'Deletion takes a path, such as "stat.hp".',
+        )
+      }
+      return write('deleteVariable', 'delete', option, { path })
+    },
     /**
      * The updater is a function, so it cannot travel. It runs here against the
      * snapshot and the *result* is what the host is asked to store — which is
@@ -261,11 +340,31 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       updater: (variables: Record<string, unknown>) => Record<string, unknown>,
       option?: VariableOption,
     ) => {
-      const next = updater(structuredClone(readVariables('updateVariablesWith', option)))
-      return write('replaceVariables', { variables: next, option: option ?? {} })
+      /*
+       * The one writer that reads first, so it reads from the host rather than
+       * from the snapshot — even for the `message` scope the snapshot carries.
+       *
+       * Two reasons. It works on every scope this way, which is what MVU's
+       * `update_variables.ts:1549` needs when the "also update chat variables"
+       * setting is on. And a read-modify-write against a snapshot that went
+       * stale between pushes would silently discard whatever changed in between;
+       * the operation is already asynchronous, so the round trip costs nothing
+       * that was not already being paid.
+       *
+       * An empty table here is an answer, not a failure — a scope nobody has
+       * written to yet reads as empty, which is exactly the state the first
+       * `updateVariablesWith` on a new chat starts from. A failed *call* rejects
+       * instead, and then nothing is written at all.
+       */
+      const answer = await host.call('getVariables', scopeOf('updateVariablesWith', option))
+      const current = (answer as { variables?: Record<string, unknown> } | undefined)?.variables ?? {}
+      const next = updater(structuredClone(current))
+      return write('updateVariablesWith', 'replace', option, { variables: next })
     },
     swipeTo: async (messageId: number, swipeId: number) =>
-      host.call('swipeTo', { messageId, swipeId }),
+      // `swipeIndex` on the wire; upstream's parameter is `swipeId`. Renamed at
+      // the boundary rather than in either half's own vocabulary.
+      host.call('swipeTo', { messageId, swipeIndex: swipeId }),
 
     // ── host capabilities that were already asynchronous ─────────────────
     generate: async (config: Record<string, unknown>): Promise<unknown> =>

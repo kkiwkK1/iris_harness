@@ -372,3 +372,26 @@ test('swipeTo addresses a message the way a card does', async (t) => {
     (error: unknown) => (error as { code?: string }).code === 'invalid-request',
   )
 })
+
+test('getVariables reads back what each scope holds, and reads an empty scope as empty', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  // Empty is a table, not an error: this is the read `updateVariablesWith`
+  // makes before its first write, and a refusal there would break the writer
+  // on a fresh chat.
+  assert.deepEqual((await handlers['script.getVariables']({ chatId, scope: 'chat' })).variables, {})
+
+  await handlers['script.setVariables']({
+    chatId, scope: 'chat', op: 'replace', variables: { counted: 1 },
+  })
+  await handlers['script.setVariables']({
+    chatId, scope: 'global', op: 'replace', variables: { elsewhere: true },
+  })
+
+  assert.deepEqual((await handlers['script.getVariables']({ chatId, scope: 'chat' })).variables, { counted: 1 })
+  // The scopes stay separate on the way out, which is the property the read is
+  // for: an updater applied to the wrong scope's table stores the wrong tree.
+  assert.deepEqual((await handlers['script.getVariables']({ chatId, scope: 'global' })).variables, { elsewhere: true })
+})

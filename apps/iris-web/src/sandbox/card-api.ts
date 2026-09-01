@@ -23,6 +23,13 @@ export const CARD_METHODS: Readonly<Record<string, string>> = {
   saveChat: 'script.saveChat',
   saveMetadata: 'script.saveMetadata',
   generateRaw: 'script.generateRaw',
+  // Not the same thing as the card's bare `getVariables()`, which answers
+  // synchronously from the pushed snapshot. This is the round trip that
+  // `updateVariablesWith` needs before it can amend a scope the snapshot does
+  // not carry.
+  getVariables: 'script.getVariables',
+  setVariables: 'script.setVariables',
+  swipeTo: 'script.swipeTo',
 }
 
 /** Whether a card may invoke this action. */

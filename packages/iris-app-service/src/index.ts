@@ -116,6 +116,24 @@ export interface Config {
   presetPath?: string
   /** Pathname prefix the card avatars are served at. @default '/iris/avatar' */
   avatarPath?: string
+  /**
+   * Run the cards' EJS prompt templates (the ST-Prompt-Template extension).
+   *
+   * Off by default, and the default is the honest one: evaluating a template is
+   * running the card author's JavaScript. It runs in a child process with no
+   * environment, no filesystem writes and no host objects in reach, but that is
+   * a containment argument, not a reason to opt a user in for them.
+   * @default false
+   */
+  templates?: boolean
+  /**
+   * Wall clock for one prompt's whole batch of templates, in milliseconds.
+   *
+   * Enforced host-side: `vm`'s own timeout bounds only synchronous execution,
+   * and the corpus awaits.
+   * @default 2000
+   */
+  templateDeadlineMs?: number
 }
 
 /** Runtime schema for the application row. */
@@ -130,6 +148,8 @@ export const Config: z<Config> = z.object({
   templateOverhead: z.natural().default(0),
   presetPath: z.string(),
   avatarPath: z.string().default('/iris/avatar'),
+  templates: z.boolean().default(false),
+  templateDeadlineMs: z.natural().default(2000),
 })
 
 /**
@@ -294,6 +314,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ...config.contextWindow === undefined ? {} : { contextWindow: config.contextWindow },
     ...config.reserveTokens === undefined ? {} : { reserveTokens: config.reserveTokens },
     ...config.templateOverhead === undefined ? {} : { templateOverhead: config.templateOverhead },
+    // `templates: false` must produce no key at all: in the service, presence is
+    // the switch, and a `{}` here would silently turn the feature on.
+    ...config.templates !== true
+      ? {}
+      : { templates: config.templateDeadlineMs === undefined ? {} : { deadlineMs: config.templateDeadlineMs } },
     onError: error => { ctx.logger.warn(error) },
   })
 
@@ -317,6 +342,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.deleteMessage', handlers['chat.deleteMessage']),
       ctx.irisRpc.register('chat.branch', handlers['chat.branch']),
       ctx.irisRpc.register('prompt.itemize', handlers['prompt.itemize']),
+      ctx.irisRpc.register('script.getVariables', handlers['script.getVariables']),
       ctx.irisRpc.register('script.setVariables', handlers['script.setVariables']),
       ctx.irisRpc.register('script.swipeTo', handlers['script.swipeTo']),
       ctx.irisRpc.register('script.slash', handlers['script.slash']),

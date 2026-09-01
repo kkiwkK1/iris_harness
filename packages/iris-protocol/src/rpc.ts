@@ -99,6 +99,28 @@ export const requestSchemas = {
    * (`/send` and `/trigger`). Anything else is refused by name.
    */
   /**
+   * Read a card script's variables.
+   *
+   * The read half of `script.setVariables`, and it exists for exactly one
+   * caller: `updateVariablesWith` is the only Tavern Helper writer that reads
+   * before it writes, so it is the only one that needs the current table before
+   * it can send a `replace`. The frame's prompt snapshot carries the `message`
+   * scope and nothing else, and MVU applies the same updater to `chat` as well
+   * (`update_variables.ts:1548`), where the frame has nothing to read.
+   *
+   * Defaulting that read to `{}` would be worse than refusing it: an updater run
+   * against an empty tree and stored back **erases the scope it was meant to
+   * amend**. So the frame refuses by name without this, and with it, reads.
+   */
+  'script.getVariables': z.object({
+    chatId: z.string().min(1),
+    scope: z.enum(['message', 'chat', 'global', 'script']),
+    /** For `message`: which turn's candidate. Absent means the newest. */
+    messageId: z.number().int().min(0).optional(),
+    /** For `script`: whose partition. */
+    scriptId: z.string().min(1).optional(),
+  }),
+  /**
    * Write a card script's variables.
    *
    * The **operation** crosses the wire, not a pre-merged tree. Tavern Helper's
@@ -355,6 +377,7 @@ export interface RpcResponseMap {
   'prompt.itemize': { itemization: PromptItemization }
 
   /** The stored table, so a card sees what its write actually produced. */
+  'script.getVariables': { variables: Record<string, unknown> }
   'script.setVariables': { variables: Record<string, unknown> }
   'script.swipeTo': { view: ChatView }
   /** Upstream's `triggerSlash` resolves with the pipeline's result. */

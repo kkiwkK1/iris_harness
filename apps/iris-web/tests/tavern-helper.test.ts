@@ -40,15 +40,26 @@ function context(): ScriptContext {
 }
 
 /** The surface, plus a record of everything it sent to the host. */
-function surface(overrides?: { context?: ScriptContext | undefined, scriptId?: string }) {
+function surface(overrides?: {
+  context?: ScriptContext | undefined
+  scriptId?: string
+  answer?: unknown
+  /** Per-method answers, for members that make more than one call. */
+  answers?: Record<string, unknown>
+}) {
   const calls: { method: string, params: Record<string, unknown> }[] = []
-  const snapshot = overrides === undefined || !('context' in overrides) ? context() : overrides.context
+  let snapshot = overrides === undefined || !('context' in overrides) ? context() : overrides.context
   const api = createFrameTavernHelper({
     context: () => snapshot,
     scriptId: () => overrides?.scriptId,
+    adoptVariables: variables => {
+      if (snapshot !== undefined) snapshot = { ...snapshot, variables }
+    },
     call: async (method, params) => {
       calls.push({ method, params })
-      return undefined
+      const perMethod = overrides?.answers
+      if (perMethod !== undefined && Object.hasOwn(perMethod, method)) return perMethod[method]
+      return overrides?.answer
     },
     triggerSlash: async command => `ran ${command}`,
     events: new EventBus(),
@@ -141,43 +152,202 @@ test('a missing snapshot is refused by name rather than read as an empty chat', 
   assert.throws(() => (api['getLastMessageId'] as () => number)(), UnsupportedApiError)
 })
 
-test('writes travel to the host and are awaited, none of them applied locally', async () => {
+test('a write sends the operation, not a merged tree', async () => {
+  /*
+   * The distinction the contract is built around: `insertOrAssign` lets the
+   * incoming value win and replaces arrays wholesale, `insert` lets the existing
+   * one win. Folding either here would put that rule in the half that is not
+   * authoritative, where it can diverge without anyone noticing.
+   */
+  const cases = [
+    ['replaceVariables', 'replace'],
+    ['insertOrAssignVariables', 'insertOrAssign'],
+    ['insertVariables', 'insert'],
+  ] as const
+
+  for (const [member, op] of cases) {
+    const { api, calls } = surface()
+    await (api[member] as (v: object, o?: object) => Promise<void>)({ stat: { hp: 3 } })
+    assert.equal(calls[0]?.method, 'setVariables', 'the card-facing name; the shell maps it')
+    assert.equal(calls[0]?.params['op'], op, `${member} must send ${op}`)
+    assert.deepEqual(calls[0]?.params['variables'], { stat: { hp: 3 } })
+  }
+})
+
+test('a write adopts the table the host returns, and nothing before it', async () => {
+  /*
+   * This is not the optimistic write it replaced. Applying a value before the
+   * host answered would tell a card its write succeeded when the host might
+   * still reject it; adopting what the host *returned* is reading back its
+   * decision. Without it a card that writes then reads is answered from a state
+   * that no longer exists.
+   */
+  const { api } = surface({ answer: { variables: { stat: { hp: 99 } } } })
+
+  assert.deepEqual((api['getVariables'] as () => unknown)(), { stat: { hp: 10 } })
+  await (api['replaceVariables'] as (v: object) => Promise<void>)({ stat: { hp: 99 } })
+  assert.deepEqual((api['getVariables'] as () => unknown)(), { stat: { hp: 99 } })
+})
+
+test('a host that returns no table leaves the snapshot alone', async () => {
+  // Absence is not an instruction to empty the scope.
+  const { api } = surface({ answer: undefined })
+
+  await (api['replaceVariables'] as (v: object) => Promise<void>)({ stat: { hp: 1 } })
+
+  assert.deepEqual((api['getVariables'] as () => unknown)(), { stat: { hp: 10 } })
+})
+
+test('message_id "latest" is resolved here, because the host cannot', async () => {
+  // Upstream syntax; the contract wants an index. The frame is the side holding
+  // the chat it refers to.
   const { api, calls } = surface()
 
   await (api['replaceVariables'] as (v: object, o: object) => Promise<void>)(
-    { stat: { hp: 3 } },
-    { type: 'message', message_id: 2 },
+    {},
+    { type: 'message', message_id: 'latest' },
   )
 
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0]?.method, 'setVariables', 'the card-facing name; the shell maps and enforces it')
-  assert.equal(calls[0]?.params['member'], 'replaceVariables')
-  assert.deepEqual(
-    (api['getVariables'] as () => unknown)(),
-    { stat: { hp: 10 } },
-    'the local snapshot must not be updated: the host has not agreed yet',
+  assert.equal(calls[0]?.params['messageId'], 2, 'the last of three messages')
+})
+
+test('a script-scoped write is partitioned by the running script', async () => {
+  // Upstream's `withScript`: a bare `{type:'script'}` means *this* script, and
+  // the frame is the only side that knows which one is running.
+  const { api, calls } = surface({ scriptId: 'card-7' })
+
+  await (api['replaceVariables'] as (v: object, o: object) => Promise<void>)({}, { type: 'script' })
+
+  assert.equal(calls[0]?.params['scope'], 'script')
+  assert.equal(calls[0]?.params['scriptId'], 'card-7')
+})
+
+test('a scope the host does not store is refused before it becomes a round trip', async () => {
+  // `preset` and `character` are real scopes in the domain but not in the
+  // contract's enum. Sending one earns an `invalid-request` that names the
+  // request; refusing here names the member and the scope.
+  const { api } = surface()
+  await assert.rejects(
+    () => (api['replaceVariables'] as (v: object, o: object) => Promise<void>)({}, { type: 'preset' }),
+    (error: unknown) =>
+      error instanceof UnsupportedApiError && error.member === "replaceVariables({type:'preset'})",
   )
 })
 
-test('updateVariablesWith runs the updater here and sends the result', async () => {
-  // The updater is a function and cannot cross the boundary, so the frame is
-  // the only place it can run.
+test('deletion names a path and is refused without one', async () => {
   const { api, calls } = surface()
+
+  await (api['deleteVariable'] as (p: string, o?: object) => Promise<void>)('stat.hp')
+  assert.equal(calls[0]?.params['op'], 'delete')
+  assert.equal(calls[0]?.params['path'], 'stat.hp')
+  assert.equal(calls[0]?.params['variables'], undefined, 'delete carries a path, not a value')
+
+  await assert.rejects(
+    () => (api['deleteVariable'] as (p: unknown) => Promise<void>)(7),
+    UnsupportedApiError,
+  )
+})
+
+test('swipeTo renames its argument at the boundary', async () => {
+  // Upstream's parameter is `swipeId`; the wire says `swipeIndex`. Neither half
+  // has to adopt the other's word for it.
+  const { api, calls } = surface()
+
+  await (api['swipeTo'] as (m: number, s: number) => Promise<unknown>)(2, 1)
+
+  assert.equal(calls[0]?.method, 'swipeTo')
+  assert.deepEqual(calls[0]?.params, { messageId: 2, swipeIndex: 1 })
+})
+
+test('updateVariablesWith reads from the host, not from the snapshot', async () => {
+  /*
+   * The updater is a function and cannot cross the boundary, so it runs here —
+   * but what it runs *on* comes from the host. Reading the snapshot instead
+   * would make this a read-modify-write against a base that may have gone stale
+   * since the last push, silently discarding whatever changed in between.
+   */
+  const { api, calls } = surface({
+    answers: {
+      getVariables: { variables: { stat: { hp: 42 } } },
+      setVariables: { variables: { stat: { hp: 43 } } },
+    },
+  })
 
   await (api['updateVariablesWith'] as (
     updater: (v: Record<string, unknown>) => Record<string, unknown>,
     option?: object,
   ) => Promise<void>)(variables => {
-    ;(variables['stat'] as { hp: number }).hp = 99
+    ;(variables['stat'] as { hp: number }).hp += 1
     return variables
   })
 
-  assert.deepEqual(calls[0]?.params['variables'], { stat: { hp: 99 } })
+  assert.equal(calls[0]?.method, 'getVariables', 'it reads first')
+  assert.equal(calls[1]?.method, 'setVariables')
+  assert.equal(calls[1]?.params['op'], 'replace')
   assert.deepEqual(
-    (api['getVariables'] as () => unknown)(),
-    { stat: { hp: 10 } },
-    'the updater must work on a copy, or it mutates the snapshot in place',
+    calls[1]?.params['variables'],
+    { stat: { hp: 43 } },
+    'the updater ran on the host table (42), not on the snapshot (10)',
   )
+})
+
+test('updateVariablesWith works on a scope the snapshot does not carry', async () => {
+  /*
+   * MVU's `update_variables.ts:1549` applies the same updater to `chat` and then
+   * to `message`, behind its "also update chat variables" setting. The `chat`
+   * half used to refuse, because the frame could not read that scope.
+   */
+  const { api, calls } = surface({ answers: { getVariables: { variables: { a: 1 } } } })
+
+  await (api['updateVariablesWith'] as (
+    updater: (v: Record<string, unknown>) => Record<string, unknown>,
+    option?: object,
+  ) => Promise<void>)(variables => ({ ...variables, b: 2 }), { type: 'chat' })
+
+  assert.equal(calls[0]?.params['scope'], 'chat')
+  assert.equal(calls[0]?.params['messageId'], undefined, 'a chat scope names no message')
+  assert.deepEqual(calls[1]?.params['variables'], { a: 1, b: 2 })
+})
+
+test('an empty scope is a starting point, not a failure', async () => {
+  /*
+   * The first `updateVariablesWith` on a new chat reads a scope nobody has
+   * written to. Refusing there would deadlock the writer on exactly the case it
+   * exists to handle. A failed *call* is the different thing, and it rejects
+   * before anything is written.
+   */
+  const { api, calls } = surface({ answers: { getVariables: { variables: {} } } })
+
+  await (api['updateVariablesWith'] as (
+    updater: (v: Record<string, unknown>) => Record<string, unknown>,
+    option?: object,
+  ) => Promise<void>)(variables => ({ ...variables, seeded: true }))
+
+  assert.deepEqual(calls[1]?.params['variables'], { seeded: true })
+})
+
+test('a failed read writes nothing at all', async () => {
+  const { api, calls } = surface()
+  const failing = createFrameTavernHelper({
+    context: () => context(),
+    scriptId: () => undefined,
+    adoptVariables: () => undefined,
+    call: async method => {
+      if (method === 'getVariables') throw new Error('host said no')
+      calls.push({ method, params: {} })
+      return undefined
+    },
+    triggerSlash: async () => '',
+    events: new EventBus(),
+  })
+  void api
+
+  await assert.rejects(
+    () =>
+      (failing['updateVariablesWith'] as (u: (v: object) => object) => Promise<void>)(v => v),
+    /host said no/,
+  )
+  assert.deepEqual(calls, [], 'a read that failed must not be followed by a write')
 })
 
 test('the event tables are the host tables, including the two upstream misspellings', () => {

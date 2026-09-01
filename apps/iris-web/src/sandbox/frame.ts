@@ -407,6 +407,13 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     call: callAction,
     triggerSlash,
     events,
+    adoptVariables: variables => {
+      // The snapshot is replaced wholesale on the next `context` message, so
+      // this only has to hold until then. Guarded because a write can land
+      // before the first context has arrived, and a card's write must not
+      // conjure a snapshot that the reads would then treat as the host's.
+      if (context !== undefined) context = { ...context, variables }
+    },
   })
 
   const core = [

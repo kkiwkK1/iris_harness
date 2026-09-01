@@ -83,6 +83,12 @@
     userName: !!js process.env.IRIS_USER_NAME ?? 'User'
     contextWindow: !!js Number(process.env.IRIS_CONTEXT_WINDOW ?? 32768)
     presetPath: !!js process.env.IRIS_PRESET
+    # The cards' EJS prompt templates (the ST-Prompt-Template extension). Off
+    # unless asked for, because evaluating one is running the card author's
+    # JavaScript — it is contained in a child process with no environment, no
+    # filesystem writes and no host objects in reach, but containment is not a
+    # reason to opt someone in. Set IRIS_TEMPLATES=1 to turn it on.
+    templates: !!js process.env.IRIS_TEMPLATES === '1'
 
 # The built interface, served from the same origin as the transport — which is
 # what keeps the page out of CORS entirely. Disabled when there is no build, so

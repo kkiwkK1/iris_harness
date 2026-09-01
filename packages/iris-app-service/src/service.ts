@@ -37,6 +37,8 @@ import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSet
 import { lineTurns } from './entry.ts'
 import { buildPrompt, DEFAULT_PRESET } from './prompt.ts'
 import { runScripts } from './regex.ts'
+import { evaluatePrompt, promptHasTemplate } from './templates.ts'
+import { applyOps, buildSnapshot } from './template.ts'
 import type { ScriptPolicyStore } from './scripts.ts'
 import type { SettingsStore } from './settings.ts'
 import { textOf } from './views.ts'
@@ -111,8 +113,24 @@ export interface AppServiceOptions {
    * the text model rather than absorbing a constant.
    */
   templateOverhead?: number
+  /**
+   * EJS prompt templates, off unless this is present.
+   *
+   * Presence is the switch rather than a boolean, because there is no useful
+   * "configured but disabled" state: evaluating a card author's JavaScript is a
+   * decision the deployment makes once. Absent means no child is ever forked and
+   * `<%` reaches the model as literal text, which is what SillyTavern without the
+   * extension installed does.
+   */
+  templates?: TemplateOptions
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
+}
+
+/** Host-side tuning for the template evaluator. */
+export interface TemplateOptions {
+  /** Wall clock for one prompt's whole batch. The evaluator's default when absent. */
+  deadlineMs?: number
 }
 
 /** The application half of Iris. */
@@ -121,14 +139,17 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'connections'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'connections' | 'templates'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
       extensionSettings?: ExtensionSettingsStore
       connections?: ConnectionStore
+      templates?: TemplateOptions
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
+  /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
+  #traceId = 0
 
   /**
    * @param options - domain stores, the model stream, and the event sink.
@@ -150,6 +171,7 @@ export class IrisAppService {
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
       ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
       ...options.connections === undefined ? {} : { connections: options.connections },
+      ...options.templates === undefined ? {} : { templates: options.templates },
     }
   }
 
@@ -268,6 +290,11 @@ export class IrisAppService {
         // whose record went when the chat last closed. `preview` says which.
         const recorded = turn === undefined ? undefined : entry.itemizations.get(turn)
         return { itemization: recorded ?? this.#previewItemization(entry) }
+      },
+
+      'script.getVariables': async ({ chatId, scope, messageId, scriptId }) => {
+        const entry = await chats.open(chatId)
+        return { variables: entry.variables.getVariables(variableOptionFor(scope, messageId, scriptId)) }
       },
 
       'script.setVariables': async ({ chatId, scope, messageId, scriptId, op, variables, path }) => {
@@ -882,15 +909,20 @@ export class IrisAppService {
    * dependent and no static table fixes it.
    */
   async *#stream(options: GenerateOptions, entry?: ChatEntry): AsyncIterable<StreamChunk> {
+    // The templates run here because here is the only place that has both the
+    // assembled prompt and the chat it belongs to. `#generateRaw` reaches this
+    // with no entry and is left alone deliberately: its prompt is written by
+    // this host, not by a card, so there is nothing of the author's to evaluate.
+    const request = entry === undefined ? options : await this.#applyTemplates(options, entry)
     const messages = [
-      ...options.system === undefined ? [] : [{ text: options.system }],
-      ...options.messages.map(message => ({ text: textOf(message) })),
+      ...request.system === undefined ? [] : [{ text: request.system }],
+      ...request.messages.map(message => ({ text: textOf(message) })),
     ]
     // The corrected number, which is what `observe` must be given: passing the
     // raw estimate would make the correction compound on itself.
     const estimated = this.#counter.countRequest(messages, { templateOverhead: this.#options.templateOverhead })
 
-    for await (const chunk of this.#options.stream(options)) {
+    for await (const chunk of this.#options.stream(request)) {
       if (chunk.type === 'usage') {
         this.#counter.observe(estimated, chunk.usage.inputTokens)
         // Recorded beside the estimate so a user can see whether to trust it.
@@ -899,6 +931,61 @@ export class IrisAppService {
         if (recorded !== undefined) recorded.actualTokens = chunk.usage.inputTokens
       }
       yield chunk
+    }
+  }
+
+  /**
+   * Run the chat's EJS templates over one assembled prompt.
+   *
+   * Nothing here is allowed to cost the caller a generation. A template that
+   * throws keeps its original text, a batch that overruns keeps the rest, and a
+   * write the host would refuse is reported rather than raised — upstream's own
+   * behaviour, and the only one under which a card with one broken template is
+   * still playable.
+   * @param options - the assembled request.
+   * @param entry - the conversation it was assembled for.
+   * @returns the request to send, rewritten where a template succeeded.
+   */
+  async #applyTemplates(options: GenerateOptions, entry: ChatEntry): Promise<GenerateOptions> {
+    const templates = this.#options.templates
+    if (templates === undefined) return options
+    // Before the fork, not after: a chat with no `<%` anywhere must not pay for
+    // a child process and a 3 MiB snapshot to be told it had nothing to do.
+    if (!promptHasTemplate(options)) return options
+
+    // The message scope hangs off the turn being generated. A prompt assembled
+    // outside a turn has none, and `0` is what the evaluator's own backstop
+    // reads as "no candidate here" — an empty table rather than another turn's.
+    const turn = entry.pending?.turn ?? 0
+    this.#traceId += 1
+
+    try {
+      const evaluated = await evaluatePrompt(
+        options,
+        buildSnapshot(entry, turn, this.#traceId),
+        entry.chatId,
+        templates.deadlineMs,
+      )
+      for (const failure of evaluated.failures) {
+        this.#report(new Error(`template ${failure.origin} failed: ${failure.message}`))
+      }
+      if (evaluated.ops.length > 0) {
+        // Applied separately so a single refused write does not throw away the
+        // text every other template produced.
+        try {
+          applyOps(entry, evaluated.ops, turn)
+        } catch (error: unknown) {
+          this.#report(error)
+        }
+      }
+      return evaluated.options
+    } catch (error: unknown) {
+      // The evaluator promises not to throw for a template's sake, so anything
+      // arriving here is the host's own failure — a child that could not be
+      // forked, a snapshot that could not be built. The generation still goes
+      // out, with `<%` in it, which is visible rather than silent.
+      this.#report(error)
+      return options
     }
   }
 

@@ -466,6 +466,29 @@ class InMemoryClient implements FakeClient {
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 
+      case 'script.getVariables': {
+        /*
+         * Answered, unlike its sibling `script.setVariables`, and the line
+         * between them is what each one carries.
+         *
+         * A write carries a *rule* — `insertOrAssign` lets the incoming value
+         * win and replaces arrays wholesale, `insert` lets the existing one win
+         * — and implementing that here would be a second copy of it in the half
+         * that is not authoritative. A read carries no rule. It is a lookup, and
+         * the fake has a real per-chat variable table to look in.
+         *
+         * The `chat` scope is answered from that table. The other three are
+         * answered empty, which is a true statement about this client rather
+         * than an invented one: it models per-chat variables and nothing else,
+         * and since writes are refused, nothing can ever appear in them. Empty
+         * also means "not initialised yet" to a card, which is exactly what the
+         * fake is.
+         */
+        const { chatId, scope } = params as RpcRequest<'script.getVariables'>
+        const chat = this.#require(chatId)
+        return { variables: scope === 'chat' ? { ...chat.variables } : {} }
+      }
+
       case 'script.body': {
         // Refused like fetch: handing back an invented body would let a runner
         // pass in development and break on the first real card.
