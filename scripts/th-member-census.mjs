@@ -1,0 +1,240 @@
+/**
+ * Which of upstream's TavernHelper members do real cards actually reach for?
+ *
+ *   node scripts/th-member-census.mjs
+ *   node scripts/th-member-census.mjs --verbose
+ *
+ * Skips when the corpus is absent. Always exits 0: a caliper, not a test.
+ *
+ * ## BRITTLE, AND THIS TIME AGAINST OUR OWN SOURCE
+ *
+ * `settings-usage-census.mjs` is brittle against **upstream's** source layout.
+ * This one is brittle against **ours**: it locates `UPSTREAM_MEMBERS` in
+ * `apps/iris-web/src/sandbox/upstream-surface.ts` and `MEMBER_KINDS` in
+ * `identity.ts` by their declaration text, and reads the names out of the
+ * literals.
+ *
+ * That is the more dangerous direction, because **we refactor our own code far
+ * more often than upstream refactors theirs**. Renaming either constant, or
+ * changing how the entries are written, stops this answering.
+ *
+ * Same failure discipline as the settings caliper: conclusions already recorded
+ * do not expire — they were true of the revision measured — but **no new number
+ * may be quoted until the extraction is repaired and re-run**. A partially
+ * working extractor is the outcome to refuse: a shorter member list silently
+ * turns "unused" into the majority answer.
+ *
+ * ## 口径, chosen for the decision downstream (wiring order)
+ *
+ * - **The unit is the card, not the call.** One card calling a member a hundred
+ *   times is one card's worth of breakage; ten cards calling it once each is
+ *   ten. The tables sort by cards.
+ * - **Card identity is the card FILE.** A second chat against one character gets
+ *   its own directory (`…又看一集1`), and the script pool keys on the `.png`
+ *   name — so keying the interface pool on the directory let one card vote
+ *   twice and reported 11 where the answer was 9. Two pools, two naming schemes,
+ *   and nothing checking they were the same scheme.
+ * - **Three code populations**, deduplicated: card script bodies; the
+ *   **rendered** interfaces (a display regex expands a token into HTML on 179
+ *   floors, but that is one interface repeated, so each distinct rendered
+ *   `<script>` counts once per card); and the acceptance card's SPA.
+ * - **Matching** is an identifier at a word boundary followed by `(` or `.`.
+ *   Generic names are flagged for manual review rather than trusted — every flag
+ *   in the current corpus was checked by hand and is a real API use, though a
+ *   couple of *call counts* include the name appearing inside an error string.
+ * - **Not included:** global regex scripts from `settings.json`. Only the card's
+ *   own regexes render, so the interface pool is a lower bound.
+ *
+ * @module scripts/th-member-census
+ */
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+import { decodeCardPng, normalizeCard } from 'file:///D:/workspace/小项目/iris_cordis_traven/packages/iris-character/src/index.ts'
+import { extractScripts } from 'file:///D:/workspace/小项目/iris_cordis_traven/packages/iris-script/src/index.ts'
+import { parseChatFile } from 'file:///D:/workspace/小项目/iris_cordis_traven/packages/iris-persistence/src/index.ts'
+import { PLACEMENT, applyRegexScripts, orderScripts } from 'file:///D:/workspace/小项目/iris_cordis_traven/packages/iris-regex/src/index.ts'
+
+const ROOT = fileURLToPath(new URL('../', import.meta.url))
+const CORPUS = process.env.IRIS_CORPUS ?? 'E:/sillyTavern/SillyTavern'
+const ST = `${CORPUS}/data/default-user`
+const CARDS = `${ST}/characters`
+const CHATS = `${ST}/chats`
+const SAMPLE = `${ROOT}测试用卡`
+
+if (!existsSync(CARDS)) {
+  console.log('th-member-census: skipped — no local card corpus at')
+  console.log(`  ${CARDS}`)
+  console.log('Expected on any machine but the operator machine. Set IRIS_CORPUS to point elsewhere.')
+  process.exit(0)
+}
+
+// --- the member list, from f7's extracted surface ---------------------------
+const surfaceSource = readFileSync(`${ROOT}apps/iris-web/src/sandbox/upstream-surface.ts`, 'utf8')
+const MEMBERS = [...surfaceSource.slice(surfaceSource.indexOf('UPSTREAM_MEMBERS')).matchAll(/'([A-Za-z_$][A-Za-z0-9_$]*)'/g)].map(m => m[1])
+
+// --- what Iris has built, from identity.ts ----------------------------------
+const identitySource = readFileSync(`${ROOT}apps/iris-web/src/sandbox/identity.ts`, 'utf8')
+const kindsBlock = identitySource.slice(identitySource.indexOf('MEMBER_KINDS'), identitySource.indexOf('export function identityMembers'))
+const BUILT = new Set([...kindsBlock.matchAll(/^\s*'?([A-Za-z_$][A-Za-z0-9_$]*)'?\s*:\s*'(identity|shared)'/gm)].map(m => m[1]))
+
+/** A body of JavaScript to scan, tagged with the card it belongs to. */
+/** @type {{card: string, origin: string, code: string}[]} */
+const sources = []
+
+// 1. card script bodies
+for (const file of readdirSync(CARDS).filter(f => f.toLowerCase().endsWith('.png'))) {
+  let card
+  try { card = decodeCardPng(readFileSync(join(CARDS, file))) } catch { continue }
+  for (const script of extractScripts(card).scripts) {
+    sources.push({ card: file, origin: `script:${script.name}`, code: script.content })
+  }
+}
+
+// 2. rendered interfaces, deduplicated per card
+const seenRendered = new Set()
+/**
+ * Resolve a chat directory to the card **file** it belongs to.
+ *
+ * The file, not the directory name: a second chat against one character gets its
+ * own directory (`…又看一集1`), so keying card identity on the directory lets a
+ * single card vote twice. Caught by answering the same question a second way and
+ * getting 11 against 9.
+ */
+const cardFor = dir => {
+  for (const candidate of [dir, dir.replace(/\d+$/, '')]) {
+    const path = join(CARDS, `${candidate}.png`)
+    if (existsSync(path)) {
+      try { return { card: decodeCardPng(readFileSync(path)), file: `${candidate}.png` } } catch { return undefined }
+    }
+  }
+  return undefined
+}
+for (const dir of readdirSync(CHATS, { withFileTypes: true })) {
+  if (!dir.isDirectory()) continue
+  const resolved = cardFor(dir.name)
+  if (!resolved) continue
+  const card = resolved.card
+  const cardFile = resolved.file
+  const scripts = orderScripts((card?.data?.extensions?.regex_scripts ?? []).map(script => ({ script, type: 'character' })))
+  if (scripts.length === 0) continue
+  for (const file of readdirSync(join(CHATS, dir.name))) {
+    if (!file.endsWith('.jsonl')) continue
+    let chat
+    try { chat = parseChatFile(readFileSync(join(CHATS, dir.name, file), 'utf8')) } catch { continue }
+    chat.messages.forEach((message, index) => {
+      const depth = chat.messages.length - 1 - index
+      const swipeId = typeof message.swipe_id === 'number' ? message.swipe_id : 0
+      const raw = Array.isArray(message.swipes) && message.swipes.length > 0
+        ? String(message.swipes[swipeId] ?? message.mes ?? '')
+        : String(message.mes ?? '')
+      const rendered = applyRegexScripts(raw, message.is_user ? PLACEMENT.USER_INPUT : PLACEMENT.AI_OUTPUT, scripts, { isMarkdown: true, depth })
+      for (const match of rendered.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
+        const code = match[1] ?? ''
+        if (code.trim().length === 0) continue
+        const key = `${cardFile}\u0000${code}`
+        if (seenRendered.has(key)) continue          // same interface, rendered again
+        seenRendered.add(key)
+        sources.push({ card: cardFile, origin: 'rendered-interface', code })
+      }
+    })
+  }
+}
+
+// 3. the acceptance card's SPA
+if (existsSync(`${SAMPLE}/战锤群星闪耀.json`)) {
+  const sample = normalizeCard(JSON.parse(readFileSync(`${SAMPLE}/战锤群星闪耀.json`, 'utf8')))
+  for (const [i, script] of (sample.data?.extensions?.regex_scripts ?? []).entries()) {
+    const text = String(script?.replaceString ?? '')
+    for (const match of text.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
+      sources.push({ card: '战锤群星闪耀 (sample)', origin: `regex[${i}] SPA`, code: match[1] ?? '' })
+    }
+  }
+  for (const script of extractScripts(sample).scripts) {
+    sources.push({ card: '战锤群星闪耀 (sample)', origin: `script:${script.name}`, code: script.content })
+  }
+}
+
+// --- count -------------------------------------------------------------------
+/** Names generic enough that a word-boundary hit may not be the API. */
+const GENERIC = new Set(['builtin', 'Mvu', 'SillyTavern', 'TavernHelper', 'EjsTemplate', 'errorCatched'])
+
+/** @type {Map<string, {cards: Set<string>, calls: number, origins: Set<string>}>} */
+const usage = new Map()
+for (const name of MEMBERS) usage.set(name, { cards: new Set(), calls: 0, origins: new Set() })
+
+for (const source of sources) {
+  for (const name of MEMBERS) {
+    const pattern = new RegExp(`(^|[^A-Za-z0-9_$.])${name}\\s*[(.]`, 'g')
+    const hits = [...source.code.matchAll(pattern)].length
+    if (hits === 0) continue
+    const entry = usage.get(name)
+    entry.calls += hits
+    entry.cards.add(source.card)
+    entry.origins.add(source.origin.split(':')[0])
+  }
+}
+
+const used = MEMBERS.filter(n => (usage.get(n)).cards.size > 0)
+const builtUsed = used.filter(n => BUILT.has(n))
+const unbuiltUsed = used.filter(n => !BUILT.has(n))
+const unbuiltUnused = MEMBERS.filter(n => !BUILT.has(n) && (usage.get(n)).cards.size === 0)
+const builtUnused = MEMBERS.filter(n => BUILT.has(n) && (usage.get(n)).cards.size === 0)
+
+console.log('## corpus scanned')
+console.log(`  card script bodies      ${sources.filter(s => s.origin.startsWith('script')).length}`)
+console.log(`  distinct rendered interfaces ${sources.filter(s => s.origin === 'rendered-interface').length}  (deduplicated per card)`)
+console.log(`  sample-card SPA blocks  ${sources.filter(s => s.origin.includes('SPA')).length}`)
+console.log(`  upstream members        ${MEMBERS.length}`)
+console.log(`  Iris implements         ${MEMBERS.filter(n => BUILT.has(n)).length}`)
+
+console.log('\n## THE PRIORITY TABLE — unbuilt and used, by cards touched')
+console.log('  cards  calls  member                          seen in')
+for (const name of unbuiltUsed.sort((a, b) => {
+  const d = (usage.get(b)).cards.size - (usage.get(a)).cards.size
+  return d !== 0 ? d : (usage.get(b)).calls - (usage.get(a)).calls
+})) {
+  const u = usage.get(name)
+  console.log(`  ${String(u.cards.size).padStart(5)}  ${String(u.calls).padStart(5)}  ${name.padEnd(30)} ${[...u.origins].join(', ')}${GENERIC.has(name) ? '   [GENERIC NAME — verify]' : ''}`)
+}
+
+console.log('\n## built and used (the members we built that cards do call)')
+for (const name of builtUsed.sort((a, b) => (usage.get(b)).cards.size - (usage.get(a)).cards.size)) {
+  const u = usage.get(name)
+  console.log(`  ${String(u.cards.size).padStart(5)}  ${String(u.calls).padStart(5)}  ${name}${GENERIC.has(name) ? '   [GENERIC NAME — verify]' : ''}`)
+}
+
+console.log(`\n## built but unused in this corpus: ${builtUnused.length}`)
+console.log(`  ${builtUnused.join(', ')}`)
+console.log(`\n## unbuilt and unused in this corpus: ${unbuiltUnused.length}`)
+console.log(`  ${unbuiltUnused.join(', ')}`)
+
+// --- triggerSlash ------------------------------------------------------------
+console.log('\n\n## triggerSlash: which slash commands do cards actually call?')
+const commandCards = new Map()
+const commandCalls = new Map()
+let triggerSlashSites = 0
+const unparsed = []
+for (const source of sources) {
+  for (const match of source.code.matchAll(/triggerSlash\s*\(\s*([\s\S]{0,200}?)\)/g)) {
+    triggerSlashSites++
+    const argument = match[1] ?? ''
+    // Every leading `/name` in the argument, including multi-command pipelines.
+    const names = [...argument.matchAll(/\/([a-zA-Z][a-zA-Z0-9_-]*)/g)].map(m => m[1])
+    if (names.length === 0) { unparsed.push(argument.replace(/\s+/g, ' ').slice(0, 70)); continue }
+    for (const name of names) {
+      commandCalls.set(name, (commandCalls.get(name) ?? 0) + 1)
+      commandCards.set(name, (commandCards.get(name) ?? new Set()).add(source.card))
+    }
+  }
+}
+console.log(`  triggerSlash call sites: ${triggerSlashSites}`)
+if (triggerSlashSites === 0) console.log('  none in this corpus.')
+else {
+  console.log('  cards  calls  command')
+  for (const [name, cards] of [...commandCards].sort((a, b) => b[1].size - a[1].size || (commandCalls.get(b[0]) ?? 0) - (commandCalls.get(a[0]) ?? 0))) {
+    console.log(`  ${String(cards.size).padStart(5)}  ${String(commandCalls.get(name) ?? 0).padStart(5)}  /${name}`)
+  }
+  if (unparsed.length) console.log(`  arguments with no literal command (computed): ${unparsed.length}`)
+  for (const u of unparsed.slice(0, 5)) console.log(`     ${u}`)
+}

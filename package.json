@@ -16,6 +16,7 @@
     "census:frontend-blocks": "node scripts/frontend-block-census.mjs",
     "census:read-view": "node scripts/read-view-census.mjs",
     "census:settings-usage": "node scripts/settings-usage-census.mjs",
+    "census:th-members": "node scripts/th-member-census.mjs",
     "test:no-corpus": "node scripts/check-corpus-skips.mjs",
     "demo:mvu": "node apps/iris/demo/mvu-roleplay.ts",
     "build:web": "npm --prefix apps/iris-web run build",
