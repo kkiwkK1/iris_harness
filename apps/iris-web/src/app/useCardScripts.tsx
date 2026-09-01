@@ -48,6 +48,24 @@ export function CardScriptFrames(): ReactElement {
   const actions = useIrisActions()
   const mount = useRef<HTMLDivElement>(null)
 
+  /*
+   * Load the card's script list here, not only in the settings panel.
+   *
+   * The panel used to be the only caller, which made the whole consent flow
+   * depend on a drawer being mounted: no list meant no counts, no question and
+   * no run. It happens to mount today because the drawer renders while closed,
+   * but that is a layout detail holding up a permission decision. This component
+   * is always mounted and already owns "this chat's scripts", so it owns
+   * knowing what they are.
+   *
+   * `loadScripts` returns early when it already holds this card, so the panel
+   * asking as well costs nothing.
+   */
+  useEffect(() => {
+    if (characterId === undefined) return
+    void actions.loadScripts(characterId)
+  }, [characterId, actions])
+
   useEffect(() => {
     if (chatId === undefined || characterId === undefined) return
     if (consent !== 'allowed') return

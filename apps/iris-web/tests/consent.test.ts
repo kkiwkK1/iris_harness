@@ -13,7 +13,13 @@
 import { strict as assert } from 'node:assert'
 import test from 'node:test'
 
-import { consentState, mayRun, shouldAsk, totalBytes } from '../src/sandbox/consent.ts'
+import {
+  consentFigures,
+  consentState,
+  mayRun,
+  shouldAsk,
+  totalBytes,
+} from '../src/sandbox/consent.ts'
 
 test('absent, false and true are three different answers', () => {
   assert.equal(consentState({}), 'unasked', 'absent means nobody has been asked')
@@ -68,4 +74,56 @@ test('the size shown is every script, not only the enabled ones', () => {
   ]
 
   assert.equal(totalBytes(scripts), 3072)
+})
+
+test('the count and the size measure the same set', () => {
+  /*
+   * The defect this pins shipped and was reviewed: "This card ships 4 scripts
+   * (448 kB)" — four counted the *enabled* scripts (17 kB between them), while
+   * 448 kB measured all nine, 423 kB of which were switched off. The reader was
+   * told they were about to run twenty-six times more code than they were, on
+   * the one screen built for judging exactly that.
+   *
+   * It passed review because the card it was checked against had two scripts,
+   * both enabled, so the two rulers gave the same answer. A single example
+   * cannot distinguish a figure from a coincidence.
+   */
+  const scripts = [
+    { bytes: 10_000, enabled: true },
+    { bytes: 7_000, enabled: true },
+    { bytes: 423_000, enabled: false },
+  ]
+  const figures = consentFigures(scripts)
+
+  assert.equal(figures.running, 2)
+  assert.equal(figures.total, 3)
+  assert.equal(figures.runningBytes, 17_000, 'the size of what would run')
+  assert.equal(figures.totalBytes, 440_000, 'the size the answer covers')
+  assert.notEqual(
+    figures.runningBytes,
+    figures.totalBytes,
+    'a card where the two coincide cannot catch this',
+  )
+})
+
+test('a card whose scripts are all enabled reports one figure, not two', () => {
+  // The coinciding case is legitimate — it just must not be the only case tested.
+  const scripts = [
+    { bytes: 100, enabled: true },
+    { bytes: 200, enabled: true },
+  ]
+  const figures = consentFigures(scripts)
+
+  assert.equal(figures.running, figures.total)
+  assert.equal(figures.runningBytes, figures.totalBytes)
+})
+
+test('a card with nothing enabled still states what the answer covers', () => {
+  // Answering "run them" here grants something, even though nothing runs today.
+  const figures = consentFigures([{ bytes: 500, enabled: false }])
+
+  assert.equal(figures.running, 0)
+  assert.equal(figures.runningBytes, 0)
+  assert.equal(figures.total, 1)
+  assert.equal(figures.totalBytes, 500)
 })

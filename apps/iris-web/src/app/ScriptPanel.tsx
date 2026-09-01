@@ -25,7 +25,7 @@ import type { ScriptView } from '@iris/protocol'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { describeBytes } from './format.ts'
 import { Section } from './fields.tsx'
-import { totalBytes } from '../sandbox/consent.ts'
+import { consentFigures } from '../sandbox/consent.ts'
 import {
   describeRun,
   isFailure,
@@ -56,7 +56,6 @@ export function ScriptPanel(): ReactElement | null {
   if (characterId === undefined) return null
 
   const loaded = scriptsFor === characterId
-  const runnable = scripts.filter(script => script.enabled).length
 
   return (
     <Section title="Card scripts">
@@ -78,8 +77,7 @@ export function ScriptPanel(): ReactElement | null {
           */}
           {consent === 'unasked' ? (
             <ConsentGate
-              count={runnable}
-              bytes={totalBytes(scripts)}
+              scripts={scripts}
               onAnswer={allowed => void actions.answerScriptsAllowed(allowed)}
             />
           ) : consent === 'declined' ? (
@@ -237,21 +235,39 @@ function ScriptRow({
  * @param props.onAnswer - called with the user's decision.
  * @returns the question.
  */
-function ConsentGate({
-  count,
-  bytes,
+export function ConsentGate({
+  scripts,
   onAnswer,
 }: {
-  count: number
-  bytes: number
+  scripts: readonly ScriptView[]
   onAnswer: (allowed: boolean) => void
 }): ReactElement {
+  const figures = consentFigures(scripts)
+  const dormant = figures.totalBytes - figures.runningBytes
+
   return (
     <div className="iris-grant">
       <p className="iris-field__note">
-        This card ships {count === 1 ? '1 script' : `${String(count)} scripts`} (
-        {describeBytes(bytes)}). Scripts run in an isolated sandbox and cannot read your other
-        chats unless you also grant page access below.
+        {/*
+          One ruler per number, and both of them stated.
+
+          The first version said "ships 4 scripts (448 kB)": four counted the
+          enabled ones, 448 kB measured all nine. Someone was told they were
+          about to run 26x more code than they were, and the verb described the
+          card while the numbers described the run.
+
+          Both figures belong here, because the answer is permanent and covers
+          scripts the user may switch on later without being asked again — but
+          they have to be labelled as the different things they are.
+        */}
+        {figures.running === figures.total
+          ? `This card runs ${describeCount(figures.running)} (${describeBytes(figures.runningBytes)}).`
+          : `${String(figures.running)} of ${String(figures.total)} scripts would run now (${describeBytes(figures.runningBytes)}).`}{' '}
+        {dormant > 0
+          ? `Your answer covers all ${String(figures.total)}, including ${describeBytes(dormant)} switched off today. `
+          : ''}
+        They run in an isolated sandbox and cannot read your other chats unless you also grant
+        page access.
       </p>
       <div className="iris-grant__actions">
         <Button size="sm" onClick={() => onAnswer(true)}>
@@ -263,4 +279,13 @@ function ConsentGate({
       </div>
     </div>
   )
+}
+
+/**
+ * "1 script" or "N scripts".
+ * @param count - how many.
+ * @returns the phrase.
+ */
+function describeCount(count: number): string {
+  return count === 1 ? '1 script' : `${String(count)} scripts`
 }

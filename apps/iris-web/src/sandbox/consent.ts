@@ -107,3 +107,42 @@ export function mayRun(state: ConsentState): boolean {
 export function totalBytes(scripts: readonly { bytes: number, enabled: boolean }[]): number {
   return scripts.reduce((sum, script) => sum + script.bytes, 0)
 }
+
+/** What the question has to state, counted once. */
+export interface ConsentFigures {
+  /** Scripts that would run today. */
+  running: number
+  /** Every script the answer covers. */
+  total: number
+  /** Size of the ones that would run. */
+  runningBytes: number
+  /** Size of all of them. */
+  totalBytes: number
+}
+
+/**
+ * Measure a card's scripts for the question, both ways, in one pass.
+ *
+ * Returned together rather than computed at the call site, because computing
+ * them separately is how the first version came to count one thing and measure
+ * another: `4 scripts (448 kB)` — four being the enabled ones at 17 kB, and
+ * 448 kB being all nine, 423 kB of which were switched off. A user was told they
+ * were about to run twenty-six times more code than they were.
+ *
+ * It survived review because the card it was checked against had two scripts and
+ * both enabled, so the two rulers coincided exactly — another pair of
+ * divergences that cancel on a single example.
+ * @param scripts - the card's scripts.
+ * @returns both counts and both sizes.
+ */
+export function consentFigures(
+  scripts: readonly { bytes: number, enabled: boolean }[],
+): ConsentFigures {
+  const running = scripts.filter(script => script.enabled)
+  return {
+    running: running.length,
+    total: scripts.length,
+    runningBytes: totalBytes(running),
+    totalBytes: totalBytes(scripts),
+  }
+}

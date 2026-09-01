@@ -27,6 +27,7 @@ import { SettingsDrawer } from './SettingsDrawer.tsx'
 import { Masthead } from './Masthead.tsx'
 import { Sidebar } from './Sidebar.tsx'
 import { CardScriptFrames } from './useCardScripts.tsx'
+import { ConsentAsk } from './ConsentAsk.tsx'
 import { StatePanel } from './StatePanel.tsx'
 import { toBase64 } from './format.ts'
 
@@ -116,6 +117,20 @@ export function App(): ReactElement {
             Not connected to the Iris host. Nothing you write will be sent.
           </div>
         )}
+        {/*
+          The first-run question, where the reader is.
+
+          It used to live only in the settings drawer, which is closed by
+          default — so a card's scripts sat unasked and unrun, and the interface
+          said nothing about a decision waiting. `AUTORUN.md` §1 requires the
+          question to be put once, and a question nobody can see has not been put.
+
+          Not a modal: §3.4 keeps prompts off the conversation, and this must not
+          block reading. It sits in the notice region, inline, and unlike a notice
+          it does not expire — a question that times out has answered itself.
+        */}
+        <ConsentAsk />
+
         {notice === undefined ? null : (
           <div className={`iris-notice iris-notice--${notice.kind}`} role="status" key={notice.seq}>
             {notice.text}

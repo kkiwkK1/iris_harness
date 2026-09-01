@@ -377,9 +377,11 @@ reported, any refusal) is shown beside the frame.
   **Verified on a real host, and only this far**: the consent gate (wording, real
   byte count, both answers, the decision surviving a reload) and the happy path
   (two of a real card's scripts reaching `loaded`, two frames reporting
-  `isConnected`). **Not exercised in a browser**: every failure surface — the
-  per-script failure lines, the notice bar, the `silent` timeout firing, and the
-  declined state — because on that run nothing failed. Those are carried by unit
+  `isConnected`). The declined path was verified separately on a
+  nine-script card: an explicit `false` stored, no re-ask after a reload, the
+  panel naming the state with a way back, all nine scripts still listed, and no
+  frames. **Not exercised in a browser**: the per-script failure lines, the
+  notice bar, and the `silent` timeout firing, because no run has yet failed. Those are carried by unit
   tests, which is exactly the coverage that let the first version ship without
   attaching a single frame.
 
