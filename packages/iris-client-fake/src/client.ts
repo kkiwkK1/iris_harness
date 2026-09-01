@@ -669,6 +669,43 @@ class InMemoryClient implements FakeClient {
         return { primary: null, additional: [] }
       }
 
+      case 'script.createChatMessages': {
+        const { messages } = params as RpcRequest<'script.createChatMessages'>
+        /*
+         * Refused, and the ambiguity is the reason rather than the absence.
+         *
+         * This client *could* append to its in-memory chat and answer with a
+         * plausible view. What it cannot do is make that answer distinguishable
+         * from the one a real host gives — the append arm deliberately does not
+         * persist, so a caller checking "did it land" reads the view either way,
+         * and a fake that models half of a two-step operation teaches a card the
+         * wrong half. The same shape as `worldbook.setGlobalSelect`: the
+         * successful response and the did-nothing response are byte-identical.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client does not implement chat insertion (${String(messages.length)} message(s) refused)`,
+        )
+      }
+
+      case 'script.deleteChatMessages': {
+        const { messageIds } = params as RpcRequest<'script.deleteChatMessages'>
+        /*
+         * Refused rather than modelled, despite `chat.deleteMessage` being
+         * implemented above — and the difference is exactly the one worth not
+         * papering over. That arm removes **one** floor by id. This one removes a
+         * set by their **original** indices in a single pass, and the whole
+         * reason it exists is that applying them one at a time shifts the indices
+         * between calls and deletes the wrong floors, silently. Implementing it
+         * here as a loop over the single-floor path would reproduce that bug in
+         * the one place built to demonstrate its absence.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client does not implement batch deletion (${String(messageIds.length)} id(s) refused)`,
+        )
+      }
+
       case 'worldbook.globalSelect': {
         /*
          * An empty selection, which is a true answer here for the same reason

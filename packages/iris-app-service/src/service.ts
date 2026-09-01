@@ -286,7 +286,80 @@ export class IrisAppService {
         // stand in the way of the ordinary case while still refusing a rewrite
         // that would race a turn.
         const entry = await this.#idle(chatId, 'rewritten by a script')
-        return { view: await this.#rewriteLines(entry, messages) }
+        // Not persisted here; see `#rewriteLines`. A card commits its batch with
+        // `script.saveChat`, which is the one place that decision lives.
+        return { view: await this.#rewriteLines(entry, messages, false) }
+      },
+
+      'script.createChatMessages': async ({ chatId, messages, insertAt }) => {
+        const entry = await this.#idle(chatId, 'appended to by a script')
+        const lines = entry.toFile().messages
+
+        // Clamped and handed to `splice` still signed, exactly as upstream does
+        // (`_.clamp(insert_before, -chat.length, chat.length)` then
+        // `chat.splice(insert_before, …)`). `splice` reads a negative index from
+        // the end, so converting it here would be a second interpretation of the
+        // same number.
+        const requested = insertAt ?? lines.length
+        const clamped = Math.min(Math.max(requested, -lines.length), lines.length)
+        const at = clamped < 0 ? lines.length + clamped : clamped
+
+        const created = messages.map(message => ({
+          name: message.name,
+          is_user: message.is_user,
+          mes: message.mes,
+          ...message.is_system === undefined ? {} : { is_system: message.is_system },
+          ...message.extra === undefined ? {} : { extra: message.extra },
+          // Upstream stores the floor's layer at `variables[0]`. `variables` is
+          // not a modelled key, so it rides through `iris/st-meta` and comes
+          // back on export unchanged.
+          ...message.variables === undefined ? {} : { variables: [message.variables] },
+        }))
+        lines.splice(at, 0, ...created)
+
+        // Lines before the insertion keep their identity; lines after it shift
+        // by however many arrived; the new ones have no source, so they mint
+        // fresh keys and carry no inherited variables.
+        entry.rebuild(lines, index =>
+          index < at ? index : index >= at + created.length ? index - created.length : undefined)
+        // The same reattachment a reload performs. Without it a message created
+        // with `variables` reads back as the *inherited* table while the process
+        // lives, and as its own table after a restart — the same call answering
+        // differently depending on when it is asked. `rebuild` carries variables
+        // by position, and a newly created line has no position to carry from,
+        // so the table has to be put back explicitly exactly as `hydrateVariables`
+        // does on open. Reused rather than reimplemented: a second copy of this
+        // walk is a second thing that can disagree with a reload.
+        if (created.some(line => line.variables !== undefined)) entry.hydrateVariables(lines)
+        entry.touch()
+
+        // Deliberately not saved. A card's replay batch is heterogeneous, so a
+        // per-arm flag would put "who writes the file" wherever the last
+        // operation happened to land; `script.saveChat` is one decision in one
+        // place and is what a card calls upstream anyway.
+        return { view: this.#announceChat(entry) }
+      },
+
+      'script.deleteChatMessages': async ({ chatId, messageIds }) => {
+        const entry = await this.#idle(chatId, 'deleted from by a script')
+        const lines = entry.toFile().messages
+
+        // Sorted and de-duplicated, then resolved **all against this one
+        // snapshot** — upstream's `_.pullAt`. Applying them one at a time would
+        // read each later index against an already-shortened list, which is a
+        // different operation that also succeeds; see the contract for why both
+        // exist.
+        const ids = [...new Set(messageIds)].sort((left, right) => left - right)
+        for (const id of ids) {
+          if (lines[id] === undefined) throw notFound(`this chat has no message ${String(id)}`)
+        }
+
+        const removed = new Set(ids)
+        const sources = lines.map((_line, index) => index).filter(index => !removed.has(index))
+        const kept = lines.filter((_line, index) => !removed.has(index))
+        entry.rebuild(kept, index => sources[index])
+        entry.touch()
+        return { view: this.#announceChat(entry) }
       },
 
       'chat.deleteMessage': async ({ chatId, id }) => {
@@ -1257,9 +1330,28 @@ export class IrisAppService {
    * @returns the view, already announced.
    * @throws {AppError} `not-found` when any id names no line.
    */
+  /**
+   * Rewrite message bodies in place.
+   * @param entry - the open conversation.
+   * @param edits - message id and its new text.
+   * @param persist - whether to write the file here.
+   *
+   *   True for a user's edit, which is a complete action on its own. False for a
+   *   card's `setChatMessages`, because a card's writes arrive as a batch across
+   *   three arms and a save inside any one of them commits **everything queued
+   *   before it** — measured: an append that had not been written reached the
+   *   file as a side effect of a later rewrite. A batch that then fails leaves
+   *   half of itself on disk while the card is told it failed.
+   *
+   *   Upstream saves in all three of its equivalents, but through
+   *   `saveChatConditionalDebounced` (`chat_message.ts:172`), which coalesces —
+   *   so committing once at the end of a batch is *closer* to upstream than
+   *   committing per call. The façade calls `script.saveChat` to do it.
+   */
   async #rewriteLines(
     entry: ChatEntry,
     edits: readonly { messageId: number, message: string }[],
+    persist = true,
   ): Promise<ChatView> {
     const { messages } = entry.toFile()
     for (const edit of edits) {
@@ -1276,7 +1368,7 @@ export class IrisAppService {
 
     entry.rebuild(messages, index => index)
     entry.touch()
-    await this.#options.chats.save(entry)
+    if (persist) await this.#options.chats.save(entry)
     return this.#announceChat(entry)
   }
 

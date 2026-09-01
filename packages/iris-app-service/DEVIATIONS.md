@@ -170,3 +170,60 @@ discard it.
 `'mag_variable_initiailized'` — `i-n-i-t-i-a-i-l`. Copied verbatim wherever this
 host names it, on the `substidudeMacros` precedent: a correctly spelled constant
 reaches no listener at all.
+
+---
+
+## 4. A floor that wrote no variables inherits, where upstream answers empty
+
+**Upstream.** `getVariables({type: 'message'})` with `'latest'` or no id
+(`JS-Slash-Runner/src/function/variables.ts`):
+
+```js
+chat_message = chat.filter(m => !m.is_system).at(normalized_message_id);
+return chat_message?.variables?.[chat_message?.swipe_id ?? 0] ?? {};
+```
+
+Two properties: it **filters `is_system`** before taking the newest, and it does
+**not inherit** — a floor with no table of its own answers `{}`.
+
+**Iris.** `entry.currentVariables()` resolves the newest **turn** without an
+`is_system` filter, takes that candidate's own table, and when there is none
+walks backwards to the nearest earlier one.
+
+**Why the values still agree.** Upstream's MVU materialises a table on *every*
+floor: `updateVariablesWith(updater, {type: 'message', message_id})`
+(`MagVarUpdate/src/function/update_variables.ts:1551`) sits **outside** the
+`if (has_variable_modified)` guard that gates the chat-scope write. So upstream
+never reaches its own `?? {}` while MVU is running, and its answer for an
+unchanged floor is a materialised copy of the previous state — the same value
+this host produces by inheriting. Two internally coherent designs meeting at the
+same number by different routes. Three constructions were measured (a system row
+last; a reply that wrote nothing; a system row carrying its own table) and all
+three agreed.
+
+**Where they diverge.** Only when a floor has no table *and* nothing materialised
+one — that is, where MVU is not running. Upstream answers `{}`; this host answers
+the previous state. The usage that suffers is **read → test for empty →
+initialise**: upstream re-initialises on every such floor, this host hands back
+the old value and the initialisation never runs.
+
+**Scope of the zero, stated because the zero is thin.** No corpus card is
+affected, but that is coincidence rather than structure: the non-MVU pool is
+**3 cards** (希尔, 萧谴写卡助手, the sample card) and **none of them touches a
+variable API at all**. The zero rests on three cards happening not to use the
+feature, not on anything that would keep a fourth from doing so. Caliper: the MVU
+detector's wide reading counts 13 cards and its narrow one 9; the 4 in between
+use `getMvuData` without a bare `Mvu.` reference and are genuinely MVU.
+
+**Why this is not being aligned.** Matching upstream means copying the
+materialisation too, not just adding a filter — and that was measured at **40
+stored tables / 201 KB against 4 tables / 20 KB** for the same information. Ten
+times the storage to buy a behaviour difference nobody has yet observed. The
+inheritance is also the same decision as storing message-scope variables per
+candidate: it is an upgrade, not an omission.
+
+**What would overturn this.** A card that reads the `message` scope without MVU
+present. `tests/floor-anchor.test.ts` pins the per-floor anchor, which is
+deliberately *not* inheriting — the two behaviours live side by side and mean
+different things, so neither should be changed to match the other without
+reading this entry first.

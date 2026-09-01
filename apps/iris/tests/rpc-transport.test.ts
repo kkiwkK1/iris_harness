@@ -227,6 +227,10 @@ const PROBES: Record<string, unknown> = {
   'script.generateRaw': { chatId: 'no-such-chat', prompt: 'x' },
   'script.generate': { chatId: 'no-such-chat', userInput: 'x' },
   'script.setChatMessages': { chatId: 'no-such-chat', messages: [{ messageId: 0, message: 'x' }] },
+  'script.createChatMessages': {
+    chatId: 'no-such-chat', messages: [{ name: 'Aria', is_user: false, mes: 'x' }],
+  },
+  'script.deleteChatMessages': { chatId: 'no-such-chat', messageIds: [0] },
   // Named world books. The probes name nothing real on purpose: reachability is
   // the property under test, and a not-found answer proves the handler ran just
   // as well as a successful read would.

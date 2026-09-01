@@ -309,6 +309,93 @@ export const requestSchemas = {
     metadata: z.record(z.string(), z.unknown()),
   }),
   /** Persist the chat now, as upstream's `saveChat` does. */
+  /**
+   * Append messages to a chat, or insert them at a position.
+   *
+   * Takes the **stored** shape rather than upstream's `role`-based
+   * `ChatMessageCreating`, and that is a seam decision, not laziness. One arm
+   * serves two façades: a card's `context.chat.push`, which hands over a raw
+   * SillyTavern message object, and `createChatMessages`, whose `role` has to
+   * become a `name` using `name1`/`name2`. Those two names live in the frame's
+   * snapshot; making the host rebuild them from the chat header would create a
+   * second source for the same fact, and the symptom of the two disagreeing is a
+   * message attributed to the wrong speaker — stored fine, read back fine, wrong.
+   *
+   * **This arm does not save.** A replay batch is heterogeneous (append, remove,
+   * rewrite through three arms), so a `persist` flag would have to exist on all
+   * three and "who writes the file" would depend on which kind happened to be
+   * last. `script.saveChat` is one decision in one place, it already exists, and
+   * it is what a card calls upstream anyway.
+   */
+  'script.createChatMessages': z.object({
+    chatId: z.string().min(1),
+    messages: z.array(z.object({
+      /**
+       * The speaker. Required, never defaulted here.
+       *
+       * Upstream derives it from `role` when absent, using `name1`/`name2` — so
+       * the defaulting belongs on the side that has those, and requiring it here
+       * is what forces it to stay there rather than existing in two places.
+       */
+      name: z.string().max(500),
+      /**
+       * Required, and the one field whose absence is dangerous rather than
+       * merely incomplete: `importChat` opens with `if (line.is_user)`, so a
+       * missing value is falsy and the message silently becomes an assistant
+       * one. That reads back cleanly and is wrong, which is worse than a message
+       * that fails to read back at all.
+       */
+      is_user: z.boolean(),
+      mes: z.string().max(200_000),
+      /** Upstream's `is_hidden`. */
+      is_system: z.boolean().optional(),
+      /**
+       * Passed through verbatim, including upstream's own asymmetry: for
+       * `role: 'system'` upstream sets `extra.type` to its narrator marker and
+       * then lets a supplied `extra` **replace the whole object**, wiping it.
+       * Copied rather than corrected — a card may depend on it.
+       */
+      extra: z.record(z.string(), z.unknown()).optional(),
+      /**
+       * The floor's variable layer — upstream's `data`, which it stores as
+       * `variables[0]`.
+       *
+       * One layer, not the array: upstream only ever writes slot 0 here. Reaches
+       * this host only through the `createChatMessages` façade; the
+       * `context.chat.push` replay narrows away `variables` and `swipes` and
+       * reports the loss to the card, so it never arrives by that route.
+       */
+      variables: z.record(z.string(), z.unknown()).optional(),
+    })).min(1).max(200),
+    /**
+     * Where to insert. Absent appends at the end.
+     *
+     * Negative values are legal and clamped to `[-length, length]`, which is
+     * upstream's `_.clamp(insert_before, -chat.length, chat.length)`.
+     */
+    insertAt: z.number().int().optional(),
+  }),
+  /**
+   * Delete messages by their position in the chat.
+   *
+   * **`messageIds` are indices into the chat as it is now, and every one of them
+   * is resolved against that same snapshot — they are removed in one pass.**
+   * This is upstream's `deleteChatMessages`, which sorts, de-duplicates and
+   * `_.pullAt`s. Deleting `[2, 5]` removes the messages currently at 2 and 5.
+   *
+   * That is **not** the same as calling `chat.deleteMessage` twice, where the
+   * second index is read against a list that has already shifted: `[2, 5]`
+   * applied one at a time removes the messages at 2 and at 6. Both are correct
+   * for their own caller — a card's ledger replay applies its removals in
+   * sequence and *must* keep calling the single-message arm — and the two index
+   * meanings are both `number[]`, so nothing but this sentence distinguishes
+   * them. Measured on a 7-message chat: sequential deletion of 2 and 5 removed
+   * the wrong second message, with no error and two successful responses.
+   */
+  'script.deleteChatMessages': z.object({
+    chatId: z.string().min(1),
+    messageIds: z.array(z.number().int().min(0)).min(1).max(500),
+  }),
   'script.saveChat': z.object({ chatId: z.string().min(1) }),
   /**
    * Inject a script's text into the prompt.
@@ -650,6 +737,8 @@ export interface RpcResponseMap {
   'script.context': { context: ScriptContext }
   /** The metadata as stored, so a card can see what survived. */
   'script.saveMetadata': { metadata: Record<string, unknown> }
+  'script.createChatMessages': { view: ChatView }
+  'script.deleteChatMessages': { view: ChatView }
   'script.saveChat': Record<string, never>
   'script.setExtensionPrompt': Record<string, never>
   /** The settings as stored, so a card can see what survived. */
