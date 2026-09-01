@@ -69,8 +69,23 @@
  */
 import './preset-entry.ts'
 
-import 'jquery-ui/dist/jquery-ui.min.js'
-import 'jquery-ui-touch-punch/jquery.ui.touch-punch.min.js'
+import { reportMissingJQueryPlugins } from './jquery-plugin-gap.ts'
+
+/*
+ * jQuery UI and touch-punch are **not** shipped, and the absence is announced
+ * rather than left to a `TypeError`.
+ *
+ * Measured: zero uses across the corpus, by two independent probes (method calls
+ * and theme class names). They cost 316 KB of a bundle every message frame
+ * fetches cold, because the HTTP cache is partitioned per origin and every one
+ * of these frames is its own opaque origin.
+ *
+ * What replaces them is not a stub set. See `jquery-plugin-gap.ts`: a card
+ * reading any method jQuery does not have gets `undefined` — exactly what it
+ * would get on a SillyTavern install without the plugin — and Iris reports which
+ * name it asked for.
+ */
+reportMissingJQueryPlugins()
 
 /*
  * The stylesheets, in their own module so they land **before** Tailwind.

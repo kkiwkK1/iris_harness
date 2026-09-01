@@ -35,7 +35,6 @@ import faSolid from '@fortawesome/fontawesome-free/css/solid.min.css?inline'
 import faBrands from '@fortawesome/fontawesome-free/css/brands.min.css?inline'
 import faRegular from '@fortawesome/fontawesome-free/css/regular.min.css?inline'
 import faV4 from '@fortawesome/fontawesome-free/css/v4-font-face.min.css?inline'
-import uiCss from 'jquery-ui/dist/themes/base/jquery-ui.min.css?inline'
 
 /**
  * Add one stylesheet to the frame's head.
@@ -54,4 +53,4 @@ addStyle(faSolid, 'fontawesome-solid')
 addStyle(faBrands, 'fontawesome-brands')
 addStyle(faRegular, 'fontawesome-regular')
 addStyle(faV4, 'fontawesome-v4')
-addStyle(uiCss, 'jquery-ui')
+
