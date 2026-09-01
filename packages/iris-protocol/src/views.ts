@@ -431,6 +431,22 @@ export interface WorldbookEntry {
      * revival belongs to whoever hands these to a card.
      */
     keys: string[]
+    /**
+     * Secondary keys, and the logic combining them.
+     *
+     * `keys` here needs the **same** revival as the primary ones above — this
+     * was measured, not assumed: upstream maps both lists through
+     * `parseRegexFromString` with the identical expression
+     * (`worldbook.ts:214` and `:218`), and this host's activation engine runs
+     * both through `matchKey`, which does the same. Reviving only the primary
+     * list would give a card plain strings for keys the engine is matching as
+     * patterns — each half self-consistent, the pair wrong, nothing raised.
+     *
+     * The earlier version of this comment mentioned only `keys`, and a reader
+     * building the façade correctly inferred the narrower rule from it. Field
+     * documentation that is silent about a sibling reads as a statement about
+     * that sibling.
+     */
     keys_secondary: { logic: SecondaryLogic, keys: string[] }
     /** `'same_as_global'` when the entry sets no depth of its own. */
     scan_depth: number | 'same_as_global'

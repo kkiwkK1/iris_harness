@@ -155,6 +155,74 @@ if (existsSync(`${SAMPLE}/战锤群星闪耀.json`)) {
   }
 }
 
+// --- the detector, and a fixture that proves it can see -----------------------
+
+/**
+ * Does this body reach for `name`?
+ *
+ * The boundary excludes `.` so that an unrelated object's method does not
+ * count, with one exception: cards legitimately reach the API through its own
+ * namespace, and `TavernHelper.getWorldbook(…)` is a real call. The first
+ * version excluded that too, and reported four members short — two of them as
+ * *never used*, in the column that decides what not to build.
+ * @param {string} code - the body to scan.
+ * @param {string} name - the member.
+ * @returns {number} how many times it is reached for.
+ */
+function reachesFor(code, name) {
+  const pattern = new RegExp(`(^|[^A-Za-z0-9_$.])(TavernHelper\\s*\\.\\s*)?${name}\\s*[(.]`, 'g')
+  return [...code.matchAll(pattern)].length
+}
+
+/**
+ * Shapes the detector must see, and shapes it must not.
+ *
+ * Checking the real corpus can only ever show that nothing was found. It cannot
+ * tell "there is none" from "the detector is blind to this shape" — those are
+ * the same output. So the detector is handed source written on purpose and asked
+ * what it sees.
+ *
+ * This exists because the `.`-boundary bug produced exactly that
+ * indistinguishable pair: `TavernHelper.getWorldbook(…)` was never matched, and
+ * the report said "0 cards", which reads identically to "nobody calls it".
+ */
+const DETECTOR_FIXTURE = {
+  mustSee: {
+    'bare call': 'getWorldbook("book")',
+    'through the namespace': 'await TavernHelper.getWorldbook("book")',
+    'namespace with spacing': 'TavernHelper . getWorldbook ("book")',
+    'property access, not a call': 'const n = getWorldbook.length',
+    'awaited': 'const e = await getWorldbook(name)',
+    'chained off the result': 'getWorldbook(n).then(x => x)',
+    'after a destructure': 'const { getWorldbook } = TavernHelper; getWorldbook(n)',
+    'at the very start of the body': 'getWorldbook(n)',
+  },
+  mustNotSee: {
+    'another object with the same method': 'myCache.getWorldbook("book")',
+    'a longer identifier that contains it': 'getWorldbookNames("book")',
+    'a prefixed identifier': 'myGetWorldbook("book")',
+    'bare mention with no call or access': 'typeof getWorldbook === "function"',
+  },
+}
+
+/**
+ * Run the fixture. A caliper that cannot see is worse than no caliper: it
+ * reports zeros that read like findings.
+ * @returns {string[]} the failures, empty when the detector is sound.
+ */
+function checkDetector() {
+  const failures = []
+  for (const [label, code] of Object.entries(DETECTOR_FIXTURE.mustSee)) {
+    if (reachesFor(code, 'getWorldbook') === 0) failures.push(`MISSED  ${label}: ${code}`)
+  }
+  for (const [label, code] of Object.entries(DETECTOR_FIXTURE.mustNotSee)) {
+    if (reachesFor(code, 'getWorldbook') > 0) failures.push(`FALSE+  ${label}: ${code}`)
+  }
+  return failures
+}
+
+const detectorFailures = checkDetector()
+
 // --- count -------------------------------------------------------------------
 /** Names generic enough that a word-boundary hit may not be the API. */
 const GENERIC = new Set(['builtin', 'Mvu', 'SillyTavern', 'TavernHelper', 'EjsTemplate', 'errorCatched'])
@@ -165,13 +233,7 @@ for (const name of MEMBERS) usage.set(name, { cards: new Set(), calls: 0, origin
 
 for (const source of sources) {
   for (const name of MEMBERS) {
-    // The boundary excludes `.` so an unrelated object's method does not count
-    // — but cards legitimately reach the API through the namespace, and
-    // `TavernHelper.getWorldbook(…)` is a real call. Allowing exactly that one
-    // prefix recovered four members the first version missed, two of which it
-    // had reported as never used at all.
-    const pattern = new RegExp(`(^|[^A-Za-z0-9_$.])(TavernHelper\\s*\\.\\s*)?${name}\\s*[(.]`, 'g')
-    const hits = [...source.code.matchAll(pattern)].length
+    const hits = reachesFor(source.code, name)
     if (hits === 0) continue
     const entry = usage.get(name)
     entry.calls += hits
@@ -185,6 +247,19 @@ const builtUsed = used.filter(n => BUILT.has(n))
 const unbuiltUsed = used.filter(n => !BUILT.has(n))
 const unbuiltUnused = MEMBERS.filter(n => !BUILT.has(n) && (usage.get(n)).cards.size === 0)
 const builtUnused = MEMBERS.filter(n => BUILT.has(n) && (usage.get(n)).cards.size === 0)
+
+if (detectorFailures.length > 0) {
+  console.log('## DETECTOR FIXTURE FAILED — every number below is unreliable')
+  for (const line of detectorFailures) console.log(`  ${line}`)
+  console.log('')
+  console.log('  A missed shape reports as "0 cards", which reads exactly like')
+  console.log('  "nobody calls it" — and that column decides what not to build.')
+  console.log('')
+} else {
+  console.log(`## detector fixture: ${Object.keys(DETECTOR_FIXTURE.mustSee).length} shapes seen, ` +
+    `${Object.keys(DETECTOR_FIXTURE.mustNotSee).length} correctly ignored`)
+  console.log('')
+}
 
 console.log('## corpus scanned')
 console.log(`  card script bodies      ${sources.filter(s => s.origin.startsWith('script')).length}`)

@@ -23,9 +23,10 @@ import {
   IFRAME_EVENTS,
   MVU_EVENTS,
   TAVERN_EVENTS,
+  parseRegexFromString,
   type Listener,
 } from '@iris/compat-tavernhelper-core'
-import type { ScriptChatMessage, ScriptContext } from '@iris/protocol'
+import type { ScriptChatMessage, ScriptContext, WorldbookEntry } from '@iris/protocol'
 
 import { UnsupportedApiError } from './errors.ts'
 
@@ -162,6 +163,48 @@ export function createEventSource(events: EventBus): Record<string, unknown> {
  * card's compatibility check would be answered with a fact about nothing.
  */
 export const TAVERN_HELPER_VERSION = '4.9.1'
+
+/**
+ * A worldbook entry as a **card** sees it.
+ *
+ * Identical to the wire shape but for `strategy.keys`, whose elements upstream
+ * hands over as `RegExp | string`. A `RegExp` cannot cross a `postMessage`
+ * boundary — it arrives as `{}` — so the host sends the strings it read and the
+ * revival happens here, on the last hop before a card touches them.
+ */
+export interface CardWorldbookEntry extends Omit<WorldbookEntry, 'strategy'> {
+  strategy: Omit<WorldbookEntry['strategy'], 'keys'> & { keys: (RegExp | string)[] }
+}
+
+/**
+ * Revive regex-shaped keys the way upstream does before a card sees them.
+ *
+ * `parseRegexFromString` returns `null` for a key that is not regex-shaped, and
+ * **that is not a failure** — upstream's semantics are to fall back to plaintext
+ * matching, so `null` means "this key is literal text" and the original string is
+ * kept. Treating it as an error would drop every ordinary keyword in the book.
+ *
+ * The function is imported rather than reimplemented, and it is the **same
+ * function object** the activation engine uses. A hand-copied rule that drifted
+ * would give a card a `RegExp` for a key the engine matches as plaintext, or the
+ * reverse: two halves each self-consistent, wrong together, and silent.
+ *
+ * Only the primary keys are revived, because that is the only field the contract
+ * says upstream revives. Whether `keys_secondary.keys` gets the same treatment
+ * upstream is an open question — left alone rather than guessed at, since
+ * reviving them speculatively would be a divergence invented here.
+ * @param entry - one entry as the host sent it.
+ * @returns the same entry with its primary keys revived.
+ */
+function reviveWorldbookKeys(entry: WorldbookEntry): CardWorldbookEntry {
+  return {
+    ...entry,
+    strategy: {
+      ...entry.strategy,
+      keys: entry.strategy.keys.map(key => parseRegexFromString(key) ?? key),
+    },
+  }
+}
 
 export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<string, unknown> {
   /** Names already reported, so a card in a loop does not fill the panel. */
@@ -577,6 +620,57 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
         return swipes.map(text => ({ ...message, mes: text }))
       })
     },
+    /**
+     * Which world books this card is bound to.
+     *
+     * **Synchronous, and that is the whole design constraint.** Upstream declares
+     * `getCharWorldbookNames(character_name): CharWorldbooks` — no promise — and
+     * every one of the corpus's five call sites reads a property straight off the
+     * result: `getCharWorldbookNames('current').primary`. A façade that returned a
+     * promise would hand those cards `undefined`, which then flows into
+     * `getWorldbook(undefined)`; two of the three cards have no guard on that
+     * path. So this answers from the pushed snapshot, the way the bare
+     * `getVariables()` does, and `worldbook.charNames` is not on this route at all.
+     *
+     * **Only `'current'` is supported**, and that is a measured decision rather
+     * than an inferred one: all five call sites pass `'current'`, so the named
+     * branch is the one no card travels. Serving it would need the snapshot to
+     * carry every character's bindings, which is unbounded. A card that does ask
+     * gets a refusal naming the member instead of a silent `undefined`.
+     *
+     * `primary` is **the binding, not the book in use**. When a binding dangles,
+     * the host's selection rule falls back to the card's embedded book, and this
+     * member still reports what the card declared — so a `primary` that
+     * `getWorldbook` will refuse is a normal state, not an inconsistency to
+     * repair here. The card's embedded `character_book` is deliberately absent:
+     * upstream's member does not report it either, and embedded and named books
+     * are two different bodies of entries.
+     * @param characterName - upstream's parameter; only `'current'` is served.
+     * @returns the primary binding and any additional ones.
+     */
+    getCharWorldbookNames: (characterName?: string): {
+      primary: string | null
+      additional: string[]
+    } => {
+      if (characterName !== 'current') {
+        throw new UnsupportedApiError(
+          'getCharWorldbookNames',
+          'Iris only supports \'current\'; a named-character query needs a synchronous'
+          + ' host read that is not available in a frame.',
+        )
+      }
+
+      /*
+       * Absent means "no bindings", not "not loaded" — the host sends
+       * `{primary: null, additional: []}` for an unbound card, and the field is
+       * only optional so that a snapshot taken before it existed still parses.
+       * Copied on the way out because this surface is shared between a card's
+       * scripts, and an array handed out by reference is one a card can mutate
+       * under the next reader.
+       */
+      const bound = snapshot('getCharWorldbookNames').charWorldbooks
+      return { primary: bound?.primary ?? null, additional: [...(bound?.additional ?? [])] }
+    },
     getSwipes: (messageId?: number): string[] => {
       const chat = chatOf('getSwipes')
       const at = messageId ?? chat.length - 1
@@ -636,6 +730,27 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       const current = (answer as { variables?: Record<string, unknown> } | undefined)?.variables ?? {}
       const next = updater(structuredClone(current))
       return write('updateVariablesWith', 'replace', option, { variables: next })
+    },
+    /**
+     * One named world book's entries, with its regex keys revived.
+     *
+     * Upstream's signature is `getWorldbook(worldbook_name): Promise<WorldbookEntry[]>`
+     * and it **throws when the book does not exist** — documented as `@throws` on
+     * the declaration. That is copied rather than softened: the host answers
+     * `not-found`, the rejection propagates, and a card written against upstream
+     * catches it in the same place. Returning an empty array instead would say
+     * "this book has no entries", which leads a card to a different repair than
+     * "there is no such book".
+     *
+     * The corpus reaches this member exactly one way — `getWorldbook` is always
+     * handed the result of `getCharWorldbookNames('current').primary`, in all
+     * three cards that call it — so the two members are really one idiom in two
+     * halves, and the name arriving here is a name the host itself just supplied.
+     */
+    getWorldbook: async (name: string): Promise<CardWorldbookEntry[]> => {
+      const answer = await host.call('getWorldbook', { name })
+      const entries = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
+      return entries.map(entry => reviveWorldbookKeys(entry))
     },
     swipeTo: async (messageId: number, swipeId: number) =>
       // `swipeIndex` on the wire; upstream's parameter is `swipeId`. Renamed at

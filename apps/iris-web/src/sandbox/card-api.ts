@@ -51,6 +51,15 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
   getVariables: 'script.getVariables',
   setVariables: 'script.setVariables',
   swipeTo: 'script.swipeTo',
+  /*
+   * The only worldbook member routed through here, and deliberately the only one.
+   *
+   * `getCharWorldbookNames` is **synchronous** upstream, so it cannot be a round
+   * trip at all — it answers from the pushed snapshot's `charWorldbooks`, the
+   * same way the bare `getVariables()` does. Listing it here would be a second,
+   * wrong way to reach it.
+   */
+  getWorldbook: 'worldbook.get',
 }
 
 /** Whether a card may invoke this action. */

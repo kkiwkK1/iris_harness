@@ -307,6 +307,40 @@ The ruling, in its concrete shape:
   compiler and reproduces the original silent failure exactly, and a frame that
   never reports `ready` is reported rather than left at `starting…`.
 
+### Cancel-edit: the asymmetry, and why keying on text sidesteps it
+
+Upstream has **two** edit events and they do not mean the same thing:
+
+| event | when | DOM state |
+| --- | --- | --- |
+| `MESSAGE_EDITED` | storage has been written | **not yet rebuilt** |
+| `MESSAGE_UPDATED` | after the rebuild | final |
+
+Upstream rebuilds frames on `MESSAGE_UPDATED`, which is the correct one to pick:
+a frame built on `MESSAGE_EDITED` would read a DOM that is about to be replaced.
+
+The asymmetry is at the other end. **Cancelling an edit emits only
+`MESSAGE_UPDATED`** — there was no write, so there is no `MESSAGE_EDITED` — and
+upstream cannot tell that event apart from a real one. So opening an edit box and
+pressing escape destroys and rebuilds every frame on that floor, discarding
+whatever the panel had drawn, for a change that did not happen.
+
+Iris does not inherit this, and not by handling the case: the rebuild is keyed on
+`input.text` in `useMessageInterfaces`, not on an event. A cancelled edit yields
+the same text, the dependency is unchanged, and the effect does not re-run. The
+no-op is a no-op because nothing observed it as a change.
+
+That is the general shape of the difference and it is worth stating once: **an
+event says something happened; a value says what is true now.** Upstream's frames
+are rebuilt by a stream of notifications and therefore have to be right about
+which notifications matter. Ours are a function of the message's text, so the
+question never comes up — and the same property is why a swipe *does* rebuild
+without a rule saying so, since a different swipe is a different text.
+
+Ledger: **deliberate improvement.** What it costs is that a message edited to
+*identical* text does not rebuild, where upstream would. That is the same event as
+cancelling, and neither should rebuild, so the cost is theoretical.
+
 ## The wall does not move
 
 A message frame is **another frame of the same card**, not a new trust domain: the

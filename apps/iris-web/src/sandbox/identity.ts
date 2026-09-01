@@ -114,6 +114,11 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   getChatMessages: 'shared',
   getSwipes: 'shared',
   swipeTo: 'shared',
+  // A world book belongs to the card, not to whichever script asked for it, so
+  // two scripts reading the same book must see the same entries.
+  getWorldbook: 'shared',
+  // A binding belongs to the card; every script of it sees the same answer.
+  getCharWorldbookNames: 'shared',
   generate: 'shared',
   triggerSlash: 'shared',
   substitudeMacros: 'shared',
