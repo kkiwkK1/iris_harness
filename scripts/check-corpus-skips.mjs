@@ -36,9 +36,10 @@ import { spawn } from 'node:child_process'
  * real data, and left this number at 16 — green here and 19 on CI. The number
  * did not move because the gate was broken, which is precisely the case a
  * hand-maintained count cannot notice on its own. 19 → 20 with the world book
- * source-choice test, which is gated the same way.
+ * source-choice test, and 20 → 21 with the MVU listener premise guard; both are
+ * gated the same way.
  */
-const EXPECTED_SKIPPED = 20
+const EXPECTED_SKIPPED = 21
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 

@@ -91,3 +91,82 @@ version defaulted to an `'anonymous'` partition. That would have pooled every
 unidentified caller's state into one shared table, and once the scope persists,
 that table is on disk. Refusing costs a card nothing that upstream would have
 allowed it.
+
+---
+
+## 3. The host's variable fold emits no `VARIABLE_UPDATE_ENDED`, deliberately
+
+**Upstream.** `Mvu.events.VARIABLE_UPDATE_ENDED` is `'mag_variable_update_ended'`
+(`JS-Slash-Runner/@types/iframe/exported.mvu.d.ts`), and its listeners take
+`(variables, variables_before_update)`.
+
+It is **not a notification.** `MagVarUpdate/src/function/update_variables.ts:1472`
+emits it, and the four lines after it decide the outcome:
+
+```js
+await eventEmit(variable_events.VARIABLE_UPDATE_ENDED, variables, variables_before_update);
+//在结束事件中也可能设置变量
+_.unset(variables.stat_data, '$internal');
+const is_modified = !_.isEqual(variables.stat_data, variables_before_update.stat_data);
+if (is_modified) { reconcileAndApplySchema(variables); }
+```
+
+The emit is awaited, the author's own comment says listeners set variables, and
+`is_modified` is computed *after* the event — so a listener's mutation can flip
+the update from "nothing changed" to "changed", trigger schema reconciliation,
+and be persisted. Both documented examples mutate (clamping a stat to ≥ 0,
+capping an increase at 3). It is an **interception**.
+
+**The gap as first reported.** The host folds MVU commands in `#settle`, the
+bundle is not part of that path, so nobody emits the event — and a card that
+redraws on it would not wake.
+
+**Why the gap is empty.** Measured on the corpus 2026-09-02: 7 listener
+registrations across **4 cards**, and all 4 ship the MagVarUpdate bundle
+themselves (jsDelivr import, served through `/iris/script-bundle`). The bundle
+registers its own trunk on `MESSAGE_RECEIVED`
+(`MagVarUpdate/src/function/update/index.ts:14`), and
+`apps/iris-web/src/sandbox/host-events.ts` forwards `MESSAGE_RECEIVED` on
+`stream.end`. So on exactly the cards that listen, the bundle folds and emits the
+event itself, on the card's own bus, with both trees. **Zero measured consumers
+depend on the host emitting it.**
+
+**Why emitting it anyway would be worse than not.** A host emit would be a
+*second* emitter for an event that already fires. Because the listener is an
+interception that mutates, firing it twice does not merely duplicate a
+notification — it applies the correction twice. "Cap the increase at 3" applied
+to its own output is a different number. Absence leaves the four cards working;
+a well-meaning round trip breaks them.
+
+**Does the host double-fold?** No, and the reason is worth writing down because
+the surface reading says yes. Both paths do fold the same reply: the host in
+`#settle`, and the bundle in `handleVariablesInMessage`
+(`update_variables.ts:1500`). But the bundle reads its base from
+`getLastValidVariable(message_id)`, whose semantics are the interval
+`[0, message_id)` — the state **before** this floor. The host's write to floor N
+is therefore not the bundle's input; both computations start from floor N−1 and
+apply the same commands to it. The result is the same value written twice, not a
+value folded twice, so non-idempotent commands (`add`, `insert`) do not
+double-count.
+
+What it *is* is **last-writer-wins**: for cards carrying the bundle, the bundle's
+fold overwrites the host's, so upstream's implementation is authoritative for
+them. That is the outcome compatibility wants. The bundle's write arrives through
+`script.setVariables` with `scope: 'message'` and `op: 'replace'`, which the
+contract already carries.
+
+**What would overturn this.** A card that listens to `VARIABLE_UPDATE_ENDED`
+*without* shipping the bundle — it would consume a `Mvu` some other card
+provided, and on the host fold path its listener would never run. That premise is
+**asserted, not cited**: `tests/mvu-events.test.ts` fails with this deviation's
+number in the message when such a card appears, because nobody re-runs a census
+to check an assumption they have stopped thinking about. At that point the only correct
+implementation is the **full round trip** (host broadcasts both trees → frame runs
+the listeners → host adopts what they returned), never a notification-only
+forward, which would execute the card's correction, appear to succeed, and
+discard it.
+
+**Note on the second upstream typo.** `VARIABLE_INITIALIZED` is
+`'mag_variable_initiailized'` — `i-n-i-t-i-a-i-l`. Copied verbatim wherever this
+host names it, on the `substidudeMacros` precedent: a correctly spelled constant
+reaches no listener at all.
