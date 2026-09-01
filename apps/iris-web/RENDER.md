@@ -58,8 +58,11 @@ Three consequences the implementation has to carry:
 2. **Indented code blocks also become `<pre>`.** A caliper that counts only fences
    under-counts. [corpus] measured both; the indented population is 0 here, which
    is luck rather than licence.
-3. **`.text()` is entity-decoded.** Source that reads `&lt;body` presents as
-   `<body` and therefore hits. [corpus] measured this too: 0 here.
+3. ~~**`.text()` is entity-decoded.** Source that reads `&lt;body` presents as
+   `<body` and therefore hits.~~ **Retracted 2026-09-01, before implementation —
+   see "Entity decoding" below. `.text()` returns the block's source characters
+   unchanged, and decoding would make Iris claim blocks upstream does not.**
+   [corpus] measured 0 either way, so nothing observable turns on it.
 
 **Switches: three, all global.** [upstream] `src/panel/Render.vue:118-120`,
 `message.ts:41-55, 77-90`.
@@ -146,10 +149,49 @@ Two things follow, and they are the spine of this design:
    pipeline's whole job is to **carve one exception** out of the raw-HTML-disabled
    policy — a card's block becomes live DOM *inside the sandbox frame* — and never
    by loosening the renderer.
-2. **Entity decoding is a required step on our side, not a fidelity nicety.**
-   Upstream sees decoded text because `.text()` decodes; a source-level trigger
-   sees `&lt;body` literally. Without an explicit decode, the same message frames
-   upstream and does not frame here.
+2. **The block's source characters are the thing to test — with no decoding
+   step.** See below; this is the one place where the first draft of this design
+   was wrong, and it was wrong in the direction of claiming *more* than upstream.
+
+### Entity decoding: retracted, and why the retraction matters
+
+The first draft of this design required decoding HTML entities in a block's body
+before testing the predicate, on the reasoning that upstream reads `.text()` —
+which decodes — while a source-level trigger sees `&lt;body` literally.
+
+**That reasoning is wrong, and the error ran in the expensive direction.** It was
+caught by asking what the markdown renderer does *before* `.text()` is ever
+called.
+
+SillyTavern renders messages with showdown [here], and showdown's `encodeCode`
+subparser escapes a code block's body on the way in
+(`node_modules/showdown/dist/showdown.js:3324-3330`):
+
+    text = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+
+So the two steps compose to the identity:
+
+| source in the card | HTML showdown emits | what `.text()` returns |
+| --- | --- | --- |
+| `<body` | `&lt;body` | `<body` — **hits** |
+| `&lt;body` | `&amp;lt;body` | `&lt;body` — **does not hit** |
+
+`.text()` does not decode the author's entities; it undoes showdown's escaping and
+hands back exactly what the author wrote. **Testing the raw source is therefore
+already faithful, and adding a decode would claim blocks upstream leaves alone.**
+
+This has to be the case for any correct markdown renderer, or a `<script>` inside
+a fenced block would execute rather than display — which is the same property
+`MarkdownText` states as *raw HTML disabled*.
+
+Kept rather than deleted for two reasons. It is the shape of mistake this project
+keeps paying for — a plausible chain about two layers, where nobody had asked what
+the layer in between does — and both measurements found zero affected blocks, so
+**no test on the local corpus could have caught it**. It would have shipped as a
+silent divergence that only a card in the wild would expose.
 
 ## Naming and identity
 

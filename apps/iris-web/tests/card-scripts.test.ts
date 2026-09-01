@@ -28,6 +28,7 @@ const CONTEXT = {
   characters: [],
   extensionSettings: {},
   variables: {},
+  variableLayers: { global: {}, character: {}, script: {}, chat: {} },
 } as ScriptContext
 
 /** A card with three scripts, the middle one disabled. */

@@ -197,42 +197,78 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
   const chatOf = (member: string): ScriptChatMessage[] => snapshot(member).chat
 
   /**
-   * Reads are answered from the snapshot, which holds one scope: the current
-   * message's variables. Anything else is refused by name rather than answered
-   * with an empty object — empty reads as "nothing set yet", and MVU responds to
+   * One layer of the snapshot, by the name a card uses for it.
+   *
+   * The layers arrive **unmerged and labelled**, which is the shape that makes
+   * both directions possible: the façade can assign them together for
+   * `getAllVariables`, while a pre-merged tree could never be taken apart again
+   * for a card that asks for one scope alone.
+   * @param member - the calling member, for refusals.
+   * @param scope - which layer.
+   * @returns that layer.
+   */
+  const layerOf = (member: string, scope: string): Record<string, unknown> => {
+    const layers = snapshot(member).variableLayers
+    if (scope === 'global') return layers.global
+    if (scope === 'character') return layers.character
+    if (scope === 'chat') return layers.chat
+    if (scope === 'script') {
+      /*
+       * This script's partition, chosen here rather than sent pre-selected.
+       *
+       * The context is fetched per card while this scope is per script, so the
+       * host sends every partition and **the façade picking is the enforcement
+       * point** for "one script must not read another's". A frame that has no
+       * identity of its own cannot pick, so it is refused rather than handed
+       * someone else's.
+       */
+      const id = host.scriptId()
+      if (id === undefined) {
+        throw new UnsupportedApiError(
+          `${member}({type:'script'})`,
+          'A script scope needs a script_id, and this body has no identity of its own.',
+        )
+      }
+      return layers.script[id] ?? {}
+    }
+    throw new UnsupportedApiError(`${member}({type:'${scope}'})`, 'No such variable scope.')
+  }
+
+  /**
+   * Answer a scoped read from the pushed snapshot.
+   *
+   * Every wire scope is answerable now. It used to refuse everything but
+   * `message` — "the frame snapshot carries the message scope only" — which was
+   * true of the snapshot and is no longer.
+   *
+   * Refusal, never an empty object, remains the rule for what cannot be
+   * answered: empty reads as "nothing set yet", and MagVarUpdate responds to
    * that by re-initialising, which would overwrite live state with defaults.
+   * @param member - the calling member, for refusals.
+   * @param option - whatever the card passed.
+   * @returns the variables for that scope.
    */
   const readVariables = (member: string, option?: VariableOption): Record<string, unknown> => {
     const type = option?.type ?? 'message'
-    if (type !== 'message') {
-      throw new UnsupportedApiError(
-        `${member}({type:'${type}'})`,
-        'The frame snapshot carries the message scope only.',
-      )
-    }
+
+    if (type !== 'message') return layerOf(member, type)
 
     /*
      * A floor-addressed read is **refused by name**, not answered from a
      * snapshot that cannot tell floors apart.
      *
      * `ScriptContext.variables` is one flat record — "current variable state" —
-     * with no record of which floor it belongs to, and `ScriptChatMessage`
-     * carries no per-message variables at all. So `message_id: 5` cannot be
-     * answered correctly, and its wrongness **cannot even be detected here**:
-     * there is no floor label to compare the request against.
+     * with no record of which floor it belongs to, and `variableLayers`
+     * deliberately carries no per-floor data: floor tables are folded in only
+     * for a *message* frame. So `message_id: 5` cannot be answered correctly here,
+     * and its wrongness **cannot even be detected**: there is no floor label to
+     * compare the request against.
      *
      * Refusing rather than answering, because the alternative is the worst thing
      * this file can do. MagVarUpdate's update flow is
      * `getVariables({type:'message', message_id: i})` followed by a merge into
      * `stat_data` and a write — so answering the wrong floor does not merely
-     * return a wrong value, it **writes a merge built on one**. A named refusal
-     * costs a visible failure; a silent answer costs state nobody can audit
-     * afterwards.
-     *
-     * The message names the project that will make it work rather than implying
-     * a permanent limit: a message frame knows its own floor, so the read has a
-     * correct answer there and the snapshot for it is bounded (measured worst
-     * case 282.8 KiB for one floor, against 8.29 MiB to carry all of them).
+     * return a wrong value, it **persists a merge built on one**.
      */
     const addressed = option?.message_id
     if (addressed !== undefined && addressed !== 'latest') {
@@ -244,27 +280,38 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       )
     }
 
-    /*
-     * `getAllVariables` is still answered with the message scope alone, which is
-     * **not** what upstream means by it: there it merges global, character,
-     * script and chat (and, in a message frame only, every floor up to this
-     * one). Those scopes exist on the host and are not in the snapshot yet.
-     *
-     * Reported rather than refused, and the asymmetry with the branch above is
-     * deliberate. That one is refused because answering it wrongly corrupts
-     * state through a write; this one is a read whose answer is a subset — a
-     * card gets less than it asked for, not something false about a floor it
-     * named. Refusing a member that no measured card calls, days before the
-     * snapshot makes it correct, would be churn rather than honesty.
-     */
-    if (member === 'getAllVariables') {
-      host.reportGap(
-        'getAllVariables returned this frame’s message-scope variables only — upstream merges' +
-          ' global, character, script and chat scopes, which this snapshot does not carry yet',
-      )
-    }
-
     return snapshot(member).variables
+  }
+
+  /**
+   * Every scope a script frame can see, merged in upstream's order.
+   *
+   * Upstream's `_getAllVariables` shallow-assigns `global → character → script →
+   * chat` for a script frame, later winning, and folds in per-floor tables **only
+   * for a message frame** — which is why there is no floor sweep here and why
+   * this is a different answer from `getVariables({type:'message'})`.
+   *
+   * The two used to be the *same function*, returning the message scope for both.
+   * That made `getAllVariables` wrong twice over: it omitted every layer upstream
+   * merges, and it included one upstream does not. No measured card calls it
+   * (MagVarUpdate: zero), so nothing had reported it.
+   *
+   * Shallow, like upstream. A deep merge would be a different function with the
+   * same name — and a card written against a shallow one would see sibling keys
+   * survive where upstream drops them.
+   * @param member - the calling member, for refusals.
+   * @returns the merged view.
+   */
+  const readAllVariables = (member: string): Record<string, unknown> => {
+    const layers = snapshot(member).variableLayers
+    const id = host.scriptId()
+    return {
+      ...layers.global,
+      ...layers.character,
+      // A frame with no identity gets no script layer rather than a neighbour's.
+      ...(id === undefined ? {} : layers.script[id] ?? {}),
+      ...layers.chat,
+    }
   }
 
   /** The scopes `script.setVariables` accepts. */
@@ -403,7 +450,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
   const api: Record<string, unknown> = {
     // ── reads, answered here because their callers do not await ──────────
     getVariables: (option?: VariableOption) => readVariables('getVariables', option),
-    getAllVariables: (option?: VariableOption) => readVariables('getAllVariables', option),
+    getAllVariables: () => readAllVariables('getAllVariables'),
     getLastMessageId: (): number => chatOf('getLastMessageId').length - 1,
 
     /**

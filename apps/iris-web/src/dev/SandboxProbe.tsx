@@ -72,6 +72,7 @@ function standInContext(): ScriptContext {
     characters: [],
     extensionSettings: {},
     variables: {},
+    variableLayers: { global: {}, character: {}, script: {}, chat: {} },
   } as ScriptContext
 }
 

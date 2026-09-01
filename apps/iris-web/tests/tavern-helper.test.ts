@@ -37,6 +37,14 @@ function context(): ScriptContext {
     characters: [],
     extensionSettings: {},
     variables: { stat: { hp: 10 } },
+    // Distinct values per layer, so a merge that drops one or takes them in the
+    // wrong order is visible rather than plausible.
+    variableLayers: {
+      global: { fromGlobal: 1, overridden: 'global' },
+      character: { fromCharacter: 1, overridden: 'character' },
+      script: { s1: { fromScript: 1, overridden: 'script' }, other: { leaked: true } },
+      chat: { fromChat: 1, overridden: 'chat' },
+    },
   }
 }
 
@@ -129,22 +137,86 @@ test('include_swipes returns one entry per swipe, the way cards index it', () =>
   assert.deepEqual(read(2).map(message => message.mes), ['third'], 'without the flag, the shown text only')
 })
 
-test('a scope the snapshot does not carry is refused by name, not answered empty', () => {
+test('every scope the snapshot carries is answered, not refused', () => {
   /*
-   * The dangerous alternative is returning `{}`. MVU reads that as "not
-   * initialised yet" and writes its defaults over whatever was really there, so
-   * an empty answer does not fail — it destroys state and then succeeds.
+   * This assertion used to require the opposite, and the reversal is the point:
+   * the refusal was never about the scope being unreachable, it was about the
+   * *snapshot* not carrying it. The snapshot carries four layers now, so
+   * refusing them would be a gap invented by this file.
+   *
+   * What has not changed is the rule the old test existed for: refusal, never
+   * `{}`. MVU reads an empty answer as "not initialised yet" and writes its
+   * defaults over whatever was really there — so an empty answer does not fail,
+   * it destroys state and then succeeds.
    */
+  const { api } = surface({ scriptId: 's1' })
+  const read = api['getVariables'] as (option: { type: string }) => Record<string, unknown>
+
+  assert.deepEqual(read({ type: 'global' }), { fromGlobal: 1, overridden: 'global' })
+  assert.deepEqual(read({ type: 'character' }), { fromCharacter: 1, overridden: 'character' })
+  assert.deepEqual(read({ type: 'chat' }), { fromChat: 1, overridden: 'chat' })
+  assert.deepEqual(read({ type: 'script' }), { fromScript: 1, overridden: 'script' })
+})
+
+test('a scope that does not exist is still refused by name', () => {
   const { api } = surface()
   let caught: unknown
   try {
-    ;(api['getVariables'] as (option: { type: string }) => unknown)({ type: 'chat' })
+    ;(api['getVariables'] as (option: { type: string }) => unknown)({ type: 'nonsense' })
   } catch (error: unknown) {
     caught = error
   }
 
   assert.ok(caught instanceof UnsupportedApiError)
-  assert.equal(caught.member, "getVariables({type:'chat'})")
+  assert.equal(caught.member, "getVariables({type:'nonsense'})")
+})
+
+test('one script cannot read another script’s scope', () => {
+  /*
+   * The host sends every partition because the context is fetched per card while
+   * this scope is per script — so **the façade picking is the enforcement
+   * point**, and this is the test of that sentence. The fixture puts a
+   * recognisable value in a neighbour's partition precisely so a leak is visible
+   * rather than plausible.
+   */
+  const { api } = surface({ scriptId: 's1' })
+  const read = api['getVariables'] as (option: { type: string }) => Record<string, unknown>
+
+  assert.equal('leaked' in read({ type: 'script' }), false)
+})
+
+test('a frame with no identity gets no script scope rather than a neighbour’s', () => {
+  const { api } = surface()
+  assert.throws(
+    () => (api['getVariables'] as (option: { type: string }) => unknown)({ type: 'script' }),
+    /script_id/,
+  )
+})
+
+test('getAllVariables merges the four layers in upstream’s order', () => {
+  /*
+   * `global → character → script → chat`, later winning, shallow — upstream's
+   * `_getAllVariables` for a script frame. No floor sweep: upstream folds
+   * per-floor tables in only for a *message* frame.
+   *
+   * These two members used to be the same function returning the message scope,
+   * which made this one wrong twice over — every layer upstream merges was
+   * missing, and one upstream does not include was present. No measured card
+   * calls it, so nothing had ever reported it.
+   */
+  const { api } = surface({ scriptId: 's1' })
+  const all = (api['getAllVariables'] as () => Record<string, unknown>)()
+
+  assert.equal(all['fromGlobal'], 1)
+  assert.equal(all['fromCharacter'], 1)
+  assert.equal(all['fromScript'], 1)
+  assert.equal(all['fromChat'], 1)
+  // Last layer wins, and the order is the assertion — not merely that all four
+  // contributed.
+  assert.equal(all['overridden'], 'chat')
+  // Still not a neighbour's, and still not the message scope.
+  assert.equal('leaked' in all, false)
+  assert.equal('stat' in all, false)
 })
 
 test('a missing snapshot is refused by name rather than read as an empty chat', () => {
@@ -599,14 +671,4 @@ test('an unaddressed read still works, because that is what a script frame can a
   assert.doesNotThrow(() => read({ type: 'message', message_id: 'latest' }))
 })
 
-test('getAllVariables says it is answering with less than upstream would', () => {
-  const { api, gaps } = surface()
-  const read = api['getAllVariables'] as (option?: unknown) => unknown
-
-  assert.doesNotThrow(() => read())
-  assert.ok(
-    gaps.some(gap => gap.includes('global, character, script and chat')),
-    'a card asking for all variables and getting one scope must be told so',
-  )
-})
 
