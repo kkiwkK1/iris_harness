@@ -127,3 +127,19 @@ test('a card with nothing enabled still states what the answer covers', () => {
   assert.equal(figures.total, 1)
   assert.equal(figures.totalBytes, 500)
 })
+
+test('a state meaning "no information" never borrows one meaning "an answer"', () => {
+  /*
+   * The collapse this pins was observed in production: a card that had already
+   * been allowed showed the question again on reload, and its scripts did not
+   * run. The shell used `unasked` as its initial value, so the moment before the
+   * host answered was indistinguishable from the host having said nobody asked.
+   *
+   * Same shape as reading an absent `scriptsAllowed` as a decline, one layer
+   * out. Loading is not an answer.
+   */
+  assert.equal(shouldAsk('unknown'), false, 'do not ask while the answer is in flight')
+  assert.equal(mayRun('unknown'), false, 'and do not run on a state that knows nothing')
+  assert.equal(shouldAsk('unasked'), true)
+  assert.equal(mayRun('allowed'), true)
+})

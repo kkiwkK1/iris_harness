@@ -271,7 +271,7 @@ export function createIrisStore(
       dataOrigin: source.origin,
       scripts: [],
       scriptsFor: undefined,
-      scriptsAllowed: 'unasked',
+      scriptsAllowed: 'unknown',
       runStates: [],
       documentGranted: false,
       connections: [],
@@ -453,7 +453,7 @@ export function createIrisStore(
                   // `unasked`, not `declined`. Inheriting a decline is the worst
                   // of the three: the new card is never offered its scripts and
                   // nothing reports why.
-                  scriptsAllowed: 'unasked' as ConsentState,
+                  scriptsAllowed: 'unknown' as ConsentState,
                   runStates: [],
                 }
               : {}),
@@ -483,7 +483,10 @@ export function createIrisStore(
           scripts: [],
           scriptsFor: characterId,
           documentGranted: false,
-          scriptsAllowed: 'unasked',
+          // `unknown` until the host answers. `unasked` here would put the
+          // question during the round trip — including to a user whose answer is
+          // already stored and about to arrive.
+          scriptsAllowed: 'unknown',
           runStates: [],
         })
         await guard(async () => {

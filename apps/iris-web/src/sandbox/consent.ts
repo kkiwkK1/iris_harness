@@ -26,6 +26,21 @@
 
 /** What the host's answer means. */
 export type ConsentState =
+  /**
+   * The host has not answered yet.
+   *
+   * Distinct from `unasked`, and the distinction is the same one this module
+   * exists for, moved up a layer. A card whose answer is still in flight is not
+   * a card nobody has asked about: rendering the question then puts it to a user
+   * who already answered it, and — because only `allowed` runs anything — also
+   * stops the scripts of a card that had said yes.
+   *
+   * The first version had three states and used `unasked` as the initial value,
+   * which is exactly that collapse. It is the same shape as reading an absent
+   * `scriptsAllowed` as a decline, one level further out: a state meaning "no
+   * information" borrowed a state meaning "a specific answer".
+   */
+  | 'unknown'
   /** Nobody has been asked. Put the question. */
   | 'unasked'
   /** Asked, and declined. Do not ask again; the panel can still change it. */
@@ -74,6 +89,10 @@ export function consentState(
  * @returns true only when nobody has been asked yet.
  */
 export function shouldAsk(state: ConsentState): boolean {
+  // `unknown` deliberately does not ask. A question that appears and then turns
+  // out to have been answered already is worse than one that appears a beat
+  // late: the user is asked to decide something they have decided, and the
+  // interface has told them their earlier answer did not stick.
   return state === 'unasked'
 }
 

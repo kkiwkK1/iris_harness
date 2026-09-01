@@ -26,6 +26,7 @@
 import type { ReactElement } from 'react'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
+import { shouldAsk } from '../sandbox/consent.ts'
 import { ConsentGate } from './ScriptPanel.tsx'
 
 /**
@@ -42,7 +43,15 @@ export function ConsentAsk(): ReactElement | null {
   // Only once the list for *this* card has arrived: asking about a card whose
   // scripts are still loading would show a count that is about to change.
   if (characterId === undefined || scriptsFor !== characterId) return null
-  if (consent !== 'unasked') return null
+  /*
+   * Through `shouldAsk`, not a comparison written here.
+   *
+   * Only `unasked` asks. `unknown` — the host has not answered yet — renders
+   * nothing, because a question that appears and is then revealed to have been
+   * answered already is worse than one that appears a beat late: it asks someone
+   * to re-decide what they decided, and tells them their answer did not stick.
+   */
+  if (!shouldAsk(consent)) return null
   // A card with no scripts is not a decision.
   if (scripts.length === 0) return null
 
