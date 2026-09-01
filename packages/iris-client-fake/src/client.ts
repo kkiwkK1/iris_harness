@@ -117,6 +117,18 @@ class InMemoryClient implements FakeClient {
   #characters: CharacterSummary[]
   /** Cards the user granted the real document, in this fake's memory only. */
   readonly #grants = new Set<string>()
+
+  /**
+   * Whether the user has answered the run-scripts question, per card.
+   *
+   * A `Map`, not a `Set`, and the difference is the feature. `documentGranted`
+   * deliberately stores "revoked" and "never granted" as the same state — those
+   * two should be indistinguishable. `scriptsAllowed` is the opposite: absent
+   * means nobody has been asked, `false` means they were asked and said no, and
+   * telling those apart is the entire point. Collapsing them would re-ask a user
+   * who already declined, every time they open a chat.
+   */
+  readonly #scriptsAllowed = new Map<string, boolean>()
   /** User overrides of a script's on/off, keyed `characterId/scriptId`. */
   readonly #scriptOverrides = new Map<string, boolean>()
   #globalSettings: GenerationSettings
@@ -409,9 +421,15 @@ class InMemoryClient implements FakeClient {
       case 'script.list': {
         const { characterId } = params as RpcRequest<'script.list'>
         this.#requireCharacter(characterId)
+        const answered = this.#scriptsAllowed.get(characterId)
         return {
           scripts: this.#scriptViews(characterId),
           documentGranted: this.#grants.has(characterId),
+          // Omitted when unanswered rather than sent as `false`, because the
+          // reader is expected to test presence. A `false` here would mean "was
+          // asked and declined" and would suppress the first-run question
+          // permanently, with nothing reporting that it had.
+          ...(answered === undefined ? {} : { scriptsAllowed: answered }),
         }
       }
 
@@ -431,6 +449,22 @@ class InMemoryClient implements FakeClient {
         if (granted) this.#grants.add(characterId)
         else this.#grants.delete(characterId)
         return { documentGranted: this.#grants.has(characterId) }
+      }
+
+      case 'script.setScriptsAllowed': {
+        /*
+         * Answered rather than refused, on the line drawn for `getVariables`:
+         * this carries no merge rule. It records one boolean against one card,
+         * which the fake can do truthfully — and a UI built against a client that
+         * refused it could never exercise the three-state behaviour that makes
+         * the consent gate work.
+         */
+        const { characterId, allowed } = params as RpcRequest<'script.setScriptsAllowed'>
+        this.#requireCharacter(characterId)
+        // Written, never deleted. Deleting a `false` would read back as "never
+        // asked" and the question would return on the next chat open.
+        this.#scriptsAllowed.set(characterId, allowed)
+        return { scriptsAllowed: allowed }
       }
 
       case 'chat.branch': {

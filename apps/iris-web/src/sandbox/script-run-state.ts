@@ -1,0 +1,143 @@
+/**
+ * What a card script is doing, in the words the panel shows.
+ *
+ * The vocabulary is the sandbox probe's, moved rather than reinvented — every
+ * distinction in it was paid for by a run that could not explain itself, and a
+ * fresh set of names for auto-run would lose those distinctions while looking
+ * tidier.
+ *
+ * Two of them are worth stating plainly because they are easy to collapse:
+ *
+ * - `dispatched` is not `running`. It is set before the frame exists, so calling
+ *   it running would claim a body had begun when nothing had. The probe once did
+ *   exactly that and sent an observer looking for a fault in code that had never
+ *   been reached.
+ * - `ran` is not `working`. It means the body finished evaluating. A card that
+ *   registers listeners and returns has "run" while its actual job starts later,
+ *   at generation time — which is what a real card did on the eleventh run, and
+ *   reading `ran` as `working` would have called that a success too early.
+ *
+ * `silent` exists because a cross-origin frame's uncaught errors never reach the
+ * parent console. Without a timeout, "started and said nothing" is
+ * indistinguishable from "still going".
+ *
+ * @module iris-web/sandbox/script-run-state
+ */
+
+/** Where one script has got to. */
+export type ScriptRunPhase =
+  /** Asked for, no frame yet. */
+  | 'dispatched'
+  /** The frame answered `ready`; the body has been posted. */
+  | 'running'
+  /** The body finished evaluating. Not "the card finished working". */
+  | 'ran'
+  /** The sandbox refused a member the card reached for. */
+  | 'refused'
+  /** The body threw. */
+  | 'threw'
+  /** The frame never started at all. */
+  | 'bootstrap-failed'
+  /** Started and said nothing for long enough that silence became a finding. */
+  | 'silent'
+  /** Torn down before it finished, because the chat went away. */
+  | 'killed'
+
+/** One script's state, as the panel renders it. */
+export interface ScriptRunState {
+  scriptId: string
+  name: string
+  phase: ScriptRunPhase
+  /** The refused member, for `refused`. */
+  member?: string
+  /** The error text, for `threw` and `bootstrap-failed`. */
+  detail?: string
+}
+
+/** Phases that mean the script is no longer going to change on its own. */
+const SETTLED: ReadonlySet<ScriptRunPhase> = new Set<ScriptRunPhase>([
+  'ran',
+  'refused',
+  'threw',
+  'bootstrap-failed',
+  'silent',
+  'killed',
+])
+
+/**
+ * Whether a script has stopped moving.
+ * @param phase - the phase to test.
+ * @returns true when nothing further will happen without a new run.
+ */
+export function isSettled(phase: ScriptRunPhase): boolean {
+  return SETTLED.has(phase)
+}
+
+/**
+ * Whether a phase is a failure the user should be told about.
+ *
+ * `killed` is excluded deliberately: it is what leaving a chat looks like from
+ * inside, and reporting it would turn ordinary navigation into a notice.
+ * @param phase - the phase to test.
+ * @returns true when this warrants a notice.
+ */
+export function isFailure(phase: ScriptRunPhase): boolean {
+  return phase === 'refused' || phase === 'threw' || phase === 'bootstrap-failed' || phase === 'silent'
+}
+
+/**
+ * One line for the scripts panel.
+ *
+ * Written for someone deciding whether to keep a card's scripts on, so each line
+ * says what happened and — where there is one — what would change it. The
+ * refusal names the member, which is the whole reason refusals throw rather than
+ * return undefined.
+ * @param state - the script's state.
+ * @returns the sentence to show.
+ */
+export function describeRun(state: ScriptRunState): string {
+  switch (state.phase) {
+    case 'dispatched':
+      return 'starting…'
+    case 'running':
+      return 'running'
+    case 'ran':
+      // Deliberately not "finished". The body evaluated; a card that registered
+      // listeners is still waiting to do its work.
+      return 'loaded'
+    case 'refused':
+      return `refused ${state.member ?? 'a member'} — the sandbox does not allow it`
+    case 'threw':
+      return `failed: ${state.detail ?? 'no message'}`
+    case 'bootstrap-failed':
+      return `never started: ${state.detail ?? 'no message'}`
+    case 'silent':
+      return 'started but never reported — it may still be running'
+    case 'killed':
+      return 'stopped when the chat closed'
+  }
+}
+
+/**
+ * Summarise a card's scripts for the panel heading.
+ *
+ * Replaces a static enabled-count, because "2 of 2 enabled" and "2 of 2 running"
+ * are different answers to the only question that heading is opened to settle.
+ * @param states - every script's state.
+ * @returns the heading sentence.
+ */
+export function summariseRuns(states: readonly ScriptRunState[]): string {
+  if (states.length === 0) return 'No scripts are running.'
+
+  const failed = states.filter(state => isFailure(state.phase)).length
+  const settled = states.filter(state => isSettled(state.phase)).length
+  const total = states.length
+
+  if (failed > 0) {
+    return `${failed} of ${total} failed to run. The chat is unaffected.`
+  }
+  if (settled < total) {
+    return `${settled} of ${total} loaded, ${total - settled} still starting.`
+  }
+  return `${total} of ${total} loaded and listening.`
+}

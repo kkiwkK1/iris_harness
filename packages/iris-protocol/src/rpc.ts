@@ -242,6 +242,19 @@ export const requestSchemas = {
     granted: z.boolean(),
   }),
   /**
+   * Record the user's answer to "may this card's scripts run at all".
+   *
+   * Asked once per card and remembered, in the same table and with the same
+   * lifetime as the document grant — so deleting the card forgets it and a
+   * reused id does not inherit it. There is deliberately no "always allow every
+   * card" switch: that would short-circuit the per-card model, which is the one
+   * SillyTavern's users already hold.
+   */
+  'script.setScriptsAllowed': z.object({
+    characterId: z.string().min(1),
+    allowed: z.boolean(),
+  }),
+  /**
    * Fetch a remote script dependency through the host.
    *
    * The whitelist is enforced here and not in the page, because a page cannot
@@ -395,10 +408,21 @@ export interface RpcResponseMap {
   'settings.get': { settings: GenerationSettings }
   'settings.set': { settings: GenerationSettings }
 
-  'script.list': { scripts: ScriptView[], documentGranted: boolean }
+  /**
+   * What a card contains, and what the user has decided about it.
+   *
+   * `scriptsAllowed` carries **three** states and is absent for the third:
+   * absent means the user has never been asked, `false` means they were asked
+   * and declined. The shell must not fold those together — absent is what makes
+   * it ask, and `false` is what stops it asking again. This is the opposite of
+   * `documentGranted`, which is a plain boolean because a revoked grant and one
+   * never given are meant to be the same state.
+   */
+  'script.list': { scripts: ScriptView[], documentGranted: boolean, scriptsAllowed?: boolean }
   'script.setEnabled': { scripts: ScriptView[] }
   'script.body': { content: string }
   'script.setDocumentGrant': { documentGranted: boolean }
+  'script.setScriptsAllowed': { scriptsAllowed: boolean }
   /** The fetched body. Refusals arrive as an `unsupported` rejection. */
   'script.fetch': { content: string, contentType?: string }
 

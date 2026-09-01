@@ -112,7 +112,14 @@ export interface ScriptView {
    * result leaves the user unable to tell a card's own choice from their own.
    */
   enabled: boolean
-  /** Size of the body, so a list can say what it is about to run. */
+  /**
+   * Size of the body in **UTF-8 bytes**, so a list can say what it is about to
+   * run.
+   *
+   * Bytes, not characters: a consent prompt built from a string's `.length`
+   * understates a Chinese script body roughly threefold, and this number's whole
+   * job is to tell a user how much code they are agreeing to.
+   */
   bytes: number
 }
 

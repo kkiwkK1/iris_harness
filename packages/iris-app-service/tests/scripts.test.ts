@@ -250,7 +250,10 @@ test('a deleted card does not leave its document grant for the next card to inhe
 
   await handlers['script.setDocumentGrant']({ characterId: 'aria', granted: true })
   await handlers['script.setEnabled']({ characterId: 'aria', scriptId: 'core', enabled: false })
-  assert.equal((await handlers['script.list']({ characterId: 'aria' })).documentGranted, true)
+  await handlers['script.setScriptsAllowed']({ characterId: 'aria', allowed: true })
+  const before = await handlers['script.list']({ characterId: 'aria' })
+  assert.equal(before.documentGranted, true)
+  assert.equal(before.scriptsAllowed, true)
 
   await handlers['character.delete']({ characterId: 'aria' })
 
@@ -262,10 +265,65 @@ test('a deleted card does not leave its document grant for the next card to inhe
 
   const after = await handlers['script.list']({ characterId: 'aria' })
   assert.equal(after.documentGranted, false, 'a new card inherited a grant the user never gave it')
+  // Back to the third state, not to `false`: the user has never been asked
+  // about *this* card, and the shell has to ask. `false` here would silently
+  // refuse a card on the strength of an answer given about a different one.
+  assert.equal('scriptsAllowed' in after, false, 'a new card inherited an answer given about another card')
   assert.deepEqual(
     after.scripts.map(row => row.enabled),
     [true, true, false],
     'a new card inherited the previous card’s script switches',
   )
   assert.equal((await readFile(policyPath, 'utf8')).includes('aria'), false)
+})
+
+test('the run-scripts answer has three states, and "no" is not the same as "not asked"', async (t) => {
+  const { handlers } = await fixture(t)
+
+  // Never asked. The key is absent rather than `false`, because absent is what
+  // makes the shell ask, and `false` is what stops it asking again.
+  const fresh = await handlers['script.list']({ characterId: 'aria' })
+  assert.equal('scriptsAllowed' in fresh, false)
+
+  // Asked and declined. This must be distinguishable from the state above, or a
+  // user who said no is asked again on every chat they open.
+  await handlers['script.setScriptsAllowed']({ characterId: 'aria', allowed: false })
+  const declined = await handlers['script.list']({ characterId: 'aria' })
+  assert.equal('scriptsAllowed' in declined, true, 'a declined answer was stored as an absence')
+  assert.equal(declined.scriptsAllowed, false)
+
+  await handlers['script.setScriptsAllowed']({ characterId: 'aria', allowed: true })
+  assert.equal((await handlers['script.list']({ characterId: 'aria' })).scriptsAllowed, true)
+
+  // Refusing does not hide the scripts: visibility is not permission, and the
+  // panel is where a user goes to change their mind.
+  await handlers['script.setScriptsAllowed']({ characterId: 'aria', allowed: false })
+  const listed = await handlers['script.list']({ characterId: 'aria' })
+  assert.deepEqual(listed.scripts.map(row => row.id), ['core', 'exp', 'wip'])
+})
+
+test('a declined answer survives a restart', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+
+  await makeService(dir).handlers['script.setScriptsAllowed']({ characterId: 'aria', allowed: false })
+
+  // A second service over the same folder is what a restart is. The trap this
+  // guards is storing `false` as a deletion, the way `documentGranted` does:
+  // the answer would read back as "never asked" and the user would be asked
+  // again every single time.
+  const reopened = await makeService(dir).handlers['script.list']({ characterId: 'aria' })
+  assert.equal(reopened.scriptsAllowed, false)
+})
+
+test('an answer cannot be recorded against a card that is not there', async (t) => {
+  const { handlers } = await fixture(t)
+  // A decision stored against an id no card holds would be waiting for whatever
+  // card next takes that id — the inheritance this table's `forget` prevents.
+  await assert.rejects(
+    () => handlers['script.setScriptsAllowed']({ characterId: 'no-such-card', allowed: true }),
+    (error: unknown) => (error as { code?: string }).code === 'not-found',
+  )
 })

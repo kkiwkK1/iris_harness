@@ -1,0 +1,217 @@
+/**
+ * Starting a card's scripts because a chat opened.
+ *
+ * What is tested here is the part with no user in front of it. The probe's
+ * failures are seen by the person who pressed the button; these happen while
+ * someone is reading a conversation, so "it stopped" and "it never started" look
+ * identical from outside unless the code is careful about which it reports.
+ *
+ * @module iris-web/tests/card-scripts
+ */
+import { strict as assert } from 'node:assert'
+import test from 'node:test'
+
+import type { ScriptContext, ScriptView } from '@iris/protocol'
+
+import { startCardScripts, type CardScriptsEnv } from '../src/sandbox/card-scripts.ts'
+import type { ScriptRunState } from '../src/sandbox/script-run-state.ts'
+
+const CONTEXT = {
+  chat: [],
+  chatMetadata: {},
+  name1: 'You',
+  name2: 'Her',
+  characters: [],
+  extensionSettings: {},
+  variables: {},
+} as ScriptContext
+
+/** A card with three scripts, the middle one disabled. */
+function scripts(): ScriptView[] {
+  return [
+    { id: 'a', name: 'first', enabled: true, bytes: 10 },
+    { id: 'b', name: 'skipped', enabled: false, bytes: 10 },
+    { id: 'c', name: 'last', enabled: true, bytes: 10 },
+  ] as ScriptView[]
+}
+
+/** A harness recording what the controller did, with every step overridable. */
+function harness(overrides: Partial<CardScriptsEnv> = {}) {
+  const started: string[] = []
+  const disposed: string[] = []
+  const failures: ScriptRunState[] = []
+  let latest: readonly ScriptRunState[] = []
+
+  const env: CardScriptsEnv = {
+    resolve: async () => ({ scripts: scripts(), documentGranted: false }),
+    context: async () => CONTEXT,
+    body: async (_character, scriptId) => ({ ok: true, content: `/* ${scriptId} */` }),
+    bootstrap: async () => '(function(){})()',
+    start: input => {
+      started.push(input.script.id)
+      return {
+        element: undefined as never,
+        emit: () => undefined,
+        dispose: () => disposed.push(input.script.id),
+      }
+    },
+    onState: states => {
+      latest = states
+    },
+    onFailure: state => failures.push(state),
+    ...overrides,
+  }
+
+  return {
+    env,
+    started,
+    disposed,
+    failures,
+    states: () => latest,
+  }
+}
+
+/** Let the controller's async setup run to completion. */
+const settle = async (): Promise<void> => {
+  for (let turn = 0; turn < 12; turn += 1) await Promise.resolve()
+}
+
+test('only enabled scripts start, in the order the card lists them', async () => {
+  const bench = harness()
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.deepEqual(bench.started, ['a', 'c'], 'the disabled script must not run')
+})
+
+test('one script failing to load does not stop the next', async () => {
+  /*
+   * The isolation rule. A card whose first script has been deleted from disk
+   * must still get its second one, because the alternative is that one stale
+   * entry silently disables everything after it.
+   */
+  const bench = harness({
+    body: async (_character, scriptId) =>
+      scriptId === 'a'
+        ? { ok: false, error: { code: 'not-found', message: 'no such script' } }
+        : { ok: true, content: '/* ok */' },
+  })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.deepEqual(bench.started, ['c'], 'the later script still ran')
+  assert.equal(bench.failures[0]?.scriptId, 'a')
+  assert.match(
+    bench.failures[0]?.detail ?? '',
+    /not-found: no such script/,
+    "the host's own code and message, not a sentence invented here",
+  )
+})
+
+test('a frame that throws on creation does not stop the next either', async () => {
+  const bench = harness({
+    start: input => {
+      if (input.script.id === 'a') throw new Error('no iframe for you')
+      return { element: undefined as never, emit: () => undefined, dispose: () => undefined }
+    },
+  })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.equal(bench.failures.length, 1)
+  assert.equal(bench.failures[0]?.phase, 'bootstrap-failed')
+})
+
+test('leaving the chat mid-setup starts nothing', async () => {
+  /*
+   * Opening a chat and leaving immediately is ordinary navigation, and the setup
+   * is several awaits long. Without the disposal checks the user ends up with
+   * frames belonging to a chat they are no longer in — running a card against a
+   * conversation that is not on screen.
+   */
+  const bench = harness({
+    resolve: async () => {
+      await Promise.resolve()
+      return { scripts: scripts(), documentGranted: false }
+    },
+  })
+  const running = startCardScripts(bench.env, 'chat-1', 'card-1')
+  running.dispose()
+  await settle()
+
+  assert.deepEqual(bench.started, [], 'nothing may start after the chat has gone')
+})
+
+test('disposing tears down every frame that did start', async () => {
+  const bench = harness()
+  const running = startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+  running.dispose()
+  running.dispose()
+
+  assert.deepEqual(bench.disposed, ['a', 'c'])
+})
+
+test('a card whose grants cannot be resolved reports against the card, not a script', async () => {
+  // None of them got far enough to be the one at fault, and silence here would
+  // be indistinguishable from a card that ships no scripts at all.
+  const bench = harness({
+    resolve: async () => {
+      throw new Error('host unreachable')
+    },
+  })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.equal(bench.failures.length, 1)
+  assert.equal(bench.failures[0]?.scriptId, '')
+  assert.match(bench.failures[0]?.detail ?? '', /host unreachable/)
+})
+
+test('a missing context is reported rather than run against', async () => {
+  // A card handed a context it did not get would read undefined members and fail
+  // somewhere unrelated.
+  const bench = harness({ context: async () => undefined })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.deepEqual(bench.started, [])
+  assert.match(bench.failures[0]?.detail ?? '', /did not supply a context/)
+})
+
+test('grants are asked of the host, not handed in', async () => {
+  /*
+   * The shape of `resolve` is the assertion: it is a call taking the character
+   * id, so a caller cannot satisfy it with a cached value read earlier under
+   * that same id. Character ids are reused when a card is deleted, which is what
+   * makes any such cache unsound — and this path has no user present to notice a
+   * grant that belongs to a card that no longer exists.
+   */
+  const asked: string[] = []
+  const bench = harness({
+    resolve: async characterId => {
+      asked.push(characterId)
+      return { scripts: scripts(), documentGranted: true }
+    },
+  })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.deepEqual(asked, ['card-1'], 'resolved once, at run time, by id')
+})
+
+test('states are published for every script that got as far as being tried', async () => {
+  const bench = harness()
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.deepEqual(
+    bench.states().map(state => state.scriptId),
+    ['a', 'c'],
+  )
+  assert.deepEqual(
+    bench.states().map(state => state.phase),
+    ['dispatched', 'dispatched'],
+    'a frame that has not answered yet is dispatched, never running',
+  )
+})

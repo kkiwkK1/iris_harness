@@ -426,12 +426,30 @@ export class IrisAppService {
       }),
 
       'script.list': async ({ characterId }) => {
+        // A host with no policy store cannot remember an answer, so it must not
+        // claim one was given: `scriptsAllowed` stays absent rather than `false`.
+        // Absent is "not asked", and a host that cannot store the answer is
+        // exactly a host that has never asked.
         if (scripts === undefined) return { scripts: [], documentGranted: false }
         const card = await library.load(characterId)
+        const allowed = await scripts.scriptsAllowed(characterId)
         return {
           scripts: await scripts.view(characterId, card),
           documentGranted: await scripts.documentGranted(characterId),
+          // Omitted rather than sent as `undefined`, because the key's absence
+          // is the third state and `exactOptionalPropertyTypes` makes the
+          // difference a type error rather than a convention.
+          ...allowed === undefined ? {} : { scriptsAllowed: allowed },
         }
+      },
+
+      'script.setScriptsAllowed': async ({ characterId, allowed }) => {
+        if (scripts === undefined) throw new AppError('unsupported', 'script policy is not configured on this host')
+        // The card must exist. A decision recorded against an id no card holds
+        // would be waiting for whatever card next takes that id — the same
+        // inheritance this table's `forget` exists to prevent.
+        await library.load(characterId)
+        return { scriptsAllowed: await scripts.setScriptsAllowed(characterId, allowed) }
       },
 
       'script.setEnabled': async ({ characterId, scriptId, enabled }) => {

@@ -217,6 +217,7 @@ const PROBES: Record<string, unknown> = {
   'script.setEnabled': { characterId: 'no-such-card', scriptId: 'x', enabled: true },
   'script.body': { characterId: 'no-such-card', scriptId: 'x' },
   'script.setDocumentGrant': { characterId: 'no-such-card', granted: false },
+  'script.setScriptsAllowed': { characterId: 'no-such-card', allowed: true },
   'script.fetch': { url: 'https://blocked.example/x.js' },
   'script.context': { chatId: 'no-such-chat', characterId: 'no-such-card' },
   'script.saveMetadata': { chatId: 'no-such-chat', metadata: {} },
