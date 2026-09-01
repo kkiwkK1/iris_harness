@@ -25,7 +25,7 @@ import type { ScriptView } from '@iris/protocol'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { describeBytes } from './format.ts'
 import { Section } from './fields.tsx'
-import { consentFigures } from '../sandbox/consent.ts'
+import { consentFigures, describeConsentAsk } from '../sandbox/consent.ts'
 import {
   describeRun,
   isFailure,
@@ -242,32 +242,23 @@ export function ConsentGate({
   scripts: readonly ScriptView[]
   onAnswer: (allowed: boolean) => void
 }): ReactElement {
-  const figures = consentFigures(scripts)
-  const dormant = figures.totalBytes - figures.runningBytes
-
   return (
     <div className="iris-grant">
       <p className="iris-field__note">
         {/*
-          One ruler per number, and both of them stated.
+          One ruler per number, both stated, and the grammar agreeing with the
+          number that is actually the subject.
 
           The first version said "ships 4 scripts (448 kB)": four counted the
           enabled ones, 448 kB measured all nine. Someone was told they were
-          about to run 26x more code than they were, and the verb described the
-          card while the numbers described the run.
+          about to run 26x more code than they were. The second said "1 script …
+          They run in", which no card with two scripts could reveal.
 
-          Both figures belong here, because the answer is permanent and covers
-          scripts the user may switch on later without being asked again — but
-          they have to be labelled as the different things they are.
+          The sentence lives in `consent.ts` so it can be tested against the
+          shapes that expose those mistakes — a card whose counts diverge, and a
+          card with exactly one script.
         */}
-        {figures.running === figures.total
-          ? `This card runs ${describeCount(figures.running)} (${describeBytes(figures.runningBytes)}).`
-          : `${String(figures.running)} of ${String(figures.total)} scripts would run now (${describeBytes(figures.runningBytes)}).`}{' '}
-        {dormant > 0
-          ? `Your answer covers all ${String(figures.total)}, including ${describeBytes(dormant)} switched off today. `
-          : ''}
-        They run in an isolated sandbox and cannot read your other chats unless you also grant
-        page access.
+        {describeConsentAsk(consentFigures(scripts), describeBytes)}
       </p>
       <div className="iris-grant__actions">
         <Button size="sm" onClick={() => onAnswer(true)}>
@@ -281,11 +272,3 @@ export function ConsentGate({
   )
 }
 
-/**
- * "1 script" or "N scripts".
- * @param count - how many.
- * @returns the phrase.
- */
-function describeCount(count: number): string {
-  return count === 1 ? '1 script' : `${String(count)} scripts`
-}

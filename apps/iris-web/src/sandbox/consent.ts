@@ -165,3 +165,43 @@ export function consentFigures(
     totalBytes: totalBytes(scripts),
   }
 }
+
+/**
+ * The sentence the question asks, both rulers included.
+ *
+ * Built here rather than in the component so it can be tested against the shapes
+ * that catch its mistakes: a card where the enabled count and the total diverge,
+ * and a card with exactly one script. The first version got the units wrong and
+ * the second got the grammar wrong, and both were only visible on cards nobody
+ * had checked against — two scripts both enabled hides the first, and any count
+ * above one hides the second.
+ *
+ * The byte formatter is passed in because it belongs to the interface layer and
+ * this module belongs to the sandbox; the sentence should not drag one into the
+ * other.
+ * @param figures - the counts and sizes, measured in one pass.
+ * @param bytes - how to render a size.
+ * @returns the sentence, ready to show.
+ */
+export function describeConsentAsk(
+  figures: ConsentFigures,
+  bytes: (count: number) => string,
+): string {
+  const dormant = figures.totalBytes - figures.runningBytes
+  const opening =
+    figures.running === figures.total
+      ? `This card runs ${figures.running === 1 ? '1 script' : `${String(figures.running)} scripts`} (${bytes(figures.runningBytes)}).`
+      : `${String(figures.running)} of ${String(figures.total)} scripts would run now (${bytes(figures.runningBytes)}).`
+  const covered =
+    dormant > 0
+      ? ` Your answer covers all ${String(figures.total)}, including ${bytes(dormant)} switched off today.`
+      : ''
+  // Agrees with the number of scripts that would actually run — the subject of
+  // the sentence — rather than with the card.
+  const closing =
+    figures.running === 1
+      ? ' It runs in an isolated sandbox and cannot read your other chats unless you also grant page access.'
+      : ' They run in an isolated sandbox and cannot read your other chats unless you also grant page access.'
+
+  return `${opening}${covered}${closing}`
+}

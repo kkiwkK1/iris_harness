@@ -341,23 +341,30 @@ reported, any refusal) is shown beside the frame.
   reported to the shell. A mutation deeper inside an object that already exists is
   not, and would need either a deep proxy or an explicit save call from the card.
 
-- **The visual design has now been looked at, within a stated range.** A ten-item
+- **The visual design has been looked at, within a stated range.** A ten-item
   pass ran against the production build on a real host, real card and real model,
-  in both themes at 1440-class width: reading-first type, bottom anchoring
-  (28px from the last message to the composer on a two-message chat),
-  hover-revealed actions, theme parity (body 13.9:1, turn ordinal 8.28:1 in
-  dark), the rail's ladder form, paper-and-desk, panel copy, the connection
-  route, and streaming. **Two things in that list are still unverified**: the
-  rail's *compact* form — reachable now without spending anything, via the
-  **Variant rail preview** in the settings drawer under `npm run dev`, which
-  hands the real component a count instead of generating nine readings — and the
-  *mid-stream* state, which the model outran — a 2.5s
-  sampling window caught only the settled result, and "no flicker was seen" is
-  not "no flicker occurs". Both are still carried by `check:render` and the unit
-  tests alone. Nothing outside that range — narrow widths, motion, drag-and-drop
-  — has been seen either. `npm run check:render` remains a substitute, not a
-  replacement. (Note: killing the `npx` wrapper leaves the child `node` process
-  holding the port — kill it by PID, or the next build cannot write.)
+  in both themes at 1440-class width: reading-first type, bottom anchoring (28px
+  from the last message to the composer on a two-message chat), hover-revealed
+  actions, theme parity (body 13.9:1, turn ordinal 8.28:1 in dark), the rail's
+  ladder form, paper-and-desk, panel copy, the connection route, and streaming.
+  The two items that pass left open have since closed: the rail's **compact**
+  form through the **Variant rail preview** (settings drawer, `npm run dev`) —
+  2 and 8 read as countable ladders, 9 and 24 as the fixed-height compact form,
+  24 candidates stretching nothing — and the **mid-stream** state on a slower
+  model, where the layout holds while text is arriving.
+
+  Two notes worth keeping from how that went. The preview exists because reaching
+  the compact form honestly costs nine real generations, and it is only
+  trustworthy because it fakes nothing: `VariantRail` was already a pure function
+  of `count`, so it is the real component handed a number, not a mock. And the
+  mid-stream gap stayed open for a while on the principle that a 2.5s sampling
+  window catching only the settled result means **"no flicker was seen" is not
+  "no flicker occurs"**.
+
+  Still unseen: narrow widths, motion, and drag-and-drop. `npm run check:render`
+  remains a substitute, not a replacement. (Note: killing the `npx` wrapper leaves
+  the child `node` process holding the port — kill it by PID, or the next build
+  cannot write.)
 - **The renderer stalls intermittently on chats with very large highlighted code
   blocks.** Observed as repeated screenshot timeouts against a card whose opening
   message is a full-page HTML block; retrying always worked, and nothing else
@@ -380,8 +387,11 @@ reported, any refusal) is shown beside the frame.
   `isConnected`). The declined path was verified separately on a
   nine-script card: an explicit `false` stored, no re-ask after a reload, the
   panel naming the state with a way back, all nine scripts still listed, and no
-  frames. **Not exercised in a browser**: the per-script failure lines, the
-  notice bar, and the `silent` timeout firing, because no run has yet failed. Those are carried by unit
+  frames. The variable panel has since rendered a real MVU
+  state tree without breaking — three top-level keys, three levels of nesting,
+  CJK keys, 31 lines of YAML — which until then had only ever been fed the fake's
+  seeds. **Not exercised in a browser**: the per-script failure lines, the notice
+  bar, and the `silent` timeout firing, because no run has yet failed. Those are carried by unit
   tests, which is exactly the coverage that let the first version ship without
   attaching a single frame.
 

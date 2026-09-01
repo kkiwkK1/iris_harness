@@ -15,6 +15,7 @@ import test from 'node:test'
 
 import {
   consentFigures,
+  describeConsentAsk,
   consentState,
   mayRun,
   shouldAsk,
@@ -142,4 +143,65 @@ test('a state meaning "no information" never borrows one meaning "an answer"', (
   assert.equal(mayRun('unknown'), false, 'and do not run on a state that knows nothing')
   assert.equal(shouldAsk('unasked'), true)
   assert.equal(mayRun('allowed'), true)
+})
+
+/** The interface's formatter, reproduced so the sentence reads as it ships. */
+const bytes = (count: number): string =>
+  count < 1024 ? `${String(count)} B` : `${String(Math.round(count / 1024))} kB`
+
+test('one script takes a singular verb', () => {
+  /*
+   * Caught in production, on the first card anyone opened that shipped exactly
+   * one script: "This card runs 1 script (94 B). **They** run in an isolated
+   * sandbox…". Invisible on every card with two or more, which is every card
+   * this had been checked against.
+   */
+  const sentence = describeConsentAsk(consentFigures([{ bytes: 94, enabled: true }]), bytes)
+
+  assert.match(sentence, /This card runs 1 script \(94 B\)\./)
+  assert.match(sentence, /It runs in an isolated sandbox/)
+  assert.doesNotMatch(sentence, /They run/)
+})
+
+test('more than one takes the plural', () => {
+  const sentence = describeConsentAsk(
+    consentFigures([
+      { bytes: 100, enabled: true },
+      { bytes: 200, enabled: true },
+    ]),
+    bytes,
+  )
+
+  assert.match(sentence, /This card runs 2 scripts \(300 B\)\./)
+  assert.match(sentence, /They run in an isolated sandbox/)
+})
+
+test('a card whose counts diverge states both, and agrees with what runs', () => {
+  // The OVERLORD shape: four of nine enabled, and almost all the weight dormant.
+  const sentence = describeConsentAsk(
+    consentFigures([
+      { bytes: 17_000, enabled: true },
+      { bytes: 400, enabled: true },
+      { bytes: 423_000, enabled: false },
+    ]),
+    bytes,
+  )
+
+  assert.match(sentence, /2 of 3 scripts would run now \(17 kB\)\./)
+  assert.match(sentence, /covers all 3, including 413 kB switched off today/)
+  assert.match(sentence, /They run in/)
+})
+
+test('a single running script among many still takes the singular', () => {
+  // The case that needs both rules at once, and the one neither card exposed.
+  const sentence = describeConsentAsk(
+    consentFigures([
+      { bytes: 50, enabled: true },
+      { bytes: 900, enabled: false },
+    ]),
+    bytes,
+  )
+
+  assert.match(sentence, /1 of 2 scripts would run now/)
+  assert.match(sentence, /It runs in an isolated sandbox/)
 })
