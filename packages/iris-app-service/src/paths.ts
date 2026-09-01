@@ -143,6 +143,14 @@ export interface ProfilePaths {
    */
   scriptVariables: string
   /**
+   * Remote script bundles the host has fetched on a card's behalf.
+   *
+   * Not profile-specific in principle — the same jsDelivr URL is the same bytes
+   * for everyone — but kept inside the profile anyway, so deleting a profile
+   * takes its whole footprint with it and leaves nothing the user cannot find.
+   */
+  scriptBundles: string
+  /**
    * Saved connections.
    *
    * Its own file, not a section of `settings.json`: settings are what a chat is
@@ -180,6 +188,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     scriptPolicy: join(root, 'script-policy.json'),
     extensionSettings: join(root, 'extension-settings.json'),
     scriptVariables: join(root, 'script-variables.json'),
+    scriptBundles: join(root, 'script-bundles'),
     connections: join(root, 'connections.json'),
   }
 }

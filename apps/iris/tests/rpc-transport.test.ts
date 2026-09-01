@@ -355,3 +355,47 @@ test('a reused character id inherits no answer the user gave about the card befo
     'a new card inherited an answer given about another card',
   )
 })
+
+/**
+ * The remote-bundle route, mounted on the real host.
+ *
+ * The seam this covers is the one neither half can see alone: the browser
+ * rewrites a card's `import()` to this path, and nothing in the browser's tests
+ * can prove the host actually mounted it or that the whitelist is enforced on
+ * this side rather than assumed. A network fetch is deliberately not exercised —
+ * every host that would answer one is outside the whitelist by design, which is
+ * itself the property worth asserting.
+ */
+test('the bundle route is mounted, and refuses on the host side', async () => {
+  const ask = async (query: string): Promise<{ status: number, reason: string, body: string }> => {
+    const response = await fetch(`${origin}/iris/script-bundle${query}`)
+    return {
+      status: response.status,
+      reason: decodeURIComponent(response.headers.get('x-iris-reason') ?? ''),
+      body: await response.text(),
+    }
+  }
+
+  // Mounted: a missing parameter is answered by the route, not by a 404 from the
+  // server's fallback.
+  const missing = await ask('')
+  assert.equal(missing.status, 400)
+  assert.match(missing.reason, /needs a \?url= parameter/u)
+
+  // The URL is a proposal from the untrusted side, and it is judged here.
+  const refused = await ask(`?url=${encodeURIComponent('https://evil.example/payload.js')}`)
+  assert.equal(refused.status, 403)
+  assert.match(refused.reason, /evil\.example/u, 'a refusal that does not name the host is not diagnosable')
+  // The reason is in the body too, because a failed `import()` hands its caller
+  // no response to read.
+  assert.match(refused.body, /evil\.example/u)
+
+  // A near-miss on the whitelist's own shape: a suffix match would have let this
+  // through, and it is the mistake a second copy of the rule would make.
+  const lookalike = await ask(`?url=${encodeURIComponent('https://jsdelivr.net.evil.example/x.js')}`)
+  assert.equal(lookalike.status, 403)
+
+  // Method gate, like every other route here.
+  const posted = await fetch(`${origin}/iris/script-bundle?url=x`, { method: 'POST' })
+  assert.equal(posted.status, 405)
+})

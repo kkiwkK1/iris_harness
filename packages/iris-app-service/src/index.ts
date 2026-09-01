@@ -27,6 +27,7 @@ import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
+import { ScriptCache } from './script-cache.ts'
 import { ScriptPolicyStore } from './scripts.ts'
 import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
@@ -62,6 +63,7 @@ export {
 } from './prompt.ts'
 export { placementFor, runScripts, scriptsOf, substituteFor } from './regex.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
+export { ScriptCache, cacheKey, nodeFetch, type CacheFailure, type FetchLike, type ScriptCacheOptions } from './script-cache.ts'
 export { ScriptPolicyStore } from './scripts.ts'
 export { ScriptVariableStore, scriptIdOf } from './script-variables.ts'
 export { SettingsStore, sanitize, type SettingsPatch } from './settings.ts'
@@ -119,6 +121,19 @@ export interface Config {
   /** Pathname prefix the card avatars are served at. @default '/iris/avatar' */
   avatarPath?: string
   /**
+   * Pathname the remote-script proxy is served at.
+   *
+   * A card's `import()` of a CDN bundle is rewritten to this route, so the bytes
+   * are fetched once by the host instead of once per chat open by an
+   * opaque-origin frame that shares no cache. @default '/iris/script-bundle'
+   */
+  scriptBundlePath?: string
+  /**
+   * How long a fetched bundle is served before asking upstream again, in seconds.
+   * @default 604800
+   */
+  scriptBundleTtlSeconds?: number
+  /**
    * Run the cards' EJS prompt templates (the ST-Prompt-Template extension).
    *
    * Off by default, and the default is the honest one: evaluating a template is
@@ -150,6 +165,8 @@ export const Config: z<Config> = z.object({
   templateOverhead: z.natural().default(0),
   presetPath: z.string(),
   avatarPath: z.string().default('/iris/avatar'),
+  scriptBundlePath: z.string().default('/iris/script-bundle'),
+  scriptBundleTtlSeconds: z.natural().default(604_800),
   templates: z.boolean().default(false),
   templateDeadlineMs: z.natural().default(2000),
 })
@@ -387,5 +404,20 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       handler: (req, res) => serveAvatar(library, avatarPath, req, res),
     }),
     `irisApp: GET ${avatarPath}`,
+  )
+
+  const bundlePath = config.scriptBundlePath ?? '/iris/script-bundle'
+  const bundles = new ScriptCache({
+    dir: paths.scriptBundles,
+    onError: error => { ctx.logger.warn(error.message) },
+    ...config.scriptBundleTtlSeconds === undefined ? {} : { ttlSeconds: config.scriptBundleTtlSeconds },
+  })
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'prefix',
+      path: bundlePath,
+      handler: (req, res) => bundles.serve(req, res),
+    }),
+    `irisApp: GET ${bundlePath}`,
   )
 }
