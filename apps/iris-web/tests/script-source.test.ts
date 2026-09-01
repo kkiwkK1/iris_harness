@@ -81,32 +81,36 @@ test('the same host twice is named once', () => {
   assert.deepEqual(remoteImports(body), ['https://a.example/x.js'])
 })
 
-test('a card frame gets upstream two libraries, the probe gets none', () => {
-  // Copied from `src/iframe/third_party_script.html` in the installed extension:
-  // two tags for a script frame, nothing else. The probe gets none — making a
-  // diagnostic depend on two CDN fetches would let a network problem and a sandbox
+test('a card frame gets Iris’s own bundle, and the probe gets none', () => {
+  // The probe gets none because it exercises the frame, not a card. Making a
+  // diagnostic depend on a fetch would let a network problem and a sandbox
   // problem produce the same symptom.
   assert.deepEqual(librariesFor('probe', 'http://x'), [])
 
   const libs = librariesFor('card-script', 'http://x')
-  // Two from upstream's list plus Iris's own library bundle.
-  assert.equal(libs.length, 3)
-  assert.ok(libs[0]?.includes('/npm/vue/dist/vue.runtime.global.prod.min.js'))
-  assert.ok(libs[1]?.includes('/npm/vue-router/dist/vue-router.global.prod.min.js'))
+  assert.equal(libs.length, 1)
+  assert.ok(libs[0]?.endsWith('/sandbox/preset.js'))
 })
 
-test('every library comes from an origin the policy names', () => {
-  // Two from the measured CDN, one from Iris itself. Nothing else should creep in
-  // unnoticed, because anything that does is refused by the frame's own policy.
+test('nothing in a frame’s boot path comes off the network', () => {
+  /*
+   * The invariant that replaced the allowlist check here, and the stronger one.
+   *
+   * This used to permit `testingcf.jsdelivr.net` because upstream's Vue tags
+   * lived there. Those tags are gone: Iris opens each chat in a fresh opaque
+   * origin where the HTTP cache is partitioned, so a CDN tag was a cold fetch
+   * every time — and a classic script that fails to load fails *silently*, which
+   * cost eleven runs of a card whose provider was waiting on a Vue that never
+   * arrived.
+   *
+   * So the rule is no longer "from an allowed origin" but "from ours". A card
+   * may still import from the allowlisted CDNs; the difference is that the
+   * frame's own startup no longer depends on one.
+   */
   for (const url of librariesFor('card-script', 'http://x')) {
-    const allowed = url.startsWith('https://testingcf.jsdelivr.net/') || url.startsWith('http://x/')
-    assert.ok(allowed, `${url} is off the allowlist`)
+    assert.ok(
+      url.startsWith('http://x/'),
+      `${url} is off Iris’s origin, so a frame’s startup depends on the network again`,
+    )
   }
-})
-
-test('Iris own bundle loads after upstream libraries, as upstream orders it', () => {
-  // Upstream runs its third-party tags first and seeds the library globals
-  // afterwards, in `predefine`.
-  const libs = librariesFor('card-script', 'http://x')
-  assert.ok(libs.at(-1)?.endsWith('/sandbox/preset.js'))
 })

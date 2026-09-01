@@ -20,6 +20,7 @@
  */
 
 import jquery from 'jquery'
+import * as vue from 'vue'
 import * as lodash from 'lodash-es'
 import * as YAML from 'yaml'
 import { z } from 'zod'
@@ -72,6 +73,56 @@ host['jQuery'] = jquery
  * them unset broke a great many scripts — which makes these a compatibility fact
  * rather than a preference, and not ours to tune.
  */
+/*
+ * Vue itself, which upstream loads by CDN tag and Iris now bundles.
+ *
+ * This is the entry that moved. Upstream's script frames pull
+ * `vue.runtime.global.prod.min.js` from jsdelivr, and Iris copied that verbatim
+ * for eleven runs — the same URL, but not the same conditions. Upstream's frames
+ * are same-origin with the SillyTavern page and share its HTTP cache, so the tag
+ * is a warm hit; Iris opens every chat in a fresh opaque origin, where the cache
+ * is partitioned and the same tag is a cold cross-origin fetch every time.
+ *
+ * What made that expensive rather than merely slow is how a classic `<script
+ * src>` fails: **silently**. No exception, nothing the parent can see, the
+ * global simply never appears. MagVarUpdate gates its publish on `Vue.watch`, so
+ * a dropped tag meant `Mvu` was never published and every consumer waited
+ * forever, while the frame reported a missing-libraries list that did not
+ * contain Vue at all.
+ *
+ * Bundled here, a frame's startup has no network dependency left.
+ *
+ * The runtime build, matching upstream's choice of file: cards do not ship
+ * templates for Vue to compile, and the compiler is the larger half.
+ */
+host['Vue'] = vue
+
+/*
+ * `vue-router` is deliberately **not** here, and its absence is reported rather
+ * than hidden — it is in `EXPECTED_GLOBALS`, so a frame that lacks it says so.
+ *
+ * Upstream loads it beside Vue, so parity argues for it. Two measurements argue
+ * against, and they were taken before deciding: across the 19 local cards (14
+ * with scripts, 41 runnable) **no card source names `VueRouter`**, and the
+ * MagVarUpdate bundle — which declares it as a webpack external — references it
+ * **zero** times. Meanwhile the version upstream's unpinned tag resolves to,
+ * `vue-router@5.3.0`, cannot be installed here without a peer conflict: it wants
+ * `vite@^7 || ^8` and this app is on an older one.
+ *
+ * So the choice was between forcing a resolution, or vendoring a prebuilt file,
+ * for a global nothing measured uses. Neither is worth doing silently, and the
+ * banner now names the gap the moment a card needs it — which is the outcome the
+ * missing-libraries reporting exists to produce.
+ */
+
 host['__VUE_PROD_DEVTOOLS__'] = true
 host['__VUE_OPTIONS_API__'] = true
 host['__VUE_PROD_HYDRATION_MISMATCH_DETAILS__'] = false
+
+/*
+ * These three are also replaced at build time (`vite.preset.config.ts`), and
+ * both are needed. The assignments above serve pinia and any card that reads the
+ * flags off `window`; the build-time definition serves Vue itself, whose module
+ * body is hoisted above every statement in this file and would otherwise look
+ * for them before they exist.
+ */

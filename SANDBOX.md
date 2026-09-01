@@ -278,19 +278,71 @@ user for an API endpoint and key) get no special channel: there is no "card
 holds credentials" tier, and the network grant does not create one — a granted
 card can call out, but Iris never hands it anything of the user's.
 
-## Preset libraries follow upstream, unpinned — and why that is acceptable
+## ~~Preset libraries follow upstream, unpinned — and why that is acceptable~~
 
-Upstream's script frames load Vue and vue-router from jsdelivr **without version
-pins** (`/npm/vue/dist/...` resolves to latest); Iris mirrors the list and the
-unpinning. This is a supply-chain property, not a behaviour quirk, and it is
-acceptable for exactly one reason: **the frame is the boundary, and its contents
-are untrusted by construction.** Cards already import arbitrary whitelisted
-code; a library that updates itself changes nothing about what the frame is
-allowed to reach. Pinning would buy no security and would cost compatibility —
-cards are written against the user's SillyTavern, which runs latest, so a
-pinned Iris would break with those cards on a different day than upstream does.
+> ~~Upstream's script frames load Vue and vue-router from jsdelivr **without
+> version pins** (`/npm/vue/dist/...` resolves to latest); Iris mirrors the list
+> and the unpinning. This is a supply-chain property, not a behaviour quirk, and
+> it is acceptable for exactly one reason: **the frame is the boundary, and its
+> contents are untrusted by construction.** Cards already import arbitrary
+> whitelisted code; a library that updates itself changes nothing about what the
+> frame is allowed to reach. Pinning would buy no security and would cost
+> compatibility — cards are written against the user's SillyTavern, which runs
+> latest, so a pinned Iris would break with those cards on a different day than
+> upstream does.~~
 
-**Condition attached**: this reasoning holds only while the frame is a real
+**Struck 2026-09-01. Kept rather than deleted, because the argument was sound and
+still reached the wrong answer — the useful part is where it turned.**
+
+Everything above about *security* holds and is not what changed. What was wrong
+was the word **mirrors**. Loading the same URL as upstream does not reproduce
+upstream's behaviour here, because the two sides of that comparison are not
+running under the same cache:
+
+- Upstream's script frames are same-origin with the SillyTavern page and share
+  its HTTP cache, so those tags are a warm hit after the first load of a session.
+- Iris opens each chat in a **fresh opaque origin**, and the HTTP cache is
+  partitioned by origin. The same tag is therefore a cold cross-origin fetch
+  *every time* — the same path measured at 9–12 seconds with four timeouts in six
+  openings, which is why card bundles were moved behind the host proxy.
+
+So the unpinned tags were never upstream's hot path; they were upstream's URL on
+Iris's cold one. "Mirroring" compared the addresses and not the conditions.
+
+The cost was not slowness. **A classic `<script src>` that fails, fails
+silently** — no exception, no console entry the parent can see, the global simply
+never appears. Vue's absence is therefore indistinguishable from Vue being
+present but unused, and a card whose provider dies on `Vue` reports nothing
+about Vue at all. That is what happened: MagVarUpdate's publish is gated on
+`Vue.watch`, so a dropped tag meant `Mvu` was never published and its consumers
+waited forever, while the missing-libraries banner — which could not name Vue
+either, see below — listed three libraries that bundle never references.
+
+## Preset libraries are pinned and served by Iris
+
+Vue and vue-router are bundled into `sandbox/preset.js` alongside jQuery,
+lodash, zod and YAML, and served from Iris's own origin. Two consequences worth
+stating:
+
+- **A frame's startup has no network dependency.** The preset is one same-origin
+  script; the last CDN tag in the frame's boot path is gone. A card can still
+  import from the allowlisted CDNs, and that import still goes through the host
+  proxy — but nothing the *frame itself* needs comes off a wire it does not
+  control.
+- **Versions are pinned exactly**, to what upstream's unversioned tags resolve to
+  at the time of pinning: `vue@3.5.42`, `vue-router@5.3.0`. Pinned rather than
+  tracking latest for the reason the struck text got backwards — an unpinned
+  dependency whose failure mode is silent absence is not a supply-chain
+  trade-off, it is an unmonitored runtime dependency. Same treatment, and the
+  same reasoning, as `jquery@3.5.1` being pinned to what SillyTavern serves.
+
+The compatibility argument in the struck text survives and now has to be paid
+deliberately: a card written against a newer Vue than the pin will find the pin.
+That is a version to bump on evidence, which is a thing someone can do, rather
+than a drift nobody observes.
+
+**Condition attached** (unchanged, and it applied to the security argument, which
+was never the faulty half): this reasoning holds only while the frame is a real
 boundary. Any future weakening — broader grants, relaxed script-src, same-origin
 frames — reopens this decision before it reopens anything else.
 

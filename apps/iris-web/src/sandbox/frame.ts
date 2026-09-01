@@ -94,6 +94,16 @@ export interface FrameEnv {
    */
   reportMissingGlobals?: (expected: readonly string[]) => void
   /**
+   * Seed `toastr`, which is an adapter rather than a library.
+   *
+   * The other seeded globals are real libraries and live in the preset bundle,
+   * which is static and shared by every frame. This one cannot: what it does
+   * with a call is *report it*, so it needs the frame's own channel, and a
+   * frame is the smallest thing that has one.
+   * @param report - the gap channel this frame's toasts are forwarded to.
+   */
+  provideToastr?: (report: (message: string) => void) => void
+  /**
    * Publish the viewport into the frame's own realm.
    *
    * Card CSS reads `--TH-viewport-height`, which upstream sets on the child's
@@ -956,6 +966,15 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
          */
         [SCRIPT_REGISTRY, (id: unknown) => viewFor(typeof id === 'string' ? id : undefined)],
       ])
+
+      /*
+       * Before the check below, not after, and the order is the point: this
+       * makes `toastr` present, so the missing-libraries banner must run
+       * afterwards or it would name a global the frame is about to have. A
+       * banner that lists something we provide sends a reader looking for a gap
+       * that is not there — the same class of error as omitting one we do not.
+       */
+      env.provideToastr?.(reportGap)
 
       // Which of upstream's seeded globals this frame does NOT have. Reported
       // rather than waited for: without it, each missing library costs a full

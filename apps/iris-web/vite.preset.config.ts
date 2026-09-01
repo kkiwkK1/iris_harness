@@ -15,6 +15,28 @@ import { defineConfig } from 'vite'
  */
 export default defineConfig({
   configFile: false,
+  /*
+   * Vue's feature flags, as build-time constants rather than globals.
+   *
+   * `preset-entry.ts` also assigns these on `window`, because pinia and cards
+   * read them there, and that assignment is not enough on its own: ES module
+   * imports are hoisted, so Vue's own module body evaluates *before* any
+   * statement of the entry runs. A flag Vue reads during its initialisation
+   * would be missing at exactly the moment it is wanted, and the symptom would
+   * be a warning or a dead branch inside a minified library — not a line anyone
+   * could trace back to here.
+   *
+   * The values match upstream's `predefine.js` verbatim, including
+   * `__VUE_PROD_DEVTOOLS__: true`, which is not the value a build tool would
+   * choose. Upstream's comment records that pinia 4.0.0+ requires these and that
+   * leaving them unset broke a great many scripts, so they are a compatibility
+   * fact rather than a preference.
+   */
+  define: {
+    __VUE_PROD_DEVTOOLS__: 'true',
+    __VUE_OPTIONS_API__: 'true',
+    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false',
+  },
   build: {
     outDir: 'public/sandbox',
     emptyOutDir: false,

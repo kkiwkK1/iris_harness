@@ -53,6 +53,17 @@ const seeds = {
   _: value => typeof value.get === 'function',
   z: value => typeof value.object === 'function',
   YAML: value => YAML_ROUND_TRIPS(value),
+  /*
+   * `watch` and `ref` by name, not `Vue` by presence.
+   *
+   * This check is written around the failure that produced it. MagVarUpdate
+   * publishes from inside a `Vue.watch` callback, so `watch` missing means the
+   * publish never happens and every consumer of that card waits forever — with
+   * no error anywhere, because the tag that used to supply Vue failed silently.
+   * Asserting the exact member the gate depends on is the difference between
+   * this check passing on a husk and catching the thing that actually broke.
+   */
+  Vue: value => typeof value.watch === 'function' && typeof value.ref === 'function',
 }
 
 /** `parse` and `stringify` are the whole of what MVU uses; both must survive. */
@@ -86,9 +97,22 @@ for (const flag of ['__VUE_PROD_DEVTOOLS__', '__VUE_OPTIONS_API__', '__VUE_PROD_
  * banner is a preserved comment and survives minification, which a name would
  * not.
  */
-const pinned = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')).dependencies.jquery
+const manifest = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')).dependencies
+const pinned = manifest.jquery
 if (!source.includes(`jQuery JavaScript Library v${pinned}`)) {
   broken.push(`jquery (v${pinned} not in the bundle)`)
+}
+
+/*
+ * Vue's pin is checked as an exact string in the manifest rather than by reading
+ * a version out of the bundle, because the runtime build carries no banner to
+ * read. The property being defended is that nobody quietly relaxes the pin: an
+ * unpinned Vue whose failure mode is silent absence is the arrangement this
+ * whole change replaced.
+ */
+const vuePin = manifest.vue
+if (typeof vuePin !== 'string' || /[\^~*]|x/.test(vuePin)) {
+  broken.push(`vue (pin is "${String(vuePin)}", which is not an exact version)`)
 }
 if (typeof win.$ !== 'function') broken.push('$ (absent)')
 else if (win.$ !== win.jQuery) broken.push('$ and jQuery are different objects')
@@ -100,5 +124,5 @@ if (broken.length > 0) {
 }
 
 console.log(
-  `preset check: ok (${Math.round(source.length / 1024)} KB, seeds ${Object.keys(seeds).join(', ')} usable, jquery v${pinned} bundled)`,
+  `preset check: ok (${Math.round(source.length / 1024)} KB, seeds ${Object.keys(seeds).join(', ')} usable, jquery v${pinned}, vue v${vuePin} bundled)`,
 )

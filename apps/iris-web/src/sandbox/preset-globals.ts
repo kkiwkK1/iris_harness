@@ -50,6 +50,23 @@
  * Listed in full even though only some are provided, because the gap is the
  * useful part: a frame that reports which of these are missing turns "the next
  * card crashes on `YAML`" into something known before it happens.
+ *
+ * What each name means at present, since "expected" and "provided" have come
+ * apart in three different ways and conflating them has cost real runs:
+ *
+ * - `$`, `jQuery`, `_`, `z`, `YAML`, `Vue` — **provided**, bundled into
+ *   `preset.js` and served from Iris's own origin. Vue is the newest of these
+ *   and the reason the distinction is now written down; it used to arrive by CDN
+ *   tag, and a tag that fails to load fails silently.
+ * - `toastr` — **answered, not provided**. `toastr-report.ts` supplies an object
+ *   that forwards each call into the card's report list instead of showing a
+ *   toast. It is on this list so the name stays accounted for, and the frame's
+ *   own first line to the panel says plainly that this is not the real library.
+ * - `showdown`, `VueRouter`, `EjsTemplate` — **absent and reported**. Measured
+ *   across the 19 local cards: `EjsTemplate` is named by one card's source,
+ *   `showdown` and `VueRouter` by none, and MagVarUpdate's bundle references
+ *   none of the three. They stay listed precisely because the banner is the only
+ *   thing that will speak when that changes.
  */
 export const EXPECTED_GLOBALS: readonly string[] = [
   '$',

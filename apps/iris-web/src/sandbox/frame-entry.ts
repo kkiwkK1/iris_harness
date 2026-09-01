@@ -19,6 +19,7 @@ import { installSandbox } from './frame.ts'
 import { remoteImports } from './script-source.ts'
 import { describeAttempts } from './import-attempts.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
+import { createReportingToastr } from './toastr-report.ts'
 
 /**
  * Tell the shell the frame is usable — but not before its libraries are.
@@ -410,6 +411,15 @@ try {
     entry.dataset['type'] = 'script'
     entry.dataset['scriptId'] = scriptId
     list.append(entry)
+  },
+
+  provideToastr: report => {
+    const host = window as unknown as Record<string, unknown>
+    // Not overwritten if something already provided one. Upstream lets a card
+    // replace a seeded global, and a card that brought its own real toastr
+    // should keep it rather than have its UI silently redirected to our panel.
+    if (host['toastr'] !== undefined) return
+    host['toastr'] = createReportingToastr(report)
   },
 
   reportMissingGlobals: expected => {
