@@ -18,6 +18,58 @@ import type { ScriptContext, WorldbookEntry } from '@iris/protocol'
 import { UnsupportedApiError } from '../src/sandbox/errors.ts'
 import { createFrameTavernHelper } from '../src/sandbox/tavern-helper.ts'
 
+/**
+ * A key with an **escaped** delimiter, built rather than typed.
+ *
+ * Six characters: slash, `a`, backslash, slash, `b`, slash.
+ *
+ * The single most important fixture in this file and the easiest one to lose.
+ * Typed as a literal it needs a doubled backslash, and a backslash in a string
+ * literal has been eaten in transit in this repo seven times. What survives is a
+ * key with **no escaped delimiter in it at all** — five characters, a perfectly
+ * ordinary plaintext key. Every test using it keeps passing, having quietly
+ * become a second copy of the plaintext case.
+ *
+ * The neighbouring package lost precisely this fixture, and found out only
+ * because a deliberate mutation of its code failed to turn anything red. That is
+ * the part worth naming: **a teeth-check assumes the fixture is sound.** When the
+ * fixture is the broken thing, the test and the teeth-check fall silent together,
+ * and each one's silence corroborates the other's.
+ *
+ * So it is assembled from a character code, and the test directly below checks it
+ * independently of anything it is used for.
+ */
+const ESCAPED_SLASH_KEY = ['/a', String.fromCharCode(92), '/b/'].join('')
+
+test('the escaped-delimiter fixture is what it claims to be', () => {
+  /*
+   * Guarding the input, not the code — and **do not delete this as redundant**.
+   *
+   * Measured, by degrading the constant to `/a/b/` and seeing who objects:
+   *
+   * | assertion | fixture degraded |
+   * | --- | --- |
+   * | this guard | red |
+   * | `key instanceof RegExp` (the escaped-slash test) | red |
+   * | the byte-for-byte round trip | **green** |
+   *
+   * The round trip is the strictest assertion here and the only one that cannot
+   * see this failure, because a degraded fixture still satisfies the property it
+   * checks: plaintext round-trips perfectly. Strictness defends against the code
+   * being wrong; it offers nothing against the input not being what you think,
+   * while looking like it does.
+   *
+   * So this guard is not a supplement to the round trip. For that test, it is the
+   * whole of the immunity.
+   */
+  assert.equal(ESCAPED_SLASH_KEY.length, 6, 'the fixture lost its backslash')
+  assert.equal(
+    ESCAPED_SLASH_KEY.charCodeAt(2),
+    92,
+    'the third character must be a backslash, or this is just /a/b/',
+  )
+})
+
 /** A minimal snapshot; nothing here reads it, but the façade requires one. */
 function context(): ScriptContext {
   return {
@@ -85,7 +137,10 @@ function surface(answer: unknown, fails?: Error) {
 
 /** `getWorldbook`, typed for these tests. */
 type GetWorldbook = (name: string) => Promise<{
-  strategy: { keys: (RegExp | string)[], keys_secondary: { keys: string[] } }
+  strategy: {
+    keys: (RegExp | string)[]
+    keys_secondary: { keys: (RegExp | string)[] }
+  }
 }[]>
 
 /** A façade whose snapshot carries the given bindings, or none at all. */
@@ -182,6 +237,194 @@ test('a named character is refused by name rather than answered wrongly', () => 
   assert.throws(() => call(), UnsupportedApiError)
 })
 
+/** A façade answering each wire method differently, recording every call. */
+function duplex(answers: Record<string, unknown>, fails?: Record<string, Error>) {
+  const calls: { method: string, params: Record<string, unknown> }[] = []
+  const api = createFrameTavernHelper({
+    context: () => context(),
+    scriptId: () => undefined,
+    reportGap: () => undefined,
+    adoptVariables: () => undefined,
+    call: async (method, params) => {
+      calls.push({ method, params })
+      const failure = fails?.[method]
+      if (failure !== undefined) throw failure
+      return answers[method]
+    },
+    triggerSlash: async () => '',
+    events: new EventBus(),
+  })
+  return { api, calls }
+}
+
+/** The two write members, typed for these tests. */
+type ReplaceWorldbook = (
+  name: string,
+  entries: readonly unknown[],
+  options?: { render?: 'debounced' | 'immediate' },
+) => Promise<void>
+type UpdateWorldbookWith = (
+  name: string,
+  updater: (book: unknown[]) => readonly unknown[] | Promise<readonly unknown[]>,
+  options?: { render?: 'debounced' | 'immediate' },
+) => Promise<{ uid: number }[]>
+
+/** The `strategy.keys` of the first entry in a recorded `replaceWorldbook` call. */
+function sentKeys(params: Record<string, unknown>): unknown[] {
+  const entries = params['entries'] as { strategy?: { keys?: unknown[] } }[]
+  return entries[0]?.strategy?.keys ?? []
+}
+
+test('a revived key is written back as the text the host stores', async () => {
+  /*
+   * The inverse of revival, and the reason it has to exist: `updateWorldbookWith`
+   * hands the updater revived entries, so a card that returns them with one field
+   * changed — which is what the corpus does — is handing back live `RegExp`
+   * objects. Those are not merely lossy on the wire; the contract types keys as
+   * strings, so the write would be refused, for a card that did nothing wrong.
+   */
+  const scope = duplex({ replaceWorldbook: { entries: [] } })
+  await (scope.api['replaceWorldbook'] as ReplaceWorldbook)('book', [
+    { uid: 1, strategy: { keys: [/gr[ae]y wolf/i, 'literal'] } },
+  ])
+
+  assert.deepEqual(
+    sentKeys(scope.calls[0]?.params ?? {}),
+    ['/gr[ae]y wolf/i', 'literal'],
+    'a RegExp reached the wire, where it cannot survive',
+  )
+})
+
+test('a key survives the full round trip byte for byte', async () => {
+  /*
+   * Revive then flatten must be the identity, including the case that motivated
+   * `parseRegexFromString`'s odd unescape: `source` re-escapes exactly the
+   * character the parser unescaped, so the two operations cancel.
+   *
+   * Asserted as a round trip rather than by inspecting either half, because each
+   * half alone can be wrong in a way that reads as correct — which is how the
+   * neighbouring package spent a round on an assertion that could not fail.
+   */
+  const original = [ESCAPED_SLASH_KEY, '/gr[ae]y/i', 'plain text', 'not/a/regex']
+  const scope = duplex({
+    getWorldbook: { entries: [entry(original)] },
+    replaceWorldbook: { entries: [] },
+  })
+
+  const book = await (scope.api['getWorldbook'] as GetWorldbook)('book')
+  await (scope.api['replaceWorldbook'] as ReplaceWorldbook)('book', book)
+
+  const written = scope.calls.find(one => one.method === 'replaceWorldbook')
+  assert.deepEqual(sentKeys(written?.params ?? {}), original)
+})
+
+test('secondary keys are flattened too, or the round trip is only half done', async () => {
+  const scope = duplex({ replaceWorldbook: { entries: [] } })
+  await (scope.api['replaceWorldbook'] as ReplaceWorldbook)('book', [
+    { uid: 1, strategy: { keys_secondary: { logic: 'and_any', keys: [/b/i] } } },
+  ])
+
+  const entries = scope.calls[0]?.params['entries'] as {
+    strategy?: { keys_secondary?: { keys?: unknown[] } }
+  }[]
+  assert.deepEqual(entries[0]?.strategy?.keys_secondary?.keys, ['/b/i'])
+})
+
+test('the updater sees the current book and its result is what gets written', async () => {
+  const scope = duplex({
+    getWorldbook: { entries: [entry(['/a/i']), entry(['b'])] },
+    replaceWorldbook: { entries: [entry(['/a/i'])] },
+  })
+
+  let seen = 0
+  await (scope.api['updateWorldbookWith'] as UpdateWorldbookWith)('book', book => {
+    seen = book.length
+    return [{ uid: 7, content: 'rewritten' }]
+  })
+
+  assert.equal(seen, 2, 'the updater was not given the current entries')
+  assert.deepEqual(scope.calls.map(one => one.method), ['getWorldbook', 'replaceWorldbook'])
+  assert.deepEqual(
+    scope.calls[1]?.params['entries'],
+    [{ uid: 7, content: 'rewritten' }],
+    'what the updater returned is not what was sent',
+  )
+})
+
+test('what comes back is the host’s stored book, not the updater’s output', async () => {
+  /*
+   * They differ wherever the host filled in a `uid` or renumbered `displayIndex`,
+   * and those are exactly the changes a card cannot predict and needs to see.
+   * Returning the updater's own array would hide them behind something that looks
+   * right.
+   */
+  const scope = duplex({
+    getWorldbook: { entries: [] },
+    replaceWorldbook: { entries: [entry(['/kept/i'])] },
+  })
+
+  const result = await (scope.api['updateWorldbookWith'] as UpdateWorldbookWith)(
+    'book',
+    () => [{ uid: 0 }],
+  )
+
+  assert.equal(result.length, 1)
+  assert.notDeepEqual(result, [{ uid: 0 }], 'the updater’s own array came back')
+  assert.ok(
+    (result[0] as unknown as { strategy: { keys: unknown[] } }).strategy.keys[0] instanceof RegExp,
+    'the returned book was not revived on the way back',
+  )
+})
+
+test('an async updater is awaited', async () => {
+  // Upstream's `WorldbookUpdater` is a union of a sync and an async signature.
+  const scope = duplex({
+    getWorldbook: { entries: [] },
+    replaceWorldbook: { entries: [] },
+  })
+
+  await (scope.api['updateWorldbookWith'] as UpdateWorldbookWith)('book', async () => {
+    await Promise.resolve()
+    return [{ uid: 3 }]
+  })
+
+  assert.deepEqual(scope.calls[1]?.params['entries'], [{ uid: 3 }])
+})
+
+test('a missing book throws before the updater is ever called', async () => {
+  /*
+   * Upstream reads before it replaces, so a card's function is never run against
+   * a book that is not there. Worth pinning because the natural way to write this
+   * — call the updater, then discover the read failed — would let a card's
+   * side effects happen for a write that could never land.
+   */
+  let ran = false
+  const scope = duplex({}, { getWorldbook: new Error('no world book named ghost') })
+
+  await assert.rejects(
+    (scope.api['updateWorldbookWith'] as UpdateWorldbookWith)('ghost', () => {
+      ran = true
+      return []
+    }),
+    /no world book named ghost/u,
+  )
+
+  assert.equal(ran, false, 'the updater ran against a book that does not exist')
+  assert.deepEqual(scope.calls.map(one => one.method), ['getWorldbook'], 'a write was attempted anyway')
+})
+
+test('render is accepted and never reaches the wire as behaviour', async () => {
+  // Upstream's hint for repainting its own editor, which Iris does not have.
+  // Rejecting it would fail a card on an argument that means nothing here.
+  const scope = duplex({ replaceWorldbook: { entries: [] } })
+  await (scope.api['replaceWorldbook'] as ReplaceWorldbook)('book', [{ uid: 1 }], {
+    render: 'immediate',
+  })
+
+  assert.equal(scope.calls.length, 1, 'the call was refused or duplicated')
+  assert.deepEqual(scope.calls[0]?.params['entries'], [{ uid: 1 }])
+})
+
 test('the book name reaches the host under the name the card used', async () => {
   const scope = surface({ entries: [] })
   await (scope.api['getWorldbook'] as GetWorldbook)('世界观设定')
@@ -211,7 +454,7 @@ test('an escaped slash inside a key still matches the literal slash', async () =
    * unescape render as the same `source`; only running the pattern separates
    * them.
    */
-  const scope = surface({ entries: [entry(['/a\\/b/'])] })
+  const scope = surface({ entries: [entry([ESCAPED_SLASH_KEY])] })
   const book = await (scope.api['getWorldbook'] as GetWorldbook)('book')
 
   const key = book[0]?.strategy.keys[0]
@@ -239,22 +482,32 @@ test('a plain key stays a string, because null means plaintext and not failure',
   )
 })
 
-test('secondary keys are left exactly as the host sent them', async () => {
+test('secondary keys are revived exactly like primary ones', async () => {
   /*
-   * Not an oversight — a deliberate non-guess. The contract documents revival for
-   * the primary keys only, and reviving the secondary ones on the strength of
-   * "it would be consistent" would be a divergence invented here rather than
-   * copied. If upstream turns out to revive them, this test is the place that
-   * changes, and its failure will say so.
+   * Measured on both sides rather than reasoned from symmetry: upstream applies
+   * the same expression to each list (`worldbook.ts:214` and `:218`), and this
+   * project's activation engine puts both through `matchKey`
+   * (`activate.ts:967`, `matching.ts:121`), which begins with
+   * `parseRegexFromString`.
+   *
+   * The agreement is the point. If only the primary keys were revived, a card
+   * would hold plain strings for keys the engine is matching as patterns — two
+   * halves each self-consistent, wrong together, and with nothing to report.
+   *
+   * This test previously asserted the opposite, and was wrong for a reason worth
+   * keeping: the contract documented revival under `keys` and said nothing under
+   * `keys_secondary`, and **silence about a sibling field reads as a statement
+   * about that field**. Reading it narrowly was the right way to read what was
+   * written; what was written was incomplete.
    */
-  const scope = surface({ entries: [entry(['/a/i'], ['/b/i'])] })
+  const scope = surface({ entries: [entry(['/a/i'], ['/b/i', 'plain'])] })
   const book = await (scope.api['getWorldbook'] as GetWorldbook)('book')
 
-  assert.deepEqual(
-    book[0]?.strategy.keys_secondary.keys,
-    ['/b/i'],
-    'secondary keys were revived, which the contract does not say upstream does',
-  )
+  const secondary = book[0]?.strategy.keys_secondary.keys ?? []
+  const pattern = secondary[0]
+  assert.ok(pattern instanceof RegExp, 'a secondary key was left as a string the engine treats as a pattern')
+  assert.equal(pattern.test('B'), true, 'the flags did not survive on the secondary list')
+  assert.equal(secondary[1], 'plain', 'a literal secondary key must stay literal')
 })
 
 test('a book that does not exist rejects rather than reading as empty', async () => {

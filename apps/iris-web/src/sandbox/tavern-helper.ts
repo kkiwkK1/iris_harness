@@ -173,7 +173,12 @@ export const TAVERN_HELPER_VERSION = '4.9.1'
  * revival happens here, on the last hop before a card touches them.
  */
 export interface CardWorldbookEntry extends Omit<WorldbookEntry, 'strategy'> {
-  strategy: Omit<WorldbookEntry['strategy'], 'keys'> & { keys: (RegExp | string)[] }
+  strategy: Omit<WorldbookEntry['strategy'], 'keys' | 'keys_secondary'> & {
+    keys: (RegExp | string)[]
+    keys_secondary: Omit<WorldbookEntry['strategy']['keys_secondary'], 'keys'> & {
+      keys: (RegExp | string)[]
+    }
+  }
 }
 
 /**
@@ -189,21 +194,96 @@ export interface CardWorldbookEntry extends Omit<WorldbookEntry, 'strategy'> {
  * would give a card a `RegExp` for a key the engine matches as plaintext, or the
  * reverse: two halves each self-consistent, wrong together, and silent.
  *
- * Only the primary keys are revived, because that is the only field the contract
- * says upstream revives. Whether `keys_secondary.keys` gets the same treatment
- * upstream is an open question — left alone rather than guessed at, since
- * reviving them speculatively would be a divergence invented here.
+ * **Both key lists, treated identically**, because both halves were measured:
+ * upstream applies the same expression to each (`worldbook.ts:214` for `key`,
+ * `:218` for `keysecondary`), and this project's activation engine sends both
+ * through `matchKey` (`activate.ts:967`, `matching.ts:121`), whose first act is
+ * `parseRegexFromString`.
+ *
+ * That agreement is the requirement, not a coincidence worth copying. Reviving
+ * only the primary keys would hand a card plain strings for the secondary ones
+ * while the engine matched those same strings as patterns — each half internally
+ * consistent, wrong together, and silent. This member was written that narrower
+ * way first, from a contract that documented revival for `keys` and said nothing
+ * about `keys_secondary`; **silence about a sibling field reads as a statement
+ * about it**, which is how the narrow reading looked correct.
  * @param entry - one entry as the host sent it.
- * @returns the same entry with its primary keys revived.
+ * @returns the same entry with both key lists revived.
  */
 function reviveWorldbookKeys(entry: WorldbookEntry): CardWorldbookEntry {
+  /** `null` means "not regex-shaped", so the author's own text is kept. */
+  const revive = (keys: readonly string[]): (RegExp | string)[] =>
+    keys.map(key => parseRegexFromString(key) ?? key)
+
   return {
     ...entry,
     strategy: {
       ...entry.strategy,
-      keys: entry.strategy.keys.map(key => parseRegexFromString(key) ?? key),
+      keys: revive(entry.strategy.keys),
+      keys_secondary: {
+        ...entry.strategy.keys_secondary,
+        keys: revive(entry.strategy.keys_secondary.keys),
+      },
     },
   }
+}
+
+/**
+ * Turn a key back into the text the host stores.
+ *
+ * The exact inverse of revival, and it exists because the round trip is the
+ * ordinary way cards use these members: `updateWorldbookWith` hands the updater
+ * **revived** entries, so a card that returns them with one field changed —
+ * which is what the corpus does — is handing back live `RegExp` objects in the
+ * key lists.
+ *
+ * Without this they would not merely degrade, they would not arrive: `RegExp` is
+ * not structured-cloneable into a plain shape and the contract types these as
+ * strings, so the write would be rejected at validation. Loud, but for a card
+ * that did nothing wrong.
+ *
+ * `String(/a/i)` yields `/a/i`, which is what `parseRegexFromString` reads, so a
+ * key that made the trip out and back is byte-identical — including the escaped
+ * slash case, where `source` re-escapes exactly the character the parser
+ * unescaped.
+ * @param keys - a key list from a card, which may hold patterns or text.
+ * @returns the same list with any pattern written back as `/pattern/flags`.
+ */
+function flattenKeys(keys: unknown): unknown {
+  if (!Array.isArray(keys)) return keys
+  return keys.map(key => (key instanceof RegExp ? String(key) : key))
+}
+
+/**
+ * Prepare one card-supplied entry for the wire.
+ *
+ * Written defensively against `unknown` rather than against `WorldbookEntry`,
+ * because what arrives here is whatever a card's updater returned: upstream types
+ * it `PartialDeep`, every field but `uid` may be missing, and nothing has
+ * validated it yet. Copied rather than mutated so a card that keeps a reference
+ * to what it returned does not watch its own objects change underneath it.
+ * @param entry - one entry as a card produced it.
+ * @returns the same entry with its key lists flattened.
+ */
+function flattenWorldbookEntry(entry: unknown): unknown {
+  if (entry === null || typeof entry !== 'object') return entry
+  const copy = { ...(entry as Record<string, unknown>) }
+
+  const strategy = copy['strategy']
+  if (strategy === null || typeof strategy !== 'object') return copy
+  const strategyCopy = { ...(strategy as Record<string, unknown>) }
+
+  if ('keys' in strategyCopy) strategyCopy['keys'] = flattenKeys(strategyCopy['keys'])
+
+  const secondary = strategyCopy['keys_secondary']
+  if (secondary !== null && typeof secondary === 'object') {
+    const secondaryCopy = { ...(secondary as Record<string, unknown>) }
+    if ('keys' in secondaryCopy) secondaryCopy['keys'] = flattenKeys(secondaryCopy['keys'])
+    strategyCopy['keys_secondary'] = secondaryCopy
+  }
+
+  copy['strategy'] = strategyCopy
+  return copy
 }
 
 export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<string, unknown> {
@@ -238,6 +318,24 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
   }
 
   const chatOf = (member: string): ScriptChatMessage[] => snapshot(member).chat
+
+  /**
+   * One named book's entries, revived.
+   *
+   * Shared by `getWorldbook` and `updateWorldbookWith` so that "how a book is
+   * fetched and what state its keys are in" is decided once. The alternative was
+   * for the update path to fetch its own copy, which is how the two would come
+   * to disagree about revival — and the updater's input disagreeing with
+   * `getWorldbook`'s output is precisely the kind of difference a card author
+   * cannot see.
+   * @param name - the book's name, exactly as spelled.
+   * @returns its entries, with both key lists revived.
+   */
+  const readWorldbook = async (name: string): Promise<CardWorldbookEntry[]> => {
+    const answer = await host.call('getWorldbook', { name })
+    const entries = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
+    return entries.map(entry => reviveWorldbookKeys(entry))
+  }
 
   /**
    * One layer of the snapshot, by the name a card uses for it.
@@ -747,10 +845,94 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * three cards that call it — so the two members are really one idiom in two
      * halves, and the name arriving here is a name the host itself just supplied.
      */
-    getWorldbook: async (name: string): Promise<CardWorldbookEntry[]> => {
-      const answer = await host.call('getWorldbook', { name })
-      const entries = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
-      return entries.map(entry => reviveWorldbookKeys(entry))
+    getWorldbook: async (name: string): Promise<CardWorldbookEntry[]> => readWorldbook(name),
+
+    /**
+     * Replace a named book's contents wholesale.
+     *
+     * **Wholesale is the word.** Upstream rebuilds the stored book entirely from
+     * the array it is given: an entry absent from it is deleted, a missing `uid`
+     * is assigned at random, and `displayIndex` is reassigned from array
+     * position — so a book that goes out and comes back has been reordered. The
+     * one rule that catches people is that **an omitted field is not "leave it
+     * alone", it is "take the default"**, and one of those defaults is
+     * `constant: true`. So `book.map(e => ({ uid: e.uid }))`, which reads like a
+     * no-op, turns every entry in the book always-on. That is upstream's
+     * behaviour and it is copied rather than repaired, because a card may be
+     * relying on it.
+     *
+     * A book that does not exist is **not created** — the host refuses, as
+     * upstream does.
+     * @param name - the book's name, exactly as spelled.
+     * @param entries - the new contents; only `uid` is required on each.
+     * @param _options - upstream's `{ render }`, accepted and ignored (see below).
+     * @returns nothing, matching upstream's `Promise<void>`.
+     */
+    replaceWorldbook: async (
+      name: string,
+      entries: readonly unknown[],
+      /*
+       * `render` is read off the signature and never consulted. It tells upstream
+       * whether to repaint its own world-book editor, and Iris has no such
+       * editor. Accepting and ignoring it — the same treatment `setChatMessages`
+       * gives `refresh` — is what lets a card written against upstream call this
+       * unchanged; rejecting it would fail on an argument that means nothing here.
+       */
+      _options?: { render?: 'debounced' | 'immediate' },
+    ): Promise<void> => {
+      await host.call('replaceWorldbook', {
+        name,
+        entries: entries.map(entry => flattenWorldbookEntry(entry)),
+      })
+    },
+
+    /**
+     * Read a book, let the card rewrite it, and store the result.
+     *
+     * Built in the frame rather than sent over the wire, for the reason
+     * `updateVariablesWith` is: it takes a **function**, and a function cannot
+     * cross the boundary. So it is composed from the two members that can.
+     *
+     * The updater receives **revived** entries, exactly as `getWorldbook` returns
+     * them, and may be synchronous or async — upstream's `WorldbookUpdater` is a
+     * union of both. Whatever it returns is passed through whole: no attempt is
+     * made to send only the entries that look changed. That optimisation is
+     * specifically wrong here, because the host renumbers `displayIndex` from
+     * array position, so a partial array would silently reorder the book.
+     *
+     * A missing book throws on the **first read**, before the updater runs — same
+     * as upstream, which also reads before it replaces. The card's function is
+     * never called against a book that is not there.
+     * @param name - the book's name.
+     * @param updater - given the current entries, returns the new ones.
+     * @param options - upstream's `{ render }`, accepted and ignored.
+     * @returns the book as it stands after the write.
+     */
+    updateWorldbookWith: async (
+      name: string,
+      updater: (
+        book: CardWorldbookEntry[],
+      ) => readonly unknown[] | Promise<readonly unknown[]>,
+      options?: { render?: 'debounced' | 'immediate' },
+    ): Promise<CardWorldbookEntry[]> => {
+      const current = await readWorldbook(name)
+      const next = await updater(current)
+
+      /*
+       * The host's replace answers with a fresh read of the book, so that is what
+       * is returned — and it has to be, rather than what the updater produced: the
+       * two differ wherever the host filled in a uid or renumbered. Handing back
+       * the updater's own array would hide exactly the changes the card needs to
+       * see. Upstream reads a second time to get this; one read is skipped here
+       * because the host already performed it.
+       */
+      const answer = await host.call('replaceWorldbook', {
+        name,
+        entries: next.map(entry => flattenWorldbookEntry(entry)),
+        ...(options?.render === undefined ? {} : { render: options.render }),
+      })
+      const stored = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
+      return stored.map(entry => reviveWorldbookKeys(entry))
     },
     swipeTo: async (messageId: number, swipeId: number) =>
       // `swipeIndex` on the wire; upstream's parameter is `swipeId`. Renamed at

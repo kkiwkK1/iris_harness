@@ -490,9 +490,29 @@ export const requestSchemas = {
       enabled: z.boolean().optional(),
       strategy: z.object({
         type: z.enum(['constant', 'vectorized', 'selective']).optional(),
+        /**
+         * Keys as **strings**, never as revived `RegExp` objects.
+         *
+         * This is the return leg of a round trip, and it is the half that gets
+         * forgotten. `worldbook.get` hands a card `RegExp` objects for its
+         * regex-shaped keys; the most natural way to write an update is to
+         * change one field and hand the entry straight back, so what arrives
+         * here is whatever `get` produced. A `RegExp` does not survive JSON —
+         * it serializes to `{}` — and this schema rejects it outright, which
+         * fails a card that did nothing wrong.
+         *
+         * So whoever revived them un-revives them before crossing:
+         * `String(re)` yields `/pattern/flags`, exactly the shape
+         * `parseRegexFromString` reads. The frame does this in
+         * `flattenKeys`.
+         *
+         * Both lists, for the same reason `keys_secondary` is revived on the
+         * way out — see `WorldbookEntry` in `views.ts`.
+         */
         keys: z.array(z.string().max(1000)).max(200).optional(),
         keys_secondary: z.object({
           logic: z.enum(['and_any', 'not_all', 'not_any', 'and_all']).optional(),
+          /** Strings, like `keys` above — the same un-revival applies. */
           keys: z.array(z.string().max(1000)).max(200).optional(),
         }).optional(),
         scan_depth: z.union([z.number().int(), z.literal('same_as_global')]).optional(),

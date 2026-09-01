@@ -119,6 +119,14 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   getWorldbook: 'shared',
   // A binding belongs to the card; every script of it sees the same answer.
   getCharWorldbookNames: 'shared',
+  /*
+   * Writes, and shared for the same reason the read is: a world book is one file
+   * belonging to the card. Unlike the variable members, these carry no scope and
+   * no script id — two scripts replacing the same book are writing to the same
+   * place, which is the intended behaviour rather than a leak.
+   */
+  replaceWorldbook: 'shared',
+  updateWorldbookWith: 'shared',
   generate: 'shared',
   triggerSlash: 'shared',
   substitudeMacros: 'shared',

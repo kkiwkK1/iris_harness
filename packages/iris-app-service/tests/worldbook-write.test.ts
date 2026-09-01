@@ -177,3 +177,68 @@ test('a name may not escape the worlds directory on the way in', async () => {
   // alone is the shape of a directory traversal that only works one way.
   await assert.rejects(() => store.replace('../settings', [{ uid: 1 }]), /not a valid identifier/u)
 })
+
+test('regex-shaped keys survive the disk leg byte for byte', async () => {
+  // The other half of a round trip whose frame half f7 pinned. A card's key can
+  // make three crossings — host → frame (revived to `RegExp`), frame → host
+  // (flattened back to `/pattern/flags`), and host → disk → host, which is this
+  // one. Each leg can fail in a way that reads as correct on its own: the
+  // parser unescapes a delimiter, `RegExp.prototype.source` re-escapes it, and
+  // the two cancel, so inspecting either end alone proves nothing.
+  //
+  // The host's job here is to be **transparent** — it stores what it was handed
+  // and returns what it stored, never parsing or re-serializing a key. Asserted
+  // as exact equality rather than as "still a valid regex", because a leg that
+  // adds or drops one backslash still yields a valid regex.
+  // `ESCAPED` is built from a char code rather than written as a literal. The
+  // first version of this line was written through a shell heredoc, where the
+  // backslash collapsed: `'/a\\/b/'` became `'/a\/b/'`, which JavaScript reads
+  // as `/a/b/` — a key with no escape in it at all. The test still passed, and
+  // a teeth-check run specifically to catch this could not, because the damage
+  // was in the fixture rather than in the code under test. A mutation that
+  // corrupts escaped delimiters had nothing to corrupt.
+  const BACKSLASH = String.fromCharCode(92)
+  const ESCAPED = `/a${BACKSLASH}/b/`
+  const keys = [ESCAPED, '/gr[ae]y/i', 'plain text', 'not/a/regex', '/(?<name>x)/u']
+
+  // DO NOT DELETE THESE TWO LINES AS REDUNDANT. They are the only thing in this
+  // test that notices a degraded fixture. Measured, by replacing `ESCAPED` with
+  // a bare `/a/b/` and running the file:
+  //
+  //     these two assertions ......................... RED
+  //     the byte-exact deepEqual over five keys ...... green
+  //     the same, re-read from disk .................. green
+  //
+  // Delete them and the test still passes, still reads as the strictest thing
+  // here, and tests nothing about escaped delimiters at all.
+  //
+  // That is not a weakness in those assertions, it is structural. A round trip
+  // asserts "what went in came out"; a plain-text key satisfies that perfectly.
+  // Degrading the fixture changes *what went in*, which is the one thing a
+  // round trip cannot see. So the strictest check in this file — a byte-exact
+  // `deepEqual` — has exactly zero resistance to this failure, while looking
+  // like the most rigorous thing here.
+  //
+  // Hence: guard the **identity** of the input (is this the string I think it
+  // is), never its behaviour (does it survive the trip). Checked by character
+  // code rather than by length, because six characters is a property several
+  // wrong strings also have.
+  assert.equal(ESCAPED.length, 6, 'the escaped-delimiter fixture lost its backslash again')
+  assert.equal(ESCAPED.charCodeAt(2), 92, 'the third character must be a backslash, or this is just /a/b/')
+  const { store } = await bookWith([entryFile(1, 'seed')])
+
+  const [written] = await store.replace('Eldoria', [{
+    uid: 1,
+    name: 'Keys',
+    strategy: { type: 'selective', keys, keys_secondary: { logic: 'and_any', keys } },
+  }])
+  assert.ok(written)
+  assert.deepEqual(written.strategy.keys, keys, 'a key changed on the way to disk')
+  assert.deepEqual(written.strategy.keys_secondary.keys, keys, 'a secondary key changed')
+
+  // Re-read through the ordinary path, so the assertion covers the file rather
+  // than the value `replace` happened to return.
+  const [reread] = await store.get('Eldoria')
+  assert.deepEqual(reread?.strategy.keys, keys)
+  assert.deepEqual(reread?.strategy.keys_secondary.keys, keys)
+})

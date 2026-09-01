@@ -60,6 +60,14 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
    * wrong way to reach it.
    */
   getWorldbook: 'worldbook.get',
+  /*
+   * `updateWorldbookWith` is deliberately absent and is **not** a gap.
+   *
+   * It takes a function, which cannot cross the frame boundary, so it is built
+   * in the frame out of this method plus `worldbook.get` — the same shape
+   * `updateVariablesWith` uses. There is no wire method for it to map to.
+   */
+  replaceWorldbook: 'worldbook.replace',
 }
 
 /** Whether a card may invoke this action. */

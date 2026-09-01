@@ -341,6 +341,78 @@ Ledger: **deliberate improvement.** What it costs is that a message edited to
 *identical* text does not rebuild, where upstream would. That is the same event as
 cancelling, and neither should rebuild, so the cost is theoretical.
 
+## An interface leaves the measure, because it is not reading
+
+The reading column is bounded at `68ch` — a book measure, and the right one for
+prose. Applied to a card it was measured doing the wrong thing well: the frame
+sat at **477px inside a 1038px window**, and the remaining 560px was dead.
+
+The part worth stating is *why* that was worse than it looks. These cards lay
+themselves out against whatever viewport they are handed, so 477px was not a
+frame clipping a card — it was the shell **telling the card the window was
+small**, and the card correctly drawing a narrow column for it. The symptom
+reads as "the interface doesn't fill its frame"; the cause is one layer up.
+
+So an interface breaks out of the measure while prose keeps it: symmetric
+negative margins sized from `100cqi` against the column's own bound, clamped at
+zero so a narrow window reclaims nothing that is not there. Measured after:
+**900px, 69px of slack on each side, no horizontal scrollbar.**
+
+One asymmetry in it is deliberate. Equal margins centre the card on the *text
+block*, which sits one gutter right of the page's centre — measured at 97px of
+slack left against 51px right, which reads as a misaligned panel rather than as a
+margin. The start side therefore reclaims the gutter too: prose is indented by
+the gutter because the gutter holds its marginalia, and an interface has no
+marginalia.
+
+Two guards, because both halves are silent alone: `100cqi` in a page with no
+container silently falls back to the small viewport and computes a plausible
+wrong number, so the slot rule and `container-type: inline-size` are asserted
+against each other; and the column bound had been copied into five places, which
+was survivable while it only had to agree with itself and stopped being so the
+moment a breakout began subtracting it.
+
+## Live snapshot: an interface is a status panel, so it goes stale
+
+A card's `getChatMessages` answers from the snapshot its frame holds, and that
+snapshot used to arrive once, at `ready`. Upstream needs no equivalent because
+its `chat` array **is** the live one; ours crossed an origin, so liveness has to
+be pushed.
+
+Two different things break without it, and they are worth separating:
+
+- **Script frames.** MVU's generation-time chain reads the floor that just
+  arrived and writes a rewritten version back (`on_message_received.ts:54-56`).
+  Against a frozen snapshot it reads the *previous* floor and rewrites the wrong
+  text.
+- **Message frames.** An interface **is** a status panel — it draws the
+  variables — so a write from a later floor leaves it displaying a number that
+  was true a turn ago, while looking perfectly healthy. That is worse than a card
+  that visibly fails.
+
+**Two events, not one.** The obvious answer is `chat.updated`, and it alone
+misses the case the whole change exists for: a reply that just finished
+generating settles through `stream.end`, which carries its own view.
+`chat.updated` covers edits, swipes and a script's own writes. The rule is not
+the pair of names — it is *every event that assigns `view`*, and those two are
+currently what that means. Streaming deltas are deliberately excluded: they move
+`stream`, not `view`, and refreshing per token would put a host round trip
+between every pair of characters.
+
+Refreshes are **pushed into the running frame, not a rebuild**. A rebuild is what
+an edit or a swipe does, and it costs a full reparse of the block — 360 KiB on
+the sample card — plus whatever the panel had drawn. A snapshot is data; it does
+not need a new realm.
+
+The snapshot is re-read from the host rather than reconstructed from the event,
+so a refresh carries the same authority as the first one — variable layers and
+metadata move during generation too, and assembling a partial context here would
+be a second, quieter opinion about what a snapshot contains. One fetch is shared
+per event, **keyed on the event object's identity**: the same instance is handed
+to every listener, so identity already means "these calls are the same occasion"
+with nothing to keep in sync. Without that, a conversation showing eight
+interfaces makes eight identical round trips per event.
+
 ## The wall does not move
 
 A message frame is **another frame of the same card**, not a new trust domain: the
@@ -557,6 +629,73 @@ failures are distinguishable.
   versus explicit-does-not read/write inconsistency (`variables.ts:66` and `:68`
   against `:135`) is upstream behaviour, and a compatibility layer reproduces its
   source.
+- **A card in one of these frames has no storage at all.** Measured, not inferred:
+  in an opaque origin `localStorage` **throws** on access and `indexedDB.open`
+  throws too — the throwing variant, not the hang some references describe. This
+  is a real behavioural difference, because upstream's message iframes carry no
+  `sandbox` attribute and are therefore same-origin, so a card that remembers
+  anything between renders remembers it upstream and forgets it here.
+
+  The sample card's own settings pane is the concrete casualty: it writes API
+  configuration to `localStorage`, so under Iris that pane starts blank every
+  time. Ledger: **compatibility gap**, and one that cannot be closed by adding
+  `allow-same-origin` — that flag is the wall. Closing it properly means the
+  shell offering a storage channel over the existing bridge and cards opting in,
+  which is a separate piece of work, not an oversight in this one.
+- **Nothing here is a claim about startup cost.** The frame reports its own first
+  animation frame, and on the sample card that read `5293ms` with no long tasks —
+  but every one of those numbers was taken in an automation tab that was
+  **backgrounded**, and a hidden tab's `requestAnimationFrame` is throttled or
+  stopped outright. The figures are therefore an upper bound of unknown
+  tightness, and they are recorded here only so nobody re-derives them believing
+  them settled. A foreground measurement is owed before any of this is quoted.
+
+  The instrument that produced the surrounding confusion is worth naming, since
+  it will be reached for again: CDP's `Page.captureScreenshot` fails on a hidden
+  tab with *"the renderer may be frozen or unresponsive"*, which names one cause
+  for a symptom with two. The discriminator is two `requestAnimationFrame` turns
+  plus `document.hidden`, run in the same tab immediately after the failure.
+
+## When a document must not carry a fact by itself
+
+A recurring argument during this work was that "the documentation contradicts the
+code" — usually offered as evidence that upstream is confused. Sometimes it is.
+More often the document was right when written and the code moved, which is not
+a quirk of upstream's but a property of documents.
+
+The distinction that matters for this file: **some sentences here are decisions
+and some are measurements, and only the first kind is safe in prose.** A decision
+("an interface breaks out of the measure") stays true because it describes an
+intent; if the code stops matching it, the code is wrong. A measurement ("the
+frame sat at 477px in a 1038px window", "58 of 89 buttons are hidden", "the
+user's install has streaming render off") is true of a moment. Prose cannot
+notice when it stops being true, and a reader has no way to tell a fresh
+measurement from a stale one — they are typeset identically.
+
+So every measured premise this design leans on should be paired with something
+that fails on its own. The neighbouring host half has the cleanest example, and
+it is worth copying rather than admiring: `DEVIATIONS.md §3` records that Iris
+does not emit `VARIABLE_UPDATE_ENDED`, and that conclusion **rests entirely on a
+corpus fact** — all four listening cards ship their own MVU bundle, which emits
+it, so a second emitter would apply the interception twice. Rather than quote
+that count in the document and leave it to rot, it lives as an assertion in
+`tests/mvu-events.test.ts` that goes red if the corpus stops supporting it. The
+document explains the reasoning; the test holds the premise.
+
+Applied here, the honest reading of this file is:
+
+- The **ledger entries** (compatibility gap vs deliberate improvement) are
+  decisions and belong in prose.
+- The **counts** — 179 floors, 11 cards, 73 distinct rendered interfaces, 2.29 MB
+  of preset, 5 call sites all passing `'current'` — are measurements. Where one
+  of them decides behaviour, it is pinned by a test; where it is only context, it
+  is dated by the section it sits in and should be re-measured before being
+  quoted onward.
+- The **startup timings** are measurements taken through an instrument that was
+  later found to be misreporting, and are marked as such above rather than
+  quietly dropped. A retracted number left visible with its retraction is more
+  useful than a gap, because the next person will otherwise measure the same
+  thing and wonder why nobody wrote it down.
 
 ## Order of work
 
