@@ -1,7 +1,6 @@
-# Source stays LF in the repository regardless of the checkout platform, so a
-# Windows and a Linux contributor never produce whole-file diffs against each
-# other.
+# One line-ending convention, enforced at the boundary: files are LF in the
+# repository regardless of the OS that wrote them. 94 files had drifted to
+# CRLF over two days of sessions on Windows; the churn of normalizing grows
+# with every commit, so it was paid once, in a purely mechanical commit,
+# immediately after the OVERLORD acceptance went green.
 * text=auto eol=lf
-
-*.png binary
-*.woff2 binary
