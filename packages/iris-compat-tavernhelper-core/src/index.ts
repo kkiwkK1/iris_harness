@@ -27,3 +27,4 @@ export {
   type Subscription,
 } from './events.ts'
 export { parseRegexFromString } from './regex.ts'
+export { stringHash } from './hash.ts'

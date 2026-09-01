@@ -298,27 +298,15 @@ export function mulberry32(seed: number): () => number {
 }
 
 /**
- * ST's `getStringHash` (cyrb53), reproduced.
+ * Re-exported; the implementation moved to `@iris/compat-tavernhelper-core`.
  *
- * Only the shape of the guarantee matters — that editing an entry changes its
- * hash and therefore drops its timed windows — but reproducing the exact
- * function costs nothing and keeps the two implementations comparable when
- * debugging a book against ST side by side.
- * @param text - the string to hash.
- * @returns a 53-bit hash.
+ * An entry's identity for timed effects comes from this, and so do the macro
+ * tier's `{{pick}}` seeds and the script-button event names. One number, one
+ * implementation.
  */
-export function stringHash(text: string): number {
-  let h1 = 0xdeadbeef
-  let h2 = 0x41c6ce57
-  for (let i = 0; i < text.length; i++) {
-    const ch = text.charCodeAt(i)
-    h1 = Math.imul(h1 ^ ch, 2654435761)
-    h2 = Math.imul(h2 ^ ch, 1597334677)
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
-  return 4294967296 * (2097151 & h2) + (h1 >>> 0)
-}
+import { stringHash } from '@iris/compat-tavernhelper-core'
+
+export { stringHash }
 
 /**
  * Turn ST's percentage-of-context budget into an absolute token count.

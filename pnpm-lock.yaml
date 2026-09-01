@@ -260,7 +260,11 @@ importers:
         specifier: workspace:*
         version: link:../iris-compat-tavernhelper-core
 
-  packages/iris-macro: {}
+  packages/iris-macro:
+    dependencies:
+      '@iris/compat-tavernhelper-core':
+        specifier: workspace:*
+        version: link:../iris-compat-tavernhelper-core
 
   packages/iris-mvu:
     dependencies:

@@ -153,27 +153,16 @@ export interface MacroRandom {
 }
 
 /**
- * SillyTavern's `getStringHash` (cyrb53), reproduced bit for bit.
+ * Re-exported so this package's public surface is unchanged by the move.
  *
- * Kept identical on purpose: `{{pick}}` seeds off this, so a chat imported from
- * SillyTavern keeps the picks its log was written with. Any "better" hash would
- * silently reroll every pick in every imported chat.
- * @param value - the string to hash.
- * @param seed - optional salt.
- * @returns a non-negative integer below 2^53.
+ * The function lives in `@iris/compat-tavernhelper-core` because the lorebook
+ * engine, the macro tier and the script-button event names must all produce the
+ * **same number** — see that module for why two copies is the failure worth
+ * designing against.
  */
-export function stringHash(value: string, seed = 0): number {
-  let h1 = 0xdeadbeef ^ seed
-  let h2 = 0x41c6ce57 ^ seed
-  for (let index = 0; index < value.length; index += 1) {
-    const ch = value.charCodeAt(index)
-    h1 = Math.imul(h1 ^ ch, 2654435761)
-    h2 = Math.imul(h2 ^ ch, 1597334677)
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
-  return 4294967296 * (2097151 & h2) + (h1 >>> 0)
-}
+import { stringHash } from '@iris/compat-tavernhelper-core'
+
+export { stringHash }
 
 /**
  * A deterministic generator for a seed string.
