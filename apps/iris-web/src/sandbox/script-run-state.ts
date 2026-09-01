@@ -32,6 +32,24 @@ export type ScriptRunPhase =
   | 'running'
   /** The body finished evaluating. Not "the card finished working". */
   | 'ran'
+  /**
+   * Blocked on a sibling publishing a global.
+   *
+   * A phase of its own because it is the failure with no voice. A script that
+   * throws says so; one waiting for a provider that never arrives looks like one
+   * that is working — and with a card's scripts in one frame its siblings are
+   * visibly fine, so the card reads as healthy while one of them is stopped.
+   */
+  | 'waiting'
+  /**
+   * A wait ended without the global ever arriving.
+   *
+   * Upstream swallows the timeout and the script carries on, so this is not a
+   * crash — but it is not success either, and reporting it as `ran` would make a
+   * card whose provider never came indistinguishable from one whose provider
+   * did. The script is running with a dependency it never got.
+   */
+  | 'gave-up'
   /** The sandbox refused a member the card reached for. */
   | 'refused'
   /** The body threw. */
@@ -52,11 +70,14 @@ export interface ScriptRunState {
   member?: string
   /** The error text, for `threw` and `bootstrap-failed`. */
   detail?: string
+  /** What it is blocked on, for `waiting`. */
+  waitingFor?: string
 }
 
 /** Phases that mean the script is no longer going to change on its own. */
 const SETTLED: ReadonlySet<ScriptRunPhase> = new Set<ScriptRunPhase>([
   'ran',
+  'gave-up',
   'refused',
   'threw',
   'bootstrap-failed',
@@ -105,6 +126,12 @@ export function describeRun(state: ScriptRunState): string {
       // Deliberately not "finished". The body evaluated; a card that registered
       // listeners is still waiting to do its work.
       return 'loaded'
+    case 'waiting':
+      // Names what it is blocked on, because "waiting" alone is what
+      // `starting…` already was: a state you cannot act on.
+      return `waiting for ${state.waitingFor ?? 'another script'}`
+    case 'gave-up':
+      return `${state.waitingFor ?? 'a dependency'} never arrived — running without it`
     case 'refused':
       return `refused ${state.member ?? 'a member'} — the sandbox does not allow it`
     case 'threw':
@@ -136,6 +163,27 @@ export function summariseRuns(states: readonly ScriptRunState[]): string {
   if (failed > 0) {
     return `${failed} of ${total} failed to run. The chat is unaffected.`
   }
+
+  /*
+   * A blocked script is called out rather than counted as "still starting".
+   *
+   * With a card's scripts in one frame, the neighbours of a stuck script are
+   * visibly fine — so a heading that averaged them would report a healthy card
+   * while one of its scripts is stopped indefinitely. Sibling success must not
+   * paper over a hang.
+   */
+  const abandoned = states.filter(state => state.phase === 'gave-up')
+  if (abandoned.length > 0) {
+    const names = [...new Set(abandoned.map(state => state.waitingFor ?? 'a dependency'))]
+    return `${abandoned.length} of ${total} started without ${names.join(', ')}.`
+  }
+
+  const blocked = states.filter(state => state.phase === 'waiting')
+  if (blocked.length > 0) {
+    const names = [...new Set(blocked.map(state => state.waitingFor ?? 'another script'))]
+    return `${blocked.length} of ${total} are waiting for ${names.join(', ')}.`
+  }
+
   if (settled < total) {
     return `${settled} of ${total} loaded, ${total - settled} still starting.`
   }

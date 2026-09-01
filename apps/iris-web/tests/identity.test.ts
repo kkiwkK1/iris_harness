@@ -18,7 +18,7 @@ import test from 'node:test'
 import { EventBus } from '@iris/compat-tavernhelper-core'
 
 import { createFrameTavernHelper } from '../src/sandbox/tavern-helper.ts'
-import { MEMBER_KINDS, identityMembers } from '../src/sandbox/identity.ts'
+import { FRAME_MEMBERS, MEMBER_KINDS, identityMembers } from '../src/sandbox/identity.ts'
 
 /** The live surface, built with a host that answers nothing. */
 function surfaceNames(): string[] {
@@ -30,7 +30,9 @@ function surfaceNames(): string[] {
     triggerSlash: async () => '',
     events: new EventBus(),
   })
-  return Object.keys(api).sort()
+  // The frame contributes members of its own — they need its shared namespace
+  // and its channel — so the surface a card sees is the union of the two.
+  return [...Object.keys(api), ...FRAME_MEMBERS].sort()
 }
 
 test('every member of the card API is classified', () => {
@@ -104,9 +106,11 @@ test('the members needing a per-script binding are a stable, named set', () => {
     'getAllVariables',
     'getScriptId',
     'getVariables',
+    'initializeGlobal',
     'insertOrAssignVariables',
     'insertVariables',
     'replaceVariables',
     'updateVariablesWith',
+    'waitGlobalInitialized',
   ])
 })

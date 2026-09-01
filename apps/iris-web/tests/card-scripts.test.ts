@@ -49,13 +49,14 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
     body: async (_character, scriptId) => ({ ok: true, content: `/* ${scriptId} */` }),
     bootstrap: async () => '(function(){})()',
     start: input => {
-      started.push(input.script.id)
+      // One frame for the card's whole set now, so the harness records the set.
+      for (const script of input.scripts) started.push(script.id ?? '')
       return {
         // Models the DOM's own answer, so the controller's check is exercised
         // rather than skipped for want of the property.
-        element: { id: input.script.id, isConnected: false } as never,
+        element: { id: 'card-frame', isConnected: false } as never,
         emit: () => undefined,
-        dispose: () => disposed.push(input.script.id),
+        dispose: () => disposed.push('card-frame'),
       }
     },
     attach: card => {
@@ -120,21 +121,22 @@ test('one script failing to load does not stop the next', async () => {
   )
 })
 
-test('a frame that throws on creation does not stop the next either', async () => {
+test('a frame that cannot be created is reported against every script in it', async () => {
+  /*
+   * With one frame per card this is no longer one script's problem. It is
+   * reported against each of them because each is a line the reader is looking
+   * at, and a card showing three green scripts and one failure would be lying
+   * about the three.
+   */
   const bench = harness({
-    start: input => {
-      if (input.script.id === 'a') throw new Error('no iframe for you')
-      return {
-        element: { id: input.script.id } as never,
-        emit: () => undefined,
-        dispose: () => undefined,
-      }
+    start: () => {
+      throw new Error('no iframe for you')
     },
   })
   startCardScripts(bench.env, 'chat-1', 'card-1')
   await settle()
 
-  assert.equal(bench.failures.length, 1)
+  assert.deepEqual(bench.failures.map(state => state.scriptId), ['a', 'c'])
   assert.equal(bench.failures[0]?.phase, 'bootstrap-failed')
 })
 
@@ -165,7 +167,7 @@ test('disposing tears down every frame that did start', async () => {
   running.dispose()
   running.dispose()
 
-  assert.deepEqual(bench.disposed, ['a', 'c'])
+  assert.deepEqual(bench.disposed, ['card-frame'], 'one frame holds the card, so one teardown')
 })
 
 test('a card whose grants cannot be resolved reports against the card, not a script', async () => {
@@ -247,7 +249,7 @@ test('every started frame is put into the document', async () => {
   startCardScripts(bench.env, 'chat-1', 'card-1')
   await settle()
 
-  assert.deepEqual(bench.attached, bench.started, 'a frame that started but was never attached is inert')
+  assert.deepEqual(bench.attached, ['card-frame'], 'a frame that started but was never attached is inert')
 })
 
 test('a frame that never reports ready stops being "starting" and says so', async () => {
@@ -278,8 +280,12 @@ test('a frame that did report ready is never called silent', async () => {
   // Otherwise every working card would be reported as a failure eight seconds in.
   const bench = harness({
     start: input => {
-      input.onPhase({ phase: 'running' })
-      return { element: { id: input.script.id } as never, emit: () => undefined, dispose: () => undefined }
+      for (const script of input.scripts) input.onPhase(script.id, { phase: 'running' })
+      return {
+        element: { id: 'card-frame', isConnected: true } as never,
+        emit: () => undefined,
+        dispose: () => undefined,
+      }
     },
   })
   startCardScripts(bench.env, 'chat-1', 'card-1')
@@ -306,4 +312,44 @@ test('an attach that does nothing is caught, not trusted', async () => {
     ['a', 'c'],
   )
   assert.match(bench.failures[0]?.detail ?? '', /never put into the document/)
+})
+
+test('a blocked script is named in the summary, not averaged into "starting"', async () => {
+  /*
+   * The ruling this enforces: sibling success must not paper over a hang. With a
+   * card's scripts in one frame the neighbours of a stuck script are visibly
+   * fine, so a heading that folded a wait into "still starting" would report a
+   * healthy card while one of its scripts was stopped indefinitely.
+   */
+  const { summariseRuns } = await import('../src/sandbox/script-run-state.ts')
+
+  const summary = summariseRuns([
+    { scriptId: 'a', name: 'provider', phase: 'ran' },
+    { scriptId: 'b', name: 'consumer', phase: 'waiting', waitingFor: 'Mvu' },
+  ])
+
+  assert.match(summary, /waiting for Mvu/)
+  assert.doesNotMatch(summary, /still starting/)
+})
+
+test('a dependency that never arrived is not reported as success', async () => {
+  /*
+   * Upstream bounds the wait at five seconds and swallows the timeout, so the
+   * script continues — but it continues *without* what it asked for. Reporting
+   * that as `ran` would make a card whose provider never came look exactly like
+   * one whose provider did, which is the single thing a reader of this panel
+   * needs to tell apart.
+   */
+  const { describeRun, summariseRuns, isSettled } = await import(
+    '../src/sandbox/script-run-state.ts'
+  )
+
+  const state = { scriptId: 'b', name: 'consumer', phase: 'gave-up' as const, waitingFor: 'Mvu' }
+
+  assert.match(describeRun(state), /Mvu never arrived — running without it/)
+  assert.equal(isSettled('gave-up'), true, 'nothing further happens without a new run')
+  assert.match(
+    summariseRuns([{ scriptId: 'a', name: 'provider', phase: 'ran' }, state]),
+    /started without Mvu/,
+  )
 })

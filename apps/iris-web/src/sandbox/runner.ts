@@ -26,8 +26,19 @@ import { rewriteViewportUnits } from './viewport-units.ts'
 export interface RunnerHost {
   /** The bootstrap source, already built. */
   bootstrap: string
-  /** The card's script body. */
-  code: string
+  /**
+   * The card's scripts, in card order — all of them in one frame.
+   *
+   * One frame per card rather than per script, because that is the only place
+   * `waitGlobalInitialized` can work: a provider publishes a live interface and
+   * a consumer uses it, and a live object cannot cross an opaque origin. Sharing
+   * a realm is what makes the feature expressible at all.
+   *
+   * Each still evaluates as its own `<script type="module">`, so their top-level
+   * bindings stay separate; what they share is `window`, which is exactly the
+   * upstream arrangement minus the frame boundary.
+   */
+  scripts: readonly { id: string | undefined, code: string }[]
   /**
    * How to execute it.
    *
@@ -36,12 +47,6 @@ export interface RunnerHost {
    * differently for reasons their authors could not predict.
    */
   mode: 'classic' | 'module'
-  /**
-   * Which entry of `script.list` the body came from, for the card's
-   * `getScriptId()`. `undefined` for a body with no entry — a file from disk, or
-   * Iris's own probe.
-   */
-  scriptId: string | undefined
   /**
    * Preset libraries to load before the card, in order.
    *
@@ -78,7 +83,7 @@ export interface RunnerHost {
    */
   onCall: (method: string, params: unknown) => Promise<unknown>
   /** The card threw, or was refused a member. */
-  onError: (message: string, member?: string) => void
+  onError: (message: string, member: string | undefined, scriptId: string | undefined) => void
   /**
    * The frame's policy refused a host.
    *
@@ -96,7 +101,19 @@ export interface RunnerHost {
    * answers exactly one question — did the body execute — which is the question a
    * first run asks.
    */
-  onRan?: () => void
+  onRan?: (scriptId: string | undefined) => void
+  /**
+   * A script blocked on, or released by, a sibling's global.
+   *
+   * Reported rather than left to a timeout, because a hang is the failure that
+   * does not announce itself — and with a card's scripts sharing a frame, the
+   * ones that are fine make the stuck one look fine too.
+   */
+  onWaiting?: (
+    scriptId: string | undefined,
+    global: string,
+    state: 'waiting' | 'arrived' | 'gave-up',
+  ) => void
   /** The frame's bootstrap installed and is waiting for a body. */
   onReady?: () => void
   /**
@@ -199,15 +216,35 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         // Rewritten on the way in, which is where upstream does it too: a card
         // sized in `vh` is measuring its own frame, and a frame sized to its
         // content would collapse `100vh` to nothing.
-        post({
-          iris: token,
-          type: 'run',
-          code: rewriteViewportUnits(host.code),
-          mode: host.mode,
-          scriptId: host.scriptId,
-        })
+        /*
+         * One `run` per script, in card order, into the same frame.
+         *
+         * Sent together rather than awaited one at a time: a module's evaluation
+         * is asynchronous and a consumer is expected to wait for its provider
+         * through `waitGlobalInitialized`, so serialising them here would make
+         * the shell enforce an order the cards already negotiate — and would
+         * deadlock any card whose provider is not listed first.
+         */
+        for (const script of host.scripts) {
+          post({
+            iris: token,
+            type: 'run',
+            code: rewriteViewportUnits(script.code),
+            mode: host.mode,
+            scriptId: script.id,
+          })
+        }
         return
       }
+      case 'waiting':
+        host.onWaiting?.(message.scriptId, message.global, 'waiting')
+        return
+      case 'waited':
+        // Three outcomes, not two. A wait that timed out is not a wait that
+        // succeeded, and upstream swallowing the timeout is exactly why the
+        // difference has to be reported here.
+        host.onWaiting?.(message.scriptId, message.global, message.arrived ? 'arrived' : 'gave-up')
+        return
       case 'height':
         frame.style.height = `${message.pixels}px`
         host.onHeight?.(message.pixels)
@@ -246,7 +283,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
           })
         return
       case 'error':
-        host.onError(message.message, message.member)
+        host.onError(message.message, message.member, message.scriptId)
         return
       case 'blocked':
         host.onBlocked(message.host, message.directive)
@@ -267,7 +304,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
           })
         return
       case 'ran':
-        host.onRan?.()
+        host.onRan?.(message.scriptId)
         return
       case 'globals':
         host.onGlobals?.(message.published, message.refused)

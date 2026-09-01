@@ -141,10 +141,47 @@ decision for a missing element and fail somewhere later with no trace of why.
 
 ### The container
 
-One element per running script, owned by the shell, positioned where a card's
-UI belongs. Writes inside it are the card's business. It is removed when the
+One element per **card**, owned by the shell, positioned where a card's UI
+belongs. It was one per script until the scripts of a card had to see each
+other's globals. Writes inside it are the card's business. It is removed when the
 script is disposed, which is what makes the whole thing reversible — the same
 property Cordis gives every other plugin in Iris.
+
+### `parent` as a card's own shared namespace
+
+A card's scripts occupy **one frame**, and `window.parent` is the namespace they
+publish to each other through. That is not a convenience: upstream's script
+frames are same-origin siblings, so a provider hands a live interface across by
+reference — `_.set(window.parent, 'Mvu', mvu)`, which is what the real provider
+does rather than calling `initializeGlobal`. A live object cannot cross an opaque
+origin, so the only way to keep that contract is for the scripts that need to see
+each other to share a realm.
+
+Reads and writes are **asymmetric**, and the asymmetry is the safety property:
+
+| operation | behaviour |
+| --- | --- |
+| write a name the frame does not bridge | stored, scoped to this card |
+| read a name that was written | returns it |
+| read a name nobody wrote | **refuses by name, as before** |
+| `has` / `in` / `hasOwnProperty` | answers, never throws |
+| write or delete a bridged member | refused |
+
+A name nobody published keeps making noise. Turning every unknown parent member
+into `undefined` would trade the refusal discipline — bought over eleven sandbox
+runs — for the convenience of a shared slot, and a card reaching for a host API
+Iris does not have would fail somewhere unrelated instead of being told.
+
+`hasOwnProperty` is listed deliberately: lodash's `_.has` is built on it and does
+**not** go through a proxy's `has` trap, so a namespace that answered `in` but not
+`hasOwnProperty` would leave `waitGlobalInitialized`'s poll returning false
+forever with both halves apparently correct.
+
+**This is intra-card sharing and nothing else.** Two cards are two frames with
+two bags. The outward wall — opaque origin, CSP, the document grant — is
+unchanged, and sixteen members that depend on *which script* is asking are bound
+per script inside the shared realm so that co-location does not silently merge
+their variable partitions or their event teardown.
 
 ### Escalation
 

@@ -27,6 +27,16 @@
  * @module iris-web/sandbox/identity
  */
 
+/**
+ * Members the frame provides directly, outside the Tavern Helper surface.
+ *
+ * They need the frame's own shared namespace and its channel to the shell, so
+ * they cannot be built by `createFrameTavernHelper` — but they are card-facing
+ * all the same, and the classification below has to cover them or the guard
+ * would call them strays.
+ */
+export const FRAME_MEMBERS: readonly string[] = ['initializeGlobal', 'waitGlobalInitialized']
+
 /** Whether a member's answer depends on which script asked. */
 export type MemberKind =
   /** Must be bound per script; a shared implementation answers for the wrong one. */
@@ -53,6 +63,15 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   deleteVariable: 'identity',
   updateVariablesWith: 'identity',
 
+  /*
+   * Identity only in that they report *who* is waiting. The namespace they read
+   * and write is the card's, shared on purpose — that is the feature — but a
+   * wait that did not name the waiting script would leave a hung script
+   * indistinguishable from a healthy one whose siblings are fine.
+   */
+  initializeGlobal: 'identity',
+  waitGlobalInitialized: 'identity',
+
   // ── identity: registration and teardown belong to the registrant ─────
   eventOn: 'identity',
   eventOnce: 'identity',
@@ -67,6 +86,13 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   /** Emission is card-wide on purpose: it is how scripts reach each other. */
   eventEmit: 'shared',
   getLastMessageId: 'shared',
+  /**
+   * Shared because it refuses identically for every script.
+   *
+   * Not an identity member despite naming a message: in a *script* frame
+   * upstream throws, so there is no per-script answer to get wrong. When message
+   * frames exist, the answer belongs to the frame, not to the script.
+   */
   getCurrentMessageId: 'shared',
   getChatMessages: 'shared',
   getSwipes: 'shared',

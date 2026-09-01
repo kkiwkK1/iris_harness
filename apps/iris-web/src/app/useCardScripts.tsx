@@ -99,9 +99,15 @@ export function CardScriptFrames(): ReactElement {
           runCard(
             {
               bootstrap: input.bootstrap,
-              code: stripCodeFence(input.code),
+              // One frame for the card's whole set. Each script still evaluates
+              // as its own module, so their top-level bindings stay separate;
+              // what they share is `window`, which is what lets a provider hand
+              // a live interface to its siblings.
+              scripts: input.scripts.map(script => ({
+                id: script.id,
+                code: stripCodeFence(script.code),
+              })),
               mode: modeFor('card-script'),
-              scriptId: input.script.id,
               libraries: librariesFor('card-script', window.location.origin),
               documentGranted: input.documentGranted,
               // Not in the contract yet, and not defaulted to `true` on the way
@@ -118,12 +124,40 @@ export function CardScriptFrames(): ReactElement {
               // to know what they reached for.
               onBlocked: (blocked, directive) =>
                 actionsOf(store).notify('info', `blocked ${blocked} (${directive})`),
-              onReady: () => input.onPhase({ phase: 'running' }),
-              onRan: () => input.onPhase({ phase: 'ran' }),
-              onBootstrapError: message =>
-                input.onPhase({ phase: 'bootstrap-failed', detail: message }),
-              onError: (message, member) =>
+              /*
+               * Readiness belongs to the frame, so it is reported for every
+               * script in it — they all started when it did.
+               */
+              onReady: () => {
+                for (const script of input.scripts) input.onPhase(script.id, { phase: 'running' })
+              },
+              onRan: scriptId => input.onPhase(scriptId, { phase: 'ran' }),
+              /*
+               * A wait shows as its own phase and names what it is blocked on.
+               * When it ends the script goes back to `ran` — the body did finish
+               * evaluating; it was its continuation that was parked.
+               */
+              onWaiting: (scriptId, global, state) =>
                 input.onPhase(
+                  scriptId,
+                  state === 'waiting'
+                    ? { phase: 'waiting', waitingFor: global }
+                    : state === 'arrived'
+                      ? { phase: 'ran' }
+                      : // Not `ran`. The script continues — upstream swallows the
+                        // timeout — but it is running without the dependency it
+                        // asked for, and calling that success hides the one thing
+                        // a reader needs to know.
+                        { phase: 'gave-up', waitingFor: global },
+                ),
+              onBootstrapError: message => {
+                for (const script of input.scripts) {
+                  input.onPhase(script.id, { phase: 'bootstrap-failed', detail: message })
+                }
+              },
+              onError: (message, member, scriptId) =>
+                input.onPhase(
+                  scriptId,
                   member === undefined
                     ? { phase: 'threw', detail: message }
                     : { phase: 'refused', member },

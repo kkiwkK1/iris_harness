@@ -125,10 +125,27 @@ export type FromFrame =
    * code assuming an answer.
    */
   | { iris: string, type: 'globals', published: string[], refused: string[] }
-  /** The script body evaluated without throwing. */
-  | { iris: string, type: 'ran' }
+  /**
+   * A body finished evaluating.
+   *
+   * Carries the script's id because one frame now runs a card's whole set: with
+   * several bodies in flight, an outcome that did not say whose it was would be
+   * attributed to whichever script the shell happened to be tracking.
+   */
+  | { iris: string, type: 'ran', scriptId: string | undefined }
   /** The script threw, or refused a member. `member` is set for a policy refusal. */
-  | { iris: string, type: 'error', message: string, member?: string }
+  | { iris: string, type: 'error', message: string, member?: string, scriptId: string | undefined }
+  /**
+   * A script is blocked waiting for a sibling to publish a global.
+   *
+   * Reported because hanging is the failure with no voice. A script that throws
+   * says so; one waiting for a provider that never arrives looks exactly like
+   * one that is working — and under co-location its siblings are visibly fine,
+   * so the card reads as healthy while one of its scripts is stopped forever.
+   */
+  | { iris: string, type: 'waiting', scriptId: string | undefined, global: string }
+  /** The wait ended — the global arrived, or the deadline passed. */
+  | { iris: string, type: 'waited', scriptId: string | undefined, global: string, arrived: boolean }
   /** The card asked for a remote dependency. */
   | { iris: string, type: 'fetch', id: string, url: string }
   /**
@@ -240,6 +257,19 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
  * @param data - the raw message payload.
  * @returns the message, or undefined if it is not one of ours.
  */
+/**
+ * A string field that may legitimately be absent.
+ *
+ * Absent is a real answer here — a body dragged in from disk has no entry in the
+ * host's list — so this narrows without inventing one, and anything that is
+ * present but not a string is dropped rather than stringified downstream.
+ * @param value - the raw field.
+ * @returns the string, or undefined.
+ */
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
 export function parseFromFrame(token: string, data: unknown): FromFrame | undefined {
   if (typeof data !== 'object' || data === null) return undefined
   const message = data as Record<string, unknown>
@@ -259,7 +289,7 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
     case 'ready':
       return { iris: token, type: 'ready' }
     case 'ran':
-      return { iris: token, type: 'ran' }
+      return { iris: token, type: 'ran', scriptId: stringOrUndefined(message['scriptId']) }
     case 'globals': {
       const published = message['published']
       const refused = message['refused']
@@ -296,7 +326,18 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
         type: 'error',
         message: message['message'].slice(0, 2000),
         ...(typeof member === 'string' ? { member: member.slice(0, 200) } : {}),
+        scriptId: stringOrUndefined(message['scriptId']),
       }
+    }
+    case 'waiting':
+    case 'waited': {
+      const global = message['global']
+      if (typeof global !== 'string' || global.length === 0) return undefined
+      const scriptId = stringOrUndefined(message['scriptId'])
+      const name = global.slice(0, 100)
+      return message['type'] === 'waiting'
+        ? { iris: token, type: 'waiting', scriptId, global: name }
+        : { iris: token, type: 'waited', scriptId, global: name, arrived: message['arrived'] === true }
     }
     case 'call': {
       const id = message['id']

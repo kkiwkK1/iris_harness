@@ -308,13 +308,26 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     getAllVariables: (option?: VariableOption) => readVariables('getAllVariables', option),
     getLastMessageId: (): number => chatOf('getLastMessageId').length - 1,
     /**
-     * Which message this frame belongs to.
+     * Which message this frame belongs to — refused in a script frame.
      *
-     * The last one, until cards render inside a message rather than in the
-     * probe. Upstream answers with the frame's own floor, so this needs
-     * revisiting when that pipeline lands.
+     * Upstream is explicit: *"只能对楼层消息 iframe 使用 … 如果不在楼层消息
+     * iframe 内使用, 将会抛出错误"*. A script frame is not a message frame, so
+     * throwing here is not a limitation — it is the contract.
+     *
+     * This used to answer "the last message", which looked like a harmless
+     * placeholder and was actually an invention **more permissive than
+     * upstream**: a card relying on it could not survive in real SillyTavern, so
+     * the leniency has no beneficiary and quietly hides a card that is broken
+     * everywhere else. The real answer belongs to a message frame and arrives
+     * with the message-render pipeline, where it lands on the right frame type
+     * without anyone migrating.
      */
-    getCurrentMessageId: (): number => chatOf('getCurrentMessageId').length - 1,
+    getCurrentMessageId: (): number => {
+      throw new UnsupportedApiError(
+        'getCurrentMessageId',
+        'Upstream throws outside a message iframe; the real answer arrives with the message-render pipeline.',
+      )
+    },
     getScriptId: (): string | undefined => host.scriptId(),
     getChatMessages: (
       range: string | number,

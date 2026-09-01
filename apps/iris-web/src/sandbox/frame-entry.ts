@@ -40,6 +40,8 @@ function announceReady(run: string, post: (message: FromFrame) => void): void {
       post({
         iris: run,
         type: 'error',
+      // No script owns this: it happened outside any body.
+      scriptId: undefined,
         message: `a preset library failed to load: ${element.getAttribute('src') ?? 'unknown'}`,
       })
     })
@@ -255,6 +257,8 @@ try {
     post({
       iris: run,
       type: 'error',
+      // No script owns this: it happened outside any body.
+      scriptId: undefined,
       message:
         `libraries a card may expect are not present in this frame: ${missing.join(', ')}` +
         ' — upstream seeds these from its host page, which a cross-origin frame cannot do',

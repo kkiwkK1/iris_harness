@@ -13,6 +13,14 @@ function realm(): {
   globals: () => Record<string, unknown>
   /** Names the frame tried to define on its own window. */
   publishedNames: () => string[]
+  /**
+   * One published value.
+   *
+   * The per-script registry is reached through the window rather than handed in
+   * as a shadowed parameter — module code has no parameters — so a harness that
+   * only recorded names could not exercise the mechanism co-location rests on.
+   */
+  publishedValue: (name: string) => unknown
   /** What the next evaluation does with its globals. */
   run: (body: (globals: Record<string, unknown>) => void) => void
   /** Make the next module evaluation return this promise. */
@@ -23,6 +31,10 @@ function realm(): {
   const listeners: ((message: ToFrame) => void)[] = []
   let handed: Record<string, unknown> = {}
   let published: string[] = []
+  // The published *values* too: the per-script registry is reached through the
+  // window rather than handed in as a shadowed parameter, so a test that only
+  // saw names could not exercise it.
+  let publishedValues: Record<string, unknown> = {}
   let body: (globals: Record<string, unknown>) => void = () => undefined
   let asyncBody: (() => Promise<void>) | undefined
   const container = { id: 'card-root', querySelector: () => null, querySelectorAll: () => [] }
@@ -53,6 +65,7 @@ function realm(): {
     },
     publishGlobals: entries => {
       published = entries.map(([name]) => name)
+      publishedValues = Object.fromEntries(entries)
     },
   }
 
@@ -62,6 +75,7 @@ function realm(): {
     send: message => listeners.forEach(listener => listener(message)),
     globals: () => handed,
     publishedNames: () => published,
+    publishedValue: (name: string) => publishedValues[name],
     run: next => {
       body = next
     },
@@ -169,7 +183,10 @@ test('the card keeps its own realm through the window shadow', () => {
     assert.equal((win['setTimeout'] as () => string)(), 'bound')
   })
 
-  assert.deepEqual(scope.posted.at(-1), { iris: 'tok', type: 'ran' })
+  // `scriptId` rides on the outcome now: one frame runs a card's whole set, so
+  // an unattributed `ran` would be credited to whichever script the shell was
+  // tracking rather than the one that finished.
+  assert.deepEqual(scope.posted.at(-1), { iris: 'tok', type: 'ran', scriptId: undefined })
 })
 
 test('parent.document is the virtual document, and body is the card container', () => {
@@ -493,6 +510,10 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'tavern_events',
     'mvu_events',
     'TavernHelper',
+    // The per-script registry, published with the rest so a failure to define
+    // it is reported like anything else — rather than leaving co-located scripts
+    // to fail on a preamble whose lookup does not exist.
+    '__iris_script__',
   ])
 })
 
@@ -745,4 +766,193 @@ test('a card emitting on its own bus does not put the event on the wire', () => 
     false,
     'the frame must not post its own emissions outward',
   )
+})
+
+test('a card can publish to its own scripts through parent, and take it back', async () => {
+  /*
+   * The mechanism a real provider uses. MVU writes
+   * `_.set(window.parent, 'Mvu', mvu)` and removes it with `_.unset` on
+   * teardown; upstream's own `initializeGlobal` writes to the parent window too.
+   * There is no version of this feature that does not involve writing to parent.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let readBack: unknown
+  let presentAfterDelete = true
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    parent['Mvu'] = { getMvuData: () => 'data' }
+    readBack = (parent['Mvu'] as { getMvuData: () => string }).getMvuData()
+    delete parent['Mvu']
+    presentAfterDelete = 'Mvu' in parent
+  })
+
+  assert.equal(readBack, 'data', 'a published interface must be usable, not just stored')
+  assert.equal(presentAfterDelete, false, 'a provider must be able to retract its interface')
+})
+
+test('hasOwnProperty sees a published name, because that is what the poll uses', () => {
+  /*
+   * `waitGlobalInitialized` polls with lodash `_.has`, which is built on
+   * `hasOwnProperty` — and `hasOwnProperty` does not go through the proxy's
+   * `has` trap. Without `getOwnPropertyDescriptor` the poll answers false
+   * forever while `in` answers true, and the feature fails with both halves
+   * looking correct.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let owned = false
+  let listed: string[] = []
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    parent['Mvu'] = 1
+    owned = Object.prototype.hasOwnProperty.call(parent, 'Mvu')
+    listed = Object.keys(parent)
+  })
+
+  assert.equal(owned, true, 'the trap lodash actually reaches')
+  assert.deepEqual(listed, ['Mvu'], 'and only what this card published')
+})
+
+test('a name nobody published still refuses by name', () => {
+  /*
+   * The asymmetry that keeps the shared slot from costing the refusal
+   * discipline. A card reaching for a host API Iris does not have —
+   * `parent.toastr` — must hear about it here, not receive `undefined` and fail
+   * somewhere unrelated.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let caught: unknown
+  let probed: boolean | undefined
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    // `in` must answer rather than throw: that is how the poll waits.
+    probed = 'toastr' in parent
+    try {
+      void parent['toastr']
+    } catch (error: unknown) {
+      caught = error
+    }
+  })
+
+  assert.equal(probed, false, 'probing must be answerable without throwing')
+  assert.ok(caught instanceof UnsupportedApiError)
+  assert.equal(caught.member, 'parent.toastr')
+})
+
+test('a bridged member cannot be overwritten by a card', () => {
+  // Publishing is for names the frame does not own. Letting a card assign
+  // `parent.document` would let it redefine the frame's view of the host.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let caught: unknown
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    try {
+      parent['document'] = { evil: true }
+    } catch (error: unknown) {
+      caught = error
+    }
+  })
+
+  assert.ok(caught instanceof UnsupportedApiError)
+  assert.match(caught.message, /not writable/)
+})
+
+test('two co-located scripts get their own identity, from one frame', () => {
+  /*
+   * The property the whole cohabitation design exists to preserve. Upstream
+   * gives each script its own frame, so "who is asking" is answered by the frame
+   * itself; sharing a realm means a single `getScriptId` would answer for
+   * whichever script ran last, and sixteen members depend on that answer.
+   *
+   * This exercises the registry the preamble reads from, which is the mechanism
+   * the module-scope bindings are built out of.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  const seen: unknown[] = []
+  evaluate(scope, globals => {
+    void globals
+    const registry = scope.publishedValue('__iris_script__') as (id: string) => Record<string, unknown>
+    seen.push((registry('first')['getScriptId'] as () => unknown)())
+    seen.push((registry('second')['getScriptId'] as () => unknown)())
+  })
+
+  assert.deepEqual(seen, ['first', 'second'], 'one frame must still answer per script')
+})
+
+test('a co-located script tears down only its own listeners', async () => {
+  /*
+   * Measured upstream: the listener registry is keyed by iframe name and
+   * `eventClearAll` deletes only that frame's entry, fired on `pagehide`. One
+   * frame per card would turn that into a card-wide wipe, and the symptom — an
+   * event that stops arriving — is indistinguishable from one never emitted.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  const heard: string[] = []
+  let emit: ((event: string) => Promise<void>) | undefined
+  evaluate(scope, globals => {
+    const registry = scope.publishedValue('__iris_script__') as (id: string) => Record<string, unknown>
+    const one = registry('one')
+    const two = registry('two')
+    ;(one['eventOn'] as (e: string, l: () => void) => void)('tick', () => heard.push('one'))
+    ;(two['eventOn'] as (e: string, l: () => void) => void)('tick', () => heard.push('two'))
+    ;(one['eventClearAll'] as () => void)()
+    emit = globals['eventEmit'] as (event: string) => Promise<void>
+  })
+
+  await emit?.('tick')
+
+  assert.deepEqual(heard, ['two'], "a sibling's listener was removed by a teardown that was not its own")
+})
+
+test('a consumer waiting on a provider resolves when the provider publishes', async () => {
+  /*
+   * The whole point of the feature, in one frame. OVERLORD's shape: one script
+   * imports a bundle that publishes `Mvu`, three others wait for it before doing
+   * anything.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let waited: Promise<void> | undefined
+  let published = false
+  evaluate(scope, () => {
+    const registry = scope.publishedValue('__iris_script__') as (id: string) => Record<string, unknown>
+    const consumer = registry('consumer')
+    const provider = registry('provider')
+    waited = (consumer['waitGlobalInitialized'] as (n: string) => Promise<void>)('Mvu').then(() => {
+      published = true
+    })
+    ;(provider['initializeGlobal'] as (n: string, v: unknown) => void)('Mvu', { ok: true })
+  })
+
+  await waited
+  assert.equal(published, true, 'the consumer never saw its provider')
+  assert.deepEqual(
+    scope.posted.filter(m => m.type === 'waiting').map(m => (m as { global: string }).global),
+    ['Mvu'],
+    'the wait is reported, because hanging is the failure with no voice',
+  )
+  const done = scope.posted.filter(m => m.type === 'waited')[0] as { arrived: boolean, scriptId: string }
+  assert.equal(done.arrived, true)
+  assert.equal(done.scriptId, 'consumer', 'the report names who was waiting')
+})
+
+test('a global already published resolves without reporting a wait', async () => {
+  // A consumer that runs after its provider must not be reported as blocked;
+  // otherwise the ordinary case looks like the failure case.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let settled: Promise<void> | undefined
+  evaluate(scope, () => {
+    const registry = scope.publishedValue('__iris_script__') as (id: string) => Record<string, unknown>
+    ;(registry('provider')['initializeGlobal'] as (n: string, v: unknown) => void)('Mvu', 1)
+    settled = (registry('consumer')['waitGlobalInitialized'] as (n: string) => Promise<void>)('Mvu')
+  })
+
+  await settled
+  assert.deepEqual(scope.posted.filter(m => m.type === 'waiting'), [])
 })

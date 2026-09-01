@@ -117,23 +117,47 @@ has to say what happened during those five seconds.
 
 So the per-script criterion does not relax:
 
-- A hung script shows **what it is waiting for and for how long** —
-  `waiting for Mvu, 3s` — not a generic "starting…".
+- A blocked script shows **what it is waiting for** — `waiting for Mvu` — not a
+  generic "starting…". Elapsed time was in the first draft of this design and is
+  not built: the wait is bounded at five seconds, so a duration can only ever
+  count up to a number the deadline already implies. What the duration was really
+  asking for turned out to be the next line.
+- **A wait that timed out is not a wait that succeeded.** Upstream swallows the
+  timeout and the script carries on, so reporting `ran` would make a card whose
+  provider never arrived indistinguishable from one whose provider did. It gets
+  its own phase: `Mvu never arrived — running without it`.
 - A card is not "running" because its other scripts are. Sibling success must not
   paper over a stuck script; under co-location that is far easier than it was
   with one frame each, because the neighbours are visibly fine.
 - The `silent` timeout stays anchored at *ready*, which is now per frame and so
   per card. Hang detection is per script and separate.
 
-## Order of work
+## Order of work — all five done
 
-1. `identity.ts` + its guard — **done**, and it is what makes the rest decidable.
-2. The virtual parent's asymmetric read/write, with the refusal preserved for
-   names nobody wrote.
-3. One frame per card, one module tag per script, with per-script preambles for
-   the sixteen identity members.
-4. Per-script hang reporting, naming the awaited global.
-5. `SANDBOX.md`'s virtual-parent section, in the same change as the wiring.
+1. `identity.ts` + its guard. It is what made the rest decidable, and it found
+   that sixteen members are identity-bearing rather than the one this design was
+   first sketched around.
+2. The virtual parent's asymmetric read/write, refusal preserved for names nobody
+   wrote, plus `getOwnPropertyDescriptor` because that is the trap `_.has`
+   actually reaches.
+3. One frame per card, one module tag per script, per-script preambles, and
+   `scriptId` on the `ran`/`error` messages — with several bodies in one frame an
+   unattributed outcome lands on whichever script the shell was tracking.
+4. `initializeGlobal` / `waitGlobalInitialized` over the shared namespace, with
+   upstream's five-second deadline copied and the wait *reported*, which upstream
+   does not do.
+5. `SANDBOX.md`'s container and `parent` sections, in the same change as the
+   wiring.
+
+Two things went wrong while building it, both worth keeping:
+
+- The guard caught the coordination pair as unclassified, because they live in
+  the frame rather than on the helper surface. Fixed by giving "the surface" one
+  definition both the frame and the test read.
+- Classifying that pair as identity-bearing then made `viewFor`'s loop overwrite
+  both with `undefined`, since the loop copies from a surface that does not have
+  them. Classified correctly, then clobbered by the code acting on the
+  classification — and only a rendezvous test caught it.
 
 ## What this does not do
 

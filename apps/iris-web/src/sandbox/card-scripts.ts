@@ -51,15 +51,20 @@ export interface CardScriptsEnv {
   ) => Promise<{ ok: true, content: string } | { ok: false, error: { code: string, message: string } }>
   /** The bootstrap source, fetched once for the whole set. */
   bootstrap: () => Promise<string>
-  /** Start one frame. Injected so the sequencing can be tested without a DOM. */
+  /**
+   * Start the card's frame. Injected so the sequencing is testable without a DOM.
+   *
+   * One frame for the whole set, not one per script: a provider publishes a live
+   * interface for its siblings to use, and a live object cannot cross an opaque
+   * origin. Sharing a realm is what makes `waitGlobalInitialized` expressible.
+   */
   start: (input: {
-    script: ScriptView
-    code: string
+    scripts: readonly { id: string | undefined, code: string }[]
     context: ScriptContext
-    /** Fetched once for the set; every frame in it is built from this text. */
     bootstrap: string
     documentGranted: boolean
-    onPhase: (state: Omit<ScriptRunState, 'scriptId' | 'name'>) => void
+    /** Reports against a script by id, since one frame now speaks for several. */
+    onPhase: (scriptId: string | undefined, state: Omit<ScriptRunState, 'scriptId' | 'name'>) => void
   }) => RunningCard
   /**
    * Put a started frame into the document.
@@ -195,6 +200,8 @@ export function startCardScripts(
     // Card order, not enabled-order or list order: a card's scripts are written
     // expecting to load in the order the card lists them.
     const runnable = resolved.scripts.filter(script => script.enabled)
+    const loaded: { script: ScriptView, code: string }[] = []
+
     for (const script of runnable) {
       if (disposed) return
       move(script, { phase: 'dispatched' })
@@ -211,15 +218,31 @@ export function startCardScripts(
         })
         continue
       }
+      loaded.push({ script, code: source.content })
+    }
 
+    if (disposed) return
+    // A card whose every script failed to load has nothing to run, and starting
+    // an empty frame would report a readiness that means nothing.
+    if (loaded.length === 0) return
+
+    const byId = new Map(loaded.map(entry => [entry.script.id, entry.script]))
+
+    {
       try {
         const card = env.start({
-          script,
-          code: source.content,
+          scripts: loaded.map(entry => ({ id: entry.script.id, code: entry.code })),
           context,
           bootstrap,
           documentGranted: resolved.documentGranted,
-          onPhase: next => move(script, next),
+          onPhase: (scriptId, next) => {
+            const script = scriptId === undefined ? undefined : byId.get(scriptId)
+            // An outcome naming a script the set does not contain is dropped
+            // rather than attributed to a neighbour: a wrong attribution is
+            // worse than a missing one, because it reads as a working script
+            // failing.
+            if (script !== undefined) move(script, next)
+          },
         })
         cards.push(card)
         env.attach(card)
@@ -236,20 +259,21 @@ export function startCardScripts(
          */
         const connected = (card.element as { isConnected?: unknown }).isConnected
         if (connected === false) {
-          move(script, {
-            phase: 'bootstrap-failed',
-            detail: 'the frame was never put into the document, so it will never load',
-          })
-          continue
+          // One frame now, so this is the whole card's failure rather than one
+          // script's — reported against each, because each of them is the thing
+          // the reader is looking at in the panel.
+          for (const entry of loaded) {
+            move(entry.script, {
+              phase: 'bootstrap-failed',
+              detail: 'the frame was never put into the document, so it will never load',
+            })
+          }
+          return
         }
-        watchForReady(script)
+        for (const entry of loaded) watchForReady(entry.script)
       } catch (error: unknown) {
-        // `continue`, not `return`: one script that cannot be started must not
-        // decide the fate of the ones after it.
-        move(script, {
-          phase: 'bootstrap-failed',
-          detail: error instanceof Error ? error.message : String(error),
-        })
+        const detail = error instanceof Error ? error.message : String(error)
+        for (const entry of loaded) move(entry.script, { phase: 'bootstrap-failed', detail })
       }
     }
   })()

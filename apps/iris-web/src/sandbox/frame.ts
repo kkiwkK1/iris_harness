@@ -22,6 +22,9 @@ import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virt
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isCardMethod } from './card-api.ts'
 import { createEventSource, createFrameTavernHelper } from './tavern-helper.ts'
+import { identityMembers } from './identity.ts'
+import { scopedEvents } from './scoped-events.ts'
+import { SCRIPT_REGISTRY, withPreamble } from './preamble.ts'
 import { EventBus, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
 import type { ScriptContext } from '@iris/protocol'
 
@@ -234,6 +237,35 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   })
 
   /** `parent` and `top`, as a card sees them. */
+  /**
+   * Names this card's scripts have published to each other.
+   *
+   * One bag per frame, and after cohabitation a frame is one card — so this is
+   * the card-scoped shared namespace that upstream gets for free by having all
+   * its script frames share a same-origin parent. `window.parent` is where a
+   * provider publishes: MVU writes `_.set(window.parent, 'Mvu', mvu)` and
+   * removes it again with `_.unset` on teardown.
+   *
+   * Reads and writes are deliberately asymmetric. A name that has been written
+   * reads back; a name nobody wrote still refuses by name, exactly as before.
+   * Turning every unknown parent member into `undefined` would trade the
+   * refusal discipline — the thing eleven sandbox runs bought — for the
+   * convenience of a shared slot, and a card reaching for a host API we do not
+   * have would fail somewhere else entirely.
+   */
+  const published = new Map<string, unknown>()
+
+  /** Members the frame bridges itself, which a card may never overwrite. */
+  const isBridged = (property: string): boolean =>
+    property === 'document' ||
+    property === 'innerWidth' ||
+    property === 'innerHeight' ||
+    property === 'SillyTavern' ||
+    property === 'extension_settings' ||
+    property === 'TavernHelper' ||
+    property === 'eventSource' ||
+    property === 'event_types'
+
   const virtualParent = new Proxy(Object.create(null) as object, {
     get(_target, property): unknown {
       if (typeof property === 'symbol') return undefined
@@ -256,6 +288,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (property === 'eventSource') return eventSource
       if (property === 'event_types') return TAVERN_EVENTS
 
+      // Published by one of this card's scripts. Checked after the bridged
+      // members so a card cannot shadow `document` by writing to it.
+      if (published.has(property)) return published.get(property)
+
       const planned = unbridged.get(property)
       if (planned !== undefined) {
         // A different fact from "forbidden", and the card author debugging
@@ -267,11 +303,36 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       }
       throw new UnsupportedApiError(`parent.${property}`)
     },
-    set(_target, property): boolean {
-      throw new UnsupportedApiError(`parent.${String(property)}`, 'The sandbox is not writable.')
+    set(_target, property, value): boolean {
+      if (typeof property === 'symbol') {
+        throw new UnsupportedApiError('parent[symbol]', 'The sandbox is not writable.')
+      }
+      // The bridged members stay read-only. A card overwriting `document` or
+      // `SillyTavern` would be redefining the frame's own view of the host.
+      if (isBridged(property)) {
+        throw new UnsupportedApiError(`parent.${property}`, 'The sandbox is not writable.')
+      }
+      published.set(property, value)
+      return true
+    },
+    /**
+     * Removing a published name.
+     *
+     * MVU does this on teardown (`_.unset(window.parent, 'Mvu')`), and a
+     * provider that cannot retract its interface would leave consumers waiting
+     * on something already gone.
+     */
+    deleteProperty(_target, property): boolean {
+      if (typeof property === 'symbol' || isBridged(property)) {
+        throw new UnsupportedApiError(`parent.${String(property)}`, 'The sandbox is not writable.')
+      }
+      published.delete(property)
+      return true
     },
     has(_target, property): boolean {
+      if (typeof property === 'symbol') return false
       return (
+        published.has(property) ||
         property === 'document' ||
         property === 'innerWidth' ||
         property === 'innerHeight' ||
@@ -280,6 +341,24 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         property === 'event_types' ||
         ((property === 'SillyTavern' || property === 'extension_settings') && context !== undefined)
       )
+    },
+    /**
+     * The trap `_.has` actually reaches.
+     *
+     * `hasOwnProperty` does **not** go through `has` — it goes through here — and
+     * lodash's `_.has` is built on `hasOwnProperty`. Since
+     * `waitGlobalInitialized` polls with `_.has(window, 'Mvu')`, omitting this
+     * trap would leave the poll answering false forever while `in` said true:
+     * the feature would fail with both halves apparently correct.
+     */
+    getOwnPropertyDescriptor(_target, property): PropertyDescriptor | undefined {
+      if (typeof property !== 'string') return undefined
+      if (!published.has(property)) return undefined
+      return { value: published.get(property), writable: true, enumerable: true, configurable: true }
+    },
+    /** So `Object.keys(parent)` sees what this card published, and nothing else. */
+    ownKeys(): ArrayLike<string | symbol> {
+      return [...published.keys()]
     },
   })
 
@@ -401,6 +480,22 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   const events = new EventBus()
   const eventSource = createEventSource(events)
 
+  /** Upstream's `async-wait-until` default, copied rather than chosen. */
+  const WAIT_DEADLINE_MS = 5_000
+
+  /**
+   * A global's name must be a non-empty string.
+   * @param member - the caller, for the refusal.
+   * @param name - whatever was passed.
+   * @returns the name.
+   */
+  const requireGlobalName = (member: string, name: unknown): string => {
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new UnsupportedApiError(`${member}(${String(name)})`, 'A global needs a name.')
+    }
+    return name
+  }
+
   const tavernHelper = createFrameTavernHelper({
     context: () => context,
     scriptId: () => scriptId,
@@ -415,6 +510,102 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (context !== undefined) context = { ...context, variables }
     },
   })
+
+  /**
+   * One script's bound view of the identity-bearing members.
+   *
+   * Built per script rather than shared, because when a card's scripts occupy
+   * one frame a single copy would answer for whichever ran last: the wrong
+   * variable partition (which reads as empty) and a teardown reaching a
+   * sibling's listeners (which reads as an event that never fired).
+   *
+   * The shared members are not rebuilt — they have the same answer whoever asks,
+   * and `identity.ts` is where that judgment is recorded and guarded.
+   * @param forScript - the script this view belongs to.
+   * @returns the members that must not be shared.
+   */
+  /**
+   * Upstream's cross-script coordination pair, over the card's shared namespace.
+   *
+   * `initializeGlobal` publishes and announces; `waitGlobalInitialized` resolves
+   * once the name is there. Both are per-script only in that they report which
+   * script is waiting — the namespace itself is the card's.
+   *
+   * The publisher that matters does **not** call `initializeGlobal`: MVU writes
+   * `_.set(window.parent, 'Mvu', mvu)` and emits the event itself. So this pair
+   * is provided for cards that use it, while the write path stays the thing that
+   * actually has to work.
+   *
+   * The deadline is upstream's: `async-wait-until` gives up after five seconds
+   * and the caller swallows it, so a consumer whose provider never arrives
+   * carries on rather than hanging forever. What upstream does not do is *say*
+   * that it waited, and that silence is the whole reason the frame reports it.
+   * @param forScript - who is waiting, for the report.
+   * @returns the two members.
+   */
+  const coordination = (forScript: string | undefined): Record<string, unknown> => ({
+    initializeGlobal: (name: unknown, value: unknown): void => {
+      const global = requireGlobalName('initializeGlobal', name)
+      published.set(global, value)
+      void events.eventEmit(`global_${global}_initialized`)
+    },
+    waitGlobalInitialized: async (name: unknown): Promise<void> => {
+      const global = requireGlobalName('waitGlobalInitialized', name)
+      if (published.has(global)) return
+      env.post({ iris: env.token, type: 'waiting', scriptId: forScript, global })
+      const arrived = await new Promise<boolean>(resolve => {
+        const done = (value: boolean): void => {
+          clearTimeout(deadline)
+          events.eventRemoveListener(`global_${global}_initialized`, announced)
+          resolve(value)
+        }
+        const announced = (): void => done(true)
+        const deadline = setTimeout(() => done(false), WAIT_DEADLINE_MS)
+        events.eventOn(`global_${global}_initialized`, announced)
+        // Re-checked after subscribing: a provider that published between the
+        // first check and the subscription would otherwise never be noticed.
+        if (published.has(global)) done(true)
+      })
+      env.post({ iris: env.token, type: 'waited', scriptId: forScript, global, arrived })
+    },
+  })
+
+  const viewFor = (forScript: string | undefined): Record<string, unknown> => {
+    const bound = createFrameTavernHelper({
+      context: () => context,
+      scriptId: () => forScript,
+      call: callAction,
+      triggerSlash,
+      events,
+      adoptVariables: variables => {
+        if (context !== undefined) context = { ...context, variables }
+      },
+    })
+    // Events come from the scoped wrapper rather than the bound surface: the
+    // surface talks to the shared bus directly, which is right for emission and
+    // wrong for teardown.
+    const scoped = scopedEvents(events, (member, event) => {
+      if (typeof event !== 'string' || event.length === 0) {
+        throw new UnsupportedApiError(
+          `${member}(${String(event)})`,
+          'An event name must be a non-empty string. A missing table entry reads as undefined here.',
+        )
+      }
+      return event
+    }) as unknown as Record<string, unknown>
+
+    const view: Record<string, unknown> = { ...coordination(forScript) }
+    for (const name of identityMembers()) {
+      // Only from a surface that actually has it. The coordination pair is
+      // identity-bearing *and* built here rather than by the helper, so copying
+      // blindly would overwrite both with `undefined` — which is how they first
+      // shipped: classified correctly, then clobbered by the loop that acts on
+      // the classification.
+      if (Object.hasOwn(scoped, name)) view[name] = scoped[name]
+      else if (Object.hasOwn(bound, name)) view[name] = bound[name]
+    }
+    return view
+  }
 
   const core = [
     'window',
@@ -503,6 +694,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
 
     const values = resolveValues()
 
+    const failingScript = message.scriptId
     const failed = (error: unknown): void => {
       // A refusal and a bug in the card both land here, and the shell shows them
       // differently: `member` is what tells them apart.
@@ -512,6 +704,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         type: 'error',
         message: error instanceof Error ? error.message : String(error),
         ...(member === undefined ? {} : { member }),
+        // Whose failure this was. One frame runs a card's whole set, so an
+        // unattributed outcome would land on whichever script the shell was
+        // tracking rather than the one that failed.
+        scriptId: failingScript,
       })
     }
 
@@ -531,6 +727,19 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
           // redefined is a browser question the frame answers empirically.
           ([name]) => name !== 'window' && name !== 'self' && name !== 'globalThis',
         ),
+        /*
+         * The registry each co-located script reads its own bindings from.
+         *
+         * Published here rather than at install for the reason the comment above
+         * records: everything between receiving `run` and finishing the body has
+         * to be able to report that it failed, and a publish that threw outside
+         * this block once silenced a frame for its whole life.
+         *
+         * Not concealed. Within one card the scripts share a realm and can
+         * already reach each other, so hiding it would buy no isolation the realm
+         * has not already given away.
+         */
+        [SCRIPT_REGISTRY, (id: unknown) => viewFor(typeof id === 'string' ? id : undefined)],
       ])
 
       // Which of upstream's seeded globals this frame does NOT have. Reported
@@ -539,17 +748,27 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       // symptom rather than the gap.
       env.reportMissingGlobals?.(EXPECTED_GLOBALS)
 
-      const running = env.evaluate(message.code, message.mode, shadowed, values)
+      /*
+       * The preamble goes on in module mode only.
+       *
+       * A classic body is handed its bindings as function parameters, which
+       * already gives it a per-run scope; a module has no parameters, so its
+       * per-script bindings have to arrive as source. One line, so a card
+       * author's reported line numbers are off by a constant they can be told.
+       */
+      const source =
+        message.mode === 'module' ? withPreamble(message.scriptId, message.code) : message.code
+      const running = env.evaluate(source, message.mode, shadowed, values)
       if (running instanceof Promise) {
         // A module loads asynchronously, so `ran` cannot be posted on the next
         // line. The distinction matters for what `ran` means: the body finished
         // evaluating, not the card finished working.
         void running.then(
-          () => env.post({ iris: env.token, type: 'ran' }),
+          () => env.post({ iris: env.token, type: 'ran', scriptId: failingScript }),
           (error: unknown) => failed(error),
         )
       } else {
-        env.post({ iris: env.token, type: 'ran' })
+        env.post({ iris: env.token, type: 'ran', scriptId: failingScript })
       }
     } catch (error: unknown) {
       failed(error)

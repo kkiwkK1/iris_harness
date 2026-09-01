@@ -213,9 +213,10 @@ export function SandboxProbe(): ReactElement | null {
       const card = runCard(
         {
           bootstrap,
-          code: stripCodeFence(code),
+          // The probe runs one body at a time on purpose: it exists to observe a
+          // single script closely, not to reproduce a card's whole set.
+          scripts: [{ id: scriptId, code: stripCodeFence(code) }],
           mode: modeFor(kind),
-          scriptId,
           libraries: librariesFor(kind, window.location.origin),
           documentGranted: granted,
           networkGranted,
