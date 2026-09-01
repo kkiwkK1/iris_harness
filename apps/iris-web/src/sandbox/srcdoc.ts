@@ -172,19 +172,37 @@ export function buildSrcdoc(
      */
     `<script>${safe}</script>`,
     /*
-     * `crossorigin="anonymous"` is here for the error reporting, not the load.
+     * **No `crossorigin` attribute**, and the reason is a mistake worth keeping.
      *
-     * Without it the browser masks any exception thrown by a cross-origin script
-     * to the literal string `Script error.` with no file, line, or stack — and a
-     * card's real work happens in callbacks these libraries schedule, so that is
-     * precisely where the useful name lives. A whole verification round produced
-     * exactly one word of evidence because of this: the frame's listener reached
-     * the scene and the browser had already redacted the testimony.
+     * It was added here to unmask error text: without it the browser redacts any
+     * exception from a cross-origin script to the literal `Script error.`, and a
+     * whole verification round had produced exactly that one word. The comment
+     * that came with it justified the change as free — "every allowed origin
+     * serves `Access-Control-Allow-Origin: *`, so the fetch behaves identically
+     * and only the error detail changes."
      *
-     * Safe to request: every allowed origin serves `Access-Control-Allow-Origin:
-     * *`, so the fetch behaves identically and only the error detail changes.
+     * That sentence was assumed, never measured, and it was false for the one
+     * origin that mattered. `crossorigin="anonymous"` turns the load into a CORS
+     * fetch, which **requires** the response to carry `Access-Control-Allow-Origin`
+     * — and a frame here is an opaque origin, so even Iris's own host is
+     * cross-origin to it. The host serves `/sandbox/preset.js` as
+     * `200 text/javascript` with no CORS header at all. The browser therefore
+     * blocked the preset outright: not one library global reached the frame, no
+     * error was raised, and the next round reported every library missing at once
+     * — including four that had been present for a dozen runs.
+     *
+     * So the attribute cost a round to buy error detail it was never going to
+     * deliver. The replacement is better than what it was reaching for: the
+     * preset now sets a marker as its final statement, and the frame reports
+     * first-hand whether the script executed (`preset-globals.ts`,
+     * `library-state.ts`). That answers by name instead of hoping an exception
+     * surfaces, which is what the attribute was a workaround for.
+     *
+     * If a genuinely third-party library tag ever returns here, it needs this
+     * attribute *and* an origin that actually sends the header — verified, not
+     * assumed.
      */
-    ...libraries.map(url => `<script src="${attribute(url)}" crossorigin="anonymous" data-iris-lib></script>`),
+    ...libraries.map(url => `<script src="${attribute(url)}" data-iris-lib></script>`),
     '</body></html>',
   ].join('')
 }

@@ -102,3 +102,19 @@ export const EXPECTED_GLOBALS: readonly string[] = [
   'Vue',
   'VueRouter',
 ]
+
+/**
+ * The name the preset sets once it has finished running.
+ *
+ * Set as the bundle's **final** statement, so its presence proves the whole body
+ * evaluated rather than merely that the file arrived. That is the distinction
+ * this exists for: "the script did not execute" and "the script ran and this
+ * library is not in it" are different findings with different next steps, and
+ * from a list of missing names alone they are indistinguishable.
+ *
+ * They were confused exactly once, expensively. A `crossorigin` attribute made
+ * the browser block the preset outright, and the frame reported nine missing
+ * libraries — one line that read as nine independent gaps and was in fact one
+ * blocked request.
+ */
+export const PRESET_MARKER = '__iris_preset_loaded__'

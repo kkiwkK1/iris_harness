@@ -20,6 +20,8 @@ import { remoteImports } from './script-source.ts'
 import { describeAttempts } from './import-attempts.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
+import { PRESET_MARKER } from './preset-globals.ts'
+import { describeLibraryState } from './library-state.ts'
 
 /**
  * Tell the shell the frame is usable — but not before its libraries are.
@@ -425,15 +427,24 @@ try {
   reportMissingGlobals: expected => {
     const host = window as unknown as Record<string, unknown>
     const missing = expected.filter(name => host[name] === undefined)
-    if (missing.length === 0) return
+
+    /*
+     * The tag is read back from the document rather than reconstructed, so the
+     * URL in the report is the one the browser was actually given. A rebuilt
+     * guess would stay plausible while pointing at the wrong place, which on a
+     * "go and check this request" instruction is worse than no URL at all.
+     */
+    const tag = document.querySelector('script[data-iris-lib]')
+    const url = tag?.getAttribute('src') ?? 'the preset script'
+
+    const message = describeLibraryState(host[PRESET_MARKER] === true, missing, url)
+    if (message === undefined) return
     post({
       iris: run,
       type: 'error',
       // No script owns this: it happened outside any body.
       scriptId: undefined,
-      message:
-        `libraries a card may expect are not present in this frame: ${missing.join(', ')}` +
-        ' — upstream seeds these from its host page, which a cross-origin frame cannot do',
+      message,
     })
   },
 

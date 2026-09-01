@@ -21,6 +21,8 @@
 
 import jquery from 'jquery'
 import * as vue from 'vue'
+
+import { PRESET_MARKER } from './preset-globals.ts'
 import * as lodash from 'lodash-es'
 import * as YAML from 'yaml'
 import { z } from 'zod'
@@ -126,3 +128,18 @@ host['__VUE_PROD_HYDRATION_MISMATCH_DETAILS__'] = false
  * body is hoisted above every statement in this file and would otherwise look
  * for them before they exist.
  */
+
+/*
+ * Last statement in the file, and that position is the whole point.
+ *
+ * A frame can see which globals are absent, but not *why*, and the two causes
+ * need opposite responses: a library this bundle does not carry is a gap to
+ * fill, while a bundle that never ran is a request to go and look at. Reading
+ * one from the other is guesswork — nine missing names could be nine gaps or one
+ * blocked script, and the frame once reported the second as the first.
+ *
+ * Setting this at the end makes the answer first-hand. Present means every
+ * assignment above it completed; absent means the script was blocked, failed to
+ * parse, or threw partway, and the frame says so instead of listing consequences.
+ */
+host[PRESET_MARKER] = true

@@ -117,6 +117,20 @@ if (typeof vuePin !== 'string' || /[\^~*]|x/.test(vuePin)) {
 if (typeof win.$ !== 'function') broken.push('$ (absent)')
 else if (win.$ !== win.jQuery) broken.push('$ and jQuery are different objects')
 
+/*
+ * The end-of-file marker, which is what the frame checks first-hand.
+ *
+ * Pinned at both ends deliberately. The frame reads it to tell "the preset never
+ * ran" from "the preset does not carry this library" — two findings that look
+ * identical as a list of missing names, and were confused once at the cost of a
+ * verification round. If the marker were dropped from the bundle, the frame
+ * would silently fall back to reporting every absence as a gap, which is the
+ * exact ambiguity it was added to remove, and nothing else would notice.
+ */
+if (win.__iris_preset_loaded__ !== true) {
+  broken.push('__iris_preset_loaded__ (absent — the bundle did not run to its last statement)')
+}
+
 if (broken.length > 0) {
   console.error(`preset check failed: ${broken.join(', ')}`)
   console.error('  the bundle loaded but does not provide what a card is told it has')

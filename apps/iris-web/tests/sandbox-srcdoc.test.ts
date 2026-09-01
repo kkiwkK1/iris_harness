@@ -192,3 +192,38 @@ test('a network grant does not quietly widen script origins', () => {
   const granted = /script-src ([^;]*)/.exec(framePolicy(true, SELF))?.[1]
   assert.equal(granted, ungranted)
 })
+
+test('a library tag does not request CORS, because the host does not answer it', () => {
+  /*
+   * The regression this pins cost a full verification round.
+   *
+   * `crossorigin="anonymous"` was added to these tags to unmask error text, on
+   * the stated assumption that "every allowed origin serves
+   * Access-Control-Allow-Origin: *". That was never measured and was false for
+   * the one origin that mattered: Iris's own host answers `/sandbox/preset.js`
+   * with `200 text/javascript` and no CORS header.
+   *
+   * The attribute turns the load into a CORS fetch, and a frame here is an
+   * opaque origin, so even our own host is cross-origin to it. The browser
+   * blocked the preset outright — no globals, no error — and the next round
+   * reported nine missing libraries, four of which had worked for a dozen runs.
+   *
+   * Nothing tested the attribute in either direction, which is how it went in
+   * unnoticed. If a real third-party tag ever needs it again, it needs a
+   * verified `Access-Control-Allow-Origin` from that origin first, and this test
+   * is where that decision gets recorded.
+   */
+  const doc = buildSrcdoc('tok', '', {
+    networkGranted: false,
+    libraries: [`${SELF}/sandbox/preset.js`],
+    selfOrigin: SELF,
+  })
+
+  assert.ok(doc.includes('/sandbox/preset.js'), 'the library tag should still be emitted')
+  assert.ok(
+    !doc.includes('crossorigin'),
+    'a crossorigin tag makes the browser demand a header this host does not send, and the' +
+      ' script is then blocked with no error at all',
+  )
+})
+
