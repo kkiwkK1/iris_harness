@@ -90,6 +90,22 @@ export function SandboxProbe(): ReactElement | null {
   // checking, not the plumbing that will eventually carry the flag.
   const [networkGranted, setNetworkGranted] = useState(false)
 
+  /*
+   * The grant does not follow the user to another card.
+   *
+   * It is panel state, so without this it would stay checked while the card
+   * underneath changed, and the next card's script would reach the network on a
+   * permission the user gave to a different one. That is the same shape as a
+   * deleted card's document grant being inherited by its namesake: a permission
+   * must not outlive the thing it was granted to, and here the thing is the card.
+   *
+   * Dev-only, and still worth doing — a harness that quietly widens a policy is
+   * the last place a policy should be observed from.
+   */
+  useEffect(() => {
+    setNetworkGranted(false)
+  }, [characterId])
+
   // Only what would actually run: the card's switch and the user's, combined.
   const runnable = scripts.filter(script => script.enabled)
 
@@ -330,7 +346,7 @@ export function SandboxProbe(): ReactElement | null {
           onChange={event => setNetworkGranted(event.target.checked)}
         />
         <span className="iris-probe__source-name">
-          Grant this run the network (widens images, fetch and styles to https)
+          Grant this card the network (widens images, fetch and styles to https)
         </span>
       </label>
 

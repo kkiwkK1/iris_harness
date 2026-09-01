@@ -404,3 +404,65 @@ test('an allowed card action reaches its wire method with the chat attached', as
   assert.deepEqual(seen, [{ method: 'script.saveMetadata', params: { chatId: 'c1', metadata: { a: 1 } } }])
   dispose()
 })
+
+test('a deleted card does not bequeath its document grant to the next card of that name', async () => {
+  /*
+   * The host mints character ids with `uniqueId(toId(name), existing)` against
+   * the cards that currently exist, so deleting "Aria" frees `aria` and the next
+   * card called Aria is handed the same id. `loadScripts` returns early when its
+   * cache already names that id — so the new card would be shown the deleted
+   * one's scripts, and its `documentGranted`.
+   *
+   * That is a grant the user gave to a different card. The host forgets it on
+   * delete; this test is the other half, because a cache that answers without
+   * asking would hand it straight back.
+   */
+  // The host's view: one card, then a different card that reuses its id.
+  let grantedByHost = true
+  let scriptOnDisk = 'old-card-script'
+  const client: IrisClient = {
+    connected: true,
+    onConnectionChange: () => () => undefined,
+    subscribe: () => () => undefined,
+    async call(method) {
+      if (method === 'script.list') {
+        return {
+          scripts: [{ id: scriptOnDisk, name: scriptOnDisk }],
+          documentGranted: grantedByHost,
+        } as never
+      }
+      if (method === 'character.delete') {
+        // What the host's `forget` does: the freed id carries no grant. The next
+        // card to claim `aria` is a different card, with its own script.
+        grantedByHost = false
+        scriptOnDisk = 'new-card-script'
+        return {} as never
+      }
+      if (method === 'character.list') return { characters: [] } as never
+      if (method === 'chat.list') return { chats: [] } as never
+      if (method === 'settings.get') return { settings: { provider: 'p', model: 'm' } } as never
+      return {} as never
+    },
+  }
+
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+
+  await actions.loadScripts('aria')
+  assert.equal(store.getState().documentGranted, true, 'the first card really was granted')
+
+  await actions.deleteCharacter('aria')
+  await actions.loadScripts('aria')
+
+  assert.equal(
+    store.getState().documentGranted,
+    false,
+    'a new card inherited a grant the user never gave it',
+  )
+  assert.deepEqual(
+    store.getState().scripts.map(row => row.id),
+    ['new-card-script'],
+    'the panel must show this card, not the one that used to hold the id',
+  )
+  dispose()
+})

@@ -12,6 +12,22 @@
  * is the user's, and nothing a card can write may create, request, or survive
  * the revocation of one. See `SANDBOX.md`.
  *
+ * **Deleting a card is the one moment a character id changes owner**, and the
+ * line to hold there is: *content re-binds by name, a permission does not.*
+ *
+ * Ids are minted from the card's name against the cards that exist
+ * (`library.ts`), so deleting "Aria" frees `aria` and the next card imported
+ * under that name takes it. For **content** that is correct and deliberate —
+ * SillyTavern stores chats under `chats/<character name>/` for exactly this
+ * reason, and re-importing a card to carry on playing is a normal thing to do,
+ * so the old conversations reattaching is the behaviour a user wants. `forget`
+ * therefore does not touch chats.
+ *
+ * For a **permission** it is not correct at any strength. The user granted it to
+ * a card that no longer exists; a different card inheriting it is a grant nobody
+ * gave. So the policy is dropped on delete, and any future per-character store
+ * has to answer which of the two it is before it is written.
+ *
  * @module @iris/app-service/scripts
  */
 

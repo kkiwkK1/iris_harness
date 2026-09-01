@@ -159,6 +159,17 @@ card. Requirements:
   request is a prompt the card authored, and a card that can put text in front
   of the user can argue for its own privileges.
 - The grant is revocable, and revoking it takes effect on next run.
+- **A grant dies with its card, and id reuse does not inherit it.** Character
+  ids are minted from names against the cards currently present, so deleting
+  "Aria" frees `aria` for the next card imported under that name. Content
+  rebinds across that reuse — chats belong to the name, as upstream models it —
+  but permission never does: the user granted a card that no longer exists, and
+  the thing that would carry the grant across is the host's own id reuse, not
+  anything the card wrote. Deletion is the one moment a characterId changes
+  owners; every per-character store must answer "content or permission?" before
+  it is written. (Found live, both halves: the host kept the policy record, and
+  the browser's cache separately kept answering for the deleted card without
+  asking — two correct halves that did not make a correct whole.)
 
 Default-deny is what makes the default safe; the grant exists so that "Iris
 cannot run this card" is never the final answer.

@@ -375,7 +375,27 @@ export function createIrisStore(
         await guard(async () => {
           await client.call('character.delete', { characterId })
           const { characters } = await client.call('character.list', {})
-          set({ characters })
+          /*
+           * Drop the cached script list if it belonged to the card just deleted.
+           *
+           * Deletion is the one moment a character id can change owner. The host
+           * mints ids with `uniqueId(toId(name), existing)` against the cards that
+           * currently exist, so deleting "Aria" frees `aria` and the next card of
+           * that name is handed the same id. `loadScripts` returns early when
+           * `scriptsFor` already matches — so without this, opening the *new*
+           * Aria would skip the round trip and show the old one's scripts and,
+           * worse, its `documentGranted`.
+           *
+           * That would also defeat the host's own fix: it now forgets a deleted
+           * card's grant, and this cache would answer `true` without ever asking.
+           * A grant the user gave one card must not be inherited by another that
+           * merely reuses its name.
+           */
+          const stale = get().scriptsFor === characterId
+          set({
+            characters,
+            ...(stale ? { scripts: [], scriptsFor: undefined, documentGranted: false } : {}),
+          })
         })
       },
 

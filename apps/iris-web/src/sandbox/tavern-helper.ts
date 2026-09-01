@@ -226,8 +226,10 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * Worth knowing before building on this scope: **the id travels with the
      * card, the values do not.** Upstream keeps a script's `data` on the card
      * (`data.extensions.tavern_helper.scripts[].data`) while enabled-state lives
-     * in `extension_settings`, keyed by character name. Across the local corpus —
-     * 19 cards, 14 of them with scripts, 47 scripts — 8 carry a non-empty `data`,
+     * in `extension_settings`, keyed by character name — and all 47 script ids in
+     * the local corpus appear zero times in `settings.json` and zero times across
+     * 31 chat files. Across that corpus — 19 cards, 14 of them with scripts,
+     * 47 scripts — 8 carry a non-empty `data`,
      * and every one of those is a switch or an annotation (`{statusRule}`,
      * `{isEnabled}`, a build timestamp). Nothing in the corpus grows with play,
      * and MVU never writes this scope at all: its settings go to
