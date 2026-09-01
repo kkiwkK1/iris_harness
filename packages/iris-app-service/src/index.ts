@@ -148,6 +148,20 @@ export interface Config {
   /** Pathname prefix the sandbox artifacts are served at. @default '/sandbox' */
   sandboxPath?: string
   /**
+   * Trim the variable tables of old turns, the way MVU's auto-cleanup does.
+   *
+   * Off by default because **it deletes state and nothing restores it**. What it
+   * buys is a growth curve: without it a long chat's stored variables rise with
+   * its length, which the corpus measures at roughly 201 KiB per retained
+   * snapshot; with it they rise with length over the snapshot interval.
+   * @default false
+   */
+  pruneVariables?: boolean
+  /** Keep every table on a turn that is a multiple of this. @default 50 */
+  pruneSnapshotInterval?: number
+  /** Never trim the newest this many turns. @default 20 */
+  pruneKeepRecent?: number
+  /**
    * Run the cards' EJS prompt templates (the ST-Prompt-Template extension).
    *
    * Off by default, and the default is the honest one: evaluating a template is
@@ -184,6 +198,9 @@ export const Config: z<Config> = z.object({
   webDistIndex: z.string(),
   sandboxPath: z.string().default('/sandbox'),
   templates: z.boolean().default(false),
+  pruneVariables: z.boolean().default(false),
+  pruneSnapshotInterval: z.natural().default(50),
+  pruneKeepRecent: z.natural().default(20),
   templateDeadlineMs: z.natural().default(2000),
 })
 

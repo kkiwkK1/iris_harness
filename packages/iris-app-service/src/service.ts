@@ -37,6 +37,7 @@ import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
+import type { PruneOptions } from './prune.ts'
 import { runScripts } from './regex.ts'
 import { evaluatePrompt, promptHasTemplate } from './templates.ts'
 import { applyOps, buildSnapshot } from './template.ts'
@@ -124,6 +125,15 @@ export interface AppServiceOptions {
    */
   scriptVariables?: ScriptVariableStore
   /**
+   * Trimming old turns' variable tables, off unless this is present.
+   *
+   * Presence is the switch, and the default is off for a stronger reason than
+   * the template evaluator's: **this deletes user data and nothing restores
+   * it.** A feature that removes a conversation's history has to be opted into
+   * by a decision, never by a silence.
+   */
+  pruneVariables?: PruneOptions
+  /**
    * EJS prompt templates, off unless this is present.
    *
    * Presence is the switch rather than a boolean, because there is no useful
@@ -149,7 +159,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'connections' | 'templates' | 'scriptVariables'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
@@ -157,6 +167,7 @@ export class IrisAppService {
       connections?: ConnectionStore
       templates?: TemplateOptions
       scriptVariables?: ScriptVariableStore
+      pruneVariables?: PruneOptions
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -184,6 +195,7 @@ export class IrisAppService {
       ...options.connections === undefined ? {} : { connections: options.connections },
       ...options.templates === undefined ? {} : { templates: options.templates },
       ...options.scriptVariables === undefined ? {} : { scriptVariables: options.scriptVariables },
+      ...options.pruneVariables === undefined ? {} : { pruneVariables: options.pruneVariables },
     }
   }
 
@@ -686,6 +698,14 @@ export class IrisAppService {
       this.#storeRewritten(entry, entry.scripts, text)
       entry.touch()
       entry.finish()
+      // After the turn is complete, so a prune can never race the assembly that
+      // is still reading these tables. Reported rather than silent: this removes
+      // state that cannot be recovered, and a user learning about it from a
+      // shrinking file would learn too late.
+      const prune = this.#options.pruneVariables
+      if (prune !== undefined) {
+        entry.prune(prune, message => { this.#report(new Error(`variables: ${message}`)) })
+      }
       await this.#options.chats.save(entry)
       this.#options.broadcast({ type: 'stream.end', chatId: entry.chatId, turn, view: entry.toView() })
       await this.#announceChats()

@@ -36,6 +36,7 @@ import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore
 import { scriptIdOf } from './script-variables.ts'
 
 import { busy } from './errors.ts'
+import { applyPrune, applyPruned, DEFAULT_PRUNE, planPrune, prunedKeysOf, type PruneOptions } from './prune.ts'
 import { scriptsOf, substituteFor } from './regex.ts'
 import { toChatView, type Names, type PendingTurn } from './views.ts'
 
@@ -738,10 +739,67 @@ export class ChatEntry {
     if (candidate === undefined) return {}
     for (const event of this.session.events) {
       if (event.type === 'iris/variables' && event.data.candidateSeq === candidate.seq) {
-        return event.data.variables as Variables
+        // Through the prune record: a floor whose table was trimmed must report
+        // what survived, not what was written. A pruned floor and one that never
+        // wrote anything are the same thing to a reader, and upstream answers
+        // both with `{}` — see `prune.ts` for why nothing is restored.
+        return applyPruned(
+          event.data.variables as Variables,
+          prunedKeysOf(this.session).get(candidate.seq),
+        ) as Variables
       }
     }
     return {}
+  }
+
+  /**
+   * Trim the variable tables of turns old enough to have stopped mattering.
+   *
+   * The rule and the reasoning live in `prune.ts`. What belongs here is the one
+   * sentence a caller needs: **this deletes state and nothing restores it.** The
+   * snapshots kept on the interval are the only points a long conversation can
+   * be reasoned back to.
+   *
+   * Nothing is rewritten — a prune is an appended record, so the log still says
+   * exactly what happened and can explain, later, why a given floor reads empty.
+   * @param options - the interval and the protection window.
+   * @param onReport - told what was decided, per pruned turn.
+   * @returns how many turns were pruned.
+   */
+  prune(options: PruneOptions = DEFAULT_PRUNE, onReport?: (message: string) => void): number {
+    const removed = prunedKeysOf(this.session)
+    const layers: { turn: number, candidateSeq: number, variables: Variables }[] = []
+    const written = new Map<number, Variables>()
+    for (const event of this.session.events) {
+      if (event.type === 'iris/variables') written.set(event.data.candidateSeq, event.data.variables as Variables)
+    }
+
+    const turns = lineTurns(this.session)
+    let newest = -1
+    for (const turn of turns) if (turn !== undefined) newest = Math.max(newest, turn)
+
+    for (const turn of new Set(turns.filter((value): value is number => value !== undefined))) {
+      for (const candidate of listCandidates(this.session, turn)) {
+        const table = written.get(candidate.seq)
+        if (table === undefined) continue
+        // Already-pruned layers are excluded rather than re-planned: replanning
+        // them would append a second record saying the same thing, and the count
+        // this returns would report work that did not happen.
+        if ((removed.get(candidate.seq)?.size ?? 0) > 0) continue
+        layers.push({ turn, candidateSeq: candidate.seq, variables: table })
+      }
+    }
+
+    const plan = planPrune(layers, newest, options)
+    for (const decision of plan) {
+      if (decision.removed === undefined) continue
+      onReport?.(
+        `pruned turn ${String(decision.turn)}: removed ${decision.removed.join(', ')}`
+        + ` — ${decision.reason}. This is not reversible; the kept snapshots are the only points`
+        + ' this conversation can be reasoned back to.',
+      )
+    }
+    return applyPrune(this.session, plan, layers)
   }
 
   /** Per-candidate variables, keyed by the chat-file line they belong to. */
@@ -749,6 +807,13 @@ export class ChatEntry {
     const byCandidate = new Map<number, Variables>()
     for (const event of this.session.events) {
       if (event.type === 'iris/variables') byCandidate.set(event.data.candidateSeq, event.data.variables)
+    }
+    // Applied once over the finished map rather than per event: a later
+    // `iris/variables` for the same candidate is a rewrite, and the prune record
+    // describes whatever the newest one says.
+    const removed = prunedKeysOf(this.session)
+    for (const [seq, table] of byCandidate) {
+      byCandidate.set(seq, applyPruned(table, removed.get(seq)) as Variables)
     }
 
     const snapshot = new Map<number, (Variables | undefined)[]>()
