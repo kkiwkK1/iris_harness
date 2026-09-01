@@ -227,17 +227,76 @@ test('a corrupt store is not silently the same as a first run', async (t) => {
   assert.match(corrupt[0] ?? '', /saving will overwrite the file/u)
 })
 
-test('the corpus’s script buttons parse to the census taken of them', {
+/**
+ * Everything the corpus can say about buttons, split by what a red means.
+ *
+ * The two tests below look similar and fail for opposite reasons, which is the
+ * whole point of separating them. A single test asserting exact counts is
+ * ambiguous when it goes red: the parser may have regressed, or the user may
+ * simply have added a card — and a reader with one message in front of them goes
+ * to the parser first, because that is the failure a test usually means.
+ *
+ * So: **shape is a contract**, true of any library, and a red there is a real
+ * regression. **Counts are a snapshot**, true of this library on this date, and
+ * a red there means look at the cards before looking at the code.
+ */
+
+test('a button block has the shape upstream defines, whatever cards are present', {
   skip: !existsSync(CHARACTERS),
 }, async () => {
-  // Two of us measured this independently — one walking the cards by hand, one
-  // through `extractScripts` — and the numbers agreed to the entry. That
-  // agreement is what this pins: the parser is checked against a census someone
-  // else took, not against its own author's expectations.
+  // No counts here on purpose. Transcribed from
+  // `JS-Slash-Runner/src/type/scripts.ts:4-33`: the wrapper is exactly
+  // `{ enabled, buttons }` and a button is exactly `{ name, visible }`. This
+  // holds for any card library, so a failure is the parser or a genuine change
+  // in what cards contain — never "the user imported something".
+  let wrappers = 0
+  let buttons = 0
+
+  for (const file of (await readdir(CHARACTERS)).filter(name => name.endsWith('.png'))) {
+    let card: CharacterCard
+    try {
+      card = normalizeCard(decodeCardPng(await readFile(join(CHARACTERS, file))))
+    } catch {
+      continue
+    }
+    for (const script of extractScripts(card).scripts) {
+      const raw = script.button
+      if (raw === undefined || raw === null || typeof raw !== 'object') continue
+      wrappers += 1
+      assert.deepEqual(
+        Object.keys(raw as object).sort(),
+        ['buttons', 'enabled'],
+        `${file}: a button wrapper carries keys upstream does not define`,
+      )
+      for (const button of (raw as { buttons?: unknown[] }).buttons ?? []) {
+        buttons += 1
+        assert.deepEqual(
+          Object.keys(button as object).sort(),
+          ['name', 'visible'],
+          `${file}: a button carries keys upstream does not define`,
+        )
+      }
+    }
+  }
+  assert.ok(wrappers > 0 && buttons > 0, 'no buttons were examined; the walk is not reaching them')
+})
+
+test('the button census still matches the library it was taken from', {
+  skip: !existsSync(CHARACTERS),
+}, async () => {
+  // A snapshot of **this** library, measured 2026-09-01 by two of us on
+  // independent paths — one walking the cards, one through `extractScripts` —
+  // agreeing entry for entry. The agreement is what makes it worth pinning: the
+  // oracle is somebody else's measurement rather than this author's expectation.
   //
-  // It lives here rather than beside the parser because `@iris/script` does not
-  // depend on `@iris/character`, and adding that dependency to reach a PNG
-  // decoder would be a real coupling bought for a test.
+  // **If this goes red, look at the card library before the parser.** These
+  // numbers are a fact about 19 particular cards; importing, updating or
+  // deleting one is supposed to move them, and that is not a regression. The
+  // shape test above is the one that cannot be moved by a new card.
+  //
+  // The message below names the tool, because telling a reader what to check
+  // without telling them what to check it with leaves them where they started —
+  // and the thing that answers it used to exist only in one session's scratchpad.
   let scripts = 0
   let withButtons = 0
   let buttons = 0
@@ -264,6 +323,10 @@ test('the corpus’s script buttons parse to the census taken of them', {
   assert.deepEqual(
     { scripts, withButtons, buttons, invisible, groupsOff },
     { scripts: 47, withButtons: 18, buttons: 89, invisible: 58, groupsOff: 1 },
+    'the census no longer matches. Check whether the card library changed before suspecting the parser'
+    + ' — these are measured values from 2026-09-01, not invariants.'
+    + ' Run `npm run census:card-scripts` to see which group moved: it prints these numbers, the context'
+    + ' for reading a change in them, and the shape invariants, separately.',
   )
   // Stated so whoever builds the panel cannot miss it: most buttons in this
   // corpus are hidden by their own author.

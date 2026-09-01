@@ -119,6 +119,14 @@ export interface ScriptView {
    * and by nothing else — a button carries no id, no icon and no callback name,
    * so `buttons[i]` is the only handle there is.
    *
+   * **Address a button by `(scriptId, index)`, not by its name.** Measured over
+   * the corpus: no script has two buttons with the same name, so
+   * `(scriptId, name)` happens to be unique *today* — but one card
+   * (`性斗学园超级重制版`) has two different scripts each offering a button
+   * called `打开状态栏`, so a name alone is already ambiguous, and nothing
+   * upstream prevents a single script from repeating one. Position is unique by
+   * construction, because position is the only identity the format stores.
+   *
    * **`visible: false` is the common case**: 58 of the corpus's 89 buttons.
    * Rendering the whole array shows a pile of controls their authors hid on
    * purpose. `buttonsEnabled` is the author's separate switch for the group.
@@ -200,6 +208,37 @@ export interface ScriptContext {
   extensionSettings: Record<string, unknown>
   /** Current variable state, for a card reading MVU's store. */
   variables: Record<string, unknown>
+  /**
+   * The layers `getAllVariables` merges, each unmerged and labelled by source.
+   *
+   * Upstream's `_getAllVariables` (`JS-Slash-Runner/src/function/variables.ts`)
+   * shallow-assigns in a fixed order, and for a **script** frame that order is
+   * `global → character → script → chat`, later winning. Floor tables are folded
+   * in only for a *message* frame — measured by d7 — which is why they are absent
+   * here and why this carries no per-floor data at all.
+   *
+   * Sent unmerged on purpose. The merge is one `_.assign` chain that the façade
+   * can do, while the reverse is impossible: a card calling
+   * `getVariables({type: 'chat'})` needs that layer alone, and a pre-merged tree
+   * cannot be taken apart again.
+   */
+  variableLayers: {
+    /** Installation-wide. Upstream's `extension_settings.variables.global`. */
+    global: Record<string, unknown>
+    /** The card's own, from its `tavern_helper.variables`. */
+    character: Record<string, unknown>
+    /**
+     * Per script, keyed by script id.
+     *
+     * All of the card's partitions rather than one, because this context is
+     * fetched per card while the scope is per script — the façade knows which
+     * script it is running and picks its own. One script must not read
+     * another's, so the façade selecting is the enforcement point.
+     */
+    script: Record<string, Record<string, unknown>>
+    /** This conversation's, from `chat_metadata.variables`. */
+    chat: Record<string, unknown>
+  }
 }
 
 /** Where a script's injected prompt goes. Mirrors upstream's positions. */

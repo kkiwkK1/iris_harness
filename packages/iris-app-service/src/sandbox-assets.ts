@@ -44,6 +44,41 @@ const SHARED_HEADERS = {
   vary: 'Origin',
 } as const
 
+/**
+ * How long an immutable artifact may be held: one year, the conventional cap.
+ *
+ * Safe only for a content-addressed name, where a change of bytes is a change of
+ * name. See {@link immutableNames} for how that set is decided — it is read from
+ * the build's own manifest rather than guessed from the shape of a filename.
+ */
+const IMMUTABLE = 'public, max-age=31536000, immutable'
+
+/**
+ * The artifact names this build says are content-addressed.
+ *
+ * Read from `manifest.json`, not inferred from a pattern. A regex on
+ * `-<hex>.js` would be a heuristic whose two failure directions cost wildly
+ * different amounts: mistaking a **mutable** file for an immutable one pins a
+ * wrong copy in every browser for a year, while the reverse costs one
+ * revalidation. The manifest is the build stating which names it content-hashed,
+ * so reading it is not a guess in either direction.
+ *
+ * No manifest, or one that will not parse, means **nothing** is immutable. That
+ * is the direction to fail in: a checkout mid-build, or a manifest written by
+ * something else, gets revalidation rather than a year-long commitment.
+ * @param dir - the asset directory.
+ * @returns the file names that may be cached immutably.
+ */
+async function immutableNames(dir: string): Promise<Set<string>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))
+    if (typeof parsed !== 'object' || parsed === null) return new Set()
+    return new Set(Object.values(parsed).filter((value): value is string => typeof value === 'string'))
+  } catch {
+    return new Set()
+  }
+}
+
 /** Content types for what this directory actually holds. */
 const TYPES: Readonly<Record<string, string>> = {
   '.js': 'application/javascript; charset=utf-8',
@@ -116,15 +151,22 @@ export async function serveSandboxAsset(
   }
 
   const dot = file.lastIndexOf('.')
+  // Two classes, not one policy. A content-hashed artifact cannot change under
+  // its own name, so a held copy is correct by construction — and `preset-*.js`
+  // is 725 KB that the frame fetches on every open, which is the only place a
+  // long TTL buys anything here.
+  //
+  // `manifest.json` is the opposite and must stay revalidated: it is the one
+  // fixed path in this directory and its bytes change on every build. All the
+  // risk the hashing removed is now concentrated in that single file — the same
+  // fixed-name-changing-bytes shape that cost a week of poisoned cache on the
+  // bundle route — and it is a few dozen bytes, so revalidating it is free.
+  const held = (await immutableNames(dir)).has(rest)
   res.writeHead(200, {
     ...SHARED_HEADERS,
     'content-type': TYPES[file.slice(dot).toLowerCase()] ?? 'application/octet-stream',
     'content-length': body.byteLength,
-    // Revalidated, not held. These are build artifacts that change whenever the
-    // interface is rebuilt, and `script-cache.ts` records what a long TTL costs
-    // when a header goes out wrong: the bad copy outlives the deployment inside
-    // a cache only the browser can see.
-    'cache-control': 'no-cache',
+    'cache-control': held ? IMMUTABLE : 'no-cache',
   })
   res.end(req.method === 'HEAD' ? undefined : body)
 }

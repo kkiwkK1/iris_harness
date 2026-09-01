@@ -38,11 +38,17 @@ function request(url: string, method = 'GET'): Parameters<typeof serveSandboxAss
   return { method, url } as Parameters<typeof serveSandboxAsset>[2]
 }
 
-async function assets(t: TestContext): Promise<string> {
+async function assets(t: TestContext, manifest?: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-sandbox-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
   await mkdir(join(dir, 'sandbox'), { recursive: true })
   await writeFile(join(dir, 'sandbox', 'preset.js'), 'globalThis.Vue = {}', 'utf8')
+  await writeFile(join(dir, 'sandbox', 'preset-eb451a5035b60339.js'), 'globalThis.Vue = {}', 'utf8')
+  await writeFile(
+    join(dir, 'sandbox', 'manifest.json'),
+    manifest ?? JSON.stringify({ preset: 'preset-eb451a5035b60339.js' }),
+    'utf8',
+  )
   await writeFile(join(dir, 'secret.txt'), 'not for the frame', 'utf8')
   return join(dir, 'sandbox')
 }
@@ -124,4 +130,45 @@ test('a HEAD asks the same question and gets no body', async (t) => {
   assert.equal(status(), 200)
   assert.equal(headers()['content-length'], 19)
   assert.equal(body(), undefined)
+})
+
+test('a content-hashed artifact may be held; the manifest may not', async (t) => {
+  const dir = await assets(t)
+
+  const hashed = capture()
+  await serveSandboxAsset(dir, '/sandbox', request('/sandbox/preset-eb451a5035b60339.js'), hashed.res)
+  // Correct by construction: a change of bytes is a change of name, so a held
+  // copy can never be a wrong copy. 725 KB fetched on every frame open is the
+  // only place a long TTL buys anything in this directory.
+  assert.equal(hashed.headers()['cache-control'], 'public, max-age=31536000, immutable')
+
+  const manifest = capture()
+  await serveSandboxAsset(dir, '/sandbox', request('/sandbox/manifest.json'), manifest.res)
+  // The one fixed path whose bytes change every build — all the risk the hashing
+  // removed is now concentrated here, in a few dozen bytes. Revalidating it is
+  // free; holding it would rebuild the exact failure the hashing was for.
+  assert.equal(manifest.headers()['cache-control'], 'no-cache')
+
+  // A file the manifest does not name gets no promise, whatever it looks like.
+  const unlisted = capture()
+  await serveSandboxAsset(dir, '/sandbox', request('/sandbox/preset.js'), unlisted.res)
+  assert.equal(unlisted.headers()['cache-control'], 'no-cache')
+})
+
+test('without a readable manifest, nothing is held', async (t) => {
+  // The failure direction that matters. Deciding immutability from a filename
+  // pattern would pin a *mutable* file in every browser for a year on a false
+  // positive, against one wasted revalidation on a false negative. So the set
+  // comes from the build's own declaration, and an absent or broken declaration
+  // means the whole directory revalidates.
+  for (const manifest of ['{ not json', '[]', 'null']) {
+    const dir = await assets(t, manifest)
+    const { res, headers } = capture()
+    await serveSandboxAsset(dir, '/sandbox', request('/sandbox/preset-eb451a5035b60339.js'), res)
+    assert.equal(
+      headers()['cache-control'],
+      'no-cache',
+      `a manifest of ${manifest} still produced a year-long promise`,
+    )
+  }
 })

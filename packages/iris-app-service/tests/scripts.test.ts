@@ -363,3 +363,60 @@ test('an answer cannot be recorded against a card that is not there', async (t) 
     (error: unknown) => (error as { code?: string }).code === 'not-found',
   )
 })
+
+test('the four layers arrive unmerged, in the shape the façade merges', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await handlers['script.setVariables']({ chatId, scope: 'chat', op: 'replace', variables: { where: 'chat' } })
+  await handlers['script.setVariables']({ chatId, scope: 'global', op: 'replace', variables: { where: 'global' } })
+  await handlers['script.setVariables']({
+    chatId, scope: 'script', scriptId: 'core', op: 'replace', variables: { where: 'script' },
+  })
+
+  const { context } = await handlers['script.context']({ chatId, characterId: 'aria' })
+  const layers = context.variableLayers
+
+  // Unmerged and labelled. The façade does the `_.assign` chain, because the
+  // reverse is impossible: a card asking for `{type: 'chat'}` needs that layer
+  // alone, and a pre-merged tree cannot be taken apart again.
+  assert.deepEqual(layers.chat, { where: 'chat' })
+  assert.deepEqual(layers.global, { where: 'global' })
+  assert.deepEqual(layers.script['core'], { where: 'script' })
+
+  // Every layer is present even when empty, because the façade merges these
+  // positionally and an absent one would shift the order it assigns in.
+  assert.equal(typeof layers.character, 'object')
+  for (const name of ['global', 'character', 'chat'] as const) {
+    assert.notEqual(layers[name], undefined, `${name} is missing from the payload`)
+  }
+
+  // No floor tables. Upstream folds those in only for a *message* frame, and
+  // pre-pushing them was measured at 22× the latest layer with no upper bound —
+  // 8.29 MiB on the corpus's longest chat.
+  assert.equal('message' in layers, false, 'a floor layer reached the script frame payload')
+  assert.equal('messages' in layers, false)
+
+})
+
+test('one script’s partition is not another’s, in the payload as in the store', async (t) => {
+  const { handlers } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await handlers['script.setVariables']({
+    chatId, scope: 'script', scriptId: 'core', op: 'replace', variables: { mine: 1 },
+  })
+  await handlers['script.setVariables']({
+    chatId, scope: 'script', scriptId: 'exp', op: 'replace', variables: { mine: 2 },
+  })
+
+  const { context } = await handlers['script.context']({ chatId, characterId: 'aria' })
+  // Keyed by script id rather than pre-selected, because this context is fetched
+  // per card while the scope is per script. The façade knows which script it is
+  // running; that selection is the enforcement point for one script not reading
+  // another's bookkeeping.
+  assert.deepEqual(context.variableLayers.script['core'], { mine: 1 })
+  assert.deepEqual(context.variableLayers.script['exp'], { mine: 2 })
+})

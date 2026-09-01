@@ -20,6 +20,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { CharacterSummary, ScriptContext } from '@iris/protocol'
+import { extractScripts } from '@iris/script'
 
 import type { ChatEntry } from './entry.ts'
 import { invalid } from './errors.ts'
@@ -94,6 +95,7 @@ export function buildCardContext(
     extensionSettings: extras.extensionSettings,
     // The newest turn's message-scope table, which is where MVU keeps its tree.
     variables: entry.currentVariables() ?? {},
+    variableLayers: variableLayersOf(entry),
   }
 }
 
@@ -185,5 +187,60 @@ export class ExtensionSettingsStore {
     delete this.#partitions[characterId]
     await mkdir(dirname(this.#path), { recursive: true })
     await writeFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}\n`, 'utf8')
+  }
+}
+
+/**
+ * The four layers a script frame's `getAllVariables` merges.
+ *
+ * Order and membership are upstream's, from `_getAllVariables` in
+ * `JS-Slash-Runner/src/function/variables.ts`: `global → character → script →
+ * chat` for a script frame, with floor tables folded in only for a message
+ * frame. Each layer is sent as itself; the merge belongs to the façade, because
+ * a merged tree cannot be taken apart again and a card asking for one scope
+ * needs that scope alone.
+ *
+ * Two places where our layer is not upstream's, both worth knowing before
+ * trusting a value read here:
+ *
+ * - **`global` is in-memory.** Upstream persists it in
+ *   `extension_settings.variables.global`; this host's backend does not persist
+ *   at all, so it is empty on every start. A card storing an installation-wide
+ *   preference will not find it next time.
+ * - **`character` is the card's shipped value, read-only.** Upstream's character
+ *   scope is a live store that its deep watcher writes back into the card file
+ *   — the same mechanism `script-variables.ts` documents refusing for the script
+ *   scope. Reading gives the same answer until something writes; nothing here
+ *   writes.
+ * @param entry - the conversation the frame belongs to.
+ * @returns each layer, unmerged.
+ */
+export function variableLayersOf(entry: ChatEntry): ScriptContext['variableLayers'] {
+  const read = (option: Parameters<ChatEntry['variables']['getVariables']>[0]): Record<string, unknown> => {
+    try {
+      return entry.variables.getVariables(option)
+    } catch {
+      // A scope with no backend on this host. Empty rather than absent: the
+      // façade merges these positionally and a missing layer would shift the
+      // order it assigns in.
+      return {}
+    }
+  }
+
+  // Keyed by the ids the **card declares**, which is exactly the set of frames
+  // that can exist: a frame runs one of the card's scripts, so its own id is
+  // always in here. A partition left over from a script the card no longer
+  // declares is not carried, because nothing can ask for it — and carrying it
+  // would put a removed script's state back in front of a running one.
+  const script: Record<string, Record<string, unknown>> = {}
+  for (const declared of entry.card === undefined ? [] : extractScripts(entry.card).scripts) {
+    script[declared.id] = read({ type: 'script', script_id: declared.id })
+  }
+
+  return {
+    global: read({ type: 'global' }),
+    character: entry.initialVariables,
+    script,
+    chat: read({ type: 'chat' }),
   }
 }
