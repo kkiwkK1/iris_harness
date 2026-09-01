@@ -309,6 +309,40 @@ try {
     }
   },
 
+  /**
+   * The frame's own script list, in upstream's shape.
+   *
+   * Copied from `JS-Slash-Runner/src/index.ts:46` and
+   * `panel/script/ScriptItem.vue`, not from intuition: the container is
+   * `<div id="tavern_helper">` and each running script is a
+   * `<div data-type="script" data-script-id="…">` inside it. Cards read this
+   * structure to elect one instance of themselves — MVU filters it to the ids it
+   * registered and takes the last — so an attribute name guessed rather than
+   * copied is the next silent seam: the query returns nothing, the election
+   * elects nobody, and the card simply never enables itself.
+   *
+   * Upstream's list lives on the host page and its cards can already see and
+   * change it, because their `$` is the parent's. This one lives in the frame's
+   * own document, so the visible surface is upstream-faithful rather than newly
+   * exposed, and the real page is untouched.
+   */
+  listScript: scriptId => {
+    if (scriptId === undefined) return
+    let list = document.getElementById('tavern_helper')
+    if (list === null) {
+      list = document.createElement('div')
+      list.id = 'tavern_helper'
+      document.body.append(list)
+    }
+    // In card order, and once each: a second element for the same script would
+    // make an election that takes the last one depend on how often it was run.
+    if (list.querySelector(`div[data-script-id="${CSS.escape(scriptId)}"]`) !== null) return
+    const entry = document.createElement('div')
+    entry.dataset['type'] = 'script'
+    entry.dataset['scriptId'] = scriptId
+    list.append(entry)
+  },
+
   reportMissingGlobals: expected => {
     const host = window as unknown as Record<string, unknown>
     const missing = expected.filter(name => host[name] === undefined)

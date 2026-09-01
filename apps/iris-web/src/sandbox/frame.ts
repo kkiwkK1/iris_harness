@@ -76,6 +76,15 @@ export interface FrameEnv {
    */
   defineForwarding?: (name: string, read: () => unknown) => void
   /**
+   * Record a running script in the frame's own script list.
+   *
+   * Upstream keeps one `div[data-script-id]` per running script inside
+   * `#tavern_helper` on the host page, and cards read that list to decide which
+   * instance of themselves should be the active one. With a card's scripts
+   * sharing one frame, the frame *is* that page for them.
+   */
+  listScript?: (scriptId: string | undefined) => void
+  /**
    * Say which of a list of globals are not present in this frame.
    *
    * Enumerating beats discovering. Upstream seeds six library globals from its
@@ -490,7 +499,25 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * enabled scripts on one card are indistinguishable by their text. The runner
    * is the only party that knows which one it dispatched.
    */
+  /**
+   * The identity the *shared* global answers with, fixed at the first run.
+   *
+   * Card bodies get their true identity from the per-script preamble. Code they
+   * **import** does not: a bundle is its own module and reads the global, so it
+   * used to see whichever script ran last — a value that changes underneath it
+   * between two of its own calls.
+   *
+   * That is fatal to the coordination upstream cards rely on. MVU registers with
+   * `registerAsUniqueScript` under `getScriptId()` and later enables itself only
+   * when `preferred === getScriptId()`; the two reads must agree, and a mutable
+   * shared value can make them disagree for no reason the card can see.
+   *
+   * Fixed rather than cleared, and fixed to the *first* script because that id
+   * has an element in the frame's script list — the election matches against
+   * those, so an id with no element elects nobody.
+   */
   let scriptId: string | undefined
+  let scriptIdFixed = false
 
   /**
    * Upstream's `getScriptId`, the one member a card uses to name its own
@@ -834,8 +861,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     }
     if (message.type !== 'run') return
 
-    // Before `resolveValues`, which closes over it.
-    scriptId = message.scriptId
+    // Before `resolveValues`, which closes over it. Set once: see `scriptId`.
+    if (!scriptIdFixed) {
+      scriptIdFixed = true
+      scriptId = message.scriptId
+    }
+    env.listScript?.(message.scriptId)
 
     const values = resolveValues()
 

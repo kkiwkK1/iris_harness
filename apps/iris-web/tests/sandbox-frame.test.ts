@@ -13,6 +13,8 @@ function realm(): {
   globals: () => Record<string, unknown>
   /** Names the frame tried to define on its own window. */
   publishedNames: () => string[]
+  /** Script ids the frame asked to be listed. */
+  listed: () => string[]
   /** What a forwarding global currently reads. */
   forwarded: (name: string) => unknown
   /**
@@ -41,6 +43,7 @@ function realm(): {
   // mechanism that makes a waited-for global usable, which a harness recording
   // only published values could not see.
   const forwarded = new Map<string, () => unknown>()
+  const listed: string[] = []
   let body: (globals: Record<string, unknown>) => void = () => undefined
   let asyncBody: (() => Promise<void>) | undefined
   const container = { id: 'card-root', querySelector: () => null, querySelectorAll: () => [] }
@@ -63,6 +66,7 @@ function realm(): {
     },
     post: message => posted.push(message),
     defineForwarding: (name, read) => forwarded.set(name, read),
+    listScript: id => { if (id !== undefined) listed.push(id) },
     onMessage: listener => listeners.push(listener),
     evaluate: (_source, mode, names, values) => {
       handed = Object.fromEntries(names.map((name, at) => [name, values[at]]))
@@ -84,6 +88,7 @@ function realm(): {
     publishedNames: () => published,
     publishedValue: (name: string) => publishedValues[name],
     forwarded: (name: string) => forwarded.get(name)?.(),
+    listed: () => listed,
     run: next => {
       body = next
     },
@@ -738,10 +743,21 @@ test('getScriptId answers undefined for a body with no entry in the list', () =>
   assert.equal(answered, undefined, 'an unidentified body must not be given an id')
 })
 
-test('a second run re-answers getScriptId rather than keeping the first id', () => {
+test('a reused frame keeps one shared identity across runs', () => {
   /*
-   * The frame is reused across runs in the probe. An id captured at install
-   * would make every later script claim to be the first one.
+   * This test used to assert the opposite, and both versions were right for
+   * their own arrangement. When a frame ran exactly one script, re-answering per
+   * run was correct — the probe reuses its frame, and each run genuinely was a
+   * different script.
+   *
+   * A frame now holds a whole card, and every run in it is a *sibling*. Code the
+   * card imports reads this shared global, so a value that moved between runs
+   * would move underneath a bundle between two of its own calls. Per-script
+   * identity did not disappear; it moved to the preamble, which is the only
+   * place that can be right about it.
+   *
+   * The probe is unaffected: it builds a new frame per run, so nothing is fixed
+   * across the scripts it observes.
    */
   const scope = realm()
   const seen: unknown[] = []
@@ -751,7 +767,7 @@ test('a second run re-answers getScriptId rather than keeping the first id', () 
   evaluate(scope, record, 'first')
   evaluate(scope, record, 'second')
 
-  assert.deepEqual(seen, ['first', 'second'], 'each run must answer with its own id')
+  assert.deepEqual(seen, ['first', 'first'])
 })
 
 test('a host event forwarded by the shell reaches a listener the card registered', async () => {
@@ -1109,4 +1125,58 @@ test('a module with no known reason to be stuck is still declared stalled', asyn
 
   const errors = scope.posted.filter(m => m.type === 'error')
   assert.equal(errors.length, 1)
+})
+
+test('the shared getScriptId never changes underneath a reader', () => {
+  /*
+   * The invariant an imported bundle depends on. A card body gets its true
+   * identity from the preamble; code it *imports* is its own module and reads the
+   * global instead, so a value that moved with each run could differ between two
+   * of that bundle's own calls.
+   *
+   * MVU registers under `getScriptId()` and later enables itself only when
+   * `preferred === getScriptId()`. Those two reads must agree, and nothing the
+   * card can see would explain it if they did not.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  const seen: unknown[] = []
+  const read = (globals: Record<string, unknown>): void => {
+    seen.push((globals['getScriptId'] as () => unknown)())
+  }
+  evaluate(scope, read, 'provider')
+  evaluate(scope, read, 'consumer-one')
+  evaluate(scope, read, 'consumer-two')
+
+  assert.deepEqual(seen, ['provider', 'provider', 'provider'], 'the shared answer must not move')
+})
+
+test('a per-script binding still answers for its own script', () => {
+  // Fixing the shared global must not flatten the per-script identity: the
+  // preamble's bindings are what keep sixteen members answering correctly.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  const seen: unknown[] = []
+  evaluate(scope, () => {
+    const registry = scope.publishedValue('__iris_script__') as (id: string) => Record<string, unknown>
+    seen.push((registry('one')['getScriptId'] as () => unknown)())
+    seen.push((registry('two')['getScriptId'] as () => unknown)())
+  }, 'one')
+
+  assert.deepEqual(seen, ['one', 'two'])
+})
+
+test('each run is listed once, in card order', () => {
+  /*
+   * The list a card's election reads. Listed once per script because an election
+   * that takes the last match would otherwise depend on how many times a script
+   * had been run rather than on which scripts exist.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  evaluate(scope, () => undefined, 'first')
+  evaluate(scope, () => undefined, 'second')
+  evaluate(scope, () => undefined, 'first')
+
+  assert.deepEqual(scope.listed(), ['first', 'second', 'first'], 'the frame reports every run')
 })

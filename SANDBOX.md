@@ -163,19 +163,51 @@ Reads and writes are **asymmetric**, and the asymmetry is the safety property:
 | --- | --- |
 | write a name the frame does not bridge | stored, scoped to this card |
 | read a name that was written | returns it |
-| read a name nobody wrote | **refuses by name, as before** |
+| read a name nobody wrote | **`undefined`, plus a one-time named warning** |
 | `has` / `in` / `hasOwnProperty` | answers, never throws |
 | write or delete a bridged member | refused |
 
-A name nobody published keeps making noise. Turning every unknown parent member
-into `undefined` would trade the refusal discipline — bought over eleven sandbox
-runs — for the convenience of a shared slot, and a card reaching for a host API
-Iris does not have would fail somewhere unrelated instead of being told.
+A name nobody published keeps making noise — but it makes it as a **warning, not
+a refusal**, and the difference is load-bearing.
+
+Throwing was the first attempt and it broke the namespace it was protecting.
+Upstream's cross-script coordination *opens* by reading a slot that does not
+exist yet: `_.get(window.parent, 'th_unique_check.<id>', new Set())`, then writes
+it back. A refusal on that first read threw inside an init that swallows its own
+exceptions, so MVU never reached `_.set(window.parent, 'Mvu', …)` and every
+consumer waited forever on a publish that had already been abandoned. Reading an
+absent property is not an error on a real parent window, and a frame that treats
+it as one cannot host a card that coordinates.
+
+So the frame yields what upstream yields and says what upstream does not: the
+read returns `undefined`, and the frame reports it once, naming the member and
+stating that this **is not a claim the host has no such member**. Silence there
+is what turns a missing host capability into a failure three steps away; a
+refusal there is what turns a legitimate first read into a dead card.
 
 `hasOwnProperty` is listed deliberately: lodash's `_.has` is built on it and does
 **not** go through a proxy's `has` trap, so a namespace that answered `in` but not
 `hasOwnProperty` would leave `waitGlobalInitialized`'s poll returning false
 forever with both halves apparently correct.
+
+### The frame carries the card's own script list
+
+Upstream keeps `<div id="tavern_helper">` on the host page with one
+`<div data-type="script" data-script-id="…">` per running script, and cards read
+it to elect a single active instance of themselves. With a card's scripts
+sharing one frame, the frame is that page for them, so it carries the same
+structure in its own document — copied from `src/index.ts` and
+`panel/script/ScriptItem.vue` rather than guessed, because an election that
+queries an attribute we invented finds nothing and silently elects nobody.
+
+A card in real SillyTavern can already see and modify those elements — its `$`
+is the parent's — so this is upstream-faithful visibility rather than new
+exposure, and the real page is never touched.
+
+For the same reason the **shared** `getScriptId` is fixed at the first script of
+the frame. A card body gets its true identity from the per-script preamble; code
+the card *imports* is its own module and reads the global, and an election that
+registers under one value and compares against another never enables anything.
 
 **This is intra-card sharing and nothing else.** Two cards are two frames with
 two bags. The outward wall — opaque origin, CSP, the document grant — is
