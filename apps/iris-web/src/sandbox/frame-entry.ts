@@ -16,7 +16,7 @@
  */
 
 import { installSandbox } from './frame.ts'
-import { remoteImports } from './script-source.ts'
+import { remoteImports, requestedImports } from './script-source.ts'
 import { describeAttempts } from './import-attempts.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
@@ -538,7 +538,22 @@ try {
      * and the report is sent. If the module does eventually arrive it will run,
      * which is untidy and still better than silence.
      */
+    /*
+     * Two lists, because the reader and the check want different URLs.
+     *
+     * `targets` is what the card wrote, and it is what gets shown: someone
+     * reading a stalled import wants the bundle's own address, not Iris's
+     * routing. `requested` is what the browser was actually asked for, which
+     * after rewriting is the proxy URL, and it is the only thing resource timing
+     * will ever have an entry under.
+     *
+     * Using the display list for the check made the verdict unfalsifiable: it
+     * looked for an entry named after a URL the browser was never going to
+     * request, so "the browser never sent the request" came out true regardless,
+     * and a cache-warm proxy fetch was reported as a refusal before the wire.
+     */
     const targets = remoteImports(source)
+    const requested = requestedImports(source)
     const deadline = new Promise<never>((_resolve, reject) => {
       setTimeout(() => {
         /*
@@ -558,7 +573,7 @@ try {
               ? `still evaluating after ${IMPORT_TIMEOUT_MS / 1000}s — this module has no remote imports,` +
                 ' so it is parked on something inside itself, most likely a top-level await'
               : `import timed out after ${IMPORT_TIMEOUT_MS / 1000}s — the module never finished loading` +
-                ` (waiting on ${targets.join(', ')}) — ${describeAttempts(targets, timedResources())}`,
+                ` (waiting on ${targets.join(', ')}) — ${describeAttempts(requested, timedResources())}`,
           ),
         )
       }, IMPORT_TIMEOUT_MS)

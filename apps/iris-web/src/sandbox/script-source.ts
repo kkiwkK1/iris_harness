@@ -62,10 +62,50 @@ export function modeFor(kind: 'card-script' | 'probe'): ScriptMode {
  * Deliberately shallow: `from '…'` and bare `import '…'` at a line start, http(s)
  * only. It is a diagnostic, so a missed specifier costs a vaguer message and
  * nothing else.
+ * Two callers want two different answers, and conflating them broke a
+ * diagnostic for a whole round — see `requestedImports` below.
  * @param source - the card body.
- * @returns the remote specifiers, in order, without duplicates.
+ * @returns the remote specifiers as the card wrote them, in order, without
+ *   duplicates.
  */
 export function remoteImports(source: string): string[] {
+  return scanImports(source, true)
+}
+
+/**
+ * The remote specifiers **as the browser will request them**.
+ *
+ * The same scan without the unwrapping, and it exists because the unwrapping is
+ * right for one caller and wrong for the other:
+ *
+ * - *Naming a stalled import* wants the card's own URL. A reader asking which
+ *   bundle is missing does not care that Iris routes it, and our proxy in that
+ *   sentence sends them to the wrong resource.
+ * - *Checking whether the request was sent* wants the URL that was actually
+ *   requested. Resource timing records what the browser fetched, which after
+ *   rewriting is the proxy URL.
+ *
+ * The stalled-import report used the unwrapped list for both. It therefore asked
+ * resource timing for an entry under a URL the browser was never going to
+ * request, found none, and concluded "the browser never sent the request" —
+ * **a verdict that was structurally true no matter what had happened**. It
+ * reported a healthy, cache-warm proxy fetch as a refusal before the wire, and
+ * an instrument that cannot return the other answer is not evidence.
+ *
+ * @param source - the card body, after any rewriting.
+ * @returns the specifiers exactly as written, in order, without duplicates.
+ */
+export function requestedImports(source: string): string[] {
+  return scanImports(source, false)
+}
+
+/**
+ * Scan a body for http(s) import specifiers.
+ * @param source - the card body.
+ * @param unwrap - whether to report a proxied URL as the card's original.
+ * @returns the specifiers, in order, without duplicates.
+ */
+function scanImports(source: string, unwrap: boolean): string[] {
   const found = new Set<string>()
 
   // Scanned line by line with string operations rather than matched with a
@@ -89,11 +129,7 @@ export function remoteImports(source: string): string[] {
         if (end === -1) break
         const value = line.slice(at + 1, end)
         if (value.startsWith('http://') || value.startsWith('https://')) {
-          // Reported as the card wrote it, not as we route it. A stalled import
-          // is read by someone who cares which bundle is missing; our proxy in
-          // that sentence would name the wrong resource and send them to the
-          // wrong place.
-          found.add(fromProxied(value) ?? value)
+          found.add(unwrap ? fromProxied(value) ?? value : value)
         }
         at = line.indexOf(quote, end + 1)
       }

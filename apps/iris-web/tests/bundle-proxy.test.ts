@@ -19,7 +19,11 @@ import {
   rewriteBundleImports,
   toProxied,
 } from '../src/sandbox/bundle-proxy.ts'
-import { remoteImports } from '../src/sandbox/script-source.ts'
+import { remoteImports, requestedImports } from '../src/sandbox/script-source.ts'
+import { describeAttempts } from '../src/sandbox/import-attempts.ts'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 
 const ORIGIN = 'http://127.0.0.1:8787'
 const BUNDLE = 'https://testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate@beta/artifact/bundle.js'
@@ -158,3 +162,67 @@ test('an explanation that itself fails stays quiet', async () => {
 
   assert.equal(reason, undefined)
 })
+
+test('a rewritten import is named to the reader but checked by what was requested', () => {
+  /*
+   * The pairing that broke, pinned as a pair.
+   *
+   * `remoteImports` unwraps a proxied URL back to the card's own, which is right
+   * for the sentence a person reads and wrong for the lookup against resource
+   * timing — the browser only ever records what it actually fetched. Both
+   * callers were fed the unwrapped list, so the lookup asked for a name that
+   * could not exist and answered "never sent" no matter what happened.
+   */
+  const rewritten = rewriteBundleImports(`import '${BUNDLE}';`, ORIGIN)
+
+  assert.deepEqual(remoteImports(rewritten), [BUNDLE], 'the reader should see the card\u2019s URL')
+
+  const requested = requestedImports(rewritten)
+  assert.equal(requested.length, 1)
+  assert.ok(
+    requested[0]?.startsWith(ORIGIN),
+    'the check should use the proxy URL, which is what the browser fetches',
+  )
+  assert.notEqual(requested[0], BUNDLE)
+})
+
+test('a proxied import that WAS fetched is reported as sent, not as refused', () => {
+  /*
+   * The assertion the old arrangement could never pass. This is the regression
+   * itself: a healthy, cache-warm proxy fetch was being reported as "refused or
+   * unresolvable before the wire", which sent a reader to look at CSP and DNS
+   * for a request the browser had made and completed.
+   */
+  const rewritten = rewriteBundleImports(`import '${BUNDLE}';`, ORIGIN)
+  const requested = requestedImports(rewritten)
+  const timing = [{ name: requested[0] ?? '' }]
+
+  const verdict = describeAttempts(requested, timing)
+  assert.ok(verdict.includes('did send'), `expected a sent verdict, got: ${verdict}`)
+
+  // And the old way round still produces the false answer, which is what makes
+  // this test meaningful rather than decorative.
+  const wrong = describeAttempts(remoteImports(rewritten), timing)
+  assert.ok(wrong.includes('never sent'))
+})
+
+test('the frame checks timing against the requested URL, not the displayed one', () => {
+  /*
+   * A wiring pin, because the wiring is what broke and nothing else covers it.
+   *
+   * Everything above proves the two lists differ and that using the wrong one
+   * produces the wrong verdict. None of it notices if the frame goes back to
+   * passing the display list — that call sits in the browser entry, which has no
+   * unit harness, and the failure it produces is a *confident wrong answer*
+   * rather than a crash. That is the shape most likely to survive another
+   * refactor unnoticed, so it gets an explicit guard.
+   */
+  const here = dirname(fileURLToPath(import.meta.url))
+  const entry = readFileSync(join(here, '..', 'src', 'sandbox', 'frame-entry.ts'), 'utf8')
+
+  assert.ok(
+    entry.includes('describeAttempts(requested'),
+    'the stalled-import check is not using the requested URLs, so its verdict is unfalsifiable again',
+  )
+})
+
