@@ -26,6 +26,7 @@ import type { ScopeBackend } from '@iris/variables'
 
 import type { ChatEntry } from './entry.ts'
 import { invalid } from './errors.ts'
+import { charWorldbookNames } from './worldbooks.ts'
 
 // The wire type is used directly rather than mirrored. A parallel shape would
 // need a translation table between them, and a translation table is a second
@@ -108,6 +109,10 @@ export function buildCardContext(
       ? {}
       : { floor: { messageId: extras.messageId, variables: entry.floorVariables(extras.messageId) } },
     variableLayers: variableLayersOf(entry, extras.onReport),
+    // Refreshed with the rest of the snapshot rather than resolved once at open
+    // time, because a card may rebind its book mid-chat and the frame answers
+    // `getCharWorldbookNames('current')` from this field.
+    charWorldbooks: charWorldbookNames(entry.card),
   }
 }
 

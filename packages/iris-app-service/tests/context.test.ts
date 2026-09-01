@@ -229,3 +229,77 @@ test('a status-bar card reaches its MVU state at the path the corpus uses', () =
   const mine = perSwipe[message.swipe_id ?? 0]
   assert.deepEqual((mine?.['stat_data'] as Record<string, unknown>)['mood'], ['calm', 'how she seems'])
 })
+
+test('a card’s world book bindings reach the frame as names', () => {
+  const bound = card()
+  bound.data.extensions = { world: 'Eldoria' }
+  const built = new ChatEntry({
+    chatId: 'aria-1',
+    header: {
+      user_name: 'Traveller', character_name: 'Aria',
+      create_date: '2026-09-01 @10h00m00s', chat_metadata: {},
+      iris: { chatId: 'aria-1', characterId: 'aria', title: 'Aria', updatedAt: 0 },
+    },
+    session: createSession('aria-1'),
+    card: bound,
+  })
+
+  // Names, not contents: the frame answers `getCharWorldbookNames('current')`
+  // from this, and upstream's member returns names too — a card that wants a
+  // book asks for it separately.
+  assert.deepEqual(contextOf(built).charWorldbooks, { primary: 'Eldoria', additional: [] })
+})
+
+test('a binding is reported even when nothing on disk answers to it', () => {
+  const dangling = card()
+  dangling.data.extensions = { world: 'a book that was deleted' }
+  const built = new ChatEntry({
+    chatId: 'aria-1',
+    header: {
+      user_name: 'Traveller', character_name: 'Aria',
+      create_date: '2026-09-01 @10h00m00s', chat_metadata: {},
+      iris: { chatId: 'aria-1', characterId: 'aria', title: 'Aria', updatedAt: 0 },
+    },
+    session: createSession('aria-1'),
+    card: dangling,
+  })
+
+  // `primary` is the **binding**, not the book the host ended up assembling
+  // from. Two of the corpus's 18 bindings are dangling, and for those the host
+  // falls back to the card's embedded book — but reporting that fallback here
+  // would answer a different question than the one the card asked. 2 of 18
+  // measured 2026-09-02.
+  assert.equal(contextOf(built).charWorldbooks?.primary, 'a book that was deleted')
+})
+
+test('a card that binds nothing reports null, not an absent field', () => {
+  // Null rather than the key being missing: a frame doing
+  // `context.charWorldbooks.primary` should read "bound to nothing" rather than
+  // crash on an absent object, and upstream's shape is `{primary: null, …}`.
+  assert.deepEqual(contextOf(entry()).charWorldbooks, { primary: null, additional: [] })
+})
+
+test('additional books are empty because the source is absent, not unimplemented', () => {
+  // Upstream fills this from `world_info.charLore[<avatar stem>].extraBooks` in
+  // its `settings.json`. This host has no such section, and neither does the
+  // measured SillyTavern installation — `world_info` is absent from its
+  // settings file entirely. So an empty list is the *true* answer here rather
+  // than a placeholder, which is the same distinction the fake client draws
+  // between reporting an absence and inventing one.
+  //
+  // The day a `charLore` equivalent exists, this test is the one that should
+  // stop being true.
+  const bound = card()
+  bound.data.extensions = { world: 'Eldoria' }
+  const built = new ChatEntry({
+    chatId: 'aria-1',
+    header: {
+      user_name: 'Traveller', character_name: 'Aria',
+      create_date: '2026-09-01 @10h00m00s', chat_metadata: {},
+      iris: { chatId: 'aria-1', characterId: 'aria', title: 'Aria', updatedAt: 0 },
+    },
+    session: createSession('aria-1'),
+    card: bound,
+  })
+  assert.deepEqual(contextOf(built).charWorldbooks?.additional, [])
+})

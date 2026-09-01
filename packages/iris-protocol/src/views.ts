@@ -209,6 +209,25 @@ export interface ScriptContext {
   /** Current variable state, for a card reading MVU's store. */
   variables: Record<string, unknown>
   /**
+   * The world books this card is bound to, by name.
+   *
+   * Names, never contents — upstream's `getCharWorldbookNames` returns names and
+   * makes the caller fetch a book separately, so listing them costs nothing.
+   *
+   * **`primary` is the binding, not the book in use.** It is
+   * `data.extensions.world` as the card declares it, reported even when no file
+   * of that name exists (2 of 18 corpus bindings are dangling). The host may
+   * well be assembling prompts from the card's *embedded* book instead — see
+   * `resolveCardWorldbook`'s fallback — but reporting what we chose rather than
+   * what the card declares would answer a different question than the one
+   * upstream's member asks.
+   *
+   * The card's own embedded `character_book` is a separate body of entries and
+   * is deliberately not reported here; upstream's member does not report it
+   * either.
+   */
+  charWorldbooks?: { primary: string | null, additional: string[] }
+  /**
    * The layers `getAllVariables` merges, each unmerged and labelled by source.
    *
    * Upstream's `_getAllVariables` (`JS-Slash-Runner/src/function/variables.ts`)
