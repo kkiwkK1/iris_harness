@@ -89,7 +89,22 @@ try {
  * both names end up pointing at the same thing.
  */
 const seeds = {
-  _: value => typeof value.get === 'function',
+  /*
+   * Called, not inspected, and that distinction is the whole reason this line
+   * changed. It used to read `typeof value.get === 'function'` — which a module
+   * *namespace* object passes, because a namespace has `get`. Every method was
+   * present, every method worked, and the object itself was not callable.
+   *
+   * Cards use both forms. MagVarUpdate's unique-script election is written as
+   * `_(list).map(...).last()`, so it sailed past every method access and then
+   * threw `TypeError: _ is not a function` at the one line that needed the
+   * wrapper. A check that only reads properties cannot see the difference
+   * between a working lodash and a namespace pretending to be one.
+   *
+   * So this exercises the exact shape that broke: call it, chain it, and take
+   * an implicitly-unwrapped result.
+   */
+  _: value => LODASH_IS_CALLABLE(value),
   z: value => typeof value.object === 'function',
   YAML: value => YAML_ROUND_TRIPS(value),
   /*
@@ -103,6 +118,20 @@ const seeds = {
    * this check passing on a husk and catching the thing that actually broke.
    */
   Vue: value => typeof value.watch === 'function' && typeof value.ref === 'function',
+}
+
+/**
+ * Whether `_` is the callable wrapper factory rather than a namespace of methods.
+ * @param value - the seeded global.
+ * @returns true when both the method form and the wrapper form work.
+ */
+function LODASH_IS_CALLABLE(value) {
+  if (typeof value !== 'function') return false
+  if (typeof value.get !== 'function') return false
+  // The wrapper form, ending in an implicitly unwrapped method, exactly as the
+  // card that exposed this does it.
+  const chained = value([{ n: 1 }, { n: 2 }]).map(item => item.n).last()
+  return chained === 2
 }
 
 /** `parse` and `stringify` are the whole of what MVU uses; both must survive. */

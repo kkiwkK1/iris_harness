@@ -23,7 +23,7 @@ import jquery from 'jquery'
 import * as vue from 'vue'
 
 import { PRESET_MARKER } from './preset-globals.ts'
-import * as lodash from 'lodash-es'
+import * as lodashModule from 'lodash-es'
 import * as YAML from 'yaml'
 import { z } from 'zod'
 
@@ -41,6 +41,38 @@ const host = window as unknown as Record<string, unknown>
  * manifest) rather than whatever npm resolves today, because a card is written
  * against the library its author had.
  */
+/*
+ * The **default** export, not the namespace, and the difference is a whole
+ * verification round.
+ *
+ * This was `import * as lodash from 'lodash-es'`, which produces a module
+ * namespace object: every lodash method present and correct, and the object
+ * itself **not callable**. Cards use both forms. MagVarUpdate's unique-script
+ * election is written in the wrapper form —
+ * `_($('#tavern_helper').find(...).toArray()).map(...).last()` — eleven such calls
+ * across that bundle — and it failed with `TypeError: _ is not a function` at the
+ * one line that needed the callable, having sailed past every method access
+ * before it.
+ *
+ * Upstream never meets this: its `predefine.js` takes `window.parent._`, the host
+ * page's lodash UMD, which is the callable wrapper factory.
+ *
+ * The shape of the mistake is worth more than the fix. Nothing was missing and
+ * nothing was wrong — a check for `typeof _.get === 'function'` passed happily,
+ * because a namespace has `get`. Only the *form* differed, and only the one call
+ * that used the form could tell. The preset check now calls `_()` rather than
+ * inspecting it.
+ */
+/*
+ * Reached through the namespace because `@types/lodash-es` does not declare the
+ * default the package actually ships — the types are incomplete here, not the
+ * package. Deliberately **no fallback to the namespace**: if this export ever
+ * disappears, `_` becomes undefined and the preset check says so, which is far
+ * better than silently restoring the very object whose uncallability cost a
+ * round.
+ */
+const lodash: unknown = (lodashModule as unknown as { default?: unknown }).default
+
 host['_'] = lodash
 host['z'] = z
 host['YAML'] = YAML
