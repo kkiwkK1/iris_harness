@@ -204,6 +204,31 @@ export interface ScriptContext {
    * One card must not read another's: cross-card reads would defeat the
    * per-card grant model, since a card could learn — and store — through a
    * neighbour what it was not itself allowed.
+   *
+   * **This answers a narrower question than upstream's field of the same name,
+   * and the difference is deliberate.** SillyTavern's `extension_settings` is
+   * one installation-wide bag every extension and card shares. Measured across
+   * 121 sources, cards mostly do not use it as storage at all: of 20 sites in 3
+   * cards, 19 are **reads probing whether some other extension is present**
+   * (`extension_settings['st-chatu8']`, `.EjsTemplate.enabled`) and one is a
+   * card writing its own namespace. So the common use is detection.
+   *
+   * A partition serves detection *correctly*: a key belonging to an extension
+   * this host does not have is absent, which is the true answer, and a
+   * neighbouring card cannot make it look present. It also serves a card's own
+   * namespace, which is the only write shape measured.
+   *
+   * What it does not serve: a card writing a **foreign** extension's key in
+   * order to configure that extension installation-wide. Upstream would apply
+   * that globally; here it stays in the card's own partition and affects
+   * nobody. No corpus card does this, and the scope of that negative is 19
+   * cards plus one sample — card 20 is under no obligation.
+   *
+   * The trap to avoid is aliasing this to any populated installation-wide
+   * store. The field would keep its name, keep type-checking, and start
+   * answering "is this extension installed" with unrelated data — wrong in a
+   * way nothing reports. `tests/extension-settings-shapes.test.ts` pins all
+   * three measured shapes.
    */
   extensionSettings: Record<string, unknown>
   /** Current variable state, for a card reading MVU's store. */
