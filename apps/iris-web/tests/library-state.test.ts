@@ -156,3 +156,62 @@ test('the build still wraps the bundle so a throw can be recorded at all', () =>
   )
 })
 
+test('the preset check runs where Node\u2019s globals do not exist', () => {
+  /*
+   * The lesson from the bug that got furthest, made mechanical.
+   *
+   * The harness used to be `new Function(...)`, whose body resolves free
+   * identifiers against Node's globals. It could therefore only ever fail on
+   * things Node also lacked — and Vue's build reads `process.env.NODE_ENV`
+   * unguarded, so a bundle that threw `ReferenceError: process is not defined`
+   * on line 19 in every real frame passed this check every single time.
+   *
+   * The property is not "uses vm". It is that the executing context is built by
+   * *addition* — start empty, add what a browser has — rather than by
+   * subtraction from Node's. Reverting to `new Function` silently restores the
+   * blind spot, and nothing downstream would notice for another eleven runs.
+   */
+  const here = dirname(fileURLToPath(import.meta.url))
+  const harness = readFileSync(join(here, '..', 'tools', 'check-preset.mjs'), 'utf8')
+
+  /*
+   * Comments stripped first. The prose in that file explains what it replaced
+   * and names the old mechanism, so a naive search finds the documentation and
+   * reports it as the defect — a test failing on the sentence that describes the
+   * fix is worse than no test, because the obvious way to quiet it is to delete
+   * the explanation.
+   *
+   * Done with indexOf rather than a pattern, for the reason recorded in
+   * `bundle-proxy.ts`: escapes in this project have been eaten in transit
+   * repeatedly, and a collapsed one still parses while matching nothing. This
+   * very block was written twice for that reason.
+   */
+  const NEWLINE = String.fromCharCode(10)
+  const OPEN = String.fromCharCode(47, 42)
+  const CLOSE = String.fromCharCode(42, 47)
+  const LINE = String.fromCharCode(47, 47)
+
+  let stripped = harness
+  for (;;) {
+    const at = stripped.indexOf(OPEN)
+    if (at === -1) break
+    const to = stripped.indexOf(CLOSE, at + OPEN.length)
+    if (to === -1) break
+    stripped = stripped.slice(0, at) + stripped.slice(to + CLOSE.length)
+  }
+
+  const code = stripped
+    .split(NEWLINE)
+    .filter(line => !line.trim().startsWith(LINE))
+    .join(NEWLINE)
+
+  assert.ok(
+    code.includes('runInContext'),
+    'the preset is no longer executed in an isolated context, so Node globals leak into it',
+  )
+  assert.ok(
+    !code.includes('new Function('),
+    'a Function body resolves free names against Node, which is the blind spot this replaced',
+  )
+})
+

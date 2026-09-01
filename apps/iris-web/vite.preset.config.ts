@@ -33,6 +33,22 @@ export default defineConfig({
    * fact rather than a preference.
    */
   define: {
+    /*
+     * `process.env.NODE_ENV`, which this config did not replace and had to.
+     *
+     * Vue's esm-bundler build reads it **unguarded** — 306 times — because it
+     * expects a bundler to substitute a literal and eliminate the dev branches.
+     * A normal Vite build does that from its own defaults; this config passes
+     * `configFile: false` and so inherited none of them, and the first read threw
+     * `ReferenceError: process is not defined` on line 19 of the output, before
+     * a single library global was assigned.
+     *
+     * It survived every check because the only thing executing the bundle was
+     * `check-preset`, running in Node, where `process` exists. The harness could
+     * not fail on the one difference that mattered — which is why it now runs in
+     * a vm with no Node globals at all.
+     */
+    'process.env.NODE_ENV': '"production"',
     __VUE_PROD_DEVTOOLS__: 'true',
     __VUE_OPTIONS_API__: 'true',
     __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false',

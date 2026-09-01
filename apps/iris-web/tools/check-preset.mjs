@@ -15,20 +15,59 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { createContext, runInContext } from 'node:vm'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(join(here, '..', 'public', 'sandbox', 'preset.js'), 'utf8')
 
 /*
- * Executed with a bare object standing in for `window`, and nothing else.
+ * Run in a vm context, and the reason is a bug this harness could not see.
  *
- * Anything the bundle needs beyond that is something a sandboxed frame may not
- * have either, so a failure here is a real finding rather than an artefact of
- * the harness.
+ * It used to be `new Function(...)`, whose body still resolves free identifiers
+ * against Node's globals. The comment defended that as safe in one direction —
+ * "anything the bundle needs beyond this is something a frame may not have
+ * either" — which guards against a false failure and says nothing about a false
+ * pass. Everything Node happens to provide and a browser does not was simply
+ * invisible.
+ *
+ * That is not hypothetical. Vue's esm-bundler build reads `process.env.NODE_ENV`
+ * unguarded, this config was not replacing it, and the bundle threw
+ * `ReferenceError: process is not defined` on its first line in a real frame.
+ * The check passed every time, because Node has `process`. The harness could
+ * only ever fail on things its own environment also lacked.
+ *
+ * So the context is built the other way round: it starts empty and is given
+ * exactly what a browser frame has. `process`, `require`, `Buffer`,
+ * `setImmediate` and the rest are absent because they are absent there.
  */
-const win = {}
+const win = {
+  /*
+   * The timers are real browser globals and the bundle legitimately uses them —
+   * Vue schedules a devtools check, jQuery uses them for readiness. Withholding
+   * them would produce exactly the false failure the old comment worried about,
+   * which is the opposite error and just as useless.
+   */
+  setTimeout: () => 0,
+  clearTimeout: () => {},
+  setInterval: () => 0,
+  clearInterval: () => {},
+  queueMicrotask: () => {},
+  console,
+  /*
+   * Still no `document`, and still deliberately. jQuery's UMD picks what to
+   * export by looking for one at load, so supplying a half-built stand-in would
+   * assert things about a branch the frame never takes — it once produced a
+   * confident `$ (present but not usable)` against a perfectly good bundle. The
+   * frame's own first-hand check is what covers the document-bearing path.
+   */
+  document: undefined,
+}
+win.window = win
+win.self = win
+
+createContext(win)
 try {
-  new Function('window', 'self', 'globalThis', 'document', source)(win, win, win, undefined)
+  runInContext(source, win, { filename: 'preset.js' })
 } catch (error) {
   console.error(`preset check failed: the bundle threw while loading — ${error.message}`)
   process.exit(1)
