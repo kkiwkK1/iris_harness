@@ -225,6 +225,7 @@ const PROBES: Record<string, unknown> = {
   'script.setExtensionPrompt': { chatId: 'no-such-chat', key: 'k', value: 'v' },
   'script.setExtensionSettings': { characterId: 'no-such-card', settings: {} },
   'script.generateRaw': { chatId: 'no-such-chat', prompt: 'x' },
+  'script.generate': { chatId: 'no-such-chat', userInput: 'x' },
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {

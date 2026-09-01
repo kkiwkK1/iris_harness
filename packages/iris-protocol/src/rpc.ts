@@ -355,6 +355,34 @@ export const requestSchemas = {
     prompt: z.string().min(1).max(64_000),
     systemPrompt: z.string().max(32_000).optional(),
   }),
+  /**
+   * Generate the way a real turn would, without becoming one.
+   *
+   * Upstream has two of these and the difference is not cosmetic.
+   * `TavernHelper.generate` assembles the preset, the world info and the history
+   * and puts `user_input` last; `generateRaw` sends only what it is handed.
+   * `script.generateRaw` above is the second. A card asking for the first and
+   * served by the second gets a reply produced with no persona, no lorebook and
+   * no conversation — **and it succeeds**, which is why they are separate
+   * methods rather than a flag.
+   *
+   * Nothing is recorded: not the log, and not the two pieces of chat state a
+   * real assembly advances (world-info timed effects, the turn's itemization).
+   *
+   * `injects`, `overrides`, `tools`, `tool_choice` and `json_schema` are in
+   * upstream's config and deliberately absent here: no card in the corpus passes
+   * any of them, and a field added for a hypothetical caller is untested
+   * surface. `should_stream` is absent for a measured reason — the stream only
+   * drives a character-count progress indicator, and the body comes from the
+   * awaited return value.
+   */
+  'script.generate': z.object({
+    chatId: z.string().min(1),
+    userInput: z.string().min(1).max(64_000),
+    systemPrompt: z.string().max(32_000).optional(),
+    /** Upstream's `max_chat_history`; absent keeps all of it. */
+    maxHistory: z.number().int().min(0).optional(),
+  }),
 } as const
 
 /** Every callable method. */
@@ -434,6 +462,7 @@ export interface RpcResponseMap {
   /** The settings as stored, so a card can see what survived. */
   'script.setExtensionSettings': { settings: Record<string, unknown> }
   'script.generateRaw': { text: string }
+  'script.generate': { text: string }
 }
 
 /** The response of one method. */

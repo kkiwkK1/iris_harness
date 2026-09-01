@@ -545,6 +545,13 @@ export class IrisAppService {
         return {}
       },
 
+      'script.generate': async ({ chatId, userInput, systemPrompt, maxHistory }) => {
+        const entry = await chats.open(chatId)
+        return {
+          text: await this.#sideGenerate(entry, userInput, systemPrompt, maxHistory),
+        }
+      },
+
       'script.generateRaw': async ({ chatId, prompt, systemPrompt }) => {
         const entry = await chats.open(chatId)
         return { text: await this.#generateRaw(entry, prompt, systemPrompt) }
@@ -763,7 +770,12 @@ export class IrisAppService {
    * @param count - the token counter the budget uses.
    * @returns the contributions for this generation.
    */
-  #contributions(entry: ChatEntry, session: Session, count: (text: string) => number): Contribution[] {
+  #contributions(
+    entry: ChatEntry,
+    session: Session,
+    count: (text: string) => number,
+    record = true,
+  ): Contribution[] {
     const names = entry.names
     const built = buildPrompt({
       card: entry.card,
@@ -782,14 +794,24 @@ export class IrisAppService {
     })
     // Carried forward, or a sticky entry would re-open its window every turn and
     // a cooldown would never elapse — the state exists precisely to span turns.
-    entry.timedEffects = built.timedEffects
+    //
+    // **Only for a real turn.** A card-initiated generation assembles the same
+    // prompt but is not a turn: storing the advanced windows would let a script
+    // age out a sticky entry the conversation never saw, and the effect would
+    // show up turns later as world info that stopped appearing. The same shape
+    // as a preview that writes — a read-only path quietly changing chat state —
+    // only hidden inside world-info timing instead of a variable table.
+    if (record) entry.timedEffects = built.timedEffects
 
     const contributions = [...built.contributions, ...injectedContributions(entry)]
 
     // Recorded here because this is the only moment the parts and the history
     // agree with what is about to be sent: by the time the turn settles, the
     // reply is on the log and the same assembly would produce something else.
-    const turn = entry.pending?.turn
+    // Recorded for the turn being generated, and only then: the itemization is
+    // an account of what a real request contained, and a side generation
+    // overwriting it would replace the record of the turn the user is looking at.
+    const turn = record ? entry.pending?.turn : undefined
     if (turn !== undefined) {
       entry.itemizations.set(turn, this.#itemizationOf(
         assemble({ contributions, history: this.#history(entry, session), budget: this.#budget(count) }),
@@ -884,6 +906,78 @@ export class IrisAppService {
       model: settings.model,
       ...systemPrompt === undefined ? {} : { system: systemPrompt },
       messages: [createUserMessage({ content: [{ type: 'text', text: prompt }], source: { kind: 'user' } })],
+      ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
+      ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
+      ...sampling === undefined ? {} : { sampling },
+    })) {
+      assembler.push(chunk)
+    }
+
+    const finish = assembler.finish
+    if (finish.kind === 'error') {
+      throw new AppError('provider-error', finish.failure?.message ?? 'the provider ended the stream with an error')
+    }
+    return assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('')
+  }
+
+  /**
+   * Generate the way a real turn would, without becoming one.
+   *
+   * This is upstream's `TavernHelper.generate`, and the distinction from
+   * `generateRaw` is the whole point: `generate` assembles the preset, the world
+   * info and the history and puts `userInput` last, while `generateRaw` sends
+   * only what it is handed. A card asking for the first and receiving the second
+   * gets an answer produced with no persona, no lorebook and no conversation —
+   * and it reports as success, which is why the two must not share an
+   * implementation.
+   *
+   * **Nothing is written.** Not the log, and not the two pieces of chat state a
+   * real assembly advances: the world-info timed effects and the turn's
+   * itemization. A side generation that stored either would change what the
+   * conversation does next — a sticky entry aged out by a script, or the account
+   * of the user's own turn overwritten — from a call that never appears in the
+   * chat.
+   * @param entry - the conversation to assemble from.
+   * @param userInput - the card's prompt, placed as the final user message.
+   * @param systemPrompt - replaces the assembled system slot when given.
+   * @param maxHistory - how many history entries to keep; all of them when absent.
+   * @returns the finished text.
+   * @throws {AppError} `provider-error` when the stream ends in failure.
+   */
+  async #sideGenerate(
+    entry: ChatEntry,
+    userInput: string,
+    systemPrompt?: string,
+    maxHistory?: number,
+  ): Promise<string> {
+    const settings = this.#options.settings.get(entry.chatId)
+    const count = (text: string): number => this.#counter.count(text)
+
+    const history = this.#history(entry, entry.session)
+    // `max_chat_history` counts from the recent end: a card asking for two wants
+    // the last two exchanges, not the first two.
+    const kept = maxHistory === undefined ? history : history.slice(Math.max(0, history.length - maxHistory))
+
+    const result = assemble({
+      contributions: this.#contributions(entry, entry.session, count, false),
+      history: [...kept, { role: 'user' as const, text: userInput }],
+      budget: this.#budget(count),
+    })
+
+    const assembler = new BlockAssembler()
+    const sampling = samplingOf(settings)
+    for await (const chunk of this.#stream({
+      provider: settings.provider,
+      model: settings.model,
+      ...systemPrompt === undefined
+        ? result.system === '' ? {} : { system: result.system }
+        : { system: systemPrompt },
+      messages: result.messages.map(message => (message.role === 'assistant'
+        ? createAssistantMessage({
+          content: [{ type: 'text', text: message.text }],
+          source: { provider: 'iris', model: 'history' },
+        })
+        : createUserMessage({ content: [{ type: 'text', text: message.text }], source: { kind: 'user' } }))),
       ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...sampling === undefined ? {} : { sampling },
