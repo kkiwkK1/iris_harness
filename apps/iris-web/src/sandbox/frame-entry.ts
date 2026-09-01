@@ -291,6 +291,29 @@ try {
     post({ iris: run, type: 'globals', published, refused })
   },
 
+  /**
+   * A forwarding global, the way upstream makes a waited-for name usable.
+   *
+   * `get` rather than `value`: the provider owns the object and may withdraw it,
+   * and a consumer holding a copy would never notice. Configurable so a later
+   * wait on the same name can redefine it.
+   */
+  defineForwarding: (name, read) => {
+    try {
+      Object.defineProperty(window, name, { get: read, configurable: true })
+    } catch {
+      // Reported rather than silent: a card that waited successfully and still
+      // cannot see the name would otherwise fail on the next line with nothing
+      // connecting the two.
+      post({
+        iris: run,
+        type: 'error',
+        scriptId: undefined,
+        message: `could not make "${name}" available in this frame after waiting for it`,
+      })
+    }
+  },
+
   reportMissingGlobals: expected => {
     const host = window as unknown as Record<string, unknown>
     const missing = expected.filter(name => host[name] === undefined)

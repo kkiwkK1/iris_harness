@@ -13,6 +13,8 @@ function realm(): {
   globals: () => Record<string, unknown>
   /** Names the frame tried to define on its own window. */
   publishedNames: () => string[]
+  /** What a forwarding global currently reads. */
+  forwarded: (name: string) => unknown
   /**
    * One published value.
    *
@@ -35,6 +37,10 @@ function realm(): {
   // window rather than handed in as a shadowed parameter, so a test that only
   // saw names could not exercise it.
   let publishedValues: Record<string, unknown> = {}
+  // Names the frame defined as forwarding getters, with their readers — the
+  // mechanism that makes a waited-for global usable, which a harness recording
+  // only published values could not see.
+  const forwarded = new Map<string, () => unknown>()
   let body: (globals: Record<string, unknown>) => void = () => undefined
   let asyncBody: (() => Promise<void>) | undefined
   const container = { id: 'card-root', querySelector: () => null, querySelectorAll: () => [] }
@@ -56,6 +62,7 @@ function realm(): {
       },
     },
     post: message => posted.push(message),
+    defineForwarding: (name, read) => forwarded.set(name, read),
     onMessage: listener => listeners.push(listener),
     evaluate: (_source, mode, names, values) => {
       handed = Object.fromEntries(names.map((name, at) => [name, values[at]]))
@@ -76,6 +83,7 @@ function realm(): {
     globals: () => handed,
     publishedNames: () => published,
     publishedValue: (name: string) => publishedValues[name],
+    forwarded: (name: string) => forwarded.get(name)?.(),
     run: next => {
       body = next
     },
@@ -996,4 +1004,53 @@ test('a stalled import with no body blames the fetch', async () => {
 
   const reported = scope.posted.filter(m => m.type === 'error').at(-1) as { message: string }
   assert.match(reported.message, /the body never began, so this is the fetch itself/)
+})
+
+test('a waited-for global becomes usable, and follows the provider if it is withdrawn', async () => {
+  /*
+   * Waiting is only half of the contract. Upstream's description is explicit —
+   * it resolves *and* makes the name available in the calling iframe — and a
+   * real card proved why: `await waitGlobalInitialized('Mvu')` succeeded and the
+   * next line still threw `Mvu is not defined`.
+   *
+   * A forwarding getter rather than a copy, because a provider can retract its
+   * interface on teardown and a snapshot would leave consumers holding an object
+   * that has been withdrawn.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let waited: Promise<void> | undefined
+  evaluate(scope, globals => {
+    const registry = scope.publishedValue('__iris_script__') as (id: string) => Record<string, unknown>
+    waited = (registry('consumer')['waitGlobalInitialized'] as (n: string) => Promise<void>)('Mvu')
+    // Exactly what MVU does: a raw write to parent, then the announcement.
+    // The write alone does not wake a waiter — upstream keys on the event too —
+    // so a fixture that only wrote would be testing a provider no card is.
+    ;(globals['parent'] as Record<string, unknown>)['Mvu'] = { version: 1 }
+    void (globals['eventEmit'] as (event: string) => Promise<void>)('global_Mvu_initialized')
+  })
+  await waited
+
+  assert.deepEqual(scope.forwarded('Mvu'), { version: 1 }, 'the name never became usable')
+
+  // The provider retracts it, as MVU does on teardown.
+  evaluate(scope, globals => {
+    delete (globals['parent'] as Record<string, unknown>)['Mvu']
+  })
+  assert.equal(scope.forwarded('Mvu'), undefined, 'a copy would still be handing out a dead object')
+})
+
+test('a wait that timed out does not define the name', async () => {
+  // Otherwise a card gets `undefined` where it would have got a ReferenceError,
+  // and `undefined.foo` fails further from the cause than the bare reference did.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let waited: Promise<void> | undefined
+  evaluate(scope, () => {
+    const registry = scope.publishedValue('__iris_script__') as (id: string) => Record<string, unknown>
+    waited = (registry('consumer')['waitGlobalInitialized'] as (n: string) => Promise<void>)('Absent')
+  })
+  await waited
+
+  assert.equal(scope.forwarded('Absent'), undefined)
 })

@@ -67,6 +67,15 @@ export interface FrameEnv {
    */
   publishGlobals?: (entries: readonly [string, unknown][]) => void
   /**
+   * Define a name on the frame's own window that reads through to a live source.
+   *
+   * Separate from `publishGlobals` because the difference is a getter. Publishing
+   * copies a value; this forwards, so a provider retracting its interface is seen
+   * by every consumer instead of leaving them holding a withdrawn object. It is
+   * what upstream does for a global a script waited on.
+   */
+  defineForwarding?: (name: string, read: () => unknown) => void
+  /**
    * Say which of a list of globals are not present in this frame.
    *
    * Enumerating beats discovering. Upstream seeds six library globals from its
@@ -551,7 +560,29 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     },
     waitGlobalInitialized: async (name: unknown): Promise<void> => {
       const global = requireGlobalName('waitGlobalInitialized', name)
-      if (published.has(global)) return
+      /*
+       * Waiting is only half of it. Upstream's own description is "等待其他
+       * iframe 中共享出来的全局接口初始化完毕, **并使之在当前 iframe 中可用**" —
+       * it resolves *and* puts the name in the caller's realm, with
+       * `Object.defineProperty(this, global, { get: () => _.get(window, global) })`.
+       *
+       * A getter rather than a copied value, deliberately: a provider can retract
+       * its interface (`_.unset(window.parent, 'Mvu')` on teardown), and a
+       * snapshot would leave consumers holding an object the provider has
+       * withdrawn.
+       *
+       * Without this the wait resolves and the very next line still throws
+       * `Mvu is not defined`, which is exactly what a real card did: the await
+       * succeeded and the bare reference after it did not.
+       */
+      const makeUsable = (): void => {
+        env.defineForwarding?.(global, () => published.get(global))
+      }
+
+      if (published.has(global)) {
+        makeUsable()
+        return
+      }
       env.post({ iris: env.token, type: 'waiting', scriptId: forScript, global })
       const arrived = await new Promise<boolean>(resolve => {
         const done = (value: boolean): void => {
@@ -566,6 +597,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         // first check and the subscription would otherwise never be noticed.
         if (published.has(global)) done(true)
       })
+      // Only when it actually arrived: after a timeout there is nothing to
+      // forward to, and defining a getter over an absent value would turn a
+      // `ReferenceError` the card can act on into `undefined` it cannot.
+      if (arrived) makeUsable()
       env.post({ iris: env.token, type: 'waited', scriptId: forScript, global, arrived })
     },
   })
