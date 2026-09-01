@@ -32,13 +32,17 @@ function dense(text: string): string {
   return [...text].filter(character => character > ' ').join('')
 }
 
-/** Class names beginning `iris-interfaces`, wherever they appear. */
-function interfaceClasses(source: string): Set<string> {
+/**
+ * Class names under one prefix, wherever they appear.
+ * @param source - the component or stylesheet to scan.
+ * @param prefix - the family of class names to collect.
+ * @returns every distinct name found.
+ */
+function classesWithPrefix(source: string, prefix: string): Set<string> {
   const found = new Set<string>()
-  const PREFIX = 'iris-interfaces'
   let at = 0
   for (;;) {
-    const start = source.indexOf(PREFIX, at)
+    const start = source.indexOf(prefix, at)
     if (start === -1) break
     let end = start
     // A class name runs while the characters are name-ish. Written as a scan
@@ -50,25 +54,53 @@ function interfaceClasses(source: string): Set<string> {
   return found
 }
 
-test('every interface class the component emits has a rule, and every rule is used', () => {
-  const component = readFileSync(join(here, '..', 'src', 'app', 'MessageInterfaces.tsx'), 'utf8')
-  const styles = readFileSync(join(here, '..', 'src', 'app', 'reading.css'), 'utf8')
+/**
+ * The class families guarded here, and where each half lives.
+ *
+ * A table rather than one test per family, because the failure is the same in
+ * every one of them and the second family was added the hard way: the state
+ * panel's rules were deleted in a redesign while a dev probe two directories away
+ * went on emitting the old names. Nothing failed. The probe simply lost its
+ * styling, and would have stayed that way until somebody opened it.
+ */
+const GUARDED: readonly { prefix: string, emitters: string[][], styles: string[] }[] = [
+  {
+    prefix: 'iris-interfaces',
+    emitters: [['src', 'app', 'MessageInterfaces.tsx']],
+    styles: ['src', 'app', 'reading.css'],
+  },
+  {
+    prefix: 'iris-var',
+    emitters: [['src', 'app', 'StatePanel.tsx'], ['src', 'dev', 'SandboxProbe.tsx']],
+    styles: ['src', 'app', 'panels.css'],
+  },
+]
 
-  const emitted = interfaceClasses(component)
-  const styled = interfaceClasses(styles)
+for (const family of GUARDED) {
+  test(`every ${family.prefix} class emitted has a rule, and every rule is used`, () => {
+    const emitted = new Set<string>()
+    for (const emitter of family.emitters) {
+      const source = readFileSync(join(here, '..', ...emitter), 'utf8')
+      for (const name of classesWithPrefix(source, family.prefix)) emitted.add(name)
+    }
+    const styled = classesWithPrefix(
+      readFileSync(join(here, '..', ...family.styles), 'utf8'),
+      family.prefix,
+    )
 
-  assert.ok(emitted.size > 0, 'the component emits no interface classes at all')
+    assert.ok(emitted.size > 0, `nothing emits any ${family.prefix} class at all`)
 
-  const unstyled = [...emitted].filter(name => !styled.has(name))
-  assert.deepEqual(
-    unstyled,
-    [],
-    'these are emitted with no rule — the failure is silent, and last time it cost an interface its height',
-  )
+    const unstyled = [...emitted].filter(name => !styled.has(name))
+    assert.deepEqual(
+      unstyled,
+      [],
+      'these are emitted with no rule — the failure is silent, and last time it cost an interface its height',
+    )
 
-  const unused = [...styled].filter(name => !emitted.has(name))
-  assert.deepEqual(unused, [], 'these rules match nothing, and will be read as live by the next reader')
-})
+    const unused = [...styled].filter(name => !emitted.has(name))
+    assert.deepEqual(unused, [], 'these rules match nothing, and will be read as live by the next reader')
+  })
+}
 
 test('the frame itself is given a starting height', () => {
   /*

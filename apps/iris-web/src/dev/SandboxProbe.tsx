@@ -423,22 +423,22 @@ export function SandboxProbe(): ReactElement | null {
         </label>
       </div>
 
-      <dl className="iris-state">
-        <div className="iris-state__row">
-          <dt className="iris-state__key">height reported</dt>
-          <dd className="iris-state__value">{observed.height ?? 'none yet'}</dd>
+      <dl className="iris-var">
+        <div className="iris-var__row">
+          <dt className="iris-var__key">height reported</dt>
+          <dd className="iris-var__value">{observed.height ?? 'none yet'}</dd>
         </div>
-        <div className="iris-state__row">
-          <dt className="iris-state__key">settings write seen</dt>
-          <dd className="iris-state__value">{observed.settings ?? 'none'}</dd>
+        <div className="iris-var__row">
+          <dt className="iris-var__key">settings write seen</dt>
+          <dd className="iris-var__value">{observed.settings ?? 'none'}</dd>
         </div>
-        <div className="iris-state__row">
-          <dt className="iris-state__key">globals published</dt>
-          <dd className="iris-state__value">{observed.globals ?? 'not reported'}</dd>
+        <div className="iris-var__row">
+          <dt className="iris-var__key">globals published</dt>
+          <dd className="iris-var__value">{observed.globals ?? 'not reported'}</dd>
         </div>
-        <div className="iris-state__row">
-          <dt className="iris-state__key">slash commands</dt>
-          <dd className="iris-state__value">
+        <div className="iris-var__row">
+          <dt className="iris-var__key">slash commands</dt>
+          <dd className="iris-var__value">
             {observed.slash.length === 0 ? 'none' : observed.slash.join(' / ')}
           </dd>
         </div>

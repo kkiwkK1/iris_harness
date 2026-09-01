@@ -448,41 +448,153 @@
   color: var(--iris-ink-faint);
 }
 
-.iris-state {
+/*
+ * The variable index.
+ *
+ * Set as an index rather than as a data structure: keys ranged left in the
+ * annotation sans, values ranged right, one hairline per entry, and nesting shown
+ * by indentation under a rule instead of by braces. No colour distinguishes a
+ * kind — the previous panel used a syntax-highlighted tree, and red and purple
+ * string literals beside a serif reading surface announced that this column
+ * belonged to a different program.
+ */
+
+.iris-var {
   margin: 0;
 }
 
-.iris-state__row {
-  display: flex;
+.iris-var__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 5px 0;
+  column-gap: 12px;
+  padding: 4px 0;
   border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
 }
 
-.iris-state__key {
-  font-size: 12px;
+/*
+ * A value too long to tally takes its own line.
+ *
+ * Ranged right is what makes an index scannable, and it is exactly wrong for a
+ * sentence: in a 260px column a set-right paragraph squeezes its key to two
+ * characters a line. The component decides which of the two a value is.
+ */
+.iris-var__row--stacked {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 1px;
+}
+
+.iris-var__key {
+  font-family: var(--iris-font-ui);
+  font-size: 11.5px;
+  line-height: 1.5;
   color: var(--iris-ink-tertiary);
+  /*
+   * Never uppercased and never letter-spaced, unlike `.iris-label`. Most of the
+   * corpus's variable names are Chinese, and both treatments damage CJK — tracking
+   * pulls a compound apart, and `text-transform` does nothing except to the Latin
+   * fragments, which then disagree with everything beside them.
+   */
   overflow-wrap: anywhere;
 }
 
-.iris-state__value {
+.iris-var__value {
   margin: 0;
-  font-family: var(--iris-font-mono);
+  font-family: var(--iris-font-ui);
   font-size: 12px;
+  line-height: 1.55;
   color: var(--iris-ink);
-  font-variant-numeric: tabular-nums;
   text-align: right;
+  /* Wraps rather than scrolls. A column that scrolls sideways cannot show the
+     start and the end of a line at once. */
   overflow-wrap: anywhere;
 }
 
-.iris-state__nested {
-  margin-top: 16px;
+/* At this length the value is a note, so it is set in the note face. */
+.iris-var__row--stacked .iris-var__value {
+  font-family: var(--iris-font-prose);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--iris-ink-secondary);
+  text-align: left;
 }
 
-.iris-state__nested .iris-state__key {
-  margin-bottom: 6px;
+.iris-var__value--numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-var__value--absent {
+  color: var(--iris-ink-faint);
+}
+
+.iris-var__summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+  cursor: default;
+  /* Both are needed: the standard property and WebKit's older pseudo-element. */
+  list-style: none;
+}
+
+.iris-var__summary::-webkit-details-marker {
+  display: none;
+}
+
+/*
+ * Drawn with borders rather than set as a character, because a glyph like ▸ is
+ * missing from enough system stacks to fall back to a box, and a tofu box in the
+ * margin of a reading surface is worse than no affordance at all.
+ */
+.iris-var__summary::before {
+  content: '';
+  flex: none;
+  align-self: center;
+  width: 0;
+  height: 0;
+  border-left: 4px solid var(--iris-ink-faint);
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 120ms ease;
+}
+
+.iris-var__branch[open] > .iris-var__summary::before {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iris-var__summary::before {
+    transition: none;
+  }
+}
+
+.iris-var__summary:focus-visible {
+  outline: 2px solid var(--iris-accent);
+  outline-offset: 2px;
+}
+
+/* A branch heading carries a little more weight than the leaves under it. */
+.iris-var__summary .iris-var__key {
+  color: var(--iris-ink-secondary);
+}
+
+.iris-var__count {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--iris-ink-faint);
+}
+
+/*
+ * The rule that carries the nesting. One hairline down the left of a branch's
+ * children says "these belong to that" without spending a bracket, an indent
+ * guide, or a background tint on it.
+ */
+.iris-var__children {
+  margin-left: 6px;
+  padding-left: 11px;
+  border-left: var(--iris-hairline) solid var(--iris-rule-faint);
 }
 
 /* ------------------------------------------------------- sandbox probe (dev) */
