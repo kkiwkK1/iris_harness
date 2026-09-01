@@ -231,6 +231,23 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (property === 'extensionSettings') return extensionSettings
 
       /*
+       * The bus, reachable through `getContext()` as well as through `parent`.
+       *
+       * Measured: two cards read `ctx.eventSource` and `ctx.event_types` across
+       * nine sites each, always as the pair and always behind
+       * `if (ctx && ctx.eventSource && ctx.event_types)`. Until now this surface
+       * carried neither, so that guard was simply false and nine sites per card
+       * quietly took their fallback path.
+       *
+       * **The same objects the parent proxy hands out**, not equivalents.
+       * Upstream's `eventOn` is a wrapper around `eventSource`, so a card that
+       * subscribes through one route and emits through the other is talking to
+       * itself — two buses would make that stop working with nothing to see.
+       */
+      if (property === 'eventSource') return eventSource
+      if (property === 'event_types') return TAVERN_EVENTS
+
+      /*
        * Which chat this is, which a card uses as a key.
        *
        * Upstream returns the chat **file** identifier — `characters[this_chid].chat`,
@@ -250,6 +267,49 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * one must be able to find none.
        */
       if (property === 'getCurrentChatId') return () => context?.chatId
+
+      /*
+       * Upstream's, transcribed rather than designed (`public/script.js:8918`):
+       *
+       *   chat_metadata = reset ? { ...newValues } : { ...chat_metadata, ...newValues }
+       *
+       * Three properties of that line matter, and all three are easy to improve
+       * by accident:
+       *
+       * - **It is one level deep.** `updateChatMetadata({a: {b: 1}})` replaces
+       *   the whole of `a`; anything else under `a` is gone. A deep merge would
+       *   be friendlier and would silently keep keys upstream drops.
+       * - **It rebinds rather than mutating.** The card's own reference to the
+       *   old object keeps pointing at the old object. The corpus's one caller
+       *   relies on the consequence: a shallow spread copies the *reference* to
+       *   each nested value, so the nested object it just wrote into is shared
+       *   with the new metadata. Mutating in place here would also work for that
+       *   card and would diverge from upstream for one that held a reference.
+       * - **It does not save.** Persistence is `saveMetadata`, separately, and
+       *   the corpus's caller debounces that by 2000ms with an explicit
+       *   `skipSave` path — so folding a write into this call would both defeat
+       *   the debounce the card author chose and remove a capability they use.
+       *
+       * Synchronous and returning nothing, per the declaration
+       * (`exported.sillytavern.d.ts:478`). `reset` is typed as required upstream
+       * but read for truthiness, so omitting it means `false`.
+       */
+      if (property === 'updateChatMetadata') {
+        return (newValues: unknown, reset?: unknown): void => {
+          if (context === undefined) return
+          // Spread as upstream spreads, including its treatment of a non-object:
+          // `{...null}` and `{...5}` contribute nothing, and this copies that
+          // rather than validating, because a card passing one is already
+          // relying on whatever upstream does with it.
+          const incoming = { ...(newValues as Record<string, unknown>) }
+          context = {
+            ...context,
+            chatMetadata: reset === true || Boolean(reset)
+              ? incoming
+              : { ...context.chatMetadata, ...incoming },
+          }
+        }
+      }
 
       /*
        * Actions, reachable here AND through `getContext()` — because `getContext`
@@ -290,10 +350,37 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       }
       const fields = context as unknown as Record<string, unknown>
       if (Object.hasOwn(fields, property)) return fields[property]
-      throw new UnsupportedApiError(
-        `SillyTavern.${property}`,
-        'Iris bridges the members cards were measured to use; this is not one of them.',
+
+      /*
+       * An unbuilt member yields `undefined` and is reported once — **the same
+       * policy as the virtual parent, and deliberately not a second copy of the
+       * reasoning.** See the long note on the parent proxy's unpublished-name
+       * branch above: it explains why throwing was right about the danger and
+       * wrong about the mechanism, and it was paid for. The two surfaces answer
+       * one question, so they change together or not at all.
+       *
+       * This surface kept throwing after that lesson landed next door, which was
+       * not a decision anyone recorded — the refusal here carried no note saying
+       * why it should differ. Two symptoms of the gap:
+       *
+       * - The hazard is the same one, not an analogous one. Every measured
+       *   `SillyTavern` access in the corpus is behind a truthiness guard, so
+       *   `if (ctx.setVariable)` — a card degrading gracefully — threw at the
+       *   read. The guard triggered the thing it existed to prevent, which is
+       *   exactly how the parent case failed.
+       * - `has` already returned `false` for these names while `get` threw, so
+       *   `'x' in SillyTavern` and `SillyTavern.x` disagreed. Yielding
+       *   `undefined` makes the two traps consistent as a side effect rather
+       *   than as a second fix.
+       *
+       * "Absence must be named" is unchanged; the naming moves from an exception
+       * to a report, and the report channel is durable and generation-stamped.
+       */
+      reportGap(
+        `a card read SillyTavern.${property}, which Iris has not built` +
+          ' — it returned undefined, which is not a statement that the host has no such member',
       )
+      return undefined
     },
     set(_target, property): boolean {
       throw new UnsupportedApiError(
@@ -307,6 +394,11 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       return (
         property === 'getContext' ||
         property === 'extensionSettings' ||
+        property === 'eventSource' ||
+        property === 'event_types' ||
+        // Built here rather than routed to the host, so `isCardMethod` does not
+        // know about it and a card feature-testing with `in` would be told no.
+        property === 'updateChatMetadata' ||
         (typeof property === 'string' && isCardMethod(property)) ||
         Object.hasOwn(fields, property)
       )

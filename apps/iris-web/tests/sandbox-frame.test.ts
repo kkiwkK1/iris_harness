@@ -489,25 +489,80 @@ test('a write into extension settings is reported, not swallowed', () => {
   assert.deepEqual(reported[0].settings, { xierStatusRule: 'computed' })
 })
 
-test('a member the bridge does not carry is refused by name', () => {
-  // The context is the 19 keys cards were measured to touch, not the 145 ST has.
-  // A card reaching outside that set should be told which member, not handed
-  // undefined and left to fail later.
+test('a member the bridge does not carry is named in a report, not thrown', () => {
+  /*
+   * The context is the keys cards were measured to touch, not the 145 ST has. A
+   * card reaching outside that set must still be told **which** member — but by
+   * being told, not by being interrupted.
+   *
+   * This test asserted a throw until the surface was brought into line with the
+   * virtual parent, which had already learned the lesson and paid for it: every
+   * measured `SillyTavern` access in the corpus sits behind a truthiness guard,
+   * so `if (ctx.setVariable)` — a card degrading on purpose — threw at the read
+   * and the guard triggered what it existed to prevent.
+   *
+   * What is asserted has therefore changed shape but not intent: absence is
+   * still named. Both halves are checked, because either alone is the wrong
+   * behaviour — silent `undefined` loses the diagnosis, and a report without a
+   * usable return value does not fix the guard.
+   */
   const scope = realm()
   scope.send({ iris: 'tok', type: 'context', context: snapshot() })
 
-  let caught: unknown
+  let read: unknown = 'unset'
+  let threw = false
   evaluate(scope, globals => {
     const bare = globals['SillyTavern'] as Record<string, unknown>
     try {
-      void bare['generateQuietPrompt']
-    } catch (error: unknown) {
-      caught = error
+      read = bare['generateQuietPrompt']
+    } catch {
+      threw = true
     }
   })
 
-  assert.ok(caught instanceof UnsupportedApiError)
-  assert.equal(caught.member, 'SillyTavern.generateQuietPrompt')
+  assert.equal(threw, false, 'throwing here breaks the truthiness guards every measured card uses')
+  assert.equal(read, undefined, 'upstream yields undefined for an absent property')
+
+  const reports = scope.posted.filter(message => message.type === 'error')
+  assert.ok(
+    reports.some(message => message.type === 'error' && message.message.includes('generateQuietPrompt')),
+    'the member was not named anywhere — silence is what turns a gap into a failure three steps away',
+  )
+})
+
+test('a member read in a loop is reported once, not once per read', () => {
+  // A card polling a slot would otherwise turn one gap into a stream, which is
+  // the failure the card-report list was introduced to end.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    for (let turn = 0; turn < 5; turn += 1) void bare['generateQuietPrompt']
+  })
+
+  const named = scope.posted.filter(
+    message => message.type === 'error' && message.message.includes('generateQuietPrompt'),
+  )
+  assert.equal(named.length, 1)
+})
+
+test('`in` and a read agree about an unbuilt member', () => {
+  /*
+   * They did not. `has` returned `false` while `get` threw, so `'x' in
+   * SillyTavern` and `SillyTavern.x` disagreed about the same name — found by
+   * probing the surface rather than by reading it. Consistency here is a
+   * consequence of the change above rather than a separate fix, which is exactly
+   * why it needs its own assertion: nothing else would notice it regressing.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    assert.equal('deleteAllChats' in bare, false)
+    assert.equal(bare['deleteAllChats'], undefined)
+  })
 })
 
 test('the bridged globals are published, and the window aliases are not', () => {
@@ -719,24 +774,27 @@ test('an unmeasured call shape is refused by name rather than guessed at', () =>
   assert.match(caught.message, /number/, 'the refusal should say what it actually got')
 })
 
-test('a member outside the measured set is still refused', () => {
-  // The gap was a missing entry point, not a refusal that was too wide. The
-  // refusal stays.
+test('a member outside the measured set is still reported', () => {
+  /*
+   * The original point of this test survives the policy change and is worth
+   * keeping separate from the one above: the earlier gap here was a **missing
+   * entry point**, not a refusal that was too wide, and widening what the bridge
+   * silently tolerates is not the fix. Every unbuilt member is still named.
+   */
   const scope = realm()
   scope.send({ iris: 'tok', type: 'context', context: snapshot() })
 
-  let caught: unknown
   evaluate(scope, globals => {
     const bare = globals['SillyTavern'] as Record<string, unknown>
-    try {
-      void bare['deleteAllChats']
-    } catch (error: unknown) {
-      caught = error
-    }
+    assert.equal(bare['deleteAllChats'], undefined)
   })
 
-  assert.ok(caught instanceof UnsupportedApiError)
-  assert.equal(caught.member, 'SillyTavern.deleteAllChats')
+  assert.ok(
+    scope.posted.some(
+      message => message.type === 'error' && message.message.includes('deleteAllChats'),
+    ),
+    'an unbuilt member went unnamed',
+  )
 })
 
 test('getScriptId answers with the id the runner dispatched', () => {
@@ -1290,4 +1348,230 @@ test('everything except the metadata still refreshes', () => {
     '新的名字',
     'an ordinary field stopped refreshing',
   )
+})
+
+test('a nested metadata edit survives too, which is what the real card makes', () => {
+  /*
+   * The measured shape, from the one card in the corpus that calls
+   * `updateChatMetadata` (`银麒赎世`, its phone UI):
+   *
+   *   var meta = SillyTavern.chatMetadata || {}
+   *   if (!meta.yinqi_phone) meta.yinqi_phone = {}
+   *   meta.yinqi_phone[key] = value          // in place, and **nested**
+   *   SillyTavern.updateChatMetadata({ yinqi_phone: meta.yinqi_phone }, false)
+   *
+   * So the object the card actually writes into is one level down. Carrying the
+   * top-level object across a refresh only helps because the nested objects
+   * come with it by reference — which is true, and is exactly the sort of
+   * "true today" that deserves an assertion rather than a paragraph.
+   *
+   * The window this protects is not instantaneous: that card saves on a 2000ms
+   * debounce which every further keystroke resets, so under continuous use it
+   * stays open indefinitely, and what would be lost is every write since the
+   * last save rather than one.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  let bridge: Record<string, unknown> | undefined
+  evaluate(scope, globals => {
+    bridge = globals['SillyTavern'] as Record<string, unknown>
+  })
+
+  const meta = bridge?.['chatMetadata'] as Record<string, Record<string, unknown> | undefined>
+  const phone = meta['yinqi_phone']
+  assert.ok(phone !== undefined, 'the fixture lost its nested object')
+  phone['unread'] = 7
+
+  // A reply settles while the card is still inside its debounce.
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  void (bridge?.['saveMetadata'] as () => unknown)()
+
+  const call = scope.posted.find(
+    message => message.type === 'call' && message.method === 'saveMetadata',
+  )
+  assert.ok(call?.type === 'call')
+  const sent = (call.params as { metadata?: Record<string, Record<string, unknown>> }).metadata
+  assert.equal(
+    sent?.['yinqi_phone']?.['unread'],
+    7,
+    'the nested edit was lost — carrying the top-level object is not enough',
+  )
+})
+
+/**
+ * A frame with a snapshot delivered and the SillyTavern surface in hand.
+ *
+ * The metadata is overridable because the default fixture cannot tell a shallow
+ * merge from a deep one: its nested object holds a single key, so both produce
+ * the same result. Discovered by mutating the code to merge deeply and watching
+ * the test that exists to forbid that pass anyway.
+ */
+function withBridge(chatMetadata?: Record<string, unknown>) {
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: chatMetadata === undefined ? snapshot() : snapshot({ chatMetadata }),
+  })
+  let bridge: Record<string, unknown> | undefined
+  evaluate(scope, globals => {
+    bridge = globals['SillyTavern'] as Record<string, unknown>
+  })
+  return { scope, bridge: bridge as Record<string, unknown> }
+}
+
+test('updateChatMetadata merges one level deep, exactly as upstream does', () => {
+  /*
+   * `chat_metadata = { ...chat_metadata, ...newValues }` (`script.js:8918`).
+   * One level. Replacing a nested key discards its siblings, and a deep merge is
+   * the friendlier behaviour that would silently keep keys upstream drops.
+   *
+   * **The nested object needs a sibling key or this test cannot fail.** With a
+   * single-key nested object, shallow and deep merge agree, so the assertion
+   * passes under either implementation — which it did, until a mutation that
+   * should have reddened it did nothing. `muted` is here so the two disagree.
+   */
+  const { bridge } = withBridge({ yinqi_phone: { unread: 2, muted: true } })
+  const update = bridge['updateChatMetadata'] as (values: unknown, reset?: unknown) => void
+
+  update({ yinqi_phone: { unread: 9 } })
+
+  const meta = bridge['chatMetadata'] as Record<string, Record<string, unknown>>
+  assert.deepEqual(
+    meta['yinqi_phone'],
+    { unread: 9 },
+    'the sibling key survived, so this merged deeply — upstream drops it',
+  )
+})
+
+test('updateChatMetadata keeps sibling top-level keys', () => {
+  const { bridge } = withBridge()
+  const update = bridge['updateChatMetadata'] as (values: unknown, reset?: unknown) => void
+
+  update({ another: 'key' })
+
+  const meta = bridge['chatMetadata'] as Record<string, unknown>
+  assert.deepEqual(meta['yinqi_phone'], { unread: 2 }, 'an untouched key was dropped')
+  assert.equal(meta['another'], 'key')
+})
+
+test('reset replaces the whole of the metadata', () => {
+  const { bridge } = withBridge()
+  const update = bridge['updateChatMetadata'] as (values: unknown, reset?: unknown) => void
+
+  update({ only: 'this' }, true)
+
+  assert.deepEqual(bridge['chatMetadata'], { only: 'this' })
+})
+
+test('updateChatMetadata does not save, because upstream does not', () => {
+  /*
+   * Persistence is `saveMetadata`, separately. The corpus’s one caller debounces
+   * that by 2000ms and has an explicit `skipSave` path, so folding a write in
+   * here would defeat a debounce its author chose and remove a capability they
+   * use. "It obviously should persist" is the improvement this refuses.
+   */
+  const { scope, bridge } = withBridge()
+  const update = bridge['updateChatMetadata'] as (values: unknown, reset?: unknown) => void
+
+  update({ written: true })
+
+  assert.equal(
+    scope.posted.some(message => message.type === 'call'),
+    false,
+    'updating metadata reached the host, which upstream never does',
+  )
+})
+
+test('an update is visible to the save that follows it', () => {
+  // The two halves of the idiom, joined: update publishes, save persists.
+  const { scope, bridge } = withBridge()
+  const update = bridge['updateChatMetadata'] as (values: unknown, reset?: unknown) => void
+
+  update({ written: true })
+  void (bridge['saveMetadata'] as () => unknown)()
+
+  const call = scope.posted.find(
+    message => message.type === 'call' && message.method === 'saveMetadata',
+  )
+  assert.ok(call?.type === 'call')
+  assert.equal(
+    (call.params as { metadata?: Record<string, unknown> }).metadata?.['written'],
+    true,
+  )
+})
+
+test('a card feature-testing with `in` finds updateChatMetadata', () => {
+  // It is built in the frame, so the method table does not know about it. Every
+  // measured `SillyTavern` access in the corpus is behind a guard, so a member
+  // that answers but denies existing is a member cards skip.
+  const { bridge } = withBridge()
+  assert.equal('updateChatMetadata' in bridge, true)
+})
+
+test('a typeof guard degrades too, which the throw also defeated', () => {
+  /*
+   * The corpus uses two guard styles and the throw broke both. This is the
+   * second, and it is the one that looks safest:
+   *
+   *   if (ctx && typeof ctx.setExtensionPrompt === 'function') { … }
+   *
+   * `typeof obj.x` still **evaluates** `obj.x`, so a getter that throws throws
+   * right through it. `typeof` guards an undeclared *identifier*, never a
+   * missing property — which is exactly the confusion that makes this style
+   * feel defensive.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    assert.equal(typeof bare['setExtensionPrompt'], 'undefined')
+  })
+})
+
+test('the bus reached through getContext is the same bus as everywhere else', () => {
+  /*
+   * Two cards read `ctx.eventSource` and `ctx.event_types` across nine sites
+   * each, always as a pair and always behind
+   * `if (ctx && ctx.eventSource && ctx.event_types)`. This surface carried
+   * neither, so that guard was false and every one of those sites took a
+   * fallback path without anything being wrong.
+   *
+   * Identity is the assertion, not presence: `eventOn` wraps `eventSource`, so
+   * a card subscribing by one route and emitting by the other is talking to
+   * itself. Two equivalent-but-separate buses would satisfy a presence check
+   * and silently drop every message between the two routes.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  const heard: string[] = []
+  let bare: Record<string, unknown> | undefined
+  evaluate(scope, globals => {
+    bare = globals
+    const ctx = (globals['SillyTavern'] as Record<string, unknown>)
+    const viaContext = (ctx['getContext'] as () => Record<string, unknown>)()
+
+    assert.equal(
+      viaContext['eventSource'],
+      (globals['parent'] as Record<string, unknown>)['eventSource'],
+      'getContext() handed out a different bus than parent did',
+    )
+    assert.equal(
+      viaContext['event_types'],
+      (globals['parent'] as Record<string, unknown>)['event_types'],
+      'two event tables means a name that matches nothing',
+    )
+
+    const source = viaContext['eventSource'] as { on: (e: string, l: () => void) => void }
+    source.on('message_received', () => heard.push('via getContext'))
+  })
+
+  void (bare?.['eventEmit'] as (event: string) => Promise<void>)('message_received')
+  return Promise.resolve().then(() => {
+    assert.deepEqual(heard, ['via getContext'], 'the subscription did not reach the emitting bus')
+  })
 })
