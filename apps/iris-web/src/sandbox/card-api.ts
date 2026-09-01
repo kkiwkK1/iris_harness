@@ -66,6 +66,14 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
    * in `frame.ts` because that is where the card's own call shape arrives.
    */
   setExtensionPrompt: 'script.setExtensionPrompt',
+  /*
+   * The three chat-write arms, reached by the journal replay in
+   * `chat-journal.ts` and — for now — by nothing else. They are routable but
+   * **not** on the SillyTavern surface; see `OFF_ST_SURFACE` below.
+   */
+  setChatMessages: 'script.setChatMessages',
+  createChatMessages: 'script.createChatMessages',
+  deleteChatMessages: 'script.deleteChatMessages',
   getWorldbook: 'worldbook.get',
   /*
    * `updateWorldbookWith` is deliberately absent and is **not** a gap.
@@ -77,9 +85,40 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
   replaceWorldbook: 'worldbook.replace',
 }
 
+/**
+ * Routable actions that must **not** appear on the `SillyTavern` object.
+ *
+ * This table answers two questions that were the same one until now: *may the
+ * shell route this* and *does a card find it on `SillyTavern`*. They came apart
+ * the moment the journal replay needed to reach an arm that upstream does not
+ * put on its context object — `createChatMessages` and friends are Tavern Helper
+ * members, and inventing `SillyTavern.createChatMessages` would be Iris adding a
+ * member to a surface it is supposed to be mirroring.
+ *
+ * A deny list rather than an allow list is the weaker choice and is used
+ * knowingly: an allow list would have to re-declare every existing member, and
+ * getting that wrong changes behaviour that works today. The rot it invites —
+ * a future entry defaulting to *exposed* — is caught instead by
+ * `sandbox-frame.test.ts`, which pins the SillyTavern surface by name.
+ */
+export const OFF_ST_SURFACE: readonly string[] = [
+  'setChatMessages',
+  'createChatMessages',
+  'deleteChatMessages',
+]
+
 /** Whether a card may invoke this action. */
 export function isCardMethod(name: string): boolean {
   return Object.hasOwn(CARD_METHODS, name)
+}
+
+/**
+ * Whether this action is reachable as a property of `SillyTavern`.
+ * @param name - the card-facing action name.
+ * @returns true when the surface should carry it.
+ */
+export function isOnSillyTavernSurface(name: string): boolean {
+  return isCardMethod(name) && !OFF_ST_SURFACE.includes(name)
 }
 
 /**

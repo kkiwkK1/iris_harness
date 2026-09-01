@@ -147,3 +147,134 @@ bridge that already exists and cards opting into it — separate work, not an
 oversight in the render pipeline. See `RENDER.md`, "What this does not do".
 
 **What would overturn it.** Nothing about the measurement; only the work.
+
+---
+
+## 5. Live objects: two surfaces, opposite rules
+
+**Kind:** compatibility gap on one surface, faithful behaviour on the other. They
+are recorded together because the same measurement produced both answers, and
+reading either alone gets the other backwards.
+
+An audit of what the frame hands a card, measured by mutating each return value
+and re-reading it — one fresh realm per probe, for the reason in `METHODS.md`:
+
+| accessor | hands the card |
+| --- | --- |
+| `getVariables({type})` | live |
+| `getAllVariables()` | copy (the merge builds a new object) |
+| `SillyTavern.chat` | live |
+| `SillyTavern.characters` | live |
+| `getChatMessages()` | a new array of **live** message objects |
+| `getSwipes()` | live |
+| `SillyTavern.chatMetadata` | live |
+
+"Live" is not one verdict, because the two surfaces have opposite upstream rules.
+
+### The SillyTavern context surface: live is correct
+
+`chat` (63 accesses), `chatMetadata` (57), `extensionSettings` (15) and
+`characters` (6) are SillyTavern's own objects, and upstream hands them over
+live. Cards mutate them and that is the documented idiom. **Here the gap is not
+that we hand out a live object — it is that our live object is a snapshot, so the
+mutation never reaches the host.** Each of the three that cards actually write is
+handled separately and none of the fixes is "stop handing out a live object":
+
+- `chat` — recorded and replayed (`CHAT-WRITES.md`, entry in progress)
+- `chatMetadata` — carried across refreshes (§2)
+- `extensionSettings` — a proxy that posts each write (already worked, and the
+  precedent the others were designed against). **Shallow**: a nested write is not
+  intercepted, which is the same element-level blind spot the chat journal wraps
+  message objects to avoid.
+
+### The Tavern Helper surface: live is a divergence
+
+Upstream TH's house rule is the opposite — it clones on the way out, 21 `klona`
+calls across 10 modules, `getVariables` / `getChatMessages` / `getPreset` /
+`getCharacter` among them. So a card mutating a TH return value changes nothing
+on real SillyTavern, and changes our snapshot here.
+
+That makes our liveness **Iris-only behaviour**: a card doing this works in Iris
+and silently does nothing upstream — the worse direction, because it invites
+cards to depend on something no other host provides. Corpus mutations of TH
+return values: **zero**, so cloning breaks nothing measured.
+
+**Fix:** clone at the façade's exit, once, rather than per accessor — a per-member
+`klona` makes "the new member forgot to clone" a regression that can happen,
+where a single exit makes it impossible. Ordered after the shape fix in §6,
+because cloning an object whose field names are wrong accomplishes nothing.
+
+**Unclassified:** `groups`. The census pattern that produced this table looks for
+mutation, not rebinding, so a member that is only ever reassigned reads as
+untouched. Absence of evidence here is not evidence — recorded as unknown rather
+than as safe.
+
+**What would overturn it.** A corpus card mutating a TH return value, which would
+mean upstream's clone is load-bearing for it and our liveness was masking a bug.
+
+---
+
+## 6. `getChatMessages` returns SillyTavern's shape, not Tavern Helper's
+
+**Kind:** compatibility gap. Live, and the most consequential one open.
+
+**Upstream** (`chat_message.ts:164`) returns a **renamed** object:
+
+```
+{ message_id, name, role, is_hidden, message, data, extra,
+  swipe_id, swipes, swipes_data }
+```
+
+**Iris** returns `ScriptChatMessage` — SillyTavern's storage shape: `mes`,
+`is_user`, `is_system`, `swipes`. So a card reading `.message`, `.role`,
+`.is_hidden` or `.message_id` gets `undefined`.
+
+**How it happened**, because the mechanism matters more than the fault:
+`ScriptChatMessage`'s field names rest on a real measurement — 194 `context.chat`
+accesses across the corpus read `mes`, `is_user`, `swipes`. That measurement is
+correct, and it is about `context.chat`, which *is* SillyTavern's own array.
+`TavernHelper.getChatMessages()` is a different surface, where upstream renames.
+**A sound measurement of one surface was applied one notch beyond its range.**
+
+The divergence needed no upstream access to establish: this repo already contains
+the TH shape, in `packages/iris-compat-tavernhelper/src/chat-messages.ts`. Two
+implementations of one member, in one repo, disagreeing.
+
+**The `data` field is half of a larger gap.** It is annotated *"where MVU keeps
+`stat_data`"*, and Iris's shape has no such field. The other route to floor
+variables — `getVariables({type:'message', message_id})` — is refused by name.
+So both paths are closed: one loudly, one silently. They were treated as two
+items for some time; they are one picture, and MVU loading successfully says
+nothing about whether it can read floor state.
+
+**What would overturn it.** Nothing — the shape is settled. What is still being
+measured is *which* fields the corpus's fourteen call sites read, which decides
+how many cards are silently receiving `undefined` today and whether `data` is on
+a live read path.
+
+---
+
+## 7. `getSwipes` and `swipeTo` are Iris's own members
+
+**Kind:** deliberate improvement.
+
+**Upstream** has no member of either name — confirmed against its `@types` and
+its `src`, both zero hits. Swipes are reached through the message that carries
+them.
+
+**Iris** makes a swipe a first-class object, so there is a name to call and no
+upstream spelling to copy.
+
+**Why this is recorded rather than left as an implementation detail.** The
+provenance lived only in a test comment. `identity.test.ts` holds an `IRIS_OWN`
+allowlist with a paired guard — any name in it that upstream *does* have fails —
+so the fact is enforced, but a reader of the surface had no way to learn that
+these two are ours rather than a spelling nobody checked. Under the upgrade
+discipline an addition has to be visible as an addition.
+
+**What it costs.** Two names on the surface that no card written for upstream
+will call, and that a card written for Iris cannot take elsewhere.
+
+**What would overturn it.** Upstream adding members of the same name with
+different semantics, which the `IRIS_OWN` guard would catch as a failure rather
+than a silent collision.

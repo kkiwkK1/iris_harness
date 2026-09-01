@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { UnsupportedApiError } from '../src/sandbox/errors.ts'
+import { CARD_METHODS, isCardMethod, isOnSillyTavernSurface } from '../src/sandbox/card-api.ts'
 import { installSandbox, type FrameEnv } from '../src/sandbox/frame.ts'
 import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
 
@@ -1672,4 +1673,121 @@ test('arguments this contract does not carry are reported, not dropped quietly',
     ),
     'the dropped arguments went unmentioned',
   )
+})
+
+test('the SillyTavern surface carries exactly these members', () => {
+  /*
+   * Pinned by name, because `CARD_METHODS` answers two questions that used to
+   * be one: *may the shell route this* and *does a card find it on
+   * `SillyTavern`*. They came apart when the chat journal needed to reach
+   * `createChatMessages` — a Tavern Helper member. Routing it without this
+   * split would have invented `SillyTavern.createChatMessages`, a member
+   * upstream does not have, on a surface whose whole job is to mirror one.
+   *
+   * `OFF_ST_SURFACE` is a deny list, so a future entry defaults to *exposed*.
+   * That is the weaker default and it is taken knowingly — this test is what
+   * makes the weakness visible instead of silent. A new routable action shows
+   * up here as a diff, and whoever adds it has to say which side it belongs on.
+   *
+   * **This list records what the surface carries today, not what upstream says
+   * it should.** Several entries are Tavern Helper members that may not belong
+   * on a SillyTavern context object at all — `getVariables`, `setVariables` and
+   * `generateRaw` are the candidates — and none of them has been checked against
+   * `st-context.js`'s 145 keys. They are pinned so that a change is visible, not
+   * because they are ratified. Read as an inventory; do not read as approval.
+   */
+  const scope = realm()
+  
+
+  /*
+   * Candidates are **derived**, not listed. The first version of this test
+   * filtered a hand-written array, which meant it could only ever report on
+   * names somebody had thought of — so a member reachable but unlisted was
+   * invisible to the very test written to make the surface visible. It pinned 18
+   * of 25.
+   *
+   * That is this repo's oldest recurring failure ("a checklist can only speak
+   * about names that are on it") appearing inside the checklist's own guard. The
+   * fix is to enumerate from the sources the surface is actually built from:
+   * every routable action, every snapshot field, plus the handful the proxy
+   * answers itself.
+   */
+  /*
+   * The snapshot here carries **every** `ScriptContext` field, not the shared
+   * fixture's subset. Deriving candidates from a partial snapshot was the same
+   * incompleteness one level down: fields the fixture happens not to set are
+   * reachable on the surface and invisible to the probe. Adding a field to the
+   * contract without adding it here silently shrinks what this test can see —
+   * which is why the list is spelled out rather than spread from a helper.
+   */
+  const full: Record<string, unknown> = {
+    chat: [],
+    chatMetadata: {},
+    name1: 'You',
+    name2: 'Her',
+    characterId: 'char-1',
+    chatId: 'chat-1',
+    characters: [],
+    extensionSettings: {},
+    variables: {},
+    variableLayers: { global: {}, character: {}, script: {}, chat: {} },
+    charWorldbooks: { primary: null, additional: [] },
+    floor: { messageId: 0, variables: {} },
+  }
+  const answeredByProxy = ['getContext', 'extensionSettings', 'eventSource', 'event_types', 'updateChatMetadata']
+  const candidates = [...new Set([
+    ...Object.keys(CARD_METHODS),
+    ...Object.keys(full),
+    ...answeredByProxy,
+  ])]
+
+  scope.send({ iris: 'tok', type: 'context', context: full as never })
+
+  let present: string[] = []
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    present = candidates.filter(name => name in bare).sort()
+  })
+
+  assert.deepEqual(present, [
+    'charWorldbooks',
+    'characterId',
+    'characters',
+    'chat',
+    'chatId',
+    'chatMetadata',
+    'eventSource',
+    'event_types',
+    'extensionSettings',
+    'floor',
+    'generate',
+    'generateRaw',
+    'getContext',
+    'getVariables',
+    'getWorldbook',
+    'name1',
+    'name2',
+    'replaceWorldbook',
+    'saveChat',
+    'saveMetadata',
+    'setExtensionPrompt',
+    'setVariables',
+    'swipeTo',
+    'updateChatMetadata',
+    'variableLayers',
+    'variables',
+  ])
+})
+
+test('the chat-write arms are routable but not on the SillyTavern surface', () => {
+  // The specific thing the split exists for, asserted in both directions so a
+  // future "simplification" that collapses them fails here rather than in a card.
+  for (const name of ['setChatMessages', 'createChatMessages', 'deleteChatMessages']) {
+    assert.equal(isCardMethod(name), true, `${name} must stay routable`)
+    assert.equal(
+      isOnSillyTavernSurface(name),
+      false,
+      `${name} is a Tavern Helper member; upstream has no SillyTavern.${name}`,
+    )
+  }
 })

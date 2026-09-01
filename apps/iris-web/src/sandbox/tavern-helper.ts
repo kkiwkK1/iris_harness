@@ -286,6 +286,103 @@ function flattenWorldbookEntry(entry: unknown): unknown {
   return copy
 }
 
+/**
+ * One message in **Tavern Helper's** shape, which a card receives.
+ *
+ * Distinct from `ScriptChatMessage`, which is SillyTavern's storage shape and is
+ * what `context.chat` correctly still carries. Two surfaces, two vocabularies;
+ * conflating them is `DEVIATIONS.md` §6.
+ */
+export interface CardChatMessage {
+  message_id: number
+  name: string
+  role: 'user' | 'assistant' | 'system'
+  is_hidden: boolean
+  message: string
+  extra: Record<string, unknown>
+  /**
+   * This floor's variables — where MVU keeps `stat_data`.
+   *
+   * **Absent entirely when swipes were requested.** That is upstream's own
+   * asymmetry, copied rather than smoothed: a caller asking for every swipe gets
+   * `swipes_data` and no `data`, so a card written against upstream that reads
+   * `data` after asking for swipes finds nothing here too.
+   */
+  data?: Record<string, unknown>
+  swipe_id?: number
+  swipes?: string[]
+  swipes_data?: Record<string, unknown>[]
+}
+
+/**
+ * Normalise a floor's per-swipe variables to one table per swipe.
+ *
+ * The data is already in the snapshot — `chat[i].variables[swipe_id]`, the same
+ * position upstream keeps it — so this is derivation with no new transport, per
+ * `FLOOR-VARIABLES.md`. Holes are filled with `{}` rather than left sparse: a
+ * swipe nobody has written variables for has an empty table, and `undefined`
+ * would make "no variables yet" indistinguishable from "out of range".
+ *
+ * Length follows the **swipes**, not the variables. A floor can have more swipes
+ * than recorded tables (the usual case — only swipes that ran a variable update
+ * have one), and indexing `swipes_data` by `swipe_id` has to be safe for every
+ * swipe that exists.
+ * @param message - the floor, as the snapshot holds it.
+ * @param swipes - that floor's swipe texts.
+ * @returns one table per swipe.
+ */
+function swipeVariables(
+  message: ScriptChatMessage,
+  swipes: readonly string[],
+): Record<string, unknown>[] {
+  const recorded = Array.isArray(message['variables'])
+    ? (message['variables'] as unknown[])
+    : []
+  return swipes.map((_unused, at) => {
+    const table = recorded[at]
+    return typeof table === 'object' && table !== null ? (table as Record<string, unknown>) : {}
+  })
+}
+
+/**
+ * Convert one stored message into the shape Tavern Helper hands a card.
+ *
+ * `is_hidden` is `is_system` and `message` is `mes ?? ''`, both verbatim from
+ * upstream's own line. **`role` is the one field not verified against upstream**
+ * — the derivation here matches this repo's other implementation
+ * (`packages/iris-compat-tavernhelper/src/chat-messages.ts`), which is a second
+ * in-repo source rather than a reading of upstream, and upstream's `system` role
+ * appears to relate to a narrator marker in `extra` that has not been measured.
+ * Recorded as an assumption rather than presented as a copy.
+ * @param message - the stored message.
+ * @param index - its floor number, which is upstream's `message_id`.
+ * @param withSwipes - whether the caller asked for every swipe.
+ * @returns the card-facing message.
+ */
+function toCardChatMessage(
+  message: ScriptChatMessage,
+  index: number,
+  withSwipes: boolean,
+): CardChatMessage {
+  const swipes = message.swipes ?? [message.mes]
+  const swipesData = swipeVariables(message, swipes)
+  const swipeId = message.swipe_id ?? 0
+
+  const base: CardChatMessage = {
+    message_id: index,
+    name: message.name,
+    role: message.is_user ? 'user' : 'assistant',
+    is_hidden: message.is_system === true,
+    message: message.mes ?? '',
+    extra: message.extra ?? {},
+  }
+
+  if (!withSwipes) return { ...base, data: swipesData[swipeId] ?? {} }
+
+  // No `data` here, deliberately — see the field's note.
+  return { ...base, swipe_id: swipeId, swipes: [...swipes], swipes_data: swipesData }
+}
+
 export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<string, unknown> {
   /** Names already reported, so a card in a loop does not fill the panel. */
   const buttonGapsReported = new Set<string>()
@@ -702,20 +799,32 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       )
     },
     getScriptId: (): string | undefined => host.scriptId(),
+    /**
+     * The conversation, in **Tavern Helper's** shape — which is not SillyTavern's.
+     *
+     * This returned SillyTavern's storage objects until it was measured: `mes`,
+     * `is_user`, `is_system`, and one entry per swipe. Upstream renames on the
+     * way out (`chat_message.ts:164`) and returns one entry per *message*
+     * carrying a `swipes` array. Four corpus sites read `.message` and
+     * immediately call a string method on it, so the old shape did not fail
+     * quietly there — it threw.
+     *
+     * The old shape had a real measurement behind it (194 corpus reads of
+     * `context.chat` use `mes`), and that measurement is still correct — about
+     * `context.chat`, which **is** SillyTavern's own array and still carries
+     * SillyTavern's names. It was applied one surface too far. See
+     * `DEVIATIONS.md` §6.
+     */
     getChatMessages: (
       range: string | number,
       options?: { include_swipes?: boolean },
-    ): ScriptChatMessage[] => {
+    ): CardChatMessage[] => {
       const chat = chatOf('getChatMessages')
+      const withSwipes = options?.include_swipes === true
       return resolveRange(range, chat.length).flatMap(index => {
         const message = chat[index]
         if (message === undefined) return []
-        if (options?.include_swipes !== true) return [message]
-        // One entry per swipe when asked, not one entry carrying an array:
-        // cards index the result directly.
-        const swipes = message.swipes
-        if (swipes === undefined) return [message]
-        return swipes.map(text => ({ ...message, mes: text }))
+        return [toCardChatMessage(message, index, withSwipes)]
       })
     },
     /**

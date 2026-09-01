@@ -99,19 +99,40 @@ silently discarding a field a card set is the same class of bug as this whole
 document. Normalisation is against the measured call shape, which is still
 needed (below).
 
+## Replay is ordered, and "by index" is a trap
+
+The journal replays **in the order the card made the mutations**, and that is a
+correctness requirement rather than tidiness.
+
+One of the two cards processes its work **back to front** —
+`sort((a, b) => b.index - a.index)`, with the comment *"avoid index shift"* — and
+inside that loop it mixes `splice` with in-place rewrites, saving once at the
+end. Each index it passes is therefore relative to the array **as the earlier
+operations in the same batch have already left it**.
+
+Writing "replay by index" invites the reading that entries are independent and
+may be sorted, batched, or deduplicated on the way out. They may not. Two
+`splice` entries reordered produce different floors deleted, silently, and the
+card's own back-to-front discipline — which exists precisely to make sequential
+indices correct — is what breaks first. Batching the rewrites into one
+`setChatMessages` is only safe for a run of consecutive rewrites with no
+structural operation between them.
+
 ## Open items
 
 1. **Host arm for append — for 72.** Needs the same swipe-list awareness as
    `setChatMessages`: a message arrives with `mes` and no swipe list, and the
    floor's text lives in its swipes. One arm should serve both this journal and
-   the unbuilt `createChatMessages` member.
-2. **Unmeasured, and it changes the design if it goes the other way:** do the
-   corpus's cards call `saveChat()` after *every* mutation, or only after some?
-   The journal defers everything to save. If a card splices and never saves,
-   upstream loses the deletion too — so deferring is still faithful — but if a
-   card relies on `addOneMessage` alone to make an insert stick, the journal
-   never fires and the card is worse off than today's silent loss, because today
-   it at least sees its own copy. **I have not measured this and will not guess.**
+   the unbuilt `createChatMessages` member. The Proxy, journal and replay layer
+   does not wait on it: an `append` entry with no arm is refused by name, which
+   is constraint 1 working rather than a gap.
+2. ~~Do cards call `saveChat()` after every mutation?~~ **Measured: yes.**
+   Five sites after de-duplication (not eight — 3e re-counted by card and opening
+   text), all of them saving, all on the same control flow, none behind a branch
+   that could skip it. No site relies on `addOneMessage` alone to make an insert
+   stick; three of the five are explicitly write-then-save-then-draw. Deferring
+   the journal to `saveChat` is therefore faithful **and** complete for the
+   corpus as it stands.
 3. **`addOneMessage` / `printMessages`** are wiring-level and separate: they draw
    and do not store, and `chat.updated` already covers the redraw. They are not
    part of this journal.

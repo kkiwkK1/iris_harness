@@ -135,15 +135,65 @@ test('the read family answers synchronously, because its callers do not await', 
   assert.deepEqual(variables, { stat: { hp: 10 } })
 })
 
-test('include_swipes returns one entry per swipe, the way cards index it', () => {
+test('include_swipes returns one entry carrying every swipe', () => {
+  /*
+   * This test asserted the opposite — one entry per swipe, on the reasoning that
+   * "cards index the result directly" — and both halves of it were wrong.
+   *
+   * Upstream returns one entry per **message**, carrying a `swipes` array
+   * (`chat_message.ts:164`), and the fields are Tavern Helper's names, not
+   * SillyTavern's: `message`, not `mes`. Four corpus sites read `.message` and
+   * call a string method on it straight away, so the old shape threw there.
+   *
+   * Kept as one test rather than split, because the two mistakes had one cause:
+   * a measurement of `context.chat` — which really does carry `mes` — applied to
+   * a different surface.
+   */
   const { api } = surface()
   const read = api['getChatMessages'] as (
     range: number,
     options?: { include_swipes?: boolean },
-  ) => { mes: string }[]
+  ) => {
+    message: string
+    swipes?: string[]
+    swipe_id?: number
+    data?: Record<string, unknown>
+    swipes_data?: Record<string, unknown>[]
+  }[]
 
-  assert.deepEqual(read(2, { include_swipes: true }).map(message => message.mes), ['third', 'other'])
-  assert.deepEqual(read(2).map(message => message.mes), ['third'], 'without the flag, the shown text only')
+  const swiped = read(2, { include_swipes: true })
+  assert.equal(swiped.length, 1, 'one entry per message, not per swipe')
+  assert.deepEqual(swiped[0]?.swipes, ['third', 'other'])
+  assert.equal(swiped[0]?.swipe_id, 0)
+
+  const plain = read(2)
+  assert.equal(plain.length, 1)
+  assert.equal(plain[0]?.message, 'third', 'the selected swipe’s text, under Tavern Helper’s name')
+  assert.equal(plain[0]?.swipes, undefined, 'without the flag there are no swipes')
+})
+
+test('data is present without swipes and absent with them', () => {
+  /*
+   * Upstream's own asymmetry, copied rather than smoothed: a caller asking for
+   * every swipe gets `swipes_data` and **no `data` field at all**. Smoothing it
+   * would mean a card written against upstream behaves differently here, and the
+   * difference would only show on the swipe-reading path.
+   */
+  const { api } = surface()
+  const read = api['getChatMessages'] as (
+    range: number,
+    options?: { include_swipes?: boolean },
+  ) => { data?: unknown, swipes_data?: unknown[] }[]
+
+  const plain = read(2)[0]
+  assert.ok(plain !== undefined)
+  assert.equal('data' in plain, true, 'the plain read must carry this floor’s variables')
+  assert.equal('swipes_data' in plain, false)
+
+  const swiped = read(2, { include_swipes: true })[0]
+  assert.ok(swiped !== undefined)
+  assert.equal('data' in swiped, false, 'upstream omits data when swipes were asked for')
+  assert.equal(Array.isArray(swiped.swipes_data), true)
 })
 
 test('every scope the snapshot carries is answered, not refused', () => {
@@ -773,3 +823,108 @@ test('the two generates map to two different wire methods', () => {
   assert.notEqual(CARD_METHODS['generate'], CARD_METHODS['generateRaw'])
 })
 
+
+/**
+ * A chat whose floor variables differ per floor and per swipe.
+ *
+ * Shaped so that a wrong answer is a *different* answer rather than a coincidence
+ * — see below on why the last floor cannot be the sample.
+ */
+function chatWithFloorVariables(): ScriptContext {
+  return {
+    ...context(),
+    chat: [
+      { name: 'You', is_user: true, mes: 'ask', variables: [{ turn: 'user-row' }] },
+      {
+        name: 'Her',
+        is_user: false,
+        mes: 'middle',
+        swipes: ['middle', 'middle-alt', 'middle-third'],
+        swipe_id: 1,
+        // Only two tables for three swipes: the usual case, since a swipe that
+        // never ran a variable update has none.
+        variables: [{ floor: 'middle-0' }, { floor: 'middle-1' }],
+      },
+      { name: 'Her', is_user: false, mes: 'last', variables: [{ floor: 'last-0' }] },
+    ],
+  } as ScriptContext
+}
+
+test('data comes from the selected swipe of the floor that was asked for', () => {
+  /*
+   * **The sample is the middle floor, deliberately.** The card this fixes falls
+   * back to `Mvu.getMvuData({message_id: -1})` when `data` is missing, and on the
+   * *last* floor that fallback returns the same table the real answer would —
+   * so the last floor cannot tell a working derivation from a broken one with a
+   * fallback behind it. An immune sample, chosen against.
+   *
+   * It also has `swipe_id: 1`, so reading table `[0]` — the plausible mistake —
+   * gives a different answer rather than the right one.
+   */
+  const { api } = surface({ context: chatWithFloorVariables() })
+  const read = api['getChatMessages'] as (range: number) => { data?: Record<string, unknown> }[]
+
+  assert.deepEqual(read(1)[0]?.data, { floor: 'middle-1' })
+  assert.deepEqual(read(2)[0]?.data, { floor: 'last-0' })
+})
+
+test('swipes_data is one table per swipe, with holes filled', () => {
+  /*
+   * Length follows the swipes, not the recorded tables: a floor usually has more
+   * swipes than tables, and indexing by `swipe_id` has to be safe for every swipe
+   * that exists. `{}` rather than a hole, because `undefined` would make "no
+   * variables written yet" indistinguishable from "out of range".
+   */
+  const { api } = surface({ context: chatWithFloorVariables() })
+  const read = api['getChatMessages'] as (
+    range: number,
+    options?: { include_swipes?: boolean },
+  ) => { swipes_data?: Record<string, unknown>[] }[]
+
+  assert.deepEqual(read(1, { include_swipes: true })[0]?.swipes_data, [
+    { floor: 'middle-0' },
+    { floor: 'middle-1' },
+    {},
+  ])
+})
+
+test('a user row carries its own variables too', () => {
+  /*
+   * Measured: 79.7% of user rows in the corpus carry a full MVU table, and MVU's
+   * `'latest'` finds a floor by a data predicate rather than by role — so a
+   * derivation that blanked user rows would answer with stale data rather than
+   * with nothing, and only on chats where the newest table happens to sit on a
+   * user row.
+   */
+  const { api } = surface({ context: chatWithFloorVariables() })
+  const read = api['getChatMessages'] as (range: number) => {
+    role?: string
+    data?: Record<string, unknown>
+  }[]
+
+  const row = read(0)[0]
+  assert.equal(row?.role, 'user')
+  assert.deepEqual(row?.data, { turn: 'user-row' })
+})
+
+test('the renamed fields carry the values upstream says they do', () => {
+  // `is_hidden` is `is_system` and `message` is `mes ?? ''`, both verbatim from
+  // upstream's own line. `message_id` is the floor number.
+  const { api } = surface({
+    context: {
+      ...context(),
+      chat: [{ name: 'Sys', is_user: false, is_system: true, mes: 'hidden note' }],
+    } as ScriptContext,
+  })
+  const read = api['getChatMessages'] as (range: number) => Record<string, unknown>[]
+
+  assert.deepEqual(read(0)[0], {
+    message_id: 0,
+    name: 'Sys',
+    role: 'assistant',
+    is_hidden: true,
+    message: 'hidden note',
+    extra: {},
+    data: {},
+  })
+})

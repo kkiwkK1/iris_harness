@@ -20,7 +20,7 @@ import { UNBRIDGED_GLOBALS } from './policy.ts'
 import type { FromFrame, ToFrame } from './protocol.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
-import { isCardMethod } from './card-api.ts'
+import { isOnSillyTavernSurface } from './card-api.ts'
 import { createEventSource, createFrameTavernHelper } from './tavern-helper.ts'
 import { identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
@@ -320,7 +320,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * The earlier facade offered the data members both ways and the actions
        * neither, which is the gap a real card found.
        */
-      if (isCardMethod(property)) {
+      if (isOnSillyTavernSurface(property)) {
         if (property === 'saveMetadata') {
           // No argument upstream: a card mutates `chatMetadata` in place and then
           // asks for it to be saved. So the current snapshot is what travels,
@@ -458,7 +458,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         // Built here rather than routed to the host, so `isCardMethod` does not
         // know about it and a card feature-testing with `in` would be told no.
         property === 'updateChatMetadata' ||
-        (typeof property === 'string' && isCardMethod(property)) ||
+        (typeof property === 'string' && isOnSillyTavernSurface(property)) ||
         Object.hasOwn(fields, property)
       )
     },
