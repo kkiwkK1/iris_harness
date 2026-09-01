@@ -136,6 +136,54 @@ function applyViewport(size: { width: number, height: number }): void {
 }
 
 /**
+ * Report failures that happen after a body has finished evaluating.
+ *
+ * The gap this closes is the widest one left, and a real card fell into it. A
+ * card's work does not happen during module evaluation — it happens in the
+ * callbacks that evaluation registered. MVU's entire startup is inside
+ * `$(async () => { … })`, so anything it throws is an **unhandled rejection**:
+ * the module already reported `ran`, nothing rejects the import, and every
+ * reporter this frame has stays quiet. From outside, a card that died on its
+ * first line of real work is indistinguishable from one patiently waiting.
+ *
+ * Both events are needed. `error` catches a synchronous throw in a listener or
+ * timer; `unhandledrejection` catches the async half, which is where card code
+ * overwhelmingly lives.
+ * @param run - the run token.
+ * @param post - how to reach the shell.
+ */
+function reportAsyncFailures(run: string, post: (message: FromFrame) => void): void {
+  const said = new Set<string>()
+  const announce = (kind: string, detail: unknown): void => {
+    const text =
+      detail instanceof Error
+        ? `${detail.name}: ${detail.message}`
+        : String(detail as { toString: () => string })
+    // Deduplicated: a failing timer can fire forever, and a stream of one fact
+    // teaches a reader to skip the whole class.
+    if (said.has(text)) return
+    said.add(text)
+    post({
+      iris: run,
+      type: 'error',
+      // No script owns it: by now evaluation is over and the stack belongs to a
+      // callback, which is exactly why nothing else could attribute it either.
+      scriptId: undefined,
+      message:
+        `${kind} after the card body finished: ${text}` +
+        ' — this is card code failing in a callback, not the frame refusing anything',
+    })
+  }
+
+  window.addEventListener('unhandledrejection', event => {
+    announce('an unhandled rejection', event.reason)
+  })
+  window.addEventListener('error', event => {
+    announce('an uncaught error', event.error ?? event.message)
+  })
+}
+
+/**
  * Report what the frame's own policy refused.
  *
  * The browser fires `securitypolicyviolation` in the document whose policy
@@ -439,6 +487,7 @@ try {
   },
   })
 
+  reportAsyncFailures(run, post)
   reportBlocked(run, post)
   reportHeight(run, post)
   announceReady(run, post)

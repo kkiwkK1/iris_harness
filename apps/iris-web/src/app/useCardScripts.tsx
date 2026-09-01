@@ -206,7 +206,16 @@ export function CardScriptFrames(): ReactElement {
            * A card that fails must not take the conversation with it, so this is
            * a notice rather than anything that interrupts reading.
            */
-          actionsOf(store).notify('error', `${state.name}: ${describeRun(state)}`)
+          const text = `${state.name}: ${describeRun(state)}`
+          /*
+           * Both, and for different reasons. The notice is the immediate signal;
+           * the card's report list is the record. The notice bar holds one entry
+           * and clears itself after eight seconds, so a burst of startup reports
+           * destroys itself — which once read, from outside, as the reports never
+           * having been sent.
+           */
+          actionsOf(store).addCardReport(text)
+          actionsOf(store).notify('error', text)
         },
       },
       chatId,

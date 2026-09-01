@@ -44,6 +44,7 @@ export function ScriptPanel(): ReactElement | null {
   const granted = useIris(state => state.documentGranted)
   const consent = useIris(state => state.scriptsAllowed)
   const runStates = useIris(state => state.runStates)
+  const cardReports = useIris(state => state.cardReports)
   const actions = useIrisActions()
 
   const [asking, setAsking] = useState(false)
@@ -95,7 +96,25 @@ export function ScriptPanel(): ReactElement | null {
           ) : (
             <p className="iris-field__note iris-script__summary">{summariseRuns(runStates)}</p>
           )}
-          {scripts.map(script => (
+          {/*
+        What the frame said about itself, as opposed to about one script: a
+        library it lacks, a name a card read that nobody published, a global it
+        could not define. These have no script to belong to, and until they had
+        somewhere durable to live they went to the notice bar — one slot, cleared
+        after eight seconds — where a burst of them erased itself before anyone
+        could read it.
+      */}
+      {cardReports.length === 0 ? null : (
+        <div className="iris-field__note">
+          {cardReports.map(report => (
+            <p className="iris-script__failed" key={report}>
+              {report}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {scripts.map(script => (
             <ScriptRow
               key={script.id}
               script={script}

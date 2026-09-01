@@ -110,6 +110,19 @@ export interface IrisState {
    * for why that distinction is the feature rather than a nicety.
    */
   scriptsAllowed: ConsentState
+  /**
+   * Frame-level reports for this card, kept until the card changes.
+   *
+   * The notice bar cannot hold these. It is one slot that clears itself after
+   * eight seconds, so a burst of startup reports overwrites itself and the
+   * survivor is gone before anyone looks — which is how a verification round
+   * concluded the warnings were never emitted when in fact they had all arrived
+   * and been destroyed by the channel carrying them.
+   *
+   * Deduplicated and durable: a diagnostic that cannot be read when someone
+   * finally looks is a diagnostic that does not exist.
+   */
+  cardReports: string[]
   /** What each of this card's scripts is doing, once they start on their own. */
   runStates: ScriptRunState[]
 
@@ -145,6 +158,8 @@ export interface IrisActions {
    * permission prompt becomes something people dismiss without reading.
    */
   answerScriptsAllowed(allowed: boolean): Promise<void>
+  /** Record a frame-level report for this card, once. */
+  addCardReport(text: string): void
   /** Replace what the running scripts are reported to be doing. */
   setRunStates(states: readonly ScriptRunState[]): void
   /**
@@ -286,6 +301,7 @@ export function createIrisStore(
       scripts: [],
       scriptsFor: undefined,
       scriptsAllowed: 'unknown',
+      cardReports: [],
       runStates: [],
       documentGranted: false,
       connections: [],
@@ -469,6 +485,7 @@ export function createIrisStore(
                   // nothing reports why.
                   scriptsAllowed: 'unknown' as ConsentState,
                   runStates: [],
+                  cardReports: [],
                 }
               : {}),
           })
@@ -502,6 +519,7 @@ export function createIrisStore(
           // already stored and about to arrive.
           scriptsAllowed: 'unknown',
           runStates: [],
+          cardReports: [],
         })
         await guard(async () => {
           const listed = await client.call('script.list', { characterId })
@@ -532,6 +550,14 @@ export function createIrisStore(
             set({ scriptsAllowed: scriptsAllowed ? 'allowed' : 'declined' })
           }
         })
+      },
+
+      addCardReport(text: string): void {
+        const seen = get().cardReports
+        // Once each. A card polling a missing slot would otherwise fill the panel
+        // with one fact, and a list nobody can skim is the notice bar again.
+        if (seen.includes(text)) return
+        set({ cardReports: [...seen, text] })
       },
 
       setRunStates(states: readonly ScriptRunState[]): void {

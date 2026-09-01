@@ -615,3 +615,46 @@ test('a fault of Iris does not read as the host answering', async () => {
   assert.match(store.getState().notice?.text ?? '', /Iris hit a problem of its own/)
   dispose()
 })
+
+test('frame-level reports survive where the notice bar destroys them', async () => {
+  /*
+   * The notice bar is one slot that clears itself after eight seconds. A burst of
+   * startup reports therefore overwrites itself and the survivor evaporates — and
+   * a verification round concluded the warnings were never emitted when in fact
+   * every one had arrived and been destroyed by the channel carrying it.
+   *
+   * So the card keeps its own list: durable until the card changes, deduplicated
+   * so a polled slot cannot flood it.
+   */
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+
+  actions.addCardReport('a card read parent.toastr, which nothing has published')
+  actions.addCardReport('an unhandled rejection after the card body finished: Error: boom')
+  actions.addCardReport('a card read parent.toastr, which nothing has published')
+
+  assert.equal(store.getState().cardReports.length, 2, 'the same fact is recorded once')
+  assert.match(store.getState().cardReports.join(' '), /unhandled rejection/)
+
+  // The notice, by contrast, only ever holds the last one.
+  assert.equal(store.getState().notice, undefined, 'reports do not implicitly notify')
+  dispose()
+})
+
+test('a card switch clears the previous card reports', async () => {
+  // They belong to the card that produced them. Carrying them across would
+  // attribute one card's frame problems to the next one opened.
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+  const one = await client.call('character.import', { filename: 'One.png', content: 'AAAA' })
+  const two = await client.call('character.import', { filename: 'Two.png', content: 'AAAA' })
+
+  await actions.loadScripts(one.character.characterId)
+  actions.addCardReport('something about the first card')
+  await actions.loadScripts(two.character.characterId)
+
+  assert.deepEqual(store.getState().cardReports, [])
+  dispose()
+})
