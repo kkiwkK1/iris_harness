@@ -93,7 +93,7 @@ function describeAttempts(targets: readonly string[]): string {
   }
 
   const attempted = targets.filter(target => entries.some(entry => entry.name === target))
-  if (attempted.length === targets.length && targets.length > 0) {
+  if (attempted.length === targets.length) {
     return 'the browser did send the request, so this is the network or the server, not the frame'
   }
   if (attempted.length === 0) {
@@ -373,11 +373,24 @@ try {
     const targets = remoteImports(source)
     const deadline = new Promise<never>((_resolve, reject) => {
       setTimeout(() => {
+        /*
+         * A module with no imports cannot be stalled on one.
+         *
+         * The first version said "import timed out" whatever the cause and then
+         * added "the browser never sent the request" — both false for a script
+         * whose only remote dependency is a *sibling*: it is parked on a
+         * top-level `await waitGlobalInitialized(...)`, there was never a request
+         * to send, and the sentence sent a reader looking at the network.
+         *
+         * Two sentences, because they are two situations.
+         */
         reject(
           new Error(
-            `import timed out after ${IMPORT_TIMEOUT_MS / 1000}s — the module never finished loading` +
-              (targets.length === 0 ? '' : ` (waiting on ${targets.join(', ')})`) +
-              ` — ${describeAttempts(targets)}`,
+            targets.length === 0
+              ? `still evaluating after ${IMPORT_TIMEOUT_MS / 1000}s — this module has no remote imports,` +
+                ' so it is parked on something inside itself, most likely a top-level await'
+              : `import timed out after ${IMPORT_TIMEOUT_MS / 1000}s — the module never finished loading` +
+                ` (waiting on ${targets.join(', ')}) — ${describeAttempts(targets)}`,
           ),
         )
       }, IMPORT_TIMEOUT_MS)
