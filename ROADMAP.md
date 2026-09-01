@@ -168,7 +168,10 @@ ST 的 prompt itemization：点开一条消息，看到这次请求里每个部�
   "命中"卡里的 group 名字全是卡自己的内部函数，不在任何 API 面。**所以做群聊是开拓
   新用户,不是留住现有用户——与本表其他条目不在同一本账上**。上游机制速写（存储契约、
   三模式、策略绕过路径、swipe 与成员身份的耦合）见 GROUPS.md，立项时从那里接。
-- **快速回复 + 斜杠命令**：ST 有约 290 个命令。不必全做，但 `/send /sys /gen /setvar /if /inject /regex` 这一小撮是社区卡实际会调的（酒馆助手的 `triggerSlash` 就转发到这里）。
+- **快速回复 + 斜杠命令**：ST 有约 290 个命令。~~`/send /sys /gen /setvar /if /inject /regex`
+  这一小撮是社区卡实际会调的~~（2026-09-02 语料实测推翻：全语料 triggerSlash 仅 4 个调用点,
+  **只有 `/trigger`(3卡) 和 `/send`(2卡)**;原列七个里六个零命中,而排第一的 `/trigger`
+  根本不在原名单上。斜杠优先级是 **2 个命令**,不是 7 个)。
 - **角色表情立绘**：sprite 目录 + 情绪分类。ST 靠本地 transformers.js 或让 LLM 判断。
 - **主题与 CSS 自定义**：ST 有 `themes/`、`movingUI/`、每用户 `user.css`。Iris 的 slot 系统在这方面本来就更强，但需要真的开出扩展点。
 - **更多导入格式**：`.charx`（V3 zip）、`.byaf`（Backyard AI）、Agnai / RisuAI / NovelAI 的世界书方言。PNG 覆盖了绝大多数流通中的卡。
