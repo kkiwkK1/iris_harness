@@ -172,37 +172,34 @@ export function buildSrcdoc(
      */
     `<script>${safe}</script>`,
     /*
-     * **No `crossorigin` attribute**, and the reason is a mistake worth keeping.
+     * `crossorigin="anonymous"`, and it only works as **one half of a pair**.
      *
-     * It was added here to unmask error text: without it the browser redacts any
-     * exception from a cross-origin script to the literal `Script error.`, and a
-     * whole verification round had produced exactly that one word. The comment
-     * that came with it justified the change as free — "every allowed origin
-     * serves `Access-Control-Allow-Origin: *`, so the fetch behaves identically
-     * and only the error detail changes."
+     * The attribute makes the browser report a cross-origin script's exceptions
+     * in full instead of redacting them to the bare string `Script error.`, and
+     * a frame here is an opaque origin, so every script it loads — Iris's own
+     * preset included — is cross-origin to it. Without the names, an error
+     * thrown inside a callback the preset scheduled arrives carrying nothing:
+     * MagVarUpdate's entry runs inside jQuery's `$(async () => …)`, so jQuery is
+     * the script the browser blames, jQuery comes from `preset.js`, and the
+     * throw that stops the whole publish chain shows up as one masked word.
      *
-     * That sentence was assumed, never measured, and it was false for the one
-     * origin that mattered. `crossorigin="anonymous"` turns the load into a CORS
-     * fetch, which **requires** the response to carry `Access-Control-Allow-Origin`
-     * — and a frame here is an opaque origin, so even Iris's own host is
-     * cross-origin to it. The host serves `/sandbox/preset.js` as
-     * `200 text/javascript` with no CORS header at all. The browser therefore
-     * blocked the preset outright: not one library global reached the frame, no
-     * error was raised, and the next round reported every library missing at once
-     * — including four that had been present for a dozen runs.
+     * The other half is the response. `crossorigin` turns the load into a CORS
+     * fetch, which **requires** `Access-Control-Allow-Origin`. This attribute was
+     * added once without that header, and the result was not a degraded error
+     * message — it was the browser refusing to run the preset at all, silently,
+     * costing a full round and reporting nine missing libraries that were really
+     * one blocked request. The header now exists (`@iris/app-service`'s
+     * sandbox-asset route, `*` plus `cache-control: no-cache`).
      *
-     * So the attribute cost a round to buy error detail it was never going to
-     * deliver. The replacement is better than what it was reaching for: the
-     * preset now sets a marker as its final statement, and the frame reports
-     * first-hand whether the script executed (`preset-globals.ts`,
-     * `library-state.ts`). That answers by name instead of hoping an exception
-     * surfaces, which is what the attribute was a workaround for.
-     *
-     * If a genuinely third-party library tag ever returns here, it needs this
-     * attribute *and* an origin that actually sends the header — verified, not
-     * assumed.
+     * Neither half is safe alone and each looks correct on its own, which is
+     * exactly how they composed into a silent failure the first time. They are
+     * asserted **together**, across the two halves, in
+     * `apps/iris/tests/sandbox-cors.test.ts` — a test in either package alone
+     * could only ever check its own side.
      */
-    ...libraries.map(url => `<script src="${attribute(url)}" data-iris-lib></script>`),
+    ...libraries.map(
+      url => `<script src="${attribute(url)}" crossorigin="anonymous" data-iris-lib></script>`,
+    ),
     '</body></html>',
   ].join('')
 }

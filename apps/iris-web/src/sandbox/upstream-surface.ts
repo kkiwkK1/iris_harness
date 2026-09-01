@@ -1,23 +1,27 @@
 /**
  * Every member upstream's type definitions declare for a card script.
  *
- * Not a list of what Iris provides —  is that, and it holds 31 of
+ * Not a list of what Iris provides — `identity.ts` is that, and it holds 31 of
  * these. This is the far larger set a card **may reasonably reach for**, and it
  * exists so that reaching for one Iris has not built produces the right
  * sentence.
  *
- * Without it,  reads as a broken card.
- * That misattribution is the expensive kind: the report arrives with a suspect
- * already named, so nobody checks the innocent party. It has now cost this
- * project twice — first with , then with Vue, where a
- * library Iris was supposed to seed went unnamed because no list knew about it.
- * The pattern is the same both times: a checklist can only ever speak about
- * names that are on it.
+ * Without it, `getTavernHelperVersion is not defined` reads as a broken card, and
+ * that misattribution is the expensive kind: the report arrives with a suspect
+ * already named, so nobody checks the innocent party. It has cost this project
+ * twice already — first `waitGlobalInitialized`, then Vue, where a library Iris
+ * was supposed to seed went unnamed because no list knew about it. The shape is
+ * identical both times: **a checklist can only ever speak about names that are
+ * on it**, so anything missing from the list is missing from every report the
+ * list can produce.
  *
- * Extracted from  in the installed Tavern Helper rather than
- * written by hand, and pinned by a test that re-extracts when that corpus is
- * present. A hand-kept list of 171 names would rot silently, and the rot is
- * invisible until a card reads the wrong diagnosis.
+ * Extracted from the installed Tavern Helper's `@types` declarations rather than
+ * written by hand, and pinned by a test that re-extracts them when that corpus
+ * is present. A hand-kept list of 171 names would rot silently, and the rot is
+ * invisible until a card is handed the wrong diagnosis.
+ *
+ * Membership here says nothing about whether Iris implements a member — only
+ * that a card is entitled to expect it. `identity.ts` answers the other question.
  *
  * @module iris-web/sandbox/upstream-surface
  */

@@ -193,25 +193,20 @@ test('a network grant does not quietly widen script origins', () => {
   assert.equal(granted, ungranted)
 })
 
-test('a library tag does not request CORS, because the host does not answer it', () => {
+test('a library tag requests CORS, so its errors arrive with names', () => {
   /*
-   * The regression this pins cost a full verification round.
+   * Half of a pair. The other half — that the host actually answers with
+   * `Access-Control-Allow-Origin` — is asserted in
+   * `apps/iris/tests/sandbox-cors.test.ts`, because no test inside this package
+   * can see the host, and this attribute without that header does not degrade
+   * gracefully: the browser refuses to run the script at all.
    *
-   * `crossorigin="anonymous"` was added to these tags to unmask error text, on
-   * the stated assumption that "every allowed origin serves
-   * Access-Control-Allow-Origin: *". That was never measured and was false for
-   * the one origin that mattered: Iris's own host answers `/sandbox/preset.js`
-   * with `200 text/javascript` and no CORS header.
-   *
-   * The attribute turns the load into a CORS fetch, and a frame here is an
-   * opaque origin, so even our own host is cross-origin to it. The browser
-   * blocked the preset outright — no globals, no error — and the next round
-   * reported nine missing libraries, four of which had worked for a dozen runs.
-   *
-   * Nothing tested the attribute in either direction, which is how it went in
-   * unnoticed. If a real third-party tag ever needs it again, it needs a
-   * verified `Access-Control-Allow-Origin` from that origin first, and this test
-   * is where that decision gets recorded.
+   * That is not a hypothetical. This assertion previously read the other way
+   * round, pinning the *absence* of the attribute, because adding it without the
+   * header had blocked the entire preset — no globals, no error, nine libraries
+   * reported missing when the truth was one blocked request. Both states have
+   * now been correct at different times, which is precisely why the pairing is
+   * asserted somewhere that can see both sides rather than trusted to a comment.
    */
   const doc = buildSrcdoc('tok', '', {
     networkGranted: false,
@@ -221,9 +216,8 @@ test('a library tag does not request CORS, because the host does not answer it',
 
   assert.ok(doc.includes('/sandbox/preset.js'), 'the library tag should still be emitted')
   assert.ok(
-    !doc.includes('crossorigin'),
-    'a crossorigin tag makes the browser demand a header this host does not send, and the' +
-      ' script is then blocked with no error at all',
+    doc.includes('crossorigin="anonymous"'),
+    'without this the preset\u2019s exceptions are redacted to "Script error." and the throw that' +
+      ' stops a card\u2019s publish chain arrives carrying nothing',
   )
 })
-

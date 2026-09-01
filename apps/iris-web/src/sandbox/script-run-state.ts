@@ -25,6 +25,7 @@
  */
 import { FRAME_MEMBERS, MEMBER_KINDS } from './identity.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
+import { UPSTREAM_MEMBERS } from './upstream-surface.ts'
 
 /** Where one script has got to. */
 export type ScriptRunPhase =
@@ -225,6 +226,26 @@ function attribute(detail: string): string {
   }
   if (EXPECTED_GLOBALS.includes(name)) {
     return `${detail} — a library upstream seeds from its own page, which this frame does not have`
+  }
+  /*
+   * A member upstream declares and Iris has not built.
+   *
+   * The branch above only covers members Iris *does* implement, which meant the
+   * whole unimplemented surface — 140 of upstream's 171 declared names — fell
+   * through to "no idea, must be the card". A card calling
+   * `getTavernHelperVersion` is not broken; it is asking for something upstream
+   * documents and this port has not reached yet, and that is Iris's ledger
+   * entry, not the author's.
+   *
+   * Named separately from the branch above because the two carry different
+   * obligations: one is a member that should already work, the other is scope
+   * that was never claimed.
+   */
+  if (UPSTREAM_MEMBERS.includes(name)) {
+    return (
+      `${detail} — upstream declares this for card scripts and Iris has not built it yet,` +
+      ' so this is missing scope here, not a fault in the card'
+    )
   }
   return detail
 }
