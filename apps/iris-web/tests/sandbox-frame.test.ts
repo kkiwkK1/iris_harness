@@ -145,6 +145,15 @@ test('exactly the outward-reaching names are shadowed', () => {
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
+    // Answered, not implemented: the version is real (transcribed from the
+    // installed extension), the four button members are reporting stubs. They
+    // are here because absence is the one answer that breaks a card outright —
+    // MVU calls three of them while wiring up, before it publishes anything.
+    'getTavernHelperVersion',
+    'getScriptButtons',
+    'getButtonEvent',
+    'replaceScriptButtons',
+    'appendInexistentScriptButtons',
     'getCurrentMessageId',
     'getChatMessages',
     'getSwipes',
@@ -518,6 +527,15 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
+    // Answered, not implemented: the version is real (transcribed from the
+    // installed extension), the four button members are reporting stubs. They
+    // are here because absence is the one answer that breaks a card outright —
+    // MVU calls three of them while wiring up, before it publishes anything.
+    'getTavernHelperVersion',
+    'getScriptButtons',
+    'getButtonEvent',
+    'replaceScriptButtons',
+    'appendInexistentScriptButtons',
     'getCurrentMessageId',
     'getChatMessages',
     'getSwipes',

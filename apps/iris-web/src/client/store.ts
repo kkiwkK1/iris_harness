@@ -65,6 +65,17 @@ export interface Notice {
 }
 
 /** Everything the interface renders from. */
+/**
+ * One line the panel keeps about a card, and the run it came from.
+ *
+ * The generation is what stops three runs' worth of findings from reading as
+ * one present-tense list.
+ */
+export interface CardReport {
+  text: string
+  generation: number
+}
+
 export interface IrisState {
   connected: boolean
   chats: ChatSummary[]
@@ -122,7 +133,23 @@ export interface IrisState {
    * Deduplicated and durable: a diagnostic that cannot be read when someone
    * finally looks is a diagnostic that does not exist.
    */
-  cardReports: string[]
+  cardReports: CardReport[]
+  /**
+   * Which run the panel is currently showing.
+   *
+   * Reports outlive the run that produced them on purpose — a diagnostic nobody
+   * can read when they finally look is a diagnostic that does not exist — but
+   * durability without a generation made the panel unreadable in a different
+   * way: relics of three different runs hung side by side, all of them phrased
+   * in the present tense, and telling them apart meant remembering what had
+   * been tried when. One reading showed "the provider import timed out" beside
+   * an error that could only have come from a run where that same import
+   * *succeeded*.
+   *
+   * Clearing on card change was not enough, because re-running the same card is
+   * the common case during verification.
+   */
+  cardRunGeneration: number
   /** What each of this card's scripts is doing, once they start on their own. */
   runStates: ScriptRunState[]
 
@@ -159,6 +186,7 @@ export interface IrisActions {
    */
   answerScriptsAllowed(allowed: boolean): Promise<void>
   /** Record a frame-level report for this card, once. */
+  beginCardRun(): void
   addCardReport(text: string): void
   /** Replace what the running scripts are reported to be doing. */
   setRunStates(states: readonly ScriptRunState[]): void
@@ -302,6 +330,7 @@ export function createIrisStore(
       scriptsFor: undefined,
       scriptsAllowed: 'unknown',
       cardReports: [],
+      cardRunGeneration: 0,
       runStates: [],
       documentGranted: false,
       connections: [],
@@ -552,12 +581,39 @@ export function createIrisStore(
         })
       },
 
+      beginCardRun(): void {
+        // Monotonic rather than reset per card: two runs must never share a
+        // number, and a card's reports are cleared on switch anyway. A counter
+        // that restarted could make a stale entry look current again.
+        set({ cardRunGeneration: get().cardRunGeneration + 1 })
+      },
+
       addCardReport(text: string): void {
+        const generation = get().cardRunGeneration
         const seen = get().cardReports
-        // Once each. A card polling a missing slot would otherwise fill the panel
-        // with one fact, and a list nobody can skim is the notice bar again.
-        if (seen.includes(text)) return
-        set({ cardReports: [...seen, text] })
+
+        /*
+         * One entry per fact, re-dated when the fact recurs.
+         *
+         * Two things had to be true at once. A card polling a missing slot must
+         * not fill the panel with one fact — that is the notice bar again. But
+         * the same fact arising in a *new* run is news: it means the thing was
+         * not fixed, and suppressing it as a duplicate would leave the panel
+         * showing it stamped with a run that has long since ended.
+         *
+         * So the text stays unique and its generation moves forward. Position
+         * is deliberately not moved: a list that reorders itself while someone
+         * is reading it is harder to follow than one that does not.
+         */
+        const at = seen.findIndex(report => report.text === text)
+        if (at === -1) {
+          set({ cardReports: [...seen, { text, generation }] })
+          return
+        }
+        if (seen[at]?.generation === generation) return
+        const updated = [...seen]
+        updated[at] = { text, generation }
+        set({ cardReports: updated })
       },
 
       setRunStates(states: readonly ScriptRunState[]): void {

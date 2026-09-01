@@ -96,6 +96,9 @@ test('the members needing a per-script binding are a stable, named set', () => {
   // Named in full so that widening it is a visible change rather than a
   // side effect of adding a member.
   assert.deepEqual(identityMembers(), [
+    // Script buttons: four stubs today, but classified by what they are. A stub
+    // that becomes real must not quietly change which script owns it.
+    'appendInexistentScriptButtons',
     'deleteVariable',
     'eventClearAll',
     'eventClearEvent',
@@ -106,11 +109,14 @@ test('the members needing a per-script binding are a stable, named set', () => {
     'eventOnce',
     'eventRemoveListener',
     'getAllVariables',
+    'getButtonEvent',
+    'getScriptButtons',
     'getScriptId',
     'getVariables',
     'initializeGlobal',
     'insertOrAssignVariables',
     'insertVariables',
+    'replaceScriptButtons',
     'replaceVariables',
     'updateVariablesWith',
     'waitGlobalInitialized',

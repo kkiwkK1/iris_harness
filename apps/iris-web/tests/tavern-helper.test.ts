@@ -20,7 +20,8 @@ import { EventBus, MVU_EVENTS, TAVERN_EVENTS } from '@iris/compat-tavernhelper-c
 import type { ScriptContext } from '@iris/protocol'
 
 import { UnsupportedApiError } from '../src/sandbox/errors.ts'
-import { createFrameTavernHelper, resolveRange } from '../src/sandbox/tavern-helper.ts'
+import { readFile } from 'node:fs/promises'
+import { TAVERN_HELPER_VERSION, createFrameTavernHelper, resolveRange } from '../src/sandbox/tavern-helper.ts'
 
 /** A snapshot with three messages, the last carrying two swipes. */
 function context(): ScriptContext {
@@ -471,3 +472,98 @@ test('an unexpanded macro says so, instead of passing for text that had none', (
   assert.equal(gaps.length, 1, 'text with nothing to expand is not a gap')
   assert.match(gaps[0] ?? '', /not a statement that it had no macros/)
 })
+
+test('getTavernHelperVersion answers with the version it was transcribed from', () => {
+  const { api } = surface()
+  const version = (api['getTavernHelperVersion'] as () => string)()
+
+  assert.equal(version, TAVERN_HELPER_VERSION)
+  /*
+   * The card behaviour this exists for. MagVarUpdate opens its initialisation
+   * with a `< 3.4.17` threshold check; answering below it shows the user an
+   * error toast, and answering nothing at all threw a ReferenceError on that
+   * first line and stopped the publish chain before it began.
+   */
+  assert.ok(
+    version.split('.').map(Number)[0] !== undefined && Number(version.split('.')[0]) >= 4,
+    `a card checking for 3.4.17 or newer would be told ${version}`,
+  )
+})
+
+test('the version matches the installed extension it was transcribed from', async t => {
+  /*
+   * The drift pin. This string is a claim about a specific installed copy of
+   * JS-Slash-Runner — the same copy the 171-member surface and the seeded
+   * globals were read off — so it has to be checked against that copy rather
+   * than trusted. When the blueprint is upgraded, this fails until the number
+   * moves with it.
+   *
+   * Skipped rather than failed where the corpus is absent: it is one machine's
+   * install, and a test that cannot see it has learned nothing either way.
+   * Skipping loudly beats passing quietly.
+   */
+  const manifest =
+    'E:/sillyTavern/SillyTavern/data/default-user/extensions/JS-Slash-Runner/manifest.json'
+  let raw: string
+  try {
+    raw = await readFile(manifest, 'utf8')
+  } catch {
+    t.skip(`no local Tavern Helper install at ${manifest}; the version claim is unverified here`)
+    return
+  }
+
+  const declared: unknown = (JSON.parse(raw) as { version?: unknown }).version
+  assert.equal(
+    TAVERN_HELPER_VERSION,
+    declared,
+    'the transcribed surface and the version Iris reports have come apart',
+  )
+})
+
+test('the script-button members answer instead of being absent', () => {
+  const { api, gaps } = surface({ scriptId: 's1' })
+
+  // Absence is the one answer that is definitely wrong: a card wiring up its
+  // buttons would die on a ReferenceError and everything after it never runs.
+  const buttons = (api['getScriptButtons'] as () => unknown[])()
+  assert.deepEqual(buttons, [], 'MVU feeds this straight into _.intersectionBy')
+
+  assert.doesNotThrow(() => {
+    ;(api['replaceScriptButtons'] as (b: unknown) => void)([{ name: 'a', visible: true }])
+    ;(api['appendInexistentScriptButtons'] as (b: unknown) => void)([{ name: 'b', visible: false }])
+  })
+
+  assert.ok(gaps.some(gap => gap.includes('getScriptButtons')))
+  assert.ok(gaps.some(gap => gap.includes('script buttons are scope Iris has not built')))
+})
+
+test('getButtonEvent returns a usable event name, as upstream declares', () => {
+  /*
+   * Upstream's declaration is `getButtonEvent(button_name: string): string` and
+   * its own example passes the result to `eventOn`. Returning a string is what
+   * makes this stub safe for free: the card registers on a valid event name and
+   * nothing ever emits it, because there is no button. A fabricated
+   * subscription object would have moved the crash one property along.
+   */
+  const { api } = surface({ scriptId: 's1' })
+  const event = (api['getButtonEvent'] as (name: unknown) => unknown)('刷新')
+
+  assert.equal(typeof event, 'string')
+  assert.ok((event as string).length > 0)
+  assert.ok((event as string).includes('s1'), 'button events are per script upstream')
+})
+
+test('a script-button gap is reported once per member, not once per call', () => {
+  const { api, gaps } = surface({ scriptId: 's1' })
+  const get = api['getScriptButtons'] as () => unknown[]
+  get()
+  get()
+  get()
+
+  assert.equal(
+    gaps.filter(gap => gap.includes('getScriptButtons')).length,
+    1,
+    'a card polling its buttons would fill the panel with one fact',
+  )
+})
+

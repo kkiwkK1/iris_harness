@@ -82,7 +82,24 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   eventClearListener: 'identity',
   eventClearAll: 'identity',
 
+  /*
+   * Script buttons belong to the script that published them.
+   *
+   * Upstream says so twice over: the declarations are marked **只能在脚本中使用**,
+   * and `getAllEnabledScriptButtons` returns a map keyed by script id, which is
+   * only meaningful if each script owns its own list. Iris answers all four with
+   * stubs today, and they are still classified by what they *are* rather than by
+   * what the stub happens to need — a stub that later becomes real must not
+   * silently change which script it belongs to.
+   */
+  getScriptButtons: 'identity',
+  getButtonEvent: 'identity',
+  replaceScriptButtons: 'identity',
+  appendInexistentScriptButtons: 'identity',
+
   // ── shared: the same answer whoever asks ─────────────────────────────
+  /** The blueprint's version: one number, the same for every caller. */
+  getTavernHelperVersion: 'shared',
   /** Emission is card-wide on purpose: it is how scripts reach each other. */
   eventEmit: 'shared',
   getLastMessageId: 'shared',

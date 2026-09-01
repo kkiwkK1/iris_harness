@@ -74,6 +74,16 @@ export function CardScriptFrames(): ReactElement {
     const host = mount.current
     if (host === null) return
 
+    /*
+     * A new run starts here, and the panel's reports are dated from it.
+     *
+     * This effect re-runs for a new chat, a new card, or a fresh consent answer
+     * — which is exactly the set of things that make earlier findings historical
+     * rather than current. Without a mark at this point, a re-run of the same
+     * card left the previous attempt's reports sitting in the present tense.
+     */
+    actionsOf(store).beginCardRun()
+
     const running = startCardScripts(
       {
         /*

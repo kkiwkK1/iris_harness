@@ -148,7 +148,43 @@ export function createEventSource(events: EventBus): Record<string, unknown> {
  * @param host - what the frame can offer.
  * @returns every name a card expects, ready to publish.
  */
+/**
+ * The Tavern Helper release this surface was transcribed from.
+ *
+ * Not a version Iris invents and not one it aspires to: the card API in
+ * `identity.ts`, the 171 declared members in `upstream-surface.ts` and the seeded
+ * globals in `preset-globals.ts` were all read off one installed copy of
+ * JS-Slash-Runner, and this is that copy's `manifest.json` version.
+ *
+ * Pinned by a test against that manifest wherever the corpus is present, so
+ * transcribing from a newer release cannot leave this claiming the old number.
+ * A version string that drifts from its source is worse than none, because a
+ * card's compatibility check would be answered with a fact about nothing.
+ */
+export const TAVERN_HELPER_VERSION = '4.9.1'
+
 export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<string, unknown> {
+  /** Names already reported, so a card in a loop does not fill the panel. */
+  const buttonGapsReported = new Set<string>()
+
+  /**
+   * Say once that a script-button call did nothing.
+   *
+   * Per name rather than per call: a card may poll its buttons, and a stream of
+   * one fact teaches a reader to skip the whole class. Per name rather than
+   * once overall, because which member a card reached for is the useful part —
+   * it says what the missing UI would have had to do.
+   * @param member - the member that was called.
+   */
+  const reportButtonGap = (member: string): void => {
+    if (buttonGapsReported.has(member)) return
+    buttonGapsReported.add(member)
+    host.reportGap(
+      `card called ${member} — script buttons are scope Iris has not built, so the call did` +
+        ' nothing and no button will appear or fire',
+    )
+  }
+
   /** The snapshot, or a refusal naming the member that needed it. */
   const snapshot = (member: string): ScriptContext => {
     const context = host.context()
@@ -315,6 +351,93 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     getVariables: (option?: VariableOption) => readVariables('getVariables', option),
     getAllVariables: (option?: VariableOption) => readVariables('getAllVariables', option),
     getLastMessageId: (): number => chatOf('getLastMessageId').length - 1,
+
+    /**
+     * The Tavern Helper version this surface was transcribed from.
+     *
+     * A real answer, not a stub, and the distinction rests on where the number
+     * comes from. Iris's card API and its expected-globals list were both
+     * transcribed from one specific installed copy of JS-Slash-Runner, so
+     * "this surface is modelled on `TAVERN_HELPER_VERSION`" is a sourced fact
+     * about this repository rather than a claim to be something it is not.
+     *
+     * Cards use it as a threshold. MagVarUpdate's entry opens with
+     * `getTavernHelperVersion() < '3.4.17'` and shows an error toast when the host
+     * is too old — so answering with the blueprint version produces exactly the
+     * behaviour the card is asking about, while answering with nothing at all
+     * threw a `ReferenceError` on the first line of its initialisation and
+     * stopped the publish chain before it started.
+     *
+     * @returns the version string.
+     */
+    getTavernHelperVersion: (): string => TAVERN_HELPER_VERSION,
+
+    /*
+     * ── script buttons: answered, reported, and not implemented ──────────
+     *
+     * Upstream lets a script publish buttons into the panel and receive their
+     * clicks. Iris has no such UI yet, and these four exist because *absence*
+     * is the one answer that is definitely wrong: MagVarUpdate calls three of
+     * them while wiring up, so a missing member turns a card's setup into a
+     * `ReferenceError` and everything after it never runs.
+     *
+     * They follow the `toastr` precedent rather than inventing a new one: answer
+     * the call, do nothing, and say once that nothing was done. The panel keeps
+     * a named gap instead of a silent one, and the card gets to finish starting.
+     */
+
+    /**
+     * The buttons this script has published — none, because none can be.
+     * @returns an empty list.
+     */
+    getScriptButtons: (): { name: string, visible: boolean }[] => {
+      reportButtonGap('getScriptButtons')
+      // An empty array rather than undefined: MVU passes the result straight
+      // into `_.intersectionBy`, and the shape a card destructures matters more
+      // than the emptiness it finds.
+      return []
+    },
+
+    /**
+     * The event name a button's clicks would arrive under.
+     *
+     * Returns a string, because that is what upstream returns — the type
+     * declaration is `getButtonEvent(button_name: string): string` and its own
+     * example feeds it straight to `eventOn`. That makes the stub honest for
+     * free: the card registers a listener on a perfectly valid event name, and
+     * nothing ever emits it, because there is no button to click. Nothing here
+     * can be read wrongly or explode on property access, which a fabricated
+     * subscription object could.
+     *
+     * Scoped by script id where there is one, matching upstream's per-script
+     * button registry, so two scripts naming the same button do not collide if
+     * this ever becomes real.
+     * @param buttonName - the button's name.
+     * @returns the event name.
+     */
+    getButtonEvent: (buttonName: unknown): string => {
+      reportButtonGap('getButtonEvent')
+      const scriptId = host.scriptId() ?? 'script'
+      return `iris_button_${scriptId}_${String(buttonName)}`
+    },
+
+    /**
+     * Replace this script's button list — accepted, not performed.
+     * @param buttons - what the card wanted shown.
+     */
+    replaceScriptButtons: (buttons: unknown): void => {
+      void buttons
+      reportButtonGap('replaceScriptButtons')
+    },
+
+    /**
+     * Add buttons that do not exist yet — accepted, not performed.
+     * @param buttons - what the card wanted added.
+     */
+    appendInexistentScriptButtons: (buttons: unknown): void => {
+      void buttons
+      reportButtonGap('appendInexistentScriptButtons')
+    },
     /**
      * Which message this frame belongs to — refused in a script frame.
      *

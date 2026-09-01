@@ -45,6 +45,7 @@ export function ScriptPanel(): ReactElement | null {
   const consent = useIris(state => state.scriptsAllowed)
   const runStates = useIris(state => state.runStates)
   const cardReports = useIris(state => state.cardReports)
+  const generation = useIris(state => state.cardRunGeneration)
   const actions = useIrisActions()
 
   const [asking, setAsking] = useState(false)
@@ -107,8 +108,22 @@ export function ScriptPanel(): ReactElement | null {
       {cardReports.length === 0 ? null : (
         <div className="iris-field__note">
           {cardReports.map(report => (
-            <p className="iris-script__failed" key={report}>
-              {report}
+            <p className="iris-script__failed" key={report.text}>
+              {report.text}
+              {/*
+                Marked, not hidden, and not dropped.
+
+                A finding from an earlier run is still evidence — it may be the
+                only record of something that has since stopped reporting — but
+                read in the present tense it misleads badly. One panel showed
+                "the provider import timed out" beside an error that could only
+                have come from a run where that import had succeeded, and
+                separating them took a person who remembered the order of the
+                afternoon.
+              */}
+              {report.generation === generation ? null : (
+                <span className="iris-script__stale"> · from an earlier run</span>
+              )}
             </p>
           ))}
         </div>

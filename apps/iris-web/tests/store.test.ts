@@ -69,6 +69,11 @@ const settled: ChatView = {
   messages: [{ id: 0, key: 'a0', role: 'assistant', name: 'A', text: 'the whole reply', turn: 0 }],
 }
 
+/** The reports as one string, for assertions that do not care about generations. */
+function reportText(reports: readonly { text: string }[]): string {
+  return reports.map(report => report.text).join(' ')
+}
+
 test('deltas accumulate into the stream buffer', () => {
   const { store, push, dispose } = openedStore()
 
@@ -635,7 +640,7 @@ test('frame-level reports survive where the notice bar destroys them', async () 
   actions.addCardReport('a card read parent.toastr, which nothing has published')
 
   assert.equal(store.getState().cardReports.length, 2, 'the same fact is recorded once')
-  assert.match(store.getState().cardReports.join(' '), /unhandled rejection/)
+  assert.match(reportText(store.getState().cardReports), /unhandled rejection/)
 
   // The notice, by contrast, only ever holds the last one.
   assert.equal(store.getState().notice, undefined, 'reports do not implicitly notify')
@@ -658,3 +663,73 @@ test('a card switch clears the previous card reports', async () => {
   assert.deepEqual(store.getState().cardReports, [])
   dispose()
 })
+
+test('a report from an earlier run keeps its generation, so it cannot read as current', () => {
+  /*
+   * The failure this prevents was read off a live panel: "the provider import
+   * timed out" sat beside an error that could only have come from a run where
+   * that same import had *succeeded*. Both were true when written, both were
+   * phrased in the present tense, and telling them apart required a person who
+   * remembered the order of the afternoon.
+   */
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+
+  actions.beginCardRun()
+  actions.addCardReport('the provider import timed out')
+  const first = store.getState().cardRunGeneration
+
+  actions.beginCardRun()
+  actions.addCardReport('getTavernHelperVersion is not defined')
+  const second = store.getState().cardRunGeneration
+
+  assert.notEqual(first, second, 'two runs must never share a generation')
+  const reports = store.getState().cardReports
+  assert.equal(reports.length, 2)
+  assert.equal(reports[0]?.generation, first, 'the older finding is still dated to its own run')
+  assert.equal(reports[1]?.generation, second)
+  dispose()
+})
+
+test('a fact that recurs in a new run is re-dated rather than left stale or duplicated', () => {
+  /*
+   * Both halves matter. Suppressing it as a duplicate would leave the panel
+   * showing a live problem stamped with a run that ended long ago; appending it
+   * again would turn a card that polls into a scrolling wall of one sentence.
+   */
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+
+  actions.beginCardRun()
+  actions.addCardReport('the provider import timed out')
+
+  actions.beginCardRun()
+  actions.addCardReport('the provider import timed out')
+
+  const reports = store.getState().cardReports
+  assert.equal(reports.length, 1, 'the same fact stays one entry')
+  assert.equal(
+    reports[0]?.generation,
+    store.getState().cardRunGeneration,
+    'a problem that is still happening must not be shown as history',
+  )
+  dispose()
+})
+
+test('a repeat within one run does not re-date anything', () => {
+  // A card polling a missing slot must not keep the panel churning.
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+
+  actions.beginCardRun()
+  actions.addCardReport('same fact')
+  const before = store.getState().cardReports
+  actions.addCardReport('same fact')
+
+  assert.deepEqual(store.getState().cardReports, before)
+  dispose()
+})
+

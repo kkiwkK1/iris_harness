@@ -353,6 +353,19 @@
   color: var(--iris-ink-tertiary);
 }
 
+/*
+ * A finding from a previous run, kept but visibly dated.
+ *
+ * Quieter than the report it trails, because it is metadata about the report
+ * rather than part of it — but not hidden, since an earlier run's evidence is
+ * often the only record of something that has since gone quiet.
+ */
+.iris-script__stale {
+  color: var(--iris-ink-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .iris-script__switch {
   display: flex;
   align-items: center;
