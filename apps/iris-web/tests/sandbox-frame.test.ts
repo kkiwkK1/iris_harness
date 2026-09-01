@@ -1206,3 +1206,88 @@ test('each run is listed once, in card order', () => {
 
   assert.deepEqual(scope.listed(), ['first', 'second', 'first'], 'the frame reports every run')
 })
+
+test('a metadata edit survives a snapshot refresh landing before the save', () => {
+  /*
+   * The idiom this protects, which is upstream’s and is documented on
+   * `saveMetadata` itself: a card **mutates `chatMetadata` in place** and then
+   * asks for it to be saved. Upstream can do that because its metadata object
+   * is the live one in the same realm.
+   *
+   * Ours is a snapshot, and snapshots are now replaced wholesale on every
+   * `chat.updated` and `stream.end` — which is new, and is what makes this
+   * reachable. Between a card writing a key and calling `saveMetadata`, any
+   * reply settling anywhere in the chat swaps the object out from under it. The
+   * write is then not merely lost: the save proceeds, reports success, and
+   * stores the version without it.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  let bridge: Record<string, unknown> | undefined
+  evaluate(scope, globals => {
+    bridge = globals['SillyTavern'] as Record<string, unknown>
+  })
+
+  // The card writes, the way upstream tells it to.
+  const metadata = bridge?.['chatMetadata'] as Record<string, unknown>
+  metadata['iris_test_key'] = 'written by the card'
+
+  // A reply settles somewhere in the chat. Nothing to do with this card.
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  // Only now does the card get round to saving.
+  void (bridge?.['saveMetadata'] as () => unknown)()
+
+  const call = scope.posted.find(
+    message => message.type === 'call' && message.method === 'saveMetadata',
+  )
+  assert.ok(call?.type === 'call', 'the save never reached the host')
+
+  const sent = (call.params as { metadata?: Record<string, unknown> }).metadata ?? {}
+  assert.equal(
+    sent['iris_test_key'],
+    'written by the card',
+    'the refresh discarded the card’s edit, and the save reported success anyway',
+  )
+})
+
+test('everything except the metadata still refreshes', () => {
+  /*
+   * The other half of the fix above, and the reason it is a separate test: the
+   * cheapest way to stop a refresh from discarding a write is to stop
+   * refreshing, and that would pass the previous test perfectly while undoing
+   * the live-snapshot work entirely. A card would then read the floor it was
+   * built with forever, which is the bug the refresh exists to fix.
+   *
+   * So the exemption is asserted to be exactly one field wide.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  let bridge: Record<string, unknown> | undefined
+  evaluate(scope, globals => {
+    bridge = globals['SillyTavern'] as Record<string, unknown>
+  })
+
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({
+      chat: [{ mes: 'a newer floor', is_user: false, swipes: ['a newer floor'], swipe_id: 0 }],
+      name2: '新的名字',
+    }),
+  })
+
+  const chat = (bridge as Record<string, unknown>)['chat'] as { mes: string }[]
+  assert.equal(
+    chat[0]?.mes,
+    'a newer floor',
+    'the chat stopped refreshing — the exemption is too wide',
+  )
+  assert.equal(
+    (bridge as Record<string, unknown>)['name2'],
+    '新的名字',
+    'an ordinary field stopped refreshing',
+  )
+})

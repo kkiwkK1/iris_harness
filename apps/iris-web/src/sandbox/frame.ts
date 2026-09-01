@@ -914,7 +914,33 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       return
     }
     if (message.type === 'context') {
-      context = message.context
+      /*
+       * The whole snapshot is replaced — **except the metadata**, which the frame
+       * keeps for its own lifetime.
+       *
+       * `chatMetadata` is the one member whose documented idiom is that the card
+       * writes it: upstream has the card mutate the object in place and then call
+       * `saveMetadata`, which takes no argument. Upstream can do that because its
+       * metadata is the live object in the same realm.
+       *
+       * Ours is a snapshot, and snapshots are now refreshed on every settled
+       * reply and every edit. Replacing this one along with the rest would mean
+       * that any reply landing anywhere in the chat, between a card writing a key
+       * and calling `saveMetadata`, swaps the object out from under it — and the
+       * save then proceeds, reports success, and stores the version without the
+       * write. A silently discarded write, on a path the card did nothing wrong
+       * on.
+       *
+       * Keeping the object costs a **stale read**: a metadata change made outside
+       * this frame will not reach a card that is already running. That is the
+       * lesser harm and the reversible one, and no measured card reads metadata
+       * it did not itself write. Recorded in the deviations ledger rather than
+       * left as an implementation detail.
+       */
+      const carried = context?.chatMetadata
+      context = carried === undefined
+        ? message.context
+        : { ...message.context, chatMetadata: carried }
       extensionSettings = settingsProxy({ ...message.context.extensionSettings })
       return
     }
