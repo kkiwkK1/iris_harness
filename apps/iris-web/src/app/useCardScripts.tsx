@@ -186,8 +186,29 @@ export function CardScriptFrames(): ReactElement {
               // Reported, not swallowed: a blocked subresource is the policy
               // doing its job, and the card author needs the host and directive
               // to know what they reached for.
-              onBlocked: (blocked, directive) =>
-                actionsOf(store).notify('info', `blocked ${blocked} (${directive})`),
+              onBlocked: (blocked, directive) => {
+                const text = `blocked ${blocked} (${directive})`
+                /*
+                 * Both channels, and the durable one is the point.
+                 *
+                 * This used to be the notice bar alone — one slot that clears
+                 * itself after eight seconds. A card whose interface makes five
+                 * refused requests would overwrite its own evidence four times
+                 * and then erase the survivor, which is the exact failure the
+                 * card report list was introduced to end. A refusal is the
+                 * sandbox working, and the author still needs to find out which
+                 * host and which directive.
+                 */
+                actionsOf(store).addCardReport(text)
+                actionsOf(store).notify('info', text)
+              },
+              /*
+               * What the frame paid for its libraries. Durable, because it is a
+               * standing fact about cost rather than a passing event, and because
+               * the experiment it exists for compares two frames opened minutes
+               * apart.
+               */
+              onNote: text => actionsOf(store).addCardReport(text),
               /*
                * Readiness belongs to the frame, so it is reported for every
                * script in it — they all started when it did.

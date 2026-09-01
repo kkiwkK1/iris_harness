@@ -133,6 +133,16 @@ export type FromFrame =
    * attributed to whichever script the shell happened to be tracking.
    */
   | { iris: string, type: 'ran', scriptId: string | undefined, lateMs?: number }
+  /**
+   * Something the frame observed that is **not** a failure.
+   *
+   * Separate from `error` because the panel treats an error as a failure and
+   * counts it in the heading — and a frame reporting what its libraries cost is
+   * not a card going wrong. Reusing `error` for it would make every healthy run
+   * report a failure, which is the fastest way to teach a reader to skip the
+   * whole list.
+   */
+  | { iris: string, type: 'note', scriptId: string | undefined, message: string }
   /** The script threw, or refused a member. `member` is set for a policy refusal. */
   | { iris: string, type: 'error', message: string, member?: string, scriptId: string | undefined }
   /**
@@ -295,6 +305,12 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
   switch (message['type']) {
     case 'ready':
       return { iris: token, type: 'ready' }
+    case 'note': {
+      const note = message['message']
+      return typeof note === 'string'
+        ? { iris: token, type: 'note', scriptId: stringOrUndefined(message['scriptId']), message: note }
+        : undefined
+    }
     case 'ran':
       return {
         iris: token,

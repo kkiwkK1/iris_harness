@@ -103,6 +103,24 @@ export interface RunnerHost {
    */
   onBlocked: (host: string, directive: string) => void
   /**
+   * Something the frame observed that is not a failure.
+   *
+   * Optional because most hosts have nothing to do with it; the shell passes it
+   * to the card's durable report list, where a cost measurement belongs — the
+   * notice bar holds one entry and clears itself, so anything reported there
+   * during startup destroys itself.
+   */
+  onNote?: (message: string) => void
+  /**
+   * Markup for the frame's own body — a message frame's card interface.
+   *
+   * Present only for a message frame. Its absence is what makes this a script
+   * frame: no markup means the bodies arrive as `run` messages instead, and
+   * `scripts` is where they come from. A message frame passes no scripts at all,
+   * because markup only runs by being parsed.
+   */
+  markup?: string
+  /**
    * The card body finished evaluating without throwing.
    *
    * Distinct from "the card is finished": a card that installs listeners and
@@ -189,6 +207,19 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     networkGranted: host.networkGranted,
     libraries: host.libraries,
     selfOrigin: window.location.origin,
+    ...(host.markup === undefined ? {} : { body: host.markup }),
+    /*
+     * A message frame gets its snapshot **inlined**, a script frame does not.
+     *
+     * The difference is when the card's code runs. A script body is handed over
+     * the channel, so it cannot run before the channel has been used; a message
+     * frame's markup runs while the document is still parsing, and reads its
+     * variables immediately — drawing a panel from them is the point of it
+     * existing. The pushed `context` cannot arrive that early, so inlining is
+     * what makes the ordering correct by construction rather than dependent on a
+     * library fetch's parse pause outlasting a message round trip.
+     */
+    ...(host.markup === undefined ? {} : { context: host.context }),
   })
 
   let disposed = false
@@ -341,6 +372,9 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         return
       case 'blocked':
         host.onBlocked(message.host, message.directive)
+        return
+      case 'note':
+        host.onNote?.(message.message)
         return
       case 'fetch':
         void host

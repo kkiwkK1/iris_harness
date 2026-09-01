@@ -19,6 +19,7 @@ import type { ScriptContext } from '@iris/protocol'
 import { installSandbox } from './frame.ts'
 import { remoteImports, requestedImports } from './script-source.ts'
 import { describeAttempts, type TimedResource } from './import-attempts.ts'
+import { describeTransferCost, type TransferTiming } from './transfer-cost.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import { PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
@@ -54,6 +55,21 @@ function announceReady(run: string, post: (message: FromFrame) => void): void {
 
   const announce = (): void => {
     post({ iris: run, type: 'ready' })
+
+    /*
+     * What this frame paid for its libraries, reported once per frame.
+     *
+     * Sent from here because `load` is the first moment every subresource has
+     * settled, so the timing entries exist. It answers a question no other
+     * instrument in this project can reach: whether the HTTP cache is
+     * partitioned per frame origin, which decides whether a 2.29 MB message
+     * preset is paid once or once per chat.
+     *
+     * A `note` rather than an `error`: the panel counts errors as failures in
+     * its heading, and a frame reporting its own cost is not a card going wrong.
+     */
+    const cost = describeTransferCost(libraryTimings(), shortenAssetName)
+    if (cost !== undefined) post({ iris: run, type: 'note', scriptId: undefined, message: cost })
   }
 
   // `complete` means every subresource has settled, load or error. A frame with
@@ -261,6 +277,45 @@ function reportAsyncFailures(
  * @param run - the run token.
  * @param post - the channel to the shell.
  */
+
+/**
+ * Resource timing for the libraries this frame loaded.
+ *
+ * Matched against the tags actually in the document rather than a list built
+ * here, so the two cannot disagree: a library added to the frame is measured
+ * without anyone remembering to add it twice.
+ * @returns the timing entries for this frame's library tags.
+ */
+function libraryTimings(): TransferTiming[] {
+  let entries: readonly { name: string }[]
+  try {
+    entries = performance.getEntriesByType('resource')
+  } catch {
+    return []
+  }
+
+  const wanted = new Set(
+    [...document.querySelectorAll('script[data-iris-lib]')]
+      .map(tag => tag.getAttribute('src'))
+      .filter((src): src is string => src !== null)
+      .map(src => new URL(src, document.baseURI).href),
+  )
+  return entries.filter(entry => wanted.has(entry.name)) as TransferTiming[]
+}
+
+/**
+ * The tail of an asset URL, which is the part that identifies it.
+ *
+ * A hashed name is long and its origin is always ours, so a full URL would push
+ * the number — the thing being reported — off the end of a panel line.
+ * @param url - the asset URL.
+ * @returns something short enough to read.
+ */
+function shortenAssetName(url: string): string {
+  const at = url.lastIndexOf('/')
+  return at === -1 ? url : url.slice(at + 1)
+}
+
 function reportBlocked(run: string, post: (message: FromFrame) => void): void {
   document.addEventListener('securitypolicyviolation', event => {
     let host = event.blockedURI
