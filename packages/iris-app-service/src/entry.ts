@@ -342,7 +342,6 @@ export class ChatEntry {
             // as `null`, which is the honest answer — not an empty tree, which
             // would claim the scope exists and holds nothing.
           },
-          formatBlock: formatYamlBlock,
           onUnsupportedScope: (scope) => { this.unsupportedScopes.add(scope) },
         })
       }

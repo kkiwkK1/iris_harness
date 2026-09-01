@@ -91,3 +91,19 @@ test('an unknown selectiveLogic value activates nothing', () => {
   // extra logic mode fails closed rather than firing on everything.
   assert.equal(evaluateSelectiveLogic(99, [true, true]), false)
 })
+
+test('the regex decision has exactly one implementation', async () => {
+  // `parseRegexFromString` moved to `@iris/compat-tavernhelper-core` so the
+  // frame can revive `strategy.keys` using the same judgement this engine
+  // matches with. Asserted by **identity**, not behaviour: two functions that
+  // agree today are two functions that can stop agreeing, and the whole point
+  // of the move was to remove that possibility. If this package ever grows its
+  // own copy again, the copy will pass every behavioural test in this file on
+  // the day it is written.
+  //
+  // The check lives here rather than beside the function because core is
+  // dependency-free by contract — a test there importing `@iris/lorebook` would
+  // be the reverse edge that contract forbids.
+  const core = await import('@iris/compat-tavernhelper-core') as { parseRegexFromString: unknown }
+  assert.equal(parseRegexFromString, core.parseRegexFromString)
+})

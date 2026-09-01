@@ -21,6 +21,17 @@
  * @module @iris/lorebook/matching
  */
 
+import { parseRegexFromString } from '@iris/compat-tavernhelper-core'
+
+/**
+ * Re-exported so this package's public surface is unchanged by the move.
+ *
+ * The function now lives in `@iris/compat-tavernhelper-core` because the frame
+ * needs the same answer this engine uses — see that module for why a second
+ * copy is the failure worth designing against.
+ */
+export { parseRegexFromString }
+
 import { worldInfoLogic } from './types.ts'
 
 /**
@@ -34,39 +45,6 @@ import { worldInfoLogic } from './types.ts'
  */
 export function escapeRegex(text: string): string {
   return text.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&')
-}
-
-/**
- * Read a `/pattern/flags` key as a real `RegExp`.
- *
- * The unescaped-delimiter rejection is deliberate and stricter than JavaScript
- * needs: `new RegExp` does not care about delimiters, but a key written with a
- * bare `/` inside would be a different regex in every other engine that reads
- * the same book. Refusing it here keeps the key portable — and, because the
- * caller falls back to plaintext matching on `null`, the key still does
- * something rather than silently matching nothing.
- * @param input - a key as the author typed it.
- * @returns the compiled pattern, or `null` if this key is plain text.
- */
-export function parseRegexFromString(input: string): RegExp | null {
-  const match = /^\/([\w\W]+?)\/([gimsuy]*)$/.exec(input)
-  if (!match) return null
-
-  const [, rawPattern, flags] = match
-  if (rawPattern === undefined || flags === undefined) return null
-  if (/(^|[^\\])\//.test(rawPattern)) return null
-
-  // Upstream's `replace` with a string needle only unescapes the first slash.
-  // Reproduced rather than fixed: a key with two escaped slashes compiles to
-  // the same thing here as it does in ST, and "correct" would mean a different
-  // set of activations.
-  const pattern = rawPattern.replace('\\/', '/')
-
-  try {
-    return new RegExp(pattern, flags)
-  } catch {
-    return null
-  }
 }
 
 /** How a single key is tested against the scan buffer. */

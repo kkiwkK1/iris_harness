@@ -26,3 +26,4 @@ export {
   type Listener,
   type Subscription,
 } from './events.ts'
+export { parseRegexFromString } from './regex.ts'

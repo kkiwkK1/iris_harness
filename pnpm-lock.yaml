@@ -230,6 +230,9 @@ importers:
       '@iris/compat-tavernhelper-core':
         specifier: workspace:*
         version: link:../iris-compat-tavernhelper-core
+      '@iris/mvu':
+        specifier: workspace:*
+        version: link:../iris-mvu
       '@iris/variables':
         specifier: workspace:*
         version: link:../iris-variables
@@ -251,7 +254,11 @@ importers:
         specifier: ^3.0.0
         version: 3.1.1
 
-  packages/iris-lorebook: {}
+  packages/iris-lorebook:
+    dependencies:
+      '@iris/compat-tavernhelper-core':
+        specifier: workspace:*
+        version: link:../iris-compat-tavernhelper-core
 
   packages/iris-macro: {}
 

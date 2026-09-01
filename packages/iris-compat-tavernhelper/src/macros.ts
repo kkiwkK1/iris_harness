@@ -30,6 +30,8 @@
  * @module @iris/compat-tavernhelper/macros
  */
 
+import { formatYamlBlock } from '@iris/mvu'
+
 /**
  * The five scopes upstream's variable macros name.
  *
@@ -60,15 +62,6 @@ export interface MacroSources {
    * that.
    */
   variables: Partial<Record<MacroScope, unknown>>
-  /**
-   * Renders a value as a YAML block, for `format_`.
-   *
-   * Injected because this package declares no YAML library and adding one needs
-   * an install. `@iris/mvu` exports `formatYamlBlock`, which is the intended
-   * argument; when this package can declare `js-yaml` directly the parameter
-   * should go away.
-   */
-  formatBlock: (value: unknown) => string
   /**
    * Called when a macro names a scope this host has no store for.
    *
@@ -183,7 +176,7 @@ export function expandHelperMacros(text: string, sources: MacroSources): string 
   })
 
   return withGet.replace(FORMAT, (_match, prefix: string, scope: string, path: string) => {
-    const block = sources.formatBlock(read(scope as MacroScope, path))
+    const block = formatYamlBlock(read(scope as MacroScope, path))
     // Every newline is padded to sit under the macro's own column. Upstream
     // uses the prefix's length, so a block after `状态: ` lines up under it and
     // the YAML keeps meaning what it says.
