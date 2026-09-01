@@ -231,6 +231,7 @@ const PROBES: Record<string, unknown> = {
     chatId: 'no-such-chat', messages: [{ name: 'Aria', is_user: false, mes: 'x' }],
   },
   'script.deleteChatMessages': { chatId: 'no-such-chat', messageIds: [0] },
+  'script.getPreset': { name: 'in_use' },
   // Named world books. The probes name nothing real on purpose: reachability is
   // the property under test, and a not-found answer proves the handler ran just
   // as well as a successful read would.

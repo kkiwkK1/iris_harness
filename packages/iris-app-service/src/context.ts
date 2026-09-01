@@ -22,6 +22,7 @@ import { dirname } from 'node:path'
 import type { CharacterSummary, ScriptContext } from '@iris/protocol'
 import { extractScripts } from '@iris/script'
 
+import type { SillyTavernMessage } from '@iris/persistence'
 import type { ScopeBackend } from '@iris/variables'
 
 import type { ChatEntry } from './entry.ts'
@@ -72,6 +73,56 @@ export function assertStorable(value: unknown, path = 'value'): void {
 }
 
 /**
+ * The chat as a card sees it, with a table on every row that belongs to a turn.
+ *
+ * **Why a table-less user row is a correctness problem, not a cosmetic one.**
+ * MVU's restore path asks `_.has(chat[i].variables[swipe_id], 'stat_data')` to
+ * decide whether floor `i` carries state. On a real SillyTavern install that is
+ * true for **79.7% of user rows**, so a replay walking backwards stops there. On
+ * this host the same rows had no table, so the walk continued past them — and
+ * MVU then persisted the state as of "before this turn's commands were applied",
+ * overwriting the turn's real table. Nothing errors; the conversation simply
+ * loses a turn's worth of state.
+ *
+ * The cause is not that this host stores one table per turn. It is that the
+ * snapshot did not *show* the user row a table. So the repair belongs here, in
+ * the read projection, and nowhere else.
+ *
+ * **Three lines this must not cross.**
+ *
+ * 1. **The export path is untouched.** Projecting into `toFile`'s output would
+ *    write tables into the user's own chat file that SillyTavern never put
+ *    there — the 972-of-972 byte-identical round trip breaks immediately, and it
+ *    breaks by *adding* data, which no reader would notice.
+ * 2. **Fill absences only, never overwrite.** A chat imported from SillyTavern
+ *    has real user-row tables restored through `iris/st-meta`; those are the
+ *    genuine article and win.
+ * 3. **The projected table is the turn's, which is half a turn newer than
+ *    upstream's.** Upstream's user row holds the state as the turn *began*;
+ *    this host has only the state the turn *settled on*. That is a difference in
+ *    what a read means, not in what a write does — see `FLOOR-VARIABLES.md`.
+ * @param entry - the open conversation.
+ * @returns the message lines, with user rows filled in.
+ */
+function withUserRowTables(entry: ChatEntry): SillyTavernMessage[] {
+  const lines = entry.toFile().messages
+  return lines.map((line, index) => {
+    if (!line.is_user) return line
+    const existing = line['variables']
+    // Present and non-empty means it came from the file. Leave it alone.
+    if (Array.isArray(existing) && existing.some(table =>
+      typeof table === 'object' && table !== null && Object.keys(table).length > 0)) {
+      return line
+    }
+    const table = entry.floorVariables(index)
+    if (Object.keys(table).length === 0) return line
+    // A copy, because the caller may scribble on what it is handed and these
+    // lines came out of `toFile` fresh but the table did not.
+    return { ...line, variables: [structuredClone(table)] }
+  })
+}
+
+/**
  * Assemble what a card's script may read about its chat.
  * @param entry - the open conversation.
  * @param extras - the card's settings partition and the visible library.
@@ -93,7 +144,7 @@ export function buildCardContext(
     // `toFile`, not `exportMessages`: only the former attaches
     // `chat[i].variables[swipe_id]`, which is where a status-bar card reads its
     // MVU state. The bare projection loses it with no error to trace.
-    chat: entry.toFile().messages,
+    chat: withUserRowTables(entry),
     // Structured-cloned rather than handed over: the frame gets a copy it may
     // scribble on, and the host keeps the version it will actually store.
     chatMetadata: structuredClone(entry.header.chat_metadata),

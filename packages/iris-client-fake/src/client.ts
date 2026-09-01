@@ -669,6 +669,24 @@ class InMemoryClient implements FakeClient {
         return { primary: null, additional: [] }
       }
 
+      case 'script.getPreset': {
+        const { name } = params as RpcRequest<'script.getPreset'>
+        /*
+         * Refused, and this one is the clearest case in the file.
+         *
+         * A preset is the assembled prompt configuration — orders, macros, the
+         * lot. Anything this client returned would be its own invention of
+         * SillyTavern's shape, which is exactly the line the `generate` family is
+         * refused along. Worse here: a card reads a preset in order to *reason
+         * about what the model will be sent*, so a fabricated one does not fail,
+         * it produces confident wrong conclusions about prompts that do not exist.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client has no presets to read (asked for ${name})`,
+        )
+      }
+
       case 'script.createChatMessages': {
         const { messages } = params as RpcRequest<'script.createChatMessages'>
         /*

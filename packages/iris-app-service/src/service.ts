@@ -20,7 +20,7 @@ import { BlockAssembler, createAssistantMessage, createUserMessage, type Generat
 import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, selectCandidate, SwipeError } from '@iris/chat'
 import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
-import type { ChatCompletionPreset } from '@iris/preset'
+import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset } from '@iris/preset'
 import type { ChatView, GenerationSettings, IrisEvent, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
@@ -289,6 +289,39 @@ export class IrisAppService {
         // Not persisted here; see `#rewriteLines`. A card commits its batch with
         // `script.saveChat`, which is the one place that decision lives.
         return { view: await this.#rewriteLines(entry, messages, false) }
+      },
+
+      'script.getPreset': async ({ name }) => {
+        // Refused by name rather than falling back. This host loads one preset;
+        // answering a request for another with the one in use would let a card
+        // reason confidently about prompts that are not in the preset it asked
+        // for, and nothing in its reply would say so.
+        if (name !== 'in_use') {
+          throw notFound(`preset "${name}" — this host only carries the one in use`)
+        }
+
+        const preset = this.#options.preset
+        const orders = preset.prompt_order ?? []
+        // The same fallback chain the assembler uses, minus the enabled filter:
+        // a card reads `enabled` and so needs the disabled entries too.
+        const chosen = orders.find(entry => entry.character_id === GLOBAL_ORDER_ID)
+          ?? orders.find(entry => entry.character_id === LEGACY_ORDER_ID)
+        const enabled = new Map((chosen?.order ?? []).map(entry => [entry.identifier, entry.enabled]))
+
+        return {
+          prompts: preset.prompts.map(item => ({
+            // `identifier` here, `id` on the wire: upstream's name for the field
+            // is what a card matches on.
+            id: item.identifier,
+            // A preset with no ordering at all runs its list in file order with
+            // everything on, which is what `resolveOrder` falls back to. With an
+            // ordering present, an item missing from it is off — being absent
+            // from the order is how a preset turns a prompt off.
+            enabled: chosen === undefined ? true : enabled.get(item.identifier) ?? false,
+            ...item.role === undefined ? {} : { role: item.role },
+            ...item.content === undefined ? {} : { content: item.content },
+          })),
+        }
       },
 
       'script.createChatMessages': async ({ chatId, messages, insertAt }) => {

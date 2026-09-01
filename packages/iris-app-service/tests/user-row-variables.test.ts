@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { ChatStore } from '../src/chats.ts'
+import { buildCardContext } from '../src/context.ts'
 import { CharacterLibrary } from '../src/library.ts'
 
 /**
@@ -131,4 +132,64 @@ test('a backwards data-predicate scan stops at the user row', async (t) => {
     'USER_ROW',
     'the scan returned an earlier turn’s state — complete, well-formed, and stale',
   )
+})
+
+test('the snapshot shows a table-less user row its turn’s table', async (t) => {
+  const chats = await chatWithBoth(t)
+  const entry = await chats.open('probe')
+
+  // Row 1 is a user row the fixture gave no table. MVU's restore path asks
+  // `_.has(chat[i].variables[swipe_id], 'stat_data')` to decide whether a floor
+  // carries state; on a real install 79.7% of user rows answer yes, so a
+  // backwards replay stops there. Answering no made the walk continue past it
+  // and persist the state from *before* this turn's commands — losing a turn,
+  // with nothing raised.
+  const snapshot = buildCardContext(entry, { extensionSettings: {}, characters: [] })
+  // Found by its text, not by a hardcoded index: the file's first line is the
+  // header, so message indices are offset from row numbers by one — which is
+  // exactly the arithmetic the first version of these tests got wrong.
+  const userRow = snapshot.chat.find(line => line.mes === 'first')
+  assert.equal(userRow?.is_user, true)
+  const projected = (userRow?.['variables'] as { stat_data?: unknown }[] | undefined)?.[0]
+  assert.ok(projected?.stat_data !== undefined, 'the user row still shows no table to a restore walk')
+})
+
+test('the projection fills absences and never overwrites a real table', async (t) => {
+  const chats = await chatWithBoth(t)
+  const snapshot = buildCardContext(
+    await chats.open('probe'), { extensionSettings: {}, characters: [] })
+
+  // `second` is the user row the fixture gave its *own* table, restored through
+  // `iris/st-meta`. That is the genuine article — an imported chat's real data —
+  // and the projection must leave it exactly as it found it.
+  const row = snapshot.chat.find(line => line.mes === 'second')
+  const owned = (row?.['variables'] as { stat_data?: { owner?: string } }[])[0]
+  assert.equal(owned?.stat_data?.owner, 'USER_ROW', 'the projection overwrote an imported table')
+})
+
+test('the export path is untouched — a table-less user row stays table-less on disk', async (t) => {
+  const chats = await chatWithBoth(t)
+  const entry = await chats.open('probe')
+
+  // The line the repair must not cross. Projecting into `toFile` would write
+  // tables into the user's own chat file that SillyTavern never put there, and
+  // it would break the byte-identical round trip by *adding* data — the kind of
+  // damage a reader does not notice because nothing is missing.
+  //
+  // Asserted after building the snapshot, because the projection maps over
+  // `toFile`'s output and a mutating implementation would have modified the
+  // very lines the export path returns.
+  buildCardContext(entry, { extensionSettings: {}, characters: [] })
+
+  const exported = entry.toFile().messages
+  const blank = exported.find(line => line.mes === 'first')
+  assert.equal(blank?.is_user, true)
+  assert.equal(
+    blank?.['variables'],
+    undefined,
+    'the snapshot projection leaked into the export path',
+  )
+  // And the row that legitimately has one still does.
+  const owned = exported.find(line => line.mes === 'second')
+  assert.ok(Array.isArray(owned?.['variables']), 'an imported user-row table went missing')
 })

@@ -396,6 +396,36 @@ export const requestSchemas = {
     chatId: z.string().min(1),
     messageIds: z.array(z.number().int().min(0)).min(1).max(500),
   }),
+  /**
+   * Read a preset's prompt list.
+   *
+   * Minimal by measurement: the corpus has **one** call site, its argument is
+   * always the literal `'in_use'`, and it reads only `id`, `enabled`, `content`
+   * and `role` off each prompt. Everything else upstream's `PresetPrompt`
+   * carries is left out until something asks for it.
+   *
+   * **Prompt ids are camelCase**, and this is the one place a reader is likely
+   * to get it wrong from the documentation. Upstream's own JSDoc
+   * (`@types/function/preset.d.ts:81`) lists them in snake_case —
+   * `world_info_before`, `persona_description`, `enhance_definitions` — while
+   * the type union immediately below it at `:83`, the type-guard array at
+   * `preset.ts:115`, and the default preset's literals at `preset.ts:161`/`:190`
+   * all say `worldInfoBefore`, `personaDescription`, `enhanceDefinitions`. Three
+   * runtime sources against one comment. Implementing from the comment gives a
+   * card whose `prompt.id === 'worldInfoBefore'` is never true: its world info
+   * silently disappears and the output still reads as complete.
+   */
+  'script.getPreset': z.object({
+    /**
+     * Which preset. `'in_use'` means the one currently loaded.
+     *
+     * Any other name is refused by name rather than quietly answered with the
+     * one in use — a card that asked for a specific preset and got a different
+     * one cannot tell, and would go on to reason about prompts that are not
+     * there.
+     */
+    name: z.string().min(1).max(200),
+  }),
   'script.saveChat': z.object({ chatId: z.string().min(1) }),
   /**
    * Inject a script's text into the prompt.
@@ -739,6 +769,9 @@ export interface RpcResponseMap {
   'script.saveMetadata': { metadata: Record<string, unknown> }
   'script.createChatMessages': { view: ChatView }
   'script.deleteChatMessages': { view: ChatView }
+  'script.getPreset': {
+    prompts: { id: string, enabled: boolean, role?: string, content?: string }[]
+  }
   'script.saveChat': Record<string, never>
   'script.setExtensionPrompt': Record<string, never>
   /** The settings as stored, so a card can see what survived. */

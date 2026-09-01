@@ -444,6 +444,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('script.generateRaw', handlers['script.generateRaw']),
       ctx.irisRpc.register('script.generate', handlers['script.generate']),
       ctx.irisRpc.register('script.setChatMessages', handlers['script.setChatMessages']),
+      ctx.irisRpc.register('script.getPreset', handlers['script.getPreset']),
       ctx.irisRpc.register('script.createChatMessages', handlers['script.createChatMessages']),
       ctx.irisRpc.register('script.deleteChatMessages', handlers['script.deleteChatMessages']),
       ctx.irisRpc.register('worldbook.names', handlers['worldbook.names']),
