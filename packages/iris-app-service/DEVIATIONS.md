@@ -227,3 +227,42 @@ present. `tests/floor-anchor.test.ts` pins the per-floor anchor, which is
 deliberately *not* inheriting — the two behaviours live side by side and mean
 different things, so neither should be changed to match the other without
 reading this entry first.
+
+---
+
+## 5. `characterId` is an opaque id, not a stringified array index
+
+**Upstream.** `this_chid` is a **stringified index into `characters[]`**, so
+`characters[this_chid]` works and so does arithmetic on it — `Number(this_chid)`,
+`this_chid + 1`, comparisons against numbers.
+
+**Iris.** `characterId` is the card's own id (`'aria'`), and the snapshot's
+`characters[]` entries carry that id. `characters[characterId]` still resolves,
+because the two fields agree with each other.
+
+**Why the difference is safe as far as it was measured.** The corpus reaches into
+that array exactly once, and the shape it uses is
+`ctx.characters[ctx.characterId]` — a lookup, not an index. What that needs is
+for the two fields to correspond, which they do; nothing in it requires the key
+to be a number. Three other `characters[…]` sites exist and none of them touches
+this array at all: two are 银麒赎世's own local object of the same name (it
+*writes* to it) and one is 扣扣审判's CG-gallery name list. A census that counts
+`characters[` hits finds four; a census that asks *which object* finds one.
+
+**Scope of the zero, and it has no mechanism behind it.** A card doing
+`parseInt(characterId)`, comparing it to a number, or using it to index anything
+other than this array will break. **Zero corpus hits, but nothing prevents it** —
+the id is opaque by construction and a card written against upstream may
+reasonably assume otherwise. This is the same shape as the frame-opens-only-on-
+assistant-floors boundary: measured absence, not structural impossibility.
+
+**Why it is not being aligned.** Renumbering would make `characterId` a value
+like `'3'`, which changes it for every existing consumer of `script.context` —
+`charWorldbooks`, the façade's own lookups — to satisfy no measured need. The
+essence of upstream's semantics here is "`characters[characterId]` finds the
+character being played", and that already holds.
+
+**What would overturn this.** A card doing arithmetic on `characterId`. It would
+present as a lookup that silently finds nothing, since `characters[NaN]` is
+`undefined` and every corpus reader guards its result — so the symptom is a
+card quietly behaving as though the character had no data, not an error.
