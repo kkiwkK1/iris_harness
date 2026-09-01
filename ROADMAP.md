@@ -2,7 +2,7 @@
 
 对照本机 SillyTavern 1.18.0 的**实际装置**盘点，不是凭记忆或文档：`E:/sillyTavern/SillyTavern`。
 
-ST 的功能面规模：14 个内置扩展、43 组 API 端点、约 290 个斜杠命令、7 类互相独立的预设、20 余种每用户数据目录。Iris 当前 ~1180 个测试。
+ST 的功能面规模：14 个内置扩展、43 组 API 端点、约 290 个斜杠命令、7 类互相独立的预设、20 余种每用户数据目录。Iris 当前 ~1400 个测试。
 
 排期不按 ST 的目录顺序，按**什么在挡路**。
 
@@ -10,31 +10,50 @@ ST 的功能面规模：14 个内置扩展、43 组 API 端点、约 290 个斜�
 > 不是天花板。偏离分两本账：兼容面缺口（修或记档）与**刻意升级**（记档为特性：写明好在
 > 哪、代价什么、上游为什么没做）。"已经比 ST 好、要守住的"一节从守势转为产品主张。
 
-## 当前状态（2026-09-02，本节替代文末旧"建议顺序"）
+## 当前状态（2026-09-02 深夜，本节替代文末旧"建议顺序"与本节自身的上一版）
 
 **已完成**（每项都在真卡/真语料上验收过）：Tier 0 全部——卡片脚本沙箱（共居 realm、
-虚拟 parent、按卡授权、自动运行）✅；正则脚本 ✅；EJS 模板（子进程、差分 195/196）✅。
-Tier 1——分支 ✅、连接档 ✅、计费视图 ✅。此外（原表没有的）：MVU 全链（宏展开、
-JSONPatch 方言、变量折叠，真模型验收）✅；脚本按钮数据半 ✅；宿主代取缓存 ✅；
-`script.generate`（装配式生成，受控口子一期）✅；楼层锚定快照宿主半 ✅；CI ✅；
-InitVar 播种 ✅；global 作用域持久化 ✅。
+虚拟 parent、按卡授权、自动运行，实际位置 `apps/iris-web/src/sandbox/`）✅；正则脚本
+（引擎 + 提示词/显示两向接线）✅；EJS 模板（子进程围栏、差分 195/196）✅。Tier 1——
+分支 ✅、连接档 ✅、计费视图 ✅。**消息内渲染管线** ✅（RENDER.md 五步全落，验收卡
+战锤群星闪耀端到端；189 个渲染后接口楼是它的真实负载）。MVU 全链 ✅（宏、JSONPatch
+方言、折叠、真模型验收）。**楼层变量通路** ✅（FLOOR-VARIABLES.md：快照携带 + 门面派生
+data/swipes_data + messageId 全线统一为消息下标 + 用户行快照投影）。**卡对聊天的写** ✅
+（CHAT-WRITES.md：Proxy 账本 + 按序重放 + 批末一次存；append/批删宿主 arm）。世界书
+三来源 ✅（择一 + globalSelect + InitVar 反序；characters 携带当前角色内嵌书）。
+TavernHelper 面出口克隆 ✅（两面相反规则钉成测试）；SillyTavern 面清理 ✅（挂错面成员
+搬家 + 按名钉面）。getPreset ✅（camelCase id 表钉死，上游注释是错的）。script.generate
+（受控口子一期）✅；script.evalTemplate（围栏路由）✅。宿主代取缓存 ✅；CI ✅；
+message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
 
-**进行中**：**消息内渲染管线**（RENDER.md，五步中 1-4 落地，白屏收尾中——语料实测
-179 楼/11 卡是它的负载，验收卡=战锤群星闪耀）。
+**在建**：受控口子一期**浏览器验收**（清单已备，SPA 到标题屏，阻塞于浏览器窗口可见性）；
+预设瘦身 B 件（jQuery UI 结构兜底，undefined+报告已裁）；EjsTemplate frame 门面；
+调试页（宿主半设计 DEBUG-SURFACE.md 已定稿）。
 
-**队列**（按依赖序）：
-1. 渲染管线白屏收案 → 阶段一复验 → 第 2 环（真实生成出令牌）→ RENDER.md 文档收口
-2. **阅读视图窗口化**——外层照 ST 形状（尾部 N 条+显式按钮，d7 已量 `chat_truncation`
-   机制），frame 侧按**字节预算**（3e 已量：楼层数对最坏情况零保护，2 MiB 预算同覆盖
-   有上界）——这是"比上游好"的第一类展品
-3. **脚本按钮 UI**（数据半已备：89 按钮/13 卡，visible:false 是常态，按位置认）
-4. 受控口子一期验收（SPA 调 generate 的真实往返）；二期（/api/backends/*）已归档
-   BRIDGE.md，等真实消费者
-5. MVU 长局变量清理（Tier 1.3，677 楼语料在手）；升级方向自研（见下）
+**队列**（按依赖序，"设计 ✅ / 实现待排"分开记，不再把已付的成本算第二遍）：
+1. **脚本按钮 UI**——设计 ✅（SCRIPT-BUTTONS.md：QR 栏位置、事件名=按钮 id、cyrb53
+   逐字复刻、二级按钮=整表替换）；实现待做
+2. **阅读视图窗口化**——设计 ✅（WINDOWING.md：只窗口挂载层、20 frame 数量闸是结构
+   必需、38.6 KiB/frame 固定开销实测、占位符是主要外观）；实现待做
+3. **调试页页面半**——章程 OBSERVABILITY.md 11 具名缺口（保真度 6 + 缄默 5），宿主半
+   契约 DEBUG-SURFACE.md（拉取不推、dropped 必需、宿主声明已接 kind、禁裸空白）
+4. MVU 长局变量清理（Tier 1.3，677 楼语料在手；注意 chat[i].variables 已是楼层读通路，
+   裁剪不得静默答空——约束记在 WINDOWING.md）
+5. 受控口子二期（/api/backends/*）已归档 BRIDGE.md，等真实消费者
+6. **CI 推远端**——用户决定，仍开放
 
-**升级方向自研**（用户令：自己查资料找改进方向,不等确认）——候选按"上游痛点×我们
-地基优势"筛：设置组织（ST 被抱怨最多）、失败可观测性（我们已领先，产品化）、
-长局性能（窗口化+字节预算+变量清理三件套）、多扩展生态兼容（xiaobaix 等 4 键已量存在）。
+**升级方向自研**（用户令：自己查资料找改进方向,不等确认）——**失败可观测性已从候选
+转为在建**（章程扩至 11 缺口 + 调试页两半）；长局性能三件套中窗口化已有定稿设计、
+变量清理在队、message-preset 瘦身 A 件已落（PRESET-WEIGHT.md）；设置组织
+（SETTINGS.md：负用量发现 + 10 项 IA 草案）待排；多扩展生态兼容仍为候选。
+
+**账本与文档地图**：偏离两本账落在**三份 DEVIATIONS.md**（`apps/iris-web/`、
+`packages/iris-app-service/`、`packages/iris-compat-prompt-template/`）。设计与测量文档
+按域归位：界面侧 `apps/iris-web/`（RENDER / COHABITATION / CHAT-WRITES / WINDOWING /
+SCRIPT-BUTTONS / PRESET-WEIGHT / GRANTS）；宿主侧 `packages/iris-app-service/`
+（FLOOR-VARIABLES / WORLDBOOKS / BRIDGE）；仓库根（SANDBOX / OBSERVABILITY /
+DEBUG-SURFACE / SETTINGS / GROUPS / METHODS / ARCHITECTURE）。ROADMAP 不复述它们的
+内容，立项时从对应文档接。
 
 ---
 
@@ -54,7 +73,7 @@ import 'https://gcore.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate@master/artifac
 
 所以沙箱必须支持**ES module 语法**与**远程 import**。这不是可选项——`window.Mvu` 就是这个 bundle 装上去的，`@iris/compat-tavernhelper` 提供的 API 面没有它就没有消费者。
 
-上游的 iframe **没有沙箱**（同源 `srcdoc`，直接访问 `window.parent`，API 被平铺成裸全局变量）。我们要做真隔离，代价是同步 API 得靠预推快照实现——设计已写在 `PLAN.md`，包名 `iris-script-host` / `iris-script-sandbox`，尚未开始。
+上游的 iframe **没有沙箱**（同源 `srcdoc`，直接访问 `window.parent`，API 被平铺成裸全局变量）。我们做了真隔离，同步 API 靠预推快照实现——~~设计已写在 `PLAN.md`，包名 `iris-script-host` / `iris-script-sandbox`，尚未开始~~（2026-09-02 划掉：**已建成并被真卡验证**，实际形态与立项设想不同——不是两个包，是 `apps/iris-web/src/sandbox/` 里的共居 realm + 虚拟 parent + 按卡授权，策略与实测见 `SANDBOX.md`）。
 
 远程 import 还带一个必须现在就决定的安全问题：**卡片能从任意 URL 拉代码执行**。ST 是默认放行的。Iris 应当至少做到域名白名单 + 首次加载时告知用户，否则我们的"隔离"只是把门锁上、钥匙插在外面。
 
@@ -87,11 +106,9 @@ substitute_find_regex = { NONE: 0, RAW: 1, ESCAPED: 2 }
 - `promptOnly`（仅格式提示词）：只改发出去的提示词，不改存储
 - **两个都不设**：改动被永久写进聊天记录
 
-还有 `minDepth` / `maxDepth`（按楼层深度限定）、`trimStrings`、`runOnEdit`、`disabled`。角色卡自带的正则在 `data.extensions.regex_scripts`——我们已经原样保留了这个字段，只是还没有引擎去执行。
+还有 `minDepth` / `maxDepth`（按楼层深度限定）、`trimStrings`、`runOnEdit`、`disabled`。角色卡自带的正则在 `data.extensions.regex_scripts`——原样保留并由引擎执行。
 
-`packages/iris-regex` 已实现，31 个测试，头三条就是拿 MVU 官方那两条正则跑真实回复，分别验证「读者看不到命令块」「模型读不到自己上一轮的命令块」「存储原文不变」。
-
-剩下的是**接线**：提示词方向接进 `iris-pipeline`，显示方向接进视图投影，并把角色卡 `data.extensions.regex_scripts` 里的脚本按 `SCRIPT_TYPE` 排序喂进去。这部分依赖传输层和界面就位。
+`packages/iris-regex` 已实现，31 个测试，头三条就是拿 MVU 官方那两条正则跑真实回复，分别验证「读者看不到命令块」「模型读不到自己上一轮的命令块」「存储原文不变」。~~剩下的是接线~~（2026-09-02 划掉：两向接线均已完成——提示词方向在管线里，显示方向在渲染管线里跑真语料，189 个渲染后接口楼就是它的产出）。
 
 ### 0.3 ST-Prompt-Template（EJS 模板）
 
@@ -209,18 +226,11 @@ ST 的 prompt itemization：点开一条消息，看到这次请求里每个部�
 
 ---
 
-## 建议顺序
+## ~~建议顺序~~（2026-09-02 整节废止，由文首「当前状态」替代）
 
-两位子代理当前在做传输层与界面。等那条链路能端到端跑起来之后，按这个顺序推：
-
-1. **正则脚本**（Tier 0.2）—— 纯逻辑、可测、MVU 硬依赖，先做
-2. **分支/检查点** + **作者注释**（Tier 1.1 / 1.2）—— 底层能力已具备，接线即可
-3. **提示词计费视图**（Tier 1.4）—— 几乎免费，ST 用户立刻认得
-4. **脚本沙箱**（Tier 0.1）—— 最大的一块，且要先定远程代码加载的安全策略
-5. **ST-Prompt-Template**（Tier 0.3）
-6. **Instruct / Context 模板**（Tier 1.3）
-
-前三项加起来的工作量小于第四项，而且能立刻让产品从"能对话"变成"能用真实社区卡对话"。
+这一节是立项期的排序，**六项全部完成**，保留仅为对照当初的判断：当时认为最大的一块
+（脚本沙箱）确实最大，但"前三项工作量小于第四项"低估了第四项裂变出的东西——沙箱
+带出了共居、渲染、写回、楼层变量四条线，每条都比原表上的独立项大。**读排序请回到文首。**
 
 ---
 
@@ -276,12 +286,9 @@ ST 的 prompt itemization：点开一条消息，看到这次请求里每个部�
 
 `parent.extension_settings` 那 6 处也值得留意：那是 ST 的全局设置大对象，卡片用它存自己的配置。我们的兼容面目前没有对应物，需要补一个（`{type:'extension'}` 变量作用域已经是现成的落点）。
 
-## 需要你拍板的一件事
+## ~~需要你拍板的一件事~~（2026-09-02 已裁决并实现，不再待决）
 
-`parent.document` 那 7 处怎么处理，三种选择：
-
-1. **严格沙箱**——那些卡的界面功能降级（脚本仍然跑，DOM 操作静默失败）。最安全，但用户会觉得"卡坏了"。
-2. **虚拟 parent**——把 `parent.document` 代理到卡片自己的容器上。`parent.document.getElementById('chat')` 之类多半是想找聊天容器或注入样式，给它一个受限但可用的对象，大部分卡能正常工作而不获得真实权限。
-3. **按卡显式授权**——提供"同源模式"开关，用户明确知情后给某张卡完整权限。
-
-推荐 **2 + 3**：默认虚拟代理，个别确实需要真实访问的卡由用户显式开。纯 1 会让"能跑真实社区卡"这个目标打折，纯 3 等于把默认值退回 ST 的水平。
+`parent.document` 那 7 处的处理，当时给了三选一，**已裁为推荐案（2 + 3）并建成**：
+默认虚拟 parent 代理，个别需要真实访问的卡按卡显式授权（GRANTS.md）。策略、实测与
+边界见 `SANDBOX.md` 与 `apps/iris-web/COHABITATION.md`。保留本节骨架是因为三个选项的
+利弊分析对将来同类裁决仍有参照价值；**但它已经不是问题,别再答一遍。**
