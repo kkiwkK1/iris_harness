@@ -116,7 +116,7 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   swipeTo: 'shared',
   generate: 'shared',
   triggerSlash: 'shared',
-  substidudeMacros: 'shared',
+  substitudeMacros: 'shared',
   iframe_events: 'shared',
   tavern_events: 'shared',
   mvu_events: 'shared',

@@ -545,8 +545,8 @@ test('an unexpanded macro says so, instead of passing for text that had none', (
    * right. Doing it silently is not.
    */
   const { api, gaps } = surface()
-  const withMacros = (api['substidudeMacros'] as (t: string) => string)('hello {{user}}')
-  const plain = (api['substidudeMacros'] as (t: string) => string)('hello')
+  const withMacros = (api['substitudeMacros'] as (t: string) => string)('hello {{user}}')
+  const plain = (api['substitudeMacros'] as (t: string) => string)('hello')
 
   assert.equal(withMacros, 'hello {{user}}', 'the text still comes back unchanged, as upstream does')
   assert.equal(plain, 'hello')

@@ -728,7 +728,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * frame reports that none were expanded, and says explicitly that this is
      * not a claim the text had none.
      */
-    substidudeMacros: (text: string): string => {
+    substitudeMacros: (text: string): string => {
       if (typeof text === 'string' && text.includes('{{') && text.includes('}}')) {
         host.reportGap(
           'a card asked for macro expansion and this frame performed none — the text came back' +

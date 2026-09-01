@@ -19,6 +19,27 @@ import { EventBus } from '@iris/compat-tavernhelper-core'
 
 import { createFrameTavernHelper } from '../src/sandbox/tavern-helper.ts'
 import { FRAME_MEMBERS, MEMBER_KINDS, identityMembers } from '../src/sandbox/identity.ts'
+import { UPSTREAM_MEMBERS } from '../src/sandbox/upstream-surface.ts'
+
+/**
+ * Members that are ours, not upstream’s, and are therefore exempt from the
+ * spelling guard below.
+ *
+ * Three, and each is here because upstream has no member of that name at all —
+ * confirmed against its `@types` and its `src`, both zero hits. Being an
+ * extension is the only thing that earns an entry: a name that upstream *does*
+ * have, spelled our own way, is a bug, and the paired test below refuses to let
+ * one hide here.
+ */
+const IRIS_OWN: ReadonlySet<string> = new Set([
+  // Swipes are a first-class object in Iris; upstream reaches them through the
+  // message it hangs them off, so there is no name to copy.
+  'getSwipes',
+  'swipeTo',
+  // The MVU event namespace, exposed as one member rather than as upstream’s
+  // loose globals.
+  'mvu_events',
+])
 
 /** The live surface, built with a host that answers nothing. */
 function surfaceNames(): string[] {
@@ -121,4 +142,50 @@ test('the members needing a per-script binding are a stable, named set', () => {
     'updateVariablesWith',
     'waitGlobalInitialized',
   ])
+})
+
+test('every name we build is a name upstream has, or is declared as ours', () => {
+  /*
+   * The direction that was missing, and the gap it left was live.
+   *
+   * `identity.test.ts` had two guards over this surface and both compared the
+   * implementation against `MEMBER_KINDS`. That pairing is closed: a name
+   * misspelled in one was misspelled in the other, so the two agreed and both
+   * tests passed while cards calling the real upstream name got `undefined`.
+   * It happened — `substitudeMacros` is upstream’s own misspelling, which this
+   * surface deliberately copies, and the copy was itself mistyped as
+   * `substidudeMacros`. Five green tests, one dead member.
+   *
+   * `UPSTREAM_MEMBERS` is extracted from upstream’s `@types`, so it is the one
+   * list here that cannot drift to match our mistakes. This is the only guard
+   * that consults it.
+   *
+   * The module header already had the principle backwards-on: “a checklist can
+   * only ever speak about names that are on it.” The checklist was on the shelf;
+   * nobody held the implementation up against it.
+   */
+  const upstream = new Set(UPSTREAM_MEMBERS)
+  const invented = surfaceNames().filter(
+    name => !upstream.has(name) && !IRIS_OWN.has(name),
+  )
+
+  assert.deepEqual(
+    invented,
+    [],
+    'these exist on our surface under names upstream does not use — a card written against upstream reaches them as undefined. Either the spelling is wrong, or the member is ours and belongs in IRIS_OWN with a reason.',
+  )
+})
+
+test('the members we claim as our own are genuinely not upstream’s', () => {
+  /*
+   * The allowlist has to be falsifiable in both directions, or it becomes the
+   * place a future typo is parked to make the guard above go quiet.
+   */
+  const upstream = new Set(UPSTREAM_MEMBERS)
+  const notOurs = [...IRIS_OWN].filter(name => upstream.has(name))
+  assert.deepEqual(notOurs, [], 'upstream has these, so they are not Iris extensions and must not be exempt from the spelling guard')
+
+  const surface = new Set(surfaceNames())
+  const absent = [...IRIS_OWN].filter(name => !surface.has(name))
+  assert.deepEqual(absent, [], 'exempted but not built — a dead entry that will excuse the next real typo')
 })

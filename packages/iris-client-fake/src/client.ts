@@ -315,6 +315,57 @@ class InMemoryClient implements FakeClient {
         return { view }
       }
 
+      case 'script.setChatMessages': {
+        /*
+         * Modelled rather than refused, unlike its neighbours in the script
+         * group, and the line between them is whether the fake would have to
+         * invent host domain logic. It would not here: the protocol says this
+         * takes **the same write path as `chat.editMessage`**, the arm directly
+         * above already implements that path, and a batch of edits is chat
+         * shape rather than SillyTavern assembly. Refusing it would also stall
+         * MVU's generation-time chain, which is the only reason the method
+         * exists.
+         */
+        const { chatId, messages } = params as RpcRequest<'script.setChatMessages'>
+        const chat = this.#require(chatId)
+
+        /*
+         * Resolved in full before a single character is written. A card
+         * appending a status panel to several floors must not be able to leave
+         * half of them rewritten: a partly applied batch is worse than a
+         * refused one, because the card is told it succeeded and its next read
+         * disagrees with its own model of the chat.
+         */
+        const targets = messages.map(({ messageId, message }) => {
+          const floor = chat.messages[messageId]
+          if (floor === undefined) throw new FakeRpcError(
+            'not-found',
+            `no message ${String(messageId)}`,
+          )
+          // The visible reading only, for the reason `chat.editMessage` gives:
+          // the other candidates are still the model’s words.
+          const candidate = floor.candidates[floor.index]
+          if (candidate === undefined) throw new FakeRpcError(
+            'internal',
+            `message ${String(messageId)} has no reading`,
+          )
+          return { candidate, text: message }
+        })
+
+        for (const target of targets) target.candidate.text = target.text
+        chat.updatedAt = Date.now()
+
+        /*
+         * `refresh` is read off the wire and deliberately not consulted — it is
+         * upstream's hint about repainting its own DOM, and this client tells
+         * every attached page what changed regardless. Accepting and ignoring
+         * it is what lets a card written against upstream call this unchanged.
+         */
+        const view = toChatView(chat, this.#streams.get(chatId)?.turn)
+        this.#emit({ type: 'chat.updated', chatId, view })
+        return { view }
+      }
+
       case 'chat.deleteMessage': {
         const { chatId, id } = params as RpcRequest<'chat.deleteMessage'>
         const chat = this.#require(chatId)

@@ -440,6 +440,56 @@ function reportStorage(run: string, post: (message: FromFrame) => void): void {
 const BLANK_AFTER_MS = 6_000
 
 /**
+ * Main-thread blocking inside this frame, accumulated from the start.
+ *
+ * Registered as an observer rather than read on demand, because
+ * `getEntriesByType('longtask')` returns **nothing** unless something was already
+ * observing — the entries are not retained otherwise. The first version of the
+ * summary read it on demand, got an empty list, and printed no timing at all:
+ * an instrument reporting silence that meant "nobody was listening" rather than
+ * "nothing happened".
+ *
+ * This is the measurement that separates the two reasons a frame paints late,
+ * which need opposite fixes: waiting on the network, or blocking its own thread.
+ */
+const blocking = { tasks: 0, total: 0 }
+
+/**
+ * When this frame first got to render, measured by its own animation frame.
+ *
+ * Not `first-contentful-paint`. That entry is a **main-frame** metric in Chrome and
+ * is simply not recorded for a child document — so reading it here returned
+ * nothing, and the summary printed "never painted" for a frame that was
+ * rendering perfectly well. **An unavailable measurement reported as a negative
+ * finding**, which is the same mistake as reading `background-color` on a gradient
+ * and the same mistake as reading a long-task list nobody was observing. Three
+ * times in one instrument, each time producing a confident wrong answer rather
+ * than a gap.
+ *
+ * A `requestAnimationFrame` callback fires immediately before the browser paints,
+ * and it exists in every frame. It says "this document reached the point of
+ * rendering", which is the question actually being asked.
+ */
+let firstFrameAt: number | undefined
+try {
+  requestAnimationFrame(() => {
+    firstFrameAt = performance.now()
+  })
+} catch {
+  // No rAF is itself unusual enough that the frame has larger problems.
+}
+try {
+  new PerformanceObserver(list => {
+    for (const entry of list.getEntries()) {
+      blocking.tasks += 1
+      blocking.total += entry.duration
+    }
+  }).observe({ type: 'longtask', buffered: true })
+} catch {
+  // Not every browser implements it; absence is not a finding, so nothing is said.
+}
+
+/**
  * Say something when a frame is alive and has drawn nothing.
  *
  * The coordinator's question was whether this deserves a判据 at all, and the
@@ -549,11 +599,37 @@ function reportBodySummary(run: string, post: (message: FromFrame) => void): voi
       return box.width > 0 && box.height > 0
     })
 
+    /*
+     * **When** it drew, not only whether.
+     *
+     * The sample card renders correctly and takes tens of seconds to do it, with
+     * the renderer unresponsive in between — a failure none of the other
+     * instruments can express, because each asks a yes/no question and the
+     * answer to all of them is eventually yes. "Works" and "works after thirty
+     * seconds" are the same reading to a boolean.
+     *
+     * `first-contentful-paint` is the browser's own answer, measured inside the
+     * frame where the work happens. Long tasks separate the two causes, which
+     * need opposite fixes: a frame that paints late because it waited on a fetch
+     * is not a frame that paints late because it blocked its own main thread.
+     */
+    const timing: string[] = [
+      firstFrameAt === undefined
+        ? 'has not reached a render yet'
+        : `first render at ${String(Math.round(firstFrameAt))}ms`,
+    ]
+    if (blocking.tasks > 0) {
+      timing.push(
+        `${String(blocking.tasks)} long tasks blocking ${String(Math.round(blocking.total))}ms`,
+      )
+    }
+
     const parts = [
       `${String(children.length)} children, ${String(descendants.length)} descendants`,
       `${String(visibleDescendants.length)} of them with a visible box`,
       `${String(styles)} style elements in the body`,
       `body ${paint(getComputedStyle(body))}`,
+      ...timing,
     ]
     if (visible.length > 0) {
       parts.push(`largest: ${visible.slice(0, 3).map(describe).join('; ')}`)

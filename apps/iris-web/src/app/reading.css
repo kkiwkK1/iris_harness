@@ -14,11 +14,19 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /*
+   * Named as a container so an interface can ask how much room the window
+   * actually has. Nothing else needs it: prose is bounded by the measure on
+   * purpose, and only the thing that must escape the measure needs the page's
+   * real width. Query units read the content box, so the scrollbar is already
+   * excluded.
+   */
+  container-type: inline-size;
 }
 
 .iris-column {
   /* Margin + measure, plus breathing room at the right edge. */
-  max-width: calc(var(--iris-gutter) + var(--iris-measure) + 40px);
+  max-width: var(--iris-column-max);
   margin: 0 auto;
   padding: 26px 20px 28px;
   /*
@@ -487,8 +495,52 @@
   color-scheme: normal;
 }
 
+/*
+ * An interface breaks out of the reading measure, because it is not reading.
+ *
+ * 68ch is a book measure and it is right for prose. Applied to a card it was
+ * measured doing the wrong thing well: the frame sat at 477px inside a 1038px
+ * window, and because these cards lay themselves out against whatever viewport
+ * they are handed, that is the viewport the card believed in — so it drew a
+ * narrow column and the remaining 560px stayed empty. The card was not failing
+ * to fill its frame; the frame was telling it the window was small.
+ *
+ * Symmetric negative margins rather than a wider column, so prose keeps the
+ * measure and only the interface leaves it.
+ */
 .iris-interfaces__slot {
   margin: 12px 0 0;
+
+  /*
+   * What the column’s auto margin leaves on each side, plus the 20px the
+   * column pads itself by. `max(0px, …)` because on a narrow window the column
+   * is under its bound and there is nothing out there to reclaim.
+   */
+  --iris-slot-air: calc(max(0px, (100cqi - var(--iris-column-max)) / 2) + 20px);
+  /*
+   * The percentage resolves against this slot’s own width, so this is "half the
+   * growth still allowed before the cap" — clamped at zero so a cap narrower
+   * than the measure shrinks nothing.
+   */
+  --iris-slot-out: max(
+    0px,
+    min(
+      var(--iris-slot-air),
+      calc((var(--iris-interface-max) - var(--iris-gutter) - 100%) / 2)
+    )
+  );
+
+  /*
+   * The start side reclaims the marginalia gutter as well, and this asymmetry
+   * is the whole point: symmetric margins centre the card on the *text block*,
+   * which sits one gutter right of the page’s centre — measured at 97px of slack
+   * on the left against 51px on the right, which reads as a misaligned panel
+   * rather than as a deliberate margin. Prose is indented by the gutter because
+   * the gutter holds its marginalia; an interface has no marginalia, so it has
+   * no reason to be indented past it.
+   */
+  margin-inline-start: calc(-1 * (var(--iris-slot-out) + var(--iris-gutter)));
+  margin-inline-end: calc(-1 * var(--iris-slot-out));
 }
 
 /*

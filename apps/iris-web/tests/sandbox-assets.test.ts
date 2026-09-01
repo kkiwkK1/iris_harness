@@ -137,3 +137,40 @@ test('no source file spells out an unhashed artifact name', () => {
   }
   assert.deepEqual(offenders, [], 'these still name an artifact the build no longer emits')
 })
+
+test('the directory the host actually serves has no superseded artifact either', t => {
+  /*
+   * The guard above checks `public/sandbox` — where the build *writes*. The host
+   * serves `dist/sandbox` — where Vite *copies*. Vite copies without removing, so
+   * that directory accumulated every earlier build: **eleven superseded
+   * artifacts against three current ones**, each still answering its own URL.
+   *
+   * So the property this whole scheme rests on — a superseded name stops being
+   * answerable, which is what makes an immutable long-lived cache safe — was
+   * only ever true of the directory nobody fetches from. A test that checks the
+   * written directory and calls that "the artifacts are pruned" is checking the
+   * wrong side of a copy.
+   *
+   * It cost measurement time too: two instrument revisions were built into
+   * `public/` and never reached the browser, and read as "the change had no
+   * effect" rather than "the change was never served".
+   */
+  const served = join(here, '..', 'dist', 'sandbox')
+  if (!existsSync(join(served, 'manifest.json'))) {
+    t.skip('no built dist in this checkout — run "npm run build"')
+    return
+  }
+
+  const manifest = JSON.parse(readFileSync(join(served, 'manifest.json'), 'utf8')) as Record<
+    string,
+    string
+  >
+  const current = new Set(Object.values(manifest))
+  const stale = readdirSync(served).filter(
+    entry =>
+      /^(?:bootstrap|preset|message-preset)-/u.test(entry) && !current.has(entry),
+  )
+
+  assert.deepEqual(stale, [], 'the served directory still answers superseded URLs')
+})
+

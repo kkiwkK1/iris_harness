@@ -118,10 +118,38 @@ That host is **not** on the remote allowlist (`SANDBOX.md`: `*.jsdelivr.net`,
 `raw.githubusercontent.com`), so under current policy the fetch is refused and the
 user sees the author's own red fallback text.
 
-**This is why there is no local acceptance sample, and the reason is structural
+~~**This is why there is no local acceptance sample, and the reason is structural
 rather than bad luck.** Card authors keep the interface at a URL and ship a stub,
 so the payload is not on disk, is unbounded, and can change after distribution. A
-corpus of chat logs cannot contain it.
+corpus of chat logs cannot contain it.~~
+
+**Struck 2026-09-02. The measurement above is of the wrong population, and this
+document says so three sections earlier.**
+
+Counting what is *on disk* answers a question this pipeline never asks. The
+predicate runs on the text a message renders, and display regex runs first — a
+fact stated under "Regex runs before the trigger" and then not applied to the
+corpus figure. Re-measured through the render [corpus]:
+
+| | on disk | **after display regex** |
+| --- | --- | --- |
+| floors carrying a frame block | 1 | **179** |
+| cards involved | 1 | **11** |
+| total frame content | 0.66 KiB | **~10.6 MiB** |
+| of those, already a frame in storage | 1 | **0** |
+
+**Not one of the 179 is a frame on disk.** Every one is a short token in storage
+that a display-only regex expands at render time — `状态栏`, `封面`, `开局`,
+`角色查看器`. The warhammer sample card is not an outlier; it is the **paradigm**,
+distinguished only by size (360 KiB against a median of 0.5 KiB and a p99 of
+129.6 KiB).
+
+Kept rather than deleted because the error is the more useful artifact. Two people
+reached it independently on the same day — the census measured files where the
+pipeline needed the render, and this document stated the rule that would have
+caught it and then did not apply it to itself. **A rule written down is not a rule
+applied**, and the gap between them is invisible precisely because the document
+looks like it already knows.
 
 Two things that are *not* interfaces, checked because both had been assumed to be:
 
@@ -353,6 +381,73 @@ jQuery instance; Iris cannot (cross-origin) and ships its own copy, so a card
 relying on a host-installed jQuery plugin being visible inside a script frame
 loses that. Unmeasured: how many cards do this.
 
+### What it cost, measured
+
+The message preset is **2.29 MB** built, and the two questions it raised are both
+answered.
+
+**Is the HTTP cache partitioned per frame origin?** Yes. Two chats opened in
+sequence each reported a real download of the script preset — the frame reads its
+own resource timing, which is the only instrument that can see this: `webRequest`
+observes that a request was initiated, not whether bytes crossed the wire, and a
+frame's `<script src>` subresources do not appear there at all. So `immutable`
+buys nothing across chats, and every message frame pays for its libraries.
+
+**What does that cost here?** 751 KB in 3–5 ms for the script preset; 2.29 MB in
+**163–193 ms** for the message preset. Superlinear — roughly 40× the time for 3×
+the bytes — and imperceptible against a loopback host.
+
+**Recorded as a fact, not acted on.** Splitting the fonts into shared assets or
+chunking the bundle are surgeries for a cost that does not exist in a local
+deployment. The per-frame `library cost:` line is permanent, so the day someone
+moves the host to a remote machine, the panel makes the number ugly by itself and
+the case for that work arrives with its own evidence. The superlinearity is the
+part to remember: a remote cost cannot be extrapolated linearly from these bytes.
+
+## Windowing: where this deliberately beats upstream
+
+Iris is an upgrade to SillyTavern rather than a replacement, so a divergence is
+only worth having if it is written down as a claim. This one is.
+
+**Upstream has two windows and only mentions one.** SillyTavern renders the last
+`chat_truncation` messages — default **100** — and offers an explicit "Show more
+messages" button (`script.js:1475-1488`, `:1431-1473`); the Tavern Helper `depth`
+window is **nested inside that**, because `calcToRender`'s lower bound is the
+first message *in the DOM*, not floor zero. So `depth: 0` never meant "all 677
+floors"; it meant "as many as SillyTavern is currently showing". The outer window
+is the one carrying the weight.
+
+**Iris has no outer window**, which is why `render-window.ts` protects nothing
+today: it is the inner window with nothing to nest inside. So the work is not a
+feature for frames, it is the missing outer layer.
+
+Two decisions, and the second is the exhibit:
+
+- **The outer list copies upstream's shape**: a tail of N messages and an
+  **explicit button**, not infinite scroll. Upstream's own `loadUntilMesId`
+  implements "jump to floor" as repeated loading, which is the evidence that
+  button semantics are sufficient — no scroll listener needed.
+- **The frame window is a byte budget, not a floor count** — and this is where we
+  diverge deliberately. Measured [corpus]: at the same N, rendered bytes differ by
+  **three orders of magnitude** between chats. The clearest pair: a **91-floor**
+  chat's last 20 floors are **1.28 MiB**, while a **677-floor** chat's last 20 are
+  **0.12 MiB** — ten times more from a chat seven times shorter. And the worst
+  chat in the corpus falls *entirely inside* a 100-floor window, so a count-based
+  limit gives it **no protection at all**.
+
+  A 2 MiB budget covers the same 26 of 31 chats that N=100 does, and unlike N=100
+  it has an upper bound.
+
+  **What it costs**: the number of frames is no longer bounded, only their total
+  size — 2 MiB may be five 300 KiB interfaces or two hundred 10 KiB ones, and each
+  frame carries its own preset fetch, srcdoc and observer. That count needs its own
+  measurement before the budget is tuned.
+
+  **Why upstream does not do this**: its unit of cost is a DOM message, which is
+  roughly uniform. Ours is a sandboxed frame whose weight is the card's markup, and
+  that is what varies by four orders of magnitude. The right unit changed when the
+  thing being limited changed.
+
 ## Diagnostics and acceptance
 
 The loader card gives us a **third-party-authored acceptance oracle**, better than
@@ -369,17 +464,25 @@ A reader who cannot separate those will chase the wrong half. The census's
 `remote sources` section supplies the second half's evidence without hardcoding a
 URL the author can change after distribution.
 
-Acceptance has two branches, because the local corpus cannot settle it:
+Acceptance has three sources, and the local corpus is now the largest of them.
 
-1. **A real front-end card, obtained deliberately.** The coordinator is sourcing
-   one. This is the branch that matters; the ecosystem plainly has such cards,
-   they are simply not in these 31 chats.
-2. **A constructed fixture**, exercising the predicate's edges — a `text`-labelled
-   fence, an indented block, an entity-encoded `&lt;body`, a false positive that
-   merely mentions `<body`, two interfaces in one floor, and a swipe that changes
-   the interface.
+1. **The real front-end card**, run first and deliberately: 战锤群星闪耀, whose
+   360 KiB interface is the **worst case** in the measured population rather than
+   a typical one. Starting at the extreme is the right order — a pipeline that
+   survives the largest block will survive the median, and the reverse proves
+   nothing.
+2. **The 179 rendered floors across 11 cards.** These are reachable without a
+   browser: the predicate can be run over the corpus as the render produces it,
+   which is how the 368,909-byte figure was confirmed against an independent
+   census byte for byte. They cover sizes across four orders of magnitude, which
+   no fixture would have thought to.
+3. **A constructed fixture** for the predicate's edges — a `text`-labelled fence,
+   an indented block, an entity-encoded `&lt;body`, a false positive that merely
+   mentions `<body`, two interfaces in one floor, and a swipe that changes the
+   interface. These are the cases the corpus happens not to contain, and "happens
+   not to" is the reason to write them down rather than to trust the absence.
 
-Fixtures confirm; only a real card disproves. Branch 2 without branch 1 would
+Fixtures confirm; only a real card disproves. Branch 3 without branch 1 would
 reproduce this project's most expensive mistake — 41 assertions that had never
 been inside a browser.
 

@@ -267,6 +267,23 @@ test('the body summary reports whether or not anything is visible', () => {
     /style elements in the body/u,
     'without the stylesheet count, "visible boxes on a white page" cannot be told from "no CSS arrived"',
   )
+  /*
+   * `background-image`, because reporting only `background-color` is a wrong
+   * reading rather than an incomplete one: the `background` shorthand resets the
+   * colour to transparent, so a card painting a gradient reports
+   * `rgba(0, 0, 0, 0)` and looks like a stylesheet that does nothing. This
+   * summary said exactly that once, and it was believed.
+   */
+  assert.match(
+    entry,
+    /backgroundImage/u,
+    'a gradient background computes to a transparent colour, so colour alone misreads it',
+  )
+  assert.match(
+    entry,
+    /descendants/u,
+    'counting only direct children says nothing about a card whose interface lives inside one box',
+  )
   assert.match(
     entry,
     /data-iris-interface/u,
