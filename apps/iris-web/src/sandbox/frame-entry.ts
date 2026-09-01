@@ -61,6 +61,47 @@ function announceReady(run: string, post: (message: FromFrame) => void): void {
 /** How long a module gets to load before the frame says so. */
 const IMPORT_TIMEOUT_MS = 15_000
 
+/**
+ * Whether the browser ever put the request on the wire.
+ *
+ * "The fetch never returned" has two causes that look identical from inside a
+ * frame and need opposite fixes: the browser declined to dispatch it — a policy
+ * or resolution problem — or it dispatched and nothing came back, which is the
+ * network. Resource timing knows which, and it is available in the frame
+ * without `connect-src`, because reading the entry is not a fetch.
+ *
+ * Cross-origin entries are opaque about *durations* without
+ * `Timing-Allow-Origin`, but the entry's existence and name are visible
+ * regardless — and existence is the entire question here.
+ *
+ * Two limits, stated so a reading of this is not over-trusted: the buffer holds
+ * a few hundred entries and drops the rest, and a request that was redirected is
+ * recorded under the URL first asked for. Neither bites a frame that has loaded
+ * four scripts and a handful of libraries, but "no entry" is evidence rather
+ * than proof.
+ * @param targets - the URLs the module was waiting on.
+ * @returns a phrase naming what the browser attempted.
+ */
+function describeAttempts(targets: readonly string[]): string {
+  let entries: readonly { name: string }[]
+  try {
+    entries = performance.getEntriesByType('resource')
+  } catch {
+    // A frame that cannot answer says so, rather than letting a missing API read
+    // as a missing request.
+    return 'resource timing is unavailable here, so whether the request was sent is unknown'
+  }
+
+  const attempted = targets.filter(target => entries.some(entry => entry.name === target))
+  if (attempted.length === targets.length && targets.length > 0) {
+    return 'the browser did send the request, so this is the network or the server, not the frame'
+  }
+  if (attempted.length === 0) {
+    return 'the browser never sent the request, so it was refused or unresolvable before the wire'
+  }
+  return `only some were sent (${attempted.join(', ')})`
+}
+
 /** The token the host stamped into this frame's markup. */
 function token(): string {
   const element = document.querySelector('meta[name="iris-token"]')
@@ -312,7 +353,8 @@ try {
         reject(
           new Error(
             `import timed out after ${IMPORT_TIMEOUT_MS / 1000}s — the module never finished loading` +
-              (targets.length === 0 ? '' : ` (waiting on ${targets.join(', ')})`),
+              (targets.length === 0 ? '' : ` (waiting on ${targets.join(', ')})`) +
+              ` — ${describeAttempts(targets)}`,
           ),
         )
       }, IMPORT_TIMEOUT_MS)
