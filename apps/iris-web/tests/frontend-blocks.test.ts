@@ -11,7 +11,11 @@
 import { strict as assert } from 'node:assert'
 import test from 'node:test'
 
-import { claimFrontendBlocks, frontendMarker } from '../src/sandbox/frontend-blocks.ts'
+import {
+  claimFrontendBlocks,
+  frontendMarker,
+  splitAroundInterfaces,
+} from '../src/sandbox/frontend-blocks.ts'
 
 /** A fence, built from code points so no escape has to survive being written. */
 const TICKS = String.fromCharCode(96, 96, 96)
@@ -173,3 +177,65 @@ test('a tilde fence works, and a backtick run inside an info string does not', (
 test('a message with no blocks claims nothing, and says so by being empty', () => {
   assert.deepEqual(claimFrontendBlocks('just prose with <body> loose in it'), [])
 })
+
+test('an interface replaces its block rather than following the message', () => {
+  /*
+   * Observed on the sample card: the first cut appended frames after the whole
+   * message, so a reader scrolled through 360 KiB of source before reaching the
+   * interface that source describes. Upstream hides the block and puts the frame
+   * where it was. Side by side is not a milder version of replacement.
+   */
+  const source = ['before', '', fenced('html', '<body>panel'), '', 'after'].join(NL)
+  const segments = splitAroundInterfaces(source, claimFrontendBlocks(source))
+
+  assert.deepEqual(
+    segments.map(segment => segment.kind),
+    ['text', 'interface', 'text'],
+    'the interface belongs between the prose, not after it',
+  )
+  const first = segments[0]
+  const last = segments[2]
+  assert.ok(first?.kind === 'text' && first.text.includes('before'))
+  assert.ok(last?.kind === 'text' && last.text.includes('after'))
+
+  // The source of the claimed block must not survive into any prose segment —
+  // that is the whole point.
+  const prose = segments.filter(s => s.kind === 'text').map(s => (s.kind === 'text' ? s.text : '')).join('')
+  assert.ok(!prose.includes('<body>panel'))
+})
+
+test('two interfaces keep their order and their surrounding prose', () => {
+  const source = [
+    fenced('html', '<body>one'),
+    '',
+    'between them',
+    '',
+    fenced('text', '<body>two'),
+  ].join(NL)
+  const segments = splitAroundInterfaces(source, claimFrontendBlocks(source))
+
+  assert.deepEqual(
+    segments.map(segment => segment.kind),
+    ['interface', 'text', 'interface'],
+  )
+  assert.deepEqual(
+    segments.filter(s => s.kind === 'interface').map(s => (s.kind === 'interface' ? s.instance : -1)),
+    [0, 1],
+    'instances must stay in source order',
+  )
+})
+
+test('whitespace between interfaces is not rendered as prose', () => {
+  // A gap of blank lines is not a paragraph, and emitting one would put an empty
+  // block between two panels.
+  const source = [fenced('html', '<body>one'), '', '   ', '', fenced('html', '<body>two')].join(NL)
+  const segments = splitAroundInterfaces(source, claimFrontendBlocks(source))
+
+  assert.deepEqual(segments.map(segment => segment.kind), ['interface', 'interface'])
+})
+
+test('a message with no interfaces is one piece of prose, unchanged', () => {
+  const source = 'just some narration'
+  assert.deepEqual(splitAroundInterfaces(source, []), [{ kind: 'text', text: source }])
+})
+

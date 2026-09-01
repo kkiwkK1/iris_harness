@@ -26,7 +26,10 @@ import {
   type SandboxAssets,
 } from '../sandbox/asset-manifest.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
-import { describeInterface } from '../sandbox/message-frames.ts'
+import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+
+import { claimFrontendBlocks, splitAroundInterfaces } from '../sandbox/frontend-blocks.ts'
+import { describeInterface, type InterfaceState } from '../sandbox/message-frames.ts'
 import { floorsToRender } from '../sandbox/render-window.ts'
 import { runCard } from '../sandbox/runner.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
@@ -73,21 +76,40 @@ function sandboxSupply(): Promise<{ assets: SandboxAssets, bootstrap: string }> 
   return supply
 }
 
-/** One message's interfaces. */
+/**
+ * An assistant message's body, with any card interface in place of its block.
+ *
+ * Renders the **whole** body rather than an addition to it, because replacing a
+ * block is not something that can be done from beside it: `MarkdownText` only
+ * makes a `<pre>` if it is handed the text, so the only way to not show the source
+ * is to not hand it over.
+ * @param props - the floor, its text after display regex, and whether it is still arriving.
+ * @returns the message body.
+ */
 export function MessageInterfaces({
   floor,
   text,
+  streaming,
 }: {
   floor: number
   text: string
-}): ReactElement | null {
+  streaming: boolean
+}): ReactElement {
   const chatId = useIris(state => state.chatId)
   const characterId = useIris(state => state.view?.characterId)
   const consent = useIris(state => state.scriptsAllowed)
   const messageCount = useIris(state => state.view?.messages.length ?? 0)
   const store = useIrisStore()
 
-  const mount = useRef<HTMLDivElement>(null)
+  /*
+   * One slot per interface, keyed by instance.
+   *
+   * The frame is **moved into** its slot rather than created by it: the
+   * controller owns construction and teardown, and a component that built its
+   * own frame would be a second place deciding how a frame is made — the thing
+   * the injected `start` exists to prevent.
+   */
+  const slots = useRef(new Map<number, HTMLDivElement | null>())
   const [ready, setReady] = useState<
     | {
         assets: SandboxAssets
@@ -201,31 +223,92 @@ export function MessageInterfaces({
       return { element: card.element, dispose: card.dispose }
     },
     attach: frame => {
-      const host = mount.current
-      if (host === null) return
-      host.append(frame.element as unknown as Node)
+      const slot = slots.current.get(frame.instance)
+      /*
+       * No slot means the row that should hold this frame is not on screen, so
+       * the frame is left unattached — and `isConnected` then reports it, which is
+       * the discriminator that exists for exactly this. Appending it somewhere
+       * else to avoid the report would hide a real mismatch between what was
+       * claimed and what was rendered.
+       */
+      if (slot === null || slot === undefined) return
+      slot.append(frame.element as unknown as Node)
     },
   })
 
-  if (states.length === 0 && mount.current === null) return null
+  /*
+   * The message's own body, with each claimed block **replaced** by its
+   * interface rather than followed by it.
+   *
+   * Upstream replaces — it hides the `<pre>` and puts the iframe where it was. The
+   * first cut of this appended frames after the whole message, and on the sample
+   * card that meant scrolling past 360 KiB of source to reach the interface that
+   * source describes. There is no `<pre>` to hide here, because `MarkdownText` only
+   * makes one if we hand it the text — so the fix is to hand it the text without
+   * the claimed spans.
+   */
+  /*
+   * While a reply is still arriving, the body is just text.
+   *
+   * Upstream renders mid-stream with its predicate relaxed and — as measured —
+   * no throttling on that path. This pipeline does not copy that: a 360 KiB
+   * interface rebuilt per token is not a feature, and a half-arrived block shown
+   * as source is honest about what has come so far.
+   */
+  const blocks = streaming ? [] : claimFrontendBlocks(text)
+  if (blocks.length === 0) return <MarkdownText text={text} streaming={streaming} />
+
+  const segments = splitAroundInterfaces(text, blocks)
+  const byInstance = new Map(states.map(state => [state.instance, state]))
 
   return (
     <div className="iris-interfaces">
-      <div ref={mount} className="iris-interfaces__frames" />
-      {states
-        .filter(state => state.phase !== 'live')
-        .map(state => (
-          /*
-           * Only the rows that are *not* live. A working interface is its own
-           * evidence — it is on screen — and a permanent caption under every one
-           * would be noise. A frame that never started has nothing to show, so
-           * the line is the only thing a reader gets.
-           */
-          <p className="iris-interfaces__state" key={state.instance}>
-            {describeInterface(state)}
-          </p>
-        ))}
+      {segments.map(segment =>
+        segment.kind === 'text' ? (
+          <MarkdownText key={`t-${segment.text.length}-${segment.text.slice(0, 16)}`} text={segment.text} />
+        ) : (
+          <InterfaceSlot
+            key={`i-${segment.instance}`}
+            instance={segment.instance}
+            state={byInstance.get(segment.instance)}
+            adopt={node => slots.current.set(segment.instance, node)}
+          />
+        ),
+      )}
     </div>
   )
+}
 
+/**
+ * Where one interface's frame goes, and what is said when it is not there.
+ *
+ * The frame is moved into this slot rather than created by it: the controller
+ * owns construction and teardown, and a component that built its own frame would
+ * be a second place deciding how a frame is made.
+ * @param props - the instance, its state, and how to register the slot.
+ * @returns the slot element.
+ */
+function InterfaceSlot({
+  instance,
+  state,
+  adopt,
+}: {
+  instance: number
+  state: InterfaceState | undefined
+  adopt: (node: HTMLDivElement | null) => void
+}): ReactElement {
+  return (
+    <div className="iris-interfaces__slot" data-instance={instance}>
+      <div ref={adopt} />
+      {state === undefined || state.phase === 'live' ? null : (
+        /*
+         * Only when it is not live. A working interface is its own evidence — it
+         * is on screen — and a caption under every one would be noise. A frame
+         * that never started has nothing to show, so this line is all a reader
+         * gets.
+         */
+        <p className="iris-interfaces__state">{describeInterface(state)}</p>
+      )}
+    </div>
+  )
 }

@@ -247,3 +247,51 @@ function opensIndentedBlock(lines: readonly string[], at: number): boolean {
   const previous = at === 0 ? '' : lines[at - 1] ?? ''
   return at === 0 || previous.trim() === ''
 }
+
+/** One piece of a message: prose to render, or an interface to mount. */
+export type MessageSegment =
+  | { kind: 'text', text: string }
+  | { kind: 'interface', block: FrontendBlock, instance: number }
+
+/**
+ * Split a message so each claimed block is **replaced** by its interface.
+ *
+ * Upstream replaces: it wraps the `<pre>` in a `div.TH-render`, hides the block and
+ * puts the iframe in its place (`render/Iframe.vue`, the `hidden!` class). The
+ * first cut of this pipeline appended the frame *after* the message instead, and
+ * on the sample card that meant a reader scrolled through **360 KiB of source**
+ * before reaching the interface it describes. Side by side is not a milder
+ * version of replacement; it is a different and worse thing.
+ *
+ * Splitting rather than hiding after the fact, because the renderer never
+ * produces a `<pre>` for us to hide — `MarkdownText` emits React elements, and the
+ * block only becomes an element if we hand it the text. So the text handed over
+ * is the text with the claimed spans removed, and the interfaces go in the gaps
+ * they left. That also puts each interface **where its block was**, which
+ * matters for a message that has prose on both sides of it.
+ *
+ * @param source - the message text, after display regex.
+ * @param blocks - the claimed blocks, from `claimFrontendBlocks`.
+ * @returns the pieces, in order, with empty prose dropped.
+ */
+export function splitAroundInterfaces(
+  source: string,
+  blocks: readonly FrontendBlock[],
+): MessageSegment[] {
+  const segments: MessageSegment[] = []
+  let at = 0
+
+  blocks.forEach((block, instance) => {
+    const before = source.slice(at, block.start)
+    // Trimmed only for the emptiness test: a gap of whitespace between two
+    // interfaces is not prose, and rendering it would add a blank paragraph.
+    if (before.trim() !== '') segments.push({ kind: 'text', text: before })
+    segments.push({ kind: 'interface', block, instance })
+    at = block.end
+  })
+
+  const rest = source.slice(at)
+  if (rest.trim() !== '') segments.push({ kind: 'text', text: rest })
+  return segments
+}
+

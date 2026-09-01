@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { MarkdownText, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { MessageInterfaces } from './MessageInterfaces.tsx'
 import type { MessageView } from '@iris/protocol'
@@ -121,27 +121,19 @@ export function Message({
             */}
             <div key={swipes?.index ?? 0} className="iris-msg__text iris-msg__text--enter">
               {message.role === 'assistant' ? (
-                <MarkdownText text={message.text} streaming={streaming} />
+                /*
+                 * The assistant body goes through `MessageInterfaces`, which
+                 * renders the markdown itself and puts a card interface **in
+                 * place of** the block that declares it. Rendering `MarkdownText`
+                 * here as well would show 360 KiB of source above the interface
+                 * it describes, which is what the first cut did.
+                 */
+                <MessageInterfaces floor={message.id} text={message.text} streaming={streaming} />
               ) : (
                 message.text
               )}
               {streaming ? <span className="iris-caret" aria-label="Generating" /> : null}
             </div>
-            {/*
-              A card interface belonging to this message, if it has one.
-
-              Placed after the text rather than instead of it, and only for a
-              settled assistant message. Not during streaming: upstream renders
-              mid-stream with its predicate *relaxed* and no throttling, which
-              this pipeline deliberately does not copy — a 360 KiB interface
-              rebuilt per token is not a feature. The block stays visible as a
-              code block until the reply settles, which is honest about what has
-              arrived so far.
-            */}
-            {message.role === 'assistant' && !streaming ? (
-              <MessageInterfaces floor={message.id} text={message.text} />
-            ) : null}
-
             <Slot name="iris.message.footer" owner={{ message, streaming }} />
 
             <div className="iris-actions">

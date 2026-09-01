@@ -231,6 +231,27 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (property === 'extensionSettings') return extensionSettings
 
       /*
+       * Which chat this is, which a card uses as a key.
+       *
+       * Upstream returns the chat **file** identifier — `characters[this_chid].chat`,
+       * or the group's `chat_id` — and `undefined` when nothing is selected
+       * (`SillyTavern/public/script.js:540-546`). Iris answers with the snapshot's
+       * chat id, which is a different string for the same role: an opaque handle
+       * that changes when the conversation does.
+       *
+       * The difference matters only to a card that treats the value as a
+       * filename rather than as a key. None measured does, and the alternative —
+       * leaving it absent — is worse in a way that was observed rather than
+       * argued: the sample card's interface calls this during startup, so its
+       * absence stopped the whole bridge at its title screen with a
+       * `ReferenceError` and no further initialisation.
+       *
+       * `undefined` when there is no chat, matching upstream: a card checking for
+       * one must be able to find none.
+       */
+      if (property === 'getCurrentChatId') return () => context?.chatId
+
+      /*
        * Actions, reachable here AND through `getContext()` — because `getContext`
        * returns this same object. One surface, two entry points, which is what
        * upstream has: `SillyTavern.saveMetadata` and `context.saveChat` are both
