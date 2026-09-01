@@ -39,6 +39,20 @@ export interface CommandInfo {
   args: string[]
   /** Text of the trailing `// …` comment, or `''`. */
   reason: string
+  /**
+   * Already-parsed arguments, positionally aligned with {@link args}.
+   *
+   * Present only for the JSON Patch dialect, where the value arrived as real
+   * JSON and re-reading it out of `args` would lose information:
+   * `evaluateLiteral` turns object literals into JSON by swapping `'` for `"`,
+   * so a value containing an apostrophe stops parsing and comes back as the
+   * literal text instead of an object. Measured, not feared — `{"note":"don't"}`
+   * round-trips to a string.
+   *
+   * A slot holding `undefined` means "no parsed form, read `args`", which is
+   * what the path slot always is.
+   */
+  values?: unknown[]
 }
 
 /** Aliases the model may use, folded onto the canonical verb. */

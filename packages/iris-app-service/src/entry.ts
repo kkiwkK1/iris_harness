@@ -20,7 +20,8 @@ import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { CharacterCard } from '@iris/character'
 import { listCandidates, selectedCandidate } from '@iris/chat'
 import type { TimedEffectState } from '@iris/lorebook'
-import { applyCommands, extractCommands, loadInitVars, type MvuData } from '@iris/mvu'
+import { expandHelperMacros } from '@iris/compat-tavernhelper'
+import { applyCommands, formatYamlBlock, loadInitVars, scanDialects, type MvuData } from '@iris/mvu'
 import { extractScripts } from '@iris/script'
 import {
   exportMessages,
@@ -250,8 +251,62 @@ export class ChatEntry {
    * a script pattern can reference.
    */
   get substitute(): MacroSubstitute {
-    this.#substitute ??= substituteFor(this.names)
+    // Composed, not replaced: SillyTavern's own macros first, then Tavern
+    // Helper's. TH registers its as "macro-like" on top of the tavern's, and a
+    // host that expands only the first family sends `{{format_message_variable
+    // ::stat_data}}` to the model verbatim — which is how a card that asks the
+    // model to patch a state it can no longer see gets a reply with no patch.
+    //
+    // The trees are read at call time rather than captured, because they change
+    // every turn and this getter is resolved once.
+    if (this.#substitute === undefined) {
+      const tavern = substituteFor(this.names)
+      this.#substitute = (text, options) => {
+        const expanded = tavern(text, options)
+        // `postProcess` marks the regex-pattern path, where every expanded value
+        // is escaped before being read as syntax. A variable macro there would
+        // put an unescaped YAML block into a pattern, so it is left alone: the
+        // corpus writes these macros into prompts, never into `findRegex`, and
+        // expanding one here would be a guess with no evidence behind it.
+        if (options?.postProcess !== undefined) return expanded
+        return expandHelperMacros(expanded, {
+          variables: {
+            // Upstream searches the chat for the last message whose selected
+            // swipe carries variables — and during generation the pending reply
+            // is not in that array yet, because nothing has written it. Asking
+            // the message scope directly would resolve to that pending turn,
+            // which has no candidate, and the read throws: the macro then renders
+            // `null` on exactly the request that needed the state most.
+            //
+            // `baselineFor` is the same question already answered elsewhere —
+            // what state does this turn start from — and it falls back to the
+            // card's `[InitVar]` tree, so a chat's very first generation shows
+            // the declared starting state instead of nothing.
+            message: this.baselineFor(this.pending?.turn ?? this.lastTurn + 1),
+            chat: this.#scopeOrEmpty({ type: 'chat' }),
+            global: this.#scopeOrEmpty({ type: 'global' }),
+            // `character` and `preset` have no store on this host. Absent reads
+            // as `null`, which is the honest answer — not an empty tree, which
+            // would claim the scope exists and holds nothing.
+          },
+          formatBlock: formatYamlBlock,
+        })
+      }
+    }
     return this.#substitute
+  }
+
+  /**
+   * One scope's tree, or undefined when this host has no backend for it.
+   * @param option - the scope selector.
+   * @returns the tree, or undefined.
+   */
+  #scopeOrEmpty(option: Parameters<VariableStore['getVariables']>[0]): unknown {
+    try {
+      return this.variables.getVariables(option)
+    } catch {
+      return undefined
+    }
   }
 
   /** Whether a turn is in flight. */
@@ -421,8 +476,20 @@ export class ChatEntry {
    * @param text - the candidate's visible text.
    * @returns the state now attached to the candidate.
    */
-  recordVariables(turn: number, text: string): MvuData {
-    const result = applyCommands(extractCommands(text), this.baselineFor(turn))
+  recordVariables(turn: number, text: string, onReport?: (message: string) => void): MvuData {
+    // Both dialects, because a card asks for one of them and nothing here knows
+    // which. Reading only the legacy one is exactly how the `<JSONPatch>` cards
+    // silently stopped folding.
+    const scan = scanDialects(text)
+    for (const rejection of scan.rejected) onReport?.(`MVU: ${rejection}`)
+    // A block the model wrote and nothing understood is the signal that was
+    // missing when this broke; it costs one line and it is the only thing that
+    // distinguishes "the model did not answer" from "we could not read it".
+    if (scan.jsonPatchBlocks > 0 && scan.commands.length === 0) {
+      onReport?.(`MVU: a reply carried ${String(scan.jsonPatchBlocks)} <JSONPatch> block(s) that produced no commands`)
+    }
+    const result = applyCommands(scan.commands, this.baselineFor(turn))
+    for (const failure of result.failures) onReport?.(`MVU: ${failure.reason}`)
     this.variables.replaceVariables(
       result.data as unknown as Variables,
       { type: 'message', message_id: turn },

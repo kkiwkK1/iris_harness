@@ -35,7 +35,7 @@ import { AppError, invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { lineTurns } from './entry.ts'
-import { buildPrompt, DEFAULT_PRESET } from './prompt.ts'
+import { buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { runScripts } from './regex.ts'
 import { evaluatePrompt, promptHasTemplate } from './templates.ts'
 import { applyOps, buildSnapshot } from './template.ts'
@@ -669,7 +669,10 @@ export class IrisAppService {
     try {
       // Variables first: a permanent script may be there precisely to strip the
       // command block, and the commands have to be read before it does.
-      entry.recordVariables(turn, text)
+      // Reported, not swallowed: a reply whose update block nothing understood
+      // is indistinguishable from a model that never wrote one, and telling
+      // those apart is the difference between "the card is broken" and "we are".
+      entry.recordVariables(turn, text, message => { this.#report(new Error(message)) })
       this.#storeRewritten(entry, entry.scripts, text)
       entry.touch()
       entry.finish()
@@ -770,6 +773,9 @@ export class IrisAppService {
       history: this.#history(entry, session),
       count,
       worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
+      // The chat's expander, so the card's own variable macros resolve against
+      // this chat's state rather than being sent as braces.
+      substitute: entry.substitute,
       ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
     })
     // Carried forward, or a sticky entry would re-open its window every turn and
@@ -839,6 +845,10 @@ export class IrisAppService {
       history: this.#history(entry, entry.session),
       count,
       worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
+      // The preview has to show what would actually be sent, macros included —
+      // an itemization that still holds `{{format_message_variable::…}}` would
+      // hide precisely the defect this seam exists to prevent.
+      substitute: entry.substitute,
       ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
     })
     const contributions = [...built.contributions, ...injectedContributions(entry)]
@@ -959,6 +969,15 @@ export class IrisAppService {
     // The corrected number, which is what `observe` must be given: passing the
     // raw estimate would make the correction compound on itself.
     const estimated = this.#counter.countRequest(messages, { templateOverhead: this.#options.templateOverhead })
+
+    // The last thing before the provider, so it sees everything — macros,
+    // templates, injections. An unexpanded macro is the one prompt defect with
+    // no symptom at all: the braces go out, the model answers around them, and
+    // the reply looks like an ordinary refusal to follow the format.
+    const residual = residualMacros(messages.map(message => message.text).join(' '))
+    if (residual.length > 0) {
+      this.#report(new Error(`prompt: ${String(residual.length)} macro(s) reached the provider unexpanded: ${residual.join(', ')}`))
+    }
 
     for await (const chunk of this.#options.stream(request)) {
       if (chunk.type === 'usage') {

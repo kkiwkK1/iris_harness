@@ -91,6 +91,18 @@ function isPair(value: unknown): value is [unknown, string] {
  * @param literal - argument source text.
  * @returns the value it denotes.
  */
+/**
+ * One argument's value, preferring the parsed form when the dialect carried one.
+ * @param command - the command being applied.
+ * @param index - which argument.
+ * @returns the value.
+ */
+function argValue(command: CommandInfo, index: number): unknown {
+  const parsed = command.values?.[index]
+  if (parsed !== undefined) return parsed
+  return evaluateLiteral(command.args[index] as string)
+}
+
 export function evaluateLiteral(literal: string): unknown {
   const trimmed = literal.trim()
   if (trimmed === '') return ''
@@ -178,7 +190,7 @@ export function applyCommands(
         // Two-argument form is (path, new); three-argument is (path, old, new).
         // The declared old value is advisory — upstream never verifies it, and
         // models get it wrong constantly.
-        const value = evaluateLiteral(command.args[command.args.length - 1] as string)
+        const value = argValue(command, command.args.length - 1)
 
         if (path === '') {
           data.stat_data = value as Record<string, unknown>
@@ -201,7 +213,7 @@ export function applyCommands(
         }
         const wrapped = isPair(stored) && typeof stored[0] !== 'object'
         const target = wrapped ? (stored as [unknown, string])[0] : stored
-        const delta = evaluateLiteral(command.args[1] as string)
+        const delta = argValue(command, 1)
 
         if (typeof target !== 'number' || typeof delta !== 'number') {
           reject(command, `cannot add ${typeof delta} to ${typeof target}`)
@@ -219,7 +231,7 @@ export function applyCommands(
           continue
         }
         if (command.args.length === 2) {
-          const value = evaluateLiteral(command.args[1] as string)
+          const value = argValue(command, 1)
           if (Array.isArray(stored)) set(data.stat_data, path, [...stored, value])
           else if (isObject(stored) && isObject(value)) {
             set(data.stat_data, path, { ...(stored as Record<string, unknown>), ...(value as Record<string, unknown>) })
@@ -229,8 +241,8 @@ export function applyCommands(
             continue
           }
         } else {
-          const key = evaluateLiteral(command.args[1] as string)
-          const value = evaluateLiteral(command.args[2] as string)
+          const key = argValue(command, 1)
+          const value = argValue(command, 2)
           if (Array.isArray(stored) && typeof key === 'number') {
             const next = [...stored]
             next.splice(key, 0, value)
@@ -274,7 +286,7 @@ export function applyCommands(
         if (command.args.length === 1) {
           unset(data.stat_data, path)
         } else {
-          const which = evaluateLiteral(command.args[1] as string)
+          const which = argValue(command, 1)
           if (Array.isArray(stored)) {
             const index = typeof which === 'number' ? which : stored.indexOf(which)
             if (index < 0 || index >= stored.length) {
@@ -299,8 +311,21 @@ export function applyCommands(
       }
 
       case 'move': {
-        reject(command, 'move is only reachable through the JSON Patch dialect')
-        continue
+        // `args` is `[from, to]`. The source must exist; the destination is
+        // created, because a move onto a fresh key is the ordinary use.
+        const to = command.args[1] as string
+        if (!has(data.stat_data, path)) {
+          reject(command, `path "${path}" does not exist`)
+          continue
+        }
+        const moved = get(data.stat_data, path)
+        unset(data.stat_data, path)
+        if (to === '') data.stat_data = moved as Record<string, unknown>
+        else set(data.stat_data, to, moved)
+        // Recorded against the destination as well, or the panel would show the
+        // source emptying and nothing arriving.
+        display_data[to] = renderChange(undefined, displayValue(moved), command.reason)
+        break
       }
     }
 

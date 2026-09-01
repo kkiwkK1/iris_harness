@@ -40,3 +40,13 @@ export {
   type Listener,
   type Subscription,
 } from '@iris/compat-tavernhelper-core'
+
+export {
+  expandHelperMacros,
+  hasHelperMacros,
+  omitDollarKeys,
+  readMacroPath,
+  unescapePath,
+  type MacroScope,
+  type MacroSources,
+} from './macros.ts'

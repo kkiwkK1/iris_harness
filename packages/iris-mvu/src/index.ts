@@ -14,6 +14,21 @@ export {
   type CommandType,
 } from './commands.ts'
 
+export { formatYamlBlock } from './yaml.ts'
+
+export {
+  extractUpdateCommands,
+  scanDialects,
+  type DialectScan,
+} from './dialects.ts'
+
+export {
+  extractJsonPatch,
+  pointerToPath,
+  scanJsonPatch,
+  type JsonPatchScan,
+} from './json-patch.ts'
+
 export {
   extractGreetingOverride,
   loadInitVars,

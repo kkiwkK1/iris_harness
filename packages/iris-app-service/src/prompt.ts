@@ -72,6 +72,20 @@ export interface PromptInput {
   worldInfoBudget: number
   /** Sticky and cooldown windows carried from the previous turn. */
   timedEffects?: TimedEffectState
+  /**
+   * The chat's own macro expander, replacing the one built here.
+   *
+   * Supplied so that Tavern Helper's `{{get_*_variable::}}` and
+   * `{{format_*_variable::}}` reach world-info content and depth prompts, which
+   * is where the corpus writes them — MVU's `[mvu_update]` entries show the
+   * model its current state through exactly these. Expanding only
+   * `@iris/macro`'s family here left the braces in the prompt, and a model asked
+   * to patch a state it cannot see answers with no patch at all.
+   *
+   * Optional because it needs a chat: a caller with only a card (a preview, a
+   * test) still gets `{{char}}` and `{{user}}`.
+   */
+  substitute?: (text: string) => string
 }
 
 /** The assembled policy for one generation. */
@@ -162,7 +176,7 @@ export function applyCardOverrides(
  */
 export function buildPrompt(input: PromptInput): PromptResult {
   const macros = createMacroContext({ char: input.characterName, user: input.userName })
-  const expand = (text: string): string => expandMacros(text, macros)
+  const expand = input.substitute ?? ((text: string): string => expandMacros(text, macros))
 
   const scan = activateEntries({
     entries: scanEntriesOf(input.card),
@@ -248,4 +262,37 @@ export function buildPrompt(input: PromptInput): PromptResult {
   }
 
   return { contributions, timedEffects: scan.timedEffects, activated: scan.activated }
+}
+
+/**
+ * Macro-shaped tokens still present in a finished prompt.
+ *
+ * A macro that nothing expanded reaches the model as its own braces, and the
+ * whole failure is silent: MVU's `{{format_message_variable::stat_data}}` went
+ * out verbatim for a release, so the model was asked to patch a state it could
+ * not see and answered with no patch — indistinguishable, from the outside, from
+ * a model that will not follow the format.
+ *
+ * **No whitelist**, and that is a decision the corpus settled rather than a
+ * default. Measured over the 19 cards on this machine — every field, every
+ * greeting, every world-book entry — `{{name…}}` occurs under exactly **28
+ * distinct heads and produces no false positives**: card prose and embedded JSON
+ * do not trip it. A whitelist would need maintaining, and it would hide the one
+ * case that matters, which is a macro nobody here has heard of. Among the 28 are
+ * several a card's own script registers through Tavern Helper's
+ * `registerMacroLike`, and one plain typo (`{{usre}}`) that upstream would not
+ * have expanded either — both worth seeing.
+ *
+ * Only the head is returned, never the body: this feeds a log line, and a card's
+ * text is not something to copy there.
+ * @param text - the assembled prompt, after every expansion.
+ * @returns each distinct macro head still present, in first-seen order.
+ */
+export function residualMacros(text: string): string[] {
+  const seen = new Set<string>()
+  for (const match of text.matchAll(/\{\{\s*([A-Za-z_][\w.-]*)/g)) {
+    const head = match[1]
+    if (head !== undefined) seen.add(head.toLowerCase())
+  }
+  return [...seen]
 }
