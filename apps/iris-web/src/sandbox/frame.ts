@@ -301,17 +301,39 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       // members so a card cannot shadow `document` by writing to it.
       if (published.has(property)) return published.get(property)
 
+      /*
+       * An unpublished name yields `undefined` and is reported once.
+       *
+       * It used to throw. That was right about the danger and wrong about the
+       * mechanism, and it cost a verification round: upstream's cross-script
+       * coordination begins with `_.get(window.parent, 'th_unique_check.…',
+       * new Set())` — read with a default, then write — so throwing on the first
+       * read of a slot nobody has published yet threw *inside* an init that
+       * swallows exceptions. MVU never reached its `_.set(window.parent, 'Mvu',
+       * …)`, and every consumer waited forever on a publish that had already
+       * been abandoned.
+       *
+       * Returning `undefined` is also what upstream does — an absent property on
+       * a real parent window is not an error. What upstream does *not* do is say
+       * anything, and silence is what turns a missing host capability into a
+       * failure three steps away. So the frame yields like upstream and speaks
+       * unlike it: the policy asked for a named refusal *or an audible warning*,
+       * and only the warning leaves a working namespace behind.
+       *
+       * Deduplicated, because a card polling a slot in a loop would otherwise
+       * turn one gap into a stream.
+       */
       const planned = unbridged.get(property)
-      if (planned !== undefined) {
-        // A different fact from "forbidden", and the card author debugging
-        // deserves the right one.
-        throw new UnsupportedApiError(
-          `parent.${property}`,
-          `Iris has not bridged it yet; it is planned as ${planned.plan}.`,
-        )
-      }
-      throw new UnsupportedApiError(`parent.${property}`)
+      reportGap(
+        planned === undefined
+          ? `a card read parent.${property}, which nothing has published in this frame` +
+            ' — it returned undefined, which is not a statement that the host has no such member'
+          : `a card read parent.${property}, which Iris has measured but not built yet` +
+            ` (planned as ${planned.plan}); it returned undefined`,
+      )
+      return undefined
     },
+
     set(_target, property, value): boolean {
       if (typeof property === 'symbol') {
         throw new UnsupportedApiError('parent[symbol]', 'The sandbox is not writable.')

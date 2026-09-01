@@ -279,36 +279,55 @@ test('the three formerly-unbridged parent globals reach the same objects as the 
  * forbidden, and a card author debugging needs the right one) still matters.
  */
 
-test('an unknown parent member is refused without a plan attached', () => {
+test('an unpublished parent member yields undefined and is reported, not thrown', () => {
+  /*
+   * This used to throw, and the throw cost a verification round. Upstream's
+   * cross-script coordination opens with `_.get(window.parent, path, default)` —
+   * read a slot that does not exist yet, then write it — so throwing on that
+   * first read threw inside an init that swallows exceptions, and the publish
+   * every consumer was waiting for never happened.
+   *
+   * Returning `undefined` is what a real parent window does. Saying nothing is
+   * what loses a missing host capability, so the frame yields like upstream and
+   * speaks unlike it.
+   */
   const scope = realm()
-  let caught: unknown
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let read: unknown = 'unset'
+  let threw = false
   evaluate(scope, globals => {
     const parent = globals['parent'] as Record<string, unknown>
     try {
-      void parent['localStorage']
-    } catch (error: unknown) {
-      caught = error
+      read = parent['toastr']
+    } catch {
+      threw = true
     }
   })
 
-  assert.ok(caught instanceof UnsupportedApiError)
-  assert.equal(caught.member, 'parent.localStorage')
-  assert.doesNotMatch(caught.message, /planned/)
+  assert.equal(threw, false, 'throwing here breaks read-with-default, which is how publishing starts')
+  assert.equal(read, undefined)
+  const said = scope.posted.filter(m => m.type === 'error').map(m => (m as { message: string }).message)
+  assert.match(said.join(' '), /parent\.toastr/, 'yielding quietly is what loses a gap')
+  assert.match(said.join(' '), /not a statement that the host has no such member/)
 })
 
-test('a refusal reaches the shell carrying the member name', () => {
-  // This is how the shell tells "the card asked for something we do not give"
-  // from "the card has a bug", and it decides which of two very different
-  // messages the user sees.
+test('a nested read-with-default works, because that is how a card publishes', () => {
+  /*
+   * The exact shape MVU's uniqueness election uses:
+   * `_.get(window.parent, 'th_unique_check.MVU', new Set())` then a write back.
+   * A frame where the first read throws cannot host a card that coordinates.
+   */
   const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let slot: unknown = 'unset'
   evaluate(scope, globals => {
     const parent = globals['parent'] as Record<string, unknown>
-    void parent['cookie']
+    const existing = parent['th_unique_check']
+    parent['th_unique_check'] = existing ?? { MVU: new Set(['script-1']) }
+    slot = parent['th_unique_check']
   })
 
-  const last = scope.posted.at(-1)
-  assert.ok(last?.type === 'error')
-  assert.equal(last.member, 'parent.cookie')
+  assert.deepEqual((slot as { MVU: Set<string> }).MVU, new Set(['script-1']))
 })
 
 test('a plain bug in a card is reported without a member', () => {
@@ -822,32 +841,6 @@ test('hasOwnProperty sees a published name, because that is what the poll uses',
   assert.deepEqual(listed, ['Mvu'], 'and only what this card published')
 })
 
-test('a name nobody published still refuses by name', () => {
-  /*
-   * The asymmetry that keeps the shared slot from costing the refusal
-   * discipline. A card reaching for a host API Iris does not have —
-   * `parent.toastr` — must hear about it here, not receive `undefined` and fail
-   * somewhere unrelated.
-   */
-  const scope = realm()
-  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
-  let caught: unknown
-  let probed: boolean | undefined
-  evaluate(scope, globals => {
-    const parent = globals['parent'] as Record<string, unknown>
-    // `in` must answer rather than throw: that is how the poll waits.
-    probed = 'toastr' in parent
-    try {
-      void parent['toastr']
-    } catch (error: unknown) {
-      caught = error
-    }
-  })
-
-  assert.equal(probed, false, 'probing must be answerable without throwing')
-  assert.ok(caught instanceof UnsupportedApiError)
-  assert.equal(caught.member, 'parent.toastr')
-})
 
 test('a bridged member cannot be overwritten by a card', () => {
   // Publishing is for names the frame does not own. Letting a card assign
