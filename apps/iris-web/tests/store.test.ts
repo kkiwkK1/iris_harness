@@ -3,6 +3,9 @@ import { test } from 'node:test'
 
 import { actionsOf, applyEvent, createIrisStore, type IrisStore } from '../src/client/store.ts'
 import type { ChatView, IrisClient, IrisEvent } from '@iris/protocol'
+import { createFakeClient } from '@iris/client-fake'
+
+import { consentState } from '../src/sandbox/consent.ts'
 
 /** A client that records calls and lets a test push frames by hand. */
 function stubClient(): {
@@ -464,5 +467,59 @@ test('a deleted card does not bequeath its document grant to the next card of th
     ['new-card-script'],
     'the panel must show this card, not the one that used to hold the id',
   )
+  dispose()
+})
+
+test('the browser half of delete → reimport → open: nothing is inherited', async () => {
+  /*
+   * The browser side of the cross-trust-domain check. The host owns the other
+   * half; this one asserts that the shell asks again and believes the answer.
+   *
+   * It runs against the real fake rather than a bespoke stub, which is the point:
+   * the fake mints ids the way the host does, so deleting a card frees its id and
+   * the next card of that name receives it. A client that could not express that
+   * could not host this test, and an interface built against one would never show
+   * the defect.
+   *
+   * The load-bearing assertion is `unasked` rather than `declined`. Inheriting a
+   * decline is the worst of the three outcomes: the new card's scripts are never
+   * offered and never run, and nothing anywhere reports why.
+   */
+  const client = createFakeClient()
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+
+  const first = await client.call('character.import', {
+    filename: 'Aria.png',
+    // Not a real card: `readCard` falls back to the filename for the name, which
+    // is all this test needs and keeps a PNG fixture out of it.
+    content: 'AAAA',
+  })
+  const id = first.character.characterId
+
+  await client.call('script.setDocumentGrant', { characterId: id, granted: true })
+  await client.call('script.setScriptsAllowed', { characterId: id, allowed: true })
+  await actions.loadScripts(id)
+  assert.equal(store.getState().documentGranted, true, 'the first card really was granted')
+
+  await actions.deleteCharacter(id)
+  const second = await client.call('character.import', {
+    filename: 'Aria.png',
+    // Not a real card: `readCard` falls back to the filename for the name, which
+    // is all this test needs and keeps a PNG fixture out of it.
+    content: 'AAAA',
+  })
+  assert.equal(second.character.characterId, id, 'the freed id is handed to the next card')
+
+  const listed = await client.call('script.list', { characterId: id })
+  assert.equal(
+    consentState(listed),
+    'unasked',
+    'a new card inherited an answer given about another card',
+  )
+  assert.equal(listed.documentGranted, false, 'and it inherited page access too')
+
+  await actions.loadScripts(id)
+  assert.equal(store.getState().documentGranted, false, 'the shell cache answered for the dead card')
   dispose()
 })

@@ -28,6 +28,8 @@ import type {
 
 import { asRpcError, describeError } from './errors.ts'
 import { wireMethodFor } from '../sandbox/card-api.ts'
+import { consentState, type ConsentState } from '../sandbox/consent.ts'
+import type { ScriptRunState } from '../sandbox/script-run-state.ts'
 
 /** A prompt breakdown, or why there is not one. */
 export type ItemizationResult =
@@ -101,6 +103,15 @@ export interface IrisState {
   scriptsFor: string | undefined
   /** Whether that character's scripts may touch the real page. */
   documentGranted: boolean
+  /**
+   * Whether the user has answered the run-scripts question for this card.
+   *
+   * Three states, and the absent one is not a decline — see `sandbox/consent.ts`
+   * for why that distinction is the feature rather than a nicety.
+   */
+  scriptsAllowed: ConsentState
+  /** What each of this card's scripts is doing, once they start on their own. */
+  runStates: ScriptRunState[]
 
   /** Saved connection profiles, and which one was last activated. */
   connections: ConnectionProfile[]
@@ -238,6 +249,8 @@ export function createIrisStore(
       dataOrigin: source.origin,
       scripts: [],
       scriptsFor: undefined,
+      scriptsAllowed: 'unasked',
+      runStates: [],
       documentGranted: false,
       connections: [],
       activeConnectionId: undefined,
@@ -410,7 +423,18 @@ export function createIrisStore(
           const stale = get().scriptsFor === characterId
           set({
             characters,
-            ...(stale ? { scripts: [], scriptsFor: undefined, documentGranted: false } : {}),
+            ...(stale
+              ? {
+                  scripts: [],
+                  scriptsFor: undefined,
+                  documentGranted: false,
+                  // `unasked`, not `declined`. Inheriting a decline is the worst
+                  // of the three: the new card is never offered its scripts and
+                  // nothing reports why.
+                  scriptsAllowed: 'unasked' as ConsentState,
+                  runStates: [],
+                }
+              : {}),
           })
         })
       },
@@ -433,11 +457,24 @@ export function createIrisStore(
         // Cleared first: the previous card's scripts must not sit under the new
         // card's name for the length of a round trip, because the one thing this
         // panel exists to answer is "what does THIS card run".
-        set({ scripts: [], scriptsFor: characterId, documentGranted: false })
+        set({
+          scripts: [],
+          scriptsFor: characterId,
+          documentGranted: false,
+          scriptsAllowed: 'unasked',
+          runStates: [],
+        })
         await guard(async () => {
           const listed = await client.call('script.list', { characterId })
           if (get().scriptsFor !== characterId) return
-          set({ scripts: listed.scripts, documentGranted: listed.documentGranted })
+          set({
+            scripts: listed.scripts,
+            documentGranted: listed.documentGranted,
+            // Read through `consentState`, never `?? false`: the field is absent
+            // when nobody has been asked, and folding that into a decline means
+            // the question is never put and scripts never start, silently.
+            scriptsAllowed: consentState(listed),
+          })
         })
       },
 

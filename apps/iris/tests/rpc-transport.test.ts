@@ -260,3 +260,98 @@ test('every method in the contract is actually reachable over the wire', async (
 
   assert.deepEqual(unreachable, [], `methods with no handler registered: ${unreachable.join(', ')}`)
 })
+
+test('the third state crosses the wire as an absent key, not a present undefined', async () => {
+  // The browser distinguishes "never asked" from "asked and declined" by this
+  // key. `{ scriptsAllowed: undefined }` would have the key while meaning
+  // neither — and a browser testing `'scriptsAllowed' in response` would read
+  // it as "asked", then fall through to declined: the same silent suppression
+  // as reading absent-as-false, reached from the other direction.
+  //
+  // Asserted on the parsed JSON of a real response rather than on a returned
+  // object, because that is where the guarantee has to hold. The host builds the
+  // field with a conditional spread and `JSON.stringify` drops `undefined`
+  // besides, so there are two reasons — this pins the result of both.
+  const unasked = await fetch(`${origin}/iris/rpc`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'p1', method: 'script.list', params: { characterId: 'aria' } }),
+  })
+  const unaskedFrame = await unasked.json() as { ok: boolean, result?: Record<string, unknown> }
+  assert.equal(unaskedFrame.ok, true)
+  assert.equal(
+    'scriptsAllowed' in (unaskedFrame.result ?? {}),
+    false,
+    'an unanswered card sent the key anyway',
+  )
+
+  await fetch(`${origin}/iris/rpc`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'p2', method: 'script.setScriptsAllowed', params: { characterId: 'aria', allowed: false } }),
+  })
+
+  const declined = await fetch(`${origin}/iris/rpc`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'p3', method: 'script.list', params: { characterId: 'aria' } }),
+  })
+  const declinedFrame = await declined.json() as { ok: boolean, result?: Record<string, unknown> }
+  // And `false` must survive the trip as `false`, not be dropped as falsy.
+  assert.equal('scriptsAllowed' in (declinedFrame.result ?? {}), true, 'a declined answer vanished on the wire')
+  assert.equal(declinedFrame.result?.['scriptsAllowed'], false)
+})
+
+/**
+ * The composition neither half can see from inside its own boundary.
+ *
+ * `GRANTS.md` §1 asks for exactly this path — *deleted card → reimport → open* —
+ * because the leak it describes lived on the seam: the host forgot its grants
+ * and was correct, the browser's cache never asked and was also defensible, and
+ * both suites stayed green. This one runs the real id minting against real files
+ * on disk, the real policy store, and the real wire, so the id reuse that makes
+ * inheritance possible is not a premise here — it is asserted.
+ */
+test('a reused character id inherits no answer the user gave about the card before it', async () => {
+  const card = JSON.stringify({
+    spec: 'chara_card_v2',
+    spec_version: '2.0',
+    data: {
+      name: 'Nadia', description: '', personality: '', scenario: '',
+      first_mes: 'Hello.', mes_example: '', creator_notes: '', system_prompt: '',
+      post_history_instructions: '', alternate_greetings: [], tags: [],
+      creator: '', character_version: '1', extensions: {},
+    },
+  })
+  const content = Buffer.from(card, 'utf8').toString('base64')
+
+  const first = await client.call('character.import', { filename: 'nadia.json', content })
+  const characterId = first.character.characterId
+
+  await client.call('script.setDocumentGrant', { characterId, granted: true })
+  await client.call('script.setScriptsAllowed', { characterId, allowed: true })
+  const granted = await client.call('script.list', { characterId })
+  assert.equal(granted.documentGranted, true)
+  assert.equal(granted.scriptsAllowed, true)
+
+  await client.call('character.delete', { characterId })
+  const second = await client.call('character.import', { filename: 'nadia.json', content })
+
+  // The premise of the whole failure, asserted rather than assumed: ids are
+  // minted against the cards that exist, so deleting one hands its id to the
+  // next card of that name. A client that never reuses ids cannot express this
+  // scenario at all, which is how it stays invisible during development.
+  assert.equal(second.character.characterId, characterId, 'the id was not reused; this test proves nothing')
+
+  const after = await client.call('script.list', { characterId })
+  assert.equal(after.documentGranted, false, 'a new card inherited page access nobody gave it')
+  // Before any `setScriptsAllowed` on this card: the third state, not `false`.
+  // `false` would mean the shell never asks, so the scripts never run, with
+  // nothing reported anywhere — and a card may not have its consent pre-filled
+  // (`AUTORUN.md` §1), including pre-filled as a refusal.
+  assert.equal(
+    'scriptsAllowed' in after,
+    false,
+    'a new card inherited an answer given about another card',
+  )
+})

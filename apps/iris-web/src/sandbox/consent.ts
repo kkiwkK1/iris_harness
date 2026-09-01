@@ -42,7 +42,13 @@ export type ConsentState =
  * @param listed - the `script.list` response, or whatever stood in for it.
  * @returns which of the three states the host reported.
  */
-export function consentState(listed: { scriptsAllowed?: boolean } | undefined): ConsentState {
+export function consentState(
+  // `| undefined` on the property, not just optional: under
+  // `exactOptionalPropertyTypes` those are different types, and the explicit
+  // shape is the one this function exists to survive. Declaring it is what makes
+  // the tolerance visible rather than something a test has to cast its way into.
+  listed: { scriptsAllowed?: boolean | undefined } | undefined,
+): ConsentState {
   /*
    * Switched on the value in three ways rather than tested for presence.
    *

@@ -383,7 +383,22 @@ class InMemoryClient implements FakeClient {
         const { filename, content } = params as RpcRequest<'character.import'>
         const card = readCard(filename, content)
         const character: CharacterSummary = {
-          characterId: `char-${this.#nextId++}`,
+          /*
+           * Derived from the name and made unique against the cards that exist
+           * now, which is what the host does — and it matters here for a reason
+           * beyond tidiness.
+           *
+           * A counter never repeats, so a fake that minted `char-7` could not
+           * reproduce id *reuse*: deleting a card frees its id, and the next card
+           * of that name is handed it. That is the mechanism behind a defect
+           * found in both halves of this project, where a new card inherited
+           * permissions granted to its deleted namesake. An interface developed
+           * against a client that cannot express that will never show it.
+           *
+           * It also made the fake inconsistent with itself: seeded cards already
+           * carry slugs (`aria-vance`), and only imports carried counters.
+           */
+          characterId: this.#mintCharacterId(card.name),
           name: card.name,
           tags: card.tags,
           ...(card.creator === undefined ? {} : { creator: card.creator }),
@@ -398,6 +413,20 @@ class InMemoryClient implements FakeClient {
           throw new FakeRpcError('not-found', `no character "${characterId}"`)
         }
         this.#characters = this.#characters.filter(row => row.characterId !== characterId)
+        /*
+         * Forget what was decided *about* this card, and keep what belongs to
+         * the conversations.
+         *
+         * Content rebinds by name — chats survive, because reimporting a card to
+         * carry on playing is what a user means to do. Permissions never: the
+         * page grant and the run-scripts answer were given about a card that no
+         * longer exists, and the id is about to be handed to a different one.
+         *
+         * The host does this; a fake that did not would let an interface be
+         * built against inheritance the real thing does not have.
+         */
+        this.#grants.delete(characterId)
+        this.#scriptsAllowed.delete(characterId)
         return {}
       }
 
@@ -570,6 +599,31 @@ class InMemoryClient implements FakeClient {
 
   #summaries(): ChatSummary[] {
     return [...this.#chats].sort((left, right) => right.updatedAt - left.updatedAt).map(toChatSummary)
+  }
+
+  /**
+   * A character id from a card's name, unique against the cards that exist.
+   *
+   * Mirrors the host's `uniqueId(toId(name), existing)`, including that a freed
+   * id is handed out again.
+   * @param name - the card's name.
+   * @returns the id to store it under.
+   */
+  #mintCharacterId(name: string): string {
+    const base =
+      name
+        .normalize('NFC')
+        .replace(/[\s]+/gu, '-')
+        .replace(/[^\p{L}\p{N}._-]/gu, '')
+        .replace(/^[.\-]+|[.\-]+$/g, '')
+        .slice(0, 100) || 'unnamed'
+    const taken = (candidate: string): boolean =>
+      this.#characters.some(row => row.characterId === candidate)
+    if (!taken(base)) return base
+    for (let suffix = 2; ; suffix += 1) {
+      const candidate = `${base}-${String(suffix)}`
+      if (!taken(candidate)) return candidate
+    }
   }
 
   #require(chatId: string): FakeChat {
