@@ -43,9 +43,12 @@ function harness(options?: { attachWorks?: boolean, readyTimeoutMs?: number }): 
   states: () => InterfaceState[]
   attached: () => number
   becomeReady: (instance: number) => void
+  /** Snapshots pushed into each frame after it was built, by instance. */
+  refreshed: () => { instance: number, context: unknown }[]
 } {
   let latest: InterfaceState[] = []
   let attachedCount = 0
+  const pushed: { instance: number, context: unknown }[] = []
   const readies = new Map<number, () => void>()
 
   const env: MessageFramesEnv = {
@@ -53,6 +56,7 @@ function harness(options?: { attachWorks?: boolean, readyTimeoutMs?: number }): 
       readies.set(input.instance, input.onReady)
       return {
         element: { isConnected: options?.attachWorks !== false },
+        refreshContext: context => pushed.push({ instance: input.instance, context }),
         dispose: () => undefined,
       }
     },
@@ -70,6 +74,7 @@ function harness(options?: { attachWorks?: boolean, readyTimeoutMs?: number }): 
     states: () => latest,
     attached: () => attachedCount,
     becomeReady: instance => readies.get(instance)?.(),
+    refreshed: () => pushed,
   }
 }
 
@@ -291,3 +296,43 @@ test('the body summary reports whether or not anything is visible', () => {
   )
 })
 
+
+test('a refresh reaches every frame of the message without rebuilding one', () => {
+  /*
+   * An interface is a status panel: it draws the variables. A write from a
+   * later floor leaves it displaying a number that was true a turn ago —
+   * healthy-looking and wrong, which is worse than a card that visibly fails.
+   *
+   * Pushed rather than rebuilt on purpose. This pipeline already rebuilds on an
+   * edit or a swipe, and that costs a full reparse of the block — 360 KiB on the
+   * sample card — plus whatever the panel had drawn. A snapshot is data; it does
+   * not need a new realm.
+   */
+  const blocks = claimFrontendBlocks([oneInterface('<body>one'), '', oneInterface('<body>two')].join(NL))
+  const scope = harness()
+  const running = runMessageInterfaces(blocks, 3, scope.env)
+
+  running.refresh({ chat: ['fresh'] })
+
+  assert.deepEqual(
+    scope.refreshed().map(entry => entry.instance),
+    [0, 1],
+    'every frame of the message shares the chat, so every frame gets the snapshot',
+  )
+  running.dispose()
+})
+
+test('a refresh after teardown reaches nothing', () => {
+  /*
+   * A message scrolling out of view disposes its frames, and an event already
+   * in flight must not push into a realm that is gone.
+   */
+  const blocks = claimFrontendBlocks(oneInterface('<body>one'))
+  const scope = harness()
+  const running = runMessageInterfaces(blocks, 3, scope.env)
+
+  running.dispose()
+  running.refresh({ chat: ['fresh'] })
+
+  assert.equal(scope.refreshed().length, 0, 'a disposed message still pushed a snapshot')
+})

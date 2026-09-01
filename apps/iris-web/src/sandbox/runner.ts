@@ -180,6 +180,22 @@ export interface RunningCard {
    * tick cannot post into a torn-down realm.
    */
   emit: (event: string, args: unknown[]) => void
+  /**
+   * Replace the frame’s snapshot with a newer one.
+   *
+   * The façade reads `host.context()` on **every** call, so a card's
+   * `getChatMessages` answers from whatever snapshot the frame currently holds
+   * — which means keeping that snapshot current is the whole of keeping the
+   * card current. Upstream needs no equivalent because its `chat` array is the
+   * live one; ours crosses an origin, so the liveness has to be pushed.
+   *
+   * Safe before the frame is ready: the newest snapshot is what gets sent at
+   * `ready`, rather than the one captured at construction. That matters here
+   * and is not defensive — these frames take seconds to boot, so an update
+   * arriving during boot is ordinary, and dropping it would start the card on
+   * text that was already stale.
+   */
+  refreshContext: (context: ScriptContext) => void
   /** Remove the frame and every listener it needed. Idempotent. */
   dispose: () => void
 }
@@ -223,6 +239,22 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   })
 
   let disposed = false
+  /**
+   * The snapshot this frame should hold.
+   *
+   * Mutable because the chat keeps moving after the frame is built, and the
+   * façade answers every `getChatMessages` from whatever this is. Seeded from
+   * the host and then replaced by `refreshContext`.
+   */
+  let current: ScriptContext = host.context
+  /**
+   * Whether the frame has said `ready`.
+   *
+   * Tracked so a refresh arriving before then updates `current` without
+   * posting into a frame that has no listener yet — the post would be dropped
+   * silently, which is the failure mode this whole file is written against.
+   */
+  let ready = false
   /** So one protocol fault is one report, not one per message. */
   let reportedUnreadable = false
 
@@ -284,9 +316,10 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         host.onBootstrapError?.(message.message)
         return
       case 'ready': {
+        ready = true
         host.onReady?.()
         // The order that matters. Context, then viewport, then the card.
-        post({ iris: token, type: 'context', context: host.context })
+        post({ iris: token, type: 'context', context: current })
         const size = host.viewport()
         post({ iris: token, type: 'viewport', width: size.width, height: size.height })
         // Rewritten on the way in, which is where upstream does it too: a card
@@ -426,6 +459,17 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     emit: (event, args) => {
       if (disposed) return
       post({ iris: token, type: 'event', event, args })
+    },
+    refreshContext: next => {
+      if (disposed) return
+      /*
+       * Recorded even when the frame cannot be told yet. `ready` sends
+       * `current`, so an update that lands mid-boot is not lost — it simply
+       * becomes the snapshot the card starts from.
+       */
+      current = next
+      if (!ready) return
+      post({ iris: token, type: 'context', context: current })
     },
     dispose: () => {
       if (disposed) return

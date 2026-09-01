@@ -93,6 +93,25 @@ export interface CardScriptsEnv {
 
 /** A running set of card scripts. */
 export interface RunningCardScripts {
+  /**
+   * Re-read the chat snapshot and push it into every frame.
+   *
+   * Upstream needs nothing like this: its `chat` array **is** the live one, so
+   * a card reading `getChatMessages` during generation sees the floor that just
+   * arrived. Ours is a snapshot that crossed an origin, so the liveness has to
+   * be pushed, and this is where.
+   *
+   * It is not a convenience. MVU's generation-time chain reads the floor that
+   * just arrived and writes a rewritten version of it back
+   * (`on_message_received.ts:54-56`); against a snapshot taken when the frame
+   * was built, it reads the *previous* floor and rewrites the wrong text.
+   *
+   * Re-read from the host rather than patched from the event, so a refresh
+   * carries the same authority as the first snapshot — variable layers and
+   * metadata move during generation too, and reconstructing a partial context
+   * here would be a second, quieter opinion about what a snapshot contains.
+   */
+  refresh: () => Promise<void>
   /** Tear every frame down. Idempotent. */
   dispose: () => void
 }
@@ -295,6 +314,24 @@ export function startCardScripts(
   })()
 
   return {
+    refresh: async () => {
+      if (disposed) return
+      const context = await env.context(chatId, characterId)
+      /*
+       * Re-checked after the await: a chat can close while the host is
+       * answering, and pushing into a torn-down frame is the stale-write the
+       * `disposed` flag exists for.
+       */
+      if (disposed) return
+      /*
+       * No snapshot, no push. The same rule the first one follows — handing a
+       * card an invented empty context would have it redraw its panel as
+       * zeroes, which looks like state rather than like an absence.
+       */
+      if (context === undefined) return
+      for (const card of cards) card.refreshContext(context)
+    },
+
     dispose: () => {
       if (disposed) return
       disposed = true

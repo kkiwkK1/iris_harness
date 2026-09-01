@@ -45,6 +45,8 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
   const started: string[] = []
   const attached: string[] = []
   const disposed: string[] = []
+  /** Snapshots pushed into the frame after it was built. */
+  const refreshed: ScriptContext[] = []
   const failures: ScriptRunState[] = []
   let latest: readonly ScriptRunState[] = []
 
@@ -61,6 +63,7 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
         // rather than skipped for want of the property.
         element: { id: 'card-frame', isConnected: false } as never,
         emit: () => undefined,
+        refreshContext: context => refreshed.push(context),
         dispose: () => disposed.push('card-frame'),
       }
     },
@@ -84,6 +87,7 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
     started,
     attached,
     disposed,
+    refreshed,
     failures,
     states: () => latest,
   }
@@ -289,6 +293,7 @@ test('a frame that did report ready is never called silent', async () => {
       return {
         element: { id: 'card-frame', isConnected: true } as never,
         emit: () => undefined,
+        refreshContext: () => undefined,
         dispose: () => undefined,
       }
     },
@@ -481,6 +486,7 @@ test('a report that belongs to the frame rather than a script still arrives', as
       return {
         element: { id: 'card-frame', isConnected: true } as never,
         emit: () => undefined,
+        refreshContext: () => undefined,
         dispose: () => undefined,
       }
     },
@@ -501,6 +507,7 @@ test('an outcome naming a script this card does not have is still dropped', asyn
       return {
         element: { id: 'card-frame', isConnected: true } as never,
         emit: () => undefined,
+        refreshContext: () => undefined,
         dispose: () => undefined,
       }
     },
@@ -552,3 +559,85 @@ test('a late arrival stops the card being counted as failed', () => {
   assert.ok(summary.includes('3 of 3'))
 })
 
+
+test('a refresh pushes the newest snapshot into every frame', async () => {
+  /*
+   * The pin for MVU's generation-time chain, stated as the thing that goes
+   * wrong without it.
+   *
+   * A card's `getChatMessages` answers from the snapshot its frame holds. That
+   * snapshot arrives once, at `ready`, and upstream needs no equivalent because
+   * its `chat` array is the live one. Ours crossed an origin. So when MVU reads
+   * the floor that just arrived and writes a rewritten version back
+   * (`on_message_received.ts:54-56`), a frozen snapshot means it reads the
+   * **previous** floor and rewrites the wrong text — silently, and looking
+   * exactly like a card bug.
+   */
+  let floors = 1
+  const bench = harness({
+    context: async () => ({
+      ...CONTEXT,
+      chat: Array.from({ length: floors }, (_unused, id) => ({
+        name: 'Her',
+        is_user: false,
+        mes: `floor ${String(id)}`,
+      })),
+    }) as ScriptContext,
+  })
+
+  const running = startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+  /*
+   * A length check rather than `deepEqual(…, [])`, because @types/node declares
+   * these as `asserts actual is T` — comparing against a bare `[]` narrows the
+   * array to `never[]` for the rest of the test, and the next line that reads an
+   * element fails to compile for a reason that has nothing to do with it.
+   */
+  assert.equal(bench.refreshed.length, 0, 'nothing was pushed before anything changed')
+
+  // The reply arrives: one more floor than the frame was built with.
+  floors = 2
+  await running.refresh()
+
+  assert.equal(bench.refreshed.length, 1)
+  assert.deepEqual(
+    bench.refreshed[0]?.chat.map(entry => entry.mes),
+    ['floor 0', 'floor 1'],
+    'the frame was handed a snapshot that predates the floor MVU needs to read',
+  )
+
+  running.dispose()
+})
+
+test('a refresh after teardown pushes nothing', async () => {
+  /*
+   * The host answers asynchronously, and a chat can close while it is
+   * answering. Pushing into a disposed frame is a write to a card's realm that
+   * no longer exists, which is the class of bug the `disposed` flag is for
+   * everywhere else in this controller.
+   */
+  const bench = harness()
+  const running = startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  running.dispose()
+  await running.refresh()
+
+  assert.equal(bench.refreshed.length, 0, 'a torn-down set still pushed a snapshot')
+})
+
+test('a refresh with no snapshot pushes nothing rather than an empty one', async () => {
+  /*
+   * The same rule the first snapshot follows. A card handed an invented empty
+   * context redraws its status panel as zeroes, and a panel of zeroes reads as
+   * state rather than as an absence — the reader cannot tell the difference,
+   * and neither can the card.
+   */
+  const bench = harness({ context: async () => undefined })
+  const running = startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  await running.refresh()
+  assert.equal(bench.refreshed.length, 0, 'an absent snapshot was pushed as if it were one')
+  running.dispose()
+})

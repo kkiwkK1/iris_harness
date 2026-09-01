@@ -30,13 +30,28 @@ let manifest
 try {
   manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'))
 } catch {
-  // No manifest means nothing was built into this directory, which is a
-  // legitimate state — a build that has not run yet is not a stale build.
-  console.log(`prune: no manifest in ${dir}, nothing to do`)
+  /*
+   * No manifest means nothing was built into this directory, which is a
+   * legitimate state — a build that has not run yet is not a stale build. It is
+   * also the only safe reading: without a manifest there is no way to tell a
+   * current artifact from a superseded one, and a pruner that guesses would
+   * delete the build it was meant to protect.
+   */
+  console.log(`prune: no manifest in ${dir}, nothing to prune`)
   process.exit(0)
 }
 
+/** Everything the manifest vouches for, plus the manifest itself. */
 const keep = new Set(['manifest.json', ...Object.values(manifest)])
+
+/**
+ * The artifact families this tool is allowed to touch.
+ *
+ * Deletion is restricted to `<prefix>-<hash>.js` names so the pruner can only
+ * ever remove a **superseded version of something the manifest names**. The
+ * un-hashed build outputs alongside them are left alone, which is why the report
+ * below lists what it did not manage as well as what it did.
+ */
 const prefixes = Object.keys(manifest)
 
 let removed = 0
@@ -47,7 +62,46 @@ for (const entry of readdirSync(dir)) {
   removed += 1
 }
 
+/*
+ * Reported as the directory actually is, not as the manifest wishes it were.
+ *
+ * The first version of this line said the directory "now serves only" the three
+ * manifest entries. It served five: the un-hashed `bootstrap.js` and `preset.js`
+ * are build outputs this tool deliberately leaves alone, and the sentence walked
+ * straight past them. A build log that overstates what it checked is the same
+ * failure this whole tool was written to fix — the stale artifacts it now deletes
+ * went unnoticed because nothing ever said what was really there.
+ *
+ * The un-hashed pair is safe only because the host derives its `immutable` set
+ * from the manifest (`sandbox-assets.ts`), so a name that is not in the manifest
+ * never gets a year-long TTL. Printing them keeps that dependency visible: if
+ * anyone ever caches this directory by pattern instead, these two are the trap.
+ */
+/**
+ * The last two segments of a path, under either separator.
+ *
+ * Split rather than matched, and the first attempt here is why: written as a
+ * character class it became `[/\]`, where the backslash escaped the closing
+ * bracket and the whole expression failed to compile. Escapes in this repo have
+ * been eaten in transit repeatedly; a split has nothing to eat.
+ * @param full - an absolute path.
+ * @returns its last two segments, joined with a forward slash.
+ */
+function shortPath(full) {
+  const BACKSLASH = String.fromCharCode(92)
+  return full.split(BACKSLASH).flatMap(part => part.split('/')).slice(-2).join('/')
+}
+
+const listed = new Set(Object.values(manifest))
+const alsoPresent = readdirSync(dir).filter(
+  entry => entry !== 'manifest.json' && !listed.has(entry),
+)
+
 console.log(
-  `prune: ${dir.split(/[\/]/).slice(-2).join('/')} now serves only ` +
-    `${prefixes.map(p => manifest[p]).join(', ')} (${String(removed)} superseded removed)`,
+  `prune: ${shortPath(dir)} — ` +
+    `${String(removed)} superseded removed; ` +
+    `hashed: ${[...listed].join(', ')}` +
+    (alsoPresent.length === 0
+      ? ''
+      : `; also present, never immutable: ${alsoPresent.join(', ')}`),
 )

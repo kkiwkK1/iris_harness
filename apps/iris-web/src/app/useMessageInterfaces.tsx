@@ -45,6 +45,14 @@ export interface MessageInterfacesInput {
   start: MessageFramesEnv['start']
   /** Put a frame into the message's own DOM. */
   attach: MessageFramesEnv['attach']
+  /**
+   * Subscribe to newer chat snapshots; returns an unsubscribe.
+   *
+   * Passed in for the same reason `start` is: this file must not know about
+   * the store, the host, or the event names. It knows only that something out
+   * there produces newer snapshots and that a running interface wants them.
+   */
+  watchContext: (push: (context: unknown) => void) => () => void
 }
 
 /**
@@ -63,8 +71,16 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
    * would otherwise tear down a working panel and rebuild it, losing whatever
    * state the card had drawn.
    */
-  const callbacks = useRef({ start: input.start, attach: input.attach })
-  callbacks.current = { start: input.start, attach: input.attach }
+  const callbacks = useRef({
+    start: input.start,
+    attach: input.attach,
+    watchContext: input.watchContext,
+  })
+  callbacks.current = {
+    start: input.start,
+    attach: input.attach,
+    watchContext: input.watchContext,
+  }
 
   useEffect(() => {
     if (!input.allowed) {
@@ -86,7 +102,24 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
       onState: next => setStates(next),
     })
 
+    /*
+     * The chat keeps moving under a mounted interface, and an interface is a
+     * status panel — it draws the variables. Without this it goes on drawing
+     * the ones that were true when the message mounted: a healthy-looking
+     * panel showing a turn-old number, which a reader cannot tell from a
+     * current one.
+     *
+     * Pushed into the running frame rather than triggering a rebuild. A
+     * rebuild is what an edit or a swipe does, and it costs a full reparse of
+     * the block — 360 KiB on the sample card — plus whatever the panel had
+     * already drawn.
+     */
+    const unwatch = callbacks.current.watchContext(context => {
+      running.refresh(context)
+    })
+
     return () => {
+      unwatch()
       running.dispose()
       /*
        * Cleared here as well as in the controller, because this is the half a

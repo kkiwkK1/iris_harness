@@ -24,7 +24,7 @@ import { useEffect, useRef } from 'react'
 import type { ReactElement } from 'react'
 
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
-import { actionsOf } from '../client/store.ts'
+import { actionsOf, tapHostEvents } from '../client/store.ts'
 import { startCardScripts } from '../sandbox/card-scripts.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import { librariesFor } from '../sandbox/libraries.ts'
@@ -319,7 +319,41 @@ export function CardScriptFrames(): ReactElement {
       characterId,
     )
 
+    /*
+     * Keep the frames’ snapshot current while the chat moves under them.
+     *
+     * A card's `getChatMessages` answers from the snapshot its frame holds, and
+     * without this that snapshot is frozen at the moment the frame was built.
+     * MVU's generation-time chain reads the floor that just arrived and writes
+     * a rewritten version back (`on_message_received.ts:54-56`) — against a
+     * frozen snapshot it reads the *previous* floor and rewrites the wrong one.
+     *
+     * **Two events, not one.** The ruling named `chat.updated`, and that alone
+     * would have missed the case the whole change exists for: a reply that just
+     * finished generating settles through `stream.end`, which carries its own
+     * view and is the only notice that floor exists. `chat.updated` covers
+     * edits, swipes and script writes. Between them they are every event in
+     * `applyEvent` that assigns `view`, which is the property that matters here
+     * rather than the names.
+     *
+     * Streaming deltas are deliberately not in that set: they move `stream`,
+     * not `view`, and refreshing per token would put a host round trip between
+     * every pair of characters.
+     */
+    const untap = tapHostEvents(store, event => {
+      if (event.type !== 'chat.updated' && event.type !== 'stream.end') return
+      if (event.chatId !== chatId) return
+      /*
+       * Not awaited, and failures are the controller’s to report: a refresh
+       * that loses a race with teardown is already guarded inside `refresh`,
+       * and there is nothing for a listener to do about a host that did not
+       * answer except try again on the next event.
+       */
+      void running.refresh()
+    })
+
     return () => {
+      untap()
       running.dispose()
       actionsOf(store).setRunStates([])
     }

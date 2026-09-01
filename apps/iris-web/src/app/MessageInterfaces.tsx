@@ -18,7 +18,8 @@ import { useEffect, useRef, useState, type ReactElement } from 'react'
 
 import type { ScriptContext } from '@iris/protocol'
 
-import { actionsOf } from '../client/store.ts'
+import { actionsOf, tapHostEvents } from '../client/store.ts'
+import { snapshotFor } from './shared-snapshot.ts'
 import { useIris, useIrisStore } from '../client/provider.tsx'
 import {
   SANDBOX_MANIFEST_PATH,
@@ -220,8 +221,46 @@ export function MessageInterfaces({
         },
         document,
       )
-      return { element: card.element, dispose: card.dispose }
+      /*
+       * `refreshContext` is forwarded rather than dropped. An interface is a
+       * status panel: it draws the variables, so a write from a later floor
+       * leaves it showing a turn-old number while looking perfectly healthy.
+       */
+      return {
+        element: card.element,
+        refreshContext: next => {
+          card.refreshContext(next as ScriptContext)
+        },
+        dispose: card.dispose,
+      }
     },
+    watchContext: push =>
+      tapHostEvents(store, event => {
+        /*
+         * Two events, not one. A reply that just finished generating settles
+         * through `stream.end`; `chat.updated` covers edits, swipes and a
+         * script’s own writes. Between them they are every event that assigns
+         * `view` — which is the property that matters, rather than the names.
+         *
+         * Streaming deltas are deliberately absent: they move `stream`, not
+         * `view`, and refreshing per token would put a host round trip between
+         * every pair of characters.
+         */
+        if (event.type !== 'chat.updated' && event.type !== 'stream.end') return
+        if (chatId === undefined || characterId === undefined) return
+        if (event.chatId !== chatId) return
+        void snapshotFor(event, async () =>
+          actionsOf(store).scriptContext(chatId, characterId),
+        ).then(next => {
+          /*
+           * No snapshot, no push — the rule the first one follows. A card handed
+           * an invented empty context redraws its panel as zeroes, and zeroes
+           * read as state rather than as an absence.
+           */
+          if (next !== undefined) push(next)
+        })
+      }),
+
     attach: frame => {
       const slot = slots.current.get(frame.instance)
       /*

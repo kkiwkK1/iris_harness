@@ -81,6 +81,14 @@ export interface InterfaceState {
 /** One running frame, as this controller needs to see it. */
 export interface StartedInterface {
   element: { isConnected?: unknown }
+  /**
+   * Hand this frame a newer snapshot.
+   *
+   * Typed as `unknown` rather than as `ScriptContext` for the same reason the
+   * element is structural: this controller is tested without a DOM and without
+   * the protocol, and it never looks inside a snapshot — it only forwards one.
+   */
+  refreshContext: (context: unknown) => void
   dispose: () => void
 }
 
@@ -117,6 +125,22 @@ export interface MessageFramesEnv {
 
 /** A running set of interfaces for one message. */
 export interface RunningInterfaces {
+  /**
+   * Push a newer snapshot into every frame of this message.
+   *
+   * Interfaces need this for a different reason than card scripts do. A script
+   * frame goes stale because MVU reads the floor that just arrived; an
+   * interface goes stale because it **is** a status panel — it draws the
+   * variables, and a variable written by a later floor leaves the panel
+   * displaying numbers that were true a turn ago. Both look like a working
+   * card showing wrong data, which is worse than a card that visibly fails.
+   *
+   * Not a rebuild. The frame keeps running and is handed new data, because
+   * rebuilding is what this pipeline already does on an edit or a swipe and it
+   * costs a full reparse of the block — 360 KiB on the sample card, and the
+   * panel’s own drawn state with it.
+   */
+  refresh: (context: unknown) => void
   dispose: () => void
 }
 
@@ -198,6 +222,11 @@ export function runMessageInterfaces(
   })
 
   return {
+    refresh: context => {
+      if (disposed) return
+      for (const card of running) card.refreshContext(context)
+    },
+
     dispose: () => {
       disposed = true
       for (const timer of timers) clearTimeout(timer)
