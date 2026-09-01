@@ -12,10 +12,17 @@
  * is the user's, and nothing a card can write may create, request, or survive
  * the revocation of one. See `SANDBOX.md`.
  *
- * **Deleting a card is the one moment a character id changes owner**, and the
- * line to hold there is: *content re-binds by name, a permission does not.*
+ * The line to hold is: **when the thing a permission was granted to is no longer
+ * the thing in front of you, re-anchor the permission.** *Content re-binds by
+ * name; a permission does not.*
  *
- * Ids are minted from the card's name against the cards that exist
+ * Stated about the **subject**, not about deletion, because deletion is only one
+ * of its instances. On the host, deleting a card is the moment a character id
+ * changes owner — but in the browser the panel's current card changes dozens of
+ * times a day with nothing deleted, and a permission held in panel state loses
+ * its subject just as completely. Both are the same requirement.
+ *
+ * On this side, ids are minted from the card's name against the cards that exist
  * (`library.ts`), so deleting "Aria" frees `aria` and the next card imported
  * under that name takes it. For **content** that is correct and deliberate —
  * SillyTavern stores chats under `chats/<character name>/` for exactly this

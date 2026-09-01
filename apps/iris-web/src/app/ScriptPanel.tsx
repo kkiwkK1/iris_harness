@@ -57,8 +57,19 @@ export function ScriptPanel(): ReactElement | null {
         <p className="iris-list__empty">This card ships no scripts.</p>
       ) : (
         <>
+          {/*
+            States what is true today, not what is planned.
+            `runCard` is reached from the sandbox probe alone — opening a chat
+            runs nothing — so "will run when you open a chat" was a promise the
+            product does not keep. A settings panel is where a user decides what
+            a card is allowed to do; copy that describes an unbuilt pipeline as
+            current behaviour makes that decision on false information, which is
+            the same fault as a permission control whose label overstates its
+            scope. Restore the original sentence when the pipeline lands.
+          */}
           <p className="iris-field__note iris-script__summary">
-            {runnable} of {scripts.length} will run when you open a chat with this card.
+            {runnable} of {scripts.length} enabled. Scripts do not run on their own yet — the
+            sandbox panel is the only thing that runs them.
           </p>
           {scripts.map(script => (
             <ScriptRow

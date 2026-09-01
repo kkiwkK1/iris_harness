@@ -197,6 +197,17 @@ export class ScriptVariableStore {
 
   /**
    * Drop a card's partition, when its character is deleted.
+   *
+   * `scripts.ts` sets the rule for the moment a character id changes owner:
+   * *content re-binds by name, a permission does not.* Script variables are
+   * content — a player's progress, not a grant — so by that rule alone they
+   * would survive a delete the way chats do. They do not, and the reason is
+   * upstream rather than the rule: upstream keeps this table **inside the card
+   * file**, so deleting a card and importing another under the same name gives
+   * the new card's shipped `data`, not the old card's accumulated state.
+   * Forgetting and re-seeding is what reproduces that. This is the answer to the
+   * question the rule tells a new store to ask, written down because the answer
+   * here looks like an exception to it and is not.
    * @param characterId - whose partition.
    */
   async forget(characterId: string): Promise<void> {

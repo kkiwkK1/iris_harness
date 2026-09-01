@@ -378,7 +378,14 @@ export function createIrisStore(
           /*
            * Drop the cached script list if it belonged to the card just deleted.
            *
-           * Deletion is the one moment a character id can change owner. The host
+           * Deletion is the one moment a character *id* can change owner — but it
+           * is not the only moment a permission loses its subject. The panel
+           * moving to a different card does the same thing and does it dozens of
+           * times a day; the probe's network grant had exactly that bug. The rule
+           * is about the subject, not about deletion: re-anchor a permission
+           * whenever what it was granted to stops being what is in front of you.
+           *
+           * The host
            * mints ids with `uniqueId(toId(name), existing)` against the cards that
            * currently exist, so deleting "Aria" frees `aria` and the next card of
            * that name is handed the same id. `loadScripts` returns early when
@@ -388,8 +395,17 @@ export function createIrisStore(
            *
            * That would also defeat the host's own fix: it now forgets a deleted
            * card's grant, and this cache would answer `true` without ever asking.
-           * A grant the user gave one card must not be inherited by another that
-           * merely reuses its name.
+           * Two green halves that leak when composed — the host is right and stays
+           * right, because the question never reaches it.
+           *
+           * The two fields go for different reasons, and the difference is the
+           * rule worth carrying: **content rebinds by name, permissions never.**
+           * `scripts` is content — the new card has its own, so this is ordinary
+           * cache invalidation, and the chats deliberately survive for the same
+           * reason (reimporting a card to carry on playing is what a user means
+           * to do). `documentGranted` is a permission, and the user granted it to
+           * a card that no longer exists. Any per-character state added here has
+           * to answer which of the two it is before it is cached.
            */
           const stale = get().scriptsFor === characterId
           set({
