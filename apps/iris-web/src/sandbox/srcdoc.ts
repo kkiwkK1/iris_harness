@@ -131,7 +131,43 @@ function attribute(value: string): string {
 export function buildSrcdoc(
   token: string,
   bootstrap: string,
-  options: { networkGranted: boolean, libraries: readonly string[], selfOrigin: string },
+  options: {
+    networkGranted: boolean
+    libraries: readonly string[]
+    selfOrigin: string
+    /**
+     * Markup to place in the frame's own body — a message frame's card
+     * interface.
+     *
+     * Script frames leave this undefined: their bodies arrive later as `run`
+     * messages, because a script *is* code and can be handed over a channel. A
+     * message frame's block is **markup**, and markup only runs by being parsed,
+     * so it has to be in the document from the start.
+     */
+    body?: string
+    /**
+     * The snapshot, inlined so it exists before the body parses.
+     *
+     * This is the whole reason the option exists. A card's interface runs its
+     * scripts **at parse time** and reads variables immediately — drawing a
+     * status panel from them is the point of it existing. The pushed `context`
+     * message cannot arrive that early: the shell only sends it after `ready`
+     * (`runner.ts`), so the only thing separating them is the parse pause while
+     * a library `<script src>` is fetched. That pause usually wins, and
+     * "usually" is not a mechanism — it makes correctness depend on a fetch's
+     * timing, which is the class of accident this project has spent eleven
+     * rounds removing.
+     *
+     * Inlined, the ordering is correct by construction. The cost is bytes, paid
+     * per frame with no caching, and it is bounded three ways: a message frame
+     * carries only **its own floor's** layer, the corpus distribution is
+     * overwhelmingly under 1 KiB (283 KiB is the worst single floor measured),
+     * and the number of simultaneous frames is limited by the lifecycle window.
+     *
+     * The pushed channel stays for **updates**; this is only the initial value.
+     */
+    context?: unknown
+  },
 ): string {
   const { networkGranted, libraries, selfOrigin } = options
   // The bootstrap is placed inside a script element, so the one sequence that
@@ -141,8 +177,27 @@ export function buildSrcdoc(
   // A literal backslash here is invisible when it goes missing: `'<\/script'`
   // and `'</script'` look almost identical and the second is a silent no-op,
   // which is exactly the bug this line shipped with until a test caught it.
+  const { body, context } = options
   const BACKSLASH = String.fromCharCode(92)
-  const safe = bootstrap.split('</script').join(`<${BACKSLASH}/script`)
+  const escapeClose = (source: string): string =>
+    source.split('</script').join(`<${BACKSLASH}/script`)
+  const safe = escapeClose(bootstrap)
+
+  /*
+   * The initial snapshot, as a global the bootstrap picks up.
+   *
+   * `JSON.stringify` twice, then parsed once at run time: the value is embedded
+   * as a **string literal** rather than as an object literal, so no character in
+   * a card's data can end the script element or be read as code. A card's
+   * variables are card-authored and model-influenced text; putting them into a
+   * document as source is exactly where an object literal would be a hole.
+   */
+  const seed =
+    context === undefined
+      ? ''
+      : `<script>globalThis.__iris_context__=JSON.parse(${escapeClose(
+          JSON.stringify(JSON.stringify(context)),
+        )})</script>`
 
   return [
     '<!doctype html>',
@@ -171,6 +226,8 @@ export function buildSrcdoc(
      * other half of why they come second.
      */
     `<script>${safe}</script>`,
+    // After the bootstrap, which reads it, and before anything a card can run.
+    seed,
     /*
      * `crossorigin="anonymous"`, and it only works as **one half of a pair**.
      *
@@ -200,6 +257,17 @@ export function buildSrcdoc(
     ...libraries.map(
       url => `<script src="${attribute(url)}" crossorigin="anonymous" data-iris-lib></script>`,
     ),
+    /*
+     * The card's markup last, after the bootstrap and the libraries.
+     *
+     * Order is load-bearing in both directions. The bootstrap must be first so
+     * that anything the markup throws is something the frame can *say* — it
+     * installs the channel and the error reporting. The libraries must precede
+     * the markup because a card's inline script calls `$()` on its first line,
+     * and an external `<script src>` without `defer` blocks parsing until it has
+     * run, which is what makes that ordering hold.
+     */
+    body === undefined ? '' : body,
     '</body></html>',
   ].join('')
 }

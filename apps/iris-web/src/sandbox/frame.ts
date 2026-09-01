@@ -97,7 +97,17 @@ export interface FrameEnv {
    * does not provide is a card crash waiting to happen — and the crash says
    * `X is not defined`, which names the symptom and not the list it came from.
    */
-  reportMissingGlobals?: (expected: readonly string[]) => void
+  /**
+   * The snapshot inlined into this frame's document, if there was one.
+   *
+   * A function rather than a value because the frame runtime is built before the
+   * document is read, and because reading a global belongs to the entry that has
+   * one — this module deliberately knows nothing about the realm it installs
+   * into.
+   * @returns the seeded snapshot, or undefined when the shell inlined none.
+   */
+  seededContext?: () => ScriptContext | undefined
+    reportMissingGlobals?: (expected: readonly string[]) => void
   /**
    * Seed `toastr`, which is an adapter rather than a library.
    *
@@ -155,8 +165,21 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
 
   const unbridged = new Map(UNBRIDGED_GLOBALS.map(row => [row.name, row]))
 
-  /** The host snapshot, absent until the shell pushes it. */
-  let context: ScriptContext | undefined
+  /**
+   * The host snapshot.
+   *
+   * Seeded from the document when the shell inlined one, and pushed updates
+   * replace it afterwards. A **message frame** needs the seed: its card markup
+   * runs at parse time and reads variables immediately, which is earlier than
+   * any `postMessage` can arrive — the shell sends `context` only after `ready`.
+   * Without the seed, correctness would rest on the parse pause of a library
+   * fetch happening to outlast a message round trip.
+   *
+   * A **script frame** inlines nothing and this stays undefined until the push,
+   * which is correct there: a script body is handed over the channel, so it
+   * cannot run before the channel has been used.
+   */
+  let context: ScriptContext | undefined = env.seededContext?.()
 
   /**
    * `extension_settings`, watched for top-level assignment.

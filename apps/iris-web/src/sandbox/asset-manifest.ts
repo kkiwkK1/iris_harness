@@ -29,6 +29,15 @@ export const SANDBOX_MANIFEST_PATH = '/sandbox/manifest.json'
 export interface SandboxAssets {
   bootstrap: string
   preset: string
+  /**
+   * The message frame's library bundle.
+   *
+   * A separate artifact because the two frame kinds need different libraries —
+   * upstream injects two into a script frame and eight into a message frame — and
+   * a script frame carrying Tailwind and jQuery UI would be bytes spent on
+   * nothing.
+   */
+  messagePreset: string
 }
 
 /**
@@ -62,7 +71,7 @@ export function parseSandboxManifest(body: string): SandboxAssets | string {
   const record = parsed as Record<string, unknown>
 
   const names: Record<string, string> = {}
-  for (const key of ['bootstrap', 'preset']) {
+  for (const key of ['bootstrap', 'preset', 'message-preset']) {
     const value = record[key]
     if (typeof value !== 'string' || value === '') {
       return `the sandbox manifest does not name a ${key} artifact`
@@ -82,5 +91,6 @@ export function parseSandboxManifest(body: string): SandboxAssets | string {
   return {
     bootstrap: `/sandbox/${names['bootstrap'] ?? ''}`,
     preset: `/sandbox/${names['preset'] ?? ''}`,
+    messagePreset: `/sandbox/${names['message-preset'] ?? ''}`,
   }
 }

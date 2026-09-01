@@ -15,6 +15,7 @@
  * @module iris-web/sandbox/frame-entry
  */
 
+import type { ScriptContext } from '@iris/protocol'
 import { installSandbox } from './frame.ts'
 import { remoteImports, requestedImports } from './script-source.ts'
 import { describeAttempts, type TimedResource } from './import-attempts.ts'
@@ -457,7 +458,23 @@ try {
     list.append(entry)
   },
 
-  provideToastr: report => {
+  seededContext: () => {
+    /*
+     * Read once, then removed from the global.
+     *
+     * Removed because leaving it there would give a card a second, stale copy of
+     * its own variables under a name it can discover — and a stale copy that
+     * looks authoritative is worse than none. Pushed updates go to the frame's
+     * own slot, not back to this global, so anything still reading it after the
+     * first update would be reading history.
+     */
+    const host = window as unknown as Record<string, unknown>
+    const seeded = host['__iris_context__']
+    delete host['__iris_context__']
+    return seeded === undefined ? undefined : (seeded as ScriptContext)
+  },
+
+    provideToastr: report => {
     const host = window as unknown as Record<string, unknown>
     // Not overwritten if something already provided one. Upstream lets a card
     // replace a seeded global, and a card that brought its own real toastr

@@ -34,7 +34,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const dir = join(here, '..', 'public', 'sandbox')
 
 /** The artifacts this owns, by the name their build emits. */
-const ARTIFACTS = ['bootstrap', 'preset']
+const ARTIFACTS = ['bootstrap', 'preset', 'message-preset']
 
 /**
  * Sixteen hex characters of SHA-256.

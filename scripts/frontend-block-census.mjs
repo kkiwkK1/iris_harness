@@ -8,7 +8,15 @@
  * adds a card, and nobody should have to re-derive the predicate to find out.
  *
  *   node scripts/frontend-block-census.mjs
- *   node scripts/frontend-block-census.mjs --verbose   # show each matching block
+ *   node scripts/frontend-block-census.mjs --verbose        # show each matching block
+ *   node scripts/frontend-block-census.mjs --dir <path>     # loose card files too
+ *   node scripts/frontend-block-census.mjs --card <file>    # one card, .png or .json
+ *
+ * `--dir` / `--card` exist so a candidate card can be measured with **this**
+ * predicate rather than a hand-rolled copy of it. A card handed over for
+ * acceptance does not live in the SillyTavern layout, and re-deriving the three
+ * substrings at the call site is how two measurements of the same thing come to
+ * disagree.
  *
  * Skips when the corpus is absent. Always exits 0: a caliper, not a test.
  *
@@ -61,7 +69,18 @@ const CARDS = `${ST}/data/default-user/characters`
 const WORLDS = `${ST}/data/default-user/worlds`
 const verbose = process.argv.includes('--verbose')
 
-if (!existsSync(CHATS) && !existsSync(CARDS)) {
+/** Collect repeatable `--card <path>` / `--dir <path>` arguments. */
+function flagValues(flag) {
+  const out = []
+  process.argv.forEach((argument, index) => {
+    if (argument === flag && process.argv[index + 1] !== undefined) out.push(process.argv[index + 1])
+  })
+  return out
+}
+const explicitCards = flagValues('--card')
+const explicitDirs = flagValues('--dir')
+
+if (!existsSync(CHATS) && !existsSync(CARDS) && explicitCards.length === 0 && explicitDirs.length === 0) {
   console.log('frontend-block-census: skipped — no local corpus at')
   console.log(`  ${ST}`)
   console.log('Expected on any machine but the operator\'s. Set IRIS_CORPUS to point elsewhere.')
@@ -133,6 +152,15 @@ const populations = {
   'chat files': [],
   'card text': [],
   'disk world books': [],
+  // Explicit cards are kept in their own columns: they are candidates under
+  // review, not part of the installed corpus, and adding them to the corpus
+  // columns would silently change what "this machine's corpus" means.
+  'explicit: card text': [],
+  // Script bodies are a separate population because they are **not** message
+  // rendered. HTML inside a script body is written by the script itself, so it
+  // never reaches the Markdown renderer and the frame predicate never sees it.
+  // Counted so that a reader can tell the two kinds of HTML apart.
+  'explicit: script bodies': [],
 }
 
 // --- chats: every renderable text, swipe-expanded ---------------------------
@@ -201,6 +229,82 @@ if (existsSync(WORLDS)) {
   }
 }
 
+// --- explicit cards: candidates handed over for acceptance ------------------
+
+/** Load a card from either carrier. */
+function loadCard(path) {
+  if (path.toLowerCase().endsWith('.png')) return decodeCardPng(readFileSync(path))
+  const raw = JSON.parse(readFileSync(path, 'utf8'))
+  // A preset or a world book is not a card; recognised by absence of a name.
+  if (raw?.data?.name === undefined && raw?.name === undefined) return undefined
+  return raw
+}
+
+/** Every script body a card carries, across the storage shapes. */
+function scriptBodies(card) {
+  const extensions = card?.data?.extensions ?? card?.extensions ?? {}
+  const out = []
+  for (const key of ['tavern_helper', 'TavernHelper_scripts']) {
+    const holder = extensions[key]
+    if (holder === undefined) continue
+    const asObject = Array.isArray(holder)
+      ? Object.fromEntries(holder.filter(entry => Array.isArray(entry) && entry.length === 2))
+      : holder
+    const list = Array.isArray(holder) && Object.keys(asObject).length === 0 ? holder : (asObject?.scripts ?? [])
+    if (!Array.isArray(list)) continue
+    list.forEach((entry, index) => {
+      const script = entry?.value ?? entry
+      const content = script?.content
+      if (typeof content === 'string' && content.length > 0) {
+        out.push({ name: String(script?.name ?? `#${index}`), content })
+      }
+    })
+  }
+  return out
+}
+
+const explicitPaths = [...explicitCards]
+for (const dir of explicitDirs) {
+  if (!existsSync(dir)) continue
+  for (const name of readdirSync(dir)) {
+    if (/\.(png|json)$/i.test(name)) explicitPaths.push(join(dir, name))
+  }
+}
+
+let explicitLoaded = 0
+let explicitSkipped = 0
+for (const path of explicitPaths) {
+  let card
+  try { card = loadCard(path) } catch { card = undefined }
+  if (card === undefined) { explicitSkipped++; continue }
+  explicitLoaded++
+  const label = path.split(/[\/]/).pop()
+  const data = card?.data ?? card
+  const fields = [
+    ['first_mes', String(data.first_mes ?? '')],
+    ['description', String(data.description ?? '')],
+    ['personality', String(data.personality ?? '')],
+    ['scenario', String(data.scenario ?? '')],
+    ['mes_example', String(data.mes_example ?? '')],
+    ['system_prompt', String(data.system_prompt ?? '')],
+    ['post_history_instructions', String(data.post_history_instructions ?? '')],
+  ]
+  ;(data.alternate_greetings ?? []).forEach((greeting, i) => fields.push([`alternate_greetings[${i}]`, String(greeting)]))
+  ;(data.character_book?.entries ?? []).forEach((entry, i) => fields.push([`wi[${i}] ${entry?.comment ?? entry?.name ?? ''}`, String(entry?.content ?? '')]))
+  ;(data.extensions?.regex_scripts ?? []).forEach((script, i) => fields.push([`regex[${i}] ${script?.scriptName ?? ''}`, String(script?.replaceString ?? '')]))
+
+  for (const [name, text] of fields) {
+    for (const hit of matchesIn(text)) {
+      populations['explicit: card text'].push({ where: `${label} ${name}`, ...hit })
+    }
+  }
+  for (const script of scriptBodies(card)) {
+    for (const hit of matchesIn(script.content)) {
+      populations['explicit: script bodies'].push({ where: `${label} script ${JSON.stringify(script.name)}`, ...hit })
+    }
+  }
+}
+
 // --- report -----------------------------------------------------------------
 const occurrences = Object.values(populations).reduce((sum, list) => sum + list.length, 0)
 /**
@@ -222,6 +326,10 @@ console.log('## by population (these overlap — see below)')
 console.log(`  chat files         ${String(populations['chat files'].length).padStart(3)}  (${chatFiles} files, ${chatTexts} renderable texts, swipe-expanded)`)
 console.log(`  card text          ${String(populations['card text'].length).padStart(3)}  (${cards} cards, ${cardFields} fields)`)
 console.log(`  disk world books   ${String(populations['disk world books'].length).padStart(3)}  (${books} books, ${bookEntries} entries)`)
+if (explicitPaths.length > 0) {
+  console.log(`  explicit: card text      ${String(populations['explicit: card text'].length).padStart(3)}  (${explicitLoaded} card(s) loaded, ${explicitSkipped} file(s) not a card)`)
+  console.log(`  explicit: script bodies  ${String(populations['explicit: script bodies'].length).padStart(3)}  <- NOT message-rendered; a script writes its own HTML`)
+}
 console.log(`  ── sum of columns  ${String(occurrences).padStart(3)}  (a greeting appears as card text AND as message 0)`)
 console.log(`  distinct blocks    ${String(distinct).padStart(3)}  <- the answer`)
 console.log('')
