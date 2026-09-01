@@ -12,11 +12,42 @@
  */
 
 import { readFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { checkBootstrap } from '../src/sandbox/bootstrap-source.ts'
 
-const file = fileURLToPath(new URL('../public/sandbox/bootstrap.js', import.meta.url))
+
+/**
+ * The artifact this build actually produced, by manifest rather than by name.
+ *
+ * The sandbox artifacts carry content hashes, so a fixed filename here would
+ * check whichever build happened to leave a file behind — including one that has
+ * since been superseded. The manifest is written by the hashing step and is the
+ * single place that knows the current names.
+ * @param key - which artifact to resolve.
+ * @param dir - the sandbox asset directory.
+ * @returns the absolute path to that artifact.
+ */
+function artifactPath(key, dir) {
+  let manifest
+  try {
+    manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'))
+  } catch {
+    console.error('check failed: no sandbox manifest — run the hash step after building')
+    process.exit(1)
+  }
+  const name = manifest[key]
+  if (typeof name !== 'string' || name === '') {
+    console.error(`check failed: the sandbox manifest does not name a ${key} artifact`)
+    process.exit(1)
+  }
+  return join(dir, name)
+}
+
+const sandboxDir = fileURLToPath(new URL('../public/sandbox', import.meta.url))
+const file = artifactPath('bootstrap', sandboxDir)
 const source = await readFile(file, 'utf8')
 const why = checkBootstrap(source)
 

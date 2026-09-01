@@ -41,6 +41,11 @@ import { modeFor, stripCodeFence } from '../sandbox/script-source.ts'
 import { librariesFor } from '../sandbox/libraries.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import {
+  SANDBOX_MANIFEST_PATH,
+  parseSandboxManifest,
+  type SandboxAssets,
+} from '../sandbox/asset-manifest.ts'
+import {
   getHarness,
   resetObservations,
   runningCard,
@@ -170,12 +175,23 @@ export function SandboxProbe(): ReactElement | null {
       })
 
       let bootstrap: string
+      // Both come from the same manifest read, so the probe cannot end up
+      // pairing one build's bootstrap with another build's preset.
+      let assets: SandboxAssets | undefined
       try {
         // `/sandbox/` — under `public/`, the one directory Vite serves verbatim.
         // Fetched from anywhere else in the project root it comes back rewritten
         // as an ES module, and the `import` that adds is a parse error in the
         // classic script it ends up inside.
-        const response = await fetch('/sandbox/bootstrap.js')
+        // Named by the manifest, because the artifacts carry content hashes now.
+        // A fixed name here would fetch a file this build did not produce.
+        const manifest = await fetch(SANDBOX_MANIFEST_PATH)
+        if (!manifest.ok) throw new Error(`manifest HTTP ${manifest.status}`)
+        const parsed = parseSandboxManifest(await manifest.text())
+        if (typeof parsed === 'string') throw new Error(parsed)
+        assets = parsed
+
+        const response = await fetch(parsed.bootstrap)
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         bootstrap = await response.text()
       } catch (error: unknown) {
@@ -217,7 +233,7 @@ export function SandboxProbe(): ReactElement | null {
           // single script closely, not to reproduce a card's whole set.
           scripts: [{ id: scriptId, code: stripCodeFence(code) }],
           mode: modeFor(kind),
-          libraries: librariesFor(kind, window.location.origin),
+          libraries: librariesFor(kind, `${window.location.origin}${assets?.preset ?? ''}`),
           documentGranted: granted,
           // Same origin as the page: the host serves both the interface and the proxy.
           bundleOrigin: window.location.origin,

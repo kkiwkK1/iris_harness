@@ -17,8 +17,37 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
 
+
+/**
+ * The artifact this build actually produced, by manifest rather than by name.
+ *
+ * The sandbox artifacts carry content hashes, so a fixed filename here would
+ * check whichever build happened to leave a file behind — including one that has
+ * since been superseded. The manifest is written by the hashing step and is the
+ * single place that knows the current names.
+ * @param key - which artifact to resolve.
+ * @param dir - the sandbox asset directory.
+ * @returns the absolute path to that artifact.
+ */
+function artifactPath(key, dir) {
+  let manifest
+  try {
+    manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'))
+  } catch {
+    console.error('check failed: no sandbox manifest — run the hash step after building')
+    process.exit(1)
+  }
+  const name = manifest[key]
+  if (typeof name !== 'string' || name === '') {
+    console.error(`check failed: the sandbox manifest does not name a ${key} artifact`)
+    process.exit(1)
+  }
+  return join(dir, name)
+}
+
 const here = dirname(fileURLToPath(import.meta.url))
-const source = readFileSync(join(here, '..', 'public', 'sandbox', 'preset.js'), 'utf8')
+const sandboxDir = join(here, '..', 'public', 'sandbox')
+const source = readFileSync(artifactPath('preset', sandboxDir), 'utf8')
 
 /*
  * Run in a vm context, and the reason is a bug this harness could not see.

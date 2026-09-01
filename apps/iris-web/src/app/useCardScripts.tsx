@@ -28,10 +28,32 @@ import { actionsOf } from '../client/store.ts'
 import { startCardScripts } from '../sandbox/card-scripts.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import { librariesFor } from '../sandbox/libraries.ts'
+import {
+  SANDBOX_MANIFEST_PATH,
+  parseSandboxManifest,
+  type SandboxAssets,
+} from '../sandbox/asset-manifest.ts'
 import { runCard } from '../sandbox/runner.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun } from '../sandbox/script-run-state.ts'
+
+/**
+ * Resolve this build's sandbox artifacts, once per run.
+ *
+ * The names carry content hashes, so nothing may hardcode them. The manifest is
+ * the one fixed path, and it is validated rather than trusted for the reason the
+ * bootstrap already was: a dev server answers an unknown path with its index at
+ * status 200, so `response.ok` is not evidence of anything.
+ * @returns the asset URLs for this build.
+ */
+async function sandboxAssets(): Promise<SandboxAssets> {
+  const response = await fetch(SANDBOX_MANIFEST_PATH)
+  if (!response.ok) throw new Error(`sandbox manifest: HTTP ${String(response.status)}`)
+  const parsed = parseSandboxManifest(await response.text())
+  if (typeof parsed === 'string') throw new Error(`sandbox manifest: ${parsed}`)
+  return parsed
+}
 
 /**
  * Run the foreground chat's card scripts, and tear them down when it leaves.
@@ -84,6 +106,20 @@ export function CardScriptFrames(): ReactElement {
      */
     actionsOf(store).beginCardRun()
 
+    /** This build's artifacts, resolved by `bootstrap` before `start` needs them. */
+    let resolvedAssets: SandboxAssets | undefined
+
+    /**
+     * The preset's absolute URL for this build.
+     * @returns the URL to put in the frame's library tag.
+     */
+    const presetUrl = (): string => {
+      if (resolvedAssets === undefined) {
+        throw new Error('the sandbox manifest was not resolved before the frame was built')
+      }
+      return `${window.location.origin}${resolvedAssets.preset}`
+    }
+
     const running = startCardScripts(
       {
         /*
@@ -95,11 +131,26 @@ export function CardScriptFrames(): ReactElement {
         resolve: async id => actionsOf(store).resolveScripts(id),
         context: async (chat, character) => actionsOf(store).scriptContext(chat, character),
         body: async (character, scriptId) => actionsOf(store).scriptBody(character, scriptId),
+        /*
+         * Resolved once by `bootstrap` and read by `start`.
+         *
+         * The two callbacks need the same build's artifacts and the controller
+         * runs them in that order, so fetching the manifest twice would be a
+         * second chance to disagree with itself rather than a safety net. It is
+         * asserted rather than defaulted below: a missing value here would mean
+         * the contract's ordering had changed, and quietly falling back to an
+         * unhashed guess is how a stale asset gets served again.
+         */
         bootstrap: async () => {
-          // `/sandbox/` is the one directory served verbatim. A stale path here
-          // returns the SPA fallback at status 200, so `response.ok` proves
-          // nothing and the source is checked before it is injected.
-          const response = await fetch('/sandbox/bootstrap.js')
+          /*
+           * Both the name and the bytes are checked, and they catch different
+           * things. The manifest guards against fetching a file this build did
+           * not produce; `checkBootstrap` guards against the right file arriving
+           * transformed — a dev server once returned it as an ES module, which is
+           * a parse error inside a classic `srcdoc` script and therefore silent.
+           */
+          resolvedAssets = await sandboxAssets()
+          const response = await fetch(resolvedAssets.bootstrap)
           if (!response.ok) throw new Error(`bootstrap: HTTP ${String(response.status)}`)
           const source = await response.text()
           const unusable = checkBootstrap(source)
@@ -119,7 +170,7 @@ export function CardScriptFrames(): ReactElement {
                 code: stripCodeFence(script.code),
               })),
               mode: modeFor('card-script'),
-              libraries: librariesFor('card-script', window.location.origin),
+              libraries: librariesFor('card-script', presetUrl()),
               documentGranted: input.documentGranted,
               // Same origin as the page: the host serves both the interface and the proxy.
               bundleOrigin: window.location.origin,

@@ -43,14 +43,19 @@
  * for.
  *
  * @param kind - what the frame is running.
- * @param origin - Iris's own origin, for the locally served bundle.
+ * @param presetUrl - the absolute URL of **this build's** preset bundle, which
+ *   carries a content hash and therefore cannot be spelled out here.
  * @returns the library URLs, in load order.
  */
-export function librariesFor(kind: 'card-script' | 'probe', origin: string): readonly string[] {
+export function librariesFor(kind: 'card-script' | 'probe', presetUrl: string): readonly string[] {
   if (kind !== 'card-script') return []
   // Absolute rather than root-relative. A `srcdoc` document resolves relative
   // URLs against its parent's base URL, which is a browser behaviour this project
   // cannot verify from outside a browser — and the failure mode if it differs is
   // a silent 404 that surfaces as a missing library three steps later.
-  return [`${origin}/sandbox/preset.js`]
+  //
+  // The name is passed in rather than built here. It carries a content hash, so
+  // a literal would be a second place to go stale — and a stale literal would
+  // 404, which is loud, but only after a card had already failed to start.
+  return [presetUrl]
 }

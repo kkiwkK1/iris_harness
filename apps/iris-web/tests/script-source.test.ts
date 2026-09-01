@@ -85,11 +85,15 @@ test('a card frame gets Iris’s own bundle, and the probe gets none', () => {
   // The probe gets none because it exercises the frame, not a card. Making a
   // diagnostic depend on a fetch would let a network problem and a sandbox
   // problem produce the same symptom.
-  assert.deepEqual(librariesFor('probe', 'http://x'), [])
+  // The preset's name carries a content hash, so it is passed in rather than
+  // spelled out — a literal here would be a second place to go stale.
+  const PRESET = 'http://x/sandbox/preset-0123456789abcdef.js'
 
-  const libs = librariesFor('card-script', 'http://x')
+  assert.deepEqual(librariesFor('probe', PRESET), [])
+
+  const libs = librariesFor('card-script', PRESET)
   assert.equal(libs.length, 1)
-  assert.ok(libs[0]?.endsWith('/sandbox/preset.js'))
+  assert.equal(libs[0], PRESET)
 })
 
 test('nothing in a frame’s boot path comes off the network', () => {
@@ -107,7 +111,7 @@ test('nothing in a frame’s boot path comes off the network', () => {
    * may still import from the allowlisted CDNs; the difference is that the
    * frame's own startup no longer depends on one.
    */
-  for (const url of librariesFor('card-script', 'http://x')) {
+  for (const url of librariesFor('card-script', 'http://x/sandbox/preset-0123456789abcdef.js')) {
     assert.ok(
       url.startsWith('http://x/'),
       `${url} is off Iris’s origin, so a frame’s startup depends on the network again`,

@@ -10,7 +10,7 @@
  * @module iris-web/tests/library-state
  */
 import { strict as assert } from 'node:assert'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -135,7 +135,7 @@ test('an empty recorded error is treated as no record, not as a nameless throw',
   assert.ok(line?.includes('never executed'))
 })
 
-test('the build still wraps the bundle so a throw can be recorded at all', () => {
+test('the build still wraps the bundle so a throw can be recorded at all', t => {
   /*
    * The wrapper lives in `vite.preset.config.ts`, not in any source file, which
    * makes it the kind of thing a later config edit removes without any test
@@ -144,7 +144,28 @@ test('the build still wraps the bundle so a throw can be recorded at all', () =>
    * sending a reader to inspect a request that was perfectly fine.
    */
   const here = dirname(fileURLToPath(import.meta.url))
-  const built = readFileSync(join(here, '..', 'public', 'sandbox', 'preset.js'), 'utf8')
+  /*
+   * Resolved through the manifest: the artifact carries a content hash, so a
+   * fixed name here would either miss the file entirely or — worse — find a
+   * superseded one left behind by an earlier build and assert against that.
+   */
+  const dir = join(here, '..', 'public', 'sandbox')
+  if (!existsSync(join(dir, 'manifest.json'))) {
+    /*
+     * Skipped aloud, not failed. `public/sandbox/` is gitignored, so a fresh
+     * checkout has no artifact to inspect — and this used to die inside
+     * `JSON.parse`, reporting a missing build as a syntax error and sending a
+     * reader to look for a corrupt file that does not exist.
+     */
+    t.skip('no sandbox build in this checkout — run "npm run build:sandbox"')
+    return
+  }
+  const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as {
+    preset?: string
+  }
+  const name = manifest.preset
+  assert.equal(typeof name, 'string', 'the sandbox manifest does not name a preset artifact')
+  const built = readFileSync(join(dir, String(name)), 'utf8')
   assert.ok(built.startsWith('try{'), 'the emitted preset is no longer wrapped in a try')
   assert.ok(
     built.trimEnd().endsWith('}'),
