@@ -12,7 +12,7 @@
 
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 
@@ -27,6 +27,7 @@ import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
+import { serveSandboxAsset } from './sandbox-assets.ts'
 import { ScriptCache } from './script-cache.ts'
 import { ScriptPolicyStore } from './scripts.ts'
 import { ScriptVariableStore } from './script-variables.ts'
@@ -134,6 +135,18 @@ export interface Config {
    */
   scriptBundleTtlSeconds?: number
   /**
+   * `index.html` of the built interface, the same value the frontend row takes.
+   *
+   * Given here so the sandbox's own artifacts — `bootstrap.js`, `preset.js` —
+   * can be served with a CORS header: they are loaded **by** an opaque-origin
+   * frame, and the plugin that serves the rest of the dist takes the fallback
+   * seat with no way to set one. Absent means the route is not registered, which
+   * is what a checkout with no build should do.
+   */
+  webDistIndex?: string
+  /** Pathname prefix the sandbox artifacts are served at. @default '/sandbox' */
+  sandboxPath?: string
+  /**
    * Run the cards' EJS prompt templates (the ST-Prompt-Template extension).
    *
    * Off by default, and the default is the honest one: evaluating a template is
@@ -167,6 +180,8 @@ export const Config: z<Config> = z.object({
   avatarPath: z.string().default('/iris/avatar'),
   scriptBundlePath: z.string().default('/iris/script-bundle'),
   scriptBundleTtlSeconds: z.natural().default(604_800),
+  webDistIndex: z.string(),
+  sandboxPath: z.string().default('/sandbox'),
   templates: z.boolean().default(false),
   templateDeadlineMs: z.natural().default(2000),
 })
@@ -420,4 +435,21 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }),
     `irisApp: GET ${bundlePath}`,
   )
+
+  // Claimed as a prefix so it is matched ahead of the frontend plugin, which
+  // takes the webserver's fallback seat. Only registered when there is a build
+  // to serve from: a route answering 404 for everything would be worse than no
+  // route, because the fallback would no longer get a chance to answer.
+  const sandboxPath = config.sandboxPath ?? '/sandbox'
+  if (config.webDistIndex !== undefined && config.webDistIndex !== '') {
+    const sandboxDir = join(dirname(config.webDistIndex), sandboxPath.replace(/^\/+/, ''))
+    ctx.effect(
+      () => ctx.webServer.register({
+        kind: 'prefix',
+        path: sandboxPath,
+        handler: (req, res) => serveSandboxAsset(sandboxDir, sandboxPath, req, res),
+      }),
+      `irisApp: GET ${sandboxPath}`,
+    )
+  }
 }

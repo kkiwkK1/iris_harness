@@ -157,6 +157,21 @@ const FAILURE_MEMORY_MS = 30_000
  * **`*`, not `null`.** `null` looks tighter and is not: *every* sandboxed frame
  * has origin `null`, so it names no one in particular while merely appearing to.
  *
+ * **A response header is cache content.** This route answers with a long
+ * `max-age`, so a wrong header does not end when the process restarts — it lives
+ * in the browser's cache for the full TTL. That is not hypothetical: an early
+ * version answered `200` with `max-age=604800` and **no** CORS header, Chrome
+ * kept that response under its top-site partition, and every later frame import
+ * hit the poisoned copy and failed its CORS check in silence. `curl` never sees
+ * it, because `curl` has no browser cache — so the host looked healthy from
+ * every angle the host can see itself from. It took a `fetch(url, {cache:
+ * 'reload'})` from the shell to replace the entry.
+ *
+ * The rule that follows: **on a route with a long TTL, a header deployed wrong
+ * outlives the deployment.** Widen the headers before shipping a cacheable
+ * response, not after, and when one has already gone out, remember that the
+ * evidence of the bad copy exists only inside the browser.
+ *
  * This route deliberately diverges from the RPC endpoint, which sends no CORS
  * header at all and relies on that (see `rpc-host/src/http.ts`). The two are not
  * comparable: RPC methods change the user's data, while this serves public CDN

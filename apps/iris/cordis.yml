@@ -83,6 +83,11 @@
     userName: !!js process.env.IRIS_USER_NAME ?? 'User'
     contextWindow: !!js Number(process.env.IRIS_CONTEXT_WINDOW ?? 32768)
     presetPath: !!js process.env.IRIS_PRESET
+    # The same value the frontend row takes. Given here too so the sandbox's own
+    # artifacts (bootstrap.js, preset.js) can be served with a CORS header: the
+    # card frame that loads them is an opaque origin, and the plugin serving the
+    # rest of the dist has no way to set one.
+    webDistIndex: !!js process.env.IRIS_WEB_DIST
     # The cards' EJS prompt templates (the ST-Prompt-Template extension). Off
     # unless asked for, because evaluating one is running the card author's
     # JavaScript — it is contained in a child process with no environment, no
