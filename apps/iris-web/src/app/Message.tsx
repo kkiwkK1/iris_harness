@@ -13,6 +13,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { MarkdownText, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+
+import { MessageInterfaces } from './MessageInterfaces.tsx'
 import type { MessageView } from '@iris/protocol'
 
 import { Slot } from '../slots/Slot.tsx'
@@ -125,6 +127,20 @@ export function Message({
               )}
               {streaming ? <span className="iris-caret" aria-label="Generating" /> : null}
             </div>
+            {/*
+              A card interface belonging to this message, if it has one.
+
+              Placed after the text rather than instead of it, and only for a
+              settled assistant message. Not during streaming: upstream renders
+              mid-stream with its predicate *relaxed* and no throttling, which
+              this pipeline deliberately does not copy — a 360 KiB interface
+              rebuilt per token is not a feature. The block stays visible as a
+              code block until the reply settles, which is honest about what has
+              arrived so far.
+            */}
+            {message.role === 'assistant' && !streaming ? (
+              <MessageInterfaces floor={message.id} text={message.text} />
+            ) : null}
 
             <Slot name="iris.message.footer" owner={{ message, streaming }} />
 

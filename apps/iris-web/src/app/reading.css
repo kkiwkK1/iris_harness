@@ -458,3 +458,39 @@
      step smaller. */
   color: var(--iris-ink-tertiary);
 }
+
+/*
+ * A card interface inside a message.
+ *
+ * The frame reports its own height and the shell applies it, so nothing here
+ * sets one — a fixed height would fight the measurement and win, leaving the
+ * card cut off at whatever this file guessed. `overflow:hidden` inside the frame
+ * means anything past the reported height does not exist, so the height is the
+ * card's, not the layout's.
+ */
+.iris-interfaces {
+  margin: 12px 0 0;
+}
+
+.iris-interfaces__frames iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+  /* Until the first height arrives. Small rather than zero, so a frame that
+     never reports is a visible sliver rather than an invisible absence. */
+  min-height: 24px;
+  color-scheme: normal;
+}
+
+/*
+ * Shown only for an interface that is *not* live — a working one is its own
+ * evidence. Quiet, because it is a caption about the machinery rather than the
+ * card's own voice.
+ */
+.iris-interfaces__state {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--iris-ink-tertiary);
+}
+
