@@ -570,7 +570,23 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     },
   })
 
+  /**
+   * Scripts whose module body has begun executing.
+   *
+   * Recorded because it is the one fact that splits a stalled import in two, and
+   * it costs nothing to collect: ES module imports are **hoisted**, so every
+   * static import of a module has been fetched and evaluated before its first
+   * statement runs. The preamble's registry call *is* that first statement.
+   *
+   * So a body that has begun proves the remote fetch succeeded, and a timeout
+   * after that point is a stall inside the imported code rather than in getting
+   * hold of it. Without this the two are indistinguishable from outside, and the
+   * frame reports the same sentence for both.
+   */
+  const begun = new Set<string | undefined>()
+
   const viewFor = (forScript: string | undefined): Record<string, unknown> => {
+    begun.add(forScript)
     const bound = createFrameTavernHelper({
       context: () => context,
       scriptId: () => forScript,
@@ -699,10 +715,27 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       // A refusal and a bug in the card both land here, and the shell shows them
       // differently: `member` is what tells them apart.
       const member = error instanceof UnsupportedApiError ? error.member : undefined
+      const text = error instanceof Error ? error.message : String(error)
+      /*
+       * A stalled import has two very different causes and one sentence, so the
+       * sentence is split here by the only evidence that separates them.
+       *
+       * Imports are hoisted: if the body ran at all, every static import had
+       * already been fetched and evaluated. So a timeout with the body begun is
+       * the imported module hanging on its own — a top-level await that never
+       * settles, say — while a timeout with no body means the fetch itself never
+       * came back.
+       */
+      const stalled = text.includes('import timed out')
+      const detail = !stalled
+        ? text
+        : begun.has(failingScript)
+          ? `${text} — the body had begun, so the imported module is stalling on its own, not the fetch`
+          : `${text} — the body never began, so this is the fetch itself`
       env.post({
         iris: env.token,
         type: 'error',
-        message: error instanceof Error ? error.message : String(error),
+        message: detail,
         ...(member === undefined ? {} : { member }),
         // Whose failure this was. One frame runs a card's whole set, so an
         // unattributed outcome would land on whichever script the shell was

@@ -956,3 +956,44 @@ test('a global already published resolves without reporting a wait', async () =>
   await settled
   assert.deepEqual(scope.posted.filter(m => m.type === 'waiting'), [])
 })
+
+test('a stalled import says whether the fetch or the imported module is at fault', async () => {
+  /*
+   * One sentence for two very different failures is what made a production
+   * regression unreadable: "import timed out" cannot distinguish a fetch that
+   * never returned from an imported module that hangs on its own.
+   *
+   * Imports are hoisted, so the module body running at all proves every static
+   * import was fetched and evaluated. The preamble's registry call is the first
+   * statement of every co-located body, which makes "did the body begin" free to
+   * collect and decisive to know.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  // A body that began: it reached the registry before its import stalled.
+  scope.runAsync(async () => {
+    scope.publishedValue('__iris_script__')
+    ;(scope.publishedValue('__iris_script__') as (id: string) => unknown)('slow')
+    throw new Error('import timed out after 15s — the module never finished loading')
+  })
+  scope.send({ iris: 'tok', type: 'run', code: 'x', mode: 'module', scriptId: 'slow' })
+  await new Promise(resolve => setTimeout(resolve, 5))
+
+  const reported = scope.posted.filter(m => m.type === 'error').at(-1) as { message: string }
+  assert.match(reported.message, /the body had begun, so the imported module is stalling on its own/)
+})
+
+test('a stalled import with no body blames the fetch', async () => {
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  scope.runAsync(async () => {
+    throw new Error('import timed out after 15s — the module never finished loading')
+  })
+  scope.send({ iris: 'tok', type: 'run', code: 'x', mode: 'module', scriptId: 'never' })
+  await new Promise(resolve => setTimeout(resolve, 5))
+
+  const reported = scope.posted.filter(m => m.type === 'error').at(-1) as { message: string }
+  assert.match(reported.message, /the body never began, so this is the fetch itself/)
+})
