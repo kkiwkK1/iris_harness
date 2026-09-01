@@ -61,6 +61,14 @@ export interface TavernHelperFrameHost {
   adoptVariables: (variables: Record<string, unknown>) => void
   /** The bus shared with the shell's forwarding. */
   events: EventBus
+  /**
+   * Report a capability this frame does not have, once it has actually been
+   * reached for.
+   *
+   * Not an error: the card carries on, and upstream would too. It exists because
+   * the alternative is a gap that looks like an ordinary answer.
+   */
+  reportGap: (message: string) => void
 }
 
 /**
@@ -417,12 +425,27 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     /**
      * Upstream's spelling, kept wrong on purpose — cards call it.
      *
-     * Returns the text unexpanded. The macro engine is host-side and this member
-     * is synchronous, so there is nothing to expand with; the host's own
-     * implementation falls back to exactly this when no engine is wired, which is
-     * the behaviour to match rather than invent a second one.
+     * Returns the text unexpanded, and **says so when that mattered**. The macro
+     * engine is host-side and this member is synchronous, so there is nothing to
+     * expand with; the host's own implementation falls back to the same thing
+     * when no engine is wired, and matching it is right.
+     *
+     * What is not right is doing it silently. Text handed back unchanged is
+     * indistinguishable from text that had nothing to expand — a plausible
+     * normal value standing in for an unimplemented capability, which is the
+     * quietest way a gap can hide. So when the text actually carried macros, the
+     * frame reports that none were expanded, and says explicitly that this is
+     * not a claim the text had none.
      */
-    substidudeMacros: (text: string): string => text,
+    substidudeMacros: (text: string): string => {
+      if (typeof text === 'string' && text.includes('{{') && text.includes('}}')) {
+        host.reportGap(
+          'a card asked for macro expansion and this frame performed none — the text came back' +
+            ' unchanged, which is not a statement that it had no macros',
+        )
+      }
+      return text
+    },
 
     // ── the event family, on the bus the shell forwards into ─────────────
     eventOn: (event: string, listener: Listener) =>

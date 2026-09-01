@@ -13,6 +13,12 @@
 import { strict as assert } from 'node:assert'
 import test from 'node:test'
 
+/** A sentence the caller expects to exist; fails loudly rather than typing it away. */
+function required(sentence: string | undefined): string {
+  assert.ok(sentence !== undefined, 'this card has scripts, so there is a question to ask')
+  return sentence
+}
+
 import {
   consentFigures,
   describeConsentAsk,
@@ -156,7 +162,7 @@ test('one script takes a singular verb', () => {
    * sandbox…". Invisible on every card with two or more, which is every card
    * this had been checked against.
    */
-  const sentence = describeConsentAsk(consentFigures([{ bytes: 94, enabled: true }]), bytes)
+  const sentence = required(describeConsentAsk(consentFigures([{ bytes: 94, enabled: true }]), bytes))
 
   assert.match(sentence, /This card runs 1 script \(94 B\)\./)
   assert.match(sentence, /It runs in an isolated sandbox/)
@@ -164,13 +170,13 @@ test('one script takes a singular verb', () => {
 })
 
 test('more than one takes the plural', () => {
-  const sentence = describeConsentAsk(
+  const sentence = required(describeConsentAsk(
     consentFigures([
       { bytes: 100, enabled: true },
       { bytes: 200, enabled: true },
     ]),
     bytes,
-  )
+  ))
 
   assert.match(sentence, /This card runs 2 scripts \(300 B\)\./)
   assert.match(sentence, /They run in an isolated sandbox/)
@@ -178,14 +184,14 @@ test('more than one takes the plural', () => {
 
 test('a card whose counts diverge states both, and agrees with what runs', () => {
   // The OVERLORD shape: four of nine enabled, and almost all the weight dormant.
-  const sentence = describeConsentAsk(
+  const sentence = required(describeConsentAsk(
     consentFigures([
       { bytes: 17_000, enabled: true },
       { bytes: 400, enabled: true },
       { bytes: 423_000, enabled: false },
     ]),
     bytes,
-  )
+  ))
 
   assert.match(sentence, /2 of 3 scripts would run now \(17 kB\)\./)
   assert.match(sentence, /covers all 3, including 413 kB switched off today/)
@@ -194,14 +200,29 @@ test('a card whose counts diverge states both, and agrees with what runs', () =>
 
 test('a single running script among many still takes the singular', () => {
   // The case that needs both rules at once, and the one neither card exposed.
-  const sentence = describeConsentAsk(
+  const sentence = required(describeConsentAsk(
     consentFigures([
       { bytes: 50, enabled: true },
       { bytes: 900, enabled: false },
     ]),
     bytes,
-  )
+  ))
 
   assert.match(sentence, /1 of 2 scripts would run now/)
   assert.match(sentence, /It runs in an isolated sandbox/)
+})
+
+test('a card with no scripts produces no question at all', () => {
+  /*
+   * The zero case, which the component happened to guard and the function did
+   * not. It used to read "This card runs 0 scripts (0 B). **They** run in an
+   * isolated sandbox…" — consent solicited for nothing, plural wrong as well —
+   * and stayed invisible because a length check in a different module happened
+   * to stand in front of it.
+   *
+   * Three false greens in this project shared that shape, and all three were on
+   * a zero or empty input: correct wherever anyone had thought to look, wrong on
+   * the case that looks like nothing is happening.
+   */
+  assert.equal(describeConsentAsk(consentFigures([]), bytes), undefined)
 })

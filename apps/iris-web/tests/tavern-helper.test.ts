@@ -48,10 +48,12 @@ function surface(overrides?: {
   answers?: Record<string, unknown>
 }) {
   const calls: { method: string, params: Record<string, unknown> }[] = []
+  const gaps: string[] = []
   let snapshot = overrides === undefined || !('context' in overrides) ? context() : overrides.context
   const api = createFrameTavernHelper({
     context: () => snapshot,
     scriptId: () => overrides?.scriptId,
+    reportGap: message => gaps.push(message),
     adoptVariables: variables => {
       if (snapshot !== undefined) snapshot = { ...snapshot, variables }
     },
@@ -64,7 +66,7 @@ function surface(overrides?: {
     triggerSlash: async command => `ran ${command}`,
     events: new EventBus(),
   })
-  return { api, calls }
+  return { api, calls, gaps }
 }
 
 test('resolveRange agrees with the host, case for case', () => {
@@ -354,6 +356,7 @@ test('a failed read writes nothing at all', async () => {
     context: () => context(),
     scriptId: () => undefined,
     adoptVariables: () => undefined,
+    reportGap: () => undefined,
     call: async method => {
       if (method === 'getVariables') throw new Error('host said no')
       calls.push({ method, params: {} })
@@ -447,4 +450,24 @@ test('a real table entry still subscribes normally', () => {
       () => undefined,
     ),
   )
+})
+
+test('an unexpanded macro says so, instead of passing for text that had none', () => {
+  /*
+   * The quietest way a gap can hide: a plausible ordinary value. Text handed
+   * back unchanged is exactly what text with no macros in it looks like, so a
+   * card author sees a working call and a result that simply did not need
+   * expanding — while the truth is that this frame has no macro engine at all.
+   *
+   * Upstream returns the text too when nothing is wired, and matching that is
+   * right. Doing it silently is not.
+   */
+  const { api, gaps } = surface()
+  const withMacros = (api['substidudeMacros'] as (t: string) => string)('hello {{user}}')
+  const plain = (api['substidudeMacros'] as (t: string) => string)('hello')
+
+  assert.equal(withMacros, 'hello {{user}}', 'the text still comes back unchanged, as upstream does')
+  assert.equal(plain, 'hello')
+  assert.equal(gaps.length, 1, 'text with nothing to expand is not a gap')
+  assert.match(gaps[0] ?? '', /not a statement that it had no macros/)
 })

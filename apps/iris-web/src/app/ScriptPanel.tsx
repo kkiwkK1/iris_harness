@@ -258,7 +258,7 @@ export function ConsentGate({
           shapes that expose those mistakes — a card whose counts diverge, and a
           card with exactly one script.
         */}
-        {describeConsentAsk(consentFigures(scripts), describeBytes)}
+        {describeConsentAsk(consentFigures(scripts), describeBytes) ?? ''}
       </p>
       <div className="iris-grant__actions">
         <Button size="sm" onClick={() => onAnswer(true)}>

@@ -22,9 +22,11 @@ import { FRAME_MEMBERS, MEMBER_KINDS, identityMembers } from '../src/sandbox/ide
 
 /** The live surface, built with a host that answers nothing. */
 function surfaceNames(): string[] {
+  const gaps: string[] = []
   const api = createFrameTavernHelper({
     context: () => undefined,
     scriptId: () => undefined,
+    reportGap: message => gaps.push(message),
     adoptVariables: () => undefined,
     call: async () => undefined,
     triggerSlash: async () => '',

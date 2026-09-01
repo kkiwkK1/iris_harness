@@ -383,7 +383,12 @@ test('a card action not on the allowlist is refused by the shell, by name', () =
     .then(
       () => assert.fail('an unlisted action should not reach the wire'),
       (error: unknown) => {
-        assert.match(String(error), /does not let card scripts call deleteAllChats/)
+        // Names the action, and does not claim to know *why* it is absent.
+        // "Iris does not let card scripts call X" read as a settled decision,
+        // and the usual reason a name is missing from that table is that nobody
+        // has built it yet — which is a request, not a refusal.
+        assert.match(String(error), /deleteAllChats is not one of the actions/)
+        assert.doesNotMatch(String(error), /does not let/)
         dispose()
       },
     )
@@ -574,5 +579,39 @@ test('switching cards does not carry the previous answer across', async () => {
 
   assert.equal(store.getState().scriptsAllowed, 'unasked', 'the second card was never asked')
   assert.deepEqual(store.getState().runStates, [], "and it is not showing the first card's runs")
+  dispose()
+})
+
+test('a fault of Iris does not read as the host answering', async () => {
+  /*
+   * `guard`'s job is described as turning a host refusal into a notice. It also
+   * catches bugs in the guarded callback, which arrive as a plain Error, get
+   * relabelled `internal` — a code the host genuinely uses — and then reach the
+   * user in the same sentence a host refusal would. Same notice, opposite
+   * origin, reader sent to the wrong side.
+   *
+   * The two are distinguishable at the moment they are caught, and that
+   * distinction was being discarded one line later.
+   */
+  const client: IrisClient = {
+    connected: true,
+    onConnectionChange: () => () => undefined,
+    subscribe: () => () => undefined,
+    async call(method) {
+      if (method === 'script.list') {
+        // Not a host error: no code, the shape a bug in our own code has.
+        throw new TypeError('cannot read properties of undefined')
+      }
+      if (method === 'chat.list') return { chats: [] } as never
+      if (method === 'character.list') return { characters: [] } as never
+      if (method === 'settings.get') return { settings: { provider: 'p', model: 'm' } } as never
+      return {} as never
+    },
+  }
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+
+  await actionsOf(store).loadScripts('someone')
+
+  assert.match(store.getState().notice?.text ?? '', /Iris hit a problem of its own/)
   dispose()
 })

@@ -362,3 +362,146 @@ test('a long wait says how long, and is never abandoned', async () => {
     /waiting for Mvu/,
   )
 })
+
+test('a card with nothing to run starts no frame and reports nothing', async () => {
+  /*
+   * The empty case. A card whose scripts are all switched off must not get a
+   * frame — an empty one would report a readiness that means nothing — and must
+   * not produce a failure either, because nothing failed.
+   *
+   * Tested because "no scripts" is the input least likely to be tried: it looks
+   * like nothing happens, which is exactly when a wrong answer goes unnoticed.
+   */
+  const bench = harness({ resolve: async () => ({ scripts: [], documentGranted: false }) })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.deepEqual(bench.started, [])
+  assert.deepEqual(bench.attached, [])
+  assert.deepEqual(bench.failures, [], 'a card with no scripts has not failed')
+})
+
+test('a failure that is really a gap in Iris does not read as a broken card', async () => {
+  /*
+   * `waitGlobalInitialized is not defined` cost a full verification round
+   * reading as a card bug. It was not: it was a member upstream gives every card
+   * and this sandbox did not.
+   *
+   * That is the expensive half of a bad diagnostic — not that it is unclear, but
+   * that it **arrives with a suspect already attached**, so nobody checks the
+   * innocent party. The names Iris knows it should provide are already written
+   * down, so a ReferenceError naming one of them can be attributed correctly.
+   */
+  const { describeRun } = await import('../src/sandbox/script-run-state.ts')
+
+  const ours = describeRun({
+    scriptId: 'a',
+    name: 'x',
+    phase: 'threw',
+    detail: 'ReferenceError: waitGlobalInitialized is not defined',
+  })
+  assert.match(ours, /gap here, not in the card/)
+
+  const library = describeRun({
+    scriptId: 'a',
+    name: 'x',
+    phase: 'threw',
+    detail: 'ReferenceError: toastr is not defined',
+  })
+  assert.match(library, /a library upstream seeds from its own page/)
+
+  // A name that is genuinely the card's own stays the card's own: over-claiming
+  // would move the suspect to the other innocent party.
+  const theirs = describeRun({
+    scriptId: 'a',
+    name: 'x',
+    phase: 'threw',
+    detail: 'ReferenceError: myOwnTypo is not defined',
+  })
+  assert.equal(theirs, 'failed: ReferenceError: myOwnTypo is not defined')
+
+  // And an ordinary throw is left exactly as the card wrote it.
+  const plain = describeRun({ scriptId: 'a', name: 'x', phase: 'threw', detail: 'boom' })
+  assert.equal(plain, 'failed: boom')
+})
+
+test('a refusal says which of the two it is, instead of asserting policy', async () => {
+  /*
+   * "the sandbox does not allow it" asserted a *policy*, and most refusals here
+   * are not one. A scope the pushed snapshot cannot carry is a gap; a member the
+   * sandbox deliberately withholds is a decision. Reporting both as prohibition
+   * puts the suspect on a decision nobody made, so the gap never gets filed.
+   *
+   * The distinction already existed in the hint `UnsupportedApiError` carries.
+   * The panel was discarding it and inventing a reason in its place.
+   */
+  const { describeRun } = await import('../src/sandbox/script-run-state.ts')
+
+  const gap = describeRun({
+    scriptId: 'a',
+    name: 'x',
+    phase: 'refused',
+    member: "getVariables({type:'chat'})",
+    detail:
+      "Iris sandbox: getVariables({type:'chat'}) is not available to card scripts." +
+      ' The frame snapshot carries the message scope only.',
+  })
+  assert.match(gap, /The frame snapshot carries the message scope only\./)
+  assert.doesNotMatch(gap, /does not allow/, 'a gap must not be reported as a prohibition')
+
+  // A refusal that offered no explanation says only what it knows.
+  const bare = describeRun({ scriptId: 'a', name: 'x', phase: 'refused', member: 'document.cookie' })
+  assert.equal(bare, 'refused document.cookie')
+})
+
+test('a report that belongs to the frame rather than a script still arrives', async () => {
+  /*
+   * A regression cohabitation introduced, and the worst-shaped kind: it removed
+   * reports without removing anything visible.
+   *
+   * The frame speaks for itself as well as for its scripts — the
+   * missing-libraries banner, a bootstrap failure before any token exists, a
+   * global it could not define. None of those carries a script id, and the
+   * attribution guard dropped them along with genuinely misattributed outcomes.
+   * The banner that warned about `YAML` and `$` three runs before any card
+   * reached them simply stopped arriving.
+   */
+  const bench = harness({
+    start: input => {
+      // No script id: this is the frame talking about itself.
+      input.onPhase(undefined, {
+        phase: 'bootstrap-failed',
+        detail: 'libraries a card may expect are not present in this frame: showdown',
+      })
+      return {
+        element: { id: 'card-frame', isConnected: true } as never,
+        emit: () => undefined,
+        dispose: () => undefined,
+      }
+    },
+  })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.match(bench.failures.map(f => f.detail ?? '').join(' '), /showdown/)
+})
+
+test('an outcome naming a script this card does not have is still dropped', async () => {
+  // The other half of the distinction. Attributing a stray outcome to a
+  // neighbour would read as a working script failing, which is worse than
+  // losing it — so "names nobody" and "names a stranger" are handled apart.
+  const bench = harness({
+    start: input => {
+      input.onPhase('a-script-from-another-card', { phase: 'threw', detail: 'not ours' })
+      return {
+        element: { id: 'card-frame', isConnected: true } as never,
+        emit: () => undefined,
+        dispose: () => undefined,
+      }
+    },
+  })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.equal(bench.failures.length, 0)
+})

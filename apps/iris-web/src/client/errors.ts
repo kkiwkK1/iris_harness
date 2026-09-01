@@ -29,6 +29,21 @@ const COPY: Record<RpcError['code'], string> = {
 }
 
 /** Whether a value carries a recognizable `RpcError` code. */
+/**
+ * Whether a failure came from the host at all.
+ *
+ * The distinction exists here and used to be discarded one line later: a host
+ * error arrives carrying a code, while a bug in Iris's own callback arrives as a
+ * plain `Error` and is then relabelled `internal` — which is *also* a real host
+ * code. Two different origins rendered as one sentence, so a fault of ours read
+ * as the host answering.
+ * @param error - whatever was thrown.
+ * @returns true when the host said this, false when Iris did.
+ */
+export function isHostError(error: unknown): boolean {
+  return hasCode(error)
+}
+
 function hasCode(value: unknown): value is { code: RpcError['code'], message?: unknown } {
   if (typeof value !== 'object' || value === null) return false
   const code = (value as { code?: unknown }).code

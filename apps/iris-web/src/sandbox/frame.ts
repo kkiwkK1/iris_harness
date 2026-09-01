@@ -519,19 +519,52 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     return name
   }
 
+  /**
+   * Announce a capability this frame lacks, once it has actually been reached
+   * for.
+   *
+   * Not an error — the card carries on, as it would upstream. It exists because
+   * the alternative is a gap wearing the shape of an ordinary answer: text
+   * returned unexpanded is indistinguishable from text that had nothing to
+   * expand.
+   *
+   * Deduplicated, because a card calling such a member in a loop would turn one
+   * gap into a stream, and a stream teaches a reader to skip the whole class of
+   * line rather than read it.
+   */
+  /**
+   * Take on the variable table the host confirmed after a write.
+   *
+   * One implementation, used by both the shared surface and every per-script
+   * view. It existed twice — once with this reasoning attached and once without
+   * — and two copies of a rule where only one carries its reason is a copy
+   * waiting to be changed alone.
+   *
+   * The snapshot is replaced wholesale by the next `context` message, so this
+   * only has to hold until then. Guarded because a write can land before the
+   * first context arrives, and a card's write must not conjure a snapshot that
+   * later reads would treat as the host's.
+   * @param variables - the table the host stored.
+   */
+  const adoptVariables = (variables: Record<string, unknown>): void => {
+    if (context !== undefined) context = { ...context, variables }
+  }
+
+  const reportedGaps = new Set<string>()
+  const reportGap = (message: string): void => {
+    if (reportedGaps.has(message)) return
+    reportedGaps.add(message)
+    env.post({ iris: env.token, type: 'error', scriptId: undefined, message })
+  }
+
   const tavernHelper = createFrameTavernHelper({
     context: () => context,
     scriptId: () => scriptId,
+    reportGap,
     call: callAction,
     triggerSlash,
     events,
-    adoptVariables: variables => {
-      // The snapshot is replaced wholesale on the next `context` message, so
-      // this only has to hold until then. Guarded because a write can land
-      // before the first context has arrived, and a card's write must not
-      // conjure a snapshot that the reads would then treat as the host's.
-      if (context !== undefined) context = { ...context, variables }
-    },
+    adoptVariables,
   })
 
   /**
@@ -651,12 +684,11 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     const bound = createFrameTavernHelper({
       context: () => context,
       scriptId: () => forScript,
+      reportGap,
       call: callAction,
       triggerSlash,
       events,
-      adoptVariables: variables => {
-        if (context !== undefined) context = { ...context, variables }
-      },
+      adoptVariables,
     })
     // Events come from the scoped wrapper rather than the bound surface: the
     // surface talks to the shared bus directly, which is right for emission and

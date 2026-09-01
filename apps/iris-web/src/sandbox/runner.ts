@@ -192,6 +192,8 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   })
 
   let disposed = false
+  /** So one protocol fault is one report, not one per message. */
+  let reportedUnreadable = false
 
   const post = (message: ToFrame): void => {
     // `'*'` because the frame's origin is opaque and cannot be named. Safe in
@@ -208,7 +210,40 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     // every sandboxed frame on the page.
     if (event.source !== frame.contentWindow) return
     const message = parseFromFrame(token, event.data)
-    if (message === undefined) return
+    if (message === undefined) {
+      /*
+       * The source check above has already established this came from our own
+       * frame, so an unreadable payload is not noise — it is this frame saying
+       * something the shell cannot parse: a protocol drift, or a serialisation
+       * fault on one side of it.
+       *
+       * Dropping it silently produces the symptom this project has spent the
+       * most time on: a frame that appears to have gone quiet while it is in
+       * fact talking. Noise from elsewhere never reaches here; only we do.
+       *
+       * Reported once. A card that found a way to post rubbish deliberately
+       * would otherwise turn one fault into a flood, and a flood is how a reader
+       * learns to ignore the whole class.
+       *
+       * **Not covered by a unit test.** The intake listens on the real `window`,
+       * so reaching this branch needs a global stub rather than the injected
+       * document the rest of this module takes. The half that *is* tested is the
+       * parse: `sandbox-policy.test.ts` pins that a malformed payload yields
+       * `undefined`. Whoever gives this module an injectable listener should
+       * cover this at the same time — it is the branch that decides whether a
+       * frame going quiet is visible.
+       */
+      if (!reportedUnreadable) {
+        reportedUnreadable = true
+        host.onError(
+          'this frame sent a message the shell could not read — the shell and the frame' +
+            ' disagree about the protocol, so anything it says next may also be lost',
+          undefined,
+          undefined,
+        )
+      }
+      return
+    }
     handle(message)
   }
 

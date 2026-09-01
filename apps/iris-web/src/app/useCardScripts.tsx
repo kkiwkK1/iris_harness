@@ -157,7 +157,11 @@ export function CardScriptFrames(): ReactElement {
                   scriptId,
                   member === undefined
                     ? { phase: 'threw', detail: message }
-                    : { phase: 'refused', member },
+                    : // The message travels too. It carries the refusal's own
+                      // explanation — whether this is policy or a gap in Iris —
+                      // and dropping it left the panel asserting a reason it did
+                      // not have.
+                      { phase: 'refused', member, detail: message },
                 )
                 if (member !== undefined) return
                 /*

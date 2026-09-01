@@ -26,7 +26,7 @@ import type {
   ScriptView,
 } from '@iris/protocol'
 
-import { asRpcError, describeError } from './errors.ts'
+import { asRpcError, describeError, isHostError } from './errors.ts'
 import { wireMethodFor } from '../sandbox/card-api.ts'
 import { consentState, type ConsentState } from '../sandbox/consent.ts'
 import type { ScriptRunState } from '../sandbox/script-run-state.ts'
@@ -247,13 +247,27 @@ export function createIrisStore(
   let noticeSeq = 0
 
   const store: IrisStore = createStore<IrisState & IrisActions>((set, get) => {
-    /** Run a host call, turning a refusal into a notice rather than a crash. */
+    /**
+     * Run a host call, turning a refusal into a notice rather than a crash.
+     *
+     * The sentence above describes one of the two things this catches. The other
+     * is a bug in the guarded callback itself, which arrives as a plain `Error`,
+     * gets relabelled `internal` — a code the host also uses — and then reads to
+     * the user as the host having answered. Same notice, opposite origin, and
+     * the reader is sent to the wrong side.
+     *
+     * The distinction is available right here and was being discarded, so it is
+     * kept: a fault of ours says it is ours.
+     */
     const guard = async (work: () => Promise<void>): Promise<void> => {
       try {
         await work()
       } catch (error: unknown) {
         noticeSeq += 1
-        set({ notice: { kind: 'error', text: describeError(error), seq: noticeSeq } })
+        const text = isHostError(error)
+          ? describeError(error)
+          : `Iris hit a problem of its own: ${describeError(error)}`
+        set({ notice: { kind: 'error', text, seq: noticeSeq } })
       }
     }
 
@@ -654,7 +668,19 @@ export function createIrisStore(
         if (wire === undefined) {
           // Named, so a card author reading their console learns which member was
           // refused rather than that "something" failed.
-          throw new Error(`Iris does not let card scripts call ${method}`)
+          /*
+           * States the fact, not a motive.
+           *
+           * "Iris does not let card scripts call X" reads as a decision, and the
+           * commonest reason a method is missing from this table is that nobody
+           * has built it yet — `setVariables` sat outside it for exactly that
+           * reason. Announcing a gap as a prohibition tells the reader the
+           * question is settled, so nobody asks for it.
+           */
+          throw new Error(
+            `${method} is not one of the actions a card can ask Iris for` +
+              ' — either it is deliberately withheld or it has not been built; the list is CARD_METHODS',
+          )
         }
 
         // Not wrapped in `guard`: a card is awaiting this, and turning a refusal

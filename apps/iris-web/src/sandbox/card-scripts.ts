@@ -236,11 +236,27 @@ export function startCardScripts(
           bootstrap,
           documentGranted: resolved.documentGranted,
           onPhase: (scriptId, next) => {
-            const script = scriptId === undefined ? undefined : byId.get(scriptId)
-            // An outcome naming a script the set does not contain is dropped
-            // rather than attributed to a neighbour: a wrong attribution is
-            // worse than a missing one, because it reads as a working script
-            // failing.
+            /*
+             * Naming no script and naming an unknown one are different, and
+             * conflating them lost a whole class of report.
+             *
+             * The frame speaks for itself as well as for its scripts: the
+             * missing-libraries banner, a bootstrap failure before any token
+             * exists, a global that could not be defined. Those carry no script
+             * id because none of them belongs to one — and this callback used to
+             * drop them alongside genuinely misattributed outcomes, so the
+             * instrument that warned about `YAML` and `$` three runs before a
+             * card reached them stopped arriving at all.
+             *
+             * An outcome naming a script this set does not contain is still
+             * dropped: attributing it to a neighbour would read as a working
+             * script failing, which is worse than losing it.
+             */
+            if (scriptId === undefined) {
+              env.onFailure({ scriptId: '', name: 'card scripts', ...next })
+              return
+            }
+            const script = byId.get(scriptId)
             if (script !== undefined) move(script, next)
           },
         })

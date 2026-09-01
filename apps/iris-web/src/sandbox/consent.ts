@@ -179,14 +179,21 @@ export function consentFigures(
  * The byte formatter is passed in because it belongs to the interface layer and
  * this module belongs to the sandbox; the sentence should not drag one into the
  * other.
+ * Returns `undefined` for a card with no scripts, because there is no question
+ * to ask. That case used to produce "This card runs 0 scripts (0 B). **They**
+ * run in an isolated sandbox…" — consent solicited for nothing, with the plural
+ * wrong as well — and the only thing preventing it was a length check in the
+ * component. A guard living in a different module from the knowledge it guards
+ * is a guard someone will reuse this function without.
  * @param figures - the counts and sizes, measured in one pass.
  * @param bytes - how to render a size.
- * @returns the sentence, ready to show.
+ * @returns the sentence, or undefined when there is nothing to consent to.
  */
 export function describeConsentAsk(
   figures: ConsentFigures,
   bytes: (count: number) => string,
-): string {
+): string | undefined {
+  if (figures.total === 0) return undefined
   const dormant = figures.totalBytes - figures.runningBytes
   const opening =
     figures.running === figures.total

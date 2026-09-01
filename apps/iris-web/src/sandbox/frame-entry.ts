@@ -17,6 +17,7 @@
 
 import { installSandbox } from './frame.ts'
 import { remoteImports } from './script-source.ts'
+import { describeAttempts } from './import-attempts.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 
 /**
@@ -62,45 +63,20 @@ function announceReady(run: string, post: (message: FromFrame) => void): void {
 const IMPORT_TIMEOUT_MS = 15_000
 
 /**
- * Whether the browser ever put the request on the wire.
+ * Resource timing entries, or undefined when this frame cannot produce them.
  *
- * "The fetch never returned" has two causes that look identical from inside a
- * frame and need opposite fixes: the browser declined to dispatch it — a policy
- * or resolution problem — or it dispatched and nothing came back, which is the
- * network. Resource timing knows which, and it is available in the frame
- * without `connect-src`, because reading the entry is not a fetch.
- *
- * Cross-origin entries are opaque about *durations* without
- * `Timing-Allow-Origin`, but the entry's existence and name are visible
- * regardless — and existence is the entire question here.
- *
- * Two limits, stated so a reading of this is not over-trusted: the buffer holds
- * a few hundred entries and drops the rest, and a request that was redirected is
- * recorded under the URL first asked for. Neither bites a frame that has loaded
- * four scripts and a handful of libraries, but "no entry" is evidence rather
- * than proof.
- * @param targets - the URLs the module was waiting on.
- * @returns a phrase naming what the browser attempted.
+ * The reading itself lives in `import-attempts.ts` so it can be tested; this is
+ * only the part that must touch the real realm.
+ * @returns the entries, or undefined.
  */
-function describeAttempts(targets: readonly string[]): string {
-  let entries: readonly { name: string }[]
+function timedResources(): readonly { name: string }[] | undefined {
   try {
-    entries = performance.getEntriesByType('resource')
+    return performance.getEntriesByType('resource')
   } catch {
-    // A frame that cannot answer says so, rather than letting a missing API read
-    // as a missing request.
-    return 'resource timing is unavailable here, so whether the request was sent is unknown'
+    return undefined
   }
-
-  const attempted = targets.filter(target => entries.some(entry => entry.name === target))
-  if (attempted.length === targets.length) {
-    return 'the browser did send the request, so this is the network or the server, not the frame'
-  }
-  if (attempted.length === 0) {
-    return 'the browser never sent the request, so it was refused or unresolvable before the wire'
-  }
-  return `only some were sent (${attempted.join(', ')})`
 }
+
 
 /** The token the host stamped into this frame's markup. */
 function token(): string {
@@ -284,8 +260,27 @@ try {
         // it is attempted and the result reported, instead of the code assuming.
         Object.defineProperty(window, name, { value, writable: false, configurable: true })
         published.push(name)
-      } catch {
+      } catch (error: unknown) {
         refused.push(name)
+        /*
+         * The comment above explains one reason a define can fail; this catch
+         * accepts every reason. For `parent` and `top` a refusal is the browser
+         * answering a question we asked it — expected, and the report is the
+         * whole point. For any other name it is a fault of ours, and letting it
+         * land in the same list would dress a bug as a browser fact and stop
+         * anyone looking further.
+         */
+        if (name !== 'parent' && name !== 'top') {
+          post({
+            iris: run,
+            type: 'error',
+            scriptId: undefined,
+            message:
+              `could not define "${name}" in this frame: ` +
+              (error instanceof Error ? error.message : String(error)) +
+              ' — this is not the browser refusing, it is Iris failing to publish',
+          })
+        }
       }
     }
     post({ iris: run, type: 'globals', published, refused })
@@ -390,7 +385,7 @@ try {
               ? `still evaluating after ${IMPORT_TIMEOUT_MS / 1000}s — this module has no remote imports,` +
                 ' so it is parked on something inside itself, most likely a top-level await'
               : `import timed out after ${IMPORT_TIMEOUT_MS / 1000}s — the module never finished loading` +
-                ` (waiting on ${targets.join(', ')}) — ${describeAttempts(targets)}`,
+                ` (waiting on ${targets.join(', ')}) — ${describeAttempts(targets, timedResources())}`,
           ),
         )
       }, IMPORT_TIMEOUT_MS)

@@ -23,6 +23,8 @@
  *
  * @module iris-web/sandbox/script-run-state
  */
+import { FRAME_MEMBERS, MEMBER_KINDS } from './identity.ts'
+import { EXPECTED_GLOBALS } from './preset-globals.ts'
 
 /** Where one script has got to. */
 export type ScriptRunPhase =
@@ -136,10 +138,25 @@ export function describeRun(state: ScriptRunState): string {
       return seconds > 0 ? `still waiting for ${target} (${String(seconds)}s)` : `waiting for ${target}`
     }
 
-    case 'refused':
-      return `refused ${state.member ?? 'a member'} — the sandbox does not allow it`
+    case 'refused': {
+      /*
+       * The refusal's own words, not an invented reason.
+       *
+       * This used to read "the sandbox does not allow it", which asserts a
+       * *policy* — and most refusals here are not policy at all. A scope the
+       * pushed snapshot cannot carry, a member Iris has not built yet: those are
+       * gaps, and calling them prohibitions puts the suspect on a deliberate
+       * decision so nobody files the gap.
+       *
+       * The explanation already exists — `UnsupportedApiError` carries a hint
+       * saying which of the two it is — and the panel was throwing it away.
+       */
+      const hint = refusalHint(state.detail)
+      const member = state.member ?? 'a member'
+      return hint === undefined ? `refused ${member}` : `refused ${member} — ${hint}`
+    }
     case 'threw':
-      return `failed: ${state.detail ?? 'no message'}`
+      return `failed: ${attribute(state.detail ?? 'no message')}`
     case 'bootstrap-failed':
       return `never started: ${state.detail ?? 'no message'}`
     case 'silent':
@@ -147,6 +164,69 @@ export function describeRun(state: ScriptRunState): string {
     case 'killed':
       return 'stopped when the chat closed'
   }
+}
+
+/**
+ * The explanatory half of a refusal, without the boilerplate.
+ *
+ * `UnsupportedApiError` formats as `Iris sandbox: <member> is not available to
+ * card scripts. <hint>`. The panel already names the member, so repeating the
+ * first sentence would push the part that matters off the end of the line.
+ * @param detail - the thrown message, if there was one.
+ * @returns the hint, or undefined when the refusal offered none.
+ */
+function refusalHint(detail: string | undefined): string | undefined {
+  if (detail === undefined) return undefined
+  const marker = 'is not available to card scripts.'
+  const at = detail.indexOf(marker)
+  const rest = (at === -1 ? detail : detail.slice(at + marker.length)).trim()
+  return rest.length === 0 ? undefined : rest
+}
+
+/**
+ * The name a `ReferenceError` complained about, if that is what this is.
+ *
+ * String operations rather than a pattern: escapes in this file have been eaten
+ * in transit repeatedly, and a collapsed one still parses while matching
+ * nothing.
+ * @param detail - the thrown message.
+ * @returns the missing identifier, or undefined.
+ */
+function missingName(detail: string): string | undefined {
+  const marker = ' is not defined'
+  const at = detail.indexOf(marker)
+  if (at === -1) return undefined
+  const before = detail.slice(0, at)
+  const name = before.slice(before.lastIndexOf(' ') + 1)
+  return name.length === 0 ? undefined : name
+}
+
+/**
+ * Say when a card's failure is actually Iris's gap.
+ *
+ * `waitGlobalInitialized is not defined` reads as a broken card. It was not — it
+ * was a member upstream provides and this sandbox did not, and the sentence sent
+ * every reader to look at the card. That is the expensive half of a bad
+ * diagnostic: not that it is unclear, but that **it arrives with a suspect
+ * already attached**, so nobody thinks to check the innocent party.
+ *
+ * The names Iris knows it *should* provide are already written down — the
+ * card-API classification and the library globals — so a `ReferenceError`
+ * naming one of them can be attributed correctly instead of blamed on the card.
+ * @param detail - the thrown message.
+ * @returns the message, with the attribution corrected where it is known to be wrong.
+ */
+function attribute(detail: string): string {
+  const name = missingName(detail)
+  if (name === undefined) return detail
+  const ours = Object.hasOwn(MEMBER_KINDS, name) || FRAME_MEMBERS.includes(name)
+  if (ours) {
+    return `${detail} — upstream gives cards this and Iris should too, so this is a gap here, not in the card`
+  }
+  if (EXPECTED_GLOBALS.includes(name)) {
+    return `${detail} — a library upstream seeds from its own page, which this frame does not have`
+  }
+  return detail
 }
 
 /**
