@@ -67,6 +67,9 @@ IRIS_MODEL=qwen3:8b pnpm start
 | `packages/iris-llm-openai-compat` | 一个适配器覆盖 OpenAI/OpenRouter/Ollama/llama.cpp/TextGen/DeepSeek… |
 | `packages/iris-regex` | 正则脚本引擎。三态易失性（仅显示 / 仅提示词 / 永久），MVU 的硬依赖 |
 | `packages/iris-tokenizer` | token 估算，权重由实测拟合；可用 provider 报告的用量在线校准 |
+| `packages/iris-script` | 卡片脚本提取（三种在野存储形状归一）与远程来源白名单 |
+| `packages/iris-compat-tavernhelper-core` | 酒馆助手的词汇表：两个信任域必须逐字共享的事件名。零依赖，有测试钉住 |
+| `packages/iris-compat-prompt-template` | ST-Prompt-Template（EJS）兼容：围栏子进程求值，原版引擎+具名补丁，差分验收 |
 | `packages/iris-protocol` | 宿主与浏览器之间的契约。请求方向带 zod 校验 |
 | `packages/iris-rpc-host` / `-client` | HTTP + WebSocket 传输，带重连 |
 | `packages/iris-app-service` | 宿主应用层：用领域包实现协议方法 |
@@ -78,8 +81,14 @@ IRIS_MODEL=qwen3:8b pnpm start
 
 ## 现状
 
-阶段 0 的五道验证关全部通过。领域内核、生态兼容层、宿主传输层与浏览器界面均已落地，**463 个测试（461 通过 / 2 联网跳过）**，类型检查干净。
+领域内核、生态兼容层、宿主传输层、浏览器界面、卡片脚本沙箱与 EJS 模板层均已落地，
+**850 个测试（848 通过 / 2 联网跳过）**，类型检查干净。架构不变量（依赖分层、浏览器
+import 白名单等）由测试强制（[ARCHITECTURE.md](ARCHITECTURE.md)）。
 
-对真实 provider 的端到端验证跑通：8MB 的真实角色卡导入成功，开场白成为 turn 0 且备选开场白作为该轮的 swipe，回复以 121 条增量流式返回，重新生成与切换 swipe 都正确。
+端到端在真实数据上验证过：真页面 → 真传输 → 真宿主 → 真卡;**真实卡片的 MVU 生产
+bundle 在隔离沙箱内从白名单 CDN 加载并完整执行**（沙箱策略与实测见
+[SANDBOX.md](SANDBOX.md)）;导入/导出对用户真实的 SillyTavern 数据（含 677 楼长局）
+逐行无损。**视觉设计仍未经人眼在浏览器里审阅**——这是当前"已验证"边界的准确位置。
 
-功能差距、兼容性实测分析与排期见 [ROADMAP.md](ROADMAP.md)。最大的剩余缺口是**卡片脚本沙箱**——本机 19 张卡里 7 张带脚本共 22 个，目前一个都跑不了，而它也是唯一存在真实兼容性风险的地方。
+~~最大的剩余缺口是卡片脚本沙箱~~（2026-09-01 划掉：已建成并被真卡验证）。当前在做的
+收尾与排期见 [ROADMAP.md](ROADMAP.md)，工作方法的付费教训见 [METHODS.md](METHODS.md)。
