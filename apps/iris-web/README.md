@@ -135,7 +135,12 @@ single place that string is assembled.
 | `sandbox/frame.ts` | the frame-side installer, dependency-injected so the decisions it makes are testable under `node --test` |
 | `sandbox/frame-entry.ts` | the second build entry: adapts the real frame realm to `FrameEnv` and holds no policy of its own |
 | `sandbox/srcdoc.ts` | the frame's markup, including its own CSP and the inlined bootstrap |
-| `sandbox/runner.ts` | host side: create, feed, size, dispose. The thinnest module here, because it is the only one a browser is required to exercise |
+| `sandbox/runner.ts` | host side: create, feed, size, dispose. The thinnest module here, because it is the only one a browser is required to exercise. **It does not insert the frame** — `card.element` is the caller's to attach, and forgetting to is silent |
+| `sandbox/card-scripts.ts` | the set of frames one chat runs: card order, failure isolation, teardown, and the checks that a frame really entered the document and really became ready |
+| `sandbox/consent.ts` | the three-state run-scripts answer. Absent is not a decline, and the field beside it uses the opposite convention |
+| `sandbox/script-run-state.ts` | what a script is doing, in the probe's vocabulary — `dispatched` is not `running`, and `ran` is not `working` |
+| `sandbox/tavern-helper.ts` | the 28-member card API over a pushed snapshot: synchronous reads, asynchronous writes, and the operation rather than a merged tree on the wire |
+| `sandbox/host-events.ts` | which host events reach a card and under which upstream names — deliberately smaller than the table |
 
 **CSP does work here, just not the work it was ruled out for.** It cannot forbid
 `eval` — the card blobs are webpack output that evals per module — but pinning
@@ -361,13 +366,32 @@ reported, any refusal) is shown beside the frame.
   a pipeline that is already planned. Worth re-checking rather than pre-emptively
   optimising.
 - The lorebook editor is not built; `PLAN.md` schedules it after the core path.
-- **Card scripts now start when a chat opens**, once the user has answered the
+- **Card scripts start when a chat opens**, once the user has answered the
   run-scripts question for that card. The frame set's lifetime is "this chat is
   in the foreground"; leaving tears it down completely. Grants are re-resolved
   from the host at the moment of running rather than read from the store, because
   that cache is keyed on a character id and character ids are reused. Failures
   land in the panel and the notice bar, never in the conversation. The policy is
   `AUTORUN.md` and the reasoning behind its permission clauses is `GRANTS.md`.
+
+  **Verified on a real host, and only this far**: the consent gate (wording, real
+  byte count, both answers, the decision surviving a reload) and the happy path
+  (two of a real card's scripts reaching `loaded`, two frames reporting
+  `isConnected`). **Not exercised in a browser**: every failure surface — the
+  per-script failure lines, the notice bar, the `silent` timeout firing, and the
+  declined state — because on that run nothing failed. Those are carried by unit
+  tests, which is exactly the coverage that let the first version ship without
+  attaching a single frame.
+
+  That bug is worth remembering when reading this section. `runCard` builds an
+  iframe and does not insert it; the probe had always appended `card.element`
+  itself, and the convention lived nowhere but that one call site. An iframe
+  outside the document never loads, so the result was two scripts resting on
+  `starting…` with no frame, no console error and no notice — **nothing had
+  failed, because nothing had begun.** Attaching is now part of the controller's
+  contract, and the controller checks `isConnected` afterwards rather than
+  trusting the call, because requiring a function does not make the supplied one
+  work.
 - **A card's frame does not survive edit mode.** Re-rendering the message a card
   lives in tears the frame down and builds a new one, which restarts the card:
   its listeners, its Vue app and any state it kept in the frame are gone, and a

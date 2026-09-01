@@ -123,7 +123,12 @@ the missing-globals banner, refusals naming the member, CSP violations, the run
 outcome. **Auto-run has nowhere to put any of it.** A card that fails on chat open
 would fail into a panel nobody opened.
 
-**Constraint on auto-run.**
+**Constraint on auto-run.** **Discharged**, and the gap proved real on the way:
+the first version of the run path failed without producing any of the signals
+below, because a frame that is never inserted into the document never runs and so
+never has anything to report. The landing points now exist *and* the two silences
+with no innocent reading — a frame that never entered the document, and one that
+never became ready — are reported rather than waited on.
 
 - Decide, in the policy, where a card's failure appears when no one asked it to
   run. Silent failure is the default outcome otherwise, and this half spent eleven
