@@ -21,8 +21,15 @@ so saw one of the three storage shapes.
 | Largest single card payload | **1.79 MB** |
 
 Counted by running `extractScripts` over the corpus, not by grepping: 19 cards
-decode, 14 carry scripts, 2 entries are genuinely empty (`content: ""`, and
-disabled) and are the only things skipped.
+decode, 14 carry scripts, and the only thing skipped is ~~2 entries~~ **one**
+empty, disabled placeholder (`content: ""`, OVERLORD's `ERA以上待修改`), which
+sits under **both** storage keys and therefore reports twice — "2" was the skip
+count, not the script count; the total of 47 real scripts was never wrong.
+(Corrected 2026-09-01 after the button census tripped on the same double-count.
+The self-reference is worth noticing: this very paragraph exists to warn that
+reading only one key loses scripts, and its own tally was inflated by reading
+both keys without deduplicating. The two mistakes are the same mistake facing
+opposite directions.)
 
 ### Three storage shapes, one meaning
 
