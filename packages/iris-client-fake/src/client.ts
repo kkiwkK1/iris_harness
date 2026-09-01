@@ -669,6 +669,25 @@ class InMemoryClient implements FakeClient {
         return { primary: null, additional: [] }
       }
 
+      case 'worldbook.replace': {
+        const { name } = params as RpcRequest<'worldbook.replace'>
+        /*
+         * Refused, and for the opposite reason to the reads above.
+         *
+         * "This host has no world books" is a true answer to *names* and to
+         * *bindings*: nothing is being invented by reporting an absence. It is
+         * not a true answer to a write. Upstream's `replaceWorldbook` rebuilds
+         * the stored book entirely from the array it is handed — entries absent
+         * from it are gone — and it also renumbers: missing uids are assigned at
+         * random and `displayIndex` is reassigned from array position, so a
+         * round trip reorders the file. Accepting the call and doing nothing
+         * would tell a card its rewrite landed when no book exists to have
+         * received it, which is the "passes here, breaks on a real host" failure
+         * this whole package exists to prevent.
+         */
+        throw new FakeRpcError('not-found', `no world book named ${name}`)
+      }
+
       case 'worldbook.get': {
         const { name } = params as RpcRequest<'worldbook.get'>
         /*

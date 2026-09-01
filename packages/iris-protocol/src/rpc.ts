@@ -466,6 +466,73 @@ export const requestSchemas = {
   'worldbook.charNames': z.object({
     characterId: z.string().min(1),
   }),
+  /**
+   * Replace a named world book's entire contents.
+   *
+   * **Whole-book replacement, which is upstream's semantics.** An entry not in
+   * `entries` is deleted. Upstream's `replaceWorldbook` builds the saved file
+   * fresh from the array it is handed, and partial updates are expressed by
+   * reading first — which is what `updateWorldbookWith` does.
+   *
+   * `updateWorldbookWith` itself stays in the frame, on the `updateVariablesWith`
+   * precedent: it takes a function, and a function cannot cross this boundary.
+   * The frame reads, applies the caller's updater, and calls this.
+   *
+   * Every field but `uid` is optional, and **omitting `strategy` does not mean
+   * "leave it alone"** — it means `constant: true`, an always-on entry. That is
+   * upstream's default and this host copies it; see `worldbooks.ts`.
+   */
+  'worldbook.replace': z.object({
+    name: z.string().min(1).max(120),
+    entries: z.array(z.object({
+      uid: z.number().int().min(0),
+      name: z.string().max(500).optional(),
+      enabled: z.boolean().optional(),
+      strategy: z.object({
+        type: z.enum(['constant', 'vectorized', 'selective']).optional(),
+        keys: z.array(z.string().max(1000)).max(200).optional(),
+        keys_secondary: z.object({
+          logic: z.enum(['and_any', 'not_all', 'not_any', 'and_all']).optional(),
+          keys: z.array(z.string().max(1000)).max(200).optional(),
+        }).optional(),
+        scan_depth: z.union([z.number().int(), z.literal('same_as_global')]).optional(),
+      }).optional(),
+      position: z.object({
+        type: z.enum([
+          'before_character_definition', 'after_character_definition',
+          'before_example_messages', 'after_example_messages',
+          'before_author_note', 'after_author_note', 'at_depth', 'outlet',
+        ]).optional(),
+        role: z.enum(['system', 'user', 'assistant']).optional(),
+        depth: z.number().int().optional(),
+        order: z.number().int().optional(),
+      }).optional(),
+      content: z.string().max(200_000).optional(),
+      probability: z.number().int().min(0).max(100).optional(),
+      recursion: z.object({
+        prevent_incoming: z.boolean().optional(),
+        prevent_outgoing: z.boolean().optional(),
+        delay_until: z.number().int().nullable().optional(),
+      }).optional(),
+      effect: z.object({
+        sticky: z.number().int().nullable().optional(),
+        cooldown: z.number().int().nullable().optional(),
+        delay: z.number().int().nullable().optional(),
+      }).optional(),
+      addMemo: z.boolean().optional(),
+      group: z.string().max(200).optional(),
+      groupOverride: z.boolean().optional(),
+      groupWeight: z.number().int().optional(),
+      caseSensitive: z.boolean().nullable().optional(),
+      matchWholeWords: z.boolean().nullable().optional(),
+      matchPersonaDescription: z.boolean().optional(),
+      matchCharacterDescription: z.boolean().optional(),
+      matchCharacterPersonality: z.boolean().optional(),
+      matchCharacterDepthPrompt: z.boolean().optional(),
+      matchScenario: z.boolean().optional(),
+      matchCreatorNotes: z.boolean().optional(),
+    })).max(2000),
+  }),
 } as const
 
 /** Every callable method. */
@@ -511,6 +578,8 @@ export interface RpcResponseMap {
   'worldbook.get': { entries: WorldbookEntry[] }
   /** A name may be bound with no file behind it; 2 of 18 corpus bindings are. */
   'worldbook.charNames': { primary: string | null, additional: string[] }
+  /** The book as stored, read back — so a writer sees what its partial produced. */
+  'worldbook.replace': { entries: WorldbookEntry[] }
 
   'connection.list': { profiles: ConnectionProfile[], activeId?: string }
   'connection.save': { profiles: ConnectionProfile[], activeId?: string }

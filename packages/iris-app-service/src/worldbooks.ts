@@ -27,7 +27,7 @@
  * @module @iris/app-service/worldbooks
  */
 
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, rename, writeFile } from 'node:fs/promises'
 
 import { fromCharacterBook, parseLorebook, type Lorebook, type LorebookEntry } from '@iris/lorebook'
 import type { CharacterCard } from '@iris/character'
@@ -73,6 +73,120 @@ const ROLES: Record<number, 'system' | 'user' | 'assistant'> = {
   0: 'system',
   1: 'user',
   2: 'assistant',
+}
+
+/**
+ * The implicit keys upstream fills in, with its defaults.
+ *
+ * Named `_default_implicit_keys` upstream. They are "implicit" because the
+ * card-facing shape does not surface them as a group: a caller may set any of
+ * them, and one that does not gets these.
+ */
+const DEFAULT_IMPLICIT_KEYS = {
+  addMemo: true,
+  matchPersonaDescription: false,
+  matchCharacterDescription: false,
+  matchCharacterPersonality: false,
+  matchCharacterDepthPrompt: false,
+  matchScenario: false,
+  matchCreatorNotes: false,
+  group: '',
+  groupOverride: false,
+  groupWeight: 100,
+  caseSensitive: null,
+  matchWholeWords: null,
+} as const
+
+/** The reverse of {@link POSITIONS}. */
+const POSITION_CODES: Record<WorldbookPosition, number> = {
+  before_character_definition: 0,
+  after_character_definition: 1,
+  before_author_note: 2,
+  after_author_note: 3,
+  at_depth: 4,
+  before_example_messages: 5,
+  after_example_messages: 6,
+  outlet: 7,
+}
+
+/** The reverse of {@link LOGICS}. */
+const SELECTIVE_LOGIC: Record<SecondaryLogic, number> = {
+  and_any: 0,
+  not_all: 1,
+  not_any: 2,
+  and_all: 3,
+}
+
+/** The reverse of {@link ROLES}. */
+const ROLE_CODES: Record<'system' | 'user' | 'assistant', number> = {
+  system: 0,
+  user: 1,
+  assistant: 2,
+}
+
+/**
+ * A card-facing entry as a writer may supply it: everything optional but `uid`.
+ *
+ * Upstream's `PartialDeep<WorldbookEntry>`, narrowed to the nesting this host
+ * actually reads. Written out rather than derived so the optionality is visible
+ * at the point where the defaults in {@link fromWorldbookEntry} are chosen —
+ * "which fields does omitting change the meaning of" is the question that
+ * matters here, and a mapped type hides it.
+ */
+export interface PartialWorldbookEntry {
+  uid: number
+  name?: string | undefined
+  enabled?: boolean | undefined
+  strategy?: {
+    type?: 'constant' | 'vectorized' | 'selective' | undefined
+    keys?: readonly string[] | undefined
+    keys_secondary?: { logic?: SecondaryLogic | undefined, keys?: readonly string[] | undefined } | undefined
+    scan_depth?: number | 'same_as_global' | undefined
+  } | undefined
+  position?: {
+    type?: WorldbookPosition | undefined
+    role?: 'system' | 'user' | 'assistant' | undefined
+    depth?: number | undefined
+    order?: number | undefined
+  } | undefined
+  content?: string | undefined
+  probability?: number | undefined
+  recursion?: {
+    prevent_incoming?: boolean | undefined
+    prevent_outgoing?: boolean | undefined
+    delay_until?: number | null | undefined
+  } | undefined
+  effect?: {
+    sticky?: number | null | undefined
+    cooldown?: number | null | undefined
+    delay?: number | null | undefined
+  } | undefined
+  addMemo?: boolean | undefined
+  group?: string | undefined
+  groupOverride?: boolean | undefined
+  groupWeight?: number | undefined
+  caseSensitive?: boolean | null | undefined
+  matchWholeWords?: boolean | null | undefined
+  matchPersonaDescription?: boolean | undefined
+  matchCharacterDescription?: boolean | undefined
+  matchCharacterPersonality?: boolean | undefined
+  matchCharacterDepthPrompt?: boolean | undefined
+  matchScenario?: boolean | undefined
+  matchCreatorNotes?: boolean | undefined
+}
+
+/**
+ * The implicit keys a caller actually set, so they can override the defaults.
+ * @param entry - the caller's partial entry.
+ * @returns only the implicit keys present on it.
+ */
+function pickImplicit(entry: PartialWorldbookEntry): Record<string, unknown> {
+  const picked: Record<string, unknown> = {}
+  for (const key of Object.keys(DEFAULT_IMPLICIT_KEYS)) {
+    const value = (entry as unknown as Record<string, unknown>)[key]
+    if (value !== undefined) picked[key] = value
+  }
+  return picked
 }
 
 /**
@@ -167,9 +281,10 @@ export function charWorldbookNames(
 /**
  * The named world books beside an installation.
  *
- * Reads only. The write members of the same family are a ruling item, not an
- * implementation one, and this class deliberately offers them no foothold: it
- * has no save path to be extended by accident.
+ * Reads, and one write: {@link WorldbookStore.replace}, which replaces a whole
+ * book. There is deliberately no create and no per-entry write — upstream's
+ * `replaceWorldbook` refuses a book that does not exist, and every other write
+ * member in that family is built on top of the same whole-book replacement.
  */
 export class WorldbookStore {
   private readonly dir: string
@@ -236,6 +351,50 @@ export class WorldbookStore {
       throw notFound(`world book "${name}"`)
     }
     return parseLorebook(JSON.parse(raw))
+  }
+
+  /**
+   * Replace a book's entire contents.
+   *
+   * **Whole-book, and that is upstream's semantics rather than a shortcut.**
+   * `createOrReplaceWorldbook` builds the saved object fresh from the array it
+   * is given, so an entry the caller did not include is gone. A partial update
+   * is expressed by reading the book, changing what you want, and writing all of
+   * it back — which is exactly what `updateWorldbookWith` does, and why that
+   * member cannot live on this side of the wire: it takes a function.
+   *
+   * The append-only rule that governs the chat log does **not** apply here. A
+   * book is a document the user edits in another application, not a history this
+   * host is the custodian of; rewriting it is the operation, not a violation.
+   *
+   * Written through a temporary file and renamed, because the alternative to an
+   * atomic replace is a truncated book: a crash midway through writing 167
+   * entries leaves a file that parses as a smaller book rather than as an error,
+   * and the user's next read finds their world quietly shortened.
+   * @param name - the book's name, exactly as spelled. It must already exist.
+   * @param entries - the complete new contents.
+   * @returns the entries as stored, read back.
+   * @throws {AppError} `not-found` when no book has that name.
+   */
+  async replace(name: string, entries: readonly PartialWorldbookEntry[]): Promise<WorldbookEntry[]> {
+    // Existence is checked by reading: it refuses the same cases `get` refuses,
+    // with the same message, and it means a book that vanished between the check
+    // and the write cannot be silently created by this call.
+    await this.read(name)
+
+    const resolved = resolveUidCollisions(entries)
+    const stored: Record<string, unknown> = {}
+    resolved.forEach((entry, index) => {
+      const row = fromWorldbookEntry(entry, index)
+      stored[String(row['uid'])] = row
+    })
+
+    const path = fileFor(this.dir, name, '.json')
+    const temporary = `${path}.${String(process.pid)}.tmp`
+    await writeFile(temporary, JSON.stringify({ entries: stored }, null, 2), 'utf8')
+    await rename(temporary, path)
+
+    return this.get(name)
   }
 }
 
@@ -324,4 +483,103 @@ export async function resolveCardWorldbook(
   }
 
   return { entries: [], source: 'none', world: fallbackName }
+}
+
+/**
+ * Turn one card-facing entry back into the shape a book file stores.
+ *
+ * The inverse of {@link toWorldbookEntry}, and **deliberately not its exact
+ * inverse** — upstream's is not either, and copying that faithfully is the
+ * point. Two asymmetries a caller can be bitten by, both upstream's:
+ *
+ * 1. **`constant` defaults to `true` when `strategy` is absent.** Reading maps
+ *    `constant: false` to `'selective'`, but writing a partial that omits
+ *    `strategy` produces `constant: true` — an **always-on** entry. So
+ *    `updateWorldbookWith(name, book => book.map(e => ({ uid: e.uid })))` does
+ *    not "keep everything and change nothing": it turns every entry in the book
+ *    constant. This is copied rather than corrected, because a card may depend
+ *    on it and correcting it is what would break them.
+ * 2. **`useProbability` is always written `true`.** Reading resolves it away
+ *    (`useProbability ? probability : 100`), so a round trip stores the flag
+ *    differently while leaving the effective probability the same.
+ *
+ * Anyone reaching to "fix" either of these should note that both are load-
+ * bearing compatibility, not oversights — and that this paragraph is the thing
+ * to delete first, so that deleting it is a visible decision.
+ * @param entry - a partial card-facing entry; only `uid` is required.
+ * @param displayIndex - the entry's position in the array being written.
+ * @returns the stored shape, with every field upstream would have filled in.
+ */
+export function fromWorldbookEntry(
+  entry: PartialWorldbookEntry,
+  displayIndex: number,
+): Record<string, unknown> {
+  const type = entry.strategy?.type
+  const logic = entry.strategy?.keys_secondary?.logic ?? 'and_any'
+  const scanDepth = entry.strategy?.scan_depth
+
+  return {
+    ...DEFAULT_IMPLICIT_KEYS,
+    uid: entry.uid,
+    displayIndex,
+    comment: entry.name ?? '',
+    disable: !(entry.enabled ?? true),
+
+    // See asymmetry 1 above: absent `strategy` means constant, not selective.
+    constant: type !== undefined ? type === 'constant' : true,
+    selective: type === 'selective',
+    vectorized: type === 'vectorized',
+    key: (entry.strategy?.keys ?? []).map(String),
+    selectiveLogic: SELECTIVE_LOGIC[logic],
+    keysecondary: (entry.strategy?.keys_secondary?.keys ?? []).map(String),
+    scanDepth: scanDepth === 'same_as_global' ? null : scanDepth ?? null,
+
+    position: POSITION_CODES[entry.position?.type ?? 'at_depth'],
+    role: ROLE_CODES[entry.position?.role ?? 'system'],
+    depth: entry.position?.depth ?? 4,
+    order: entry.position?.order ?? 100,
+
+    content: entry.content ?? '',
+
+    // See asymmetry 2 above.
+    useProbability: true,
+    probability: entry.probability ?? 100,
+
+    excludeRecursion: entry.recursion?.prevent_incoming ?? false,
+    preventRecursion: entry.recursion?.prevent_outgoing ?? false,
+    delayUntilRecursion: entry.recursion?.delay_until ?? false,
+    sticky: entry.effect?.sticky ?? null,
+    cooldown: entry.effect?.cooldown ?? null,
+    delay: entry.effect?.delay ?? null,
+
+    // The caller's own implicit keys win over the defaults spread above.
+    ...pickImplicit(entry),
+  }
+}
+
+/**
+ * Give every entry a uid nothing else in the book claims.
+ *
+ * Upstream's algorithm, including its quadratic probe: an absent uid becomes a
+ * random one below a million, and a collision advances by `i * i` modulo the
+ * same bound. Reproduced rather than replaced by something simpler because the
+ * uid is an entry's identity — a book written by this host and reopened in
+ * SillyTavern has to agree about which entry is which.
+ * @param entries - the entries about to be written, in order.
+ * @returns the same entries with unique uids.
+ */
+export function resolveUidCollisions(entries: readonly PartialWorldbookEntry[]): PartialWorldbookEntry[] {
+  const MAX_UID = 1_000_000
+  const taken = new Set<number>()
+
+  return entries.map((entry) => {
+    let candidate = entry.uid ?? Math.floor(Math.random() * MAX_UID)
+    let step = 1
+    while (taken.has(candidate)) {
+      candidate = (candidate + step * step) % MAX_UID
+      step += 1
+    }
+    taken.add(candidate)
+    return { ...entry, uid: candidate }
+  })
 }

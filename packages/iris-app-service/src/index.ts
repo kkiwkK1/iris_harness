@@ -438,6 +438,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('worldbook.names', handlers['worldbook.names']),
       ctx.irisRpc.register('worldbook.get', handlers['worldbook.get']),
       ctx.irisRpc.register('worldbook.charNames', handlers['worldbook.charNames']),
+      ctx.irisRpc.register('worldbook.replace', handlers['worldbook.replace']),
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()

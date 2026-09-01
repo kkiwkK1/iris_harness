@@ -459,6 +459,14 @@ export class IrisAppService {
         if (worldbooks === undefined) throw notFound(`world book "${name}"`)
         return { entries: await worldbooks.get(name) }
       },
+      'worldbook.replace': async ({ name, entries }) => {
+        // Refused rather than answered when there is nowhere to write. A write
+        // that reports success without a store is the worst of the three
+        // outcomes: the card believes its book was saved and stops keeping the
+        // only copy.
+        if (worldbooks === undefined) throw notFound(`world book "${name}"`)
+        return { entries: await worldbooks.replace(name, entries) }
+      },
       'worldbook.charNames': async ({ characterId }) => {
         const card = await library.load(characterId)
         return charWorldbookNames(card)

@@ -233,6 +233,7 @@ const PROBES: Record<string, unknown> = {
   'worldbook.names': {},
   'worldbook.get': { name: 'no-such-book' },
   'worldbook.charNames': { characterId: 'no-such-character' },
+  'worldbook.replace': { name: 'no-such-book', entries: [] },
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {
