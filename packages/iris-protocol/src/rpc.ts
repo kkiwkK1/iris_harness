@@ -426,6 +426,33 @@ export const requestSchemas = {
      */
     name: z.string().min(1).max(200),
   }),
+  /**
+   * Render one EJS template on the card's behalf.
+   *
+   * Upstream's `evalTemplate(content, data?, options?)`. The corpus calls it at
+   * **one site in one card** and always with a single argument, so this takes
+   * `content` alone. The schema is **strict**: a call carrying `data` or
+   * `options` is refused by name rather than having them dropped, because a
+   * template silently evaluated without the data it was given returns
+   * well-formed text built from the wrong values — the failure this project
+   * keeps meeting, where the wrong answer looks like an answer.
+   *
+   * **The evaluation never happens in this process.** The string goes verbatim
+   * into `@iris/compat-prompt-template`'s forked child, which runs with `env: {}`
+   * so nothing of the host's environment crosses. There is no `eval`, `Function`
+   * or `vm` on the host side of this call, and there must not be: the argument
+   * is attacker-controlled in the only sense that matters — it is whatever a
+   * card put there.
+   *
+   * **Failure is an error, not an empty string.** Cards expect upstream's soft
+   * degradation, so the façade turns a rejection into a warning plus the
+   * original text. Returning `''` here would hand the card a rendered-looking
+   * empty result and lose the text it asked about.
+   */
+  'script.evalTemplate': z.strictObject({
+    chatId: z.string().min(1),
+    content: z.string().max(200_000),
+  }),
   'script.saveChat': z.object({ chatId: z.string().min(1) }),
   /**
    * Inject a script's text into the prompt.
@@ -772,6 +799,7 @@ export interface RpcResponseMap {
   'script.getPreset': {
     prompts: { id: string, enabled: boolean, role?: string, content?: string }[]
   }
+  'script.evalTemplate': { text: string }
   'script.saveChat': Record<string, never>
   'script.setExtensionPrompt': Record<string, never>
   /** The settings as stored, so a card can see what survived. */

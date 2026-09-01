@@ -20,6 +20,7 @@ import { BlockAssembler, createAssistantMessage, createUserMessage, type Generat
 import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, selectCandidate, SwipeError } from '@iris/chat'
 import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
+import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset } from '@iris/preset'
 import type { ChatView, GenerationSettings, IrisEvent, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
@@ -289,6 +290,65 @@ export class IrisAppService {
         // Not persisted here; see `#rewriteLines`. A card commits its batch with
         // `script.saveChat`, which is the one place that decision lives.
         return { view: await this.#rewriteLines(entry, messages, false) }
+      },
+
+      'script.evalTemplate': async ({ chatId, content }) => {
+        // Refused by name when the feature is off, never answered with an empty
+        // string. A card asking for a render and receiving `''` cannot tell that
+        // from a template that rendered to nothing, and would go on to inject
+        // the emptiness.
+        const templates = this.#options.templates
+        if (templates === undefined) {
+          throw new AppError(
+            'unsupported',
+            'script.evalTemplate needs the template feature, which this host is running without',
+          )
+        }
+
+        const entry = await chats.open(chatId)
+        const turn = entry.pending?.turn ?? 0
+        this.#traceId += 1
+
+        // Evaluated in the forked child, exactly like a prompt slot — same
+        // fence, same empty environment, same deadline. There is deliberately
+        // no shorter path for a single string: a second evaluator would be a
+        // second thing to keep sandboxed, and it is the sandbox that is the
+        // whole point of this arm.
+        //
+        // The origin is labelled apart from `generate/…` so a diagnostic can
+        // say which door a template came through. What it cannot say is what
+        // the card *put* in the string — a world book entry the card read and
+        // handed over arrives here identical to a template the card wrote, so
+        // this label distinguishes the call path, not the material.
+        const outcome = await evaluateBatch({
+          items: [{ id: 'eval', text: content, origin: `script.evalTemplate/${chatId}` }],
+          snapshot: buildSnapshot(entry, turn, this.#traceId),
+          ...templates.deadlineMs === undefined ? {} : { deadlineMs: templates.deadlineMs },
+        })
+
+        const result = outcome.results[0]?.result
+        if (result === undefined || !result.ok) {
+          const reason = result === undefined
+            ? outcome.timedOut ? 'the evaluator timed out' : 'the evaluator returned nothing'
+            : result.error
+          // Thrown, so the façade can do what upstream does: warn and keep the
+          // caller's original text. Swallowing it here would decide that policy
+          // for every caller, in the one place that cannot see who is asking.
+          throw invalid(`template evaluation failed: ${reason}`)
+        }
+
+        // Writes replay through the host's own stores, like the prompt path —
+        // a template cannot reach storage except through a check the host makes.
+        if (outcome.ops.length > 0) {
+          try {
+            applyOps(entry, outcome.ops, turn,
+              reason => { this.#report(new Error(`script.evalTemplate: ${reason}`)) })
+          } catch (error: unknown) {
+            this.#report(error)
+          }
+        }
+
+        return { text: result.text }
       },
 
       'script.getPreset': async ({ name }) => {

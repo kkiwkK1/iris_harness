@@ -669,6 +669,25 @@ class InMemoryClient implements FakeClient {
         return { primary: null, additional: [] }
       }
 
+      case 'script.evalTemplate': {
+        /*
+         * Refused, and the softness of the caller's error handling is the reason
+         * to be careful rather than a reason to relax.
+         *
+         * The measured card wraps this in `console.warn` plus a fall back to the
+         * unrendered text, so a refusal degrades gracefully there — which is
+         * exactly why a *fabricated* answer would be worse than usual: it would
+         * take the graceful path away and substitute a confidently wrong one. An
+         * EJS template reads macros, variables and chat state; anything this
+         * client rendered would be its own invention of what those hold, and the
+         * card would embed the invention in a prompt.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          'the fake client does not evaluate templates; it has no macro or variable state to render against',
+        )
+      }
+
       case 'script.getPreset': {
         const { name } = params as RpcRequest<'script.getPreset'>
         /*
