@@ -27,6 +27,13 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import { isAllowedRemote, REMOTE_ALLOWLIST } from '../src/sandbox/policy.ts'
+import { BUNDLE_PROXY_PATH } from '../src/sandbox/bundle-proxy.ts'
+
+/** The frozen policy, read whole. */
+function sandboxDoc(): string {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+  return readFileSync(join(root, 'SANDBOX.md'), 'utf8')
+}
 
 /** The `script-src` line as the frozen policy records it. */
 function documentedScriptSrc(): string {
@@ -44,7 +51,11 @@ test('the documented policy and this half of the code list the same origins', ()
    * is the exact direction that produces a CSP wider than the host.
    */
   const documented = documentedScriptSrc()
+    // Trimmed per token: this repository is CRLF, so splitting on the newline
+    // leaves a carriage return on the last one. A drift detector that trips over
+    // line endings is a detector someone will loosen instead of read.
     .split(' ')
+    .map(token => token.trim())
     .filter(token => token.startsWith('https://'))
     .map(token => token.slice('https://'.length))
     .sort()
@@ -74,4 +85,26 @@ test('a host that merely ends with an allowed name is still refused', () => {
   assert.equal(isAllowedRemote('https://jsdelivr.net.evil.example/x.js'), false)
   assert.equal(isAllowedRemote('https://notjsdelivr.net/x.js'), false)
   assert.equal(isAllowedRemote('https://raw.githubusercontent.com.evil.example/x.js'), false)
+})
+
+test('the proxy route this half calls is the route the policy records', () => {
+  /*
+   * The route string existed in four places across two trust domains — one
+   * constant here, a documented default, a schema default and a fallback on the
+   * host — and in no document, so nothing could tie the halves together.
+   *
+   * A mismatch is a 404, and `import()` reports a 404 as "failed to fetch
+   * dynamically imported module": a sentence that names nothing and sends the
+   * reader to the network. Of all the ways these two halves can disagree, this
+   * is the one whose symptom hides its own cause.
+   *
+   * The document is the hub because it is the only thing both sides can read —
+   * the architecture allowlist stops each from importing the other, and should.
+   */
+  assert.ok(
+    sandboxDoc().includes(`GET ${BUNDLE_PROXY_PATH}?url=`),
+    `SANDBOX.md does not record ${BUNDLE_PROXY_PATH} as the bundle route;` +
+      ' the host reads the same document, and a silent disagreement here is a 404' +
+      ' that import() reports as an unnamed fetch failure',
+  )
 })

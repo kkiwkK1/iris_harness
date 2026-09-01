@@ -550,6 +550,18 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     if (context !== undefined) context = { ...context, variables }
   }
 
+  /**
+   * Scripts parked on a named global, and what they are parked on.
+   *
+   * Two rules here contradicted each other. The wait is unbounded on purpose —
+   * upstream never abandons one — while the module deadline calls any module
+   * that has not finished in fifteen seconds stalled. A module *knowingly*
+   * waiting has not stalled, and letting the deadline speak over it did two
+   * kinds of damage: it reported a healthy park as a failure, and it erased the
+   * one state that says what the module is waiting for.
+   */
+  const activeWaits = new Map<string | undefined, { global: string, since: number }>()
+
   const reportedGaps = new Set<string>()
   const reportGap = (message: string): void => {
     if (reportedGaps.has(message)) return
@@ -631,6 +643,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         return
       }
       env.post({ iris: env.token, type: 'waiting', scriptId: forScript, global, elapsedMs: 0 })
+      activeWaits.set(forScript, { global, since: Date.now() })
       const started = Date.now()
       await new Promise<void>(resolve => {
         const done = (): void => {
@@ -659,6 +672,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         // first check and the subscription would otherwise never be noticed.
         if (published.has(global)) done()
       })
+      activeWaits.delete(forScript)
       makeUsable()
       env.post({ iris: env.token, type: 'waited', scriptId: forScript, global, arrived: true })
     },
@@ -819,6 +833,28 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * settles, say — while a timeout with no body means the fetch itself never
        * came back.
        */
+      /*
+       * A module that is knowingly waiting is not reported as stalled.
+       *
+       * The deadline cannot know this: it lives in the entry and sees only that
+       * evaluation has not finished. This does. Re-announcing the wait rather
+       * than falling silent keeps the panel showing *what* it waits on — the
+       * deadline's sentence used to overwrite exactly that, which is why two
+       * verification rounds could not tell a woken waiter from one that never ran.
+       */
+      const parked = activeWaits.get(failingScript)
+      const overdue = text.includes('still evaluating after') || text.includes('import timed out')
+      if (parked !== undefined && overdue) {
+        env.post({
+          iris: env.token,
+          type: 'waiting',
+          scriptId: failingScript,
+          global: parked.global,
+          elapsedMs: Date.now() - parked.since,
+        })
+        return
+      }
+
       const stalled = text.includes('import timed out')
       const detail = !stalled
         ? text

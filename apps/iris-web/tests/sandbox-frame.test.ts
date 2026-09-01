@@ -1070,3 +1070,50 @@ test('a wait that has not been answered stays open, and defines nothing yet', as
   const reported = scope.posted.filter(m => m.type === 'waiting')
   assert.equal(reported.length, 1, 'it says once that it is waiting')
 })
+
+test('a module knowingly waiting is not declared stalled by the deadline', async () => {
+  /*
+   * Two rules contradicted each other. The wait is unbounded on purpose —
+   * upstream never abandons one — while the module deadline calls anything
+   * unfinished after fifteen seconds stalled. A module parked on a named global
+   * has not stalled, and the deadline speaking over it did two kinds of damage:
+   * it reported a healthy park as a failure, and it *erased the state naming
+   * what the module was waiting for*.
+   *
+   * That erasure is why two verification rounds could not distinguish a waiter
+   * that was woken from one that never ran: both ended on the same sentence.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  // A body that parks on a global nobody will publish, then hits the deadline.
+  scope.runAsync(async () => {
+    const registry = scope.publishedValue('__iris_script__') as (id: string) => Record<string, unknown>
+    void (registry('consumer')['waitGlobalInitialized'] as (n: string) => Promise<void>)('Mvu')
+    await Promise.resolve()
+    throw new Error('still evaluating after 15s — this module has no remote imports')
+  })
+  scope.send({ iris: 'tok', type: 'run', code: 'x', mode: 'module', scriptId: 'consumer' })
+  await new Promise(resolve => setTimeout(resolve, 20))
+
+  const errors = scope.posted.filter(m => m.type === 'error')
+  assert.deepEqual(errors, [], 'a knowing wait must not be reported as a failure')
+  const waits = scope.posted.filter(m => m.type === 'waiting') as { global: string }[]
+  assert.ok(waits.length >= 2, 'the wait is re-announced instead of being overwritten')
+  assert.equal(waits.at(-1)?.global, 'Mvu', 'and it still names what it waits on')
+})
+
+test('a module with no known reason to be stuck is still declared stalled', async () => {
+  // The deadline keeps its job. Standing down for a *known* wait is not the same
+  // as standing down.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  scope.runAsync(async () => {
+    throw new Error('still evaluating after 15s — this module has no remote imports')
+  })
+  scope.send({ iris: 'tok', type: 'run', code: 'x', mode: 'module', scriptId: 'quiet' })
+  await new Promise(resolve => setTimeout(resolve, 20))
+
+  const errors = scope.posted.filter(m => m.type === 'error')
+  assert.equal(errors.length, 1)
+})

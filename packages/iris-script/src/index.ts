@@ -16,6 +16,7 @@ export {
 
 export {
   allowedScriptSources,
+  ALLOWED,
   checkScriptFetch,
   type FetchVerdict,
 } from './remote.ts'

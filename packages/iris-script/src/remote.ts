@@ -21,8 +21,14 @@
  * `jsdelivr.net` covers every hostname it serves under, which is the point.
  * `raw.githubusercontent.com` is exact: `githubusercontent.com` as a suffix
  * would also cover user-content hosts that serve arbitrary uploads.
+ *
+ * Exported so the drift test can compare **this list** against the `script-src`
+ * line in `SANDBOX.md`, rather than against a copy of it written in the test. A
+ * test holding its own literal pins the document to the test and leaves the code
+ * free: widening this array would then change what the host fetches while every
+ * assertion stayed green, which is the one direction that matters.
  */
-const ALLOWED = [
+export const ALLOWED = [
   { suffix: 'jsdelivr.net', subdomains: true },
   { suffix: 'raw.githubusercontent.com', subdomains: false },
 ] as const

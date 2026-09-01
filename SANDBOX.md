@@ -325,6 +325,19 @@ origin, so a card's bundle is a cold fetch every time — measured at 307 KB ove
 9–12 seconds, four timeouts in six openings. Upstream never pays this: its
 script frames are same-origin with the page and share its cache.
 
+The route is:
+
+```
+GET /iris/script-bundle?url=<encodeURIComponent(upstream URL)>
+```
+
+Written here because it is the one thing about this feature that **both trust
+domains must agree on and neither can import from the other**. A query parameter
+rather than a path segment: a URL inside a path needs double encoding and is
+still rewritten by path normalisation. A mismatch between the halves is a 404,
+which `import()` reports as "failed to fetch dynamically imported module" — a
+sentence that names nothing and sends the reader looking at the network.
+
 The browser rewrites **only** imports that were already allowed. A URL the
 allowlist rejects is left exactly as written, so the frame's CSP refuses it as
 before; rewriting it to a same-origin path would turn a request that never left
