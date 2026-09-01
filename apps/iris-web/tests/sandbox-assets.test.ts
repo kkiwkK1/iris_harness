@@ -20,6 +20,7 @@
  * @module iris-web/tests/sandbox-assets
  */
 import { strict as assert } from 'node:assert'
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -174,3 +175,60 @@ test('the directory the host actually serves has no superseded artifact either',
   assert.deepEqual(stale, [], 'the served directory still answers superseded URLs')
 })
 
+
+test('every font ships once, and ships the bytes the package holds', () => {
+  /*
+   * Two assertions that have to travel together, because each alone rewards the
+   * wrong fix.
+   *
+   * "The bundle got smaller" is satisfied by losing glyphs. "The fonts are
+   * correct" is satisfied by shipping each one five times. So: the decoded set
+   * must be **byte-identical to the installed package**, and no payload may
+   * appear twice.
+   *
+   * The oracle is `node_modules`, not a previous build. Comparing against the
+   * last artifact only says "nothing changed since whenever", which is also true
+   * of two builds that are both wrong.
+   *
+   * History worth keeping: the split-sheet change that preceded this reduced ten
+   * `@font-face` declarations to seven, and its note claims the split sheets
+   * inline "every face once". The built artifact disagreed — `v4-font-face`
+   * redeclares the same three files under the `FontAwesome` family — which is
+   * why the claim is now a test instead of a sentence.
+   */
+  const dir = join(here, '..', 'dist', 'sandbox')
+  if (!existsSync(dir)) return
+
+  const bundle = readdirSync(dir).find(name => name.startsWith('message-preset-'))
+  if (bundle === undefined) return
+  const code = readFileSync(join(dir, bundle), 'utf8')
+
+  const BACKSLASH = String.fromCharCode(92)
+  const pattern = new RegExp(`data:font/woff2;base64,[A-Za-z0-9+${BACKSLASH}/=]+`, 'g')
+  const payloads = [...code.matchAll(pattern)].map(match => match[0])
+
+  assert.deepEqual(
+    payloads.filter((one, at) => payloads.indexOf(one) !== at),
+    [],
+    'a font is inlined more than once — every duplicate is its own size in wasted bytes',
+  )
+
+  const shipped = new Set(
+    payloads.map(one =>
+      createHash('sha1')
+        .update(Buffer.from(one.slice('data:font/woff2;base64,'.length), 'base64'))
+        .digest('hex')),
+  )
+
+  const webfonts = join(here, '..', 'node_modules', '@fortawesome', 'fontawesome-free', 'webfonts')
+  const installed = new Set(
+    readdirSync(webfonts)
+      .filter(name => name.endsWith('.woff2'))
+      .map(name => createHash('sha1').update(readFileSync(join(webfonts, name))).digest('hex')),
+  )
+
+  assert.equal(shipped.size, 4, 'the bundle must carry exactly the four faces')
+  for (const digest of shipped) {
+    assert.ok(installed.has(digest), 'a shipped font is not byte-identical to the installed package')
+  }
+})

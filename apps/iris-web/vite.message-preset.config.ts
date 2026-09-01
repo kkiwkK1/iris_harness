@@ -71,9 +71,84 @@ function dropTruetypeSources() {
   }
 }
 
+/**
+ * Inline each font's bytes once, however many faces name it.
+ *
+ * The split sheets fixed most of this — `all.min.css` declared ten faces for
+ * four files, and importing the sub-sheets got that to seven. But the note on
+ * `message-preset-styles.ts` says the split sheets inline "every face once", and
+ * the built artifact disagrees: `v4-font-face.min.css` declares the
+ * `FontAwesome` family over the **same three files** the FA6 sheets use, so
+ * `fa-solid-900`, `fa-brands-400` and `fa-regular-400` each arrive twice.
+ * 399,597 bytes of base64 for glyphs already present.
+ *
+ * The obvious alternative — drop the v4 sheet — is not free: the `FontAwesome`
+ * family is what a card writing `font-family: FontAwesome` in its own CSS
+ * matches, and losing it degrades silently to a fallback font. This keeps every
+ * face and every family and removes only the repetition.
+ *
+ * **Why it edits the emitted chunk rather than the CSS.** CSS has no way to say
+ * "this face uses the bytes that face already carries" — `@font-face` takes one
+ * family name and needs a `src`. In the chunk the payloads are ordinary string
+ * content, so a shared binding is expressible there and nowhere earlier.
+ *
+ * The splice assumes the payloads sit inside double-quoted string literals,
+ * which is what Rollup emits and what the build asserts by decoding the result:
+ * a wrong guess is a parse error or a failed decode, both at build time. This is
+ * deliberately a place where being wrong is loud.
+ */
+function inlineEachFontOnce() {
+  const BACKSLASH = String.fromCharCode(92)
+  const PATTERN = new RegExp(`data:font/woff2;base64,[A-Za-z0-9+${BACKSLASH}/=]+`, 'g')
+
+  return {
+    name: 'iris-inline-each-font-once',
+    enforce: 'post' as const,
+    renderChunk(code: string) {
+      const seen = new Map<string, number>()
+      for (const match of code.matchAll(PATTERN)) {
+        seen.set(match[0], (seen.get(match[0]) ?? 0) + 1)
+      }
+      const repeated = [...seen].filter(([, count]) => count > 1).map(([payload]) => payload)
+      if (repeated.length === 0) return null
+
+      let out = code
+      const declarations: string[] = []
+      repeated.forEach((payload, index) => {
+        const name = `__irisFont${String(index)}`
+        // `const`, not `var`: this lands inside the `try{` below, where a `const`
+        // is block-scoped and a `var` would become a global. The frame's global
+        // scope belongs to the card, and three font bindings in it would undo a
+        // decision made elsewhere for reasons that have nothing to do with fonts.
+        declarations.push(`const ${name}=${JSON.stringify(payload)};`)
+        // Every occurrence, the first included, so the bytes live in one place.
+        out = out.split(payload).join(`"+${name}+"`)
+      })
+
+      /*
+       * Spliced **inside** the existing `try{` rather than wrapped around it.
+       *
+       * Rollup's `banner`/`footer` are applied before this runs, and that banner
+       * is not decoration: the whole bundle is wrapped so a throw is recorded as
+       * `__iris_preset_error__`, because an exception in an opaque origin reaches
+       * `window.onerror` redacted to "Script error." Wrapping the banner in
+       * another function put the fonts outside the recorded region and left the
+       * artifact no longer starting with `try{` — which a test caught, and which
+       * would otherwise have cost the frame its only way to report its own
+       * failure.
+       */
+      const OPEN = 'try{'
+      if (out.startsWith(OPEN)) {
+        return { code: OPEN + declarations.join('') + out.slice(OPEN.length), map: null }
+      }
+      return { code: `(function(){${declarations.join('')}${out}})();`, map: null }
+    },
+  }
+}
+
 export default defineConfig({
   configFile: false,
-  plugins: [dropTruetypeSources()],
+  plugins: [dropTruetypeSources(), inlineEachFontOnce()],
   define: {
     /*
      * The same flags the script preset defines, for the same reason: Vue's
