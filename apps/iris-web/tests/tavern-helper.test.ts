@@ -567,3 +567,46 @@ test('a script-button gap is reported once per member, not once per call', () =>
   )
 })
 
+test('a floor-addressed read is refused by name rather than answered from the wrong floor', () => {
+  const { api } = surface()
+  const read = api['getVariables'] as (option?: unknown) => unknown
+
+  /*
+   * The failure this prevents is a write, not a read. MagVarUpdate's update flow
+   * reads one floor's variables and merges them into `stat_data` before storing
+   * — so answering with a snapshot that cannot tell floors apart does not return
+   * a wrong value, it persists a merge built on one.
+   */
+  assert.throws(
+    () => read({ type: 'message', message_id: 5 }),
+    /message_id:5/,
+    'a floor-addressed read must name what it refused',
+  )
+
+  // The refusal points at the project that will answer it, so a card author is
+  // not told a permanent limit about something already scheduled.
+  assert.throws(() => read({ type: 'message', message_id: 0 }), /message-frame project/)
+})
+
+test('an unaddressed read still works, because that is what a script frame can answer', () => {
+  const { api } = surface()
+  const read = api['getVariables'] as (option?: unknown) => unknown
+
+  // `latest` and an absent id both mean "whatever this frame was given", which
+  // is exactly what the snapshot holds. Refusing these would break every card.
+  assert.doesNotThrow(() => read())
+  assert.doesNotThrow(() => read({ type: 'message' }))
+  assert.doesNotThrow(() => read({ type: 'message', message_id: 'latest' }))
+})
+
+test('getAllVariables says it is answering with less than upstream would', () => {
+  const { api, gaps } = surface()
+  const read = api['getAllVariables'] as (option?: unknown) => unknown
+
+  assert.doesNotThrow(() => read())
+  assert.ok(
+    gaps.some(gap => gap.includes('global, character, script and chat')),
+    'a card asking for all variables and getting one scope must be told so',
+  )
+})
+

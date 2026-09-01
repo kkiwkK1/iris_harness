@@ -27,10 +27,12 @@ import { spawn } from 'node:child_process'
  * provider key.
  *
  * Measured, not guessed: with the corpus present the suite skips 2, without it
- * 15. Update this number **only** after checking which test moved and why — a
- * drift here is the signal, not the noise.
+ * 16. Update this number **only** after checking which test moved and why — a
+ * drift here is the signal, not the noise. It has already earned its keep once:
+ * splitting one corpus test into two moved it from 15 to 16, and the check named
+ * the drift before the change was reported as finished.
  */
-const EXPECTED_SKIPPED = 15
+const EXPECTED_SKIPPED = 16
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 

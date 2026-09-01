@@ -210,6 +210,60 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
         'The frame snapshot carries the message scope only.',
       )
     }
+
+    /*
+     * A floor-addressed read is **refused by name**, not answered from a
+     * snapshot that cannot tell floors apart.
+     *
+     * `ScriptContext.variables` is one flat record — "current variable state" —
+     * with no record of which floor it belongs to, and `ScriptChatMessage`
+     * carries no per-message variables at all. So `message_id: 5` cannot be
+     * answered correctly, and its wrongness **cannot even be detected here**:
+     * there is no floor label to compare the request against.
+     *
+     * Refusing rather than answering, because the alternative is the worst thing
+     * this file can do. MagVarUpdate's update flow is
+     * `getVariables({type:'message', message_id: i})` followed by a merge into
+     * `stat_data` and a write — so answering the wrong floor does not merely
+     * return a wrong value, it **writes a merge built on one**. A named refusal
+     * costs a visible failure; a silent answer costs state nobody can audit
+     * afterwards.
+     *
+     * The message names the project that will make it work rather than implying
+     * a permanent limit: a message frame knows its own floor, so the read has a
+     * correct answer there and the snapshot for it is bounded (measured worst
+     * case 282.8 KiB for one floor, against 8.29 MiB to carry all of them).
+     */
+    const addressed = option?.message_id
+    if (addressed !== undefined && addressed !== 'latest') {
+      throw new UnsupportedApiError(
+        `${member}({message_id:${String(addressed)}})`,
+        'This frame answers from one snapshot that does not record which floor it holds, so a' +
+          ' floor-addressed read cannot be answered correctly here. Floor-addressed reads arrive' +
+          ' with the message-frame project.',
+      )
+    }
+
+    /*
+     * `getAllVariables` is still answered with the message scope alone, which is
+     * **not** what upstream means by it: there it merges global, character,
+     * script and chat (and, in a message frame only, every floor up to this
+     * one). Those scopes exist on the host and are not in the snapshot yet.
+     *
+     * Reported rather than refused, and the asymmetry with the branch above is
+     * deliberate. That one is refused because answering it wrongly corrupts
+     * state through a write; this one is a read whose answer is a subset — a
+     * card gets less than it asked for, not something false about a floor it
+     * named. Refusing a member that no measured card calls, days before the
+     * snapshot makes it correct, would be churn rather than honesty.
+     */
+    if (member === 'getAllVariables') {
+      host.reportGap(
+        'getAllVariables returned this frame’s message-scope variables only — upstream merges' +
+          ' global, character, script and chat scopes, which this snapshot does not carry yet',
+      )
+    }
+
     return snapshot(member).variables
   }
 
