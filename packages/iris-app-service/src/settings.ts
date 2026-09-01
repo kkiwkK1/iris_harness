@@ -34,6 +34,15 @@ interface SettingsFile {
   global: GenerationSettings
   /** Per-chat overrides, keyed by chat id. */
   chats: Record<string, Partial<GenerationSettings>>
+  /**
+   * World book settings, which are installation-wide rather than per chat.
+   *
+   * Its own section rather than a field of {@link GenerationSettings}: that
+   * type is merged per chat and range-checked as numbers, and a list of book
+   * names is neither. Upstream keeps this apart too — `globalSelect` lives
+   * under `world_info_settings.world_info`, not beside the sampler.
+   */
+  worldbooks?: { globalSelect: string[] }
 }
 
 /** Fields of {@link GenerationSettings} that may simply be absent. */
@@ -143,6 +152,32 @@ export class SettingsStore {
    * Drop a chat's overrides, when its conversation is deleted.
    * @param chatId - the chat.
    */
+  /**
+   * The books injected into every chat, whatever character is playing.
+   *
+   * Upstream's `world_info.globalSelect`. Names verbatim, because a book's name
+   * is its identity and 13 of 18 real names change under `toId`.
+   * @returns the selected names, empty when none are.
+   */
+  globalSelect(): string[] {
+    return [...this.#file.worldbooks?.globalSelect ?? []]
+  }
+
+  /**
+   * Choose the books injected into every chat.
+   *
+   * Deliberately not migrated from a SillyTavern installation: importing
+   * settings is its own unstarted piece of work, and silently adopting another
+   * application's live selection would make this host's prompts depend on that
+   * application's current state. A user moving across re-selects their global
+   * books once.
+   * @param names - book names, verbatim.
+   */
+  async setGlobalSelect(names: readonly string[]): Promise<void> {
+    this.#file.worldbooks = { globalSelect: [...names] }
+    await this.save()
+  }
+
   async forget(chatId: string): Promise<void> {
     if (this.#file.chats[chatId] === undefined) return
     delete this.#file.chats[chatId]

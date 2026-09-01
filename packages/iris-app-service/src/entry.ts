@@ -522,20 +522,47 @@ export class ChatEntry {
     // no declared tree at all, and MVU's `set` refuses a path that does not
     // exist — so the symptom would be every variable update silently failing.
     const chosen = this.worldbook
-    const entries = chosen !== undefined
+
+    // Globally selected books seed variables too, and **before** the
+    // character's. That order is not a guess: MVU's `getEnabledLorebookList`
+    // builds `[...selected_global_lorebooks, primary, ...additional]`
+    // (`MagVarUpdate/src/function/initvar/variable_init.ts:230`), so a global
+    // book's `[InitVar]` is folded first and the character's declaration wins
+    // where they overlap.
+    //
+    // **This is the opposite of the order `scanEntriesOf` builds, and neither is
+    // a typo.** That one is character-first, by the installation's
+    // `world_info_character_strategy`; this one is global-first, by MVU's
+    // hardcoded list. The same note sits beside that construction, because a
+    // reader who finds only one of the two will reasonably conclude the other
+    // is a mistake. Matching them up would be plausible tidiness that changes
+    // behaviour.
+    const books: { name: string, entries: unknown[] }[] = []
+    const seen = new Set<string>()
+    for (const book of chosen?.global ?? []) {
+      if (seen.has(book.world)) continue
+      seen.add(book.world)
+      books.push({ name: book.world, entries: book.entries })
+    }
+
+    // The chosen book, not the embedded one. A card that declares `[InitVar]`
+    // in its named book and ships no embedded copy would otherwise start with
+    // no declared tree at all, and MVU's `set` refuses a path that does not
+    // exist — so the symptom would be every variable update silently failing.
+    const ownName = chosen?.world ?? this.card?.data.name ?? 'character book'
+    const own = chosen !== undefined
       ? chosen.entries
       : (() => {
         const book = this.card?.data.character_book
         return book !== undefined && Array.isArray(book.entries) ? book.entries : []
       })()
-    if (entries.length === 0) {
+    if (own.length > 0 && !seen.has(ownName)) books.push({ name: ownName, entries: own })
+
+    if (books.length === 0) {
       this.#initVars = EMPTY_MVU
       return this.#initVars
     }
-    this.#initVars = loadInitVars(
-      [{ name: chosen?.world ?? this.card?.data.name ?? 'character book', entries }],
-      EMPTY_MVU,
-    ).data
+    this.#initVars = loadInitVars(books as Parameters<typeof loadInitVars>[0], EMPTY_MVU).data
     return this.#initVars
   }
 

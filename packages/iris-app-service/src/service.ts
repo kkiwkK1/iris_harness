@@ -459,6 +459,15 @@ export class IrisAppService {
         if (worldbooks === undefined) throw notFound(`world book "${name}"`)
         return { entries: await worldbooks.get(name) }
       },
+      'worldbook.globalSelect': async () => ({ names: settings.globalSelect() }),
+      'worldbook.setGlobalSelect': async ({ names }) => {
+        // Chats already open keep the selection they resolved with. Re-resolving
+        // them here would change what a conversation in progress is built from,
+        // mid-conversation, which is a bigger surprise than waiting for the next
+        // open — and `ChatStore` reads the selection fresh every time.
+        await settings.setGlobalSelect(names)
+        return { names: settings.globalSelect() }
+      },
       'worldbook.replace': async ({ name, entries }) => {
         // Refused rather than answered when there is nowhere to write. A write
         // that reports success without a store is the worst of the three

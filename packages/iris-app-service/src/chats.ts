@@ -79,6 +79,14 @@ export class ChatStore {
   readonly #globalScope: ScopeBackend | undefined
   /** Named books, for choosing which one a card's world info comes from. */
   readonly #worldbooks: WorldbookStore | undefined
+  /**
+   * The globally selected book names, read fresh each time a chat opens.
+   *
+   * A function rather than a value because the selection is a setting the user
+   * can change while the host is running, and a snapshot taken at construction
+   * would leave every chat opened afterwards using the old one.
+   */
+  readonly #globalSelect: (() => readonly string[]) | undefined
   readonly #entries = new Map<string, ChatEntry>()
 
   /**
@@ -93,12 +101,14 @@ export class ChatStore {
     scriptVariables?: ScriptVariableStore,
     globalScope?: ScopeBackend,
     worldbooks?: WorldbookStore,
+    globalSelect?: () => readonly string[],
   ) {
     this.#dir = dir
     this.#library = library
     this.#scriptVariables = scriptVariables
     this.#globalScope = globalScope
     this.#worldbooks = worldbooks
+    this.#globalSelect = globalSelect
   }
 
   /**
@@ -187,7 +197,7 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(meta.characterId, card)
     const entry = new ChatEntry({
       chatId, header: file.header, session, card,
-      worldbook: await resolveCardWorldbook(card, this.#worldbooks),
+      worldbook: await resolveCardWorldbook(card, this.#worldbooks, this.#globalSelect?.() ?? []),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
     })
@@ -230,7 +240,7 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(characterId, card)
     const entry = new ChatEntry({
       chatId, header, session, card,
-      worldbook: await resolveCardWorldbook(card, this.#worldbooks),
+      worldbook: await resolveCardWorldbook(card, this.#worldbooks, this.#globalSelect?.() ?? []),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
     })

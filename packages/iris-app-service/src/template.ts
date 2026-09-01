@@ -61,23 +61,29 @@ export function worldInfoOf(
   // The fallback is not a second rule: it is what a caller with no world book
   // store can see, and it keeps this function usable from a test that has no
   // installation behind it. A host always passes `chosen`.
-  let source: { entries: LorebookEntry[], world: string }
+  // One group per book, so each entry is attributed to the book it came from.
+  // `getwi` matches on that name, and a globally selected book must not answer
+  // to the character's.
+  let sources: { entries: LorebookEntry[], world: string }[]
   if (chosen !== undefined) {
-    source = { entries: chosen.entries, world: chosen.world }
+    sources = [
+      { entries: chosen.entries, world: chosen.world },
+      ...chosen.global.map(book => ({ entries: book.entries, world: book.world })),
+    ]
   } else {
     const book = card?.data.character_book
     if (book === undefined) return []
     try {
-      source = {
+      sources = [{
         entries: Object.values(fromCharacterBook(book).entries),
         world: card?.data.name ?? 'character book',
-      }
+      }]
     } catch {
       return []
     }
   }
 
-  return source.entries
+  return sources.flatMap(source => source.entries
     .filter(entry => entry.disable !== true)
     .map(entry => ({
       world: source.world,
@@ -85,7 +91,7 @@ export function worldInfoOf(
       // The title, which is what `getwi` matches on — not the body.
       comment: entry.comment,
       content: expand(entry.content),
-    }))
+    })))
 }
 
 /**

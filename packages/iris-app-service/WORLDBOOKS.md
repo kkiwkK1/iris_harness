@@ -68,6 +68,66 @@ changed on disk mid-conversation cannot make a branch disagree with its parent.
 corpus case asserts that a card with both books resolves to *exactly* its named
 book and keeps nothing that exists only in the embedded one.
 
+## 2b. How many entries actually reach a prompt
+
+`1478` is the number of entries on disk. It is an **upper bound**, and it was
+written in this document and in `worldbooks.ts` without saying so, which reads as
+a claim that it is the working figure. Measured by 3e (2026-09-02):
+
+```
+entries in the 18 book files                 1478   100.0%
+  …in a book some card binds, or globally
+    selected                                 1142    77.3%
+  …and not disabled by its author             859    58.1%
+       of which constant (always injected)    288    19.5%   ← firmest lower bound
+       of which keyword-triggered             571    38.6%   ← depends on the conversation
+          …with no keywords, so never firing     5     0.3%
+       of which vectorized                      0     0.0%
+  disabled                                    503    34.0%
+```
+
+**336 entries (22.7%) are on disk and reachable by no path at all**, and 333 of
+those are one book — `缄默之秋2.5`, the largest in the corpus, bound by no card
+and not globally selected. Any suspicion that this host is failing to read
+content should rule that book out first.
+
+Two layers are **not** in these numbers, so 288 is "survived the switches", not
+"landed in the context": `world_info_budget: 100` trims after activation, and
+`world_info_recursive: true` adds back. The 571 keyword-triggered entries depend
+on what is actually said, so any single figure for them is false precision.
+
+Scope: 19 corpus cards plus one sample card, and one installation's
+`settings.json`. That exactly one book is globally selected is a fact about this
+machine, not about the product.
+
+## 2c. Globally selected books reach every character
+
+A **third source**, added to the character's rather than chosen between — the
+exception to §2, and for a reason: the embedded and named books are two copies of
+one thing, while a globally selected book is a different thing. Upstream
+concatenates it (`world-info.js:4478`).
+
+- Stored as `worldbooks.globalSelect` in this host's own settings file, read
+  fresh whenever a chat opens. Reachable over `worldbook.globalSelect` /
+  `worldbook.setGlobalSelect`.
+- **Dedup is mandatory.** `world-info.js:4387` skips a character's book when it
+  is already active globally. Without it, the one card that binds a globally
+  selected book receives every entry twice.
+- **Order is `character_first`** on the measured installation
+  (`world_info_character_strategy = 1`): the character's own entries, then the
+  global ones. Order breaks activation ties, so it is behaviour.
+- **`[InitVar]` seeding uses the opposite order.** MVU builds
+  `[...selected_global_lorebooks, primary, ...additional]`
+  (`MagVarUpdate/.../variable_init.ts:230`), so a global book's declaration is
+  folded first and the character's wins where they overlap. Matching only one of
+  the two orders would be plausible tidiness that changes behaviour.
+- A selected book that no longer exists is skipped, not fatal.
+
+Measured effect of turning this on, 2026-09-02: **18 cards gain 15 always-on
+entries each; the 1 card that binds the selected book gains 0.** That zero is the
+strongest assertion available — every other card gains legitimately, so only that
+card can tell a fix from a duplication.
+
 ## 3. Names are used verbatim
 
 A book's name is its identity, and it comes from another application's data. All
@@ -150,8 +210,17 @@ would break them.
 
 ## 6. What is not implemented
 
-- **Creating a book.** Upstream's `createWorldbook` / `createOrReplaceWorldbook`
-  exist; no corpus card calls them.
+- **Creating a book.** Upstream's `createWorldbook`, `createOrReplaceWorldbook`,
+  `deleteWorldbook` and `createWorldbookEntries` exist and are called by no
+  corpus card. That zero was originally written without a measurement behind it;
+  it has since been measured, by **bare member name** across 47 card scripts in
+  19 cards — no `TavernHelper.` anchor, because a path-anchored pattern cannot
+  see `window.parent.TavernHelper.x` or `getContext().x`, and its output for a
+  member it cannot see is `0`, which reads as "unused" rather than "unsearched".
+  Scope caveat: 47 card scripts is a **narrower source set** than the 121 sources
+  (card scripts, rendered interface blocks, sample card) used for the census
+  numbers elsewhere in this document, so this zero is weaker than one taken
+  there.
 - **`charLore` extra books.** `CharWorldbookNames.additional` is always empty:
   the measured installation has a `world_info` section — under
   `world_info_settings`, not at the top level — and it carries `globalSelect`
@@ -159,8 +228,12 @@ would break them.
   though not because the section is missing. An earlier version of this section
   said it was, having read the top-level path; the conclusion survived, the
   reason did not. The shape comes from upstream's source, not from a file.
-- **Global selection.** `world_info.globalSelect` is likewise absent, which is
-  why the corpus has 2 books that no card binds and nothing can currently reach.
+- **Migrating a selection from SillyTavern.** Global selection itself *is*
+  implemented (§2c); what is not is adopting an existing installation's
+  `globalSelect` value. Importing settings is its own unstarted piece of work,
+  and silently following another application's live file would make this host's
+  prompts depend on that application's current state. A user moving across
+  re-selects their global books once.
 - **`render: 'debounced' | 'immediate'`.** It redraws upstream's world book
   editor panel; this host has no such panel. If the frame needs a "this book
   changed" signal, that is a broadcast to add, not this option to port.

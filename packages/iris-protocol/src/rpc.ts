@@ -482,6 +482,20 @@ export const requestSchemas = {
    * "leave it alone"** — it means `constant: true`, an always-on entry. That is
    * upstream's default and this host copies it; see `worldbooks.ts`.
    */
+  /**
+   * The books injected into every chat, whatever character is playing.
+   *
+   * Upstream's `world_info.globalSelect`, which lives under
+   * `settings.json` → `world_info_settings`. Its own pair of methods rather than
+   * a field of `settings.set`: that patch is merged per chat and range-checked
+   * as numbers, and this is neither — it is installation-wide and a list of
+   * names.
+   */
+  'worldbook.globalSelect': z.object({}),
+  'worldbook.setGlobalSelect': z.object({
+    /** Book names, verbatim. A name with no file behind it is simply skipped. */
+    names: z.array(z.string().min(1).max(120)).max(100),
+  }),
   'worldbook.replace': z.object({
     name: z.string().min(1).max(120),
     entries: z.array(z.object({
@@ -600,6 +614,8 @@ export interface RpcResponseMap {
   'worldbook.charNames': { primary: string | null, additional: string[] }
   /** The book as stored, read back — so a writer sees what its partial produced. */
   'worldbook.replace': { entries: WorldbookEntry[] }
+  'worldbook.globalSelect': { names: string[] }
+  'worldbook.setGlobalSelect': { names: string[] }
 
   'connection.list': { profiles: ConnectionProfile[], activeId?: string }
   'connection.save': { profiles: ConnectionProfile[], activeId?: string }

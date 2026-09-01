@@ -131,7 +131,7 @@ test('a binding with no file behind it falls back to the embedded book', async (
 test('a card with no books at all resolves to nothing, not to an error', async () => {
   const store = await storeWith({})
   const resolved = await resolveCardWorldbook(cardWith({}), store)
-  assert.deepEqual(resolved, { entries: [], source: 'none', world: 'Aria' })
+  assert.deepEqual(resolved, { entries: [], source: 'none', world: 'Aria', global: [] })
 
   // And a host with no store behaves like a host whose books are all missing,
   // rather than throwing on every chat it opens.

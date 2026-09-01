@@ -343,11 +343,20 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // a card and a synchronous read cannot wait for a file.
   const globalScope = await openGlobalScope(extensionSettingsStore, error => { ctx.logger.warn(error.message) })
   const worldbooks = new WorldbookStore(paths.worlds)
-  const chats = new ChatStore(paths.chats, library, scriptVariables, globalScope, worldbooks)
+  // Declared before `chats`, which closes over it. The closure is only called
+  // when a chat opens, so the old order happened to work — but it left a
+  // temporal-dead-zone hazard one refactor away from a `ReferenceError` that
+  // would only appear if something ever opened a chat during construction.
   const settings = new SettingsStore(paths.settings, {
     provider: config.provider ?? 'default',
     model: config.model ?? 'local-model',
   })
+  const chats = new ChatStore(
+    paths.chats, library, scriptVariables, globalScope, worldbooks,
+    // Read through a closure rather than captured: the selection is a setting
+    // the user can change at runtime, and a value read here would freeze it.
+    () => settings.globalSelect(),
+  )
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset
   // cannot hand a card the page document.
@@ -439,6 +448,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('worldbook.get', handlers['worldbook.get']),
       ctx.irisRpc.register('worldbook.charNames', handlers['worldbook.charNames']),
       ctx.irisRpc.register('worldbook.replace', handlers['worldbook.replace']),
+      ctx.irisRpc.register('worldbook.globalSelect', handlers['worldbook.globalSelect']),
+      ctx.irisRpc.register('worldbook.setGlobalSelect', handlers['worldbook.setGlobalSelect']),
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()

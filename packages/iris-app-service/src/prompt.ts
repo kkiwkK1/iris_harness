@@ -128,7 +128,25 @@ function roleOf(value: number): Role {
 export function scanEntriesOf(card: CharacterCard | undefined, chosen?: ResolvedWorldbook): ScanEntry[] {
   let entries: ScanEntry[]
   if (chosen !== undefined) {
-    entries = chosen.entries.map(entry => ({ ...entry, world: chosen.world }))
+    // Character's own book first, then the globally selected ones. That is
+    // upstream's `character_first` strategy (`world_info_character_strategy`),
+    // which is the value the measured installation carries. Each book keeps its
+    // own name, because `getwi(name, …)` matches on it and a globally selected
+    // book is not the character's.
+    //
+    // **`ChatEntry.initVars` builds the same list in the opposite order, and
+    // that is not a typo in either place.** Prompt assembly is character-first
+    // by the installation's strategy setting; `[InitVar]` seeding is global-first
+    // because MVU's `getEnabledLorebookList` hardcodes
+    // `[...selected_global_lorebooks, primary, ...additional]`
+    // (`MagVarUpdate/src/function/initvar/variable_init.ts:230`), so a global
+    // book's declaration folds first and the character's wins on overlap. Two
+    // upstream decisions, made in different code for different reasons.
+    // Reconciling them would look like tidying and would change behaviour.
+    entries = [
+      ...chosen.entries.map(entry => ({ ...entry, world: chosen.world })),
+      ...chosen.global.flatMap(book => book.entries.map(entry => ({ ...entry, world: book.world }))),
+    ]
   } else {
     // No resolver: the embedded book, which is what a caller with no world book
     // store can see. A host always passes `chosen`.

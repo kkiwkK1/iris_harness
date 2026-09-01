@@ -5,7 +5,10 @@
  * storage of any kind — `worldInfoOf` and `prompt.ts` read `data.character_book`
  * and nothing else. Against the corpus that is not a small omission: **18 of 19
  * cards bind a named book** through `data.extensions.world`, 16 of those names
- * resolve to a file, and the 18 book files hold **1478 entries** between them.
+ * resolve to a file, and the 18 book files hold **1478 entries** between them —
+ * an *upper bound*, not a working figure: only 288 of those are always injected
+ * and 336 are reachable by no path at all. `WORLDBOOKS.md §2b` carries the
+ * funnel.
  * 17 cards carry *both* an embedded book and a binding, so for those the host
  * was assembling prompts from half of each card's world info.
  *
@@ -413,12 +416,26 @@ export class WorldbookStore {
  * when it behaves as though it has none.
  */
 export interface ResolvedWorldbook {
-  /** The entries to assemble from, already normalized. */
+  /** The character's own entries, already normalized. */
   entries: LorebookEntry[]
-  /** What the entries came from. */
+  /** What {@link entries} came from. */
   source: 'named' | 'embedded' | 'none'
-  /** The book's name, for attribution on each entry. */
+  /** The character's book name, for attribution on each of its entries. */
   world: string
+  /**
+   * Globally selected books, which apply to every character.
+   *
+   * A **third source, added to** the character's rather than chosen between —
+   * unlike the embedded/named pair. Upstream assembles
+   * `[...chatLore, ...personaLore, ...characterLore, ...globalLore]`
+   * (`world-info.js:4478`), so a globally selected book reaches every card.
+   *
+   * Kept as its own list rather than merged into {@link entries} because each
+   * book attributes its entries to its own name, and `getwi(name, …)` matches on
+   * that name. Flattening here would need one `world` for entries from several
+   * books.
+   */
+  global: { world: string, entries: LorebookEntry[] }[]
 }
 
 /**
@@ -460,14 +477,40 @@ export interface ResolvedWorldbook {
 export async function resolveCardWorldbook(
   card: CharacterCard | undefined,
   store: WorldbookStore | undefined,
+  globalSelect: readonly string[] = [],
 ): Promise<ResolvedWorldbook> {
   const fallbackName = card?.data.name ?? 'character book'
   const bound = charWorldbookNames(card).primary
 
+  // The globally selected books, read once and shared by every branch below.
+  const global: { world: string, entries: LorebookEntry[] }[] = []
+  if (store !== undefined) {
+    for (const name of globalSelect) {
+      try {
+        const book = await store.read(name)
+        global.push({ world: name, entries: Object.values(book.entries) })
+      } catch {
+        // A selected book that no longer exists is skipped, not fatal. Upstream
+        // does the same: `loadWorldInfo` returning nothing yields no entries and
+        // a console note.
+      }
+    }
+  }
+
+  // Upstream's dedup, and it is not optional: `world-info.js:4387` skips a
+  // character's book when it is *already* active globally, with the comment
+  // "is already activated in global world info! Skipping...". Without it the one
+  // card that binds a globally selected book gets every entry of it twice —
+  // which is the duplication failure this module already exists to avoid, in a
+  // second place.
+  if (bound !== null && globalSelect.includes(bound)) {
+    return { entries: [], source: 'none', world: bound, global }
+  }
+
   if (bound !== null && store !== undefined) {
     try {
       const book = await store.read(bound)
-      return { entries: Object.values(book.entries), source: 'named', world: bound }
+      return { entries: Object.values(book.entries), source: 'named', world: bound, global }
     } catch {
       // A binding with no file behind it, or a file this build cannot parse.
       // Falls through to the embedded book rather than refusing: rule 2 exists
@@ -482,6 +525,7 @@ export async function resolveCardWorldbook(
         entries: Object.values(fromCharacterBook(embedded).entries),
         source: 'embedded',
         world: fallbackName,
+        global,
       }
     } catch {
       // A book Iris cannot read is a reason to play the character without it,
@@ -489,7 +533,7 @@ export async function resolveCardWorldbook(
     }
   }
 
-  return { entries: [], source: 'none', world: fallbackName }
+  return { entries: [], source: 'none', world: fallbackName, global }
 }
 
 /**

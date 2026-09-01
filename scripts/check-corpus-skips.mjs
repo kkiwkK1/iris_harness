@@ -37,9 +37,9 @@ import { spawn } from 'node:child_process'
  * did not move because the gate was broken, which is precisely the case a
  * hand-maintained count cannot notice on its own. 19 → 20 with the world book
  * source-choice test, and 20 → 21 with the MVU listener premise guard; both are
- * gated the same way.
+ * gated the same way; 21 → 22 with the global-selection acceptance case.
  */
-const EXPECTED_SKIPPED = 21
+const EXPECTED_SKIPPED = 22
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 
