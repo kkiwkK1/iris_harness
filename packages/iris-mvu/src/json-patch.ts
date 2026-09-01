@@ -40,6 +40,16 @@ export interface JsonPatchScan {
   /** How many `<JSONPatch>` blocks were present at all. */
   blocks: number
   /**
+   * How many operations those blocks contained, understood or not.
+   *
+   * Separate from `commands.length` so a caller can tell an **empty** block from
+   * an unreadable one. `<JSONPatch>[]</JSONPatch>` is a model saying "nothing
+   * changed this turn", which is a correct answer and must not be reported as a
+   * failure to read; a block with operations in it that produced no commands is
+   * the opposite, and is the thing worth saying out loud.
+   */
+  operations: number
+  /**
    * One line per operation that was dropped, and why.
    *
    * Carried rather than discarded because this whole dialect went unnoticed for
@@ -52,6 +62,21 @@ export interface JsonPatchScan {
 
 /** `<JSONPatch>` … `</JSONPatch>`, tolerant of case and surrounding whitespace. */
 const BLOCK = /<JSONPatch>([\s\S]*?)<\/JSONPatch>/gi
+
+/**
+ * RFC 6902 operations this dialect does **not** carry, and what to say instead.
+ *
+ * A model that has read the RFC rather than the card writes `add` or `copy`, and
+ * a refusal reading `unknown op "add"` blames it for inventing something that is
+ * in fact the standard's own name. The message has to say which side the gap is
+ * on: this dialect is the card's, not the RFC's, and it spells three of the five
+ * differently.
+ */
+const RFC_ONLY: Readonly<Record<string, string>> = {
+  add: 'RFC 6902 calls this "add"; this dialect spells the same thing "insert"',
+  copy: '"copy" belongs to RFC 6902; this dialect has no equivalent, and a "move" followed by a re-set is the nearest',
+  test: '"test" is the RFC 6902 assertion op; this dialect has no equivalent and nothing in the corpus uses it',
+}
 
 /** JSON Patch op names mapped onto the canonical verbs `apply` implements. */
 const OPS: Readonly<Record<string, CommandType>> = {
@@ -111,7 +136,16 @@ function splitPointer(pointer: string): { container: string, key: string } {
 function toCommand(raw: RawOperation, index: number): CommandInfo | { reason: string } {
   const op = typeof raw.op === 'string' ? raw.op.toLowerCase() : ''
   const type = OPS[op]
-  if (type === undefined) return { reason: `operation ${String(index)}: unknown op "${String(raw.op)}"` }
+  if (type === undefined) {
+    // Named precisely, because a refusal that points at the wrong side costs
+    // somebody a search. `add` is not a model's invention.
+    const known = RFC_ONLY[op]
+    return {
+      reason: known === undefined
+        ? `operation ${String(index)}: unknown op "${String(raw.op)}"`
+        : `operation ${String(index)}: ${known}`,
+    }
+  }
 
   const source = JSON.stringify(raw)
 
@@ -180,6 +214,7 @@ export function scanJsonPatch(text: string): JsonPatchScan {
   const commands: CommandInfo[] = []
   const rejected: string[] = []
   let blocks = 0
+  let operations = 0
 
   BLOCK.lastIndex = 0
   for (let match = BLOCK.exec(text); match !== null; match = BLOCK.exec(text)) {
@@ -197,6 +232,7 @@ export function scanJsonPatch(text: string): JsonPatchScan {
       continue
     }
 
+    operations += parsed.length
     for (const [index, entry] of parsed.entries()) {
       if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
         rejected.push(`operation ${String(index)}: not an object`)
@@ -208,7 +244,7 @@ export function scanJsonPatch(text: string): JsonPatchScan {
     }
   }
 
-  return { commands, blocks, rejected }
+  return { commands, blocks, operations, rejected }
 }
 
 /**

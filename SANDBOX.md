@@ -292,6 +292,45 @@ The frame's own `script-src` carries the same list. That is a second layer, not
 a second enforcement point — if the two ever disagree, the host's answer is the
 real one.
 
+### Anything the frame imports must send CORS headers
+
+**Module scripts are always fetched in CORS mode.** Not "when cross-origin" —
+`<script type="module">` and `import` use request mode `cors` unconditionally,
+where a classic script uses `no-cors`. The frame is an opaque origin, so *every*
+import it makes is cross-origin, including one aimed at Iris's own host.
+
+This is invisible until you serve a card's dependency yourself. Direct CDN
+imports work because jsDelivr sends `Access-Control-Allow-Origin: *`; the moment
+the host proxied those bundles, the same mechanism failed with
+`Failed to fetch dynamically imported module: blob:null/…` — no CSP violation,
+because CSP allowed it, and no timeout, because the response arrived and was
+simply not delivered.
+
+So a host route the frame imports from must send `Access-Control-Allow-Origin`.
+`*` rather than `null`: every sandboxed frame's origin is `null`, so it
+identifies nobody and only looks precise. It grants nothing either, since the
+bytes are public CDN content that already carried `*`, and a CORS header governs
+whether a response may be **read**, never whether a request may be **sent**.
+
+Note what this does *not* buy: a custom header still needs
+`Access-Control-Expose-Headers` to be readable cross-origin, so `x-iris-reason`
+remains invisible to the frame. It is read by the shell, which is same-origin
+with the host — putting the diagnostic where its reader already is, rather than
+opening the frame further to reach it.
+
+### Remote imports are routed through the host
+
+Every chat opens a fresh opaque origin and HTTP caching is partitioned by
+origin, so a card's bundle is a cold fetch every time — measured at 307 KB over
+9–12 seconds, four timeouts in six openings. Upstream never pays this: its
+script frames are same-origin with the page and share its cache.
+
+The browser rewrites **only** imports that were already allowed. A URL the
+allowlist rejects is left exactly as written, so the frame's CSP refuses it as
+before; rewriting it to a same-origin path would turn a request that never left
+the browser into one the host must field, which is capability the card did not
+have. Diagnostics unwrap the routing and name the bundle the card asked for.
+
 ## Work split
 
 | Stream | Owner |

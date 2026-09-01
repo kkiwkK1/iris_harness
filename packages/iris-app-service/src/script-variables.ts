@@ -116,9 +116,19 @@ export class ScriptVariableStore {
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
         this.#partitions = parsed as Partitions
       }
-    } catch {
-      // Absent or unreadable. Empty is the safe reading: a script finds its
-      // table missing and re-initialises, which is its first-run state anyway.
+    } catch (error: unknown) {
+      // Two different events share this branch and only one of them is routine.
+      // A file that is not there is a first run, and an empty store is the right
+      // answer. A file that is there and cannot be parsed is **a card's
+      // accumulated script state about to be silently replaced by nothing** —
+      // the same recovery, a completely different fact, and the user is the one
+      // who loses by not hearing it.
+      if ((error as { code?: string }).code !== 'ENOENT') {
+        this.#onError(new Error(
+          `${this.#path} could not be read (${error instanceof Error ? error.message : String(error)});`
+          + ' every card starts from its shipped defaults this session, and saving will overwrite the file',
+        ))
+      }
     }
   }
 

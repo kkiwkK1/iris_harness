@@ -10,7 +10,10 @@ import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
-import { residualMacros } from '../src/prompt.ts'
+import { MACRO_SCOPES, isHelperMacroName } from '@iris/compat-tavernhelper'
+import { defaultRegistry } from '@iris/macro'
+
+import { attributeResidualMacros, residualMacros } from '../src/prompt.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { textOf } from '../src/views.ts'
@@ -180,6 +183,30 @@ test('a macro that nothing expanded is reported rather than sent in silence', as
     errors.some(error => /reached the provider unexpanded/u.test(error.message) && /no_such_macro/u.test(error.message)),
     `the unexpanded macro was not reported; saw ${JSON.stringify(errors.map(error => error.message))}`,
   )
+  // And it says whose gap it is. A bare list of names points at nobody, so a
+  // reader supplies the nearest suspect — which for a prompt defect is always
+  // the card. Nothing here implements `no_such_macro`, so the card is where it
+  // came from, and the message says exactly that.
+  assert.ok(
+    errors.some(error => /nothing here implements these/u.test(error.message)),
+    'the report did not say which side the gap is on',
+  )
+})
+
+test('a macro this host does implement is reported against this host', () => {
+  // The other half of the attribution, and the one that matters: `{{user}}` is
+  // ours. If it survives to the provider, the card did nothing wrong and the
+  // expansion failed to reach that text — a message naming only the macro would
+  // send whoever reads it to look at the card.
+  const registry = defaultRegistry()
+  const split = attributeResidualMacros(
+    ['user', 'format_message_variable', 'usre', 'pov_desc'],
+    name => registry.has(name) || isHelperMacroName(name),
+  )
+  assert.deepEqual(split.ours, ['user', 'format_message_variable'])
+  // `usre` is the corpus's own typo and `pov_desc` is registered by a card's
+  // script — neither is a gap here, and neither should send anyone searching.
+  assert.deepEqual(split.theirs, ['usre', 'pov_desc'])
 })
 
 test('residual detection names heads only, and does not fire on ordinary text', () => {
@@ -193,4 +220,94 @@ test('residual detection names heads only, and does not fire on ordinary text', 
   // Only the head, never the body — this feeds a log line, and a card's text
   // does not belong in one.
   assert.deepEqual(residualMacros('{{get_message_variable::secret.path}}'), ['get_message_variable'])
+})
+
+test('a model saying "nothing changed" is not reported as an unreadable reply', async (t) => {
+  const { handlers, errors, settled } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  await handlers['chat.send']({ chatId: created.view.chatId, text: 'Hi.' })
+  await settled()
+
+  // The stream in this fixture answers 'Understood.' — no block at all — so
+  // nothing about update blocks should be reported. The guard being asserted is
+  // the neighbouring one: a reply that *does* carry an empty block is a model
+  // answering "nothing changed this turn", and warning about it would point
+  // whoever reads the log at a parser that is working.
+  assert.equal(
+    errors.some(error => /produced no commands/u.test(error.message)),
+    false,
+    `a quiet turn was reported as unreadable; saw ${JSON.stringify(errors.map(error => error.message))}`,
+  )
+})
+
+test('a scope with no store is named, not rendered as emptiness', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-scope-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  // `character` is one of upstream's five scopes and Iris has no store for it.
+  // Rendered, it becomes `null` — indistinguishable from a store that exists and
+  // holds nothing, so a card author debugging a blank panel is told their value
+  // is unset when the truth is that the shelf was never built.
+  await writeFile(
+    join(dir, 'characters', 'aria.json'),
+    JSON.stringify({
+      spec: 'chara_card_v2', spec_version: '2.0',
+      data: {
+        name: 'Aria', description: 'Mood: {{get_character_variable::mood}}',
+        personality: '', scenario: '', first_mes: 'Hello.', mes_example: '',
+        creator_notes: '', system_prompt: '', post_history_instructions: '',
+        alternate_greetings: [], tags: [], creator: '', character_version: '1', extensions: {},
+      },
+    }),
+    'utf8',
+  )
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const chats = new ChatStore(join(dir, 'chats'), library)
+  const errors: Error[] = []
+  let ends = 0
+  const handlers = new IrisAppService({
+    stream: async function* (): AsyncIterable<StreamChunk> {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+    library,
+    chats,
+    settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
+    broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
+    userName: 'Traveller',
+    onError: (error: Error) => { errors.push(error) },
+  }).handlers()
+
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  await handlers['chat.send']({ chatId: created.view.chatId, text: 'Hi.' })
+  while (ends < 1) await new Promise(resolve => setTimeout(resolve, 1))
+
+  assert.ok(
+    errors.some(error => /character variable scope, which Iris has no store for/u.test(error.message)),
+    `the missing scope was rendered silently; saw ${JSON.stringify(errors.map(error => error.message))}`,
+  )
+  // Measured before this was wired: all 42 variable-macro uses in the corpus
+  // name `message`, and none names `character` or `preset` — so this reports a
+  // gap that costs nothing today, which is the point of naming it now.
+})
+
+test('every scope the macros match is a scope attribution recognises', () => {
+  // The set lived in four hand-written copies across two packages, and the one
+  // furthest from its definition decided *blame*: a sixth scope added to the
+  // matcher would have left the attribution regex stale, reporting a macro Iris
+  // owns as something the card invented. Duplicated logic where only one copy
+  // carries its reason is the copy that gets changed alone.
+  //
+  // Derived from the exported list, so this cannot pass by restating it.
+  for (const scope of MACRO_SCOPES) {
+    for (const kind of ['get', 'format']) {
+      assert.equal(
+        isHelperMacroName(`${kind}_${scope}_variable`),
+        true,
+        `${kind}_${scope}_variable is matched by the expander but not by attribution`,
+      )
+    }
+  }
+  assert.equal(isHelperMacroName('get_nonsense_variable'), false)
+  assert.equal(isHelperMacroName('user'), false)
 })

@@ -23,7 +23,7 @@
 
 import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { checkScriptFetch } from '@iris/script'
@@ -62,6 +62,24 @@ export interface ScriptCacheOptions {
    * @default 604800 (7 days)
    */
   ttlSeconds?: number
+  /**
+   * Largest the whole cache directory may grow, in bytes.
+   *
+   * This route is the first thing in the host a page on another origin can make
+   * write to disk: the RPC endpoint refuses cross-site requests by requiring a
+   * content type that forces a preflight, but a `GET` needs no preflight, so any
+   * local page can ask this host to fetch and store a whitelisted URL. The bytes
+   * are public CDN code and the host binds to loopback, so the exposure is a
+   * disk-fill rather than a disclosure — but unbounded growth caused by someone
+   * else's page is not a thing to leave unbounded.
+   *
+   * Over budget, fetching still works and serving still works; only new entries
+   * stop being written, and the refusal is reported. Refusing to store is
+   * strictly better than evicting: eviction would let a hostile page push out
+   * the bundle a real card depends on.
+   * @default 268435456 (256 MiB)
+   */
+  maxCacheBytes?: number
   /**
    * Largest body accepted, in bytes.
    *
@@ -121,11 +139,52 @@ const MAX_HOPS = 5
  */
 const FAILURE_MEMORY_MS = 30_000
 
+/**
+ * What every response on this route carries so a module fetch can read it.
+ *
+ * **A module fetch is always a CORS fetch.** `import()` and
+ * `<script type="module">` use request mode `cors` unconditionally — unlike a
+ * classic script, which is `no-cors` — and the card's frame is opaque-origin, so
+ * its requests arrive with `Origin: null` and are cross-origin to this host.
+ * Without this header the browser has the bytes and refuses to hand them to the
+ * module system, reporting only `Failed to fetch dynamically imported module`
+ * against the outer blob URL rather than the dependency that was blocked.
+ *
+ * This is why fetching straight from jsDelivr worked: jsDelivr sends
+ * `access-control-allow-origin: *`. Proxying moved the fetch to a host that sent
+ * none.
+ *
+ * **`*`, not `null`.** `null` looks tighter and is not: *every* sandboxed frame
+ * has origin `null`, so it names no one in particular while merely appearing to.
+ *
+ * This route deliberately diverges from the RPC endpoint, which sends no CORS
+ * header at all and relies on that (see `rpc-host/src/http.ts`). The two are not
+ * comparable: RPC methods change the user's data, while this serves public CDN
+ * bytes that already carry `*` from their origin, so reading them here grants a
+ * page nothing it could not get by fetching the CDN directly. Note also that a
+ * CORS header governs whether a response may be **read**, never whether the
+ * request happens — so it adds no ability to cause a fetch.
+ *
+ * **What it does not buy:** this exposes the *body* cross-origin, not the
+ * headers. A custom response header stays invisible to a cross-origin reader
+ * without `access-control-expose-headers`, so the frame still cannot read
+ * `x-iris-reason` — and it is deliberately not exposed, because the reader of
+ * that header is the shell, which is same-origin and needs no exemption. Anyone
+ * concluding from "failures carry CORS too" that the frame can now fetch its own
+ * reason would be wrong, and would be tempted to delete the shell's path for
+ * doing it. `SANDBOX.md` carries the same warning; it is repeated here because
+ * this is where someone editing the header is standing.
+ */
+const CORS_HEADER = { 'access-control-allow-origin': '*' } as const
+
 /** Seven days. See {@link ScriptCacheOptions.ttlSeconds}. */
 const DEFAULT_TTL_SECONDS = 604_800
 
 /** Eight mebibytes. See {@link ScriptCacheOptions.maxBytes}. */
 const DEFAULT_MAX_BYTES = 8_388_608
+
+/** 256 mebibytes. See {@link ScriptCacheOptions.maxCacheBytes}. */
+const DEFAULT_MAX_CACHE_BYTES = 268_435_456
 
 /**
  * The cache file name for one URL.
@@ -154,6 +213,7 @@ export class ScriptCache {
   readonly #fetch: FetchLike
   readonly #ttlMs: number
   readonly #maxBytes: number
+  readonly #maxCacheBytes: number
   readonly #onError: (error: Error) => void
   /** In-flight fetches, so ten frames opening at once cause one request. */
   readonly #inflight = new Map<string, Promise<Buffer | CacheFailure>>()
@@ -168,6 +228,7 @@ export class ScriptCache {
     this.#fetch = options.fetchRemote ?? nodeFetch
     this.#ttlMs = (options.ttlSeconds ?? DEFAULT_TTL_SECONDS) * 1000
     this.#maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
+    this.#maxCacheBytes = options.maxCacheBytes ?? DEFAULT_MAX_CACHE_BYTES
     this.#onError = options.onError ?? (() => {})
   }
 
@@ -178,7 +239,7 @@ export class ScriptCache {
    */
   async serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405, { allow: 'GET, HEAD' })
+      res.writeHead(405, { ...CORS_HEADER, allow: 'GET, HEAD' })
       res.end()
       return
     }
@@ -196,6 +257,7 @@ export class ScriptCache {
     }
 
     res.writeHead(200, {
+      ...CORS_HEADER,
       // Always JavaScript. The far side's own content-type is not echoed: this
       // route exists to be imported as a module, and letting upstream choose the
       // type would let it choose what the browser does with the bytes.
@@ -260,8 +322,19 @@ export class ScriptCache {
       const body = await readFile(`${base}.js`)
       await stat(`${base}.js`)
       return body
-    } catch {
-      // Absent, unreadable, or half-written. Fetching again is always safe.
+    } catch (error: unknown) {
+      // Refetching is the right action for all three of absent, half-written and
+      // unreadable — but they are not the same event, and merging them into one
+      // silent return hides the third. A cache directory this host cannot read
+      // fetches everything from upstream on every request, forever, which is
+      // exactly the cost this module was built to remove and looks from outside
+      // like the cache simply not working.
+      if ((error as { code?: string }).code !== 'ENOENT') {
+        this.#onError(new Error(
+          `could not read the cached copy of ${url} (${error instanceof Error ? error.message : String(error)});`
+          + ' refetching, and this will repeat until the cache directory is readable',
+        ))
+      }
       return undefined
     }
   }
@@ -274,7 +347,19 @@ export class ScriptCache {
       try {
         response = await this.#fetch(target, { redirect: 'manual', headers: { accept: '*/*' } })
       } catch (error: unknown) {
-        const reason = `could not reach ${target}: ${error instanceof Error ? error.message : String(error)}`
+        // "could not reach" would assert a fact about the network, and this
+        // catch is not homogeneous: a `fetch` that throws is usually the far
+        // side being unreachable, but a fault in `nodeFetch` — the one part of
+        // this module a test with an injected upstream never runs — throws here
+        // too and would arrive wearing the network's clothes. Somebody chasing
+        // an upstream outage would never look at our adapter.
+        //
+        // So the message says what happened rather than why, and names both
+        // readings. Guessing between them from the error's shape would be a
+        // heuristic that is wrong silently, which is the thing being avoided.
+        const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+        const reason = `fetching ${target} threw (${detail}) — either the far side is unreachable`
+          + ' or the host’s own fetch adapter faulted; the adapter is nodeFetch in script-cache.ts'
         this.#onError(new Error(reason))
         return { status: 502, reason }
       }
@@ -323,6 +408,12 @@ export class ScriptCache {
     const base = join(this.#dir, cacheKey(url))
     try {
       await mkdir(this.#dir, { recursive: true })
+      if (await this.#overBudget(body.byteLength)) {
+        this.#onError(new Error(
+          `not caching ${url}: the bundle cache is at its ${String(this.#maxCacheBytes)} byte budget`,
+        ))
+        return
+      }
       // Body first, sidecar second: a reader requires the sidecar, so a crash
       // between the two leaves a body nobody will serve rather than a sidecar
       // pointing at bytes that are not there.
@@ -336,10 +427,35 @@ export class ScriptCache {
     }
   }
 
+  /**
+   * Whether storing one more body would exceed the directory's budget.
+   * @param incoming - the body's size.
+   * @returns whether to skip the write.
+   */
+  async #overBudget(incoming: number): Promise<boolean> {
+    let total = incoming
+    try {
+      for (const name of await readdir(this.#dir)) {
+        total += (await stat(join(this.#dir, name))).size
+        if (total > this.#maxCacheBytes) return true
+      }
+    } catch {
+      // An unreadable directory is not a reason to refuse the write; the write
+      // itself will report if it also fails.
+      return false
+    }
+    return false
+  }
+
   /** Answer with the reason, in the body and in a header. */
   #fail(res: ServerResponse, failure: CacheFailure): void {
     const body = Buffer.from(`${failure.reason}\n`, 'utf8')
     res.writeHead(failure.status, {
+      // On failures too. A route whose CORS behaviour depends on the outcome is
+      // a route where "what does failure look like" depends on who is asking,
+      // and the reasons carry nothing private — the URL in them came from the
+      // caller.
+      ...CORS_HEADER,
       'content-type': 'text/plain; charset=utf-8',
       'content-length': body.byteLength,
       // Readable without consuming the body, which a failed `import()` never

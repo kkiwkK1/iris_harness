@@ -201,3 +201,28 @@ test('no card on this machine accumulates runtime state in its script data', {
     ].join(' | '),
   )
 })
+
+test('a corrupt store is not silently the same as a first run', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-script-vars-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const path = join(dir, 'script-variables.json')
+  const { writeFile } = await import('node:fs/promises')
+
+  // Absent and unparseable share one recovery — start empty — and they are not
+  // the same event. A first run is routine; a file that exists and cannot be
+  // read is a card's accumulated state about to be replaced by nothing, and the
+  // next save overwrites it. Merging them into one silent branch means the user
+  // is never told which happened.
+  const quiet: string[] = []
+  const fresh = new ScriptVariableStore(path, error => { quiet.push(error.message) })
+  assert.deepEqual(await fresh.open('aria', undefined), {})
+  assert.deepEqual(quiet, [], 'a first run was reported as a problem')
+
+  await writeFile(path, '{ this is not json', 'utf8')
+  const corrupt: string[] = []
+  const store = new ScriptVariableStore(path, error => { corrupt.push(error.message) })
+  assert.deepEqual(await store.open('aria', undefined), {})
+  assert.equal(corrupt.length, 1, 'a corrupt store started over without a word')
+  assert.match(corrupt[0] ?? '', /could not be read/u)
+  assert.match(corrupt[0] ?? '', /saving will overwrite the file/u)
+})

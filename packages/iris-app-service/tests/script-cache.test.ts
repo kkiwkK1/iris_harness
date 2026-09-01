@@ -39,7 +39,7 @@ function upstream(
 async function cacheIn(
   t: TestContext,
   routes: Record<string, { status: number, body?: string, location?: string }>,
-  options: { maxBytes?: number, ttlSeconds?: number } = {},
+  options: { maxBytes?: number, ttlSeconds?: number, maxCacheBytes?: number } = {},
 ): Promise<{ cache: ScriptCache, asked: string[], dir: string, errors: string[] }> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-bundles-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
@@ -51,6 +51,11 @@ async function cacheIn(
     onError: (error: Error) => { errors.push(error.message) },
     ...options.maxBytes === undefined ? {} : { maxBytes: options.maxBytes },
     ...options.ttlSeconds === undefined ? {} : { ttlSeconds: options.ttlSeconds },
+    // Forwarded explicitly, one line per option. An earlier version of this
+    // helper accepted `maxCacheBytes` in its signature and never passed it on,
+    // so the budget test ran against the 256 MiB default and asserted nothing —
+    // the test failed, which is the only reason it was noticed.
+    ...options.maxCacheBytes === undefined ? {} : { maxCacheBytes: options.maxCacheBytes },
   })
   return { cache, asked, dir, errors }
 }
@@ -274,4 +279,86 @@ test('a remembered failure does not lock out a recovery', async (t) => {
   const stillFailing = await cache.load(BUNDLE)
   assert.ok(!Buffer.isBuffer(stillFailing))
   assert.deepEqual(asked, [BUNDLE])
+})
+
+test('every response carries the header a module fetch needs', async (t) => {
+  const { cache } = await cacheIn(t, { [BUNDLE]: { status: 200, body: 'x' } })
+  const seen: { status: number, headers: Record<string, unknown> }[] = []
+  const res = () => {
+    const captured = { status: 0, headers: {} as Record<string, unknown> }
+    seen.push(captured)
+    return {
+      writeHead(status: number, headers: Record<string, unknown>) {
+        captured.status = status
+        captured.headers = headers
+      },
+      end() {},
+    } as unknown as Parameters<ScriptCache['serve']>[1]
+  }
+  const req = (url: string, method = 'GET') => ({ method, url }) as Parameters<ScriptCache['serve']>[0]
+
+  // A module fetch is a CORS fetch unconditionally — `import()` and
+  // `<script type="module">` use request mode `cors` whatever the origin — and
+  // the card's frame is opaque-origin, so every one of these arrives with
+  // `Origin: null`. Without the header the browser holds the bytes and hands the
+  // module system nothing, reporting only a failure against the outer blob URL.
+  await cache.serve(req(`/x?url=${encodeURIComponent(BUNDLE)}`), res())
+  await cache.serve(req('/x'), res())
+  await cache.serve(req(`/x?url=${encodeURIComponent('https://evil.example/a.js')}`), res())
+  await cache.serve(req('/x?url=y', 'POST'), res())
+
+  assert.deepEqual(seen.map(entry => entry.status), [200, 400, 403, 405])
+  for (const entry of seen) {
+    assert.equal(
+      entry.headers['access-control-allow-origin'],
+      '*',
+      `status ${String(entry.status)} answered without the header a module fetch needs`,
+    )
+  }
+})
+
+test('the cache stops growing at its budget instead of evicting', async (t) => {
+  const first = 'https://cdn.jsdelivr.net/npm/a@1/x.js'
+  const second = 'https://cdn.jsdelivr.net/npm/b@1/x.js'
+  const { cache, dir } = await cacheIn(t, {
+    [first]: { status: 200, body: 'a'.repeat(400) },
+    [second]: { status: 200, body: 'b'.repeat(400) },
+  }, { maxCacheBytes: 600 })
+
+  assert.ok(Buffer.isBuffer(await cache.load(first)))
+  const second2 = await cache.load(second)
+  // Still served — the fetch worked, only the write was skipped.
+  assert.ok(Buffer.isBuffer(second2))
+  assert.equal(second2.toString('utf8').startsWith('b'), true)
+
+  // Refusing to store beats evicting: eviction would let whoever filled the
+  // directory push out the bundle a real card depends on.
+  const files = await readdir(dir)
+  assert.ok(files.includes(`${cacheKey(first)}.js`), 'the first entry was evicted')
+  assert.equal(files.includes(`${cacheKey(second)}.js`), false, 'the budget was exceeded')
+})
+
+test('a throw from the fetch does not claim to know it was the network', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-bundles-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const errors: string[] = []
+  const cache = new ScriptCache({
+    dir,
+    // Whatever throws here reaches the same catch: the far side being
+    // unreachable, and a fault in the adapter itself — the one part of this
+    // module an injected upstream never exercises. "could not reach" would state
+    // the first as fact, and someone chasing a CDN outage would never look at
+    // our own code.
+    fetchRemote: () => { throw new TypeError('cannot read properties of undefined') },
+    onError: (error: Error) => { errors.push(error.message) },
+  })
+
+  const result = await cache.load(BUNDLE)
+  assert.ok(!Buffer.isBuffer(result))
+  assert.equal(result.status, 502)
+  assert.match(result.reason, /threw \(TypeError/u, 'the message did not say what actually happened')
+  assert.match(result.reason, /either the far side is unreachable/u)
+  assert.match(result.reason, /fetch adapter faulted/u, 'the second reading was not named')
+  assert.equal(result.reason.includes('could not reach'), false, 'the message still asserts a cause')
+  assert.equal(errors.length, 1)
 })

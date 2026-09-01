@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { describeHubError } from '../src/errors.ts'
+
 import { isJsonContentType, isOriginAllowed, isRpcErrorCode, toRpcError } from '../src/index.ts'
 
 /**
@@ -67,4 +69,23 @@ test('a thrown value becomes a wire error without inventing a code', () => {
   assert.deepEqual(toRpcError(foreign), { code: 'internal', message: 'endpoint refused the connection' })
 
   assert.deepEqual(toRpcError('a bare string'), { code: 'internal', message: 'a bare string' })
+})
+
+test('the error sink survives everything that has actually reached it', () => {
+  // A reporting path that throws turns a logged warning into a dead host, and it
+  // does so at the moment something is already going wrong. This is not
+  // hypothetical: `ws.send` calls back with `null` on success, a looser guard
+  // reported every successful broadcast as a failure, and the sink reading
+  // `.message` off that `null` is what took the process down mid-generation.
+  //
+  // The fix was one line and went in unpinned, so until now its correctness
+  // rested on the same reading that had produced the crash.
+  assert.equal(describeHubError(new Error('a real failure')), 'a real failure')
+  assert.match(describeHubError(null), /non-error value reached the error sink: null/u)
+  assert.match(describeHubError(undefined), /non-error value reached the error sink: undefined/u)
+  assert.equal(describeHubError('a bare string'), 'a bare string')
+  assert.equal(describeHubError(42), '42')
+  // `String(null)` alone would render the exact text that made the original bug
+  // read as a logger fault instead of a success reported as a failure.
+  assert.notEqual(describeHubError(null), 'null')
 })

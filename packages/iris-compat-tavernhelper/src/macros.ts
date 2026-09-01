@@ -30,8 +30,24 @@
  * @module @iris/compat-tavernhelper/macros
  */
 
+/**
+ * The five scopes upstream's variable macros name.
+ *
+ * One list, and everything that needs to know the set is derived from it: the
+ * two matching patterns, the type, and the predicate the host uses to decide
+ * whether an unexpanded macro is one of ours. Four hand-written copies of this
+ * set existed before, in two packages, and the one furthest from here decided
+ * **attribution** — so adding a sixth scope would have left it quietly reporting
+ * a macro of ours as the card's own. Duplicated logic where only one copy
+ * carries its reason is the copy that gets changed alone.
+ */
+export const MACRO_SCOPES = ['message', 'chat', 'character', 'preset', 'global'] as const
+
 /** Which variable scope a macro names. */
-export type MacroScope = 'message' | 'chat' | 'character' | 'preset' | 'global'
+export type MacroScope = typeof MACRO_SCOPES[number]
+
+/** The scopes as a regex alternation, so no pattern spells them out again. */
+const SCOPES = MACRO_SCOPES.join('|')
 
 /** What the macros are allowed to read. */
 export interface MacroSources {
@@ -53,6 +69,21 @@ export interface MacroSources {
    * should go away.
    */
   formatBlock: (value: unknown) => string
+  /**
+   * Called when a macro names a scope this host has no store for.
+   *
+   * Without it the gap is invisible in the worst way: an unimplemented scope
+   * reads as `null`, which is exactly what an implemented-but-empty scope reads
+   * as, so a card author debugging a blank status panel is told their variable
+   * is unset when the truth is that Iris never built the shelf. Reporting turns
+   * "empty" back into "not built".
+   *
+   * Measured before it was wired: across the 19 cards on this machine, all 42
+   * variable-macro uses name the `message` scope and none names `character` or
+   * `preset`. So this costs nothing today — it exists so that the day it does
+   * cost something, the cost is named instead of guessed at.
+   */
+  onUnsupportedScope?: (scope: MacroScope) => void
 }
 
 /** The five entities `_.unescape` reverses, which upstream applies to the path. */
@@ -121,9 +152,9 @@ export function omitDollarKeys(value: unknown): unknown {
 }
 
 /** `{{get_<scope>_variable::path}}` — one line. */
-const GET = /\{\{get_(message|chat|character|preset|global)_variable::(.*?)\}\}/gi
+const GET = new RegExp(`\{\{get_(${SCOPES})_variable::(.*?)\}\}`, 'gi')
 /** `{{format_<scope>_variable::path}}`, with everything before it on its line. */
-const FORMAT = /^(.*?)\{\{format_(message|chat|character|preset|global)_variable::(.*?)\}\}/gim
+const FORMAT = new RegExp(`^(.*?)\{\{format_(${SCOPES})_variable::(.*?)\}\}`, 'gim')
 
 /**
  * Expand Tavern Helper's variable macros.
@@ -137,8 +168,12 @@ const FORMAT = /^(.*?)\{\{format_(message|chat|character|preset|global)_variable
  * @returns the text with both macro families substituted.
  */
 export function expandHelperMacros(text: string, sources: MacroSources): string {
-  const read = (scope: MacroScope, path: string): unknown =>
-    omitDollarKeys(readMacroPath(sources.variables[scope], unescapePath(path)))
+  const read = (scope: MacroScope, path: string): unknown => {
+    // `undefined` here means no store, which is not the same as a store holding
+    // nothing — and the two are indistinguishable once both have become `null`.
+    if (sources.variables[scope] === undefined) sources.onUnsupportedScope?.(scope)
+    return omitDollarKeys(readMacroPath(sources.variables[scope], unescapePath(path)))
+  }
 
   const withGet = text.replace(GET, (_match, scope: string, path: string) => {
     const value = read(scope as MacroScope, path)
@@ -165,5 +200,20 @@ export function expandHelperMacros(text: string, sources: MacroSources): string 
  * @returns whether a Tavern Helper variable macro remains.
  */
 export function hasHelperMacros(text: string): boolean {
-  return /\{\{(?:get|format)_(?:message|chat|character|preset|global)_variable::/i.test(text)
+  return new RegExp(`\{\{(?:get|format)_(?:${SCOPES})_variable::`, 'i').test(text)
+}
+
+/**
+ * Whether a bare macro name is one of these.
+ *
+ * For the host's residual-macro report, which has to say whether an unexpanded
+ * macro is a gap here or the card's own. It lives beside the scope list rather
+ * than being spelled out at the call site, because the call site is the one that
+ * decides **blame** — a stale copy there would report a macro Iris owns as
+ * something the card invented.
+ * @param name - the macro head, without braces or arguments.
+ * @returns whether it names one of these macros.
+ */
+export function isHelperMacroName(name: string): boolean {
+  return new RegExp(`^(?:get|format)_(?:${SCOPES})_variable$`, 'i').test(name)
 }

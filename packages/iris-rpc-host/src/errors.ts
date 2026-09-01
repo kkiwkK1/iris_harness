@@ -70,3 +70,29 @@ export function toRpcError(error: unknown): RpcError {
   }
   return { code: 'internal', message: String(error) }
 }
+
+/**
+ * Render anything a sink is handed into a line a log can carry.
+ *
+ * Extracted so it can be tested. The judgment used to live inline in the plugin
+ * as `error.message`, which is correct for an `Error` and throws for anything
+ * else — and a **reporting** path that throws converts a logged warning into a
+ * dead host, at the moment something is already going wrong. That is not a
+ * hypothetical: the hub once reported `null` (the value `ws.send` passes on
+ * success) as an error, and this line reading `.message` off it is what took the
+ * process down mid-generation.
+ *
+ * The guard at the source is the fix; this is the seatbelt. It was added as a
+ * one-line defence and never pinned, so its correctness rested on the same
+ * reading that had produced the crash — which is the thing being corrected here.
+ * @param error - whatever reached the sink.
+ * @returns a string, for every input.
+ */
+export function describeHubError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  // Not `String(error)` alone: `String(null)` is `"null"`, which is exactly the
+  // text that made the original bug look like a logger fault rather than a
+  // success being reported as a failure. Naming the type keeps that readable.
+  if (error === null || error === undefined) return `a non-error value reached the error sink: ${String(error)}`
+  return String(error)
+}

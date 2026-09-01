@@ -19,6 +19,14 @@ export interface DialectScan {
   commands: CommandInfo[]
   /** How many `<JSONPatch>` blocks the reply carried. */
   jsonPatchBlocks: number
+  /**
+   * How many operations those blocks held, understood or not.
+   *
+   * An empty block is a model answering "nothing changed", not a model this
+   * could not read. Telling the two apart needs this number: without it, a
+   * correct answer of `[]` reads exactly like a dialect nobody understands.
+   */
+  jsonPatchOperations: number
   /** How many commands came from the legacy `_.verb();` dialect. */
   legacyCommands: number
   /**
@@ -49,6 +57,7 @@ export function scanDialects(text: string): DialectScan {
   return {
     commands: [...legacy, ...patch.commands],
     jsonPatchBlocks: patch.blocks,
+    jsonPatchOperations: patch.operations,
     legacyCommands: legacy.length,
     rejected: patch.rejected,
   }

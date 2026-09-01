@@ -42,8 +42,10 @@ export {
 } from '@iris/compat-tavernhelper-core'
 
 export {
+  MACRO_SCOPES,
   expandHelperMacros,
   hasHelperMacros,
+  isHelperMacroName,
   omitDollarKeys,
   readMacroPath,
   unescapePath,

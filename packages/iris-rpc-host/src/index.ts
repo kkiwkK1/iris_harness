@@ -34,11 +34,11 @@ import {
 } from '@iris/protocol'
 
 import { EventHub } from './events.ts'
-import { toRpcError } from './errors.ts'
+import { describeHubError, toRpcError } from './errors.ts'
 import { isJsonContentType, readBody, respondJson } from './http.ts'
 
 export { EventHub, isOriginAllowed, type EventHubOptions } from './events.ts'
-export { RpcFailure, isRpcErrorCode, toRpcError } from './errors.ts'
+export { RpcFailure, describeHubError, isRpcErrorCode, toRpcError } from './errors.ts'
 export { isJsonContentType, readBody, respondJson, type BodyResult } from './http.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -158,9 +158,7 @@ export class IrisRpcHost extends Service {
       // logged warning into a dead host, and it does it at the moment something
       // is already going wrong. The guard at the source (events.ts) is the fix;
       // this is the seatbelt, and it costs one expression.
-      onError: (error: unknown) => {
-        this.ctx.logger.warn(error instanceof Error ? error.message : String(error))
-      },
+      onError: (error: unknown) => { this.ctx.logger.warn(describeHubError(error)) },
     })
   }
 

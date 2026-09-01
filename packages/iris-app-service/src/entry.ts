@@ -170,6 +170,14 @@ export class ChatEntry {
   #scripts: RegexScript[] | undefined
   /** Storage for the `script` scope; outlives `rebuild`, so it is held here. */
   readonly #scriptScope: ScopeBackend
+  /**
+   * Variable scopes a macro asked for that this host has no store for.
+   *
+   * Collected rather than thrown: a missing scope must not take the turn down,
+   * and the reader who needs to know is whoever reads the log after the prompt
+   * went out. Drained by the caller once per request.
+   */
+  readonly unsupportedScopes = new Set<string>()
   #substitute: MacroSubstitute | undefined
   #abort: AbortController | undefined
   /** Row identities, one per chat-file line, plus one spare for a streaming row. */
@@ -290,6 +298,7 @@ export class ChatEntry {
             // would claim the scope exists and holds nothing.
           },
           formatBlock: formatYamlBlock,
+          onUnsupportedScope: (scope) => { this.unsupportedScopes.add(scope) },
         })
       }
     }
@@ -297,15 +306,27 @@ export class ChatEntry {
   }
 
   /**
-   * One scope's tree, or undefined when this host has no backend for it.
+   * One scope's tree, empty when its backend could not answer.
+   *
+   * **Never `undefined`.** In the macro sources, an absent key means one thing
+   * only — this host implements no such scope — and the report built from it
+   * says exactly that. A backend that exists and threw is a different fact, and
+   * returning `undefined` for it would make the report assert something untrue
+   * about a scope Iris does implement.
+   *
+   * That leaves a throwing backend rendering as empty, which is the same lie in
+   * miniature. It is accepted rather than plumbed: `chat` and `global` are
+   * served by a metadata reader and an in-memory map, neither of which throws in
+   * practice, and the corpus's 42 variable-macro uses all name `message`. If a
+   * backend here ever does start failing, this is the line that hid it.
    * @param option - the scope selector.
-   * @returns the tree, or undefined.
+   * @returns the tree, or an empty one.
    */
   #scopeOrEmpty(option: Parameters<VariableStore['getVariables']>[0]): unknown {
     try {
       return this.variables.getVariables(option)
     } catch {
-      return undefined
+      return {}
     }
   }
 
@@ -485,8 +506,13 @@ export class ChatEntry {
     // A block the model wrote and nothing understood is the signal that was
     // missing when this broke; it costs one line and it is the only thing that
     // distinguishes "the model did not answer" from "we could not read it".
-    if (scan.jsonPatchBlocks > 0 && scan.commands.length === 0) {
-      onReport?.(`MVU: a reply carried ${String(scan.jsonPatchBlocks)} <JSONPatch> block(s) that produced no commands`)
+    //
+    // Gated on the operation count, not on the block count. `<JSONPatch>[]` is a
+    // model saying "nothing changed this turn" — a correct answer, and the most
+    // ordinary one on a quiet turn. Reporting it would point whoever reads the
+    // log at a parser that is working perfectly.
+    if (scan.jsonPatchOperations > 0 && scan.commands.length === 0) {
+      onReport?.(`MVU: a reply carried ${String(scan.jsonPatchOperations)} <JSONPatch> operation(s) that produced no commands`)
     }
     const result = applyCommands(scan.commands, this.baselineFor(turn))
     for (const failure of result.failures) onReport?.(`MVU: ${failure.reason}`)

@@ -23,8 +23,9 @@ import { assemble, type AssembleResult, type Contribution, type HistoryEntry } f
 import type { ChatCompletionPreset } from '@iris/preset'
 import type { GenerationSettings, IrisEvent, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
-import { parseSlashCommands } from '@iris/compat-tavernhelper'
+import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
 import { checkScriptFetch, extractScripts } from '@iris/script'
+import { defaultRegistry } from '@iris/macro'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
 import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } from '@iris/turn'
 
@@ -35,7 +36,7 @@ import { AppError, invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { lineTurns } from './entry.ts'
-import { buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
+import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { runScripts } from './regex.ts'
 import { evaluatePrompt, promptHasTemplate } from './templates.ts'
 import { applyOps, buildSnapshot } from './template.ts'
@@ -974,9 +975,40 @@ export class IrisAppService {
     // templates, injections. An unexpanded macro is the one prompt defect with
     // no symptom at all: the braces go out, the model answers around them, and
     // the reply looks like an ordinary refusal to follow the format.
+    // A scope a macro asked for and this host has no store for. It rendered as
+    // `null`, which is what an empty store renders as too — so without this the
+    // difference between "you have not set that" and "Iris never built that"
+    // never reaches anyone.
+    if (entry !== undefined && entry.unsupportedScopes.size > 0) {
+      const scopes = [...entry.unsupportedScopes].join(', ')
+      entry.unsupportedScopes.clear()
+      this.#report(new Error(
+        `prompt: a macro read the ${scopes} variable scope, which Iris has no store for — it rendered as null, `
+        + 'which is not a statement that the value is unset',
+      ))
+    }
+
     const residual = residualMacros(messages.map(message => message.text).join(' '))
     if (residual.length > 0) {
-      this.#report(new Error(`prompt: ${String(residual.length)} macro(s) reached the provider unexpanded: ${residual.join(', ')}`))
+      // Attributed, not merely listed. An unattributed list of names reads as a
+      // complaint about the card, because that is the nearest suspect a reader
+      // has — and for the half of them this host is supposed to expand, the card
+      // is innocent.
+      const registry = defaultRegistry()
+      const { ours, theirs } = attributeResidualMacros(
+        residual,
+        name => registry.has(name) || isHelperMacroName(name),
+      )
+      if (ours.length > 0) {
+        this.#report(new Error(
+          `prompt: ${ours.join(', ')} reached the provider unexpanded — Iris implements these, so the expansion did not reach that text`,
+        ))
+      }
+      if (theirs.length > 0) {
+        this.#report(new Error(
+          `prompt: ${theirs.join(', ')} reached the provider unexpanded — nothing here implements these, so they are the card's own (a typo, or a macro one of its scripts registers)`,
+        ))
+      }
     }
 
     for await (const chunk of this.#options.stream(request)) {
@@ -1030,7 +1062,7 @@ export class IrisAppService {
         // Applied separately so a single refused write does not throw away the
         // text every other template produced.
         try {
-          applyOps(entry, evaluated.ops, turn)
+          applyOps(entry, evaluated.ops, turn, reason => { this.#report(new Error(`template: ${reason}`)) })
         } catch (error: unknown) {
           this.#report(error)
         }

@@ -398,4 +398,21 @@ test('the bundle route is mounted, and refuses on the host side', async () => {
   // Method gate, like every other route here.
   const posted = await fetch(`${origin}/iris/script-bundle?url=x`, { method: 'POST' })
   assert.equal(posted.status, 405)
+
+  // The header a module fetch cannot do without, on the real socket. `import()`
+  // and `<script type="module">` fetch in CORS mode unconditionally, and the
+  // card's frame is opaque-origin, so every request here arrives with
+  // `Origin: null`. Without this the browser has the bytes and hands the module
+  // system nothing — reporting a failure against the outer blob URL, which
+  // names neither this route nor the dependency that was blocked.
+  for (const [what, response] of [
+    ['a refusal', await fetch(`${origin}/iris/script-bundle?url=${encodeURIComponent('https://evil.example/x.js')}`)],
+    ['a missing parameter', await fetch(`${origin}/iris/script-bundle`)],
+  ] as const) {
+    assert.equal(
+      response.headers.get('access-control-allow-origin'),
+      '*',
+      `${what} answered without the header a module fetch needs`,
+    )
+  }
 })

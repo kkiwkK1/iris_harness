@@ -189,7 +189,27 @@ test('a reply with no block at all reports no block', () => {
   // the model did not answer, versus we could not read the answer — and the
   // caller reports only the second.
   const quiet = scanJsonPatch('She closed the map and said nothing.')
-  assert.deepEqual(quiet, { commands: [], blocks: 0, rejected: [] })
+  assert.deepEqual(quiet, { commands: [], blocks: 0, operations: 0, rejected: [] })
+})
+
+test('an empty block is an answer, not a failure to read one', () => {
+  // `<JSONPatch>[]</JSONPatch>` is a model saying "nothing changed this turn" —
+  // a correct answer, and the ordinary one on a quiet turn. Counted only by
+  // blocks it is indistinguishable from a dialect nobody understands, and the
+  // host would warn about a parser that is working perfectly.
+  //
+  // This is the empty-set edge: the failure it would cause is a *report* rather
+  // than a wrong value, so nothing observable breaks and the noise is blamed on
+  // the model.
+  const empty = scanJsonPatch('<JSONPatch>[]</JSONPatch>')
+  assert.equal(empty.blocks, 1, 'the block was there')
+  assert.equal(empty.operations, 0, 'and it asked for nothing')
+  assert.deepEqual(empty.rejected, [])
+
+  // The contrast: operations present, none usable. That is worth saying aloud.
+  const unreadable = scanJsonPatch('<JSONPatch>[{ "op": "increment", "path": "/a", "value": 1 }]</JSONPatch>')
+  assert.equal(unreadable.operations, 1)
+  assert.deepEqual(unreadable.commands, [])
 })
 
 test('the legacy dialect still reads, and both can be read at once', () => {
@@ -239,4 +259,26 @@ test('a block is found without the <UpdateVariable> wrapper the card asks for', 
   // And the wrapper, when a model does write it, changes nothing.
   const wrapped = extractJsonPatch(`<UpdateVariable>${reply}</UpdateVariable>`)
   assert.equal(wrapped.length, 1)
+})
+
+test('an RFC operation this dialect lacks is refused by the right name', () => {
+  // A model that has read RFC 6902 rather than the card writes `add`, and it is
+  // not inventing anything: `add` is the standard's own name for what this
+  // dialect calls `insert`. "unknown op" would blame it for the difference
+  // between two specifications.
+  const added = scanJsonPatch('<JSONPatch>[{ "op": "add", "path": "/a", "value": 1 }]</JSONPatch>')
+  assert.match(added.rejected[0] ?? '', /RFC 6902 calls this "add"/u)
+  assert.match(added.rejected[0] ?? '', /"insert"/u, 'the refusal does not say what to write instead')
+
+  for (const op of ['copy', 'test']) {
+    const result = scanJsonPatch(`<JSONPatch>[{ "op": "${op}", "path": "/a", "value": 1 }]</JSONPatch>`)
+    assert.match(result.rejected[0] ?? '', /RFC 6902/u, `${op} was reported as an invention`)
+  }
+
+  // And a name that really is nobody's stays a plain unknown. Over-attributing
+  // would move the blame from one innocent party to another.
+  assert.match(
+    scanJsonPatch('<JSONPatch>[{ "op": "increment", "path": "/a", "value": 1 }]</JSONPatch>').rejected[0] ?? '',
+    /unknown op "increment"/u,
+  )
 })

@@ -10,6 +10,8 @@ import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
+import { ExtensionSettingsStore } from '../src/context.ts'
+import { ScriptVariableStore } from '../src/script-variables.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
@@ -275,6 +277,40 @@ test('a deleted card does not leave its document grant for the next card to inhe
     'a new card inherited the previous card’s script switches',
   )
   assert.equal((await readFile(policyPath, 'utf8')).includes('aria'), false)
+})
+
+test('every per-character store forgets, not just the two that were checked', async (t) => {
+  // The delete path calls `forget` on three stores and the test above pinned
+  // two of them. A fix asserted in part is a fix whose remainder rests on the
+  // same reading that missed it the first time — and `ExtensionSettingsStore`
+  // is the one whose `forget` had never had a call site at all.
+  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const extensionSettings = new ExtensionSettingsStore(join(dir, 'extension-settings.json'))
+  const scriptVariables = new ScriptVariableStore(join(dir, 'script-variables.json'))
+  const handlers = new IrisAppService({
+    stream: NOTHING,
+    library,
+    chats: new ChatStore(join(dir, 'chats'), library, scriptVariables),
+    settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
+    scripts: new ScriptPolicyStore(join(dir, 'script-policy.json')),
+    extensionSettings,
+    scriptVariables,
+    broadcast: () => {},
+    userName: 'Traveller',
+  }).handlers()
+
+  await handlers['script.setExtensionSettings']({ characterId: 'aria', settings: { theme: 'dark' } })
+  assert.deepEqual(await extensionSettings.get('aria'), { theme: 'dark' })
+
+  await handlers['character.delete']({ characterId: 'aria' })
+  // Ids are minted against the cards that exist, so the next card named Aria
+  // takes this one back — settings included, if nothing dropped them.
+  assert.deepEqual(await extensionSettings.get('aria'), {}, 'a new card would inherit the old card’s settings')
 })
 
 test('the run-scripts answer has three states, and "no" is not the same as "not asked"', async (t) => {

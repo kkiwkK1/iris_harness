@@ -219,10 +219,16 @@ function optionFor(scope: Scope, turn: number): Parameters<ChatEntry['variables'
  * @param entry - the conversation to write into.
  * @param ops - the writes, in the order the templates performed them.
  * @param turn - the turn whose message scope is addressed.
+ * @param onDropped - told about a write this host has nowhere to put.
  * @returns how many writes were applied.
  * @throws {AppError} `invalid-request` when a write carries something unstorable.
  */
-export function applyOps(entry: ChatEntry, ops: readonly Op[], turn: number): number {
+export function applyOps(
+  entry: ChatEntry,
+  ops: readonly Op[],
+  turn: number,
+  onDropped?: (reason: string) => void,
+): number {
   let applied = 0
 
   for (const op of ops) {
@@ -237,7 +243,15 @@ export function applyOps(entry: ChatEntry, ops: readonly Op[], turn: number): nu
     }
 
     const option = optionFor(op.scope, turn)
-    if (option === undefined) continue
+    if (option === undefined) {
+      // `optionFor`'s own note explains why `initial` should never arrive: the
+      // evaluator refuses a write into it by name. That note is correct and it
+      // covered only the case it was written about — if one ever does arrive,
+      // dropping it here left no trace at all, and a template whose write
+      // vanished silently is the failure this whole module exists to prevent.
+      onDropped?.(`a template wrote into the "${op.scope}" scope, which Iris has no store for; the write was dropped`)
+      continue
+    }
 
     if (op.op === 'delvar') {
       entry.variables.deleteVariable(op.key, option)

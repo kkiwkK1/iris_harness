@@ -212,3 +212,31 @@ test('a card with no bound book leaves the link out rather than empty', () => {
   assert.equal(snapshot.lorebooks.character, undefined)
   assert.deepEqual(snapshot.lorebooks, {})
 })
+
+test('a write into a scope with no store is reported, not dropped in silence', () => {
+  // `optionFor`'s note explains why `initial` should never arrive — the
+  // evaluator refuses it by name — and that note is correct. It also covered
+  // only the case it was written about: if one ever does arrive, the `continue`
+  // beneath it left no trace, and a template write that vanishes is exactly the
+  // failure this module exists to prevent.
+  //
+  // A correct comment guarding an incomplete branch is harder to find than a
+  // wrong one, because a reader agrees with it and moves on.
+  const entry = entryFor()
+  const dropped: string[] = []
+  const applied = applyOps(entry, [{ op: 'setvar', scope: 'initial', key: 'a', value: 2 }], 0, reason => {
+    dropped.push(reason)
+  })
+
+  assert.equal(applied, 0, 'the write was applied to a scope that does not exist')
+  assert.equal(dropped.length, 1, 'the write vanished without a word')
+  assert.match(dropped[0] ?? '', /"initial" scope, which Iris has no store for/u)
+
+  // And a scope that does exist is still applied, with nothing reported.
+  const quiet: string[] = []
+  assert.equal(
+    applyOps(entry, [{ op: 'setvar', scope: 'global', key: 'a', value: 2 }], 0, reason => { quiet.push(reason) }),
+    1,
+  )
+  assert.deepEqual(quiet, [])
+})

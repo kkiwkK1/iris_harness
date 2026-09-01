@@ -296,3 +296,30 @@ export function residualMacros(text: string): string[] {
   }
   return [...seen]
 }
+
+/**
+ * Split residual macros by which side the gap is on.
+ *
+ * A report that only lists names points at nobody, and a reader fills that in
+ * with the nearest suspect — which for a prompt defect is always the card. The
+ * split matters because the two cases need opposite responses: a macro this host
+ * **implements** that survived to the provider is a bug here (the expansion did
+ * not reach that text), while a name nothing implements is the card's own — a
+ * typo like the corpus's `{{usre}}`, or a macro one of its scripts registers
+ * through Tavern Helper, neither of which anyone here should go looking for.
+ *
+ * This is the same shape as an unattributed `ReferenceError`: the message is
+ * accurate and still sends the reader to the wrong place.
+ * @param names - the residual macro heads, from {@link residualMacros}.
+ * @param implemented - whether this host has a macro by that name.
+ * @returns the two groups.
+ */
+export function attributeResidualMacros(
+  names: readonly string[],
+  implemented: (name: string) => boolean,
+): { ours: string[], theirs: string[] } {
+  const ours: string[] = []
+  const theirs: string[] = []
+  for (const name of names) (implemented(name) ? ours : theirs).push(name)
+  return { ours, theirs }
+}
