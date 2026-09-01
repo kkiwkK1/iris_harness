@@ -133,7 +133,12 @@ export class EventHub {
         continue
       }
       ws.send(text, (error) => {
-        if (error !== undefined) this.#options.onError(error)
+        // `!= null`, not `!== undefined`: this ws build calls back with `null`
+        // on SUCCESS. The looser guard once reported every successful send as a
+        // failure — one streamed generation produced 370 `null` warnings, and a
+        // sink that then dared to read `.message` took the whole host down
+        // mid-generation. The instrument was reporting its own health as noise.
+        if (error != null) this.#options.onError(error)
       })
     }
   }

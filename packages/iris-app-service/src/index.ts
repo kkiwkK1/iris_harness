@@ -283,7 +283,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   warnOnPreProfileLayout(ctx, dataDir, paths.root)
 
   const library = new CharacterLibrary(paths.characters, avatarPath)
-  const scriptVariables = new ScriptVariableStore(paths.scriptVariables, error => { ctx.logger.warn(error) })
+  const scriptVariables = new ScriptVariableStore(paths.scriptVariables,
+    error => { ctx.logger.warn(error instanceof Error ? error.message : String(error)) })
   const chats = new ChatStore(paths.chats, library, scriptVariables)
   const settings = new SettingsStore(paths.settings, {
     provider: config.provider ?? 'default',
@@ -323,7 +324,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ...config.templates !== true
       ? {}
       : { templates: config.templateDeadlineMs === undefined ? {} : { deadlineMs: config.templateDeadlineMs } },
-    onError: error => { ctx.logger.warn(error) },
+    // The message, not the Error, so the log line carries the text a reader
+    // needs regardless of how any exporter renders objects.
+    onError: error => { ctx.logger.warn(error instanceof Error ? error.message : String(error)) },
   })
 
   const handlers = service.handlers()

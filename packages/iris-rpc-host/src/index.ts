@@ -147,7 +147,12 @@ export class IrisRpcHost extends Service {
       heartbeatMs: resolved.heartbeatMs,
       maxPayloadBytes: resolved.maxBodyBytes,
       allowedOrigins: resolved.allowedOrigins,
-      onError: (error) => { this.ctx.logger.warn(error) },
+      // `.message`, not the object, so the log line is the text a reader needs.
+      // (An earlier comment here blamed the logger for printing `null` — the
+      // logger was innocent: the hub's send callback was reporting `null`, the
+      // value ws passes on SUCCESS, as an error. See events.ts. This sink
+      // crashing on that `null` is what finally named the real culprit.)
+      onError: (error) => { this.ctx.logger.warn(error.message) },
     })
   }
 
@@ -310,7 +315,7 @@ export class IrisRpcHost extends Service {
       // Deliberate refusals are the application talking; only an unclassified
       // failure is worth the host operator's attention.
       if (wire.code === 'internal') {
-        this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
+        this.ctx.logger.warn(error instanceof Error ? error.message : String(error))
       }
       respondJson(res, 200, refuse(id, wire))
     }
