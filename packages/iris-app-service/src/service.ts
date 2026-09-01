@@ -399,12 +399,15 @@ export class IrisAppService {
 
       'script.getVariables': async ({ chatId, scope, messageId, scriptId }) => {
         const entry = await chats.open(chatId)
-        return { variables: entry.variables.getVariables(variableOptionFor(scope, messageId, scriptId)) }
+        return {
+          variables: entry.variables.getVariables(
+            variableOptionFor(scope, turnForMessage(entry, messageId), scriptId)),
+        }
       },
 
       'script.setVariables': async ({ chatId, scope, messageId, scriptId, op, variables, path }) => {
         const entry = await chats.open(chatId)
-        const option = variableOptionFor(scope, messageId, scriptId)
+        const option = variableOptionFor(scope, turnForMessage(entry, messageId), scriptId)
 
         if (op === 'delete') {
           if (path === undefined) throw invalid('a delete needs the path to remove')
@@ -1409,6 +1412,46 @@ export function injectedContributions(entry: ChatEntry): Contribution[] {
  * @param scriptId - the partition, for the script scope.
  * @returns the option the store addresses.
  */
+/**
+ * Translate a card's `message_id` — a **message index** — into a turn.
+ *
+ * The contract says `message_id` counts messages, because two independent
+ * sources say so: upstream addresses `chat.at(message_id)`, and this host's own
+ * `ScriptContext.floor.messageId` is a message index. What the variable service
+ * takes is a *turn*, and turns count exchanges — so without this translation a
+ * non-negative id was passed through as a turn number and silently addressed a
+ * different floor. Measured on a 7-message chat before the fix:
+ * `setVariables({message_id: 2})` stored its table at message index 3.
+ *
+ * Nothing was relying on the old reading: the frame refuses every
+ * `message_id` but `'latest'`, so no explicit id had ever reached this code.
+ * That is the whole reason the meaning could be corrected rather than
+ * grandfathered — the window closes the moment the frame opens that path, and
+ * MVU's own addressing is explicit (12 sites across 13 of 19 cards), so the
+ * first traffic through it will be substantial.
+ *
+ * **A residual, worth knowing before relying on this.** A turn owns both a user
+ * line and its reply, so both indices map to one turn and therefore to one
+ * candidate's table. Upstream stores a table *per message* and would answer a
+ * user row with its own; this host has no per-user-row store, so a user-row id
+ * reads its reply's table. The rows themselves survive in the file — see
+ * `tests/user-row-variables.test.ts` — it is the variable service that has no
+ * place to put them.
+ * @param entry - the open conversation.
+ * @param messageId - the card's message index, or absent for the latest.
+ * @returns the turn to address, or undefined to mean the latest.
+ * @throws {AppError} `not-found` when no message has that index.
+ */
+function turnForMessage(entry: ChatEntry, messageId: number | undefined): number | undefined {
+  if (messageId === undefined) return undefined
+  const turn = lineTurns(entry.session)[messageId]
+  // Refused rather than clamped: an id past the end is a card that has
+  // miscounted, and answering the newest floor instead would hand it a table it
+  // did not ask for and cannot tell apart from the one it wanted.
+  if (turn === undefined) throw notFound(`this chat has no message ${String(messageId)}`)
+  return turn
+}
+
 export function variableOptionFor(
   scope: 'message' | 'chat' | 'global' | 'script',
   messageId?: number,

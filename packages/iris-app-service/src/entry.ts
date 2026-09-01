@@ -788,19 +788,29 @@ export class ChatEntry {
     if (turn === undefined) return {}
     const candidate = selectedCandidate(this.session, turn)
     if (candidate === undefined) return {}
+
+    // The **last** table written for this candidate, not the first. The log is
+    // append-only, so a floor that is written more than once — seeded at chat
+    // creation and then updated by `script.setVariables`, say — has several
+    // `iris/variables` events, and returning on the first match reports the
+    // table as it was when the floor was born. The reading is well-formed,
+    // complete, and stale, which is the failure that looks like nothing
+    // happening. It stayed hidden because the ordinary path writes each
+    // candidate once, so first and last coincide everywhere except after an
+    // explicit write.
+    let latest: Variables | undefined
     for (const event of this.session.events) {
       if (event.type === 'iris/variables' && event.data.candidateSeq === candidate.seq) {
-        // Through the prune record: a floor whose table was trimmed must report
-        // what survived, not what was written. A pruned floor and one that never
-        // wrote anything are the same thing to a reader, and upstream answers
-        // both with `{}` — see `prune.ts` for why nothing is restored.
-        return applyPruned(
-          event.data.variables as Variables,
-          prunedKeysOf(this.session).get(candidate.seq),
-        ) as Variables
+        latest = event.data.variables as Variables
       }
     }
-    return {}
+    if (latest === undefined) return {}
+
+    // Through the prune record: a floor whose table was trimmed must report
+    // what survived, not what was written. A pruned floor and one that never
+    // wrote anything are the same thing to a reader, and upstream answers
+    // both with `{}` — see `prune.ts` for why nothing is restored.
+    return applyPruned(latest, prunedKeysOf(this.session).get(candidate.seq)) as Variables
   }
 
   /**

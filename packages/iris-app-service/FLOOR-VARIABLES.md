@@ -305,3 +305,42 @@ include_swipes: true 时不发 data（照抄那个不对称）
 
 第三块值得先验，因为它的量级是另外两块的七倍，而且**一旦答错，MVU 的流程是
 「读 → 合并 → 写」，错的读会被持久化成错的写**。
+
+---
+
+## 附:两个读路径的谓词对照(料由 d7 出,72 落笔)
+
+TH 与 MVU 都在回答「哪一楼」,但问的**不是同一个问题**,谓词也不同。混用两者的谓词
+是一个自洽的错误结论——这正是 d7 记下的那句:「我上次的错误不是读错了 TH,是**把一个
+API 的谓词当成了另一个消费者的谓词**。同名场景,两条路径,两个谓词。」
+
+| | **TH `getVariables({type:'message'})`** | **MVU `getLastValidMessageId`** |
+| --- | --- | --- |
+| 出处 | `function/variables.ts:58-71` | `.reference/MagVarUpdate/src/util.ts:12-32` |
+| 谓词 | `!chat_message.is_system`,**且只在 `'latest'`/缺省路径生效** | `isMvuData(该楼的表)` |
+| 谓词定义 | ST 的消息标志位 | `variable_def.ts:171-173`:`stat_data !== undefined && schema !== undefined` |
+| 方向 | **直接取** `chat.at(id)` | **从末尾向前** `findLastIndex` |
+| 范围 | 单楼 | `slice(0, end_message_id)`,**不含 end 本身** |
+| 未命中 | `{}` | `-1` → `getLastValidVariable` 返回 `undefined` |
+| 对用户行 | 不特殊对待(只滤 `is_system`,不滤 `is_user`) | **不特殊对待**,只看数据形状 |
+
+三条要点:
+
+1. **最后一行是要害。** MVU 完全不看 `is_user` / `is_system`,只问「这一楼的表长得
+   像不像 MVU 数据」。所以**带完整 MVU 表的用户行对 MVU 是合法目标**;跳过它就落到更早
+   的 AI 行,答陈旧的 `stat_data`——形状完整、通过 schema 校验、看起来健康。
+   本仓库这条链**已排除**:实测 11 个语料聊天、972 个带表用户行,972 个逐字节往返,
+   0 丢失;`ChatStore.open → toFile()` 走真语料同样逐字节相同。守卫见
+   `tests/user-row-variables.test.ts`。
+2. **`slice(0, end)` 不含 end 本身。** 这是它们把「当前楼」包含进去的写法:
+   `button.ts:203` 传的是 `getLastValidVariable(message_id + 1)`。抄这条语义时
+   off-by-one **不会报错,只会静默取错楼**。
+3. **两个谓词都不是「错」的**,它们服务不同问题:TH 的 `is_system` 是「哪一楼算最新
+   的可见消息」,MVU 的 `isMvuData` 是「哪一楼有我认得的状态」。
+
+风险 1 的失败模式据此更正:**不是「答空表」,是「答陈旧数据」**。而陈旧数据会被 MVU
+读→合并→写回持久化,所以按 d7 的原话记档:
+
+> **不是失败,是先毁掉数据再成功。**
+
+这是「一切失败必须有声音」在数据完整性上的极端情形:整条链没有任何一步会报错。
