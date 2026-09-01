@@ -71,8 +71,8 @@ export { ScriptPolicyStore } from './scripts.ts'
 export { ScriptVariableStore, scriptIdOf } from './script-variables.ts'
 export { SettingsStore, sanitize, type SettingsPatch } from './settings.ts'
 export { applyOps, buildSnapshot, scalarsOf, worldInfoOf, writePath } from './template.ts'
-export { charWorldbookNames, toWorldbookEntry, WorldbookStore } from './worldbooks.ts'
-export type { CharWorldbookNames } from './worldbooks.ts'
+export { charWorldbookNames, resolveCardWorldbook, toWorldbookEntry, WorldbookStore } from './worldbooks.ts'
+export type { CharWorldbookNames, ResolvedWorldbook } from './worldbooks.ts'
 export {
   projectMessages,
   reasoningOf,
@@ -342,7 +342,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Loaded before the chats, because the `global` scope is read synchronously by
   // a card and a synchronous read cannot wait for a file.
   const globalScope = await openGlobalScope(extensionSettingsStore, error => { ctx.logger.warn(error.message) })
-  const chats = new ChatStore(paths.chats, library, scriptVariables, globalScope)
+  const worldbooks = new WorldbookStore(paths.worlds)
+  const chats = new ChatStore(paths.chats, library, scriptVariables, globalScope, worldbooks)
   const settings = new SettingsStore(paths.settings, {
     provider: config.provider ?? 'default',
     model: config.model ?? 'local-model',
@@ -355,10 +356,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // owners: the policy file is the user's decisions, this is data cards wrote.
   const extensionSettings = extensionSettingsStore
   const connections = new ConnectionStore(paths.connections)
-  // Named books, the ones cards bind by name through `data.extensions.world`.
-  // 18 of the 19 cards in the measured corpus bind one, so this is the common
-  // case rather than an extra.
-  const worldbooks = new WorldbookStore(paths.worlds)
 
   // The folders are created on first write, not on boot: a host that has never
   // been used should leave nothing behind, and both stores already tolerate a

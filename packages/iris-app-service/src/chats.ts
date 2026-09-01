@@ -29,6 +29,7 @@ import { ChatEntry, createSession, readMeta } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
 import { fileFor, toId, uniqueId } from './paths.ts'
+import { resolveCardWorldbook, WorldbookStore } from './worldbooks.ts'
 import type { ScriptVariableStore } from './script-variables.ts'
 
 /** Provenance stamped on a greeting, which no model produced. */
@@ -76,6 +77,8 @@ export class ChatStore {
    * another wrote next.
    */
   readonly #globalScope: ScopeBackend | undefined
+  /** Named books, for choosing which one a card's world info comes from. */
+  readonly #worldbooks: WorldbookStore | undefined
   readonly #entries = new Map<string, ChatEntry>()
 
   /**
@@ -89,11 +92,13 @@ export class ChatStore {
     library: CharacterLibrary,
     scriptVariables?: ScriptVariableStore,
     globalScope?: ScopeBackend,
+    worldbooks?: WorldbookStore,
   ) {
     this.#dir = dir
     this.#library = library
     this.#scriptVariables = scriptVariables
     this.#globalScope = globalScope
+    this.#worldbooks = worldbooks
   }
 
   /**
@@ -182,6 +187,7 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(meta.characterId, card)
     const entry = new ChatEntry({
       chatId, header: file.header, session, card,
+      worldbook: await resolveCardWorldbook(card, this.#worldbooks),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
     })
@@ -224,6 +230,7 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(characterId, card)
     const entry = new ChatEntry({
       chatId, header, session, card,
+      worldbook: await resolveCardWorldbook(card, this.#worldbooks),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
     })
@@ -313,6 +320,10 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(parentMeta.characterId, parent.card)
     const child = new ChatEntry({
       chatId: childId, header, session, card: parent.card,
+      // Reused rather than re-resolved: a branch plays the same character from
+      // the same books, and a second resolution could disagree with its parent
+      // if a book changed on disk in between.
+      ...parent.worldbook === undefined ? {} : { worldbook: parent.worldbook },
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
     })

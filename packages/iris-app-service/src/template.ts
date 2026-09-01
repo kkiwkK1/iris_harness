@@ -23,7 +23,9 @@
 
 import type { CharacterCard } from '@iris/character'
 import type { Json, Op, Scope, Snapshot, WorldInfoEntry } from '@iris/compat-prompt-template'
-import { fromCharacterBook } from '@iris/lorebook'
+import { fromCharacterBook, type LorebookEntry } from '@iris/lorebook'
+
+import type { ResolvedWorldbook } from './worldbooks.ts'
 import { createMacroContext, expandMacros } from '@iris/macro'
 import type { Variables } from '@iris/variables'
 
@@ -50,27 +52,40 @@ function jsonOf(value: unknown): Json {
  * @param expand - macro substitution, applied to content as upstream does.
  * @returns one record per enabled entry.
  */
-export function worldInfoOf(card: CharacterCard | undefined, expand: (text: string) => string): WorldInfoEntry[] {
-  const book = card?.data.character_book
-  if (book === undefined) return []
-
-  let entries: WorldInfoEntry[]
-  try {
-    const parsed = fromCharacterBook(book)
-    const world = card?.data.name ?? 'character book'
-    entries = Object.values(parsed.entries)
-      .filter(entry => entry.disable !== true)
-      .map(entry => ({
-        world,
-        uid: String(entry.uid),
-        // The title, which is what `getwi` matches on — not the body.
-        comment: entry.comment,
-        content: expand(entry.content),
-      }))
-  } catch {
-    return []
+export function worldInfoOf(
+  card: CharacterCard | undefined,
+  expand: (text: string) => string,
+  chosen?: ResolvedWorldbook,
+): WorldInfoEntry[] {
+  // The chosen book when the caller resolved one, the embedded book otherwise.
+  // The fallback is not a second rule: it is what a caller with no world book
+  // store can see, and it keeps this function usable from a test that has no
+  // installation behind it. A host always passes `chosen`.
+  let source: { entries: LorebookEntry[], world: string }
+  if (chosen !== undefined) {
+    source = { entries: chosen.entries, world: chosen.world }
+  } else {
+    const book = card?.data.character_book
+    if (book === undefined) return []
+    try {
+      source = {
+        entries: Object.values(fromCharacterBook(book).entries),
+        world: card?.data.name ?? 'character book',
+      }
+    } catch {
+      return []
+    }
   }
-  return entries
+
+  return source.entries
+    .filter(entry => entry.disable !== true)
+    .map(entry => ({
+      world: source.world,
+      uid: String(entry.uid),
+      // The title, which is what `getwi` matches on — not the body.
+      comment: entry.comment,
+      content: expand(entry.content),
+    }))
 }
 
 /**
@@ -186,7 +201,7 @@ export function buildSnapshot(entry: ChatEntry, turn: number, traceId: number): 
     },
     chatMetadata: jsonOf(entry.header.chat_metadata),
     lorebooks: lorebooksOf(entry),
-    worldInfo: worldInfoOf(entry.card, expand),
+    worldInfo: worldInfoOf(entry.card, expand, entry.worldbook),
     scalars: scalarsOf(entry),
     traceId,
   }

@@ -23,6 +23,8 @@ import type { TimedEffectState } from '@iris/lorebook'
 import { expandHelperMacros } from '@iris/compat-tavernhelper'
 import { applyCommands, formatYamlBlock, loadInitVars, scanDialects, type MvuData } from '@iris/mvu'
 import { extractScripts } from '@iris/script'
+
+import type { ResolvedWorldbook } from './worldbooks.ts'
 import {
   exportMessages,
   importChat,
@@ -140,6 +142,17 @@ export class ChatEntry {
   session: Session
   variables: VariableStore
   card: CharacterCard | undefined
+  /**
+   * Which book this chat's world info comes from, chosen once when the chat
+   * opened.
+   *
+   * Resolved rather than derived on demand, because the choice is between two
+   * sources and every consumer must make the same one: `worldInfoOf`,
+   * `scanEntriesOf` and `initVars` reading the card directly is how they would
+   * drift apart. Absent only on an entry built without a resolver, which is a
+   * test's shape and not a host's.
+   */
+  worldbook: ResolvedWorldbook | undefined
   /** Sticky and cooldown windows, carried between turns. */
   timedEffects: TimedEffectState | undefined
   /** The turn currently streaming, if any. */
@@ -214,11 +227,14 @@ export class ChatEntry {
      * to keep it should do.
      */
     globalScope?: ScopeBackend
+    /** The chosen world book; see the field of the same name. */
+    worldbook?: ResolvedWorldbook
   }) {
     this.chatId = input.chatId
     this.header = input.header
     this.session = input.session
     this.card = input.card
+    this.worldbook = input.worldbook
     // Assigned before the first `#makeStore`, and held, because `rebuild` makes
     // a new store: a backend created inside `#makeStore` would drop every script
     // table the moment a message was edited.
@@ -502,14 +518,23 @@ export class ChatEntry {
    */
   initVars(): MvuData {
     if (this.#initVars !== undefined) return this.#initVars
-    const book = this.card?.data.character_book
-    if (book === undefined) {
+    // The chosen book, not the embedded one. A card that declares `[InitVar]`
+    // in its named book and ships no embedded copy would otherwise start with
+    // no declared tree at all, and MVU's `set` refuses a path that does not
+    // exist — so the symptom would be every variable update silently failing.
+    const chosen = this.worldbook
+    const entries = chosen !== undefined
+      ? chosen.entries
+      : (() => {
+        const book = this.card?.data.character_book
+        return book !== undefined && Array.isArray(book.entries) ? book.entries : []
+      })()
+    if (entries.length === 0) {
       this.#initVars = EMPTY_MVU
       return this.#initVars
     }
-    const entries = Array.isArray(book.entries) ? book.entries : []
     this.#initVars = loadInitVars(
-      [{ name: this.card?.data.name ?? 'character book', entries }],
+      [{ name: chosen?.world ?? this.card?.data.name ?? 'character book', entries }],
       EMPTY_MVU,
     ).data
     return this.#initVars

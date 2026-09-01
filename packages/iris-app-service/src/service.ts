@@ -826,6 +826,7 @@ export class IrisAppService {
     const names = entry.names
     const built = buildPrompt({
       card: entry.card,
+      ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
       preset: this.#options.preset,
       userName: names.user,
       characterName: names.character,
@@ -910,6 +911,7 @@ export class IrisAppService {
     const names = entry.names
     const built = buildPrompt({
       card: entry.card,
+      ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
       preset: this.#options.preset,
       userName: names.user,
       characterName: names.character,

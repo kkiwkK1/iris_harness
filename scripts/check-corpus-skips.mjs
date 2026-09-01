@@ -35,9 +35,10 @@ import { spawn } from 'node:child_process'
  * instead of reading `IRIS_CORPUS`, so they ignored the rehearsal, ran against
  * real data, and left this number at 16 — green here and 19 on CI. The number
  * did not move because the gate was broken, which is precisely the case a
- * hand-maintained count cannot notice on its own.
+ * hand-maintained count cannot notice on its own. 19 → 20 with the world book
+ * source-choice test, which is gated the same way.
  */
-const EXPECTED_SKIPPED = 19
+const EXPECTED_SKIPPED = 20
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 

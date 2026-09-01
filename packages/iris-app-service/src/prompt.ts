@@ -22,6 +22,8 @@ import {
   type ScanEntry,
   type TimedEffectState,
 } from '@iris/lorebook'
+
+import type { ResolvedWorldbook } from './worldbooks.ts'
 import { createMacroContext, expandMacros } from '@iris/macro'
 import type { Contribution, HistoryEntry, Role, TokenCounter } from '@iris/pipeline'
 import { resolvePreset, type ChatCompletionPreset, type MarkerSources, type PromptItem } from '@iris/preset'
@@ -59,6 +61,15 @@ export const DEFAULT_PRESET: ChatCompletionPreset = {
 export interface PromptInput {
   /** The character being played, or absent for a chat with no card. */
   card: CharacterCard | undefined
+  /**
+   * Which book the world info comes from, chosen by the caller.
+   *
+   * Passed in rather than derived here, because the choice between a card's
+   * embedded book and its bound named book has to be the same one every
+   * consumer makes — see `resolveCardWorldbook`. Absent falls back to the
+   * embedded book, which is what a caller with no world book store can see.
+   */
+  worldbook?: ResolvedWorldbook
   preset: ChatCompletionPreset
   /** Name shown for the user, and what `{{user}}` expands to. */
   userName: string
@@ -114,19 +125,23 @@ function roleOf(value: number): Role {
  * @param card - the character whose book to read.
  * @returns scan entries, or an empty list when the card ships no book.
  */
-export function scanEntriesOf(card: CharacterCard | undefined): ScanEntry[] {
-  const book = card?.data.character_book
-  if (book === undefined) return []
-
+export function scanEntriesOf(card: CharacterCard | undefined, chosen?: ResolvedWorldbook): ScanEntry[] {
   let entries: ScanEntry[]
-  try {
-    const parsed = fromCharacterBook(book)
-    const world = card?.data.name ?? 'character book'
-    entries = Object.values(parsed.entries).map(entry => ({ ...entry, world }))
-  } catch {
-    // A book Iris cannot read is a reason to play the character without it, not
-    // a reason to refuse the chat.
-    return []
+  if (chosen !== undefined) {
+    entries = chosen.entries.map(entry => ({ ...entry, world: chosen.world }))
+  } else {
+    // No resolver: the embedded book, which is what a caller with no world book
+    // store can see. A host always passes `chosen`.
+    const book = card?.data.character_book
+    if (book === undefined) return []
+    try {
+      const world = card?.data.name ?? 'character book'
+      entries = Object.values(fromCharacterBook(book).entries).map(entry => ({ ...entry, world }))
+    } catch {
+      // A book Iris cannot read is a reason to play the character without it,
+      // not a reason to refuse the chat.
+      return []
+    }
   }
   return entries.sort((a, b) => b.order - a.order || a.uid - b.uid)
 }
@@ -179,7 +194,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
   const expand = input.substitute ?? ((text: string): string => expandMacros(text, macros))
 
   const scan = activateEntries({
-    entries: scanEntriesOf(input.card),
+    entries: scanEntriesOf(input.card, input.worldbook),
     // The engine wants the conversation newest-first, the order ST scans in.
     chat: [...input.history].reverse().map(entry => entry.text),
     budget: input.worldInfoBudget,

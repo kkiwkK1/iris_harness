@@ -29,7 +29,7 @@
 
 import { readFile, readdir } from 'node:fs/promises'
 
-import { parseLorebook, type Lorebook, type LorebookEntry } from '@iris/lorebook'
+import { fromCharacterBook, parseLorebook, type Lorebook, type LorebookEntry } from '@iris/lorebook'
 import type { CharacterCard } from '@iris/character'
 import type { SecondaryLogic, WorldbookEntry, WorldbookPosition } from '@iris/protocol'
 
@@ -237,4 +237,91 @@ export class WorldbookStore {
     }
     return parseLorebook(JSON.parse(raw))
   }
+}
+
+/**
+ * Which book a card's world info actually comes from.
+ *
+ * The three cases are kept distinct rather than collapsed into "the entries",
+ * because the reason a card has no world info is the first thing anyone asks
+ * when it behaves as though it has none.
+ */
+export interface ResolvedWorldbook {
+  /** The entries to assemble from, already normalized. */
+  entries: LorebookEntry[]
+  /** What the entries came from. */
+  source: 'named' | 'embedded' | 'none'
+  /** The book's name, for attribution on each entry. */
+  world: string
+}
+
+/**
+ * Choose the one book a card's world info comes from.
+ *
+ * **Choose, never combine — that is the whole rule.** SillyTavern's embedded
+ * `character_book` is an *import-time* source: `world-info.js:5618` prompts the
+ * user, converts it, saves it as a named book and binds it back onto the card,
+ * and `world-info.js:4363` `getCharacterLore()` then reads named books only and
+ * never looks at `character_book` again. So on a real installation the bound
+ * book **is** the embedded book, copied. Measured on the corpus: 15 cards carry
+ * both, 14 of them are identical entry for entry, and the fifteenth differs by
+ * one entry that was edited after import. Assembling both sources would produce
+ * **2246 entries where 1122 are duplicates** — a failure that is invisible in a
+ * diff, costs twice the world-info budget, and reads as a model that has begun
+ * repeating itself. `scripts/worldbook-source-census.mjs` keeps that number in
+ * view; anyone reaching for a union should run it first.
+ *
+ * The rules, in order:
+ *
+ * 1. **A binding that resolves wins.** This is upstream's semantics, and it is
+ *    also the copy the user edits — the one card whose two books disagree
+ *    disagrees because the named one was edited afterwards.
+ * 2. **Otherwise fall back to the embedded book.** This is deliberately
+ *    *better* than upstream, which reads nothing here until the user accepts an
+ *    import prompt. The deviation is safe in a way upstream's is not: their
+ *    prompt exists because importing is a data migration that writes a new file
+ *    and rebinds the card, and a migration deserves consent. This fallback only
+ *    reads. The cost is that a card whose binding is broken keeps playing from
+ *    a stale embedded copy instead of visibly losing its world info — which is
+ *    the better failure of the two, and the corpus has 2 such cards carrying 102
+ *    and 153 entries that would otherwise go silent.
+ * 3. **Never both.** See above.
+ *
+ * @param card - the character being played.
+ * @param store - the named books, when the host has them.
+ * @returns the chosen entries and where they came from.
+ */
+export async function resolveCardWorldbook(
+  card: CharacterCard | undefined,
+  store: WorldbookStore | undefined,
+): Promise<ResolvedWorldbook> {
+  const fallbackName = card?.data.name ?? 'character book'
+  const bound = charWorldbookNames(card).primary
+
+  if (bound !== null && store !== undefined) {
+    try {
+      const book = await store.read(bound)
+      return { entries: Object.values(book.entries), source: 'named', world: bound }
+    } catch {
+      // A binding with no file behind it, or a file this build cannot parse.
+      // Falls through to the embedded book rather than refusing: rule 2 exists
+      // precisely for this card, and the corpus has two of them.
+    }
+  }
+
+  const embedded = card?.data.character_book
+  if (embedded !== undefined) {
+    try {
+      return {
+        entries: Object.values(fromCharacterBook(embedded).entries),
+        source: 'embedded',
+        world: fallbackName,
+      }
+    } catch {
+      // A book Iris cannot read is a reason to play the character without it,
+      // not a reason to refuse the chat.
+    }
+  }
+
+  return { entries: [], source: 'none', world: fallbackName }
 }
