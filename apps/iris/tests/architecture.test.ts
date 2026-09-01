@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { readFile, readdir } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -54,7 +55,26 @@ async function sourceImports(dir: string): Promise<Set<string>> {
       }
       if (!/\.(ts|tsx|mts)$/.test(entry.name)) continue
       const source = await readFile(path, 'utf8')
-      for (const match of source.matchAll(/from\s+'(@iris\/[a-z0-9-]+)'/g)) found.add(match[1] as string)
+      /*
+       * The optional trailing group is load-bearing, and its absence was a hole
+       * rather than a limitation.
+       *
+       * The pattern used to require the closing quote immediately after the
+       * package name, so `@iris/persistence/src/anything.ts` **did not match at
+       * all**. It was not recorded and permitted — it was never seen, and a
+       * specifier that is never seen is indistinguishable from one that does not
+       * exist. `forbidden` came back empty and `assert.deepEqual(forbidden, [])`
+       * passed with total confidence, which is the most dangerous way for a
+       * guard to be wrong: the browser could import any workspace package by
+       * writing one extra path segment, and every package's `exports` map
+       * carries `"./src/*"`, so the specifier really did resolve.
+       *
+       * The subpath is captured and discarded so the import is attributed to the
+       * package that owns it; the allowlist check below is unchanged.
+       */
+      for (const match of source.matchAll(/from\s+'(@iris\/[a-z0-9-]+)(?:\/[^']*)?'/g)) {
+        found.add(match[1] as string)
+      }
     }
   }
   await walk(dir)
@@ -117,6 +137,45 @@ test('the browser sees the contract and nothing else', async () => {
   const forbidden = [...imported].filter(name => !allowed.has(name)).sort()
 
   assert.deepEqual(forbidden, [], `the browser may only import ${[...allowed].join(', ')}`)
+})
+
+test('the import scanner sees a package reached through a subpath', async () => {
+  /*
+   * A guard on the guard, because the one above cannot fail for this on its own.
+   *
+   * The allowlist test asserts that a set is empty. When the scanner stops
+   * recognising a specifier, the specifier does not appear in that set — so the
+   * assertion passes, and it passes for the same reason it passes when the code
+   * is clean. **A miss and an absence are the same observation.** That is how
+   * `@iris/persistence/src/anything.ts` sat inside `apps/iris-web` while this
+   * suite reported the browser was importing nothing but the contract.
+   *
+   * So this test does not check the repository. It hands the scanner a source it
+   * has written on purpose and asks what the scanner saw, which is the only
+   * question whose answer distinguishes the two cases.
+   */
+  const dir = await mkdtemp(join(tmpdir(), 'iris-arch-'))
+  try {
+    await writeFile(
+      join(dir, 'sample.ts'),
+      [
+        "import { a } from '@iris/protocol'",
+        "import { b } from '@iris/persistence/src/anything.ts'",
+        "import type { C } from '@iris/lorebook/src/matching.ts'",
+      ].join('\n'),
+      'utf8',
+    )
+
+    const seen = await sourceImports(dir)
+
+    assert.deepEqual(
+      [...seen].sort(),
+      ['@iris/lorebook', '@iris/persistence', '@iris/protocol'],
+      'a subpath import must be attributed to the package that owns it — otherwise the allowlist never hears about it',
+    )
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('nothing depends upward on the host or the composition root', async () => {
