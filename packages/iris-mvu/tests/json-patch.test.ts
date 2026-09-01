@@ -207,3 +207,36 @@ test('the legacy dialect still reads, and both can be read at once', () => {
   assert.equal(both.jsonPatchBlocks, 1)
   assert.equal(both.commands.length, 2)
 })
+
+test('a block is found without the <UpdateVariable> wrapper the card asks for', () => {
+  // Observed in production, first compliant reply: the model emitted the
+  // JSONPatch block with **no** `<UpdateVariable>` shell at all, nested inside
+  // its own `<details>` HTML. The card's format spec shows the wrapper, so an
+  // implementation written from that spec — requiring the shell, or parsing
+  // inside it — reads this real reply as "no update" and folds nothing, exactly
+  // the silence this whole dialect was added to end.
+  //
+  // Scanning the whole message is upstream's rule for the legacy dialect too
+  // (`commands.ts`: the wrapper is advisory). This pins it for the new one,
+  // where the temptation to anchor on the shell is much stronger because the
+  // card documents it.
+  const reply = [
+    'She looked at the clock.',
+    '<details><summary>state</summary>',
+    '<JSONPatch>',
+    '[ { "op": "replace", "path": "/world/time", "value": "20:00" } ]',
+    '</JSONPatch>',
+    '</details>',
+  ].join('\n')
+
+  const result = applyCommands(extractJsonPatch(reply), {
+    initialized_lorebooks: {},
+    stat_data: { world: { time: '15:00' } },
+  })
+  assert.deepEqual(result.failures, [])
+  assert.deepEqual(result.data.stat_data, { world: { time: '20:00' } })
+
+  // And the wrapper, when a model does write it, changes nothing.
+  const wrapped = extractJsonPatch(`<UpdateVariable>${reply}</UpdateVariable>`)
+  assert.equal(wrapped.length, 1)
+})

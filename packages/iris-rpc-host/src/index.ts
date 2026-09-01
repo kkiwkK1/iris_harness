@@ -152,7 +152,15 @@ export class IrisRpcHost extends Service {
       // logger was innocent: the hub's send callback was reporting `null`, the
       // value ws passes on SUCCESS, as an error. See events.ts. This sink
       // crashing on that `null` is what finally named the real culprit.)
-      onError: (error) => { this.ctx.logger.warn(error.message) },
+      //
+      // Read defensively, because this incident is what a reporting path must
+      // survive by definition: a sink that throws while reporting turns a
+      // logged warning into a dead host, and it does it at the moment something
+      // is already going wrong. The guard at the source (events.ts) is the fix;
+      // this is the seatbelt, and it costs one expression.
+      onError: (error: unknown) => {
+        this.ctx.logger.warn(error instanceof Error ? error.message : String(error))
+      },
     })
   }
 
