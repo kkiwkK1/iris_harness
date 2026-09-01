@@ -43,10 +43,17 @@ export interface CharWorldbookNames {
   /**
    * Extra books bound through the installation's settings rather than the card.
    *
-   * Upstream reads `world_info.charLore[<avatar stem>].extraBooks`. The measured
-   * install has **no `world_info` section at all**, so this is empty for every
-   * card in the corpus — the shape is taken from upstream's source, not from
-   * data, and nothing here has ever been exercised by a real file.
+   * Upstream reads `world_info.charLore[<avatar stem>].extraBooks`, where
+   * `world_info` sits under **`settings.json` → `world_info_settings`** — not at
+   * the top level, which is where an earlier version of this note said to look
+   * and found nothing.
+   *
+   * That section does exist in the measured install; it holds `globalSelect` and
+   * no `charLore`. So this list is still empty for every corpus card, but for a
+   * narrower reason than "the section is missing" — and the difference matters,
+   * because the wrong reason would keep reporting the same answer after someone
+   * added extra books. The shape below comes from upstream's source, not from
+   * data; nothing here has been exercised by a real file.
    */
   additional: string[]
 }

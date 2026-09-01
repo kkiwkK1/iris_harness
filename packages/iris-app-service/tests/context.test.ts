@@ -280,12 +280,18 @@ test('a card that binds nothing reports null, not an absent field', () => {
 })
 
 test('additional books are empty because the source is absent, not unimplemented', () => {
-  // Upstream fills this from `world_info.charLore[<avatar stem>].extraBooks` in
-  // its `settings.json`. This host has no such section, and neither does the
-  // measured SillyTavern installation — `world_info` is absent from its
-  // settings file entirely. So an empty list is the *true* answer here rather
-  // than a placeholder, which is the same distinction the fake client draws
-  // between reporting an absence and inventing one.
+  // Upstream fills this from `world_info.charLore[<avatar stem>].extraBooks`,
+  // where `world_info` lives under `settings.json` → **`world_info_settings`**.
+  // The measured installation has that section; it holds `globalSelect` and no
+  // `charLore`. This host has no equivalent at all. So an empty list is the
+  // *true* answer rather than a placeholder — the same distinction the fake
+  // client draws between reporting an absence and inventing one.
+  //
+  // An earlier version of this comment said `world_info` was absent from the
+  // settings file entirely, having looked at the top level. The conclusion
+  // survived that error and the reason did not, which is the more dangerous
+  // half: a false reason keeps producing the right answer until the data
+  // changes, and then keeps producing it.
   //
   // The day a `charLore` equivalent exists, this test is the one that should
   // stop being true.

@@ -153,9 +153,12 @@ would break them.
 - **Creating a book.** Upstream's `createWorldbook` / `createOrReplaceWorldbook`
   exist; no corpus card calls them.
 - **`charLore` extra books.** `CharWorldbookNames.additional` is always empty:
-  the measured installation has no `world_info` section in `settings.json` at
-  all, so the mechanism has never been exercised by real data. The shape comes
-  from upstream's source, not from a file.
+  the measured installation has a `world_info` section — under
+  `world_info_settings`, not at the top level — and it carries `globalSelect`
+  but no `charLore`. So the mechanism has never been exercised by real data,
+  though not because the section is missing. An earlier version of this section
+  said it was, having read the top-level path; the conclusion survived, the
+  reason did not. The shape comes from upstream's source, not from a file.
 - **Global selection.** `world_info.globalSelect` is likewise absent, which is
   why the corpus has 2 books that no card binds and nothing can currently reach.
 - **`render: 'debounced' | 'immediate'`.** It redraws upstream's world book
