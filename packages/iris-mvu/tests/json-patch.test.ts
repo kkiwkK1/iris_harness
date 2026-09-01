@@ -21,7 +21,7 @@ import { extractJsonPatch, pointerToPath, scanJsonPatch } from '../src/json-patc
  * fixture that lives on the user's disk keeps the repository holding shapes.
  */
 
-const CHATS = 'E:/sillyTavern/SillyTavern/data/default-user/chats/爱衣'
+const CHATS = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/data/default-user/chats/爱衣`
 
 /** The first real reply on this machine that answered in this dialect. */
 async function findRealPatch(): Promise<unknown[] | undefined> {

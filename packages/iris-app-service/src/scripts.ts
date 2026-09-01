@@ -235,6 +235,8 @@ export class ScriptPolicyStore {
       // and this number is about to be shown to a user being asked whether to
       // run that code. Measured over the corpus's 47 scripts: 1.13x in total,
       // 2.07x on the worst single script.
+      ...script.buttons === undefined ? {} : { buttons: script.buttons },
+      ...script.buttonsEnabled === undefined ? {} : { buttonsEnabled: script.buttonsEnabled },
       bytes: Buffer.byteLength(script.content, 'utf8'),
     }
   }

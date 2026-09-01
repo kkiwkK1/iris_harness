@@ -22,7 +22,7 @@
  * @module @iris/script/extract
  */
 
-import type { CardScript, CardScriptBundle } from './types.ts'
+import type { CardScript, CardScriptBundle, ScriptButton } from './types.ts'
 
 /** The extension keys scripts have been found under. */
 const KEYS = ['tavern_helper', 'TavernHelper_scripts'] as const
@@ -105,6 +105,7 @@ function toScript(raw: unknown, index: number): CardScript | { reason: string, d
     content,
     ...typeof value['info'] === 'string' ? { info: value['info'] } : {},
     ...value['button'] === undefined ? {} : { button: value['button'] },
+    ...readButtons(value),
     ...value['data'] === undefined ? {} : { data: value['data'] },
     ...value['export_with'] === undefined ? {} : { exportWith: value['export_with'] },
   }
@@ -175,4 +176,43 @@ export function extractScripts(card: unknown): CardScriptBundle {
  */
 export function runnableScripts(bundle: CardScriptBundle): CardScript[] {
   return bundle.scripts.filter(script => script.enabled)
+}
+
+/**
+ * The buttons a script declares, from either shape the corpus stores them in.
+ *
+ * Upstream has two. The current one wraps them —
+ * `button: { enabled, buttons: [{ name, visible }] }` — and the legacy one, in
+ * `JS-Slash-Runner/src/type/backward.ts`, puts a bare `buttons` array on the
+ * script itself. Reading only the wrapper is the same mistake this file already
+ * records for whole scripts: measured over the corpus, the legacy shape appears
+ * on 13 script entries across 3 cards, all of which **also** carry the modern
+ * shape under the other key, so nothing is lost today. A card exported with only
+ * `TavernHelper_scripts` and the old shape would lose every button in silence.
+ * @param value - the raw script object.
+ * @returns the parsed buttons and their group switch, or nothing to add.
+ */
+function readButtons(value: Unknown): { buttons?: ScriptButton[], buttonsEnabled?: boolean } {
+  const wrapper = value['button']
+  const raw = isRecord(wrapper) && Array.isArray(wrapper['buttons'])
+    ? wrapper['buttons']
+    : Array.isArray(value['buttons']) ? value['buttons'] : undefined
+  if (raw === undefined) return {}
+
+  const buttons: ScriptButton[] = []
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue
+    const name = entry['name']
+    if (typeof name !== 'string') continue
+    // `visible` defaults to shown only when the card omits it. Upstream's schema
+    // requires the field, and 58 of the corpus's 89 buttons set it to `false`,
+    // so guessing `true` for a malformed entry would surface controls the author
+    // hid rather than hide ones they meant to show.
+    buttons.push({ name, visible: entry['visible'] !== false })
+  }
+
+  // `enabled` is the author's switch for the whole group and defaults to `true`,
+  // which is upstream's default and 47 of the corpus's 48.
+  const enabled = isRecord(wrapper) && typeof wrapper['enabled'] === 'boolean' ? wrapper['enabled'] : true
+  return { buttons, buttonsEnabled: enabled }
 }

@@ -113,6 +113,20 @@ export interface ScriptView {
    */
   enabled: boolean
   /**
+   * The buttons this script asks the panel to show.
+   *
+   * Upstream's shape, unchanged: `{ name, visible }`, identified **by position**
+   * and by nothing else — a button carries no id, no icon and no callback name,
+   * so `buttons[i]` is the only handle there is.
+   *
+   * **`visible: false` is the common case**: 58 of the corpus's 89 buttons.
+   * Rendering the whole array shows a pile of controls their authors hid on
+   * purpose. `buttonsEnabled` is the author's separate switch for the group.
+   */
+  buttons?: { name: string, visible: boolean }[]
+  /** Whether the card's author left this script's button group switched on. */
+  buttonsEnabled?: boolean
+  /**
    * Size of the body in **UTF-8 bytes**, so a list can say what it is about to
    * run.
    *

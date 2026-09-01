@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test:live": "node scripts/test-live.mjs",
     "test:template-differential": "node scripts/template-differential.mjs",
+    "test:no-corpus": "node scripts/check-corpus-skips.mjs",
     "demo:mvu": "node apps/iris/demo/mvu-roleplay.ts",
     "build:web": "npm --prefix apps/iris-web run build",
     "verify": "node --test \"packages/*/tests/**/*.test.ts\" \"apps/*/tests/**/*.test.ts\" && tsc --noEmit"

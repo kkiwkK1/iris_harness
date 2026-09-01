@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { checkScriptFetch, extractScripts, runnableScripts, allowedScriptSources } from '../src/index.ts'
 
+
 /**
  * The fixtures are the three shapes measured in the local corpus, reduced to
  * the fields that carry meaning. Hermetic on purpose — the corpus is the user's
@@ -212,4 +213,61 @@ test('garbage is refused without throwing', () => {
 
 test('the whitelist can be shown to the user', () => {
   assert.deepEqual(allowedScriptSources(), ['*.jsdelivr.net', 'raw.githubusercontent.com'])
+})
+
+test('buttons are read from both shapes the corpus stores them in', () => {
+  // Upstream's current shape wraps them; `backward.ts` puts a bare `buttons`
+  // array on the script itself. Reading only the wrapper is the same mistake
+  // this module already records for whole scripts — and measured, the legacy
+  // shape sits on 13 entries across 3 cards, all of which also carry the modern
+  // one, so nothing is lost *today*. A card exported with only the old key would
+  // lose every button in silence.
+  const modern = extractScripts({
+    data: { extensions: { tavern_helper: { scripts: [{
+      id: 'a', name: 'A', type: 'script', enabled: true, content: 'x',
+      button: { enabled: true, buttons: [{ name: 'Open', visible: true }, { name: 'Hidden', visible: false }] },
+    }] } } },
+  }).scripts
+  assert.deepEqual(modern[0]?.buttons, [{ name: 'Open', visible: true }, { name: 'Hidden', visible: false }])
+  assert.equal(modern[0]?.buttonsEnabled, true)
+
+  const legacy = extractScripts({
+    data: { extensions: { TavernHelper_scripts: [{ type: 'script', value: {
+      id: 'b', name: 'B', type: 'script', enabled: true, content: 'x',
+      buttons: [{ name: 'Legacy', visible: true }],
+    } }] } },
+  }).scripts
+  assert.deepEqual(legacy[0]?.buttons, [{ name: 'Legacy', visible: true }])
+})
+
+test('a hidden button stays hidden, and a malformed one does not become visible', () => {
+  const scripts = extractScripts({
+    data: { extensions: { tavern_helper: { scripts: [{
+      id: 'a', name: 'A', type: 'script', enabled: true, content: 'x',
+      button: {
+        enabled: false,
+        buttons: [
+          { name: 'Shown', visible: true },
+          { name: 'Hidden', visible: false },
+          // No `visible` at all. Upstream's schema requires it, and 58 of the
+          // corpus's 89 buttons set it false — so defaulting a malformed entry
+          // to shown would surface controls an author hid, which is the wrong
+          // direction to guess in.
+          { name: 'Unspecified' },
+          { visible: true },
+        ],
+      },
+    }] } } },
+  }).scripts
+
+  assert.deepEqual(scripts[0]?.buttons, [
+    { name: 'Shown', visible: true },
+    { name: 'Hidden', visible: false },
+    { name: 'Unspecified', visible: true },
+  ])
+  // A button with no name is dropped: position is a button's only identity, and
+  // an unnamed one has nothing for a panel to render or a script to match.
+  assert.equal(scripts[0]?.buttons?.length, 3)
+  // The group switch is the author's, separate from each button's own.
+  assert.equal(scripts[0]?.buttonsEnabled, false)
 })

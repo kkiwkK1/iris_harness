@@ -503,7 +503,7 @@ test('the version matches the installed extension it was transcribed from', asyn
    * Skipping loudly beats passing quietly.
    */
   const manifest =
-    'E:/sillyTavern/SillyTavern/data/default-user/extensions/JS-Slash-Runner/manifest.json'
+    `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/data/default-user/extensions/JS-Slash-Runner/manifest.json`
   let raw: string
   try {
     raw = await readFile(manifest, 'utf8')

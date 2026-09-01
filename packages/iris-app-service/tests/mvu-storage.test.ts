@@ -18,7 +18,7 @@ import { ChatEntry, lineTurns } from '../src/entry.ts'
  * somebody else's application wrote.
  */
 
-const CHATS = 'E:/sillyTavern/SillyTavern/data/default-user/chats'
+const CHATS = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/data/default-user/chats`
 
 /** The largest real conversation on this machine, if it is here. */
 async function findLongChat(): Promise<string | undefined> {

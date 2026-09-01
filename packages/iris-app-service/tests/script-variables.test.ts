@@ -21,7 +21,7 @@ import { ScriptVariableStore, scriptIdOf } from '../src/script-variables.ts'
  * deviation costs no behaviour on the cards that actually exist.
  */
 
-const CHARACTERS = 'E:/sillyTavern/SillyTavern/data/default-user/characters'
+const CHARACTERS = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/data/default-user/characters`
 
 /** A throwaway store. */
 async function store(t: TestContext): Promise<{ store: ScriptVariableStore, path: string }> {
@@ -225,4 +225,47 @@ test('a corrupt store is not silently the same as a first run', async (t) => {
   assert.equal(corrupt.length, 1, 'a corrupt store started over without a word')
   assert.match(corrupt[0] ?? '', /could not be read/u)
   assert.match(corrupt[0] ?? '', /saving will overwrite the file/u)
+})
+
+test('the corpus’s script buttons parse to the census taken of them', {
+  skip: !existsSync(CHARACTERS),
+}, async () => {
+  // Two of us measured this independently — one walking the cards by hand, one
+  // through `extractScripts` — and the numbers agreed to the entry. That
+  // agreement is what this pins: the parser is checked against a census someone
+  // else took, not against its own author's expectations.
+  //
+  // It lives here rather than beside the parser because `@iris/script` does not
+  // depend on `@iris/character`, and adding that dependency to reach a PNG
+  // decoder would be a real coupling bought for a test.
+  let scripts = 0
+  let withButtons = 0
+  let buttons = 0
+  let invisible = 0
+  let groupsOff = 0
+
+  for (const file of (await readdir(CHARACTERS)).filter(name => name.endsWith('.png'))) {
+    let card: CharacterCard
+    try {
+      card = normalizeCard(decodeCardPng(await readFile(join(CHARACTERS, file))))
+    } catch {
+      continue
+    }
+    for (const script of extractScripts(card).scripts) {
+      scripts += 1
+      if (script.buttonsEnabled === false) groupsOff += 1
+      if (script.buttons === undefined || script.buttons.length === 0) continue
+      withButtons += 1
+      buttons += script.buttons.length
+      for (const button of script.buttons) if (!button.visible) invisible += 1
+    }
+  }
+
+  assert.deepEqual(
+    { scripts, withButtons, buttons, invisible, groupsOff },
+    { scripts: 47, withButtons: 18, buttons: 89, invisible: 58, groupsOff: 1 },
+  )
+  // Stated so whoever builds the panel cannot miss it: most buttons in this
+  // corpus are hidden by their own author.
+  assert.ok(invisible > buttons / 2, 'hidden is no longer the common case; a panel default may need revisiting')
 })

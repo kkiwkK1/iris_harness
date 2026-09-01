@@ -1,0 +1,82 @@
+# Continuous integration for Iris.
+#
+# One job, on purpose: every step here depends on the one before it, so running
+# them in parallel would only buy a matrix of jobs that each have to redo the
+# install. Split it when there is something genuinely independent to split.
+#
+# **No secrets are referenced, and that is a decision rather than an omission.**
+# The suite is offline by construction: the live-provider tests gate themselves
+# on `IRIS_LIVE=1` and skip without it, and the corpus-gated tests gate on a
+# SillyTavern install that a runner does not have. A workflow that took an API
+# key would make every fork's pull request either fail or leak, and would buy
+# coverage the default suite is explicitly designed not to need.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The repository requires Node 24 for native TypeScript type stripping —
+      # there is no build step for the host packages, so an older Node does not
+      # merely warn, it cannot load a single `.ts` file.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+
+      # Two package managers, and not by accident. `pnpm-workspace.yaml` excludes
+      # `apps/iris-web` because pnpm cannot extract esbuild in this project's
+      # environment; the browser app is npm-managed and reaches workspace code
+      # through Vite aliases. Installing each half with its own tool is what the
+      # lockfiles describe, so anything else would install something the repo has
+      # never run.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install workspace dependencies (pnpm)
+        run: pnpm install --frozen-lockfile
+
+      - name: Install browser app dependencies (npm)
+        run: npm ci
+        working-directory: apps/iris-web
+
+      - name: Typecheck the workspace
+        run: pnpm run typecheck
+
+      - name: Typecheck the browser app
+        run: npm run typecheck
+        working-directory: apps/iris-web
+
+      # Before the tests, not after. `apps/iris-web/public/sandbox/` is
+      # gitignored — it holds build output — and at least one test reads an
+      # artifact out of it. On a developer's machine that directory is left over
+      # from an earlier build, so the dependency is invisible; on a fresh
+      # checkout it is the difference between a green suite and a red one.
+      #
+      # This step also runs the bootstrap and preset checks, which
+      # `build:sandbox` invokes directly.
+      - name: Build the browser app
+        run: npm run build
+        working-directory: apps/iris-web
+
+      # Not `pnpm test`: this runs the same suite with the corpus forced absent
+      # and then checks the shape of the result. A corpus-gated test that guards
+      # by returning early instead of skipping reports as a pass while asserting
+      # nothing, and CI — the one environment with no corpus — is exactly where
+      # that would never be noticed. See `scripts/check-corpus-skips.mjs`.
+      - name: Test (with the corpus absent, as here)
+        run: pnpm run test:no-corpus
+
+      - name: Check the rendered interface
+        run: npm run check:render
+        working-directory: apps/iris-web

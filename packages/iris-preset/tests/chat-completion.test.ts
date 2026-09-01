@@ -193,7 +193,7 @@ test('an absolute injection pins itself to its own depth', () => {
  * from the same belief as the code, so they used the sentinel the code looked
  * for. Only files someone else wrote could disagree.
  */
-const PRESET_DIR = 'E:/sillyTavern/SillyTavern/data/default-user/OpenAI Settings'
+const PRESET_DIR = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/data/default-user/OpenAI Settings`
 
 test('every real preset resolves to its enabled prompts, not to file order', { skip: !existsSync(PRESET_DIR) }, async () => {
   const files = (await readdir(PRESET_DIR)).filter(name => name.endsWith('.json'))

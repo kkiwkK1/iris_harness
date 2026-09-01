@@ -30,8 +30,8 @@ import { SettingsStore } from '../src/settings.ts'
  * code — and the one place it was most likely to recur here.
  */
 
-const CHARACTERS = 'E:/sillyTavern/SillyTavern/data/default-user/characters'
-const CHATS = 'E:/sillyTavern/SillyTavern/data/default-user/chats'
+const CHARACTERS = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/data/default-user/characters`
+const CHATS = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/data/default-user/chats`
 const CARD = join(CHARACTERS, '爱衣.png')
 
 interface Fixture {

@@ -37,7 +37,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = fileURLToPath(new URL('../', import.meta.url))
 const require = createRequire(join(ROOT, 'scripts', 'x.cjs'))
 
-const ST = 'E:/sillyTavern/SillyTavern'
+const ST = process.env.IRIS_CORPUS ?? 'E:/sillyTavern/SillyTavern'
 const CARDS = `${ST}/data/default-user/characters`
 const WORLDS = `${ST}/data/default-user/worlds`
 const VENDORED_EJS = `${ST}/public/scripts/extensions/third-party/ST-Prompt-Template/src/3rdparty/ejs.js`

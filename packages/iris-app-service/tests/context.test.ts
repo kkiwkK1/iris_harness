@@ -153,8 +153,8 @@ test('one card cannot read or overwrite another card’s settings', async (t) =>
  * skips without a key: a machine without SillyTavern must still run the suite
  * offline and green.
  */
-const CORPUS = 'E:/sillyTavern/SillyTavern/data/default-user/characters'
-const ST_CONTEXT = 'E:/sillyTavern/SillyTavern/public/scripts/st-context.js'
+const CORPUS = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/data/default-user/characters`
+const ST_CONTEXT = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/public/scripts/st-context.js`
 
 /** Fields answered in the browser, by the frame runner rather than the host. */
 const BROWSER_SIDE = new Set(['addOneMessage', 'printMessages', 'eventSource', 'event_types'])

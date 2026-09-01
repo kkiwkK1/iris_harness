@@ -24,5 +24,6 @@ export {
 export type {
   CardScript,
   CardScriptBundle,
+  ScriptButton,
   ScriptType,
 } from './types.ts'
