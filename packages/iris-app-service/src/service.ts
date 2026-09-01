@@ -506,6 +506,7 @@ export class IrisAppService {
             // reading another's settings would defeat the per-card grant.
             extensionSettings: await this.#options.extensionSettings?.get(characterId) ?? {},
             characters: await library.list(),
+            onReport: message => { this.#report(new Error(`script.context: ${message}`)) },
           }),
         }
       },

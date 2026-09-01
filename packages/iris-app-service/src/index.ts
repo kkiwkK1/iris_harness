@@ -27,6 +27,7 @@ import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
+import { openGlobalScope } from './context.ts'
 import { serveSandboxAsset } from './sandbox-assets.ts'
 import { ScriptCache } from './script-cache.ts'
 import { ScriptPolicyStore } from './scripts.ts'
@@ -317,7 +318,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const library = new CharacterLibrary(paths.characters, avatarPath)
   const scriptVariables = new ScriptVariableStore(paths.scriptVariables,
     error => { ctx.logger.warn(error instanceof Error ? error.message : String(error)) })
-  const chats = new ChatStore(paths.chats, library, scriptVariables)
+  const extensionSettingsStore = new ExtensionSettingsStore(paths.extensionSettings)
+  // Loaded before the chats, because the `global` scope is read synchronously by
+  // a card and a synchronous read cannot wait for a file.
+  const globalScope = await openGlobalScope(extensionSettingsStore, error => { ctx.logger.warn(error.message) })
+  const chats = new ChatStore(paths.chats, library, scriptVariables, globalScope)
   const settings = new SettingsStore(paths.settings, {
     provider: config.provider ?? 'default',
     model: config.model ?? 'local-model',
@@ -328,7 +333,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const scripts = new ScriptPolicyStore(paths.scriptPolicy)
   // Kept apart from `script-policy.json` because they answer to different
   // owners: the policy file is the user's decisions, this is data cards wrote.
-  const extensionSettings = new ExtensionSettingsStore(paths.extensionSettings)
+  const extensionSettings = extensionSettingsStore
   const connections = new ConnectionStore(paths.connections)
 
   // The folders are created on first write, not on boot: a host that has never

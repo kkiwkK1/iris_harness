@@ -10,7 +10,7 @@ import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
-import { ExtensionSettingsStore } from '../src/context.ts'
+import { ExtensionSettingsStore, openGlobalScope } from '../src/context.ts'
 import { ScriptVariableStore } from '../src/script-variables.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
@@ -419,4 +419,50 @@ test('one script’s partition is not another’s, in the payload as in the stor
   // another's bookkeeping.
   assert.deepEqual(context.variableLayers.script['core'], { mine: 1 })
   assert.deepEqual(context.variableLayers.script['exp'], { mine: 2 })
+})
+
+test('the global scope survives a restart, at upstream’s own path', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+  const settingsPath = join(dir, 'extension-settings.json')
+
+  const boot = async () => {
+    const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+    const extensionSettings = new ExtensionSettingsStore(settingsPath)
+    const globalScope = await openGlobalScope(extensionSettings)
+    return new IrisAppService({
+      stream: NOTHING,
+      library,
+      chats: new ChatStore(join(dir, 'chats'), library, undefined, globalScope),
+      settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
+      extensionSettings,
+      broadcast: () => {},
+      userName: 'Traveller',
+    }).handlers()
+  }
+
+  const first = await boot()
+  const created = await first['chat.create']({ characterId: 'aria' })
+  await first['script.setVariables']({
+    chatId: created.view.chatId, scope: 'global', op: 'replace', variables: { theme: 'dark' },
+  })
+  await new Promise(resolve => setTimeout(resolve, 20))
+
+  // Upstream keeps this installation-wide, so an in-memory scope means a card
+  // storing a preference never finds it again — the gap this closes.
+  const reopened = await boot()
+  const chat = await reopened['chat.create']({ characterId: 'aria' })
+  assert.deepEqual(
+    (await reopened['script.getVariables']({ chatId: chat.view.chatId, scope: 'global' })).variables,
+    { theme: 'dark' },
+  )
+
+  // At the isomorphic path, under a key no character id can occupy: `isSafeId`
+  // refuses a leading dot, so a card named "variables" cannot collide with the
+  // global scope and silently merge its settings into it.
+  const onDisk = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, { global?: unknown }>
+  assert.deepEqual(onDisk['.variables']?.global, { theme: 'dark' })
+  assert.equal('variables' in onDisk, false, 'the section key can collide with a character id')
 })

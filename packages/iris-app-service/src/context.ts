@@ -22,6 +22,8 @@ import { dirname } from 'node:path'
 import type { CharacterSummary, ScriptContext } from '@iris/protocol'
 import { extractScripts } from '@iris/script'
 
+import type { ScopeBackend } from '@iris/variables'
+
 import type { ChatEntry } from './entry.ts'
 import { invalid } from './errors.ts'
 
@@ -76,7 +78,12 @@ export function assertStorable(value: unknown, path = 'value'): void {
  */
 export function buildCardContext(
   entry: ChatEntry,
-  extras: { extensionSettings: Record<string, unknown>, characters: CharacterSummary[] },
+  extras: {
+    extensionSettings: Record<string, unknown>
+    characters: CharacterSummary[]
+    /** Reports a growth alarm; see {@link variableLayersOf}. */
+    onReport?: (message: string) => void
+  },
 ): ScriptContext {
   const meta = entry.meta
   return {
@@ -95,7 +102,7 @@ export function buildCardContext(
     extensionSettings: extras.extensionSettings,
     // The newest turn's message-scope table, which is where MVU keeps its tree.
     variables: entry.currentVariables() ?? {},
-    variableLayers: variableLayersOf(entry),
+    variableLayers: variableLayersOf(entry, extras.onReport),
   }
 }
 
@@ -125,6 +132,14 @@ type Partitions = Record<string, Record<string, unknown>>
  * given to *a card* — and a shared settings bag is a channel that ignores which
  * card is asking.
  */
+/**
+ * Where the global variable scope sits among the per-card partitions.
+ *
+ * A leading dot, because `isSafeId` refuses ids that begin with one — so this
+ * key cannot collide with a character however a card is named.
+ */
+const GLOBAL_SECTION = '.variables'
+
 export class ExtensionSettingsStore {
   readonly #path: string
   #partitions: Partitions = {}
@@ -151,6 +166,43 @@ export class ExtensionSettingsStore {
       // finds its settings missing and re-initializes them, which is a state it
       // already has to handle on first run.
     }
+  }
+
+  /**
+   * The installation-wide variable scope, at upstream's own path.
+   *
+   * Upstream keeps this at `extension_settings.variables.global` in
+   * `settings.json`, so the value lives at the isomorphic path here rather than
+   * in a file of its own: `.variables` → `global`.
+   *
+   * **The leading dot is load-bearing.** This file's other top-level keys are
+   * character ids, and `isSafeId` rejects any id beginning with a dot — so
+   * `.variables` is a key no character can ever occupy. The alternative, a bare
+   * `variables` key, collides the day someone names a card "variables", and that
+   * collision would silently merge one card's settings with the global scope.
+   * @returns the global tree, empty when nothing has been stored.
+   */
+  async globalVariables(): Promise<Record<string, unknown>> {
+    await this.#load()
+    const section = this.#partitions[GLOBAL_SECTION]
+    const global = (section as { global?: unknown } | undefined)?.global
+    return typeof global === 'object' && global !== null && !Array.isArray(global)
+      ? structuredClone(global) as Record<string, unknown>
+      : {}
+  }
+
+  /**
+   * Replace the installation-wide variable scope.
+   * @param variables - the whole tree.
+   * @throws {AppError} `invalid-request` when it cannot be stored losslessly.
+   */
+  async setGlobalVariables(variables: Record<string, unknown>): Promise<void> {
+    assertStorable(variables, 'global variables')
+    await this.#load()
+    this.#partitions[GLOBAL_SECTION] = { global: variables }
+    await mkdir(dirname(this.#path), { recursive: true })
+    await writeFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}
+`, 'utf8')
   }
 
   /**
@@ -215,7 +267,12 @@ export class ExtensionSettingsStore {
  * @param entry - the conversation the frame belongs to.
  * @returns each layer, unmerged.
  */
-export function variableLayersOf(entry: ChatEntry): ScriptContext['variableLayers'] {
+export const CHAT_LAYER_ALARM_BYTES = 2_621_440
+
+export function variableLayersOf(
+  entry: ChatEntry,
+  onReport?: (message: string) => void,
+): ScriptContext['variableLayers'] {
   const read = (option: Parameters<ChatEntry['variables']['getVariables']>[0]): Record<string, unknown> => {
     try {
       return entry.variables.getVariables(option)
@@ -237,10 +294,83 @@ export function variableLayersOf(entry: ChatEntry): ScriptContext['variableLayer
     script[declared.id] = read({ type: 'script', script_id: declared.id })
   }
 
+  const chat = read({ type: 'chat' })
+
+  // A growth alarm, not a limit. Nothing is refused and nothing is truncated:
+  // this layer is pushed whole because upstream's frame reads it whole, and a
+  // host that silently sent less would be answering a card's question wrongly.
+  //
+  // It exists because the ruling that made this path safe assumed all four
+  // layers were small and bounded, and measurement found one that is neither:
+  // `chat_metadata.variables` reaches 1.25 MiB in the corpus, larger than every
+  // "latest floor" table in every chat combined. MVU's
+  // `兼容性.更新到聊天变量` switch writes its whole tree here as well, so it
+  // grows with the game rather than with the conversation — bounded by nothing.
+  //
+  // Today that is affordable. The point of the line is that when it stops being
+  // affordable, the log already says so and nobody has to re-derive this.
+  const chatBytes = Buffer.byteLength(JSON.stringify(chat), 'utf8')
+  if (chatBytes > CHAT_LAYER_ALARM_BYTES) {
+    onReport?.(
+      `the chat variable layer is ${String(chatBytes)} bytes, past the ${String(CHAT_LAYER_ALARM_BYTES)} byte`
+      + ' growth line (twice the largest measured in the corpus). This is a growth alarm, not a limit —'
+      + ' nothing was withheld. It is pushed whole on every script frame, and it grows with play.',
+    )
+  }
+
   return {
     global: read({ type: 'global' }),
     character: entry.initialVariables,
     script,
-    chat: read({ type: 'chat' }),
+    chat,
   }
+}
+
+/**
+ * A variable backend over the persisted global scope.
+ *
+ * `ScopeBackend` is synchronous and the store is not, so the tree is held here
+ * and the write is scheduled — the same shape `ScriptVariableStore` uses, and for
+ * the same reason. It has to be **seeded before the first read**, because a
+ * synchronous read cannot wait for a file: {@link openGlobalScope} does that and
+ * is what a caller should use.
+ *
+ * Upstream's global scope is installation-wide by definition, which is why this
+ * is shared across cards rather than partitioned like the settings beside it. The
+ * two live in one file with different sharing rules, and the section key keeps
+ * them from being confused for one another.
+ * @param store - the settings store holding the scope.
+ * @param seeded - the tree as loaded, for the synchronous first read.
+ * @param onError - reports a write that failed; writes are not awaited.
+ * @returns the backend.
+ */
+export function globalScopeBackend(
+  store: ExtensionSettingsStore,
+  seeded: Record<string, unknown>,
+  onError: (error: Error) => void = () => {},
+): ScopeBackend {
+  let held = seeded
+  let queue: Promise<void> = Promise.resolve()
+  return {
+    read: () => held,
+    write: (_option, next) => {
+      held = next
+      queue = queue
+        .then(async () => { await store.setGlobalVariables(next) })
+        .catch((error: unknown) => { onError(error instanceof Error ? error : new Error(String(error))) })
+    },
+  }
+}
+
+/**
+ * Load the global scope and hand back a backend over it.
+ * @param store - the settings store.
+ * @param onError - reports a write that failed.
+ * @returns a backend whose first read already has the stored tree.
+ */
+export async function openGlobalScope(
+  store: ExtensionSettingsStore,
+  onError?: (error: Error) => void,
+): Promise<ScopeBackend> {
+  return globalScopeBackend(store, await store.globalVariables(), onError)
 }

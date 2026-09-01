@@ -67,6 +67,15 @@ export class ChatStore {
   readonly #dir: string
   readonly #library: CharacterLibrary
   readonly #scriptVariables: ScriptVariableStore | undefined
+  /**
+   * Storage for the `global` scope, shared by every chat in this profile.
+   *
+   * One backend for the whole store rather than one per chat: the scope is
+   * installation-wide by upstream's definition, so two chats reading it must see
+   * the same tree — a per-chat copy would let one chat's write vanish when
+   * another wrote next.
+   */
+  readonly #globalScope: ScopeBackend | undefined
   readonly #entries = new Map<string, ChatEntry>()
 
   /**
@@ -75,10 +84,16 @@ export class ChatStore {
    * @param scriptVariables - where the `script` scope persists. Absent keeps it
    *   in memory, which is what a host with nowhere to store it should do.
    */
-  constructor(dir: string, library: CharacterLibrary, scriptVariables?: ScriptVariableStore) {
+  constructor(
+    dir: string,
+    library: CharacterLibrary,
+    scriptVariables?: ScriptVariableStore,
+    globalScope?: ScopeBackend,
+  ) {
     this.#dir = dir
     this.#library = library
     this.#scriptVariables = scriptVariables
+    this.#globalScope = globalScope
   }
 
   /**
@@ -168,6 +183,7 @@ export class ChatStore {
     const entry = new ChatEntry({
       chatId, header: file.header, session, card,
       ...scriptScope === undefined ? {} : { scriptScope },
+      ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
     })
     // The log carries the conversation; the variables ride alongside it and
     // have to be put back explicitly.
@@ -209,6 +225,7 @@ export class ChatStore {
     const entry = new ChatEntry({
       chatId, header, session, card,
       ...scriptScope === undefined ? {} : { scriptScope },
+      ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
     })
     seedGreeting(entry, card, { user: userName, char: name })
     seedInitialVariables(entry)
@@ -297,6 +314,7 @@ export class ChatStore {
     const child = new ChatEntry({
       chatId: childId, header, session, card: parent.card,
       ...scriptScope === undefined ? {} : { scriptScope },
+      ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
     })
     child.hydrateVariables(lines)
 

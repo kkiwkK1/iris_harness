@@ -7,6 +7,7 @@ import type { SillyTavernChatHeader } from '@iris/persistence'
 
 import { seedGreeting } from '../src/chats.ts'
 import { ChatEntry, createSession } from '../src/entry.ts'
+import { CHAT_LAYER_ALARM_BYTES, variableLayersOf } from '../src/context.ts'
 import { applyOps, buildSnapshot, scalarsOf, worldInfoOf, writePath } from '../src/template.ts'
 
 /**
@@ -239,4 +240,30 @@ test('a write into a scope with no store is reported, not dropped in silence', (
     1,
   )
   assert.deepEqual(quiet, [])
+})
+
+test('an oversized chat layer is reported, and nothing is withheld', () => {
+  // A growth alarm, not a limit. The layer is pushed whole because upstream's
+  // frame reads it whole; a host quietly sending less would answer a card's
+  // question wrongly, which is worse than a large payload.
+  //
+  // The line exists because the ruling that made this path safe assumed all four
+  // layers were small and bounded, and one is neither: `chat_metadata.variables`
+  // reaches 1.25 MiB in the corpus — more than every "latest floor" table in
+  // every chat combined — and grows with play rather than with the conversation.
+  const entry = entryFor()
+  const reported: string[] = []
+
+  const small = variableLayersOf(entry, (message: string) => { reported.push(message) })
+  assert.equal(reported.length, 0, 'an ordinary chat layer raised the alarm')
+  assert.equal(typeof small.chat, 'object')
+
+  entry.variables.replaceVariables({ padding: 'x'.repeat(CHAT_LAYER_ALARM_BYTES) }, { type: 'chat' })
+  const large = variableLayersOf(entry, (message: string) => { reported.push(message) })
+
+  assert.equal(reported.length, 1, 'the growth line did not report')
+  assert.match(reported[0] ?? '', /chat variable layer is \d+ bytes/u)
+  assert.match(reported[0] ?? '', /growth alarm, not a limit/u)
+  // The payload is intact: the alarm reports, it does not trim.
+  assert.equal((large.chat as { padding?: string }).padding?.length, CHAT_LAYER_ALARM_BYTES)
 })

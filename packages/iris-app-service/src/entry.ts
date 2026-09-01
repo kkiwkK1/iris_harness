@@ -170,6 +170,8 @@ export class ChatEntry {
   #scripts: RegexScript[] | undefined
   /** Storage for the `script` scope; outlives `rebuild`, so it is held here. */
   readonly #scriptScope: ScopeBackend
+  /** Storage for the `global` scope; outlives `rebuild`, so it is held here. */
+  readonly #globalScope: ScopeBackend
   /**
    * Variable scopes a macro asked for that this host has no store for.
    *
@@ -201,6 +203,16 @@ export class ChatEntry {
      * nowhere to keep them should do.
      */
     scriptScope?: ScopeBackend
+    /**
+     * Storage for the `global` scope.
+     *
+     * Injected for the same reason as `scriptScope`: it outlives the chat.
+     * Upstream's global scope is installation-wide, so an in-memory one is empty
+     * on every start and a card storing an installation preference never finds
+     * it again. Absent still means in-memory, which is what a host with nowhere
+     * to keep it should do.
+     */
+    globalScope?: ScopeBackend
   }) {
     this.chatId = input.chatId
     this.header = input.header
@@ -213,6 +225,7 @@ export class ChatEntry {
     // backend does, so a test running in memory cannot pass on a selector a real
     // deployment rejects.
     this.#scriptScope = input.scriptScope ?? keyedMemoryBackend(scriptIdOf)
+    this.#globalScope = input.globalScope ?? memoryBackend()
     this.variables = this.#makeStore(input.session)
   }
 
@@ -673,7 +686,7 @@ export class ChatEntry {
     return new VariableStore({
       message: sessionMessageBackend(session),
       chat: metadataBackend(this.header),
-      global: memoryBackend(),
+      global: this.#globalScope,
       // Partitioned by script id, so one card's script cannot read another's
       // bookkeeping. Supplied by the caller — see the constructor.
       script: this.#scriptScope,
