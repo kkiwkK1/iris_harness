@@ -237,3 +237,40 @@ test('a height of zero is refused at both ends, because applying it is unrecover
   )
 })
 
+test('the body summary reports whether or not anything is visible', () => {
+  /*
+   * The revision this pins, and the reason for it.
+   *
+   * The first version spoke only when the body was **blank**, so "not blank" was
+   * silence. The case that then arrived was a frame with visible boxes rendering
+   * a white rectangle — squarely inside the silence. An instrument whose quiet
+   * covers the live question is the unfalsifiable silence this project keeps
+   * removing from other people's code; it had it too.
+   *
+   * Asserted against the source, because this lives in the browser entry where
+   * there is no unit harness and the property worth protecting is that the
+   * unconditional branch does not go away.
+   */
+  const entry = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
+    'utf8',
+  )
+
+  assert.match(entry, /reportBodySummary/u, 'the summary is gone')
+  assert.match(
+    entry,
+    /interface after \$\{BLANK_AFTER_MS/u,
+    'the visible branch reports nothing, so a frame that draws the wrong thing is silent again',
+  )
+  assert.match(
+    entry,
+    /style elements in the body/u,
+    'without the stylesheet count, "visible boxes on a white page" cannot be told from "no CSS arrived"',
+  )
+  assert.match(
+    entry,
+    /data-iris-interface/u,
+    'ungated, this would put a summary under every script frame, whose body is script tags by design',
+  )
+})
+

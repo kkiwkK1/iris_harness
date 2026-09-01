@@ -460,11 +460,11 @@ const BLANK_AFTER_MS = 6_000
  * @param run - the run token.
  * @param post - the channel to the shell.
  */
-function reportBlankBody(run: string, post: (message: FromFrame) => void): void {
+function reportBodySummary(run: string, post: (message: FromFrame) => void): void {
   /*
    * Only for a frame that was given markup. A script frame's body is script tags
-   * and nothing else, so blankness there is correct — reporting it would put a
-   * false finding under every card.
+   * and nothing else, so a summary of it would be a permanent line saying that
+   * the frame that was never going to draw has not drawn.
    */
   if (document.body?.hasAttribute('data-iris-interface') !== true) return
 
@@ -472,49 +472,66 @@ function reportBlankBody(run: string, post: (message: FromFrame) => void): void 
     const body = document.body
     if (body === null) return
 
-    /*
-     * Elements, not text. A frame whose body holds only whitespace between the
-     * script tags it was given has drawn nothing, and counting characters would
-     * call that content.
-     */
-    const drawn = [...body.children].some(child => {
+    const children = [...body.children]
+    const visible = children.filter(child => {
       if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE') return false
       const box = child.getBoundingClientRect()
       return box.width > 0 && box.height > 0
     })
-    if (drawn) return
 
     /*
-     * What the body actually holds, because "blank" has two very different
-     * causes and the sentence alone cannot tell them apart:
+     * Reported **whether or not anything is visible**, and that change is the
+     * whole point of this revision.
      *
-     * - **no elements** — the markup never arrived, so the problem is upstream
-     *   of the card entirely;
-     * - **elements present, none with a box** — the markup is there and the card
-     *   has not shown it, which is the card's own code stopping somewhere.
+     * The first version spoke only when the body was blank, so "not blank" was
+     * silence — and the case that actually arrived was a frame with visible
+     * boxes rendering a white rectangle. An instrument whose quiet covers the
+     * live question is the unfalsifiable silence this project keeps removing;
+     * it just had it too.
      *
-     * Reported as a count and a few tag names rather than a verdict: a reader
-     * who can see `12 elements (div, style, script)` knows which half of the
-     * world to look at, and a guess in the message would decide that for them
-     * wrongly half the time.
+     * A summary is cheap for an interface frame (there is one per claimed block,
+     * not one per row) and it is the difference between "white" and a reading.
      */
-    const children = [...body.children]
-    const tags = [...new Set(children.map(child => child.tagName.toLowerCase()))].slice(0, 6)
-    const inventory =
-      children.length === 0
-        ? 'its body is empty, so the markup never arrived'
-        : `its body holds ${String(children.length)} elements (${tags.join(', ')}) and none of them` +
-          ' has a visible box, so the markup arrived and the card has not shown it'
+    const describe = (element: Element): string => {
+      const box = element.getBoundingClientRect()
+      const style = getComputedStyle(element)
+      return (
+        `${element.tagName.toLowerCase()}` +
+        `${element.id === '' ? '' : `#${element.id}`} ` +
+        `${Math.round(box.width)}x${Math.round(box.height)} bg=${style.backgroundColor}`
+      )
+    }
+
+    /*
+     * The card's own stylesheet, counted. If the markup arrived but its `<style>`
+     * did not, every colour in the frame is the browser's default — which is
+     * exactly what "visible boxes on a white page" looks like, and nothing else
+     * reported here would distinguish it.
+     */
+    const styles = body.querySelectorAll('style').length
+    const rootBackground = getComputedStyle(body).backgroundColor
+
+    const parts = [
+      `${String(children.length)} elements`,
+      `${String(visible.length)} with a visible box`,
+      `${String(styles)} style elements in the body`,
+      `body bg=${rootBackground}`,
+    ]
+    if (visible.length > 0) {
+      parts.push(`largest: ${visible.slice(0, 3).map(describe).join('; ')}`)
+    }
 
     post({
       iris: run,
-      type: 'error',
+      type: 'note',
       scriptId: undefined,
       message:
-        'this interface loaded and has drawn nothing after ' +
-        `${BLANK_AFTER_MS / 1000}s — ${inventory}. Code that stops without failing reports` +
-        ' nothing anywhere; storage is the usual cause in a sandboxed frame, so check any storage' +
-        ' note above first.',
+        visible.length === 0
+          ? `this interface has drawn nothing after ${BLANK_AFTER_MS / 1000}s — ` +
+            (children.length === 0
+              ? 'its body is empty, so the markup never arrived'
+              : `${parts.join(', ')}; code that stops without failing reports nothing anywhere`)
+          : `interface after ${BLANK_AFTER_MS / 1000}s: ${parts.join(', ')}`,
     })
   }, BLANK_AFTER_MS)
 }
@@ -924,7 +941,7 @@ try {
   reportAsyncFailures(run, post, () => bodyStarted)
   reportBlocked(run, post)
   reportStorage(run, post)
-  reportBlankBody(run, post)
+  reportBodySummary(run, post)
   reportHeight(run, post)
   announceReady(run, post)
 } catch (error: unknown) {
