@@ -644,42 +644,74 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
 
     // ── host capabilities that were already asynchronous ─────────────────
     /**
-     * Upstream has **two** generate functions with different semantics, and this
-     * is currently wired to the wrong one.
+     * Upstream has **two** generate functions, and this is the assembling one.
      *
-     * | upstream member | what it does |
-     * | --- | --- |
-     * | `generate({user_input})` | assembles preset, worldbook and chat history, with `user_input` as the last user message |
-     * | `generateRaw(...)` | the **caller** orders the prompt; nothing is assembled |
+     * | upstream member | what it does | Iris host method |
+     * | --- | --- | --- |
+     * | `generate({user_input})` | assembles preset, worldbook and chat history, with `user_input` as the last user message | `script.generate` |
+     * | `generateRaw(...)` | the **caller** orders the prompt; nothing is assembled | `script.generateRaw` |
      *
-     * Iris's host method `script.generateRaw` has the second semantics. So this
-     * mapping answers a card that asked for the first with the second: text
-     * comes back, nothing throws, and the reply has **no persona, no worldbook
-     * and no history**. A wrong answer that looks like a right one, on a path
-     * that costs the user money.
+     * Written out because getting them the wrong way round is **silent in both
+     * directions**, and it was wrong here: this member routed to
+     * `script.generateRaw`, so a card asking for the assembled generate received
+     * a reply built with no persona, no worldbook and no history — text back,
+     * nothing thrown, on a path that costs the user money.
      *
-     * Reported rather than refused, and the asymmetry with the floor-addressed
-     * read is deliberate: that one **persisted** a merge built on a wrong value,
-     * so refusing was cheaper than the damage. This one returns a bad reply and
-     * writes nothing, and refusing would take a capability away from every card
-     * that calls it today. So it stays connected and says what it is.
+     * Fields are mapped from upstream's `GenerateConfig`
+     * (`@types/function/generate.d.ts:225`) rather than passed through, because
+     * the two vocabularies differ and a silent pass-through would drop the ones
+     * that matter: `user_input` → `userInput`, `max_chat_history` →
+     * `maxHistory`. Upstream's `'all'` is spelled as *absent* here, which is the
+     * contract's way of saying the same thing.
      *
-     * The fix is a host method with the assembling semantics
-     * (`script.generate{chatId, userInput, systemPrompt?, maxHistory?}`); when
-     * that lands, this maps to it and the note goes away. `generateRaw`, if a card
-     * ever calls it, maps to `script.generateRaw` — **two names, two meanings**,
-     * written down here because getting them the wrong way round is silent in
-     * both directions.
-     * @param config - upstream's config object, passed through.
-     * @returns whatever the host answers.
+     * What is **not** carried, and is named rather than dropped quietly:
+     * `should_stream` (measured: the stream only drives a character-count
+     * progress indicator and the body comes from the awaited return value, so a
+     * non-streaming implementation is not wrong — only less animated), and the
+     * config fields no card in the corpus passes.
+     * @param config - upstream's config object.
+     * @returns the generated text.
      */
     generate: async (config: Record<string, unknown>): Promise<unknown> => {
-      host.reportGap(
-        'a card called generate() — Iris currently routes it to a raw-prompt call, so the reply is' +
-          ' assembled without persona, worldbook or chat history; streaming is not simulated either',
-      )
-      return host.call('generateRaw', config)
+      const chatId = snapshot('generate').chatId
+      if (chatId === undefined) {
+        throw new UnsupportedApiError(
+          'generate()',
+          'This frame has no chat to generate into; its snapshot carries no chat id.',
+        )
+      }
+
+      const userInput = config['user_input']
+      if (typeof userInput !== 'string' || userInput === '') {
+        throw new UnsupportedApiError(
+          'generate({user_input})',
+          'The assembling generate needs a user message to put last; Iris does not send an empty one.',
+        )
+      }
+
+      /*
+       * Named differences reported once, not swallowed. A progress bar that
+       * never moves is the kind of thing a card author would otherwise chase
+       * into their own code.
+       */
+      if (config['should_stream'] === true) {
+        host.reportGap(
+          'a card asked generate() to stream — Iris returns the whole reply at once, so a' +
+            ' progress indicator driven by the stream will not move; the text itself is unaffected',
+        )
+      }
+
+      const maxHistory = config['max_chat_history']
+      const answer = await host.call('generate', {
+        chatId,
+        userInput,
+        // Upstream's `'all'` and an absent value mean the same thing, and the
+        // contract spells it as absent.
+        ...(typeof maxHistory === 'number' ? { maxHistory } : {}),
+      })
+      return (answer as { text?: unknown } | undefined)?.text
     },
+
     triggerSlash: async (command: string): Promise<string> => host.triggerSlash(command),
     /**
      * Upstream's spelling, kept wrong on purpose — cards call it.

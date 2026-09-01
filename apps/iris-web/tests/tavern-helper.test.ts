@@ -21,6 +21,8 @@ import type { ScriptContext } from '@iris/protocol'
 
 import { UnsupportedApiError } from '../src/sandbox/errors.ts'
 import { readFile } from 'node:fs/promises'
+
+import { CARD_METHODS } from '../src/sandbox/card-api.ts'
 import { TAVERN_HELPER_VERSION, createFrameTavernHelper, resolveRange } from '../src/sandbox/tavern-helper.ts'
 
 /** A snapshot with three messages, the last carrying two swipes. */
@@ -36,6 +38,7 @@ function context(): ScriptContext {
     name2: 'Her',
     characters: [],
     extensionSettings: {},
+    chatId: 'chat-1',
     variables: { stat: { hp: 10 } },
     // Distinct values per layer, so a merge that drops one or takes them in the
     // wrong order is visible rather than plausible.
@@ -46,6 +49,12 @@ function context(): ScriptContext {
       chat: { fromChat: 1, overridden: 'chat' },
     },
   }
+}
+
+/** The snapshot with no chat open, which is a state a real frame can be in. */
+function contextWithoutChat(): ScriptContext {
+  const { chatId: _chatId, ...rest } = context()
+  return rest as ScriptContext
 }
 
 /** The surface, plus a record of everything it sent to the host. */
@@ -671,29 +680,96 @@ test('an unaddressed read still works, because that is what a script frame can a
   assert.doesNotThrow(() => read({ type: 'message', message_id: 'latest' }))
 })
 
-test('generate says that it is not the generate a card asked for', () => {
+test('generate calls the assembling host method, not the raw one', async () => {
   /*
-   * Upstream has two generates: `generate` assembles preset, worldbook and
-   * history; `generateRaw` leaves the prompt to the caller. Iris's host method
-   * has the second semantics and this member is wired to it, so a card asking
-   * for the first gets a reply with no persona, no worldbook and no history —
-   * text back, nothing thrown, on a path that costs money.
+   * This assertion replaced one that pinned the *note* explaining why the old
+   * mapping was wrong. That note existed because this member routed to
+   * `script.generateRaw`, so a card asking for the assembled generate got a
+   * reply with no persona, no worldbook and no history — and it succeeded.
    *
-   * Pinned as a *report* rather than a refusal on purpose, and pinned at all so
-   * that whoever rewires it to the assembling host method has to come here and
-   * delete an assertion that explains why the note existed.
+   * The pin worked as intended: rewiring turned the old test red, so the person
+   * doing it had to come here and read why the note was there before deleting
+   * it. That is the whole value of writing the reason into an assertion.
    */
-  const { api, gaps } = surface()
+  const { api, calls } = surface({ answers: { generate: { text: 'assembled reply' } } })
   const generate = api['generate'] as (config: unknown) => Promise<unknown>
 
-  assert.doesNotThrow(() => void generate({ user_input: 'hello' }))
-  assert.ok(
-    gaps.some(gap => gap.includes('without persona, worldbook or chat history')),
-    'a card must be told its generation is missing its context',
-  )
-  assert.ok(
-    gaps.some(gap => gap.includes('streaming is not simulated')),
-    'the streaming difference is named too, since a progress bar depends on it',
-  )
+  const answer = await generate({ user_input: 'hello there' })
+
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.method, 'generate', 'the raw method would answer without the card')
+  assert.equal(calls[0]?.params['userInput'], 'hello there', 'upstream spells it user_input')
+  assert.equal(typeof calls[0]?.params['chatId'], 'string', 'the assembling method needs a chat')
+  assert.equal(answer, 'assembled reply', 'upstream returns the text itself, not the envelope')
+})
+
+test('upstream’s max_chat_history is mapped, and "all" is spelled as absent', async () => {
+  const bounded = surface({ answers: { generate: { text: 'x' } } })
+  await (bounded.api['generate'] as (c: unknown) => Promise<unknown>)({
+    user_input: 'hi',
+    max_chat_history: 12,
+  })
+  assert.equal(bounded.calls[0]?.params['maxHistory'], 12)
+
+  // Upstream's `'all'` and an absent value mean the same thing, and the contract
+  // spells it as absent — passing the string through would fail validation for
+  // something the card did not get wrong.
+  const all = surface({ answers: { generate: { text: 'x' } } })
+  await (all.api['generate'] as (c: unknown) => Promise<unknown>)({
+    user_input: 'hi',
+    max_chat_history: 'all',
+  })
+  assert.equal('maxHistory' in (all.calls[0]?.params ?? {}), false)
+})
+
+test('a streaming request is answered whole, and says so', async () => {
+  /*
+   * Measured on the sample card: the stream only drives a character-count
+   * progress indicator, and the body comes from the awaited return value. So a
+   * non-streaming implementation is not wrong — but a progress bar that never
+   * moves is exactly the thing a card author would chase into their own code.
+   */
+  const { api, gaps } = surface({ answers: { generate: { text: 'done' } } })
+  const answer = await (api['generate'] as (c: unknown) => Promise<unknown>)({
+    user_input: 'hi',
+    should_stream: true,
+  })
+
+  assert.equal(answer, 'done', 'the text is unaffected by not streaming')
+  assert.ok(gaps.some(gap => gap.includes('progress indicator')))
+})
+
+test('generate refuses by name rather than sending an empty request', async () => {
+  const { api, calls } = surface()
+  const generate = api['generate'] as (config: unknown) => Promise<unknown>
+
+  await assert.rejects(() => generate({}), /user_input/)
+  assert.equal(calls.length, 0, 'nothing should reach the host')
+})
+
+test('generate refuses when the frame has no chat to generate into', async () => {
+  /*
+   * `chatId` is optional on the snapshot, so this is a state a real frame can be
+   * in — a card loaded before a chat is open. Sending the request anyway would
+   * fail validation at the host with a message about a missing field, which
+   * names the wire contract rather than the situation.
+   */
+  const { api, calls } = surface({ context: { ...contextWithoutChat() } })
+  const generate = api['generate'] as (config: unknown) => Promise<unknown>
+
+  await assert.rejects(() => generate({ user_input: 'hi' }), /no chat to generate into/)
+  assert.equal(calls.length, 0)
+})
+
+test('the two generates map to two different wire methods', () => {
+  /*
+   * The table is where this distinction has to be visible, because serving one
+   * with the other succeeds. A single mapping — or the same wire method for
+   * both — would be invisible until a card's replies came back without their
+   * character.
+   */
+  assert.equal(CARD_METHODS['generate'], 'script.generate')
+  assert.equal(CARD_METHODS['generateRaw'], 'script.generateRaw')
+  assert.notEqual(CARD_METHODS['generate'], CARD_METHODS['generateRaw'])
 })
 

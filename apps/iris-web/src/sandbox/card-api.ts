@@ -31,6 +31,18 @@ import type { RpcMethod } from '@iris/protocol'
 export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
   saveChat: 'script.saveChat',
   saveMetadata: 'script.saveMetadata',
+  /*
+   * Two generates, two meanings, and the pair is listed together so nobody adds
+   * one without seeing the other.
+   *
+   * `generate` assembles the preset, the worldbook and the history and puts the
+   * card's `user_input` last. `generateRaw` sends only what the caller ordered.
+   * Serving one with the other **succeeds** — text comes back, nothing throws,
+   * and the reply is missing its persona and its conversation — which is why
+   * they are separate wire methods rather than one with a flag, and why this
+   * table is the place the distinction has to be visible.
+   */
+  generate: 'script.generate',
   generateRaw: 'script.generateRaw',
   // Not the same thing as the card's bare `getVariables()`, which answers
   // synchronously from the pushed snapshot. This is the round trip that
