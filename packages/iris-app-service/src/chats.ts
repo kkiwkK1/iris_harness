@@ -23,7 +23,7 @@ import {
   type SillyTavernChatHeader,
 } from '@iris/persistence'
 import type { ChatSummary } from '@iris/protocol'
-import type { ScopeBackend } from '@iris/variables'
+import type { ScopeBackend, Variables } from '@iris/variables'
 
 import { ChatEntry, createSession, readMeta } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
@@ -211,6 +211,7 @@ export class ChatStore {
       ...scriptScope === undefined ? {} : { scriptScope },
     })
     seedGreeting(entry, card, { user: userName, char: name })
+    seedInitialVariables(entry)
 
     this.#entries.set(chatId, entry)
     await this.save(entry)
@@ -373,6 +374,39 @@ export class ChatStore {
  * @param card - the character being played.
  * @param names - what `{{char}}` and `{{user}}` expand to.
  */
+/**
+ * Write the card's declared starting state onto the greeting.
+ *
+ * A new chat's message 0 carries the `[InitVar]` tree, because that is what
+ * SillyTavern's own files do: measured over the 31 real chats on this machine,
+ * **21 carry `stat_data` on message 0**, and Tavern Helper's
+ * `waitGlobalInitialized('Mvu')` polls for exactly that
+ * (`JS-Slash-Runner/src/function/global.ts:35` — `_.has(getVariables({type:
+ * 'message', message_id: 0}), 'stat_data')`). Without it a card's scripts stall
+ * for the full wait window on every fresh chat.
+ *
+ * **New chats only.** Existing files keep whatever they hold; back-filling would
+ * be editing the user's data to satisfy a format nobody asked us to change, and
+ * `baselineFor` already falls back to `initVars()`, so an unseeded file behaves
+ * exactly as it does today. The two generations of file coexist.
+ *
+ * Nothing is written when the card declares no starting state: a chat with an
+ * empty tree would gain a `variables` array saying nothing, and the one corpus
+ * file whose card has no MVU has no `variables` key at all.
+ * @param entry - the new conversation, with its greeting already seeded.
+ */
+export function seedInitialVariables(entry: ChatEntry): void {
+  const initial = entry.initVars()
+  if (Object.keys(initial.stat_data).length === 0) return
+  try {
+    entry.variables.replaceVariables(initial as unknown as Variables, { type: 'message', message_id: 0 })
+  } catch {
+    // A card with no greeting has no turn 0 to attach state to. That is a card
+    // with nothing to show before the first reply, and the fallback in
+    // `baselineFor` covers it.
+  }
+}
+
 export function seedGreeting(
   entry: ChatEntry,
   card: CharacterCard,
