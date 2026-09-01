@@ -86,6 +86,31 @@ export interface CharacterSummary {
   avatarUrl?: string
   tags: string[]
   creator?: string
+  /**
+   * The card's own data, carried **only for the character being played**.
+   *
+   * Upstream's `characters[this_chid]` is a whole card, and a card script reads
+   * it by index. Measured across the corpus, exactly **one** script reaches into
+   * that array for real — the other three `characters[…]` hits are the cards'
+   * *own* local objects that happen to share the name — and it reads exactly one
+   * path, guarded at every level:
+   *
+   * ```js
+   * charData.data && charData.data.character_book && charData.data.character_book.entries
+   * ```
+   *
+   * So this carries `data.character_book` and nothing else. Whole cards would
+   * cost a median of 494 KiB and up to **2.8 MiB** on every snapshot, to deliver
+   * a book that is at most 1.1 MiB of that and is the only part anybody reads.
+   * The nesting is kept exactly as written above, because the shape is what the
+   * card tests — a flattened `character_book` at the top level would fail its
+   * first guard and read as "this card has no world info".
+   *
+   * **Only the current character has it.** Every other entry is a summary, as
+   * before. Handing out every card's embedded book would put the whole library's
+   * world info in a frame that asked about one conversation.
+   */
+  data?: { character_book?: unknown }
 }
 
 /**

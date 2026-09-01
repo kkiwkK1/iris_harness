@@ -73,6 +73,38 @@ export function assertStorable(value: unknown, path = 'value'): void {
 }
 
 /**
+ * The library summaries, with the played character's own card data attached.
+ *
+ * Upstream hands a card script whole cards; this attaches `data.character_book`
+ * to **one** entry and leaves the rest as summaries. That is what the corpus
+ * reads — see `CharacterSummary.data` for the measurement and the cost — and
+ * confining it to the current character keeps a frame that asked about one
+ * conversation from receiving the whole library's world info.
+ *
+ * The **embedded** book, not the resolved one. `characters[chid].data` is the
+ * card's own content upstream, so a card reading it expects what the file says,
+ * even where this host is assembling prompts from the bound named book instead.
+ * The two agree for 14 of the 15 corpus cards that carry both; where they
+ * disagree the card sees its own file, which is the honest answer to the
+ * question it asked.
+ * @param summaries - the visible library.
+ * @param characterId - who is being played, if anyone.
+ * @param entry - the open conversation, for its loaded card.
+ * @returns the summaries, one of them carrying card data.
+ */
+function withCurrentCardData(
+  summaries: readonly CharacterSummary[],
+  characterId: string | undefined,
+  entry: ChatEntry,
+): CharacterSummary[] {
+  const book = entry.card?.data.character_book
+  if (characterId === undefined || book === undefined) return [...summaries]
+  return summaries.map(summary => summary.characterId === characterId
+    ? { ...summary, data: { character_book: structuredClone(book) } }
+    : summary)
+}
+
+/**
  * The chat as a card sees it, with a table on every row that belongs to a turn.
  *
  * **Why a table-less user row is a correctness problem, not a cosmetic one.**
@@ -152,7 +184,7 @@ export function buildCardContext(
     name2: entry.header.character_name,
     ...meta.characterId === undefined ? {} : { characterId: meta.characterId },
     chatId: entry.chatId,
-    characters: extras.characters,
+    characters: withCurrentCardData(extras.characters, meta.characterId, entry),
     extensionSettings: extras.extensionSettings,
     // The newest turn's message-scope table, which is where MVU keeps its tree.
     variables: entry.currentVariables() ?? {},

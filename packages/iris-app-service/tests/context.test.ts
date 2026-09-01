@@ -309,3 +309,61 @@ test('additional books are empty because the source is absent, not unimplemented
   })
   assert.deepEqual(contextOf(built).charWorldbooks?.additional, [])
 })
+
+test('the played character carries its own book; the others stay summaries', () => {
+  const withBook = card()
+  withBook.data.character_book = {
+    entries: [{ keys: ['tower'], content: 'The maps are in the west tower.' }],
+  } as never
+  const built = new ChatEntry({
+    chatId: 'aria-1',
+    header: {
+      user_name: 'Traveller', character_name: 'Aria',
+      create_date: '2026-09-01 @10h00m00s', chat_metadata: {},
+      iris: { chatId: 'aria-1', characterId: 'aria', title: 'Aria', updatedAt: 0 },
+    },
+    session: createSession('aria-1'),
+    card: withBook,
+  })
+
+  const context = buildCardContext(built, {
+    extensionSettings: {},
+    characters: [
+      { characterId: 'aria', name: 'Aria', tags: [] },
+      { characterId: 'other', name: 'Other', tags: [] },
+    ],
+  })
+
+  // The exact path the one real corpus reader walks, guard by guard:
+  // `charData.data && charData.data.character_book && …entries`. Asserted as
+  // that nesting rather than as "the book is somewhere", because a flattened
+  // shape would fail the card's first guard and read to it as "this character
+  // has no world info" — a silent absence, not an error.
+  const played = context.characters.find(row => row.characterId === 'aria')
+  const entries = (played?.data?.character_book as { entries?: unknown[] } | undefined)?.entries
+  assert.equal(Array.isArray(entries), true)
+  assert.equal(entries?.length, 1)
+
+  // Everyone else stays a summary. Attaching every card's book would hand a
+  // frame that asked about one conversation the whole library's world info.
+  const other = context.characters.find(row => row.characterId === 'other')
+  assert.equal(other?.data, undefined)
+})
+
+test('a chat with no card leaves every entry a summary', () => {
+  const built = new ChatEntry({
+    chatId: 'none-1',
+    header: {
+      user_name: 'Traveller', character_name: 'Nobody',
+      create_date: '2026-09-01 @10h00m00s', chat_metadata: {},
+      iris: { chatId: 'none-1', title: 'Nobody', updatedAt: 0 },
+    },
+    session: createSession('none-1'),
+    card: undefined,
+  })
+  const context = buildCardContext(built, {
+    extensionSettings: {},
+    characters: [{ characterId: 'aria', name: 'Aria', tags: [] }],
+  })
+  assert.equal(context.characters[0]?.data, undefined)
+})

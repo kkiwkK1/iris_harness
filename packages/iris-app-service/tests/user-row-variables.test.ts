@@ -193,3 +193,64 @@ test('the export path is untouched — a table-less user row stays table-less on
   const owned = exported.find(line => line.mes === 'second')
   assert.ok(Array.isArray(owned?.['variables']), 'an imported user-row table went missing')
 })
+
+/**
+ * MVU's restore predicate, transcribed.
+ *
+ * `_.has(SillyTavern.chat[i].variables[swipe_id], 'stat_data')` — "does floor
+ * `i` carry state". Reproduced rather than imported because the point is to
+ * check what *that* reader sees in our snapshot, not what our own accessors
+ * return.
+ * @param line - one snapshot chat row.
+ * @returns whether a replay would stop at this floor.
+ */
+function carriesState(line: { variables?: unknown, swipe_id?: number } | undefined): boolean {
+  const table = (line?.variables as unknown[] | undefined)?.[line?.swipe_id ?? 0]
+  return typeof table === 'object' && table !== null && 'stat_data' in table
+}
+
+test('the restore predicate sees the same floors upstream does', async (t) => {
+  const chats = await chatWithBoth(t)
+  const snapshot = buildCardContext(
+    await chats.open('probe'), { extensionSettings: {}, characters: [] })
+
+  // This is the tooth of the projection, and it belongs here even though this
+  // host has no branch for it: the predicate is *the consumer whose reading the
+  // projection exists to fix*. Nothing today makes the snapshot hand user rows
+  // an empty table again — but that is a fact about the current code, not a
+  // property of it, and this is what would notice.
+  //
+  // The two cases d7 derived, checked as the predicate sees them rather than as
+  // an argument about them:
+  //
+  //   a turn that updated variables  → the whole turn carries state, so a
+  //                                    backwards replay stops inside it
+  //   a turn that updated nothing    → no floor of it carries state, so the
+  //                                    replay passes through to an earlier one
+  //
+  // Both readings match upstream, where the user row would have been
+  // materialised by MVU.
+  const rows = snapshot.chat
+  const updated = rows.findIndex(line => line.mes === 'first')
+  const settled = rows.findIndex(line => line.mes === 'a reply')
+
+  assert.ok(updated >= 0 && settled >= 0, 'the fixture rows moved')
+  assert.equal(rows[updated]?.is_user, true)
+
+  // The user row of a turn that settled on a table is visible to the replay.
+  // Before the projection it was not, and the replay stepped past it and
+  // persisted the state from before the turn's commands — losing a turn with
+  // nothing raised.
+  assert.equal(
+    carriesState(rows[updated]),
+    true,
+    'a replay would step past this user row and rewind a turn',
+  )
+  assert.equal(carriesState(rows[settled]), true)
+
+  // And a backwards scan stops at the newest floor carrying state rather than
+  // at the newest floor. Asserted as an index so that "it stopped somewhere
+  // plausible" cannot pass for "it stopped in the right place".
+  const stopped = rows.findLastIndex(carriesState)
+  assert.equal(stopped, rows.length - 1)
+})
