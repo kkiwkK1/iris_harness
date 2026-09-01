@@ -492,13 +492,35 @@ function reportBodySummary(run: string, post: (message: FromFrame) => void): voi
      * A summary is cheap for an interface frame (there is one per claimed block,
      * not one per row) and it is the difference between "white" and a reading.
      */
+    /*
+     * `background-image` as well as `background-color`, because reporting only the
+     * colour is a **wrong reading**, not a partial one.
+     *
+     * The `background` shorthand resets `background-color` to transparent unless a
+     * colour is named, so a card painting `background: radial-gradient(...)` —
+     * which the sample card does — computes to `rgba(0, 0, 0, 0)`. The first
+     * version of this summary reported exactly that and it was read, reasonably,
+     * as "the stylesheet is present and paints nothing". The stylesheet may have
+     * been working the whole time.
+     *
+     * `opacity` and `visibility` are here for the same reason: an element with a
+     * box can still be invisible, and none of the other fields would say so.
+     */
+    const paint = (style: CSSStyleDeclaration): string => {
+      const image = style.backgroundImage
+      const parts = [`bg=${style.backgroundColor}`]
+      if (image !== 'none' && image !== '') parts.push(`bg-image=${image.slice(0, 40)}`)
+      if (style.opacity !== '1') parts.push(`opacity=${style.opacity}`)
+      if (style.visibility !== 'visible') parts.push(`visibility=${style.visibility}`)
+      return parts.join(' ')
+    }
+
     const describe = (element: Element): string => {
       const box = element.getBoundingClientRect()
-      const style = getComputedStyle(element)
       return (
         `${element.tagName.toLowerCase()}` +
         `${element.id === '' ? '' : `#${element.id}`} ` +
-        `${Math.round(box.width)}x${Math.round(box.height)} bg=${style.backgroundColor}`
+        `${Math.round(box.width)}x${Math.round(box.height)} ${paint(getComputedStyle(element))}`
       )
     }
 
@@ -509,13 +531,29 @@ function reportBodySummary(run: string, post: (message: FromFrame) => void): voi
      * reported here would distinguish it.
      */
     const styles = body.querySelectorAll('style').length
-    const rootBackground = getComputedStyle(body).backgroundColor
+
+    /*
+     * Descendants, not just direct children.
+     *
+     * The first summary counted the body's own children and reported "1 with a
+     * visible box" for a card whose entire interface lives inside that one box.
+     * That number said nothing about whether the interface had drawn — the
+     * question it was asked. Counting the whole tree separates "one empty
+     * container" from "a container full of hidden screens".
+     */
+    const descendants = [...body.querySelectorAll('*')].filter(
+      element => element.tagName !== 'SCRIPT' && element.tagName !== 'STYLE',
+    )
+    const visibleDescendants = descendants.filter(element => {
+      const box = element.getBoundingClientRect()
+      return box.width > 0 && box.height > 0
+    })
 
     const parts = [
-      `${String(children.length)} elements`,
-      `${String(visible.length)} with a visible box`,
+      `${String(children.length)} children, ${String(descendants.length)} descendants`,
+      `${String(visibleDescendants.length)} of them with a visible box`,
       `${String(styles)} style elements in the body`,
-      `body bg=${rootBackground}`,
+      `body ${paint(getComputedStyle(body))}`,
     ]
     if (visible.length > 0) {
       parts.push(`largest: ${visible.slice(0, 3).map(describe).join('; ')}`)
