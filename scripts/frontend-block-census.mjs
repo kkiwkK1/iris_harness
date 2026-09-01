@@ -128,8 +128,26 @@ function indentedBlocks(text) {
   return out
 }
 
-/** Every remote host a block reaches for. */
-const hostsIn = body => [...new Set([...body.matchAll(/https?:\/\/([A-Za-z0-9._-]+)/g)].map(m => m[1]))]
+/**
+ * Every URL-shaped string in a block, by host.
+ *
+ * **Not the same as "hosts this block fetches".** A settings form carries
+ * `placeholder="https://api.example.com/v1"` — example text for a field the
+ * *user* fills in, not an address the card contacts. Distinguished here rather
+ * than left for the reader to assume, because the difference decides whether the
+ * remote-source whitelist is even the right question: a block whose endpoint is
+ * typed in at runtime cannot be covered by a host whitelist at all.
+ */
+function hostsIn(body) {
+  const out = new Map()
+  for (const match of body.matchAll(/https?:\/\/([A-Za-z0-9._-]+)/g)) {
+    const before = body.slice(Math.max(0, match.index - 40), match.index)
+    const kind = /placeholder\s*=\s*["'][^"']*$/.test(before) ? 'placeholder' : 'reference'
+    // One real reference outranks any number of placeholder mentions.
+    if (out.get(match[1]) !== 'reference') out.set(match[1], kind)
+  }
+  return [...out].map(([host, kind]) => (kind === 'placeholder' ? `${host} (placeholder text)` : host))
+}
 
 /** Test one text, returning the blocks upstream would frame. */
 function matchesIn(text) {
@@ -353,7 +371,7 @@ console.log(`  fence info string  ${JSON.stringify(byInfo)}   <- upstream ignore
 console.log('')
 
 const remote = all.filter(hit => hit.hosts.length > 0)
-console.log('## remote sources inside matching blocks')
+console.log('## URL-shaped strings inside matching blocks')
 if (remote.length === 0) console.log('  none')
 else {
   for (const hit of remote) console.log(`  ${hit.where}\n     hosts: ${hit.hosts.join(', ')}`)
@@ -361,6 +379,9 @@ else {
   console.log('  A block whose real payload is fetched at render time is not measurable')
   console.log('  from disk: the author can change it after distribution, and Iris\'s remote')
   console.log('  whitelist (SANDBOX.md) decides whether the fetch happens at all.')
+  console.log('  A host marked (placeholder text) is example text in a form field, not an')
+  console.log('  address the card contacts — and a block whose endpoint the *user* types')
+  console.log('  cannot be covered by a host whitelist at all.')
 }
 
 if (verbose && all.length > 0) {
