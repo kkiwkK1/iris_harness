@@ -227,6 +227,12 @@ const PROBES: Record<string, unknown> = {
   'script.generateRaw': { chatId: 'no-such-chat', prompt: 'x' },
   'script.generate': { chatId: 'no-such-chat', userInput: 'x' },
   'script.setChatMessages': { chatId: 'no-such-chat', messages: [{ messageId: 0, message: 'x' }] },
+  // Named world books. The probes name nothing real on purpose: reachability is
+  // the property under test, and a not-found answer proves the handler ran just
+  // as well as a successful read would.
+  'worldbook.names': {},
+  'worldbook.get': { name: 'no-such-book' },
+  'worldbook.charNames': { characterId: 'no-such-character' },
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {

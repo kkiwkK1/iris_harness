@@ -15,6 +15,7 @@ import { ScriptPolicyStore } from '../src/scripts.ts'
 import { ScriptVariableStore } from '../src/script-variables.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { WorldbookStore } from '../src/worldbooks.ts'
 
 /**
  * A method that reads must not write.
@@ -81,6 +82,13 @@ async function fixture(t: TestContext): Promise<Fixture> {
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+  // A real book, so `worldbook.get` below performs an actual read. Pointed at a
+  // host with no store it would refuse before touching anything, and pass this
+  // check without ever exercising the code it is supposed to be checking.
+  await mkdir(join(dir, 'worlds'), { recursive: true })
+  await writeFile(join(dir, 'worlds', 'Eldoria.json'), JSON.stringify({
+    entries: { 1: { uid: 1, key: ['tower'], comment: 'Tower', content: 'Maps.', displayIndex: 0 } },
+  }), 'utf8')
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const scriptVariables = new ScriptVariableStore(join(dir, 'script-variables.json'))
@@ -98,6 +106,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
     settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
     scripts: new ScriptPolicyStore(join(dir, 'script-policy.json')),
     extensionSettings: new ExtensionSettingsStore(join(dir, 'extension-settings.json')),
+    worldbooks: new WorldbookStore(join(dir, 'worlds')),
     broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
     userName: 'Traveller',
   }).handlers()
@@ -177,6 +186,9 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   { method: 'settings.get', params: fixed => ({ chatId: fixed.chatId }) },
   { method: 'connection.list', params: () => ({}) },
   { method: 'character.list', params: () => ({}) },
+  { method: 'worldbook.names', params: () => ({}) },
+  { method: 'worldbook.get', params: () => ({ name: 'Eldoria' }) },
+  { method: 'worldbook.charNames', params: () => ({ characterId: 'aria' }) },
 ]
 
 for (const { method, params } of READS) {
@@ -208,8 +220,13 @@ test('the read list is not silently incomplete', async (t) => {
   // method named like a read is missing from it, which is the case that actually
   // happens.
   const { handlers } = await fixture(t)
+  // `names` and `charNames` were added to this pattern after it caught
+  // `worldbook.get` and let its two siblings through in the same commit. A
+  // completeness guard that is itself incomplete fails in the direction that
+  // looks like success, so the pattern is widened whenever a read is added with
+  // a verb it does not know.
   const readShaped = Object.keys(handlers).filter(name =>
-    /^(?:.*\.(?:list|open|get|getVariables|body|context|itemize))$/u.test(name))
+    /^(?:.*\.(?:list|open|get|getVariables|names|charNames|body|context|itemize))$/u.test(name))
   const covered = new Set(READS.map(entry => entry.method as string))
 
   const missing = readShaped.filter(name => !covered.has(name))

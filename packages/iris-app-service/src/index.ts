@@ -27,6 +27,7 @@ import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
+import { WorldbookStore } from './worldbooks.ts'
 import { openGlobalScope } from './context.ts'
 import { serveSandboxAsset } from './sandbox-assets.ts'
 import { ScriptCache } from './script-cache.ts'
@@ -70,6 +71,8 @@ export { ScriptPolicyStore } from './scripts.ts'
 export { ScriptVariableStore, scriptIdOf } from './script-variables.ts'
 export { SettingsStore, sanitize, type SettingsPatch } from './settings.ts'
 export { applyOps, buildSnapshot, scalarsOf, worldInfoOf, writePath } from './template.ts'
+export { charWorldbookNames, toWorldbookEntry, WorldbookStore } from './worldbooks.ts'
+export type { CharWorldbookNames } from './worldbooks.ts'
 export {
   projectMessages,
   reasoningOf,
@@ -352,6 +355,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // owners: the policy file is the user's decisions, this is data cards wrote.
   const extensionSettings = extensionSettingsStore
   const connections = new ConnectionStore(paths.connections)
+  // Named books, the ones cards bind by name through `data.extensions.world`.
+  // 18 of the 19 cards in the measured corpus bind one, so this is the common
+  // case rather than an extra.
+  const worldbooks = new WorldbookStore(paths.worlds)
 
   // The folders are created on first write, not on boot: a host that has never
   // been used should leave nothing behind, and both stores already tolerate a
@@ -365,6 +372,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     settings,
     scripts,
     extensionSettings,
+    worldbooks,
     connections,
     scriptVariables,
     preset: await loadPreset(config.presetPath),
@@ -430,6 +438,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('script.generateRaw', handlers['script.generateRaw']),
       ctx.irisRpc.register('script.generate', handlers['script.generate']),
       ctx.irisRpc.register('script.setChatMessages', handlers['script.setChatMessages']),
+      ctx.irisRpc.register('worldbook.names', handlers['worldbook.names']),
+      ctx.irisRpc.register('worldbook.get', handlers['worldbook.get']),
+      ctx.irisRpc.register('worldbook.charNames', handlers['worldbook.charNames']),
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()

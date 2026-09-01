@@ -40,7 +40,10 @@ export type {
   ScriptContext,
   ScriptPromptPosition,
   ScriptView,
+  SecondaryLogic,
   ViewRole,
+  WorldbookEntry,
+  WorldbookPosition,
 } from './views.ts'
 
 /**

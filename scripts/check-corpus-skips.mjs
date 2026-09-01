@@ -30,9 +30,14 @@ import { spawn } from 'node:child_process'
  * 16. Update this number **only** after checking which test moved and why — a
  * drift here is the signal, not the noise. It has already earned its keep once:
  * splitting one corpus test into two moved it from 15 to 16, and the check named
- * the drift before the change was reported as finished.
+ * the drift before the change was reported as finished. It earned it a second
+ * time on the world book work: three new corpus tests hardcoded the corpus path
+ * instead of reading `IRIS_CORPUS`, so they ignored the rehearsal, ran against
+ * real data, and left this number at 16 — green here and 19 on CI. The number
+ * did not move because the gate was broken, which is precisely the case a
+ * hand-maintained count cannot notice on its own.
  */
-const EXPECTED_SKIPPED = 16
+const EXPECTED_SKIPPED = 19
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 

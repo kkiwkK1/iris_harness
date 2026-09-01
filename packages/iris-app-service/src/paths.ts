@@ -126,6 +126,14 @@ export interface ProfilePaths {
   root: string
   /** Card files. */
   characters: string
+  /**
+   * Named world books, each in its own file.
+   *
+   * SillyTavern's own directory name, for the same reason `characters` is:
+   * pointing `dataDir` at a real install finds the books its cards are already
+   * bound to. 18 of 19 corpus cards bind one.
+   */
+  worlds: string
   /** Conversation files. */
   chats: string
   /** Generation settings, global and per chat. */
@@ -183,6 +191,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
   return {
     root,
     characters: join(root, 'characters'),
+    worlds: join(root, 'worlds'),
     chats: join(root, 'chats'),
     settings: join(root, 'settings.json'),
     scriptPolicy: join(root, 'script-policy.json'),

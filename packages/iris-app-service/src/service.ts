@@ -33,6 +33,7 @@ import { ConnectionStore } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
+import { charWorldbookNames, WorldbookStore } from './worldbooks.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { lineTurns } from './entry.ts'
@@ -85,6 +86,14 @@ export interface AppServiceOptions {
    * empty partition, which is what "not configured" should look like.
    */
   extensionSettings?: ExtensionSettingsStore
+  /**
+   * The named world books beside the installation.
+   *
+   * Optional like the other stores. Absent means the installation has no books,
+   * which reads as an empty list rather than an error — a fresh profile has no
+   * `worlds` directory and that is a normal state, not a misconfiguration.
+   */
+  worldbooks?: WorldbookStore
   /**
    * The user's saved connections.
    *
@@ -159,11 +168,12 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
       extensionSettings?: ExtensionSettingsStore
+      worldbooks?: WorldbookStore
       connections?: ConnectionStore
       templates?: TemplateOptions
       scriptVariables?: ScriptVariableStore
@@ -192,6 +202,7 @@ export class IrisAppService {
       fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
       ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
+      ...options.worldbooks === undefined ? {} : { worldbooks: options.worldbooks },
       ...options.connections === undefined ? {} : { connections: options.connections },
       ...options.templates === undefined ? {} : { templates: options.templates },
       ...options.scriptVariables === undefined ? {} : { scriptVariables: options.scriptVariables },
@@ -209,7 +220,7 @@ export class IrisAppService {
    * @returns the handler table.
    */
   handlers(): Handlers {
-    const { chats, library, settings } = this.#options
+    const { chats, library, settings, worldbooks } = this.#options
     const scripts = this.#options.scripts
 
     return {
@@ -434,6 +445,24 @@ export class IrisAppService {
       'settings.set': async ({ chatId, settings: patch }) => ({
         settings: await settings.set(chatId, patch),
       }),
+
+      // World books that live in their own files rather than inside a card.
+      // Reads only: the write half of this family is a ruling item, because
+      // replacing a book is a whole-file replacement and the decision about
+      // whether Iris performs one at a card's request has not been made.
+      'worldbook.names': async () => ({ names: await worldbooks?.names() ?? [] }),
+      'worldbook.get': async ({ name }) => {
+        // A host with no store refuses by name rather than answering with an
+        // empty book. An empty book is a real state a book can be in, and
+        // reporting "not configured" as "this book has no entries" would let a
+        // card conclude the user deleted their world info.
+        if (worldbooks === undefined) throw notFound(`world book "${name}"`)
+        return { entries: await worldbooks.get(name) }
+      },
+      'worldbook.charNames': async ({ characterId }) => {
+        const card = await library.load(characterId)
+        return charWorldbookNames(card)
+      },
 
       'script.list': async ({ characterId }) => {
         // A host with no policy store cannot remember an answer, so it must not

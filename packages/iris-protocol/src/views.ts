@@ -371,3 +371,82 @@ export interface GenerationSettings {
   seed?: number
   stop?: string[]
 }
+
+/** Where a world book entry is inserted, by TavernHelper's name for it. */
+export type WorldbookPosition =
+  | 'before_character_definition'
+  | 'after_character_definition'
+  | 'before_example_messages'
+  | 'after_example_messages'
+  | 'before_author_note'
+  | 'after_author_note'
+  | 'at_depth'
+  | 'outlet'
+
+/** How a world book entry's secondary keys combine. */
+export type SecondaryLogic = 'and_any' | 'not_all' | 'not_any' | 'and_all'
+
+/**
+ * One world book entry, in the shape a card script reads.
+ *
+ * TavernHelper's `WorldbookEntry`, which is **not** the shape on disk, and the
+ * two disagree in ways a card would notice: `name` is the file's `comment`,
+ * `enabled` is the negation of its `disable`, and three independent booleans
+ * (`constant`, `vectorized`, `selective`) collapse into one `strategy.type`.
+ * Putting the file's own shape on the wire would be a quieter kind of wrong —
+ * every field present, several of them inverted.
+ */
+export interface WorldbookEntry {
+  uid: number
+  /** The file's `comment`. Cards treat it as the entry's title. */
+  name: string
+  enabled: boolean
+  strategy: {
+    type: 'constant' | 'vectorized' | 'selective'
+    /**
+     * Primary keys, as written.
+     *
+     * Upstream revives regex-shaped strings (`/foo/i`) into live `RegExp`
+     * objects before a card sees them. A `RegExp` cannot cross this boundary —
+     * it would arrive as `{}` — so the host sends the strings it read and the
+     * revival belongs to whoever hands these to a card.
+     */
+    keys: string[]
+    keys_secondary: { logic: SecondaryLogic, keys: string[] }
+    /** `'same_as_global'` when the entry sets no depth of its own. */
+    scan_depth: number | 'same_as_global'
+  }
+  position: {
+    type: WorldbookPosition
+    role: 'system' | 'user' | 'assistant'
+    depth: number
+    order: number
+  }
+  content: string
+  /** Already resolved: 100 when the entry does not use probability. */
+  probability: number
+  recursion: {
+    prevent_incoming: boolean
+    prevent_outgoing: boolean
+    /** Null rather than 0 or false when there is no delay. */
+    delay_until: number | null
+  }
+  effect: {
+    /** Null rather than 0 when unset — the two are one state on disk. */
+    sticky: number | null
+    cooldown: number | null
+    delay: number | null
+  }
+  addMemo: boolean
+  group: string
+  groupOverride: boolean
+  groupWeight: number
+  caseSensitive: boolean | null
+  matchWholeWords: boolean | null
+  matchPersonaDescription: boolean
+  matchCharacterDescription: boolean
+  matchCharacterPersonality: boolean
+  matchCharacterDepthPrompt: boolean
+  matchScenario: boolean
+  matchCreatorNotes: boolean
+}

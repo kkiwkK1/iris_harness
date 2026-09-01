@@ -634,6 +634,52 @@ class InMemoryClient implements FakeClient {
         throw new FakeRpcError('unsupported', 'the fake client does not fetch remote scripts')
       }
 
+      /*
+       * World books, answered as a host that genuinely has none.
+       *
+       * The distinction this arm rests on: an empty book list is a **real host
+       * state**, not a stand-in for one. The fake has no world book data — no
+       * fixture, no parsed `character_book` — so "none" is the true answer here
+       * rather than an invented one, and that is what separates these from the
+       * refused group above. `script.generate` is refused because faking it
+       * means inventing SillyTavern’s assembly; there is nothing to invent in
+       * reporting an absence.
+       *
+       * It also keeps the empty state reachable in development, which a refusal
+       * would not. A card bound to no books, and an interface that has to render
+       * that, are both things somebody has to be able to see.
+       *
+       * When the fake grows real book fixtures these become real reads. Until
+       * then a developer who needs books runs against a host that has them.
+       */
+      case 'worldbook.names': {
+        return { names: [] }
+      }
+
+      case 'worldbook.charNames': {
+        const { characterId } = params as RpcRequest<'worldbook.charNames'>
+        /*
+         * The card still has to exist. A binding query for a character that is
+         * not there is a caller mistake and should read as one, rather than as
+         * a card that happens to be bound to nothing.
+         */
+        if (!this.#characters.some(row => row.characterId === characterId)) {
+          throw new FakeRpcError('not-found', `no character "${characterId}"`)
+        }
+        return { primary: null, additional: [] }
+      }
+
+      case 'worldbook.get': {
+        const { name } = params as RpcRequest<'worldbook.get'>
+        /*
+         * Not-found rather than an empty entry list, and the difference is the
+         * one a caller acts on: "this book has no entries" and "there is no such
+         * book" lead to different repairs, and `worldbook.names` above has
+         * already promised that no name exists.
+         */
+        throw new FakeRpcError('not-found', `no world book named ${name}`)
+      }
+
       default: {
         // Exhaustiveness guard: a method added to the protocol without an arm
         // here becomes a type error rather than a runtime surprise.

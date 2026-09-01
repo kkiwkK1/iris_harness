@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, GenerationSettings, PromptItemization, ScriptContext, ScriptView } from './views.ts'
+import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, GenerationSettings, PromptItemization, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -432,6 +432,40 @@ export const requestSchemas = {
     /** Upstream's `max_chat_history`; absent keeps all of it. */
     maxHistory: z.number().int().min(0).optional(),
   }),
+
+  /**
+   * The named world books this installation has.
+   *
+   * Names, not contents: upstream separates the two so listing books does not
+   * read 1478 entries off the disk to answer a question about 18 names.
+   */
+  'worldbook.names': z.object({}),
+  /**
+   * One named world book's entries.
+   *
+   * Ordered by the file's `displayIndex`, which is the order the user arranged
+   * and not uid order.
+   */
+  'worldbook.get': z.object({
+    /**
+     * The book's name, exactly as spelled.
+     *
+     * Not an id. 13 of the corpus's 18 book names change under this host's
+     * `toId`, and a card's binding holds the untransformed name, so normalizing
+     * here would silently fail to find two thirds of the real books.
+     */
+    name: z.string().min(1).max(120),
+  }),
+  /**
+   * Which books a card is bound to.
+   *
+   * A binding is a name; the card's own embedded `character_book` is a separate
+   * body of entries and is not reported here, because upstream's member does not
+   * report it either.
+   */
+  'worldbook.charNames': z.object({
+    characterId: z.string().min(1),
+  }),
 } as const
 
 /** Every callable method. */
@@ -472,6 +506,11 @@ export interface RpcResponseMap {
   'script.swipeTo': { view: ChatView }
   /** Upstream's `triggerSlash` resolves with the pipeline's result. */
   'script.slash': { result: string }
+
+  'worldbook.names': { names: string[] }
+  'worldbook.get': { entries: WorldbookEntry[] }
+  /** A name may be bound with no file behind it; 2 of 18 corpus bindings are. */
+  'worldbook.charNames': { primary: string | null, additional: string[] }
 
   'connection.list': { profiles: ConnectionProfile[], activeId?: string }
   'connection.save': { profiles: ConnectionProfile[], activeId?: string }
