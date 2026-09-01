@@ -29,23 +29,44 @@
  * @param missing - expected globals the frame does not have.
  * @param presetUrl - where the preset was loaded from, so a blocked script names
  *   the thing to go and check.
+ * @param presetError - what the preset recorded about its own throw, when it got
+ *   far enough to record anything.
  * @returns the sentence to report, or undefined when there is nothing to say.
  */
 export function describeLibraryState(
   presetRan: boolean,
   missing: readonly string[],
   presetUrl: string,
+  presetError?: string,
 ): string | undefined {
   if (!presetRan) {
     /*
-     * Reported whether or not names are missing. A preset that did not run is a
-     * finding on its own: something else may have supplied the globals, and the
-     * frame is then working by accident in a way that will stop without warning.
+     * Two different failures wear the same missing marker, and they are as far
+     * apart as failures get:
+     *
+     * - **The bundle ran and threw.** Its own wrapper caught the exception and
+     *   wrote it down, so the name is available and it is the whole answer.
+     * - **The bundle never executed.** Blocked, 404, a parse error — nothing of
+     *   it ran, including the wrapper, so there is nothing to quote and the
+     *   request itself is what to go and look at.
+     *
+     * Reported whether or not names are missing, because a preset that did not
+     * finish is a finding on its own: something else may have supplied the
+     * globals, and the frame is then working by accident in a way that will stop
+     * without warning.
      */
+    if (presetError !== undefined && presetError !== '') {
+      return (
+        `the library preset threw while loading (${presetUrl}): ${presetError}` +
+        ' — every library below is a consequence of that one throw, not a separate gap' +
+        `${missing.length === 0 ? '' : `: ${missing.join(', ')}`}`
+      )
+    }
     return (
-      `the library preset never finished running (${presetUrl}) — every library below is a` +
-      ' consequence of that one failure, not a separate gap, so check that request before' +
-      ` anything else${missing.length === 0 ? '' : `: ${missing.join(', ')}`}`
+      `the library preset never executed (${presetUrl}) — it did not run far enough to record` +
+      ' a reason, so the request itself is what to check: blocked, missing, or unparseable.' +
+      ' Every library below is a consequence of that one failure, not a separate gap' +
+      `${missing.length === 0 ? '' : `: ${missing.join(', ')}`}`
     )
   }
 

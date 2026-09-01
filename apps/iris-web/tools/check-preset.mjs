@@ -131,6 +131,21 @@ if (win.__iris_preset_loaded__ !== true) {
   broken.push('__iris_preset_loaded__ (absent — the bundle did not run to its last statement)')
 }
 
+/*
+ * The bundle's own account of a throw comes first, and alone.
+ *
+ * Without this the failure printed nine absent globals and never mentioned the
+ * cause, which is the same defect the frame's report was just fixed for: a list
+ * of consequences reads as a list of independent gaps. The wrapper around the
+ * IIFE records the exception, so when there is one there is nothing to infer.
+ */
+if (typeof win.__iris_preset_error__ === 'string') {
+  console.error(`preset check failed: the bundle threw while loading — ${win.__iris_preset_error__}`)
+  console.error('  every missing global below is a consequence of that one throw')
+  console.error(`  ${broken.join(', ')}`)
+  process.exit(1)
+}
+
 if (broken.length > 0) {
   console.error(`preset check failed: ${broken.join(', ')}`)
   console.error('  the bundle loaded but does not provide what a card is told it has')

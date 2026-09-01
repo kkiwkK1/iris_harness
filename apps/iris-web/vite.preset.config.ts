@@ -42,6 +42,38 @@ export default defineConfig({
     emptyOutDir: false,
     target: 'es2022',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        /*
+         * The whole bundle, wrapped in one try/catch at build time.
+         *
+         * This cannot be written in `preset-entry.ts`, and that is the reason it
+         * is here: ES imports are hoisted, so a throw inside a dependency's
+         * module body — Vue's, jQuery's — happens before the entry's first
+         * statement, where no try/catch of the entry's could ever reach it. Only
+         * something wrapping the emitted IIFE catches those.
+         *
+         * What it buys is the error's name. A frame is an opaque origin and the
+         * preset is cross-origin to it, so a throw here reaches `window.onerror`
+         * redacted to `Script error.` — real, and carrying nothing. Recorded on
+         * the frame's own window instead, it is just a value, and the frame
+         * reports it verbatim.
+         *
+         * Deliberately not rethrown. The frame already knows the bundle failed,
+         * because the end-of-file marker is missing; rethrowing would add a
+         * masked, nameless `Script error.` next to the named one and invite a
+         * reader to treat them as two findings.
+         *
+         * The inner try/catch is not defensive habit: this runs while the frame
+         * is in an unknown state, and an assignment that throws would replace a
+         * diagnosable failure with a silent one.
+         */
+        banner: 'try{',
+        footer:
+          '}catch(irisPresetError){try{window.__iris_preset_error__=' +
+          '(irisPresetError&&irisPresetError.stack)||String(irisPresetError)}catch(ignored){}}',
+      },
+    },
     lib: {
       entry: fileURLToPath(new URL('./src/sandbox/preset-entry.ts', import.meta.url)),
       formats: ['iife'],

@@ -118,3 +118,21 @@ export const EXPECTED_GLOBALS: readonly string[] = [
  * blocked request.
  */
 export const PRESET_MARKER = '__iris_preset_loaded__'
+
+/**
+ * Where the preset records a throw of its own.
+ *
+ * The frame cannot read the preset's exception any other way. A frame is an
+ * opaque origin, the preset is served by Iris's host, and a cross-origin script
+ * that throws is redacted by the browser to the literal `Script error.` with no
+ * name, file, or line — the mask that cost one verification round to discover
+ * and another to work around badly.
+ *
+ * `crossorigin="anonymous"` is the documented way to lift that mask and it is
+ * not available here: it turns the load into a CORS fetch, and the host does not
+ * send `Access-Control-Allow-Origin` on this route. So instead of asking the
+ * browser to reveal the error, the bundle **writes it down before it escapes**.
+ * A value on the frame's own window is not cross-origin to anything.
+ */
+export const PRESET_ERROR = '__iris_preset_error__'
+

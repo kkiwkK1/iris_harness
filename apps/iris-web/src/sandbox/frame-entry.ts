@@ -20,7 +20,7 @@ import { remoteImports } from './script-source.ts'
 import { describeAttempts } from './import-attempts.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
-import { PRESET_MARKER } from './preset-globals.ts'
+import { PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
 
 /**
@@ -155,7 +155,22 @@ function applyViewport(size: { width: number, height: number }): void {
  * @param run - the run token.
  * @param post - how to reach the shell.
  */
-function reportAsyncFailures(run: string, post: (message: FromFrame) => void): void {
+/**
+ * Whether any card body has begun evaluating in this frame.
+ *
+ * Read by the uncaught-error reporter so it can state *when* an error arrived
+ * instead of asserting it. The two answers send a reader to opposite halves of
+ * the frame — the card's own code, or Iris's setup — and getting that wrong is
+ * more expensive than saying nothing, because the report arrives with a suspect
+ * already attached.
+ */
+let bodyStarted = false
+
+function reportAsyncFailures(
+  run: string,
+  post: (message: FromFrame) => void,
+  bodyHasRun: () => boolean,
+): void {
   const said = new Set<string>()
   const announce = (kind: string, detail: unknown): void => {
     const text =
@@ -169,12 +184,28 @@ function reportAsyncFailures(run: string, post: (message: FromFrame) => void): v
     post({
       iris: run,
       type: 'error',
-      // No script owns it: by now evaluation is over and the stack belongs to a
-      // callback, which is exactly why nothing else could attribute it either.
+      // No script owns it: the stack belongs to a callback, which is exactly why
+      // nothing else could attribute it either.
       scriptId: undefined,
-      message:
-        `${kind} after the card body finished: ${text}` +
-        ' — this is card code failing in a callback, not the frame refusing anything',
+      /*
+       * The context is observed, not assumed.
+       *
+       * This used to say "after the card body finished" unconditionally, which
+       * is a claim about *when* — and it was attached to whatever arrived,
+       * including errors from before any card had run. It then added "this is
+       * card code failing in a callback, not the frame refusing anything",
+       * which is a claim about *whose fault*, asserted from no evidence at all.
+       *
+       * That combination is the expensive kind of wrong: it arrives with a
+       * suspect already named, so nobody checks the innocent party. A frame
+       * whose own preset threw during load reported it as the card failing in a
+       * callback, and sent a reader looking at the card.
+       */
+      message: bodyHasRun()
+        ? `${kind} after a card body ran: ${text}` +
+          ' — the frame refused nothing, so this is code the card scheduled'
+        : `${kind} before any card body ran: ${text}` +
+          " — no card code had started, so this belongs to the frame's own setup",
     })
   }
 
@@ -189,8 +220,12 @@ function reportAsyncFailures(run: string, post: (message: FromFrame) => void): v
      * `onerror` is redacted to the literal `Script error.` with no error object,
      * file or line. Passing that on as if it were the card's own message wastes
      * a verification round: it looks like a diagnosis and carries nothing.
-     * `crossorigin="anonymous"` on the library tags is what lifts the mask; when
-     * something still arrives masked, this says so rather than repeating it.
+     * `crossorigin="anonymous"` is the documented way to lift the mask and is
+     * *not* available here — it makes the load a CORS fetch and the host sends
+     * no `Access-Control-Allow-Origin`, which blocked the preset entirely for a
+     * round. Iris's own scripts therefore record their throws in the frame's
+     * realm instead (`PRESET_ERROR`); when something still arrives masked, this
+     * says so rather than repeating a word that carries nothing.
      */
     if (event.error === null || event.error === undefined) {
       const masked = typeof event.message === 'string' && event.message.includes('Script error')
@@ -437,7 +472,14 @@ try {
     const tag = document.querySelector('script[data-iris-lib]')
     const url = tag?.getAttribute('src') ?? 'the preset script'
 
-    const message = describeLibraryState(host[PRESET_MARKER] === true, missing, url)
+    // The bundle's own record of its throw, when it got far enough to leave one.
+    const recorded = host[PRESET_ERROR]
+    const message = describeLibraryState(
+      host[PRESET_MARKER] === true,
+      missing,
+      url,
+      typeof recorded === 'string' ? recorded : undefined,
+    )
     if (message === undefined) return
     post({
       iris: run,
@@ -467,6 +509,13 @@ try {
    * coverage the probe reports on.
    */
   evaluate: (source, mode, names, values) => {
+    /*
+     * Set before evaluation, not after, and that is the point: an error thrown
+     * *by* a body is still an error after a body ran. Recording it on completion
+     * would report the card's own synchronous throw as belonging to the frame's
+     * setup.
+     */
+    bodyStarted = true
     if (mode === 'classic') {
       const compiled = new Function(...names, source) as (...args: unknown[]) => void
       compiled(...values)
@@ -529,7 +578,7 @@ try {
   },
   })
 
-  reportAsyncFailures(run, post)
+  reportAsyncFailures(run, post, () => bodyStarted)
   reportBlocked(run, post)
   reportHeight(run, post)
   announceReady(run, post)
