@@ -165,7 +165,12 @@ for (const name of MEMBERS) usage.set(name, { cards: new Set(), calls: 0, origin
 
 for (const source of sources) {
   for (const name of MEMBERS) {
-    const pattern = new RegExp(`(^|[^A-Za-z0-9_$.])${name}\\s*[(.]`, 'g')
+    // The boundary excludes `.` so an unrelated object's method does not count
+    // — but cards legitimately reach the API through the namespace, and
+    // `TavernHelper.getWorldbook(…)` is a real call. Allowing exactly that one
+    // prefix recovered four members the first version missed, two of which it
+    // had reported as never used at all.
+    const pattern = new RegExp(`(^|[^A-Za-z0-9_$.])(TavernHelper\\s*\\.\\s*)?${name}\\s*[(.]`, 'g')
     const hits = [...source.code.matchAll(pattern)].length
     if (hits === 0) continue
     const entry = usage.get(name)
