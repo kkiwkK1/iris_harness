@@ -193,7 +193,7 @@ test('a broken template costs its own text and nothing else', async (t) => {
   assert.match(sent, /After\./u)
   // Reported, so it is not also invisible.
   assert.ok(
-    errors.some(error => /template generate\/.*failed/u.test(error.message)),
+    errors.some(error => /template: generate\/.*failed/u.test(error.message)),
     `no failure was reported; saw ${JSON.stringify(errors.map(error => error.message))}`,
   )
 })

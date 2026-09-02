@@ -32,6 +32,7 @@ export type {
   ChatView,
   CharacterSummary,
   ConnectionProfile,
+  DebugReport,
   GenerationSettings,
   MessageView,
   PromptItemEntry,

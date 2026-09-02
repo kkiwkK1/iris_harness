@@ -573,3 +573,31 @@ export interface WorldbookEntry {
   matchScenario: boolean
   matchCreatorNotes: boolean
 }
+
+/**
+ * One survived failure the host kept, as a debug page reads it.
+ *
+ * The wire shape of `@iris/app-service`'s diagnostic buffer. Declared here
+ * rather than imported from the host so the page half compiles against the
+ * protocol alone.
+ */
+export interface DebugReport {
+  /** Monotonic, and the cursor a page pages with. */
+  seq: number
+  /** Unix epoch milliseconds. */
+  at: number
+  /** `mvu | template | prompt | script | variables | host`. */
+  kind: string
+  chatId?: string
+  characterId?: string
+  scriptId?: string
+  message: string
+  /**
+   * The original failure's stack, **present only when one was caught**.
+   *
+   * Most report sites write their own sentence rather than catching an error.
+   * Giving those a stack would be worse than giving them none: it names the
+   * place that reported, while reading as the place that failed.
+   */
+  stack?: string
+}

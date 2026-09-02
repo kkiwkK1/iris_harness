@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, GenerationSettings, PromptItemization, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
+import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, DebugReport, GenerationSettings, PromptItemization, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -253,6 +253,20 @@ export const requestSchemas = {
   'script.setScriptsAllowed': z.object({
     characterId: z.string().min(1),
     allowed: z.boolean(),
+  }),
+
+  /**
+   * Read the host's retained diagnostic reports.
+   *
+   * **Pull, not push.** A broadcast channel already exists, and hanging the
+   * diagnostic stream on it would turn the debug page into a log subscription —
+   * the charter asked for a page, not a platform. A `since` cursor with polling
+   * is enough, and it costs nothing while the page is closed.
+   */
+  'debug.reports': z.object({
+    /** Return records newer than this `seq`. Absent means from the oldest held. */
+    since: z.number().int().nonnegative().optional(),
+    limit: z.number().int().positive().max(2000).optional(),
   }),
   /**
    * Fetch a remote script dependency through the host.
@@ -810,6 +824,25 @@ export interface RpcResponseMap {
   'script.body': { content: string }
   'script.setDocumentGrant': { documentGranted: boolean }
   'script.setScriptsAllowed': { scriptsAllowed: boolean }
+
+  /**
+   * Retained reports, plus the three counters that make them trustworthy.
+   *
+   * `dropped` is required rather than decorative: a truncated bundle and a
+   * complete one are otherwise identical, and "there was more before this" is a
+   * state a reader acts on differently. `oldest` lets a page notice its cursor
+   * has fallen outside the buffer. `kinds` is what the host declares it
+   * collects, so an empty section can say **which** empty it is — collected and
+   * quiet, or never wired. A page cannot infer that from a count of zero, and
+   * a diagnostic page reporting "all clear" when it means "not instrumented" is
+   * the one lie it must never tell.
+   */
+  'debug.reports': {
+    reports: DebugReport[]
+    dropped: number
+    oldest: number
+    kinds: readonly string[]
+  }
   /** The fetched body. Refusals arrive as an `unsupported` rejection. */
   'script.fetch': { content: string, contentType?: string }
 

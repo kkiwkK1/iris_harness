@@ -40,6 +40,7 @@ import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
+import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
 import type { PruneOptions } from './prune.ts'
 import { runScripts } from './regex.ts'
 import { evaluatePrompt, promptHasTemplate } from './templates.ts'
@@ -163,6 +164,14 @@ export interface AppServiceOptions {
   templates?: TemplateOptions
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
+  /**
+   * Retention for those reports, so a debug page has something to read.
+   *
+   * Absent means the reports still reach `onError` and are simply not kept —
+   * which is the behaviour every caller had before this existed, and the right
+   * one for a host nobody is debugging.
+   */
+  diagnostics?: DiagnosticBuffer
 }
 
 /** Host-side tuning for the template evaluator. */
@@ -177,7 +186,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
@@ -188,6 +197,7 @@ export class IrisAppService {
       templates?: TemplateOptions
       scriptVariables?: ScriptVariableStore
       pruneVariables?: PruneOptions
+      diagnostics?: DiagnosticBuffer
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -218,6 +228,7 @@ export class IrisAppService {
       ...options.templates === undefined ? {} : { templates: options.templates },
       ...options.scriptVariables === undefined ? {} : { scriptVariables: options.scriptVariables },
       ...options.pruneVariables === undefined ? {} : { pruneVariables: options.pruneVariables },
+      ...options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics },
     }
   }
 
@@ -393,15 +404,16 @@ export class IrisAppService {
               detail = moved.length === 0 ? ' (no top-level key changed)' : ` on ${moved.join(', ')}`
             }
 
-            this.#report(new Error(
-              `script.evalTemplate: a card's template performed ${performed.op}${scope}${key}${detail}`,
-            ))
+            this.#report(
+              `a card's template performed ${performed.op}${scope}${key}${detail}`,
+              { kind: 'template', chatId, ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId } },
+            )
           }
           try {
             applyOps(entry, outcome.ops, turn,
-              reason => { this.#report(new Error(`script.evalTemplate: ${reason}`)) })
+              reason => { this.#report(reason, { kind: 'template', chatId }) })
           } catch (error: unknown) {
-            this.#report(error)
+            this.#report(error, { kind: 'template', chatId })
           }
         }
 
@@ -511,7 +523,7 @@ export class IrisAppService {
           // dropped for want of a candidate is the one way this call can
           // half-succeed, and the card would otherwise read its own write back
           // as an inherited value with nothing anywhere saying why.
-          entry.hydrateVariables(lines, message => { this.#report(new Error(message)) })
+          entry.hydrateVariables(lines, message => { this.#report(message, { kind: 'variables', chatId }) })
         }
         entry.touch()
 
@@ -767,6 +779,22 @@ export class IrisAppService {
         return { scriptsAllowed: await scripts.setScriptsAllowed(characterId, allowed) }
       },
 
+      'debug.reports': async ({ since, limit }) => {
+        const diagnostics = this.#options.diagnostics
+        // Refused rather than answered empty, and this is the one decision in
+        // this arm worth arguing. An empty page that still declares its kinds
+        // says "collected, and nothing happened" — on a host with no buffer
+        // that is false: the reports were produced and thrown away. The page
+        // would render "all clear" for a host retaining nothing, which is
+        // exactly the failure DEBUG-SURFACE §3.6 exists to prevent, and it is
+        // worst here, because this page is what someone opens when they
+        // suspect something else is lying.
+        if (diagnostics === undefined) {
+          throw new AppError('unsupported', 'this host retains no diagnostic reports')
+        }
+        return diagnostics.read(since, limit)
+      },
+
       'script.setEnabled': async ({ characterId, scriptId, enabled }) => {
         if (scripts === undefined) throw new AppError('unsupported', 'script policy is not configured on this host')
         const card = await library.load(characterId)
@@ -824,7 +852,7 @@ export class IrisAppService {
             scriptButtons: await this.#options.scriptButtons?.all(characterId) ?? {},
             characters: await library.list(),
             ...messageId === undefined ? {} : { messageId },
-            onReport: message => { this.#report(new Error(`script.context: ${message}`)) },
+            onReport: message => { this.#report(message, { kind: 'script', chatId, characterId }) },
           }),
         }
       },
@@ -999,7 +1027,13 @@ export class IrisAppService {
       // Reported, not swallowed: a reply whose update block nothing understood
       // is indistinguishable from a model that never wrote one, and telling
       // those apart is the difference between "the card is broken" and "we are".
-      entry.recordVariables(turn, text, message => { this.#report(new Error(message)) })
+      entry.recordVariables(turn, text, message => {
+        this.#report(message, {
+          kind: 'mvu',
+          chatId: entry.chatId,
+          ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+        })
+      })
       this.#storeRewritten(entry, entry.scripts, text)
       entry.touch()
       entry.finish()
@@ -1009,14 +1043,14 @@ export class IrisAppService {
       // shrinking file would learn too late.
       const prune = this.#options.pruneVariables
       if (prune !== undefined) {
-        entry.prune(prune, message => { this.#report(new Error(`variables: ${message}`)) })
+        entry.prune(prune, message => { this.#report(message, { kind: 'variables', chatId: entry.chatId }) })
       }
       await this.#options.chats.save(entry)
       this.#options.broadcast({ type: 'stream.end', chatId: entry.chatId, turn, view: entry.toView() })
       await this.#announceChats()
     } catch (cause: unknown) {
       entry.finish()
-      this.#report(cause)
+      this.#report(cause, { kind: 'host', chatId: entry.chatId })
     }
   }
 
@@ -1044,7 +1078,7 @@ export class IrisAppService {
         await this.#settle(entry, turn, partial)
         return
       } catch (cause: unknown) {
-        this.#report(cause)
+        this.#report(cause, { kind: 'host', chatId: entry.chatId })
       }
     }
 
@@ -1053,7 +1087,7 @@ export class IrisAppService {
       // The user's message stays on the log, so retrying is meaningful.
       await this.#options.chats.save(entry)
     } catch (cause: unknown) {
-      this.#report(cause)
+      this.#report(cause, { kind: 'host', chatId: entry.chatId })
     }
 
     this.#options.broadcast({
@@ -1405,10 +1439,11 @@ export class IrisAppService {
     if (entry !== undefined && entry.unsupportedScopes.size > 0) {
       const scopes = [...entry.unsupportedScopes].join(', ')
       entry.unsupportedScopes.clear()
-      this.#report(new Error(
-        `prompt: a macro read the ${scopes} variable scope, which Iris has no store for — it rendered as null, `
+      this.#report(
+        `a macro read the ${scopes} variable scope, which Iris has no store for — it rendered as null, `
         + 'which is not a statement that the value is unset',
-      ))
+        { kind: 'prompt', chatId: entry.chatId },
+      )
     }
 
     const residual = residualMacros(messages.map(message => message.text).join(' '))
@@ -1423,14 +1458,16 @@ export class IrisAppService {
         name => registry.has(name) || isHelperMacroName(name),
       )
       if (ours.length > 0) {
-        this.#report(new Error(
-          `prompt: ${ours.join(', ')} reached the provider unexpanded — Iris implements these, so the expansion did not reach that text`,
-        ))
+        this.#report(
+          `${ours.join(', ')} reached the provider unexpanded — Iris implements these, so the expansion did not reach that text`,
+          { kind: 'prompt', ...entry === undefined ? {} : { chatId: entry.chatId } },
+        )
       }
       if (theirs.length > 0) {
-        this.#report(new Error(
-          `prompt: ${theirs.join(', ')} reached the provider unexpanded — nothing here implements these, so they are the card's own (a typo, or a macro one of its scripts registers)`,
-        ))
+        this.#report(
+          `${theirs.join(', ')} reached the provider unexpanded — nothing here implements these, so they are the card's own (a typo, or a macro one of its scripts registers)`,
+          { kind: 'prompt', ...entry === undefined ? {} : { chatId: entry.chatId } },
+        )
       }
     }
 
@@ -1479,15 +1516,16 @@ export class IrisAppService {
         templates.deadlineMs,
       )
       for (const failure of evaluated.failures) {
-        this.#report(new Error(`template ${failure.origin} failed: ${failure.message}`))
+        this.#report(`${failure.origin} failed: ${failure.message}`, { kind: 'template', chatId: entry.chatId })
       }
       if (evaluated.ops.length > 0) {
         // Applied separately so a single refused write does not throw away the
         // text every other template produced.
         try {
-          applyOps(entry, evaluated.ops, turn, reason => { this.#report(new Error(`template: ${reason}`)) })
+          applyOps(entry, evaluated.ops, turn,
+            reason => { this.#report(reason, { kind: 'template', chatId: entry.chatId }) })
         } catch (error: unknown) {
-          this.#report(error)
+          this.#report(error, { kind: 'template', chatId: entry.chatId })
         }
       }
       return evaluated.options
@@ -1496,7 +1534,7 @@ export class IrisAppService {
       // arriving here is the host's own failure — a child that could not be
       // forked, a snapshot that could not be built. The generation still goes
       // out, with `<%` in it, which is visible rather than silent.
-      this.#report(error)
+      this.#report(error, { kind: 'host', chatId: entry.chatId })
       return options
     }
   }
@@ -1561,9 +1599,29 @@ export class IrisAppService {
     return this.#announceChat(entry)
   }
 
-  /** Hand a survived failure to the composition's logger. */
-  #report(error: unknown): void {
-    this.#options.onError(error instanceof Error ? error : new Error(String(error)))
+  /**
+   * Hand a survived failure to the composition's logger, and keep it.
+   *
+   * **A string argument means the sentence was written here; an `Error` means
+   * one was caught.** That distinction is the whole stack rule, made structural
+   * rather than left to discipline: a caught error's stack points at the
+   * failure, while an error constructed at the report site points at the
+   * report, and a stack that names the reporter reads as the origin. So only
+   * the caught form carries `stack`, and a site cannot get one wrong without
+   * changing what it passes.
+   * @param what - a caught error, or the message this site wrote.
+   * @param context - the kind, plus whatever attribution is in scope.
+   */
+  #report(what: unknown, context: ReportContext): void {
+    const caught = what instanceof Error ? what : undefined
+    const message = caught?.message ?? String(what)
+    this.#options.diagnostics?.record(context, message, caught?.stack)
+    // The log line keeps a prefix, because a logger has no fields to carry the
+    // kind in. It is now uniformly `kind: message`, replacing the ad-hoc
+    // prefixes each site used to write into its own text (`template `,
+    // `variables: `, `script.evalTemplate: `) — the same information, in one
+    // shape, and no longer duplicated in the structured record.
+    this.#options.onError(caught ?? new Error(`${context.kind}: ${message}`))
   }
 }
 

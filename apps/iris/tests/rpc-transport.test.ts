@@ -243,6 +243,9 @@ const PROBES: Record<string, unknown> = {
   'worldbook.replace': { name: 'no-such-book', entries: [] },
   'worldbook.globalSelect': {},
   'worldbook.setGlobalSelect': { names: [] },
+  // Empty params: the cursor and the limit are both optional, and reading
+  // from the oldest held record is the page's first call.
+  'debug.reports': {},
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {

@@ -23,6 +23,7 @@ import type { ChatCompletionPreset } from '@iris/preset'
 import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
+import { DiagnosticBuffer } from './diagnostics.ts'
 import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
@@ -66,6 +67,16 @@ export {
   type PromptResult,
 } from './prompt.ts'
 export { placementFor, runScripts, scriptsOf, substituteFor } from './regex.ts'
+export {
+  DiagnosticBuffer,
+  DEFAULT_LIMITS,
+  WIRED_KINDS,
+  type BufferLimits,
+  type DebugReport,
+  type ReportContext,
+  type ReportKind,
+  type ReportPage,
+} from './diagnostics.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
 export { ScriptCache, cacheKey, nodeFetch, type CacheFailure, type FetchLike, type ScriptCacheOptions } from './script-cache.ts'
 export { ScriptPolicyStore } from './scripts.ts'
@@ -370,6 +381,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const scriptButtons = new ScriptButtonStore(
     paths.scriptButtons, error => { ctx.logger.warn(error.message) })
   const connections = new ConnectionStore(paths.connections)
+  // Retention for the diagnostic bus. Reports already reached the logger and
+  // stopped there, so a debug page had nothing to ask for; this keeps a bounded
+  // window of them in memory. Not persisted deliberately — a restart empties it
+  // and says so through `oldest`.
+  const diagnostics = new DiagnosticBuffer()
 
   // The folders are created on first write, not on boot: a host that has never
   // been used should leave nothing behind, and both stores already tolerate a
@@ -389,6 +405,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     scriptVariables,
     preset: await loadPreset(config.presetPath),
     broadcast: event => { ctx.irisRpc.broadcast(event) },
+    diagnostics,
     ...config.userName === undefined ? {} : { userName: config.userName },
     ...config.contextWindow === undefined ? {} : { contextWindow: config.contextWindow },
     ...config.reserveTokens === undefined ? {} : { reserveTokens: config.reserveTokens },
@@ -410,6 +427,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // the check worth having here.
   ctx.effect(() => {
     const disposers = [
+      ctx.irisRpc.register('debug.reports', handlers['debug.reports']),
       ctx.irisRpc.register('chat.list', handlers['chat.list']),
       ctx.irisRpc.register('chat.create', handlers['chat.create']),
       ctx.irisRpc.register('chat.open', handlers['chat.open']),
