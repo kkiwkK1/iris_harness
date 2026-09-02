@@ -176,26 +176,82 @@ pinia 4.0.0+ 在运行时读它们；缺了会在控制台告警或走错分支�
 **上游作者知道 pinia 是常见依赖**，并且选择了**统一在引导层设标志**，
 而不是让每张卡自己设。
 
-### 上游为卡准备的东西，完整清单
+### 上游为卡准备的东西，完整清单 —— **两套，不是一套**
 
-这就是总指挥要的「族名单」。分三类：
+**这是以后每次「某卡报缺库」的对照表。**
+关键结构事实：**脚本 frame 和界面/消息 frame 的预置清单不同**，
+而且**同一个名字 `$` 在两边来源不同**。
 
-**A. 注入 frame 全局的库**（`predefine.js` + `third_party_script.html`）
+#### A-1. 脚本 frame 的标签（`panel/script/iframe.ts:5-23` 组装）
 
-| 名字 | 来源 | 形式 |
+| 全局名 | 出处 | 来源 |
 | --- | --- | --- |
-| `$` / `jQuery` | **父页面的实例** | `parent_jquery.js` 两行赋值 |
-| `_` (lodash) | **父页面的实例** | `predefine.js:1` `window._ = window.parent._` |
-| `Vue` | **CDN**（无版本号） | `<script src>` 全局 |
-| `VueRouter` | **CDN**（无版本号） | `<script src>` 全局 |
-| `EjsTemplate` `TavernHelper` `YAML` `showdown` `toastr` `z` | **父页面** | `predefine.js:15` `_.pick(window.parent, […])` |
-| `SillyTavern` | **父页面**，getter | `predefine.js:29-36` |
-| `Mvu` | **父页面**，getter，**存在才挂** | `predefine.js:38-45` |
+| `Vue` | `iframe/third_party_script.html:1` | CDN `npm/vue/dist/vue.runtime.global.prod.min.js` |
+| `VueRouter` | `iframe/third_party_script.html:2` | CDN `npm/vue-router/dist/vue-router.global.prod.min.js` |
+| （诊断层，非库） | `panel/script/iframe.ts:14` | CDN `gh/N0VI028/JS-Slash-Runner/…/log.js` |
 
-**B. 特性开关**：上面那三个 `__VUE_*__`。**唯一一个为具体第三方库（pinia）做的特殊处理。**
+**三个标签，全部 CDN，全部无版本号。**
 
-**C. 什么都没做的**：**pinia 本身、以及任何其它 ESM 依赖。**
-上游**不提供 pinia**，只提供它需要的标志。卡要 pinia 就自己去 CDN 取。
+#### A-2. 界面 / 消息 frame 的标签（`panel/render/iframe.ts:80-101` 组装）
+
+`iframe/third_party_message.html` 全文八行：
+
+| 行 | 全局名 / 资源 | 来源 |
+| --- | --- | --- |
+| 1 | Font Awesome CSS | CDN `npm/@fortawesome/fontawesome-free/css/all.min.css` |
+| 2 | **Tailwind** | **本地** `/scripts/extensions/third-party/JS-Slash-Runner/lib/tailwindcss.min.js`（260,500 B） |
+| 3 | **`$` / `jQuery`** | **CDN** `npm/jquery/dist/jquery.min.js` —— **自己一份，不是父页面那份** |
+| 4 | jQuery UI | CDN `npm/jquery-ui/dist/jquery-ui.min.js` |
+| 5 | jQuery UI theme CSS | CDN `npm/jquery-ui/themes/base/theme.min.css` |
+| 6 | jquery-ui-touch-punch | CDN `npm/jquery-ui-touch-punch` |
+| 7 | `Vue` | CDN，同 A-1 |
+| 8 | `VueRouter` | CDN，同 A-1 |
+
+**八个里七个 CDN 且无版本号，唯一钉住的是本地那份 Tailwind。**
+
+#### B. 从宿主页面取的全局（两种 frame **都有**，`predefine.js`）
+
+| 名字 | 出处 |
+| --- | --- |
+| `_` (lodash) | `iframe/predefine.js:1` `window._ = window.parent._` |
+| `EjsTemplate` `TavernHelper` `YAML` **`showdown`** `toastr` `z` | `iframe/predefine.js:15` `_.pick(window.parent, [...])` |
+| `SillyTavern` | `iframe/predefine.js:29-36`（getter） |
+| `Mvu` | `iframe/predefine.js:38-45`（getter，**父页面有才挂**） |
+
+**只有脚本 frame 额外有的**：
+
+| 名字 | 出处 |
+| --- | --- |
+| `$` / `jQuery` | `iframe/parent_jquery.js:1-2` —— **父页面的实例**（界面 frame 走 A-2 第 3 行的 CDN 版） |
+
+**`$` 这一条是两套清单里唯一一个「同名不同物」**，而且它决定选择器解析到哪个 document
+（见 `OVERLAY-CARDS.md` §二）。**对表时不能只核名字在不在，要核它是谁的实例。**
+
+#### C. 特性开关（两种 frame 都有）
+
+`predefine.js:23-26` 三个 `__VUE_PROD_DEVTOOLS__` / `__VUE_OPTIONS_API__` /
+`__VUE_PROD_HYDRATION_MISMATCH_DETAILS__`。**唯一一个为具体第三方库（pinia）做的特殊处理。**
+
+#### D. 上游**不**提供的
+
+- **`pinia` 本身**——只提供它要的标志（C）。卡要 pinia 就自己去 CDN 取。
+- **任何 ESM 模块说明符**。`VueRouter` 是**全局名**；
+  `import … from 'vue-router'` 这种写法**上游同样不支持**（没有 import map，§一之三）。
+
+### 对表用法：全局名 vs 地址，两类缺失的修法不同
+
+| 缺的是 | 例 | 修法 |
+| --- | --- | --- |
+| **全局名** | `showdown`、`VueRouter` | **预置即可**——桥接宿主实例或装进 `preset.js` |
+| **模块地址** | `https://…/pinia/+esm` | **预置不够，要映射或代理**（§五之一） |
+
+**V1.5.4 报的「absent libraries: showdown, VueRouter」属于第一类**，
+所以它是**「预置≠映射」那条的正面**：这两个预置就能解决。
+
+*（记一笔：`sandbox/libraries.ts` 当时决定不搬 `vue-router`，理由是
+「nothing measured uses it, and its absence is reported rather than hidden」。
+那条决定按当时的语料是对的，**V1.5.4 就是那个 measured 之外的用例**。
+决定没错，样本变了——这两件事要分开记。）*
 
 **所以"预置名单"若照抄上游，pinia 不在里面。**
 上游的做法是「**让卡自己取，我只保证它取到之后能正常工作**」——
