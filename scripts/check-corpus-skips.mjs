@@ -43,9 +43,11 @@ import { spawn } from 'node:child_process'
  * 23 → 24 with "real cards decode their embedded book to an array", which pins
  * the decoder rather than the mirror — the two existing `character_book` tests
  * both build their own book, so neither could catch a real card arriving in the
- * disk's uid-keyed shape.
+ * disk's uid-keyed shape; 24 → 25 with the schema-insert acceptance case, which
+ * checks the `extensible` and `template` rules are reached by real inserts
+ * rather than only by fixtures.
  */
-const EXPECTED_SKIPPED = 24
+const EXPECTED_SKIPPED = 25
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 

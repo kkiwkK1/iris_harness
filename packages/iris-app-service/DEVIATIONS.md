@@ -449,3 +449,97 @@ composed in the façade, on the `updateVariablesWith` precedent.
 **What would overturn this.** A card that expects its rearranged panel to
 survive an export — or a user reporting exactly that. The reports would look like
 "my buttons reset when I moved the card", which is the sentence to recognise.
+
+## 8. A pruned floor is answered by name, and replay is opt-in
+
+Upstream's variable cleanup is enabled by default (`.prefault({})` on a zod
+schema whose values are `{启用: true, 快照保留间隔: 50, 要保留变量的最近楼层数: 20,
+触发恢复变量的最近楼层数: 10}`), so **an imported long chat has been rolling
+under cleanup since its first floor** — that is the ordinary state of every MVU
+installation, not a property of one corpus. Iris matches the rule: keep the
+newest `keepRecent`, keep and mark every floor on the absolute-numbered
+interval, strip the five named keys in between. `prune.ts` extends rather than
+replaces, and the interval is taken modulo the **absolute floor number** because
+a user arrives carrying upstream's mental model of where their snapshots are.
+
+Two things diverge, both on the read side.
+
+**A pruned floor says so.** `readFloorVariables` reports `origin: 'pruned'` with
+a sentence naming which keys were taken and which earlier floor is still intact.
+The table itself is still empty, exactly as upstream answers it — the divergence
+is that a reader can now tell a deletion from a floor that never held anything.
+Those were the same `{}` before, and they ask a caller for opposite responses.
+This resolved what looked like a dilemma: honesty was assumed to mean refusing
+the read and breaking cards that walk history. It does not — nothing errors.
+
+**Replay is available and off by default.** `readFloorVariables(id, {replay:
+true})` reconstructs a pruned floor by folding forward from the nearest intact
+one, and labels the answer `origin: 'replayed'` with `replayedFrom` and
+`replayedFloors`. It is not the default for two independently sufficient
+reasons:
+
+- **Fidelity.** Folding one floor forward from the previous floor's stored table
+  reproduces its `stat_data` in **93 of 118** adjacent full-floor corpus pairs —
+  **78.8%**. The rest return a value that differs from what was stored, with
+  nothing in the table saying so. Folding is deterministic (verified three ways:
+  same-process repeats, 971 corpus folding floors, and two separate processes
+  byte-comparing per-chat hashes), which is no comfort — it deterministically
+  returns the same wrong value.
+- **Cost.** A fold is p50 1.98 ms against a 187 KB state, so one snapshot
+  interval is ~108 ms of **synchronous** CPU — not overlapping latency, but
+  108 ms in which this process serves nobody.
+
+**Why the gap will not close, which is the durable part of this entry.**
+**Of the 25 measured divergences, 24 are writes no command in that reply
+caused.** A zero-command control makes this exact: on a floor issuing no
+commands the fold is the identity function, so any difference is out-of-band by
+definition — 18 of 19 such pairs were unchanged, the one exception being a
+character-creation form write. With full schema support added, the ceiling is
+**94 of 118 = 79.7%**. Replay therefore cannot become the default on fidelity
+grounds *ever*: the limit is structural, not a matter of the implementation
+improving.
+
+**A withdrawn number, recorded so it is not re-derived.** An earlier pass put
+the ceiling at 84.3%. That used "the differing leaf sits under a path some
+command names" as a proxy for "the fold is wrong", and the proxy is only an
+upper bound — a card script can overwrite a commanded path too. Measured
+directly, the two classes that proxy flagged both cleared: our fold produced
+exactly what the reply asked in **9 of 9** `set` cases and **4 of 4** array
+`insert` cases. 84.3% is void; 79.7% replaces it.
+
+**What would overturn this.** A measurement showing out-of-band writes are rare
+on some other corpus — in which case replay's fidelity there is much higher and
+the default deserves revisiting. Or the opposite discovery, that some card
+depends on reading a pruned floor's real state, which would make the named
+refusal insufficient and force either retention or a documented data loss.
+
+## 9. The variable fold reads the `schema` section, and refuses what it forbids
+
+Upstream consults the `[InitVar]`-generated `schema` on every `insert`: an array
+is **closed unless** `extensible` is exactly `true`, an object is closed only by
+an explicit `extensible: false`, and a declared `template` is merged into each
+newly added member. Iris ignored the schema entirely. It now implements both
+rules (`@iris/mvu/schema`).
+
+**Filed as compatibility, not as fidelity.** Against replay this is worth under
+one point — it moves the ceiling in §8 from 78.8% to 79.7%. The reason to do it
+is that the same `applyCommands` runs on every finished turn, so accepting an
+append upstream refuses writes the divergence into the user's save immediately,
+and a card carried back to SillyTavern grows differently shaped members. Corpus
+exposure: 2 inserts upstream refuses that were being accepted, and 11 whose
+template was not being merged.
+
+**One upstream behaviour is copied even though it looks like a bug.**
+`getSchemaForPath` resolves object keys through `properties` only and stops at
+the first missing key — it does **not** fall back to an extensible parent's
+`template`. So a member added at runtime to an `extensible: true` object has no
+schema of its own and every rule above is skipped for it. This is load-bearing
+rather than incidental: a corpus append into `命定之人.<runtime member>.职业`
+looked exactly like a schema refusal until the walk was traced, and it is not
+one — upstream resolves no node there and permits the append. "Improving" the
+walk would refuse writes upstream accepts, which is the direction that loses
+user data.
+
+**What would overturn this.** Upstream changing the walk to consult `template`,
+or a card whose arrays are all undeclared and which therefore stops being able
+to append at all — the report would read "my inventory stopped growing".

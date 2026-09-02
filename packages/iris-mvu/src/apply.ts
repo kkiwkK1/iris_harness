@@ -30,6 +30,7 @@ import toPath from 'lodash-es/toPath.js'
 import unset from 'lodash-es/unset.js'
 
 import { normalizeCommandPaths, type CommandInfo } from './commands.ts'
+import { applyTemplate, refuseInsert, schemaForPath } from './schema.ts'
 
 /** The MVU state tree. `stat_data` is what cards read. */
 export interface MvuData {
@@ -230,8 +231,25 @@ export function applyCommands(
           reject(command, `cannot insert into ${typeof stored}`)
           continue
         }
+        // Through the declaration, as upstream does. An array is closed unless
+        // its schema says `extensible: true`, so accepting every append is not
+        // a lenient reading of the rule — it is a different rule, and it writes
+        // members into the user's save that upstream would never have created.
+        const node = schemaForPath(data['schema'], path)
+        const declined = refuseInsert(
+          node,
+          command.args.length,
+          command.args.length >= 3 ? String(argValue(command, 1)) : undefined,
+        )
+        if (declined !== undefined) {
+          reject(command, declined)
+          continue
+        }
         if (command.args.length === 2) {
-          const value = argValue(command, 1)
+          // The template fills in fields the model left out; the model's own
+          // fields win. Applied only to what is being added, never to what is
+          // already there.
+          const value = applyTemplate(argValue(command, 1), node?.template)
           if (Array.isArray(stored)) set(data.stat_data, path, [...stored, value])
           else if (isObject(stored) && isObject(value)) {
             set(data.stat_data, path, { ...(stored as Record<string, unknown>), ...(value as Record<string, unknown>) })
@@ -242,7 +260,7 @@ export function applyCommands(
           }
         } else {
           const key = argValue(command, 1)
-          const value = argValue(command, 2)
+          const value = applyTemplate(argValue(command, 2), node?.template)
           if (Array.isArray(stored) && typeof key === 'number') {
             const next = [...stored]
             next.splice(key, 0, value)

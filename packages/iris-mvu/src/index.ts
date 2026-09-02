@@ -47,3 +47,12 @@ export {
   type ApplyResult,
   type MvuData,
 } from './apply.ts'
+
+export {
+  applyTemplate,
+  isArraySchema,
+  isObjectSchema,
+  refuseInsert,
+  schemaForPath,
+  type SchemaNode,
+} from './schema.ts'
