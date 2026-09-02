@@ -337,9 +337,56 @@ export class IrisAppService {
           throw invalid(`template evaluation failed: ${reason}`)
         }
 
-        // Writes replay through the host's own stores, like the prompt path —
-        // a template cannot reach storage except through a check the host makes.
+        // **Writes are applied, and every one of them is reported.**
+        //
+        // The first version of this refused them, on the reasoning that the `Op`
+        // channel was built for world book and preset templates whose text comes
+        // from installed files. That reasoning was right about the trust
+        // asymmetry and wrong about the consequence. Measured: the corpus's 18
+        // books hold 8 entries carrying writes, and the one card that actually
+        // calls `evalTemplate` is rendering **world book content** with it —
+        // its `renderEntry` can reach 16 entries, one of which
+        // (`[EJS]末日世界观`) both templates and writes.
+        //
+        // So refusing, or discarding, does not close a hole: it makes a write
+        // that upstream performs **stop happening**, on a card that works there.
+        // That is a divergence dressed as a fix, and the failure it creates is
+        // the quiet kind — the card renders, the variable never moves, and
+        // nothing connects the two.
+        //
+        // What the route genuinely lacks is not authority but **visibility**:
+        // a card-supplied string reaching the same writer as an installed file
+        // should not do so silently. So each op is named on the way through.
+        // See `DEVIATIONS.md` for the three options and why this one.
         if (outcome.ops.length > 0) {
+          const before = entry.header.chat_metadata
+          for (const performed of outcome.ops) {
+            // Named individually rather than counted: "a template wrote" is not
+            // actionable, "a card's template set `global` scope `x`" is. The
+            // scope is the part that matters — it is what says how far the
+            // write reaches beyond the card that made it.
+            const scope = 'scope' in performed ? ` ${performed.scope}` : ''
+            const key = 'key' in performed ? ` ${performed.key}` : ''
+
+            // `saveMetadata` carries a **clone of the whole of**
+            // `chat_metadata` and lands as a wholesale replacement, so its
+            // payload is the wrong thing to print — a single floor's variables
+            // reach 282 KiB in the corpus and this is the same order. Which
+            // top-level keys moved is both readable and the actual semantics of
+            // a replace.
+            let detail = ''
+            if (performed.op === 'saveMetadata') {
+              const after = performed.value as Record<string, unknown>
+              const keys = new Set([...Object.keys(before), ...Object.keys(after ?? {})])
+              const moved = [...keys].filter(name =>
+                JSON.stringify(before[name]) !== JSON.stringify(after?.[name])).sort()
+              detail = moved.length === 0 ? ' (no top-level key changed)' : ` on ${moved.join(', ')}`
+            }
+
+            this.#report(new Error(
+              `script.evalTemplate: a card's template performed ${performed.op}${scope}${key}${detail}`,
+            ))
+          }
           try {
             applyOps(entry, outcome.ops, turn,
               reason => { this.#report(new Error(`script.evalTemplate: ${reason}`)) })

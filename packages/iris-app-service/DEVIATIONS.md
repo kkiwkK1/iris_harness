@@ -266,3 +266,50 @@ character being played", and that already holds.
 present as a lookup that silently finds nothing, since `characters[NaN]` is
 `undefined` and every corpus reader guards its result — so the symptom is a
 card quietly behaving as though the character had no data, not an error.
+
+---
+
+## 6. A card's template writes, and every write is announced
+
+**Upstream.** `evalTemplate` runs a template through the same evaluator as world
+book and preset templates, so it reaches the same write channel: `setvar` in any
+scope, `delvar`, `insvar`, and a wholesale `saveMetadata`.
+
+**The asymmetry that makes this a decision.** That channel was designed for text
+the *user installed* — a world book file, a preset. `evalTemplate` hands the same
+authority to a string a **card** supplied. Same writer, two very different
+provenances.
+
+**Three options were on the table.**
+
+| | what it does | what it costs |
+| --- | --- | --- |
+| **A. Apply silently** | upstream's behaviour, unchanged | a card writes through a channel built for installed files, and nothing anywhere says so |
+| **B. Refuse a template that writes** | the card gets a loud error | **breaks a card that works upstream** — see below |
+| **C. Apply, and name every write** | upstream's values, plus a record | one report per op |
+
+**B was implemented first and then withdrawn, which is the part worth
+recording.** Refusing looks like closing a hole. Measured, it closes nothing:
+the corpus's 18 books hold **8 entries carrying writes**, and the single card
+that calls `evalTemplate` (银麒赎世) uses it to render **world book content** —
+its `renderEntry` can reach 16 entries, one of them (`[EJS]末日世界观`) both
+templating and writing. Under B that card loses its render *and* its write, on
+behaviour that works in SillyTavern. The victim of the safety measure is the only
+real consumer of the feature.
+
+Discarding the ops instead (a fourth option) is worse than refusing and was
+ranked below B: the `setvar` appears to succeed, the card reads back the old
+value, and nothing connects the two. **Between two wrong answers, the loud one
+is better** — but both are wrong here, because the correct value is upstream's.
+
+**C is what ships.** The route's actual deficiency was never authority, it was
+**visibility**: a card-supplied string reaching the same writer as an installed
+file should not do it silently. Each op is reported by name and scope through
+`#report` — `a card's template performed setvar global marker` — because "a
+template wrote" is not actionable while the scope is: the scope says how far the
+write reaches beyond the card that made it.
+
+**What would overturn this.** A card using `evalTemplate` to write somewhere it
+has no business writing — the reports are what would show it, and they are the
+reason C is not simply A. `tests/eval-template.test.ts` pins that a write both
+lands and is named.

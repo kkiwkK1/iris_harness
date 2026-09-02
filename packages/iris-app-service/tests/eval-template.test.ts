@@ -41,6 +41,7 @@ const CARD = JSON.stringify({
 
 interface Fixture {
   handlers: Handlers
+  chats: ChatStore
   chatId: string
 }
 
@@ -49,7 +50,7 @@ interface Fixture {
  * @param templates - whether the template feature is configured on.
  * @returns handlers and an open chat.
  */
-async function fixture(t: TestContext, templates: boolean): Promise<Fixture> {
+async function fixture(t: TestContext, templates: boolean, reports?: string[]): Promise<Fixture> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-evalt-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
@@ -63,11 +64,12 @@ async function fixture(t: TestContext, templates: boolean): Promise<Fixture> {
     settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
     broadcast: () => {},
     userName: 'U',
+    ...reports === undefined ? {} : { onError: (error: Error) => { reports.push(error.message) } },
     ...templates ? { templates: { deadlineMs: 5000 } } : {},
   }).handlers()
 
   const created = await handlers['chat.create']({ characterId: 'aria' })
-  return { handlers, chatId: created.view.chatId }
+  return { handlers, chats, chatId: created.view.chatId }
 }
 
 test('a template renders, and the result is the rendered text', async (t) => {
@@ -152,5 +154,100 @@ test('nothing evaluates the card’s string in the host process', async () => {
   assert.ok(
     source.includes('evaluateBatch({'),
     'script.evalTemplate no longer goes through the fenced batch evaluator',
+  )
+})
+
+test('a template that writes is applied — and every write is named', async (t) => {
+  const reports: string[] = []
+  const fixed = await fixture(t, true, reports)
+
+  // **The fixture is the real shape, and that correction came from measurement.**
+  // The first version used `setvar`, which looked representative and is not:
+  // across the corpus the card that actually calls `evalTemplate` reaches
+  // exactly one writing entry, and **every op a card-supplied template produces
+  // here is `saveMetadata`** — the 8 `setvar` entries in those books all sit in
+  // entries `renderEntry` cannot reach, on the assembly path this route never
+  // touches. A `setvar` fixture tests something with no overlap at all with real
+  // traffic, which is this repository's recurring way of losing a test and its
+  // teeth-check together.
+  //
+  // The real shape, from `银麒赎世` / `[EJS]末日世界观`: mutate `chatMetadata` in
+  // place, then call `saveMetadata()`.
+  const { text } = await fixed.handlers['script.evalTemplate']({
+    chatId: fixed.chatId,
+    content: '<% const m = SillyTavern.chatMetadata; m.yinqi_phone = { seen: true };'
+      + ' SillyTavern.saveMetadata() %>rendered',
+  })
+  assert.equal(text, 'rendered')
+
+  // Named, and named with *which top-level keys moved* rather than the payload:
+  // the op carries a clone of the whole of `chat_metadata` and lands as a
+  // wholesale replacement, so the keys are both the readable part and the actual
+  // semantics.
+  const named = reports.filter(line => line.includes('performed saveMetadata'))
+  assert.equal(named.length, 1, `expected one named write, saw: ${reports.join(' | ')}`)
+  assert.match(named[0] ?? '', /yinqi_phone/u)
+})
+
+test('the fence hands templates a live chatMetadata, not a copy', async (t) => {
+  const fixed = await fixture(t, true)
+
+  // The load-bearing detail behind the shape above, pinned where it will be
+  // noticed. That template works only because `environment.ts` exposes
+  // `chatMetadata` through a getter returning the **live** object: the template
+  // holds it in a local, mutates in place, and `saveMetadata()` then clones
+  // whatever state now holds.
+  //
+  // "Harden" that getter into returning a copy and the chain breaks in silence —
+  // the template still runs, no error is raised, the op is still pushed, and the
+  // pushed value simply lacks the mutation.
+  //
+  // So this asserts through **the value that came out the far end**, not that
+  // the getter returned an object. The latter passes under a copying
+  // implementation, which is precisely the implementation it must reject.
+  await fixed.handlers['script.evalTemplate']({
+    chatId: fixed.chatId,
+    content: '<% const m = SillyTavern.chatMetadata; m.written_in_place = 42;'
+      + ' SillyTavern.saveMetadata() %>ok',
+  })
+
+  const entry = await fixed.chats.open(fixed.chatId)
+  assert.equal(
+    (entry.header.chat_metadata as Record<string, unknown>)['written_in_place'],
+    42,
+    'an in-place mutation never reached the stored metadata — chatMetadata is being copied out',
+  )
+})
+
+test('a timeout is thrown, never resolved as the original text', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-evalt-slow-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const chats = new ChatStore(join(dir, 'chats'), library)
+  const stream: StreamFn = async function* () { yield { type: 'finish', reason: { kind: 'stop' } } }
+  const handlers = new IrisAppService({
+    stream, library, chats,
+    settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
+    broadcast: () => {},
+    userName: 'U',
+    // Short enough that a spinning template is killed quickly.
+    templates: { deadlineMs: 300 },
+  }).handlers()
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+
+  // The assembly path treats a timeout as "fall back to the original text",
+  // which is right there — the generation still goes out. On this route it must
+  // be the opposite: the card's own `catch` is the thing that degrades, and it
+  // only runs on a rejection. Resolving with the input would make a template
+  // that never finished look like one that rendered to itself.
+  await assert.rejects(
+    () => handlers['script.evalTemplate']({
+      chatId: created.view.chatId,
+      content: '<% while (true) {} %>',
+    }),
+    /timed out|template evaluation failed/u,
   )
 })
