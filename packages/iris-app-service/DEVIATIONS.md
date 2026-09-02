@@ -790,3 +790,114 @@ write through `'latest'` is always visible to a read through `'latest'`.
 **What would overturn this.** A card that depends on `'latest'` writing to a
 system row, or on `null` meaning "the beginning" — both would show up as a card
 that works upstream and refuses here, with our own error naming the reason.
+
+---
+
+# Faithful reproductions a user may report as a bug
+
+The two columns above record where Iris **differs** from SillyTavern. This one
+records the opposite hazard: behaviour that is correct *because* it matches
+upstream, and that a user will nonetheless report as broken.
+
+Written down for one reason. A report reading "my world book stopped working"
+arrives with no indication of which column it belongs to, and the cheapest wrong
+move is to fix it — turning a faithful reproduction into a divergence, silently,
+with a green test suite. **Each entry below is a thing not to fix without a
+ruling.**
+
+Entries marked *(frame)* are the sandbox domain's findings, cited rather than
+restated: the mechanism was measured there, and paraphrasing someone else's
+measurement into this ledger is how a citation becomes a claim.
+
+## Host
+
+**Injection order inside a group is the keys' lexicographic order.**
+Upstream walks `Object.keys(extension_prompts).sort()` (`script.js:3249`), so
+two injections at the same position and depth are concatenated in *name* order,
+not in the order the card registered them. **What the user sees:** a card's
+panels or notes appear in an order that looks arbitrary, and a card whose
+injection id is a UUID lands at a random point in the prompt. **Not fixed
+because** SillyTavern's own keys are `1_memory`, `2_floating_prompt`,
+`3_vectors` — the digits *are* the ordering mechanism, and cards written against
+upstream rely on it. Sorting by registration order would put a card's text
+somewhere upstream never puts it. See §11.
+
+**An injection at `position: 'none'` is stored and never appears.**
+Upstream's `NONE: -1` is queried by no call site of `getExtensionPrompt`, so
+such an injection holds its key — it can be overwritten or removed — and
+contributes nothing. **What the user sees:** a card says it injected something
+and no text appears anywhere in the prompt. **Not fixed because** it is a real
+third state; treating it as "assemble anyway" would put text into prompts that
+upstream leaves out, and treating it as "reject" would break a card that parks
+an injection deliberately.
+
+**A card that binds a globally selected book receives nothing from its own
+binding.** `world-info.js:4387` skips a character's book when it is already
+active globally — with upstream's own comment, "is already activated in global
+world info! Skipping...". **What the user sees:** exactly the card whose book
+they also selected globally appears to have lost its world info, while every
+other card gained entries. **Not fixed because** without it that one card
+receives every entry of that book *twice*; the dedup is what stops the fix from
+being a duplication. Measured: 18 cards gain 15 always-on entries each, the one
+binding card gains 0 — and that zero is the strongest available evidence the
+rule is working. See `WORLDBOOKS.md §2c`.
+
+**`[InitVar]` seeding reads the books in the opposite order from assembly.**
+Assembly is `character_first` on the measured installation; MVU's seeding builds
+`[...selected_global_lorebooks, primary, ...additional]`
+(`variable_init.ts:230`), so a global book's declaration is folded **first** and
+the character's wins where they overlap. **What the user sees:** a variable
+declared in both books takes the character's value at chat start, while the
+same two books' *entries* are assembled character-first — two orders that look
+like one should be a typo. **Not fixed because** matching only one of the two
+would be plausible tidiness that changes behaviour: the seeding order decides
+which declaration wins, and the assembly order decides activation ties.
+
+**A branch shares its parent's chat world book, and a write on either side is
+visible to the other.** `chat_metadata` is `structuredClone`d into a branch, so
+the child inherits the same *book name* — one book, not a copy. **What the user
+sees:** editing world info while playing a branch changes the parent chat too,
+and because books are rewritten whole, the later writer replaces the earlier
+one's entire book. **Not fixed because** a branch here is a save point the user
+jumps back to; copying would let the two silently diverge and clearing would
+make the branch forget. Ruled 2026-09-03. See `WORLDBOOKS.md §2d`.
+
+**Writing a world book replaces all of it.** `createOrReplaceWorldbook` builds
+the saved object fresh from the array it is given, so an entry the caller left
+out is gone. **What the user sees:** a card that updates one entry appears to
+delete the rest. **Not fixed because** it is upstream's write semantics, and a
+partial update is expressed by reading the book, changing what you want, and
+writing all of it back — which is what `updateWorldbookWith` does.
+
+**World info scans only the last two messages by default.** `scan_depth`
+defaults to 2 (`world-info.js:69`). **What the user sees:** a keyword mentioned
+three messages ago does not trigger its entry, which reads as an entry that
+"stopped working". **Not fixed because** the number is SillyTavern's own
+default, and a card tuned against it would activate differently here — the
+setting is the place to change this, not the default.
+
+**A pruned floor's variables read as `{}`.** Cleanup is enabled by default
+upstream (`启用: true`, interval 50, keep 20), so an imported long chat has been
+rolling under it from its first floor, and floors outside the keep window have
+had their tables stripped. **What the user sees:** `getVariables({message_id})`
+against an early floor returns an empty table, as though the state was never
+recorded. **Not fixed because** it is upstream's own cleanup and the file
+arrived that way; what *is* fixed is the silence — see §8, where such a read
+reports that the floor was pruned rather than answering a bare empty table.
+
+## Frame *(cited, not restated)*
+
+- **Storage façade is shared per profile**, so a card's wallpaper or floating
+  button position can appear under a different card — four shared keys measured
+  between two corpus cards. `UPSTREAM-FRAME-ORIGIN.md §四`.
+- **One card can end up with two Pinia instances.** `UPSTREAM-ESM-DEPS.md`.
+- **The interface frame sees `parent.Mvu` as undefined while MVU is still
+  starting**, which upstream also handles by waiting for its
+  `global_Mvu_initialized` event rather than by making the read synchronous.
+
+## Not in this column
+
+§14 (a user row's `message_id` reads its reply's table) is a **divergence**, not
+a faithful reproduction — upstream stores a table per message and would answer
+with the user row's own. It is listed here only as the contrast: the two look
+alike from a bug report, and they belong in opposite columns.
