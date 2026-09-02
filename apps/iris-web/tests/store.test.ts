@@ -91,7 +91,7 @@ test('stream.end replaces the view and drops the buffer', () => {
 
   push({ type: 'stream.start', chatId: 'c1', turn: 0, key: 'k0' })
   push({ type: 'stream.text', chatId: 'c1', turn: 0, delta: 'partial' })
-  push({ type: 'stream.end', chatId: 'c1', turn: 0, view: settled })
+  push({ type: 'stream.end', chatId: 'c1', turn: 0, view: settled, reason: 'completed' })
 
   // The whole point of the contract: no reconciliation, one swap.
   assert.equal(store.getState().stream, undefined)

@@ -34,7 +34,7 @@ test('the end of a stream settles the message before it declares generation over
    * down on `GENERATION_ENDED`; emitting them the other way round has a card
    * releasing state one event before it reads it.
    */
-  const events = forwardedEvents({ type: 'stream.end', chatId: 'c', turn: 3, view: VIEW })
+  const events = forwardedEvents({ type: 'stream.end', chatId: 'c', turn: 3, view: VIEW, reason: 'completed' })
 
   assert.deepEqual(
     events.map(forwarded => forwarded.event),
@@ -86,7 +86,7 @@ test('every event the mapping produces is a name the shared table actually carri
   const samples: IrisEvent[] = [
     { type: 'stream.start', chatId: 'c', turn: 0, key: 'k' },
     { type: 'stream.text', chatId: 'c', turn: 0, delta: 'x' },
-    { type: 'stream.end', chatId: 'c', turn: 0, view: VIEW },
+    { type: 'stream.end', chatId: 'c', turn: 0, view: VIEW, reason: 'completed' },
     { type: 'stream.error', chatId: 'c', turn: 0, code: 'x', message: 'y' },
   ]
 
@@ -114,7 +114,7 @@ test('the interception hooks are never forwarded as notifications', () => {
   const samples: IrisEvent[] = [
     { type: 'stream.start', chatId: 'c', turn: 0, key: 'k' },
     { type: 'stream.text', chatId: 'c', turn: 0, delta: 'x' },
-    { type: 'stream.end', chatId: 'c', turn: 0, view: VIEW },
+    { type: 'stream.end', chatId: 'c', turn: 0, view: VIEW, reason: 'completed' },
     { type: 'stream.error', chatId: 'c', turn: 0, code: 'x', message: 'y' },
     { type: 'chat.updated', chatId: 'c', view: VIEW },
     { type: 'chats.updated', chats: [] },
