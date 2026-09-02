@@ -67,6 +67,13 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
    */
   setExtensionPrompt: 'script.setExtensionPrompt',
   /*
+   * Reached as `window.parent.EjsTemplate.evalTemplate`, not as a member of the
+   * SillyTavern context — it belongs to the ST-Prompt-Template extension, which
+   * publishes its own global. Routable, and off the SillyTavern surface for the
+   * same reason the chat-write arms are.
+   */
+  evalTemplate: 'script.evalTemplate',
+  /*
    * The three chat-write arms, reached by the journal replay in
    * `chat-journal.ts` and — for now — by nothing else. They are routable but
    * **not** on the SillyTavern surface; see `OFF_ST_SURFACE` below.
@@ -105,6 +112,7 @@ export const OFF_ST_SURFACE: readonly string[] = [
   'setChatMessages',
   'createChatMessages',
   'deleteChatMessages',
+  'evalTemplate',
   /*
    * Tavern Helper members that were reachable on the SillyTavern object because
    * this table used to answer one question instead of two. Measured against

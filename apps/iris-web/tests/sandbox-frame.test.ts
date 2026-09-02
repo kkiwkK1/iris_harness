@@ -1875,3 +1875,194 @@ test('the shared tables keep their identity through the clone layer', () => {
     assert.equal(parent['TavernHelper'], globals['TavernHelper'], 'one surface, two routes')
   })
 })
+
+/**
+ * The one corpus card's lookup, performed exactly as its source performs it.
+ *
+ * Measured: `ctx.characters[ctx.characterId]` → `.data.character_book.entries`
+ * → `for (i = 0; i < entries.length; i++)`. Every level is guarded, which is
+ * precisely why every level's failure is silent.
+ * @param globals - what the card was handed.
+ * @returns the entries it would iterate.
+ */
+function readEmbeddedBook(globals: Record<string, unknown>): unknown[] {
+  const ctx = globals['SillyTavern'] as Record<string, unknown>
+  const characters = ctx['characters'] as Record<string, unknown>[] | undefined
+  const characterId = ctx['characterId'] as string | undefined
+  if (characters === undefined || characterId === undefined) return []
+  const card = characters[characterId as unknown as number] as
+    | { data?: { character_book?: { entries?: unknown[] } } }
+    | undefined
+  return card?.data?.character_book?.entries ?? []
+}
+
+/** A snapshot whose **second** character is the one being played, with a book. */
+function withEmbeddedBook(): ReturnType<typeof snapshot> {
+  return snapshot({
+    characterId: 'card-abc',
+    characters: [
+      { characterId: 'other', name: 'Someone Else', tags: [] },
+      {
+        characterId: 'card-abc',
+        name: 'Yinqi',
+        tags: [],
+        /*
+         * An **array**, which is the V2/V3 card-spec shape and what this repo's
+         * own `decodeCardPng` produces. SillyTavern's *disk* world books key
+         * `entries` by uid instead, and both shapes exist here.
+         */
+        data: {
+          character_book: {
+            entries: [
+              { id: 0, comment: 'plain', content: 'no template here' },
+              { id: 1, comment: '[EJS] worldview', content: 'level <%= 1 %>' },
+            ],
+          },
+        },
+      },
+    ],
+  })
+}
+
+test('characterId is a stringified array index, so the card lookup hits', () => {
+  /*
+   * The break this repairs was invisible. Iris's character ids are opaque
+   * strings, and `array["card-abc"]` is `undefined` while `characters` and
+   * `characterId` are both truthy — so every guard the card wrote passes and the
+   * indexed read is simply absent.
+   *
+   * What follows: `charData` undefined → `entries` stays `[]` → the render loop
+   * runs zero times → `evalTemplate` is never called. **An acceptance run goes
+   * green because nothing executed**, which is the failure this project has now
+   * named often enough to test for directly.
+   *
+   * Matching the field would not have been enough either: array indexing with a
+   * non-numeric string finds nothing whatever the ids are, so making the values
+   * agree would have looked like a fix and changed no behaviour.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: withEmbeddedBook() })
+
+  let id: unknown
+  let found = 0
+  evaluate(scope, globals => {
+    id = (globals['SillyTavern'] as Record<string, unknown>)['characterId']
+    found = readEmbeddedBook(globals).length
+  })
+
+  assert.equal(id, '1', 'upstream this_chid is String(characters.indexOf(value))')
+  assert.match(String(id), /^[0-9]+$/u, 'a non-numeric string indexes to nothing')
+  assert.equal(found, 2, 'the lookup missed, and that miss is the silent failure')
+})
+
+test('character_book.entries stays an array rather than the disk keyed object', () => {
+  /*
+   * The card walks it with `.length` and `[i]`. A keyed object gives
+   * `entries.length === undefined`, zero iterations, and a green run — the same
+   * false green as above, one level down.
+   *
+   * Our reader already yields an array, so this asks only that the mirror does
+   * not helpfully normalise it into the disk shape.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: withEmbeddedBook() })
+
+  let entries: unknown[] = []
+  evaluate(scope, globals => {
+    entries = readEmbeddedBook(globals)
+  })
+
+  assert.ok(Array.isArray(entries), 'a keyed object here would iterate zero times')
+  assert.equal(entries.length, 2)
+  assert.equal((entries[1] as { comment: string }).comment, '[EJS] worldview')
+})
+
+test('the book stays nested, because the first guard reads the nesting', () => {
+  // `charData.data && charData.data.character_book && …` — flattening any level
+  // makes that guard read "this card has no world book" and take the fallback.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: withEmbeddedBook() })
+
+  evaluate(scope, globals => {
+    const ctx = globals['SillyTavern'] as Record<string, unknown>
+    const card = (ctx['characters'] as Record<string, unknown>[])[1] as Record<string, unknown>
+    assert.ok(card['data'] !== undefined, 'CharacterSummary must carry data')
+    const data = card['data'] as Record<string, unknown>
+    assert.ok(data['character_book'] !== undefined, 'the nesting collapsed')
+  })
+})
+
+test('no character selected leaves characterId falsy, stopping the outer guard', () => {
+  /*
+   * `undefined` rather than `'-1'`. Both stop the indexed read, but only this
+   * stops `if (ctx.characters && ctx.characters[ctx.characterId])` at its first
+   * term — which is what upstream does with nothing selected, and keeps a card
+   * out of a branch it would enter believing a character was chosen.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characters: [] }) })
+
+  evaluate(scope, globals => {
+    assert.equal((globals['SillyTavern'] as Record<string, unknown>)['characterId'], undefined)
+  })
+})
+
+test('EjsTemplate is a real function on parent, not a reporting getter', () => {
+  /*
+   * The measured caller feature-tests with
+   * `typeof tw.EjsTemplate.evalTemplate === 'function'`, so the report-on-read
+   * path the rest of this proxy uses for absent names would fail that test —
+   * correctly while we had nothing to offer, wrongly now that we do.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    const ejs = parent['EjsTemplate'] as Record<string, unknown> | undefined
+    assert.ok(ejs !== undefined, 'the card reaches this through window.parent')
+    assert.equal(typeof ejs['evalTemplate'], 'function')
+  })
+})
+
+test('a template goes to the host, and a rejection is left for the card to catch', () => {
+  /*
+   * The caller wraps its call in `console.warn` plus a fall back to the
+   * unrendered text, and that path is only reachable if the rejection arrives.
+   * The fence's own refusals — the `initial`/`cache` scopes, `insvar` with an
+   * `index` — carry a specific reason, and **wrapping them into `undefined`
+   * would be the wrong direction on this surface**: on `$.fn` an `undefined` is
+   * honest because the plugin is genuinely absent, whereas here the capability
+   * exists and is deliberately withheld. Erasing a decision into an absence
+   * sends the card down a path the refusal was not written for.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  let pending: Promise<unknown> | undefined
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    const ejs = parent['EjsTemplate'] as { evalTemplate: (text: string) => Promise<unknown> }
+    pending = ejs.evalTemplate('level <%= 1 %>')
+  })
+
+  const call = scope.posted.find(
+    message => message.type === 'call' && message.method === 'evalTemplate',
+  )
+  assert.ok(call?.type === 'call', 'the template never reached the host')
+  assert.deepEqual(call.params, { content: 'level <%= 1 %>' })
+
+  // The frame's own reply channel, carrying a refusal the fence produced.
+  scope.send({
+    iris: 'tok',
+    type: 'call:error',
+    id: call.id,
+    message: 'the initial scope is not available inside the fence',
+  } as never)
+
+  return assert.rejects(
+    pending as Promise<unknown>,
+    /initial scope is not available/u,
+    'the card must receive the reason, not undefined',
+  )
+})

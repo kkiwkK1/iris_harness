@@ -266,6 +266,32 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * `undefined` when there is no chat, matching upstream: a card checking for
        * one must be able to find none.
        */
+      /*
+       * **A stringified array index, not Iris's character id.**
+       *
+       * Upstream's `this_chid` is literally `String(characters.indexOf(value))`
+       * (`script.js:7073`), and the one corpus script that reaches into the array
+       * does `ctx.characters[ctx.characterId]`. Iris's own ids are opaque
+       * strings, and `array["银麒赎世"]` is `undefined` — so handing over the real
+       * id breaks the lookup while every guard around it passes: `characters`
+       * exists, `characterId` is truthy, and the indexed read is simply absent.
+       *
+       * The chain that fails then is worth naming, because its failure is
+       * invisible: `charData` undefined → `entries` stays `[]` → the render loop
+       * runs zero times → `evalTemplate` is never called. **Nothing throws and
+       * an acceptance run goes green**, because green here means "never
+       * executed" rather than "behaved correctly".
+       *
+       * A key equal to the id is not enough either. Array indexing with a
+       * non-numeric string finds nothing whatever the ids are, so matching the
+       * field would have looked like a fix and changed no behaviour.
+       *
+       * **The translation lives here and stops here.** The index is the *facade's*
+       * contract, not the system's; every member inside this file that needs a
+       * real character id keeps reading it off the snapshot.
+       */
+      if (property === 'characterId') return currentCharacterIndex()
+
       if (property === 'getCurrentChatId') return () => context?.chatId
 
       /*
@@ -517,6 +543,21 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (property === 'event_types') return TAVERN_EVENTS
 
       // Published by one of this card's scripts. Checked after the bridged
+      /*
+       * The EJS template renderer, on the parent because that is where cards
+       * reach it: `var tw = window.parent || window; tw.EjsTemplate.…`, sixteen
+       * times in the one card that uses it. It is the extension's own global,
+       * not part of the Tavern Helper surface, so putting it there would have
+       * been a member upstream does not have on a surface it does have.
+       *
+       * A **real function**, not the report-on-read path the rest of this proxy
+       * uses for absent names. The measured caller feature-tests with
+       * `typeof tw.EjsTemplate.evalTemplate === 'function'`, and a getter that
+       * answered `undefined` would fail that test — correctly, if we had nothing
+       * to offer, and wrongly now that we do.
+       */
+      if (property === 'EjsTemplate') return ejsTemplate
+
       // members so a card cannot shadow `document` by writing to it.
       if (published.has(property)) return published.get(property)
 
@@ -686,6 +727,64 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * request. A refusal comes back as a rejection so a card's `catch` sees it,
    * which is what upstream's would do.
    */
+  /**
+   * The ST-Prompt-Template extension's renderer, as a card reaches it.
+   *
+   * One member, because one is what the corpus uses. `evalTemplate(content)`
+   * renders an EJS template against the host's macros, variables and chat state
+   * — none of which exist in the frame, so it is a round trip and cannot be
+   * anything else.
+   *
+   * **Failures are not caught here.** The measured caller wraps its call in
+   * `console.warn` plus a fall back to the unrendered text, and that path is
+   * only reachable if the rejection arrives. Two kinds do:
+   *
+   * - The evaluator refusing — a timeout, an evaluation error, or the fence's
+   *   own named refusals for the `initial`/`cache` scopes and for `insvar` with
+   *   an `index`. Those carry a specific reason, and **wrapping them into
+   *   `undefined` would be the wrong direction for this surface**: on `$.fn` an
+   *   `undefined` is honest because the plugin genuinely is not there, whereas
+   *   here the capability exists and is deliberately withheld. Erasing a
+   *   decision into an absence sends the card down a different path than the one
+   *   the refusal was written for.
+   * - Extra arguments. Upstream's signature carries `data` and `options`; the
+   *   corpus passes neither, so they are not modelled — and they are **forwarded
+   *   rather than dropped**, which the contract's strict shape turns into a
+   *   named rejection. Silently ignoring an argument that changes what a
+   *   template can see would surface as a wrongly-rendered prompt.
+   */
+  /**
+   * Where the played character sits in the snapshot's `characters` array.
+   *
+   * Returns `undefined` rather than `'-1'` when there is no match. `'-1'` would
+   * index to `undefined` anyway, so both stop the card's inner guard — but a
+   * falsy `characterId` also stops the *outer* one, which is closer to what
+   * upstream does with nothing selected and keeps a card out of a branch it
+   * would enter believing a character was chosen.
+   * @returns the index as a string, or undefined.
+   */
+  const currentCharacterIndex = (): string | undefined => {
+    const snapshot = context
+    if (snapshot === undefined || snapshot.characterId === undefined) return undefined
+    const at = snapshot.characters.findIndex(row => row.characterId === snapshot.characterId)
+    return at === -1 ? undefined : String(at)
+  }
+
+  const ejsTemplate = {
+    evalTemplate: async (content: unknown, data?: unknown, options?: unknown): Promise<unknown> =>
+      callAction('evalTemplate', {
+        content: String(content),
+        /*
+         * Forwarded under upstream's own parameter names, so the contract's
+         * strict shape rejects them by the name the card used. An invented field
+         * would produce a refusal too, and it would name nothing the card could
+         * find in its own source.
+         */
+        ...(data === undefined ? {} : { data }),
+        ...(options === undefined ? {} : { options }),
+      }),
+  }
+
   const callAction = (method: string, params: unknown): Promise<unknown> => {
     const id = `c${(nextCall += 1)}`
     return new Promise<unknown>((resolve, reject) => {

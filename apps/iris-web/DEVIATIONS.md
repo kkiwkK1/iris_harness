@@ -410,3 +410,60 @@ test is reworked at the same time.
 
 **What would overturn it.** A corpus card using jQuery UI — the reports would
 name it.
+
+---
+
+## 12. `ctx.chat_metadata` stays broken, on purpose
+
+**Kind:** faithful copy — and the first entry here that is **deliberately not
+fixed**. The reason is fidelity, not effort, and it leads because an entry
+reading "known broken, not repaired" is otherwise indistinguishable from debt.
+
+**Upstream.** `chat_metadata` — snake case — is **not among `st-context.js`'s 145
+keys**. A card reading it off the context object gets `undefined` on a real
+SillyTavern install too. The corpus has one such read, as a fallback path behind
+the `characters[characterId]` route.
+
+**Iris** returns `undefined` and reports the name, like any unbuilt member.
+
+**Why this must not be "fixed".** The fallback is dead code upstream. Making it
+work here would give one card a path that exists nowhere else — a card author
+testing against Iris would see their fallback exercised, conclude it works, and
+ship something that silently takes the other branch everywhere else. **Repairing
+it would be the divergence.**
+
+The camel-cased `chatMetadata` **is** a real member and is served (§2). So the
+two spellings differ in kind, not just in case: one is the API, the other is a
+typo that upstream never rejected.
+
+**What would overturn it.** Upstream adding `chat_metadata` to its context.
+
+---
+
+## 13. Acceptance criteria for the embedded-book chain
+
+**Not a deviation** — recorded here because the numbers were wrong once and the
+wrong ones are the kind you chase.
+
+The chain: `ctx.characters[ctx.characterId]` → `.data.character_book.entries` →
+`renderEntry` per entry → entries containing `<%` reach `evalTemplate` → one of
+them writes, producing a `saveMetadata` op in the host log.
+
+| reading | value |
+| --- | --- |
+| `saveMetadata` ops in one pass | **1**, naming the `yinqi_phone` key |
+| `evalTemplate` calls in one pass | **3 to 14** |
+
+**The range is not slack.** `renderEntry` returns on its first match, so one call
+renders at most one entry: three fixed call sites plus one per character the card
+iterates, of which there are eleven. The upper bound of 14 happens to equal the
+count of `<%`-bearing entries, which makes it **easy to mistake for a
+confirmation** — seeing 14 does not verify anything, and seeing 5 does not mean 9
+were lost.
+
+Two entries match and contain no `<%`. They return their content directly, so
+**not calling `evalTemplate` for them is correct** rather than a miss.
+
+So `saveMetadata` = 1 is the primary criterion: it is unaffected by how many
+characters get iterated. The call count is corroborating evidence read as a
+range.
