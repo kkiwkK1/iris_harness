@@ -30,31 +30,38 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
 预设瘦身 B 件（jQuery UI 结构兜底，undefined+报告已裁）；EjsTemplate frame 门面；
 调试页（宿主半设计 DEBUG-SURFACE.md 已定稿）。
 
-**队列**（按依赖序，"设计 ✅ / 实现待排"分开记，不再把已付的成本算第二遍）：
-1. **脚本按钮 UI**——设计 ✅（SCRIPT-BUTTONS.md：QR 栏位置、事件名=按钮 id、cyrb53
-   逐字复刻、二级按钮=整表替换）；实现待做
-2. **阅读视图窗口化**——设计 ✅（WINDOWING.md：只窗口挂载层、20 frame 数量闸是结构
-   必需、38.6 KiB/frame 固定开销实测、占位符是主要外观）；实现待做
-3. **消息内联 HTML 消毒渲染**（2026-09-02 深夜新增，用户点名的爱衣不渲染即此）——上游是
-   "所有消息消毒后就地渲染"+"`<pre>` 内全文档追加 iframe 化"两层，我们只建了第二层。设计
-   INLINE-HTML.md；DOMPurify（apps/iris-web 自身 npm）、`<style>` 在解析后 DOM 上作用域到候选
-   序号、script/事件属性/外链无开关硬拒；CSS 作用域器已落，消毒 seam 在建。语料 936 楼片段
-   （887 在命定之诗）+ 爱衣模型生成楼。
-4. **覆盖层界面宿主**（新增，OVERLAY-CARDS.md）——第三类表面：全视口、宿主定位、具名显隐
-   API。由新测试卡 V1.5.4 逼出：脚本自建 DOM、不经消息文本、不碰 `parent.*`（靠 `$` 的
-   realm 绑定落到宿主页）。当前表现为静默落进隐藏脚本 frame，先补具名报告，再建宿主。
-5. **卡自带 ESM 依赖的代理**（2026-09-03 新增，族级基建）——22 卡里 13 卡的变量结构脚本
-   `import{…}from'…/gh/StageDog/tavern_resource/…'` 是**阻塞式 binding 导入**，15 卡的 MVU
-   bundle 是副作用导入；我们每聊天一个不透明源、HTTP 缓存分区，跨源 CDN 每次冷取 9–12s，
-   binding 失败=整脚本一行不执行。预置库只解 1 卡（pinia），**代理才解 13+15**。待测：冷取
-   里不透明源与 jsdelivr 各占多少；出厂卡里的 `localhost:5500` 地址要与冷取超时分开报。
-6. **调试页页面半**——章程 OBSERVABILITY.md 11 具名缺口（保真度 6 + 缄默 5），宿主半已落
-   （DEBUG-SURFACE.md：环形缓冲、17 处报告结构化、`debug.reports` 拉取、kinds 声明、stack
-   结构性诚实）
-4. MVU 长局变量清理（Tier 1.3，677 楼语料在手；注意 chat[i].variables 已是楼层读通路，
-   裁剪不得静默答空——约束记在 WINDOWING.md）
-5. 受控口子二期（/api/backends/*）已归档 BRIDGE.md，等真实消费者
-6. **CI 推远端**——用户决定，仍开放
+**队列**（2026-09-03 重排；"设计 ✅ / 实现待排"分开记，不再把已付的成本算第二遍）：
+1. ~~脚本按钮 UI~~ ✅（设计 SCRIPT-BUTTONS.md，实现已落，爱衣 2 按钮端到端）
+2. ~~阅读视图窗口化~~ ✅（WINDOWING.md ②③ 层 + CI 不变式；固定开销由构建核对，只在低估时失败）
+3. **MVU 聊天级五件活**（2026-09-03，族级：所有 MVU 卡）——两缺席成员 `loadWorldInfo` /
+   `getLorebookSettings` 宿主 arm ✅（原始盘面形状；同步成员进快照不做 RPC），frame 门面待接；
+   `Mvu` 未发布已收窄到**多实例选举**（UPSTREAM-MVU-INIT-PATH.md §三之四：`#tavern_helper
+   div[data-script-id]` 选优先实例，选不到即静默不发布），三环在树上皆备，剩时序，运行探针在跑。
+   验收 = 爱衣 `<UpdateVariable>` 真被 `initResponse` 处理，不看 `Mvu` 在不在。
+4. **消息内联 HTML 消毒渲染**——设计 INLINE-HTML.md；CSS 作用域器 ✅、区域切分 ✅（真语料：
+   命定之诗 677 楼 334 有区域）、消毒 seam 在建。爱衣 6/8 楼即此。
+5. **覆盖层界面宿主**（OVERLAY-CARDS.md）——**用户已亲眼撞上**：V1.5.4 开场白字面只一个「·」，
+   整张卡的界面由 990 KB 脚本建在全视口宿主表面上；今天空白。裁点待 7b 列（表面归属、z 层、
+   `pagehide` 自清映射、page-access 是否需要）。前置：预置 showdown + VueRouter（上游两种 frame
+   都预置，UPSTREAM-ESM-DEPS.md §三；`libraries.ts` 当年按语料零未搬，被此卡推翻）。
+6. **世界书单通道 + 内嵌书物化**（EMBEDDED-BOOK-MATERIALISATION.md，设计 ✅ 已裁）——上游装配层只
+   读绑定名，内嵌书在导入期物化；我们自开的第二通道造出 2246 条里 1122 条重复。物化进我们
+   `worlds/` + 绑定表，不写卡文件；两哈希四格表；撞名不覆盖（比上游严）；"书没跟过来"用种子化
+   +报告区分。**迁移必须做**：dev 8 卡 7 卡靠内嵌分支活着，物化与拆通道同批落。49 在建。
+7. **存储族**（2026-09-03 新增）——语料 8 卡 9 脚本用 `localStorage`（银麒赎世 109 次 + 唯一
+   indexedDB，族代表），ST frame 同源可用、我们不透明源不可用。要受管 `localStorage` 门面：同步
+   API → 加载时快照 + 写穿宿主；作用域按上游机制 profile 级共享不按卡分区。indexedDB 先报不建。
+   44 按兜底形状分类中。
+8. **卡自带 ESM 依赖的代理**（族级基建）——13 卡 binding 导入 + 15 卡 MVU bundle；去重 11 个地址、
+   6 个无版本（TEST-CARDS 副轴：名单会自己过期）；`script-bundles/` 是实际加载的卡尺。待测冷取。
+9. **导入体积 C**（IMPORT-DUPLICATION.md，两人复核）——st-meta 93.6% 是 `variables` 副本，只买键序；
+   改存键序（字典+下标 4 KB）省 15.6 MiB，逐字节往返不变式保住。排 6 之后。
+10. **报告分级**——被调用方 catch 住的良性拒绝与卡死脚本的拒绝面板上同形（存储两条 + "1 still
+    starting" 并排即读成假因果）；通道须跟句子（"不是失败"不得走 error）。
+11. **调试页页面半**——宿主半 ✅（DEBUG-SURFACE.md）。
+12. MVU 长局变量清理（Tier 1.3；chat[i].variables 是楼层读通路，裁剪不得静默答空）
+13. 受控口子二期（/api/backends/*）已归档 BRIDGE.md，等真实消费者
+14. **CI 推远端**——用户决定，仍开放
 
 **升级方向自研**（用户令：自己查资料找改进方向,不等确认）——**失败可观测性已从候选
 转为在建**（章程扩至 11 缺口 + 调试页两半）；长局性能三件套中窗口化已有定稿设计、
