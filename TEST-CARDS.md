@@ -503,9 +503,16 @@ and lacks the 'allow-same-origin' flag.`,复核结论是**这份正文抛不出�
 `import{createPinia as e,defineStore as n}from'https://testingcf.jsdelivr.net/npm/pinia/+esm'`
 —— **远程 bundle 内部看不见**,这正是每份普查都写着的「所有数字是下界」在此兑现。
 
-> **待 7b 的栈顶一帧(文件:行)定案。** 栈顶若落在 pinia 那个 chunk,是远程依赖;落在我们的
-> preset,是我们的。**在那之前不要把这一行改判成「分析错了」**——分析的对象是卡的正文,
-> 而正文里没有这个抛点。
+**定案(7b 实测栈顶):`@vue/devtools-kit@8.2.1/+esm:7`** —— pinia 的**传递依赖**,不是卡的正文。
+AST 分析成立。抛点是 devtools-kit 自己的 `typeof localStorage` 守卫,**在不透明源上照抛**
+(`typeof` 保护的是「引用解析不了」,不是「getter 抛」——见 §七之二 门面那条)。
+
+**这条链条是上游自己接上的,不是意外**:`JS-Slash-Runner/src/iframe/predefine.js:20` 有
+`_.set(window, '__VUE_PROD_DEVTOOLS__', true)`,注释写明「pinia 4.0.0+ 必须设置这个」。
+所以**只要卡用 pinia,devtools-kit 就会进来并摸 `localStorage`** —— 这不是 V1.5.4 一张卡的事。
+
+> **本行结论:正文 1 处受 try 保护;抛点在远程依赖 `@vue/devtools-kit`,由存储门面覆盖。**
+> 预测与实测**不矛盾**——它们说的是两个对象(卡的正文 / 卡的传递依赖)。
 
 ### 族内其实只有 6 个组件,不是 9 个脚本
 
@@ -776,9 +783,39 @@ if (Mvu) {
 `window.Mvu || (window.parent && window.parent.Mvu) || (window.top && window.top.Mvu)`
 —— **第一个就试 `window.Mvu`**。
 
-> **所以:把 `Mvu` 放进界面 frame,10 张全部served;造一座 `parent` 桥,只服务 1 张,
-> 而且那一张本来就优先走本地分支。** 这一族的修法是**在界面 frame 里提供真对象**,
-> 不是搭桥,更不是按名代理。
+**上面那句我写错过一版,更正在此(总指挥指出):** 我原先写成「放进界面 frame **而不是**搭桥」,
+**把两者当成了互斥的两条路**。它们不是——`Mvu` 对象**活在脚本 frame**(远程 bundle 执行
+`_.set(window.parent,'Mvu',e)`),要让界面 frame 的 `window.Mvu` 上出现它,**本身就得跨这道边界**。
+上游的做法就是一个转发 getter,`JS-Slash-Runner/src/iframe/predefine.js:36`:
+
+```js
+// 其实应该用 waitGlobalInitialized 来等待 Mvu 初始化完毕, 这里设置 window.Mvu 只是为了兼容性
+if (_.has(window.parent, 'Mvu')) {
+  Object.defineProperty(window, 'Mvu', {
+    get: () => _.get(window.parent, 'Mvu'),
+    set: () => {},            // Mvu 脚本自己还会 _.set() 自己的变量
+    configurable: true,
+  });
+}
+```
+
+**所以本地名字是桥的一个视图,不是桥的替代品。** 我的数没错(8 张裸 `Mvu` / 1 张 `parent.Mvu`),
+错的是从数跳到机制的那一步——**又是「两步推理只查实第一步」**(§十九):
+查实了「卡怎么读」,没查「上游怎么让它读到」。
+
+**留下来的、仍然成立的结论**:一个转发 getter **同时**服务 8 张裸 `Mvu` 和 1 张 `parent.Mvu`,
+所以要补的是**这一个前提**,不是两套机制。
+
+**而两处时序细节对实现有直接约束:**
+
+- 上面那个 `defineProperty` 包在 `if (_.has(window.parent,'Mvu'))` 里 —— **是安装时的一次性判断**,
+  不是惰性转发。predefine 跑的时候 `parent.Mvu` 还没到,这个 frame 的 `window.Mvu` 就**永远不会有**。
+- 兜底的是事件:`waitGlobalInitialized(global)` 先看 `_.has(window, global)`,没有就
+  `eventSource.once('global_' + global + '_initialized')` 等着
+  (`src/function/global.ts:17`)。**这就是「晚到被容忍」在上游的机制**,也是那 7 张卡等的东西。
+
+> 所以门面要补的是**两件**:转发 getter **和** `global_Mvu_initialized` 这个事件。
+> 只补前者,晚到的那 7 张卡等不到;只补后者,8 张裸 `Mvu` 读不到。
 
 ### 谓词区分不了什么
 
@@ -788,6 +825,81 @@ if (Mvu) {
 - **远程 bundle 内部照旧看不见**,数字是下界。
 - 宿主提供的名字(`TavernHelper`/`SillyTavern`/`jQuery`/`$`/`toastr` 等)按定义排除了,
   排除清单在脚本输出里逐条打印,可反向审计。
+
+## 七之五、界面 frame 的 TH 面 —— 三栏差集
+
+界面代码调的宿主/TH 成员,与脚本侧成员集做差。口径:22 张卡的界面正文
+(界面正则 `replaceString` / greeting / 内嵌世界书)里的 `<script>` 块**与内联 `on*=` 处理器**,
+按内容去重解析、**按卡记归属**;脚本侧用 `extractScripts`。命令
+`node scratchpad/th-surface-split.mjs`。
+
+### A. 只在界面侧用 —— 现在真正咬人的那一栏
+
+| 成员 | 卡数 | 用次 | 同步/await | 形式 |
+|---|---|---|---|---|
+| **`triggerSlash`** | **7** | 40 | 2 张 await,其余同步 | `TavernHelper.triggerSlash` |
+| `replaceWorldbook` | 2 | 9 | 2 张 await | 裸 |
+| `createChatMessages` | 2 | 3 | 2 张 await | `TavernHelper.*` |
+| `getCurrentMessageId` | 2 | 4 | 1 张 await | 裸 |
+
+**`triggerSlash` 是这一栏的重心:7 张卡、40 次,而脚本侧一次都不用。** 它是界面**独有**的能力面。
+
+### B. 两侧都用 —— 门面必须在两种 frame 里都有
+
+| 成员 | 界面侧卡数 | 脚本侧卡数 | 界面侧是否 await |
+|---|---|---|---|
+| `waitGlobalInitialized` | 6 | 6 | 有 |
+| `getChatMessages` | 5 | 4 | 有 |
+| **`errorCatched`** | **5** | **1** | **从不 await** |
+| `toastr` | 4 | 6 | 从不 await |
+| `getWorldbook` | 4 | 2 | 有 |
+| `eventOn` | 4 | 10 | 从不 await |
+| `getVariables` | 2 | 4 | 有 |
+| `setChatMessages` | 2 | 4 | 有 |
+| `eventEmit` | 1 | 3 | 从不 await |
+| `getOrCreateChatWorldbook` | 1 | 1 | 有 |
+| `createWorldbookEntries` | 1 | 1 | 有 |
+| `getLastMessageId` | 1 | 1 | 从不 await |
+
+**`errorCatched` 界面侧 5 张、脚本侧只有 1 张 —— 界面侧用得比脚本侧多。** 爱衣不是特例,
+同形状还有 可攻略女主拒绝被攻略、尸变纪元、魔法禁书目录、`2`。而且**界面侧从不 await 它**。
+
+### C. 只在脚本侧用 —— 不含界面工作量
+
+`EjsTemplate`、`eventOnce`、`eventRemoveListener`、`generate`、`generateRaw`、`getPreset`、
+`injectPrompts`、`replaceScriptButtons`、`replaceVariables`、`substitudeMacros`
+
+### 面板报的两个 Absent global,一个真咬一个不咬
+
+- **`toastr`:真的。** 界面侧 **4 张卡、63 次**(OVERLORD ×24、魔法禁书目录 ×28、
+  魔法少女的扣扣审判1.0 ×7、创世回廊1.3 ×4),而且**从不 await**。补。
+- **`EjsTemplate`:不咬任何界面代码。** 直接数出界面正文里有 2 处提到它,但逐处看过,
+  **两处都是 `context.extensionSettings.EjsTemplate`** —— 读的是 ST 的**设置键**,
+  经 `SillyTavern.getContext()` 拿到,**不是那个同名全局对象**:
+
+  ```js
+  // 创世回廊1.3
+  && ctx.extensionSettings) { const ejs = ctx.extensionSettings.EjsTemplate; return !!(ejs && ejs.enabled)
+  // 命定之诗与黄昏之歌v3.0.4
+  const ejsTemplateSettings = context.extensionSettings.EjsTemplate; if (ejsTemplateSettings) { …
+  ```
+
+  **两处都有守卫**,拿不到就降级成「EJS 未启用」。所以面板把 `EjsTemplate` 列进
+  Absent globals 是**同名不同物**(第十三节),按全局对象补它不解决任何一张卡。
+
+> **优先级:`triggerSlash`(7 张,界面独有)> `errorCatched`(5 张,界面多于脚本)>
+> `toastr`(4 张,63 次)> 其余。`EjsTemplate` 全局不在这条线上。**
+
+### 谓词区分不了什么
+
+- **本节的界面侧只覆盖 `<script>` 块与内联 `on*=`。** 这个洞在本轮**当场发作过**:
+  AST 把 `EjsTemplate` 判成「只在脚本侧」,而直接子串计数在界面正文里数到 2 处
+  —— 那 2 处**确实在 `<script>` 里**,漏的原因是它们是 `ctx.extensionSettings.EjsTemplate`
+  这种**成员位置**而非独立标识符。结论没变(它仍不是那个全局),但**聚合census 与直接计数
+  不一致时,以逐条看过的为准**。
+- **`toastr` 的脚本侧 871 次(银麒赎世)是子串计数**,含字符串与注释,不是调用数;
+  界面侧那 63 次同理。**要排优先级用卡数,不要用次数。**
+- 远程 bundle 内部照旧看不见,所有数是下界。
 
 ## 八、未量
 
