@@ -112,6 +112,21 @@ export const requestSchemas = {
    * against an empty tree and stored back **erases the scope it was meant to
    * amend**. So the frame refuses by name without this, and with it, reads.
    */
+  /**
+   * Which floor a message-scope read or write addresses.
+   *
+   * **A number or the string `'latest'`.** The sentinel is not decoration: two
+   * corpus cards write `Mvu.getMvuData({type:'message', message_id:'latest'})`
+   * verbatim, and MVU passes it straight through. A number-only schema rejects
+   * them at the door — and it would do so precisely as the frame starts
+   * forwarding explicit ids, so the change that opens this path would break the
+   * cards already using it.
+   *
+   * `'latest'` and an absent id mean the same thing to this host (the newest
+   * floor). It is still accepted explicitly rather than folded into "absent",
+   * because a card that says `'latest'` is stating an intention, and a schema
+   * that refuses to hear it teaches nothing about why.
+   */
   'script.getVariables': z.object({
     chatId: z.string().min(1),
     scope: z.enum(['message', 'chat', 'global', 'script']),

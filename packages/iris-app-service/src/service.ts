@@ -1750,8 +1750,15 @@ export function injectedContributions(entry: ChatEntry): Contribution[] {
  * @returns the turn to address, or undefined to mean the latest.
  * @throws {AppError} `not-found` when no message has that index.
  */
-function turnForMessage(entry: ChatEntry, messageId: number | undefined): number | undefined {
-  if (messageId === undefined) return undefined
+function turnForMessage(
+  entry: ChatEntry,
+  messageId: number | 'latest' | undefined,
+): number | undefined {
+  // `'latest'` is upstream's sentinel for the newest floor, and two corpus
+  // cards pass it verbatim. Here it lands on the same answer as an absent id —
+  // the message scope with no `message_id` already means "the newest" — so the
+  // translation is one line rather than a second addressing mode.
+  if (messageId === undefined || messageId === 'latest') return undefined
   const turn = lineTurns(entry.session)[messageId]
   // Refused rather than clamped: an id past the end is a card that has
   // miscounted, and answering the newest floor instead would hand it a table it

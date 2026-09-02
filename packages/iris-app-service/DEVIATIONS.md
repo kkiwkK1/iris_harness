@@ -730,3 +730,33 @@ its guard resolves `false` — so nothing is broken by the absence. Source:
 **What would overturn this.** Iris growing an extension ecosystem of its own, at
 which point "read another extension's data" becomes a capability question rather
 than a category error.
+
+## 14. A user row's `message_id` reads its reply's table
+
+SillyTavern stores variables **per message**, so addressing a user line returns
+that line's own table. This host stores them **per turn**, and a turn owns both
+the user line and the reply it produced — so both message ids map to one turn,
+and therefore to one candidate's table. A card asking for a user row's variables
+gets its reply's.
+
+**Recorded now because the path is about to open.** Until this batch the frame
+refused every `message_id` except `'latest'`, so no explicit id had ever reached
+the host and the difference was theoretical (`service.ts`, on
+`turnForMessage`). With floor-addressed reads answered from the snapshot and the
+`'latest'` sentinel accepted alongside numbers, every card that addresses floors
+by number will meet it.
+
+**Why not fixed here.** Storing a table per message rather than per turn is a
+change to the log's shape, not to this read: the user row exists in the exported
+file but has no candidate to hang a table on. Doing it properly means deciding
+what a user row's variables *mean* in a log whose unit is the exchange — and
+that question is worth answering deliberately rather than as a side effect of
+opening the read path.
+
+**What it looks like when it bites.** A card reads `message_id: N` for a user
+line and gets state that is one step *ahead* of what it expected — the reply's,
+not the prompt's. Nothing errors, and the table is well-formed.
+
+**What would overturn this.** A card that visibly depends on the two being
+different — or a measurement showing upstream's per-message tables actually
+differ between a user line and its reply often enough to matter.
