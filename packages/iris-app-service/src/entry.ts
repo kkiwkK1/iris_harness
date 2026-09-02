@@ -28,6 +28,7 @@ import type { ResolvedWorldbook } from './worldbooks.ts'
 import {
   exportMessages,
   importChat,
+  withOriginalKeyOrder,
   type SillyTavernChatHeader,
   type SillyTavernMessage,
 } from '@iris/persistence'
@@ -709,7 +710,20 @@ export class ChatEntry {
       if (line === undefined || line.is_user) continue
       line['variables'] = saved.map(variables => variables ?? {})
     }
-    return { header: this.header, messages }
+    // Put every line's keys back where the file had them.
+    //
+    // **This step used to be unnecessary, and that was the problem.** The
+    // assignment above lands in place only while a `variables` key already
+    // exists, which it did because `iris/st-meta` carried a full copy of the
+    // table — 93.6% of that event's bytes, kept for nothing but this key's
+    // position. With the copy gone the assignment appends, and the export stops
+    // being byte-identical to the file it came from. The order is now recorded
+    // deliberately instead of being a side effect of a duplicate, so a future
+    // change to the assignments above cannot quietly break the round trip.
+    return {
+      header: this.header,
+      messages: messages.map(line => withOriginalKeyOrder(line)),
+    }
   }
 
   /**

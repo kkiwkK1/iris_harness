@@ -7,6 +7,7 @@
 export {
   exportChatFile,
   exportMessages,
+  withOriginalKeyOrder,
   formatChatFile,
   importChat,
   parseChatFile,
