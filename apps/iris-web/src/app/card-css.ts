@@ -34,6 +34,15 @@
  */
 const REFUSED_AT_RULES: readonly string[] = ['import', 'font-face', 'namespace', 'charset']
 
+/**
+ * The stand-in for an `image-set()`, which refuses without naming a single URL.
+ *
+ * A sentinel rather than a bare string so the reporter can tell it apart from a
+ * reference: it went through the URL naming path once and came out as a
+ * hostname that does not exist.
+ */
+const IMAGE_SET = 'image-set()'
+
 /** The custom-property prefix a card may not redefine. */
 const RESERVED_PREFIX = '--iris-'
 
@@ -156,7 +165,7 @@ function fetchesExternally(block: string): string | undefined {
     }
     at = block.toLowerCase().indexOf('url(', at + 4)
   }
-  return block.toLowerCase().includes('image-set(') ? 'image-set()' : undefined
+  return block.toLowerCase().includes('image-set(') ? IMAGE_SET : undefined
 }
 
 /**
@@ -173,8 +182,22 @@ function fetchesExternally(block: string): string | undefined {
  * @returns something a reader can act on.
  */
 function nameOf(reference: string): string {
+  if (reference === IMAGE_SET) return 'an image-set() candidate'
+  if (reference.toLowerCase().startsWith('data:')) return 'a data: URL'
+
+  /*
+   * Only an absolute reference is resolved. The first version handed everything
+   * to `new URL(ref, 'https://placeholder.invalid')`, so a relative
+   * `url(/local/thing.png)` was reported as coming from **placeholder.invalid**
+   * — this module's own parser base, printed to a card author as though it were
+   * their URL. A report that invents a hostname is worse than one that says
+   * nothing, and it was found by reading the strings this function actually
+   * produces rather than by testing that it produced one.
+   */
+  const absolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(reference) || reference.startsWith('//')
+  if (!absolute) return reference.slice(0, 60)
   try {
-    return new URL(reference, 'https://placeholder.invalid').host || reference
+    return new URL(reference.startsWith('//') ? `https:${reference}` : reference).host || reference
   } catch {
     // A malformed reference is still worth quoting back, trimmed: the card
     // author needs to see the text they wrote, not a parser's opinion of it.

@@ -207,3 +207,33 @@ test('a media query keeps its own block and is still confined', () => {
   assert.match(css, /@scope \(#iris-msg-1\)/)
   assert.match(css, /@media \(min-width: 40em\)/)
 })
+
+test('every refusal names something the reader can act on', () => {
+  /*
+   * Found by printing what this function actually says, not by asserting that
+   * it says something. An earlier version resolved every reference against
+   * `https://placeholder.invalid`, so a relative `url(/local/thing.png)` was
+   * reported as loading from **placeholder.invalid** — a hostname invented by
+   * our own parser, handed to a card author as if it were theirs.
+   *
+   * A report that invents a name is worse than one that stays vague, because it
+   * is actionable in the wrong direction.
+   */
+  const cases: [string, string][] = [
+    ['.a { background: url(https://fonts.gstatic.test/x.woff2) }', 'fonts.gstatic.test'],
+    [".b { background: url('//cdn.jsdelivr.test/p.png') }", 'cdn.jsdelivr.test'],
+    ['.c { background: url(data:image/png;base64,AAA) }', 'a data: URL'],
+    ['.d { background: url(/local/thing.png) }', '/local/thing.png'],
+    ['.e { background: image-set("a.png" 1x) }', 'an image-set() candidate'],
+  ]
+
+  for (const [css, expected] of cases) {
+    const { refused } = scopeCardCss(css, '1')
+    assert.equal(refused.length, 1, `${css} -> ${refused.join(',')}`)
+    assert.ok(refused[0]?.includes(expected), `expected ${expected} in: ${refused[0] ?? '(none)'}`)
+    assert.ok(
+      !refused[0]?.includes('placeholder'),
+      `the parser's own base leaked into the report: ${refused[0] ?? ''}`,
+    )
+  }
+})

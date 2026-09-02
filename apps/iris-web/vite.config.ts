@@ -19,6 +19,15 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   build: {
+    /*
+     * Emitted so the pruner can tell a current artifact from a superseded one.
+     *
+     * `index.html` is not a usable substitute: a dynamically imported chunk is
+     * named only inside the JS that imports it, so a pruner reading the HTML
+     * would delete exactly the files that load late and leave no trace until
+     * someone opened the feature that needs them.
+     */
+    manifest: true,
     // The shell holds its boot at top-level await.
     target: 'es2022',
     sourcemap: true,
