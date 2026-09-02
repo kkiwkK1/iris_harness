@@ -543,3 +543,81 @@ user data.
 **What would overturn this.** Upstream changing the walk to consult `template`,
 or a card whose arrays are all undeclared and which therefore stops being able
 to append at all — the report would read "my inventory stopped growing".
+
+## 10. Script injections are held per chat, where upstream holds one global set
+
+Upstream keeps `extension_prompts` in a single module-level object
+(`script.js:625`) and `clearChat()` empties it — 14 call sites covering opening,
+switching and deleting a chat. Nothing serialises it, so a reload loses it too.
+This host keeps injections **on the conversation**, which agrees with upstream on
+the part that matters most — they are memory-only and never persisted, because an
+injection belongs to a running script — and differs on one axis: switching away
+from a chat and back finds that chat's injections still there, where SillyTavern
+would have cleared them.
+
+**Kept rather than matched, because "clear on switch" has no meaning here.**
+Upstream has exactly one active chat; this host serves several pages that may
+each hold a different conversation open, so there is no moment that is
+unambiguously "the switch". Clearing chat A's injections because a page opened
+chat B would break the other page still using A.
+
+**The divergence is announced instead.** Re-opening a chat that still holds
+injections emits a `script` report naming how many. A card written against
+SillyTavern assumes a clean slate at that moment, and stale injected text is
+indistinguishable from text the card meant to be there — the failure is silent
+and misattributable, which is what the report removes. This is the silence
+family from `OBSERVABILITY.md`, whose remedy is a sentence at the moment it
+happens, rather than the fidelity family the charter's "add context, not
+reports" rule governs.
+
+**A related asymmetry, upstream's rather than ours.** TavernHelper's script
+frame is rebuilt only when the *character* changes
+(`store/settings/character.ts:55-60`), so switching chats within one character
+leaves the scripts running with live handles whose `deleted` is still false —
+while SillyTavern has already emptied the injections underneath them. A card is
+then holding a handle to nothing, with no notification. V1.5.4 happens to
+survive this by re-injecting every turn, but that is a habit of that card, not a
+guarantee of the mechanism.
+
+**What would overturn this.** A card that depends on injections *not* surviving
+a return to the same chat — it would look like text reappearing that the user
+thought was gone.
+
+## 11. What a card may set on an injection, and what it may not
+
+Built to upstream's whole signature rather than to any card's observed usage:
+`injectPrompts` is a thin wrapper whose handle **is** the key, and `uninject()`
+is `_.unset(extension_prompts, id)`, so this host implements the primitive and
+the wrapper composes in the façade.
+
+- **`position: 'none'` is a third state.** Upstream's `NONE: -1` is queried by no
+  call site of `getExtensionPrompt`, so such an injection holds its key — it can
+  be overwritten or removed — and contributes no text. Registered-but-silent is
+  distinct from both assembled and absent.
+- **Assembly order within a group is the keys' lexicographic order**, because
+  upstream walks `Object.keys(extension_prompts).sort()` (`script.js:3249`).
+  This host iterated its Map in insertion order until 2026-09-03, which agreed
+  only when a card injected alphabetically. Nothing reported the difference:
+  both orders produce a well-formed prompt, and the model simply received
+  different text. Upstream's own keys are named `1_memory`, `2_floating_prompt`,
+  `3_vectors` — **the digits are a sorting device, not a naming habit**, and
+  noticing that is how the rule becomes visible at all.
+- **Keys are not partitioned by script.** Upstream's key is `prompt.id ??
+  uuidv4()` with no script prefix, so two scripts choosing one id overwrite each
+  other there as well. Matching, not diverging. The consequence worth knowing: a
+  UUID id lands at a random position in that lexicographic order.
+- **`should_scan` is accepted and stored, and the scan pass does not yet read
+  it.** Recorded rather than flattened to `false`: answering a card's request
+  with its opposite leaves nothing for anyone to find, while a stored value
+  makes the gap locatable and means cards already asking for it are asking
+  correctly the day it is honoured.
+- **`filter` is not implemented.** It is a function, re-evaluated on every
+  assembly, and cannot cross this boundary — the `updateVariablesWith`
+  precedent, composed in the façade.
+- **Upgrade side.** TavernHelper exposes only `'in_chat'` and `'none'`, so a
+  card cannot reach SillyTavern's `IN_PROMPT(0)` or `BEFORE_PROMPT(2)`. This
+  host's `before` and `after` are therefore more than a card can ask for
+  upstream, which is a documented improvement rather than a compatibility need.
+
+**What would overturn this.** Upstream partitioning keys by script, or exposing
+the two positions it currently hides.

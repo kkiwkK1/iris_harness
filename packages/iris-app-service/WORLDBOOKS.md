@@ -128,6 +128,64 @@ entries each; the 1 card that binds the selected book gains 0.** That zero is th
 strongest assertion available — every other card gains legitimately, so only that
 card can tell a fix from a duplication.
 
+## 2d. There are five sources, and two of them jump the queue
+
+Measured by the upstream-research domain (3c) against SillyTavern's own source,
+2026-09-03, and **not yet independently reviewed** — the line numbers below are
+one path, not two.
+
+Beyond the embedded book, the bound book and the globally selected ones, two
+more sources exist and **neither is implemented here yet**:
+
+- **The chat book** — `chat_metadata['world_info']`, holding a **book name as a
+  plain string**, not an object and not the entries (`world-info.js:94`). A
+  chat book is minted as `` `Chat Book ${chatId}` `` with non-alphanumerics
+  collapsed to underscores and truncated to 64 characters
+  (`world-info.js:1176`), and the key is only honoured when
+  `world_names.includes(...)` — delete the file and the key is ignored rather
+  than erroring.
+- **The persona book** — `power_user.persona_description_lorebook`,
+  `getPersonaLore()` at `world-info.js:4452`.
+
+**Copy the key's type as well as its name.** A corpus card (银麒赎世) contains
+`if (wi.entries) entries = Object.values(wi.entries)` guarded on
+`chat_metadata.world_info` — dead code today precisely *because* the value is a
+string. Storing an object there would **wake that branch up**, in a card nobody
+is testing.
+
+### The ordering claim in §2c is too weak, and this is the correction
+
+`world_info_character_strategy` orders **only the global and character sources**.
+The chat and persona books are **prepended unconditionally**, ahead of
+everything, with upstream's own comment saying so:
+
+```js
+// world-info.js:4512
+// Chat lore always goes first, then persona lore, then the rest
+entries = [...chatLore.sort(fn), ...personaLore.sort(fn), ...entries]
+```
+
+That is the candidate-table order, and the candidate table *is* the scan
+traversal order (`:4632`). So a chat book's entries compete for budget ahead of
+every other source. (**"First come, first served" is 3c's inference from the
+traversal order, not a statement they read** — recorded as inference, not fact.)
+
+Each source also carries a **per-book dedup guard**, and the direction is fixed:
+a globally selected book wins over the chat book, and the chat book wins over
+the persona book.
+
+### Branching shares the chat book, deliberately
+
+`chat_metadata` is `structuredClone`d into a branch, so the child inherits the
+same **book name** — parent and child then read and write **one book**, not a
+copy. Ruled 2026-09-03 to keep upstream's behaviour rather than clearing the key
+or copying the book. A branch here is a save point the user jumps back to, and
+someone resuming from one expects the same book; copying would let the two
+silently diverge, and clearing would make the branch forget. The cost is real
+and recorded rather than hidden: **a write on either side is visible to the
+other**, and world books are rewritten whole, so the later writer replaces the
+earlier one's entire book.
+
 ## 3. Names are used verbatim
 
 A book's name is its identity, and it comes from another application's data. All

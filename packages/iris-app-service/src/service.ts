@@ -254,7 +254,30 @@ export class IrisAppService {
         return { view: entry.toView() }
       },
 
-      'chat.open': async ({ chatId }) => ({ view: (await chats.open(chatId)).toView() }),
+      'chat.open': async ({ chatId }) => {
+        // A re-open is the moment SillyTavern would have cleared injections and
+        // this host does not. Upstream's `clearChat()` empties the single global
+        // `extension_prompts` on every chat open, switch and delete; ours are
+        // held per conversation, so switching away and back finds them still
+        // there. Whichever behaviour is right, the one thing that must not
+        // happen is the difference being silent — a card written against
+        // SillyTavern assumes a clean slate here, and stale injected text is
+        // indistinguishable from text the card meant to put there.
+        const reopened = chats.cached(chatId) !== undefined
+        const entry = await chats.open(chatId)
+        if (reopened && entry.extensionPrompts.size > 0) {
+          this.#report(
+            `${String(entry.extensionPrompts.size)} script injection(s) are still live on this chat from an`
+            + ' earlier session; SillyTavern would have cleared them when the chat was opened',
+            {
+              kind: 'script',
+              chatId,
+              ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+            },
+          )
+        }
+        return { view: entry.toView() }
+      },
 
       'chat.delete': async ({ chatId }) => {
         chats.cached(chatId)?.abort()

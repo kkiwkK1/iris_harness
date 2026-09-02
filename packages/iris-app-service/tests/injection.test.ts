@@ -7,6 +7,7 @@ import { test, type TestContext } from 'node:test'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
+import { DiagnosticBuffer } from '../src/diagnostics.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { injectedContributions, IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
@@ -194,4 +195,60 @@ test('injections do not survive a reload, matching upstream', async (t) => {
   )
   const reloaded = await reopened.open(fixed.chatId)
   assert.deepEqual(injectedContributions(reloaded), [])
+})
+
+test('re-opening a chat that still holds injections says so', async (t) => {
+  const fixed = await fixture(t)
+  const diagnostics = new DiagnosticBuffer()
+  // A second service over the same stores, so the report has somewhere to land.
+  const watched = new IrisAppService({
+    stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } },
+    library: new CharacterLibrary(join(fixed.dir, 'characters'), '/iris/avatar'),
+    chats: fixed.chats,
+    settings: new SettingsStore(join(fixed.dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
+    broadcast: () => {},
+    userName: 'Traveller',
+    diagnostics,
+  }).handlers()
+
+  await watched['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0,
+  })
+  await watched['chat.open']({ chatId: fixed.chatId })
+
+  // SillyTavern's `clearChat()` empties its single global `extension_prompts`
+  // on every chat open; ours are per conversation and survive. The divergence
+  // is deliberate — a chat's injections belong to that chat — but a card
+  // written against upstream assumes a clean slate here, and stale injected
+  // text looks exactly like text the card meant to put there. So the report is
+  // the point: this is the silence family, whose fix is a sentence at the
+  // moment it happens.
+  const page = await watched['debug.reports']({})
+  const injectionReports = page.reports.filter(report => /still live on this chat/u.test(report.message))
+  assert.equal(injectionReports.length, 1, `saw ${JSON.stringify(page.reports.map(r => r.message))}`)
+  assert.equal(injectionReports[0]?.kind, 'script')
+  assert.equal(injectionReports[0]?.chatId, fixed.chatId)
+  assert.match(injectionReports[0]?.message ?? '', /^1 script injection\(s\)/u)
+})
+
+test('a chat with no live injections re-opens quietly', async (t) => {
+  const fixed = await fixture(t)
+  const diagnostics = new DiagnosticBuffer()
+  const watched = new IrisAppService({
+    stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } },
+    library: new CharacterLibrary(join(fixed.dir, 'characters'), '/iris/avatar'),
+    chats: fixed.chats,
+    settings: new SettingsStore(join(fixed.dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
+    broadcast: () => {},
+    userName: 'Traveller',
+    diagnostics,
+  }).handlers()
+
+  await watched['chat.open']({ chatId: fixed.chatId })
+  await watched['chat.open']({ chatId: fixed.chatId })
+
+  // The other half of the discipline: an instrument that also fires on the
+  // ordinary path teaches its reader to ignore it.
+  const page = await watched['debug.reports']({})
+  assert.deepEqual(page.reports.filter(report => /still live/u.test(report.message)), [])
 })
