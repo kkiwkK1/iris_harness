@@ -259,6 +259,95 @@ const getPreferredScriptId = () => {
 `getPreferredScriptId` 要的不是一个 API，是**一段 DOM**。
 我们把成员都建齐了，它仍然会因为「页面上没有那个面板」而自我关闭。
 
+### 三之六 那段 DOM 由谁建、什么时候建：**不是竞态**
+
+#### 建在哪
+
+```
+[TH] src/index.ts:46-47              const $app = $('<div id="tavern_helper">').appendTo('#extensions_settings');
+                                     app.mount($app[0]);
+[TH] src/panel/script/ScriptItem.vue:3-11   <div data-type="script" :data-script-id="script.id" v-show="is_visible">
+[TH] src/panel/script/Container.vue:31-33   <div v-for="(script,index) in script_trees"><ScriptItem v-if="isScript(...)">
+[TH] src/panel/Script.vue:13/17/26          <Container global /> <Container character v-if 有角色 /> <Container preset />
+[TH] src/panel/Script.vue:28-38             <Teleport to="body"><Iframe v-for="script in runtimes" …/></Teleport>
+```
+
+**`#tavern_helper` 是 TH 的整个扩展面板**，扩展初始化时挂进 ST 的 `#extensions_settings`。
+**它不是为选举建的**——选举搭了这个面板的便车。
+
+#### 一个不对称，比时序更要紧
+
+| | 渲染源 | 覆盖谁 |
+| --- | --- | --- |
+| **`div[data-script-id]`** | `Container` → `ScriptItem` | **全部脚本**，启用与否都有；`v-show` 过滤搜索（**留在 DOM 里**） |
+| **`<iframe>`** | `Teleport to="body"` → `Iframe` | **仅启用的脚本**（`runtimes` ← `enabled_scripts_with_source`） |
+
+**列表项 ⊇ iframe。**一个禁用的脚本**有 div、没有 frame**，所以它从不
+`registerAsUniqueScript`，于是被 `.filter(el => registered.has(el))` 滤掉——
+**两边靠那个 Set 对齐，不靠 DOM 本身。**
+
+另一处：角色脚本的 `Container` 在 `v-if="character_name !== undefined"` 后面。
+**没选角色卡时角色脚本没有列表项**——但那时也没有它们的 frame，所以自洽。
+
+#### 顺序图
+
+```
+扩展初始化
+  │
+  ├─ index.ts:46   建 <div id="tavern_helper"> 并 appendTo('#extensions_settings')
+  ├─ index.ts:47   app.mount(...)                        ← 同一次同步渲染
+  │                  ├─ Container × 3 → ScriptItem × N   ⇒ div[data-script-id] 全部进 DOM
+  │                  └─ Teleport to="body" → Iframe × M  ⇒ <iframe srcdoc> 元素进 DOM（M ≤ N）
+  │  ── 同步 patch 到此结束，div 与 iframe 元素都已就位 ──
+  ▼
+浏览器异步解析每个 iframe 的 srcdoc
+  ├─ parent_jquery.js → predefine.js → 卡的 <script type="module">
+  ▼
+MVU bundle 求值 → store 构造 → registerAsUniqueScript('MVU变量框架')
+  │   util/script.ts:51   _.update(window.parent, 'th_unique_check.MVU变量框架', add 自己的 scriptId)
+  │   util/script.ts:61   eventEmit(path, getPreferredScriptId())      ← 注册即广播一次
+  ▼
+每个监听方（含自己）跑 should_enable = (广播值 === getScriptId())
+```
+
+**div 在 DOM 里早于任何卡代码执行，这是结构保证不是巧合**：两者在**同一次同步渲染**里落地，
+而 iframe 的内容是浏览器**之后**才异步解析的。`Teleport to="body"` 只把 iframe 挪出面板，
+**不影响这个先后**。
+
+#### 谁赢：DOM 顺序最后一个，且会自我纠正
+
+`.last()` 取匹配元素里 **DOM 顺序最后一个**，DOM 顺序即 `Script.vue` 的模板顺序：
+
+```
+全局脚本 → 角色脚本 → 预设脚本      （容器内按 script_trees 树序）
+```
+
+**预设 > 角色 > 全局；同容器内靠后的赢。**
+
+两个实例会经历一个瞬态：
+
+```
+A 先注册 → set={A} → 广播 preferred=A                → A: should_enable=true
+B 后注册 → set={A,B} → 广播 preferred=(DOM 靠后者)
+         → A、B 都收到（eventOn 挂在共享路径上）
+         → 若 B 靠后：A 自己翻回 false，B 变 true
+```
+
+**每次注册都重播**，所以最终态是 (DOM 顺序, 已注册集合) 的纯函数，**与注册先后无关**。
+
+**但瞬态里"错的那个"确实短暂 enable 过**——它会 `_.set(window.parent,'Mvu',…)` 并 emit，
+而**上游不清理那次发布**：`initGlobals` 的 stop 只在 `should_enable && Mvu === 自己` 时才 unset
+（`function/global/index.ts:180-182`）。**一个翻回 false 的实例，它写下的 `Mvu` 留在原地。**
+
+#### 三条落到实现上
+
+1. **「等 DOM」是先决条件。**没有 `div[data-script-id]` 列表，`.last()` 返回 `undefined`，
+   **谁都选不上，事件再多也没用**。
+2. **「等事件」是为多实例收敛。**单实例只靠 DOM 就能起来。
+3. **列表要建全部脚本的 div，不能只建启用的。**上游的对齐点是那个 Set 不是 DOM——
+   只给启用脚本建 div，单实例仍工作，**但选举结果会在"禁用脚本"这一维上和上游分叉**。
+   影响面很小，但它是 §三之五 那条通则的具体一例。
+
 ---
 
 ## 四、一个更大的发现：上游的角色书「择一」不在装配层，在**导入期**
