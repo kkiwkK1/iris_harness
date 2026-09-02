@@ -2962,3 +2962,59 @@ test('a floor whose tables cannot be parsed is reported, and reads as empty', ()
     .map(message => (message as unknown as { message: string }).message)
   assert.equal(said.filter(line => line.includes('could not be parsed')).length, 1, said.join(' | '))
 })
+test('a gap note about a name is retracted once something publishes it', () => {
+  /*
+   * **A gap report is a statement about a moment, and the panel shows it as a
+   * standing one.** Cross-script coordination is written as a poll: 创世回廊's
+   * two scripts read `parent.__辅助计算脚本_loaded__` until the other one sets
+   * it, so the first read is *guaranteed* to find nothing and the note it
+   * produces stays on screen after the flag arrives. Read later it says a
+   * capability is missing when it is present — which cost a round of "is our
+   * `window.parent` even the virtual one?" (it is; measured).
+   *
+   * Same shape as the storage probe whose sentence became false the moment the
+   * façade landed. Both are reports whose truth depends on when they were made,
+   * and both needed a way to stop being true.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const parent = scope.globals()['parent'] as Record<string, unknown>
+
+  // The poll's first read, which finds nothing and says so.
+  void parent['__helper_loaded__']
+  const notes = () => scope.posted
+    .filter(message => message.type === 'note')
+    .map(message => (message as unknown as { message: string }).message)
+  assert.equal(notes().filter(line => line.includes('__helper_loaded__')).length, 1)
+
+  // Then the other script sets the flag, exactly as the card does.
+  parent['__helper_loaded__'] = true
+  const about = notes().filter(line => line.includes('__helper_loaded__'))
+  assert.equal(about.length, 2, `the note was never retracted: ${about.join(' | ')}`)
+  assert.match(about[1] ?? '', /has since been published/)
+
+  // Both lines stay, which is the point: together they read as a resolved
+  // sequence, while the first alone reads as a standing fault.
+  assert.match(about[0] ?? '', /nothing has published/)
+})
+
+test('a publish nobody asked about first says nothing extra', () => {
+  // Otherwise every publish would emit a retraction for a note that was never
+  // made — an instrument that cannot be quiet is not an instrument.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const parent = scope.globals()['parent'] as Record<string, unknown>
+  parent['__never_read__'] = true
+
+  assert.equal(
+    scope.posted
+      .filter(message => message.type === 'note')
+      .filter(message => (message as unknown as { message: string }).message.includes('__never_read__'))
+      .length,
+    0,
+  )
+})

@@ -1021,6 +1021,18 @@ try {
      */
     interfaceFrame: document.body?.hasAttribute('data-iris-interface') === true,
     /*
+     * The frame's own document, not the shell's — `document.URL` here is
+     * `about:srcdoc`, and answering with the shell's URL would hand a card a
+     * fact about the page it is isolated from. Visibility is the exception in
+     * kind rather than in source: a srcdoc frame inherits the page's visibility,
+     * so "is the reader looking?" is answered correctly by reading it here.
+     */
+    pageState: () => ({
+      visibilityState: document.visibilityState,
+      hidden: document.hidden,
+      url: document.URL,
+    }),
+    /*
      * An own property of `window`, which is what the measurement said to do.
      *
      * In a real `sandbox="allow-scripts"` frame, `localStorage` is an own,

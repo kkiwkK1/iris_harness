@@ -41,7 +41,8 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * reads and the Tavern Helper surface an interface frame now gets, and 1.2 KiB
  * more for the prompt-injection façade, and 4.2 KiB for the `localStorage` a
  * frame on an opaque origin has to be given instead of having, then 0.7 KiB for
- * the lazy restore of floor tables the text transport made necessary.
+ * the lazy restore of floor tables the text transport made necessary, then the
+ * read-only document state and the gap-note retraction.
  *
  * **No current figure is written here on purpose.** Two earlier versions of this
  * comment carried "as this line is written" numbers and both were stale within
@@ -56,7 +57,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 58 * 1024
+export const FRAME_OVERHEAD_BYTES = 59 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -72,12 +73,12 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 35 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 34 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
- * 16 leaves about 1.1 MiB for content (overhead ≈ 928 KiB, 45%), and 16 live
+ * 16 leaves about 1.1 MiB for content (overhead ≈ 944 KiB, 46%), and 16 live
  * panels on one screen is already past any reading scenario. It is a trade-off
  * point rather than a threshold — moving it means revisiting the two measured
  * values above, not just this line.

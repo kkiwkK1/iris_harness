@@ -174,14 +174,67 @@ test('membership probes answer instead of throwing', () => {
 
   assert.equal('body' in doc, true)
   assert.equal('cookie' in doc, false)
+  /*
+   * The read-only status members are here too, and they are the second half of
+   * the surface rather than an extension of the first. A real card
+   * (银麒赎世's system panel) opened with `document.readyState` and the
+   * refusal killed the whole script — for a **read** that cannot break
+   * anything, of a value this frame genuinely knows.
+   *
+   * `cookie` stays absent: it is a write as much as a read, and its read is a
+   * fact about the shell's origin.
+   */
   assert.deepEqual(Object.keys(doc).sort(), [
+    'URL',
     'body',
+    'characterSet',
+    'charset',
+    'compatMode',
     'createDocumentFragment',
     'createElement',
     'createTextNode',
     'documentElement',
+    'documentURI',
     'getElementById',
+    'hidden',
     'querySelector',
     'querySelectorAll',
+    'readyState',
+    'referrer',
+    'title',
+    'visibilityState',
   ])
+})
+
+test('a status read answers rather than killing the script that asked', () => {
+  /*
+   * **The card this exists for.** 银麒赎世's system panel reads
+   * `document.readyState` on its first line, and the virtual document refused
+   * — so the whole script died on a read that writes nothing, of a value the
+   * frame knows for certain.
+   *
+   * The refusal policy was right and the *list* had never been sorted by it:
+   * every name that was not a lookup or a factory fell through to one refusal,
+   * so a benign status read and an unimplemented capability produced the same
+   * fatal sentence. The split is now by what a member **does** — reads answer,
+   * writes and structural operations keep the old policy.
+   */
+  const { doc } = source()
+  const bag = doc as Record<string, unknown>
+
+  // `'complete'` is not an approximation: a script frame is handed its body by
+  // message and an interface frame's markup is already in the document, so the
+  // parse is over before any card code runs.
+  assert.equal(bag['readyState'], 'complete')
+  assert.equal(bag['characterSet'], 'UTF-8')
+  assert.equal(bag['compatMode'], 'CSS1Compat')
+  // The frame's own URL, deliberately not the shell's: a card deciding which
+  // host it is on must not be told it is the shell.
+  assert.equal(bag['URL'], 'about:srcdoc')
+  assert.equal(bag['referrer'], '')
+
+  // And the members that are still refused are still refused, so the split is a
+  // split rather than a general opening.
+  assert.throws(() => bag['cookie'], /document\.cookie/)
+  assert.throws(() => bag['write'], /document\.write/)
 })

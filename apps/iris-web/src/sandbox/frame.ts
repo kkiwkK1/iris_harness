@@ -110,6 +110,15 @@ export interface FrameEnv {
    */
   provideStorage?: (storage: unknown) => void
   /**
+   * The realm's own page state, read on each access.
+   *
+   * Injected because this module touches no document, and read live rather than
+   * captured for the same reason `viewport` is: a card polling
+   * `document.hidden` on an interval is asking a question whose answer changes,
+   * and a captured value answers the first one forever.
+   */
+  pageState?: () => { visibilityState: string, hidden: boolean, url: string }
+  /**
    * Define a name on the frame's own window that reads through to a live source.
    *
    * Separate from `publishGlobals` because the difference is a getter. Publishing
@@ -199,6 +208,26 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     container: env.container,
     viewport: readViewport,
     factory: env.factory,
+    /*
+     * Read-only page state, so a status read answers instead of killing a
+     * script. `title` is the one value this module has rather than the realm:
+     * a card asking for the document title in a chat is asking whose chat it
+     * is, and upstream's title carries the character's name.
+     */
+    state: {
+      get visibilityState(): string {
+        return env.pageState?.().visibilityState ?? 'visible'
+      },
+      get hidden(): boolean {
+        return env.pageState?.().hidden ?? false
+      },
+      get title(): string {
+        return context?.name2 ?? ''
+      },
+      get url(): string {
+        return env.pageState?.().url ?? 'about:srcdoc'
+      },
+    },
   })
 
   const unbridged = new Map(UNBRIDGED_GLOBALS.map(row => [row.name, row]))
@@ -693,6 +722,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * turn one gap into a stream.
        */
       const planned = unbridged.get(property)
+      reportedAbsent.add(property)
       reportGap(
         planned === undefined
           ? `a card read parent.${property}, which nothing has published in this frame` +
@@ -712,7 +742,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (isBridged(property)) {
         throw new UnsupportedApiError(`parent.${property}`, 'The sandbox is not writable.')
       }
-      published.set(property, value)
+      publishName(property, value)
       return true
     },
     /**
@@ -1022,6 +1052,23 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    */
   const activeWaits = new Map<string | undefined, { global: string, since: number }>()
 
+  /**
+   * Names a card read before anything published them.
+   *
+   * **A gap report is a statement about a moment, and the panel shows it as a
+   * standing one.** Cross-script coordination is written as a poll — 创世回廊's
+   * two scripts read `parent.__辅助计算脚本_loaded__` until the other one sets
+   * it — so the *first* read is guaranteed to find nothing, and the note it
+   * produces stays on screen after the flag arrives. Read months later it says
+   * a capability is missing when it is present.
+   *
+   * That is the same fault as the storage probe whose sentence became false the
+   * moment the façade landed, and it is worth naming as its own shape: **a
+   * report whose truth depends on when it was made needs a way to stop being
+   * true.** So a publish retracts the note for that name.
+   */
+  const reportedAbsent = new Set<string>()
+
   const reportedGaps = new Set<string>()
 
   /**
@@ -1047,6 +1094,31 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   /** A capability that is missing or was degraded — the card carried on. */
   const reportGap = (message: string): void => {
     say(message, 'note')
+  }
+
+  /**
+   * Publish a name on the card's shared namespace, retracting any gap note.
+   *
+   * One function for the three routes that publish — the parent proxy's `set`,
+   * `initializeGlobal`, and the frame's own seeding — so the retraction cannot
+   * be attached to two of them and forgotten on the third.
+   * @param name - the published name.
+   * @param value - what to publish.
+   */
+  const publishName = (name: string, value: unknown): void => {
+    published.set(name, value)
+    if (!reportedAbsent.delete(name)) return
+    /*
+     * Said once per name, and only when a note actually went out for it. The
+     * panel keeps both lines, which is the point: "nothing has published X" and
+     * "X has since been published" read as a resolved sequence, while the first
+     * alone reads as a standing fault.
+     */
+    reportGap(
+      `parent.${name} has since been published by this frame \u2014 the earlier note about it`
+      + ' was true when it was made and is not any more, which is what a poll for another'
+      + " script's flag looks like from here",
+    )
   }
 
   /**
@@ -1161,7 +1233,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   const coordination = (forScript: string | undefined): Record<string, unknown> => ({
     initializeGlobal: (name: unknown, value: unknown): void => {
       const global = requireGlobalName('initializeGlobal', name)
-      published.set(global, value)
+      publishName(global, value)
       void events.eventEmit(`global_${global}_initialized`)
     },
     waitGlobalInitialized: async (name: unknown): Promise<void> => {

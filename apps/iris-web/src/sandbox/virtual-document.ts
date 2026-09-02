@@ -41,6 +41,18 @@ export interface NodeFactory {
 }
 
 /** What the virtual document is built over. */
+/** Read-only page state a card may ask the virtual document for. */
+export interface DocumentState {
+  /** The real page's visibility, so "is the reader looking?" answers truly. */
+  visibilityState?: string
+  /** The same fact as a boolean, which is the older spelling cards use. */
+  hidden?: boolean
+  /** What a card sees as the document title — the character, not the app. */
+  title?: string
+  /** This frame's own URL, never the shell's. */
+  url?: string
+}
+
 export interface VirtualDocumentSource {
   /** The card's own container element. */
   container: ScopedRoot
@@ -50,6 +62,16 @@ export interface VirtualDocumentSource {
    */
   viewport: () => { width: number, height: number }
   factory: NodeFactory
+  /**
+   * Read-only page state, read on every access for the same reason `viewport`
+   * is: a card polling `document.hidden` on an interval is asking a question
+   * whose answer changes, and a captured value would answer the first one
+   * forever.
+   *
+   * Optional so a test can build a document without it; each member falls back
+   * to the value that is true of a frame nobody has told anything about.
+   */
+  state?: DocumentState
 }
 
 /**
@@ -124,6 +146,75 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
     createElement: (tagName: string): unknown => source.factory.createElement(tagName),
     createTextNode: (data: string): unknown => source.factory.createTextNode(data),
     createDocumentFragment: (): unknown => source.factory.createDocumentFragment(),
+
+    /*
+     * **Read-only state, answered rather than refused, and a real card paid for
+     * the difference.** 银麒赎世's system panel opens with `document.readyState`
+     * and the refusal killed the whole script — for a **read** that cannot break
+     * anything, of a value this frame genuinely knows.
+     *
+     * The refusal policy this file follows is "refuse where upstream would throw,
+     * or where a return value would corrupt data". Neither applies to a status
+     * read: upstream answers it, and the answer writes nothing. The policy was
+     * right and the *list* had never been sorted by it — every name that was not
+     * a lookup or a factory fell through to one refusal, so a benign read and an
+     * unimplemented capability produced the same fatal sentence.
+     *
+     * So the split is now by **what a member does**, not by whether anyone
+     * implemented it: reads answer, writes and structural operations keep the
+     * old policy. Each value below is the frame's real state or the closest
+     * constant to it, with the divergence named where there is one.
+     */
+    // The card's body runs after this frame's document has parsed: a script
+    // frame is handed its body by message, and an interface frame's markup is
+    // already in the document. So `'complete'` is not an approximation.
+    readyState: 'complete',
+    /*
+     * The frame's real values where the frame has them. `visibilityState` and
+     * `hidden` are properties of the *page*, and a card reading them is asking
+     * "is the reader looking?" — which the shell's tab answers, not the frame's
+     * own hidden-ness. Read through to the real document so a backgrounded tab
+     * reads as hidden, which is what a card polling on an interval wants.
+     */
+    get visibilityState(): unknown {
+      return source.state?.visibilityState ?? 'visible'
+    },
+    get hidden(): unknown {
+      return source.state?.hidden ?? false
+    },
+    /*
+     * `title` is a **write** as often as a read upstream, and the write is the
+     * one that has to be refused: a card setting the browser tab's title would
+     * be reaching out of its frame and relabelling the whole app. The read
+     * answers the character's name, which is what upstream's title carries in a
+     * chat, so a card that displays it shows something true.
+     */
+    get title(): unknown {
+      return source.state?.title ?? ''
+    },
+    /*
+     * The frame's own URL, which is `about:srcdoc`. Deliberately **not** the
+     * shell's: a card reading `document.URL` to build a link or to decide which
+     * host it is on must not be told it is the shell, and an opaque origin's
+     * real answer is this one.
+     */
+    get URL(): unknown {
+      return source.state?.url ?? 'about:srcdoc'
+    },
+    get documentURI(): unknown {
+      return source.state?.url ?? 'about:srcdoc'
+    },
+    // A constant, and true of every document this project creates.
+    characterSet: 'UTF-8',
+    charset: 'UTF-8',
+    // `'BackCompat'` would be a lie: the srcdoc carries a doctype.
+    compatMode: 'CSS1Compat',
+    /*
+     * `''` rather than the shell's referrer, on the same reasoning as `URL`:
+     * this frame was not navigated to from anywhere, and naming the shell would
+     * hand a card a fact about the page it is isolated from.
+     */
+    referrer: '',
   }
 
   return new Proxy(Object.create(null) as object, {
