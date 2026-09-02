@@ -316,6 +316,20 @@ export interface ScriptContext {
    */
   scriptButtons?: Record<string, { name: string, visible: boolean }[]>
   /**
+   * World-info settings, for TavernHelper's `getLorebookSettings()`.
+   *
+   * Carried in the snapshot rather than fetched, because that member is
+   * **synchronous**: MVU calls it both with and without `await`, and both work
+   * only while the value is already in hand. Backing it with a request would
+   * break the call site that does not await.
+   *
+   * Sixteen fields, and two of the names mislead — `max_depth` is the ceiling
+   * for *minimum activations*, not the scan depth, and `context_percentage` is
+   * a percentage while `budget_cap` is the byte count. Copied as-is, because a
+   * card reads them by name.
+   */
+  lorebookSettings?: LorebookSettings
+  /**
    * The layers `getAllVariables` merges, each unmerged and labelled by source.
    *
    * Upstream's `_getAllVariables` (`JS-Slash-Runner/src/function/variables.ts`)
@@ -608,4 +622,33 @@ export interface DebugReport {
    * place that reported, while reading as the place that failed.
    */
   stack?: string
+}
+
+/** How a character's books and the globally selected ones are interleaved. */
+export type InsertionStrategy = 'evenly' | 'character_first' | 'global_first'
+
+/**
+ * World-info settings as TavernHelper's `getLorebookSettings()` reports them.
+ *
+ * Declared here so the page half compiles against the protocol alone. The
+ * host's `@iris/app-service/lorebook-settings` is the authority on the values.
+ */
+export interface LorebookSettings {
+  selected_global_lorebooks: string[]
+  scan_depth: number
+  /** A percentage of context, not a byte count. */
+  context_percentage: number
+  /** Bytes; `0` disables the cap. */
+  budget_cap: number
+  min_activations: number
+  /** Ceiling for minimum activations; `0` means none. Not the scan depth. */
+  max_depth: number
+  max_recursion_steps: number
+  insertion_strategy: InsertionStrategy
+  include_names: boolean
+  recursive: boolean
+  case_sensitive: boolean
+  match_whole_words: boolean
+  use_group_scoring: boolean
+  overflow_alert: boolean
 }

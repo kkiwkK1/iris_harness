@@ -28,6 +28,7 @@ import { effectiveButtons } from './script-buttons.ts'
 import type { ScopeBackend } from '@iris/variables'
 
 import type { ChatEntry } from './entry.ts'
+import { lorebookSettings } from './lorebook-settings.ts'
 import { invalid } from './errors.ts'
 import { charWorldbookNames } from './worldbooks.ts'
 
@@ -213,6 +214,8 @@ export function buildCardContext(
      * declares.
      */
     scriptButtons?: Record<string, { name: string, visible: boolean }[]>
+    /** Globally selected book names, for the lorebook settings snapshot. */
+    globalSelect?: readonly string[]
     /** Reports a growth alarm; see {@link variableLayersOf}. */
     onReport?: (message: string) => void
   },
@@ -243,6 +246,10 @@ export function buildCardContext(
     // `getCharWorldbookNames('current')` from this field.
     charWorldbooks: charWorldbookNames(entry.card),
     scriptButtons: scriptButtonsOf(entry, extras.scriptButtons),
+    // In the snapshot rather than behind a call, because `getLorebookSettings()`
+    // is synchronous upstream — MVU invokes it both with and without `await`,
+    // and only a value already in hand satisfies both.
+    lorebookSettings: lorebookSettings(extras.globalSelect ?? []),
   }
 }
 

@@ -789,6 +789,16 @@ class InMemoryClient implements FakeClient {
         throw new FakeRpcError('not-found', `no world book named ${name}`)
       }
 
+      case 'worldbook.load': {
+        const { name } = params as RpcRequest<'worldbook.load'>
+        // Placeholder in this client's own idiom (7b owns the sandbox half).
+        // `null` rather than a refusal, because this client holds no books and
+        // upstream's answer for a name that resolves to nothing is `null` —
+        // and an empty name is upstream's absent answer, which is also this
+        // client's honest one.
+        return name === '' ? {} : { book: null }
+      }
+
       case 'worldbook.get': {
         const { name } = params as RpcRequest<'worldbook.get'>
         /*

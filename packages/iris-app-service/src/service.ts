@@ -745,6 +745,22 @@ export class IrisAppService {
       // replacing a book is a whole-file replacement and the decision about
       // whether Iris performs one at a card's request has not been made.
       'worldbook.names': async () => ({ names: await worldbooks?.names() ?? [] }),
+      'worldbook.load': async ({ name }) => {
+        // Upstream's first line is `if (!name) return;` — an absent answer, not
+        // an error and not a null. Mirrored, because MVU's caller reads the two
+        // empties differently.
+        if (name === '') return {}
+        // A host with no store cannot distinguish "no such book" from "no world
+        // info at all", and the second is not this call's answer to give. `null`
+        // is upstream's "asked and did not get it", which is exactly this case.
+        if (worldbooks === undefined) return { book: null }
+        const book = await worldbooks.readRaw(name)
+        // Upstream returns `null` for a response that was not ok, so a name
+        // that resolves to nothing is `null` here rather than an absent key —
+        // the absent key is reserved for "you asked for nothing".
+        return { book: book ?? null }
+      },
+
       'worldbook.get': async ({ name }) => {
         // A host with no store refuses by name rather than answering with an
         // empty book. An empty book is a real state a book can be in, and
@@ -873,6 +889,7 @@ export class IrisAppService {
             // Overrides for this card only, for the same reason: a per-card
             // partition read whole would hand one card another's panel state.
             scriptButtons: await this.#options.scriptButtons?.all(characterId) ?? {},
+            globalSelect: settings.globalSelect(),
             characters: await library.list(),
             ...messageId === undefined ? {} : { messageId },
             onReport: message => { this.#report(message, { kind: 'script', chatId, characterId }) },

@@ -364,6 +364,37 @@ export class WorldbookStore {
   }
 
   /**
+   * One book exactly as it sits on disk, with no normalisation.
+   *
+   * **Deliberately not {@link read}.** The two upstream APIs for the same book
+   * return different shapes: `SillyTavern.loadWorldInfo(name)` hands back the
+   * raw saved object — `entries` keyed by uid — while TavernHelper's
+   * `getWorldbook()` hands back a normalised array. A card picks one and gets
+   * that shape, so serving the normalised form here would answer a different
+   * question than the one asked, and MVU's own guard
+   * (`isPlainObject(loaded) && isPlainObject(loaded.entries)`) is exactly what
+   * fails when the shape is wrong.
+   *
+   * **No cache, on purpose.** Upstream keeps a process-level `worldInfoCache`
+   * whose invalidation nobody has yet located, so a book edited after being
+   * read can be served stale there. Reading the file each time is strictly
+   * fresher; the cost is a file read on a path that runs once per chat-level
+   * init, which is not where anyone's latency is.
+   * @param name - the book's name, used verbatim as the filename.
+   * @returns the parsed file, or undefined when there is no such book.
+   */
+  async readRaw(name: string): Promise<unknown> {
+    const path = fileFor(this.dir, name, '.json')
+    try {
+      return JSON.parse(await readFile(path, 'utf8')) as unknown
+    } catch {
+      // Absent, unreadable, or not JSON. The caller is told "no book", which is
+      // upstream's own answer for a name that does not resolve.
+      return undefined
+    }
+  }
+
+  /**
    * Replace a book's entire contents.
    *
    * **Whole-book, and that is upstream's semantics rather than a shortcut.**

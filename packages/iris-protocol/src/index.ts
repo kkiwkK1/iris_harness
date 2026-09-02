@@ -34,6 +34,8 @@ export type {
   ConnectionProfile,
   DebugReport,
   GenerationSettings,
+  InsertionStrategy,
+  LorebookSettings,
   MessageView,
   PromptItemEntry,
   PromptItemization,

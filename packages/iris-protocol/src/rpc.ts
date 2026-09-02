@@ -646,6 +646,26 @@ export const requestSchemas = {
    * Ordered by the file's `displayIndex`, which is the order the user arranged
    * and not uid order.
    */
+  /**
+   * One book in the **raw saved shape**, as `SillyTavern.loadWorldInfo` returns it.
+   *
+   * Deliberately a second reader beside `worldbook.get`: the two upstream APIs
+   * for one book answer with different shapes — this one with `entries` keyed
+   * by uid, TavernHelper's `getWorldbook()` with a normalised array. A card
+   * picks an API and expects that API's shape; MVU's guard is literally
+   * `isPlainObject(loaded) && isPlainObject(loaded.entries)`, so handing back
+   * the array form is what produces its "Failed to read character-card
+   * configuration".
+   */
+  'worldbook.load': z.object({
+    /**
+     * The book's name. **Empty is a real input**, not a client bug: upstream's
+     * first line is `if (!name) return;`, and the caller distinguishes that
+     * answer from "asked and could not get it".
+     */
+    name: z.string().max(200),
+  }),
+
   'worldbook.get': z.object({
     /**
      * The book's name, exactly as spelled.
@@ -809,6 +829,20 @@ export interface RpcResponseMap {
   'script.slash': { result: string }
 
   'worldbook.names': { names: string[] }
+  /**
+   * The raw book, and **three answers rather than two**.
+   *
+   * - `book` present and an object — the saved file.
+   * - `book: null` — a name was given and no book came back. Upstream returns
+   *   `null` for a response that was not ok.
+   * - **key absent** — no name was asked for, upstream's bare `return;`.
+   *
+   * The two empties are kept apart because upstream's caller keeps them apart,
+   * and because they mean different things to a card: "you asked for nothing"
+   * against "what you asked for is not there".
+   */
+  'worldbook.load': { book?: unknown }
+
   'worldbook.get': { entries: WorldbookEntry[] }
   /** A name may be bound with no file behind it; 2 of 18 corpus bindings are. */
   'worldbook.charNames': { primary: string | null, additional: string[] }

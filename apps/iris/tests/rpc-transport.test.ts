@@ -239,6 +239,8 @@ const PROBES: Record<string, unknown> = {
   // as well as a successful read would.
   'worldbook.names': {},
   'worldbook.get': { name: 'no-such-book' },
+  // Empty name is upstream's absent-answer path and needs no book to exist.
+  'worldbook.load': { name: '' },
   'worldbook.charNames': { characterId: 'no-such-character' },
   'worldbook.replace': { name: 'no-such-book', entries: [] },
   'worldbook.globalSelect': {},
