@@ -17,118 +17,140 @@ import { test } from 'node:test'
  * with tables, the mapping had no source for them, and the tables reached the
  * file but not the live log — so a card appending a floor and reading it back
  * got the *inherited* value, while the same read after a restart got its own.
- * One call, two answers, decided by how long the process had been running. The
- * fix was to reuse `hydrateVariables` rather than write a second walk; this is
- * what stops the next such path being written without one.
  *
- * A hand-maintained classification needs something watching for omissions —
- * the same reasoning as `registration.test.ts`, and the same shape: the table
- * below is the decision, and the count check is what makes a new call site a
- * red line rather than a silent gap.
+ * **The guard used to compare counts, and that was not enough.** Six call sites
+ * against six classifications passes whether or not the six are the *same* six:
+ * add one site while deleting an unrelated classification and the totals still
+ * agree. The labels were prose, checked by nobody — one of them said "template
+ * write-back" where the code says `#storeRewritten`, and nothing noticed
+ * because nothing compared them. A count guard proves the totals match; it says
+ * nothing about entry *i* describing site *i*, which is exactly the gap an
+ * off-by-one slips through.
+ *
+ * So the table below is keyed by the **site name derived from the source**, and
+ * the check is set equality. A site that appears, moves, or is renamed shows up
+ * as a named difference rather than a number.
  */
 
-const SOURCES = ['../src/service.ts', '../src/chats.ts'] as const
+const SOURCES = [
+  { file: 'service.ts', path: '../src/service.ts' },
+  { file: 'chats.ts', path: '../src/chats.ts' },
+] as const
 
 /**
- * Every `rebuild` call site, and why it does or does not need hydration.
+ * Every `rebuild` call site, keyed by its enclosing site name, and why it does
+ * or does not need hydration.
  *
  * Classified by **whether the mapping is total**: if every line in the rebuilt
  * list has a source index, the tables travel with them and nothing else is
  * needed. If any line can have no source, its table has to be put back.
  */
-const CLASSIFIED = [
-  {
-    where: 'chats.ts — branch, parent',
+const CLASSIFIED: Record<string, { total: boolean, why: string }> = {
+  'branch': {
     total: true,
     why: 'identity mapping; the parent keeps every line it had, only `extra.branches` changed',
   },
-  {
-    where: 'service.ts — createChatMessages',
+  'script.createChatMessages': {
     total: false,
     why: 'created lines have no predecessor, so their tables must be reattached',
   },
-  {
-    where: 'service.ts — deleteChatMessages',
+  'script.deleteChatMessages': {
     total: true,
     why: 'survivors only; every kept line names the index it came from',
   },
-  {
-    where: 'service.ts — chat.deleteMessage',
+  'chat.deleteMessage': {
     total: true,
     why: 'survivors only, one hole',
   },
-  {
-    where: 'service.ts — template write-back',
+  '#storeRewritten': {
+    total: true,
+    why: 'identity mapping; only `mes` is rewritten, by the template write-back',
+  },
+  '#rewriteLines': {
     total: true,
     why: 'identity mapping; only `mes` is rewritten',
   },
-  {
-    where: 'service.ts — rewriteLines',
-    total: true,
-    why: 'identity mapping; only `mes` is rewritten',
-  },
-] as const
-
-/** Call sites that put tables back, whatever their rebuild does. */
-const HYDRATION_SITES = [
-  'chats.ts — open, after importing a file',
-  'chats.ts — branch, child session',
-  'service.ts — createChatMessages',
-] as const
-
-async function occurrences(needle: string): Promise<number> {
-  let total = 0
-  for (const source of SOURCES) {
-    const text = await readFile(new URL(source, import.meta.url), 'utf8')
-    total += text.split(needle).length - 1
-  }
-  return total
 }
 
-test('every rebuild call site has been classified', async () => {
-  const found = await occurrences('.rebuild(')
+/** Call sites that put tables back, whatever their rebuild does. */
+const HYDRATION_SITES = ['open', 'branch', 'script.createChatMessages'] as const
 
-  // The number, not the reasoning, is what a new call site moves. When this
-  // fails, the fix is to decide whether the new rebuild's mapping is total and
-  // add it to `CLASSIFIED` — not to bump the count.
-  assert.equal(
-    found,
-    CLASSIFIED.length,
-    `${String(found)} rebuild call sites, ${String(CLASSIFIED.length)} classified. `
-    + 'A new one must be classified: is its index mapping total? If any rebuilt line can '
-    + 'have no source index, its variable table has to be reattached with '
-    + '`hydrateVariables`, or it will reach the file but not the live log — and the same '
-    + 'read will then answer differently before and after a reload.',
+/** Lines that look like a declaration but are control flow. */
+const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'else', 'do', 'try'])
+
+/**
+ * A line that names an enclosing site: an RPC handler key or a method.
+ *
+ * Derived rather than declared, so the table cannot drift from the code while
+ * staying green — the failure this guard exists to make impossible.
+ */
+const SITE = /^\s*(?:'([\w.]+)':\s*async|(?:async\s+)?([#a-zA-Z][\w]*)\s*\()/
+
+/**
+ * Find the site enclosing each occurrence of `needle`.
+ * @param needle - the call to locate.
+ * @returns site names, one per occurrence.
+ */
+async function sitesCalling(needle: string): Promise<string[]> {
+  const found: string[] = []
+  for (const source of SOURCES) {
+    const text = await readFile(new URL(source.path, import.meta.url), 'utf8')
+    const lines = text.split(String.fromCharCode(10))
+    lines.forEach((line, index) => {
+      if (!line.includes(needle)) return
+      for (let above = index; above >= 0; above -= 1) {
+        const match = SITE.exec(lines[above] ?? '')
+        if (match === null) continue
+        if (match[2] !== undefined && KEYWORDS.has(match[2])) continue
+        found.push(match[1] ?? match[2] ?? '?')
+        return
+      }
+      found.push(`(no enclosing site found at ${source.file}:${String(index + 1)})`)
+    })
+  }
+  return found
+}
+
+test('the classified sites are exactly the sites that rebuild', async () => {
+  const found = new Set(await sitesCalling('.rebuild('))
+  const classified = new Set(Object.keys(CLASSIFIED))
+
+  // Set equality, not counts. When this fails it names which site appeared or
+  // vanished, and the fix is to decide whether the new one's index mapping is
+  // total — not to adjust a number until it matches.
+  const unclassified = [...found].filter(site => !classified.has(site)).sort()
+  const stale = [...classified].filter(site => !found.has(site)).sort()
+
+  assert.deepEqual(
+    unclassified,
+    [],
+    `these rebuild without a classification: ${unclassified.join(', ')}. `
+    + 'Is the new site\'s index mapping total? If any rebuilt line can have no source index, '
+    + 'its variable table must be reattached with `hydrateVariables`, or it reaches the file '
+    + 'but not the live log — and the same read then answers differently before and after a reload.',
+  )
+  assert.deepEqual(
+    stale,
+    [],
+    `these are classified but no longer rebuild: ${stale.join(', ')} — the table describes code that moved`,
   )
 })
 
-test('every hydration call site has been classified', async () => {
-  // Call sites only — the method is defined in `entry.ts`, which is not scanned.
-  // The first version of this subtracted one for a definition that is not in
-  // these files, which is the kind of arithmetic that produces a guard off by
-  // exactly one forever.
-  const found = await occurrences('hydrateVariables(')
-  assert.equal(
-    found,
-    HYDRATION_SITES.length,
-    'a `hydrateVariables` call site was added or removed without updating this list',
-  )
+test('the classified hydration sites are exactly the sites that hydrate', async () => {
+  const found = new Set(await sitesCalling('hydrateVariables('))
+  assert.deepEqual([...found].sort(), [...HYDRATION_SITES].sort())
 })
 
 test('exactly one classified rebuild has a partial mapping, and it hydrates', () => {
   // The cross-check between the two tables. A rebuild whose mapping is not
-  // total must appear in both lists; if a second partial one is ever added and
-  // its author forgets the hydration, this is what says so.
-  const partial = CLASSIFIED.filter(site => !site.total)
-  assert.deepEqual(
-    partial.map(site => site.where),
-    ['service.ts — createChatMessages'],
-    'a rebuild with a partial mapping changed — check it reattaches variable tables',
-  )
+  // total must appear in both; if a second partial one is added and its author
+  // forgets the hydration, this is what says so.
+  const partial = Object.entries(CLASSIFIED).filter(([, site]) => !site.total).map(([name]) => name)
+  assert.deepEqual(partial, ['script.createChatMessages'])
   for (const site of partial) {
     assert.ok(
-      HYDRATION_SITES.some(hydration => hydration === site.where),
-      `${site.where} rebuilds with a partial mapping but does not hydrate`,
+      (HYDRATION_SITES as readonly string[]).includes(site),
+      `${site} rebuilds with a partial mapping but does not hydrate`,
     )
   }
 })
@@ -137,7 +159,7 @@ test('the classification says something — every entry carries a reason', () =>
   // A list of names with no reasons decays into a list of names. The reason is
   // what a later reader needs in order to classify their own call site, and it
   // is the part that cannot be reconstructed from the code.
-  for (const site of CLASSIFIED) {
-    assert.ok(site.why.length > 20, `${site.where} has no usable reason recorded`)
+  for (const [name, site] of Object.entries(CLASSIFIED)) {
+    assert.ok(site.why.length > 20, `${name} has no usable reason recorded`)
   }
 })
