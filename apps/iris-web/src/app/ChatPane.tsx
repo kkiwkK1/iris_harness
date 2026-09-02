@@ -44,7 +44,7 @@ export function ChatPane(): ReactElement {
    * end of the conversation, which is where a reader of a live chat already is.
    */
   const [shown, setShown] = useState(DEFAULT_WINDOW)
-  const window_ = useMemo(() => readingWindow(all, shown), [all, shown])
+  const window_ = useMemo(() => readingWindow(all, shown, message => message.turn), [all, shown])
   const messages = window_.visible
   const groups = useMemo(() => groupByTurn(messages), [messages])
 

@@ -173,17 +173,16 @@ test('exactly the outward-reaching names are shadowed', () => {
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
-    // Mixed, and the mixture is the point: the version is real (transcribed
-    // from the installed extension), `getScriptButtons` and `getButtonEvent`
-    // are real, and the two writers are still reporting stubs pending a host
-    // arm. All four are here because absence is the one answer that breaks a
-    // card outright — MVU calls three of them while wiring up, before it has
-    // published anything.
+    // All five are real now. They were stubs that answered and reported, which
+    // was the right shape while there was no host arm and no bar — absence is
+    // the one answer that breaks a card outright, since MVU calls three of them
+    // while wiring up, before it has published anything.
     'getTavernHelperVersion',
     'getScriptButtons',
     'getButtonEvent',
     'replaceScriptButtons',
     'appendInexistentScriptButtons',
+    'updateScriptButtonsWith',
     'getCurrentMessageId',
     'getChatMessages',
     'getCharWorldbookNames',
@@ -617,17 +616,16 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
-    // Mixed, and the mixture is the point: the version is real (transcribed
-    // from the installed extension), `getScriptButtons` and `getButtonEvent`
-    // are real, and the two writers are still reporting stubs pending a host
-    // arm. All four are here because absence is the one answer that breaks a
-    // card outright — MVU calls three of them while wiring up, before it has
-    // published anything.
+    // All five are real now. They were stubs that answered and reported, which
+    // was the right shape while there was no host arm and no bar — absence is
+    // the one answer that breaks a card outright, since MVU calls three of them
+    // while wiring up, before it has published anything.
     'getTavernHelperVersion',
     'getScriptButtons',
     'getButtonEvent',
     'replaceScriptButtons',
     'appendInexistentScriptButtons',
+    'updateScriptButtonsWith',
     'getCurrentMessageId',
     'getChatMessages',
     'getCharWorldbookNames',

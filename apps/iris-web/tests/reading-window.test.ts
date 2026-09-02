@@ -98,3 +98,61 @@ test('the window and the count it reports always agree', () => {
     )
   }
 })
+
+test('the boundary rounds outward so a turn is never split', () => {
+  /*
+   * [WINDOWING.md 回合边界] A boundary inside a turn mounts an assistant reply
+   * whose user line is hidden above the window: a reply to nothing, at the top
+   * of the page, and with no turn number either — the ordinal marks boundaries
+   * between mounted turns, and this one has nothing above it.
+   *
+   * The fixture puts the boundary **inside** turn 3 deliberately. With the
+   * boundary between turns, a plain tail and a rounded one agree, and the test
+   * would pass against either.
+   */
+  const messages = [
+    { id: 0, turn: 1 },
+    { id: 1, turn: 1 },
+    { id: 2, turn: 2 },
+    { id: 3, turn: 2 },
+    { id: 4, turn: 3 },
+    { id: 5, turn: 3 },
+  ]
+
+  // A tail of 3 would start at id 3 — the second half of turn 2.
+  const window_ = readingWindow(messages, 3, message => message.turn)
+
+  assert.deepEqual(window_.visible.map(message => message.id), [2, 3, 4, 5])
+  assert.equal(window_.hidden, 2, 'the count above must follow the boundary that moved')
+
+  /*
+   * At most one extra message, which is not a coincidence to be grateful for:
+   * `lineTurns` emits at most one user and one assistant row per turn, so a
+   * group's ceiling is two and rounding can only ever reach back by one.
+   */
+  assert.ok(window_.visible.length <= 4, `rounded to ${String(window_.visible.length)}`)
+})
+
+test('rounding does not run on messages with no turn', () => {
+  /*
+   * `undefined` means "not part of a turn" — the opening greeting and the
+   * fake's loose rows are like this. Treating two of those as the same turn
+   * walks the window back to the start of the conversation, which is not a
+   * window at all: the failure is silent and its symptom is that windowing
+   * appears not to work.
+   */
+  const messages = Array.from({ length: 10 }, (_unused, at) => ({ id: at, turn: undefined }))
+
+  const window_ = readingWindow(messages, 3, message => message.turn)
+
+  assert.equal(window_.visible.length, 3, 'an untyped run must not extend the window')
+  assert.equal(window_.hidden, 7)
+})
+
+test('without a turn accessor the window is a plain tail', () => {
+  // The module is generic and the count is its subject; a caller with no turns
+  // gets the tail it asked for.
+  const window_ = readingWindow([1, 2, 3, 4, 5], 2)
+  assert.deepEqual(window_.visible, [4, 5])
+  assert.equal(window_.hidden, 3)
+})

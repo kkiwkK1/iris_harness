@@ -69,15 +69,52 @@ export interface ReadingWindow<T> {
  * showing the newest messages with no recalculation. That is also why nothing
  * here tracks scroll position: the anchor is the end of the conversation, which
  * is where a reader of a live chat already is.
+ * **The boundary rounds outward to a turn.** [WINDOWING.md 回合边界] A turn is
+ * what swipe and regenerate address, and the view groups by it, so a boundary
+ * falling inside one leaves an assistant reply mounted with the line it answers
+ * hidden above the window — a reply to nothing, at the top of the page, and no
+ * turn number on it either (the ordinal marks boundaries between mounted
+ * turns). Rounding outward costs **at most one extra message**: `lineTurns`
+ * emits at most one user and one assistant row per turn, and `groupByTurn`
+ * groups consecutive equal turns, so a group's ceiling is two.
+ *
+ * `turnOf` is optional because this module is generic and the count is the
+ * subject; without it the window is a plain tail, which is what a caller with no
+ * turns wants.
  * @param messages - the whole conversation, oldest first.
  * @param shown - how many to mount; `0` or negative for all.
+ * @param turnOf - which turn a message belongs to, for rounding the boundary.
  * @returns the tail to mount, and the count above it.
  */
-export function readingWindow<T>(messages: readonly T[], shown: number): ReadingWindow<T> {
+export function readingWindow<T>(
+  messages: readonly T[],
+  shown: number,
+  turnOf?: (message: T) => number | undefined,
+): ReadingWindow<T> {
   if (shown <= 0 || messages.length <= shown) {
     return { visible: [...messages], hidden: 0 }
   }
-  return { visible: messages.slice(messages.length - shown), hidden: messages.length - shown }
+
+  let start = messages.length - shown
+  if (turnOf !== undefined) {
+    const first = messages[start]
+    const turn = first === undefined ? undefined : turnOf(first)
+    /*
+     * Only a real turn extends the window. `undefined` means "not part of a
+     * turn" — the fake's loose rows and the opening greeting are like this —
+     * and treating two of those as the same turn would walk the window back to
+     * the beginning of the conversation, which is the opposite of a window.
+     */
+    if (turn !== undefined) {
+      while (start > 0) {
+        const above = messages[start - 1]
+        if (above === undefined || turnOf(above) !== turn) break
+        start -= 1
+      }
+    }
+  }
+
+  return { visible: messages.slice(start), hidden: start }
 }
 
 /**

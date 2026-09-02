@@ -651,40 +651,215 @@ test('the version matches the installed extension it was transcribed from', asyn
   )
 })
 
-test('the script-button members answer instead of being absent', () => {
-  const { api, gaps } = surface({ scriptId: 's1' })
-
-  // Absence is the one answer that is definitely wrong: a card wiring up its
-  // buttons would die on a ReferenceError and everything after it never runs.
-  const buttons = (api['getScriptButtons'] as () => unknown[])()
-  assert.deepEqual(buttons, [], 'MVU feeds this straight into _.intersectionBy')
-
-  /*
-   * **The read half no longer reports a gap, and the split is the assertion.**
-   *
-   * It is answered from the snapshot now, so an empty list here means "this
-   * script has published nothing" — a true answer about the data. Reporting a
-   * gap beside a true answer is the thing the gap list must not do: a reader
-   * who sees "Iris has not built this" beside a correct empty list has been
-   * told to distrust a member that works, and every reading of that panel
-   * afterwards is worth less.
-   */
-  assert.equal(
-    gaps.filter(gap => gap.includes('getScriptButtons')).length,
-    0,
-    'an answered member must not also be reported as a gap',
-  )
-
-  // The writers are still stubs, and still say so: they accept the call so the
-  // card finishes starting, and record once that nothing was written.
-  assert.doesNotThrow(() => {
-    ;(api['replaceScriptButtons'] as (b: unknown) => void)([{ name: 'a', visible: true }])
-    ;(api['appendInexistentScriptButtons'] as (b: unknown) => void)([{ name: 'b', visible: false }])
+test('the script-button members are all answered, and none of them reports a gap', () => {
+  const { api, gaps, calls } = surface({
+    context: { ...context(), characterId: 'char', scriptButtons: { s1: [] } },
+    scriptId: 's1',
   })
 
-  assert.ok(gaps.some(gap => gap.includes('replaceScriptButtons')))
-  assert.ok(gaps.some(gap => gap.includes('appendInexistentScriptButtons')))
-  assert.ok(gaps.some(gap => gap.includes('script buttons are scope Iris has not built')))
+  const read = api['getScriptButtons'] as () => { name: string, visible: boolean }[]
+  assert.deepEqual(read(), [], 'MVU feeds this straight into _.intersectionBy')
+
+  const replace = api['replaceScriptButtons'] as (id: string, buttons: unknown) => void
+  replace('s1', [{ name: 'a', visible: true }])
+
+  assert.deepEqual(calls.map(call => call.method), ['replaceScriptButtons'])
+  assert.deepEqual(calls[0]?.params, {
+    characterId: 'char',
+    scriptId: 's1',
+    buttons: [{ name: 'a', visible: true }],
+  })
+
+  /*
+   * **No gap, and that is the assertion.** These four were stubs that answered
+   * and reported once — the right shape while there was no host arm — and the
+   * report is now the thing that would be wrong. A gap beside a member that
+   * works tells a reader to distrust something that is fine, and every later
+   * reading of that panel is worth less for it.
+   */
+  assert.deepEqual(gaps, [], `nothing should be reported: ${gaps.join(' | ')}`)
+})
+
+test('replacing with the table that is already stored writes nothing', () => {
+  /*
+   * Upstream's own guard (`function/script.ts:80`, `!_.isEqual`), and it earns
+   * its place here for a reason upstream does not have: a write crosses the
+   * boundary and returns as a new snapshot, which re-plans the frame budget and
+   * refreshes every running card. The one corpus caller republishes its table
+   * on a button press, so an identical republish paying for all of that is a
+   * real path, not a hypothetical.
+   */
+  const stored = [{ name: 'a', visible: true }, { name: 'b', visible: false }]
+  const { api, calls } = surface({
+    context: { ...context(), characterId: 'char', scriptButtons: { s1: stored } },
+    scriptId: 's1',
+  })
+  const replace = api['replaceScriptButtons'] as (id: string, buttons: unknown) => void
+
+  replace('s1', [{ name: 'a', visible: true }, { name: 'b', visible: false }])
+  // Length, not `deepEqual(calls, [])`: @types/node declares deepEqual as
+  // `asserts actual is T`, so comparing against `[]` narrows `calls` to
+  // `never[]` and every later read of it is a type error.
+  assert.equal(calls.length, 0, 'an equal table must not be written')
+
+  // Order is part of the table: the bar renders in this order, so a reordering
+  // is a change even though the set is the same.
+  replace('s1', [{ name: 'b', visible: false }, { name: 'a', visible: true }])
+  assert.equal(calls.length, 1, 'a reordered table is a different table')
+})
+
+test('a button writer called with upstream’s old one-argument shape is refused by name', () => {
+  /*
+   * This member used to take one argument, back when it discarded it. Upstream
+   * takes `(script_id, buttons)`, so a card writing the real call would have
+   * had its script id land in `buttons` — and the refusal has to name the
+   * signature, because the alternative is writing a table under a script id
+   * taken from an array.
+   */
+  const { api } = surface({
+    context: { ...context(), characterId: 'char', scriptButtons: { s1: [] } },
+    scriptId: 's1',
+  })
+  const replace = api['replaceScriptButtons'] as (...args: unknown[]) => void
+
+  assert.throws(
+    () => replace([{ name: 'a', visible: true }]),
+    /script_id, buttons/,
+    'the refusal must name the real signature',
+  )
+})
+
+test('a button with no boolean visible is refused rather than defaulted', () => {
+  /*
+   * `visible: false` is the **common** case — 58 of the corpus's 89 buttons — so
+   * a missing field is at least as likely to have meant hidden as shown.
+   * Defaulting it either way stores a table the card did not ask for, and the
+   * card's author would be debugging the bar instead of their call.
+   */
+  const { api } = surface({
+    context: { ...context(), characterId: 'char', scriptButtons: { s1: [] } },
+    scriptId: 's1',
+  })
+  const replace = api['replaceScriptButtons'] as (id: string, buttons: unknown) => void
+
+  assert.throws(() => replace('s1', [{ name: '开始' }]), /visible/)
+  assert.throws(() => replace('s1', [{ visible: true }]), /name/)
+  assert.throws(() => replace('s1', 'not an array'), /array/)
+})
+
+test('appendInexistent adds only the names that are not already there', () => {
+  const { api, calls } = surface({
+    context: {
+      ...context(),
+      characterId: 'char',
+      scriptButtons: { s1: [{ name: 'a', visible: true }] },
+    },
+    scriptId: 's1',
+  })
+  const append = api['appendInexistentScriptButtons'] as (id: string, buttons: unknown) => void
+
+  append('s1', [{ name: 'a', visible: false }, { name: 'b', visible: true }])
+
+  /*
+   * `a` is dropped **including its different `visible`**: this member appends
+   * what is missing, it does not update what is present. Dedupe is by name
+   * because the name is the identity — a button's event is
+   * `${script_id}_${hash(name)}`, so two buttons with one name are one button as
+   * far as every listener is concerned.
+   */
+  assert.deepEqual(calls[0]?.params['buttons'], [
+    { name: 'a', visible: true },
+    { name: 'b', visible: true },
+  ])
+})
+
+test('appendInexistent with nothing new does not write', () => {
+  const { api, calls } = surface({
+    context: {
+      ...context(),
+      characterId: 'char',
+      scriptButtons: { s1: [{ name: 'a', visible: true }] },
+    },
+    scriptId: 's1',
+  })
+  const append = api['appendInexistentScriptButtons'] as (id: string, buttons: unknown) => void
+
+  append('s1', [{ name: 'a', visible: false }])
+  assert.deepEqual(calls, [], 'a round trip to store what is stored is churn for nothing')
+})
+
+test('updateScriptButtonsWith takes a function, synchronously', () => {
+  const { api, calls } = surface({
+    context: {
+      ...context(),
+      characterId: 'char',
+      scriptButtons: { s1: [{ name: 'a', visible: false }] },
+    },
+    scriptId: 's1',
+  })
+  const update = api['updateScriptButtonsWith'] as (
+    id: string,
+    updater: (current: { name: string, visible: boolean }[]) => unknown,
+  ) => unknown
+
+  const returned = update('s1', current => current.map(button => ({ ...button, visible: true })))
+
+  // Upstream's returns void for a synchronous updater, so this does too.
+  assert.equal(returned, undefined)
+  assert.deepEqual(calls[0]?.params['buttons'], [{ name: 'a', visible: true }])
+})
+
+test('updateScriptButtonsWith awaits an async updater before writing', async () => {
+  const { api, calls } = surface({
+    context: {
+      ...context(),
+      characterId: 'char',
+      scriptButtons: { s1: [{ name: 'a', visible: false }] },
+    },
+    scriptId: 's1',
+  })
+  const update = api['updateScriptButtonsWith'] as (
+    id: string,
+    updater: (current: { name: string, visible: boolean }[]) => unknown,
+  ) => unknown
+
+  const returned = update('s1', async current => {
+    await Promise.resolve()
+    return current.map(button => ({ ...button, visible: true }))
+  })
+
+  // Length again, for the `never[]` narrowing recorded above.
+  assert.equal(calls.length, 0, 'the write must wait for the updater')
+  assert.ok(returned instanceof Promise || typeof (returned as { then?: unknown })?.then === 'function')
+  await returned
+  assert.deepEqual(calls[0]?.params['buttons'], [{ name: 'a', visible: true }])
+})
+
+test('a button write with no character open is reported, not thrown', () => {
+  /*
+   * Reachable while a chat is closing, and upstream's writer returns **silently**
+   * in exactly this window (`script.ts:76-78`, the four identical TODOs), which
+   * `SCRIPT-BUTTONS.md` records as the thinnest part of upstream's
+   * observability. The silence is what is copied; the name is what is added.
+   *
+   * Not thrown, because upstream's member returns `void` and cards call it
+   * without `await` — a throw here lands in whatever the card was doing when the
+   * chat closed, which is nothing it can handle.
+   */
+  const { characterId: _absent, ...noCard } = { ...context(), characterId: 'char' }
+  const { api, gaps, calls } = surface({
+    // The key is **omitted**, not set to undefined: `exactOptionalPropertyTypes`
+    // refuses the explicit undefined, and an absent key is what a snapshot with
+    // no card open actually looks like.
+    context: { ...noCard, scriptButtons: { s1: [] } },
+    scriptId: 's1',
+  })
+  const replace = api['replaceScriptButtons'] as (id: string, buttons: unknown) => void
+
+  assert.doesNotThrow(() => replace('s1', [{ name: 'a', visible: true }]))
+  assert.deepEqual(calls, [], 'nothing can be stored without a card')
+  assert.equal(gaps.length, 1, `expected one report: ${gaps.join(' | ')}`)
+  assert.match(gaps[0] ?? '', /no character was open/)
 })
 
 test('getButtonEvent returns a usable event name, as upstream declares', () => {
@@ -701,26 +876,6 @@ test('getButtonEvent returns a usable event name, as upstream declares', () => {
   assert.equal(typeof event, 'string')
   assert.ok((event as string).length > 0)
   assert.ok((event as string).includes('s1'), 'button events are per script upstream')
-})
-
-test('a script-button gap is reported once per member, not once per call', () => {
-  const { api, gaps } = surface({ scriptId: 's1' })
-  /*
-   * Asked of a writer, because the reader stopped being a gap when it was
-   * implemented. The dedupe still matters here and matters more: a card that
-   * republishes its buttons on every variable change calls this repeatedly, and
-   * one fact repeated forty times is a panel a reader stops reading.
-   */
-  const replace = api['replaceScriptButtons'] as (buttons: unknown) => void
-  replace([{ name: 'a', visible: true }])
-  replace([{ name: 'a', visible: false }])
-  replace([])
-
-  assert.equal(
-    gaps.filter(gap => gap.includes('replaceScriptButtons')).length,
-    1,
-    'a card republishing its buttons would fill the panel with one fact',
-  )
 })
 
 test('a floor-addressed read is refused by name rather than answered from the wrong floor', () => {

@@ -408,27 +408,6 @@ function toCardChatMessage(
 }
 
 export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<string, unknown> {
-  /** Names already reported, so a card in a loop does not fill the panel. */
-  const buttonGapsReported = new Set<string>()
-
-  /**
-   * Say once that a script-button call did nothing.
-   *
-   * Per name rather than per call: a card may poll its buttons, and a stream of
-   * one fact teaches a reader to skip the whole class. Per name rather than
-   * once overall, because which member a card reached for is the useful part —
-   * it says what the missing UI would have had to do.
-   * @param member - the member that was called.
-   */
-  const reportButtonGap = (member: string): void => {
-    if (buttonGapsReported.has(member)) return
-    buttonGapsReported.add(member)
-    host.reportGap(
-      `card called ${member} — script buttons are scope Iris has not built, so the call did` +
-        ' nothing and no button will appear or fire',
-    )
-  }
-
   /** The snapshot, or a refusal naming the member that needed it. */
   const snapshot = (member: string): ScriptContext => {
     const context = host.context()
@@ -436,6 +415,135 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       throw new UnsupportedApiError(member, 'The host snapshot has not arrived yet.')
     }
     return context
+  }
+
+  /** One script's stored table, copied, for a writer to compute against. */
+  const buttonsOf = (member: string, id: string): { name: string, visible: boolean }[] =>
+    (snapshot(member).scriptButtons?.[id] ?? []).map(button => ({
+      name: button.name,
+      visible: button.visible,
+    }))
+
+  /**
+   * The script id a button writer was called with.
+   *
+   * Upstream takes it explicitly — `replaceScriptButtons(getScriptId(), [...])`
+   * — and the frame does **not** fall back to this frame's own id when it is
+   * missing. A default would be leniency past upstream, and this project has
+   * already recorded what that buys: a card that works only here, whose author
+   * finds out in real SillyTavern. Worse here than usually, because the thing
+   * defaulted is *which script gets written*.
+   * @param member - named in the refusal.
+   * @param scriptId - the first argument, as the card passed it.
+   * @returns the id.
+   */
+  const requireScriptId = (member: string, scriptId: unknown): string => {
+    if (Array.isArray(scriptId)) {
+      throw new UnsupportedApiError(
+        member,
+        `${member}(script_id, buttons) takes the script id first; it was called with the`
+          + ' button array as its only argument.',
+      )
+    }
+    if (typeof scriptId !== 'string' || scriptId === '') {
+      throw new UnsupportedApiError(member, 'The first argument must be a script id.')
+    }
+    return scriptId
+  }
+
+  /**
+   * The table a card handed over, checked before it is stored.
+   *
+   * Both fields are required, matching upstream's type, which has no default for
+   * `visible`. Defaulting it would be the more forgiving choice and the wrong
+   * one: `visible: false` is the **common** case in the corpus (58 of 89
+   * buttons), so a missing field is at least as likely to have meant hidden as
+   * shown, and inventing either answer writes a table the card did not ask for.
+   * @param member - named in the refusal.
+   * @param buttons - the candidate table.
+   * @returns the validated table, copied.
+   */
+  const requireButtons = (
+    member: string,
+    buttons: unknown,
+  ): { name: string, visible: boolean }[] => {
+    if (!Array.isArray(buttons)) {
+      throw new UnsupportedApiError(member, 'The buttons argument must be an array.')
+    }
+    return buttons.map((button: unknown, at) => {
+      const row = button as { name?: unknown, visible?: unknown } | null
+      if (row === null || typeof row !== 'object') {
+        throw new UnsupportedApiError(member, `buttons[${String(at)}] is not an object.`)
+      }
+      if (typeof row.name !== 'string' || row.name === '') {
+        throw new UnsupportedApiError(member, `buttons[${String(at)}] has no name.`)
+      }
+      if (typeof row.visible !== 'boolean') {
+        throw new UnsupportedApiError(
+          member,
+          `buttons[${String(at)}] ("${row.name}") has no boolean visible; upstream requires it.`,
+        )
+      }
+      return { name: row.name, visible: row.visible }
+    })
+  }
+
+  /**
+   * Store one script's table, unless it is already what is stored.
+   *
+   * The equality guard is upstream's (`function/script.ts:80`, `!_.isEqual`) and
+   * it earns its place here for a reason upstream does not have: every write
+   * crosses the boundary and comes back as a new snapshot, which re-plans the
+   * frame budget and refreshes every running card. A card that republishes an
+   * identical table on every variable change — the pattern the one corpus caller
+   * uses — would otherwise pay all of that to change nothing.
+   *
+   * The failure path reports rather than throws. Upstream's writer returns
+   * `void` and cards call it without `await`; throwing asynchronously would
+   * surface as an unhandled rejection with no card frame in the stack, which is
+   * the kind of report that names nothing.
+   * @param member - which member is writing, for the report.
+   * @param scriptId - the script whose table this is.
+   * @param buttons - the table to store.
+   */
+  const writeButtons = (member: string, scriptId: unknown, buttons: unknown): void => {
+    const id = requireScriptId(member, scriptId)
+    const next = requireButtons(member, buttons)
+    const current = buttonsOf(member, id)
+    const same =
+      current.length === next.length
+      && current.every((button, at) => {
+        const other = next[at]
+        return other !== undefined && button.name === other.name && button.visible === other.visible
+      })
+    if (same) return
+
+    const characterId = snapshot(member).characterId
+    if (characterId === undefined) {
+      /*
+       * No card, no table to write to. Reported rather than thrown for the same
+       * reason the failure path is: this is reachable while a chat is closing,
+       * and upstream's own writer returns silently in exactly this window
+       * (`script.ts:76-78`, the four TODOs) — which `SCRIPT-BUTTONS.md` records
+       * as the thinnest part of upstream's observability. Silent is what we are
+       * copying behaviourally; named is what we add.
+       */
+      host.reportGap(
+        `card called ${member} while no character was open — upstream returns silently here`
+          + ' too, so the buttons were not stored and nothing failed',
+      )
+      return
+    }
+
+    void host.call('replaceScriptButtons', { characterId, scriptId: id, buttons: next }).then(
+      undefined,
+      (error: unknown) => {
+        host.reportGap(
+          `card called ${member} and the host refused to store the table: `
+            + (error instanceof Error ? error.message : String(error)),
+        )
+      },
+    )
   }
 
   const chatOf = (member: string): ScriptChatMessage[] => snapshot(member).chat
@@ -828,21 +936,104 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       buttonEventName(host.scriptId(), String(buttonName)),
 
     /**
-     * Replace this script's button list — accepted, not performed.
-     * @param buttons - what the card wanted shown.
+     * Replace one script's whole button table.
+     *
+     * **Whole-table, and that is upstream's semantics, not a shortcut.** A
+     * button left out of `buttons` is gone; upstream's writer assigns the array
+     * it is handed rather than merging into it. Its own 3.2.5 example is a
+     * button that replaces the entire bar with a different set, which is what
+     * "second-level buttons" means upstream — a usage, not a data structure.
+     *
+     * **Two arguments, `(script_id, buttons)`.** This used to take one, back
+     * when it was a stub that discarded it: a card writing upstream's real call
+     * would have had its script id land in `buttons`, and a no-op cannot tell
+     * you it was called wrongly. The one-argument form is refused by name rather
+     * than guessed at, because guessing here means writing a table under a
+     * script id taken from an array.
+     *
+     * **Asynchronous, where upstream is synchronous.** Upstream assigns a Vue
+     * ref and the bar re-renders; here the table lives on the host and the write
+     * crosses the RPC boundary. A card cannot await this — upstream's returns
+     * `void` and no card treats it as a promise — so a failure cannot be thrown
+     * at the call site and is reported to the panel instead. That is the one
+     * divergence a card could notice: it will see its own next
+     * `getScriptButtons` still answering the old table for one round trip.
+     * @param scriptId - which script's table, as upstream requires.
+     * @param buttons - the whole table to store.
      */
-    replaceScriptButtons: (buttons: unknown): void => {
-      void buttons
-      reportButtonGap('replaceScriptButtons')
+    replaceScriptButtons: (scriptId: unknown, buttons: unknown): void => {
+      writeButtons('replaceScriptButtons', scriptId, buttons)
     },
 
     /**
-     * Add buttons that do not exist yet — accepted, not performed.
-     * @param buttons - what the card wanted added.
+     * Add the buttons this script does not already have.
+     *
+     * Upstream builds it out of the replace (`script.ts:110` →
+     * `_updateScriptButtonsWith` → `_replaceScriptButtons`), deduplicating **by
+     * name**, so it is composed here too rather than given its own host arm: a
+     * second arm would be a second place that decides what "already have" means.
+     *
+     * Dedupe is by name because the name is the identity — the button's event is
+     * `${script_id}_${hash(name)}`, so two buttons with one name are one button
+     * as far as every listener is concerned.
+     * @param scriptId - which script's table.
+     * @param buttons - candidates; those whose names are present are dropped.
      */
-    appendInexistentScriptButtons: (buttons: unknown): void => {
-      void buttons
-      reportButtonGap('appendInexistentScriptButtons')
+    appendInexistentScriptButtons: (scriptId: unknown, buttons: unknown): void => {
+      const id = requireScriptId('appendInexistentScriptButtons', scriptId)
+      const incoming = requireButtons('appendInexistentScriptButtons', buttons)
+      const current = buttonsOf('appendInexistentScriptButtons', id)
+      const known = new Set(current.map(button => button.name))
+      const added = incoming.filter(button => !known.has(button.name))
+      /*
+       * Nothing new is not an error and not a write — and it needs no early
+       * return here, because `writeButtons` already refuses a table equal to the
+       * stored one and `[...current]` is exactly that. There was one; a mutation
+       * check found no test could tell whether it existed, which is what a second
+       * guard for one decision looks like from the outside.
+       */
+      writeButtons('appendInexistentScriptButtons', id, [...current, ...added])
+    },
+
+    /**
+     * Rewrite one script's table with a function of its current value.
+     *
+     * The same family as `updateVariablesWith`, and it stays in the façade for
+     * the same reason: a function cannot cross the frame boundary, so the read,
+     * the call and the write have to happen on this side.
+     *
+     * **Both signatures.** An updater may return the new table or a promise of
+     * it; when it returns a promise this returns one too, so a card that wrote
+     * an async updater can await the write. A synchronous updater gets
+     * `undefined` back, which is what upstream's returns.
+     * @param scriptId - which script's table.
+     * @param updater - given the current table, returns the new one.
+     * @returns a promise when the updater is asynchronous, otherwise undefined.
+     */
+    updateScriptButtonsWith: (scriptId: unknown, updater: unknown): unknown => {
+      const member = 'updateScriptButtonsWith'
+      const id = requireScriptId(member, scriptId)
+      if (typeof updater !== 'function') {
+        throw new UnsupportedApiError(member, 'The second argument must be a function.')
+      }
+      const produced = (updater as (current: { name: string, visible: boolean }[]) => unknown)(
+        buttonsOf(member, id),
+      )
+
+      /*
+       * Duck-typed on `then` rather than `instanceof Promise`. A card's updater
+       * may be an async function from its own realm, or a thenable from a
+       * bundled promise library, and neither is this realm's `Promise` — an
+       * `instanceof` check would call `requireButtons` on a promise object and
+       * refuse a perfectly good async updater.
+       */
+      if (typeof (produced as { then?: unknown } | undefined)?.then === 'function') {
+        return (produced as Promise<unknown>).then(resolved => {
+          writeButtons(member, id, resolved)
+        })
+      }
+      writeButtons(member, id, produced)
+      return undefined
     },
     /**
      * Which message this frame belongs to — refused in a script frame.

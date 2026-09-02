@@ -87,15 +87,25 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
    *
    * Upstream says so twice over: the declarations are marked **只能在脚本中使用**,
    * and `getAllEnabledScriptButtons` returns a map keyed by script id, which is
-   * only meaningful if each script owns its own list. Iris answers all four with
-   * stubs today, and they are still classified by what they *are* rather than by
-   * what the stub happens to need — a stub that later becomes real must not
-   * silently change which script it belongs to.
+   * only meaningful if each script owns its own list.
+   *
+   * All five are real now. This note used to say they were stubs and that they
+   * were classified by what they *are* rather than by what a stub happens to
+   * need — "a stub that later becoming real must not silently change which
+   * script it belongs to". That is exactly what happened, and the classification
+   * did not have to move, which is the whole point of having written it that way.
+   *
+   * The three writers take the script id **explicitly**, as upstream does, so
+   * they never read this frame's own id and would be correct under a shared
+   * binding too. They stay `identity` because ownership is the fact being
+   * recorded here, not the argument list: the day one of them gains a default,
+   * the binding it needs is already the right one.
    */
   getScriptButtons: 'identity',
   getButtonEvent: 'identity',
   replaceScriptButtons: 'identity',
   appendInexistentScriptButtons: 'identity',
+  updateScriptButtonsWith: 'identity',
 
   // ── shared: the same answer whoever asks ─────────────────────────────
   /** The blueprint's version: one number, the same for every caller. */

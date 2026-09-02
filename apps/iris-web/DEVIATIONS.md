@@ -611,3 +611,116 @@ unwindowed view, and it answered the same question this layer answers. Two
 windows stacked are not safer — they give "why has this floor no interface?" two
 answers. The count is now layer ②'s (which floors mount at all) and the weight
 is layer ③'s.
+
+## 16. Script buttons: the five members, and what each one copies
+
+**Compatibility ledger.** All five are now real. They were stubs that answered
+the call and reported once that nothing happened — the right shape while there
+was no host arm and no bar, because *absence* is the one answer that breaks a
+card outright: MagVarUpdate calls three of them while wiring up, and a missing
+member turns a card's setup into a `ReferenceError` with everything after it
+unrun.
+
+| member | shape | notes |
+| --- | --- | --- |
+| `getScriptButtons()` | sync, from the snapshot | unfiltered, per script, a copy |
+| `getButtonEvent(name)` | sync | `${script_id}_${cyrb53(name)}` — the id **is** the event |
+| `replaceScriptButtons(id, buttons)` | whole-table write | equality-guarded |
+| `appendInexistentScriptButtons(id, buttons)` | façade sugar | dedupe by name, then append |
+| `updateScriptButtonsWith(id, updater)` | façade sugar | sync and async updaters both |
+
+Corpus calibration, so the effort is on the record as disproportionate on
+purpose: **1** script calls `replaceScriptButtons`, **0** call the other two
+writers, and 18 scripts publish 89 buttons of which **58 are hidden**.
+
+### Two arguments, and the one-argument form is refused by name
+
+Upstream is `replaceScriptButtons(script_id, buttons)` — its own 3.2.5 example
+is `replaceScriptButtons(getScriptId(), [...])`. The stub here took **one**
+argument and discarded it, so a card writing upstream's real call would have had
+its script id land in `buttons`, and a no-op cannot tell you it was called
+wrongly.
+
+The one-argument form now throws, naming the signature. Guessing would mean
+writing a table under a script id taken from an array.
+
+**No default for the id, either.** Upstream requires it, and leniency past
+upstream has a recorded cost in this project: a card that works only here, whose
+author finds out in real SillyTavern. Worse than usual here, because the thing
+being defaulted is *which script gets written*.
+
+### `visible` is required, and defaulting it would be the wrong kindness
+
+Upstream's type has no default. And `visible: false` is the **common** case — 58
+of 89 — so a missing field is at least as likely to have meant hidden as shown.
+Either default stores a table the card did not ask for, and its author debugs
+the bar instead of their call.
+
+### Asynchronous where upstream is synchronous
+
+Upstream assigns a Vue ref and the bar re-renders. Here the table lives on the
+host and the write crosses the RPC boundary. Cards call this without `await` and
+upstream returns `void`, so:
+
+- the write is fire-and-forget, and a host refusal is **reported to the panel**
+  rather than thrown — an async throw would surface as an unhandled rejection
+  with no card frame in the stack, which is a report that names nothing;
+- a card sees its own next `getScriptButtons` answering the **old** table for one
+  round trip. This is the one divergence a card could observe.
+
+`updateScriptButtonsWith` is the exception: an async updater makes it return a
+promise, so a card that wrote one can await the write. The thenable check is
+duck-typed on `.then`, not `instanceof Promise` — a card's updater may be an
+async function from its own realm or a thenable from its own bundled library, and
+neither is this realm's `Promise`.
+
+### The equality guard is upstream's, and it earns more here
+
+Upstream guards with `!_.isEqual` (`function/script.ts:80`). Here a write also
+returns as a new snapshot, which re-plans the frame budget and refreshes every
+running card — so an identical republish, which is exactly what the one corpus
+caller does on a button press, would pay for all of that to change nothing.
+
+Comparison is **positional**: the bar renders in table order, so a reordered
+table is a different table even though the set is equal.
+
+The guard also made an early return in `appendInexistentScriptButtons`
+redundant, and a mutation check found that no test could tell whether that early
+return existed. It is gone: one place decides "no change, no write".
+
+### No character open: silent upstream, named here
+
+Upstream's writer simply returns when the card has been switched away
+(`script.ts:76-78`, four identical TODOs) — which `SCRIPT-BUTTONS.md` records as
+the thinnest part of upstream's observability, since a script trying to change
+its buttons during teardown fails with no sound at all. Iris copies the
+behaviour and adds the name: nothing is stored, nothing throws, and the panel
+gets one line saying which member was called and that upstream is silent here
+too.
+
+### Old listeners are left where upstream leaves them
+
+Renaming a button changes its event name, because the name is hashed into it.
+Upstream does not migrate the old listener and neither does this — a card that
+replaces its table must re-register. Copied deliberately: repairing it would
+make cards that work here fail upstream.
+
+### `getScriptButtons` is unfiltered, and that is load-bearing
+
+`visible: false` hides a button from the bar; it does not remove it from the
+table. Cards read the list, flip one entry and write the whole table back — so a
+filtered read would make the read-modify-write **delete every hidden button**,
+and the card's author would report it as "toggling one button deleted my
+others". Filtering happens in `script-buttons.ts` and only there.
+
+### One thing deliberately not done
+
+The bar reads `ScriptView.buttons` while the façade reads
+`ScriptContext.scriptButtons`. Two read paths for one table is normally a
+drift risk worth removing, and the field's own doc used to say it carried "what
+the card declared", which would have made the bar go stale the moment a card
+replaced its table. The host now derives both from one `effectiveButtons` merge
+with a test pinning that they never disagree, so the paths are same-source and
+unifying them would only add an async fetch the bar has no other reason to make.
+The bar also needs `enabled`, `buttonsEnabled` and `name` from `ScriptView`
+regardless, so the unification would have been partial by nature.

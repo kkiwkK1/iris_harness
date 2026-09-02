@@ -24,6 +24,8 @@ import { createIrisStore, type IrisStore } from '../src/client/store.ts'
 import { SlotProvider } from '../src/slots/Slot.tsx'
 import { createIrisSlots, type IrisSlotName } from '../src/slots/slots.ts'
 import { RAIL_MAX_TICKS, railMode } from '../src/app/rail.ts'
+import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
+import type { MessageView } from '@iris/protocol'
 import { contributing, discrepancy, rowsFor } from '../src/app/itemization.ts'
 import type { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 
@@ -323,6 +325,67 @@ async function main(): Promise<void> {
     /PROBE/,
     'a disposed slot contribution still rendered — reversibility is broken',
   )
+
+
+  // ------------------------------------------------------- reading window
+  /*
+   * Acceptance 1 of `WINDOWING.md` §七, pinned here rather than looked at.
+   *
+   * The criterion is about the **DOM**: a 677-floor chat opens with 100
+   * messages mounted, not 677. `reading-window.ts` is unit-tested, but that
+   * tests the arithmetic; whether `ChatPane` actually mounts only the window is
+   * a property of the rendered tree, and this is the only harness in the project
+   * that renders it.
+   *
+   * The store is written to directly, which is a harness concession of the same
+   * kind as the `getInitialState` override above: the fake's seeded chat is
+   * short, and there is no long conversation to open without either a corpus
+   * file or a synthetic one. Nothing in the app depends on this being possible.
+   */
+  const seeded = wired.store.getState().view
+  assert.ok(seeded !== undefined, 'the fixture chat should be open')
+
+  const FLOORS = 677
+  const long = Array.from({ length: FLOORS }, (_unused, at) => ({
+    id: at,
+    key: `synthetic-${String(at)}`,
+    // Turns of two rows, so the window boundary can fall inside one — which is
+    // the case the outward rounding exists for.
+    role: (at % 2 === 0 ? 'user' : 'assistant') as MessageView['role'],
+    name: at % 2 === 0 ? 'You' : seeded.title,
+    text: `floor ${String(at)}`,
+    turn: Math.floor(at / 2) + 1,
+  }))
+  wired.store.setState({ view: { ...seeded, messages: long } })
+
+  const windowed = render(wired.store, slots.core)
+  const mounted = windowed.match(/class="iris-msg /g)?.length ?? 0
+
+  /*
+   * 100 or 101: the window is a tail of 100 and the boundary rounds outward to
+   * a turn, which can reach back by one. Asserted as that range rather than as
+   * `<= 101`, because a window that mounted *fewer* than it promised would also
+   * satisfy an upper bound while showing the reader less than a screen.
+   */
+  assert.ok(
+    mounted === DEFAULT_WINDOW || mounted === DEFAULT_WINDOW + 1,
+    `a ${String(FLOORS)}-floor chat mounted ${String(mounted)} messages, expected ${String(DEFAULT_WINDOW)} or one more`,
+  )
+
+  // And the seam says how much is above it, because a window with no way back
+  // is a truncation.
+  assert.match(windowed, /class="iris-more"/, 'the load-more seam is missing')
+  const above = FLOORS - mounted
+  assert.ok(
+    windowed.includes(`${String(above)} earlier`) || windowed.includes(String(above)),
+    `the seam does not report the ${String(above)} messages above the window`,
+  )
+
+  // Every mounted floor is from the tail: floor 0 must not be on the page.
+  assert.equal(windowed.includes('>floor 0<'), false, 'the oldest floor is mounted')
+  assert.ok(windowed.includes(`floor ${String(FLOORS - 1)}`), 'the newest floor is not mounted')
+
+  wired.store.setState({ view: seeded })
 
   wired.dispose()
   slots.dispose()
