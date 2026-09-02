@@ -21,12 +21,27 @@ import { dirname } from 'node:path'
 /**
  * The largest value one key may hold.
  *
- * **A placeholder, and labelled as one.** The number that belongs here is what
- * one value costs to clone into the script snapshot every turn, which the
- * sandbox domain is measuring in a real frame; bytes are the wrong unit for it,
- * because structured-clone cost tracks object count rather than size and the
- * snapshot already pays 85 ms for the variable tables alone. Until that
- * measurement lands this bounds the obvious runaway and nothing finer.
+ * **Still a placeholder, but no longer for the reason first written here.**
+ * The original note said the number should be "what one value costs to clone
+ * per turn". Measured, that is not the binding cost: storage values are
+ * **strings**, and a string clones far more cheaply per byte than the object
+ * trees that make the snapshot expensive.
+ *
+ * ```
+ * one 4 MiB string value, cloned in a flat store   1.39 ms
+ * 1 MiB of the same bytes as an object tree        9.97 ms   (26k leaves)
+ * ```
+ *
+ * So a large *value* is close to free on the path this cap was meant to
+ * protect. What actually scales is the **write**: every `set` re-serialises the
+ * whole store (2.53 ms at 4 MiB), so the cost is a function of the store's
+ * total size and the write rate, not of any one value.
+ *
+ * This therefore bounds a runaway single value — which is worth bounding on its
+ * own, since one card should not be able to fill a shared file — while the
+ * question it does not answer is **how large the whole store may get**. That
+ * needs a decision rather than a constant, and it is recorded as open rather
+ * than guessed at here.
  */
 export const MAX_VALUE_BYTES = 1_048_576
 
