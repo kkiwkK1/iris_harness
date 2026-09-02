@@ -526,6 +526,31 @@ if (chatEl) observer.observe(chatEl, { childList: true, subtree: true });
 
 **它把 `#chat` 当"有新楼层了"的信号源，不是数据源。**
 
+> **⚠ 一处补正（2026-09-03）。**上面这句**只说了这个 observer**，而我当时**没读它的回调
+> 最终调用的 `injectPanel()` 做什么**。补读之后：
+>
+> ```js
+> // [银麒赎世/银麒系统面板] injectPanel()
+> var $messages = $p("#chat .mes");
+> if ($messages.length === 0) return;
+> var $lastMsg = $messages.last();
+> if (!$p("#yinqi-panel-css").length) { $p(_pd.head).append(PANEL_CSS); }   // ← 往主页面 <head> 注 CSS
+> var $dicePanel = $lastMsg.find('[id*="dice"], [class*="dice"]');
+> if ($dicePanel.length) { $dicePanel.first().before(buildPanel()); }
+> else { $lastMsg.find(".mes_text").append(buildPanel()); }                 // ← 面板挂进 .mes_text
+> ```
+>
+> **所以 `#chat` 对这张卡不只是信号源，也是挂载点。**它需要
+> **最后一条 `.mes` 里有 `.mes_text`**——空存根没有，`.find(".mes_text")` 得空集，
+> **`.append()` 在空集上是静默 no-op，面板永不出现**；还需要**主页面 `<head>` 可写**。
+>
+> **这条被引用过**：`OVERLAY-HOST.md` 方案 B 据「实际消费只有 childList」推出
+> 「一个空 `.mes` 存根真的满足它」。**前半句是我量的，后半句是我没验的一步。**
+>
+> *（`[id*="dice"]` 那个分支在本语料里**永不命中**：全语料没有任何脚本创建 id/class 含
+> `dice` 的节点——创世回廊与手机UI 里的 `dice` 全是伤害骰计算的变量名/函数名。
+> **所以 `.mes_text` 那条是唯一活着的路径。**）*
+
 **这条是对我们 DOM 结构的具体约束**，不只是"给个元素"：
 
 - 新楼层必须是 **`#chat` 子树里的新增节点**（`childList` + `subtree`）；
