@@ -65,7 +65,12 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    语料 8 卡 9 脚本 / 6 组件（银麒赎世 109 次 + 唯一 indexedDB，族代表）；ST frame 同源可用
    （UPSTREAM-FRAME-ORIGIN.md：无 sandbox、与 ST 共用一个键空间、无前缀约定）。门面：属性层可用对象、
    同步 API → 加载快照 + 写穿宿主、profile 级共享不按卡分区（跨卡串台是忠实复现，入账）、写失败报告、
-   宿主不可达时失败壳、`clear()` 抹别卡键报告。AST：165 引用里 4 个裸启动点承担全部"启动即死"，
+   宿主不可达时失败壳、`clear()` 抹别卡键报告。**宿主半 ✅**（71ec6aa：`card-storage.json` profile 级 +
+   按键 last-writer 署名、`storage.set/remove/clear` arm、`storage` 报告类别、不进 `character.delete` 遗忘序列）。
+   探针证实 `defineProperty(window,'localStorage')` 可遮蔽抛错 getter（`sessionStorage` 对照仍抛）。规格定稿：
+   脚本 frame 随 `context`、界面 frame load 后 push（界面侧 50 点全在交互期、顶层 0）、**无单值上限**（字符串
+   clone 4 MiB 1.4 ms，不是约束）、**整份 10 MiB 配额照浏览器机制**（超出 `setItem` 抛 QuotaExceededError +
+   storage 报告带 last-writer 字节分布）、写节流合并。frame 门面在建。AST：165 引用里 4 个裸启动点承担全部"启动即死"，
    按组件验收；「论坛覆盖层」预测静默降级、实测启动即死，44 复核判据。**indexedDB**：1 卡 blob 级
    图片库，本轮报告+降级，容量清理另议；枚举源内数据库读邻居扩展结构上不适用。
 8. **卡自带 ESM 依赖的代理**（族级基建）——13 卡 binding 导入 + 15 卡 MVU bundle；去重 11 个地址、
