@@ -35,9 +35,11 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
 2. ~~阅读视图窗口化~~ ✅（WINDOWING.md ②③ 层 + CI 不变式；固定开销由构建核对，只在低估时失败）
 3. **MVU 聊天级五件活**（族级：所有 MVU 卡）——8f22e5f 复读：爱衣「2 of 2 loaded and listening」、
    MVU 九条 toast 全部回来（still-starting 消失；成因是 reportGap 全走 error 通道 + eventOn 句柄被判
-   不可复制，两者皆修）。两条 fault `loadWorldInfo` / `getLorebookSettings` 门面 ✅（复读消失）。新露：界面 frame 的 TH 面缺
-   `errorCatched`/toastr/EjsTemplate（上游 predefine 两种 frame 同一套）→ 界面 frame 门面补齐，44 普查界面侧
-   成员集。楼层寻址读：每楼表已在快照 `chat[N].variables[swipe]`（677/677），frame 同步答即可，'latest'
+   不可复制，两者皆修）。两条 fault `loadWorldInfo` / `getLorebookSettings` 门面 ✅（复读消失）。界面 frame 的 TH 面 ✅（同一 `resolveValues()` 在 install 期发布同一批名字；复读爱衣仅剩 `parent.Mvu`
+   note）。`triggerSlash` 门面待建：界面侧 22 调用只用 `/send`/`/trigger`/`/echo`，两种管道 `|`/`||`
+   （UPSTREAM-SLASH.md），其他命令按名拒绝。`injectPrompts` frame 门面缺（V1.5.4 复读新露，宿主 arm 早有）。
+   classic 模式看不到 `waitGlobalInitialized`，44 量占比后裁。楼层寻址读 ✅（frame 从 `chat[N].variables[swipe]` 同步答；负数/字符串数字收、null 拒、越界抛；`'latest'` 热路
+   答案不变+不一致报 note）；'latest'
    哨兵已收；快照代价实测 224 ms 构建 + 85 ms 克隆/回合，变量表占克隆时间 91%（对象数而非字节）→ 已裁
    SNAPSHOT-TRANSPORT.md 候选一：表以 JSON 文本携带（克隆 87.7→16.8 ms，payload 反而 +1 MiB——按字节
    决策会选反），frame 被问时同步 parse、缓存随快照丢；增量快照出局（跨回合状态 + 过期表良构静默）；与
