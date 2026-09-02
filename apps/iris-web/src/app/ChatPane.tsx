@@ -14,6 +14,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
+import { buttonEventName } from '../sandbox/button-event.ts'
+import { emitToCard } from './card-bus.ts'
 import { Composer } from './Composer.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
 import { PromptPanel } from './PromptPanel.tsx'
@@ -173,21 +175,23 @@ export function ChatPane(): ReactElement {
         onPreviewPrompt={() => setExplaining({ turn: undefined })}
         onPressButton={button => {
           /*
-           * The press is recorded, not delivered — **for now, and loudly**.
-           *
-           * Delivering it means emitting `${scriptId}_${cyrb53(name)}` into the
-           * card's frames, and that hash is being consolidated into one shared
-           * module rather than copied a third time (it already exists twice
-           * host-side). A copy made here to finish the wiring sooner is exactly
-           * the shape that produced two incompatible `getChatMessages`.
-           *
-           * Reported by name rather than silently dropped: a button that does
-           * nothing and says nothing is worse than no button, and this way the
-           * gap is visible in the same list every other card gap appears in.
+           * The button id **is** the event name, computed here and computed
+           * again by the card, with nothing checking that the two agree. When
+           * they do not, the card's handler is simply never called — no error,
+           * no warning, a button that does nothing. That is why the name comes
+           * from one shared builder over one shared hash rather than being
+           * assembled at either end.
+           */
+          const event = buttonEventName(button.scriptId, button.name)
+          if (emitToCard(event)) return
+
+          /*
+           * Nothing was listening because no card is running — not the same as a
+           * card that ignored it, and only this one is worth saying. A press that
+           * vanishes silently is the failure this whole seam exists to avoid.
            */
           actions.addCardReport(
-            `button "${button.name}" (${button.scriptName}) was pressed;`
-              + ' Iris cannot deliver it yet — the button event name is not wired',
+            `button "${button.name}" (${button.scriptName}) was pressed while no card scripts are running`,
           )
         }}
       />

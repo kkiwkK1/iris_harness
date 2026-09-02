@@ -112,6 +112,21 @@ export interface RunningCardScripts {
    * here would be a second, quieter opinion about what a snapshot contains.
    */
   refresh: () => Promise<void>
+  /**
+   * Emit one event into every frame of this card.
+   *
+   * **Every frame, not the one that looks relevant.** Upstream's bus is
+   * card-wide — one `eventSource` that all of a card's scripts share — so a
+   * listener registered by one script can be fired by another's work, and that
+   * is the feature rather than an accident. Here the scripts may be spread
+   * across frames, and nothing outside them knows which frame holds a given
+   * listener. A frame with no listener for the name simply does nothing with it.
+   *
+   * The button bar is the first caller: a press emits `${scriptId}_${hash}`, the
+   * name the card computed for itself, and delivery to the wrong frame is
+   * indistinguishable from no delivery at all — both are silent.
+   */
+  emit: (event: string, args: readonly unknown[]) => void
   /** Tear every frame down. Idempotent. */
   dispose: () => void
 }
@@ -314,6 +329,11 @@ export function startCardScripts(
   })()
 
   return {
+    emit: (event, args) => {
+      if (disposed) return
+      for (const card of cards) card.emit(event, [...args])
+    },
+
     refresh: async () => {
       if (disposed) return
       const context = await env.context(chatId, characterId)

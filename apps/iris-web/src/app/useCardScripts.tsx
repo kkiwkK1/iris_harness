@@ -26,6 +26,7 @@ import type { ReactElement } from 'react'
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
 import { actionsOf, tapHostEvents } from '../client/store.ts'
 import { startCardScripts } from '../sandbox/card-scripts.ts'
+import { registerCardEmitter } from './card-bus.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import { librariesFor } from '../sandbox/libraries.ts'
 import {
@@ -352,7 +353,18 @@ export function CardScriptFrames(): ReactElement {
       void running.refresh()
     })
 
+    /*
+     * Publish the way in, so the interface can reach this card.
+     * `registerCardEmitter` returns a disposer that only clears the slot if it
+     * is still holding *this* emitter — a late teardown from a previous card
+     * would otherwise silence the one that replaced it.
+     */
+    const unregister = registerCardEmitter((event, args) => {
+      running.emit(event, args)
+    })
+
     return () => {
+      unregister()
       untap()
       running.dispose()
       actionsOf(store).setRunStates([])
