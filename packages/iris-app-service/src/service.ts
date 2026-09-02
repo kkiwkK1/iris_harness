@@ -32,7 +32,7 @@ import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } fr
 
 import { ConnectionStore } from './connections.ts'
 import type { ChatStore } from './chats.ts'
-import type { ChatEntry } from './entry.ts'
+import type { ChatEntry, ScriptInjection } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
 import { charWorldbookNames, WorldbookStore } from './worldbooks.ts'
@@ -1778,6 +1778,39 @@ export class IrisAppService {
  * @param entry - the conversation holding the injections.
  * @returns one contribution per live injection.
  */
+/**
+ * Where one injection goes, decided exhaustively.
+ *
+ * **A `switch` with a `never` default rather than a chain of conditions**, and
+ * the difference is not tidiness. This was
+ * `position === 'at-depth' ? … : { order: position === 'before' ? 850 : 950 }`,
+ * which handles two positions by name and gives **every other value the
+ * `after` slot** — silently, with no compile error and no report. Adding a
+ * fifth `ScriptPromptPosition` would have placed a card's text somewhere nobody
+ * chose, and nothing would have said so.
+ *
+ * The same shape as `Set<Code>` against `Record<Code, true>`: a construct that
+ * only complains about an *extra* case cannot complain about a missing one.
+ * @param injection - the registered injection.
+ * @returns its placement, or undefined when the position asks for none.
+ */
+function placementFor(injection: ScriptInjection): Contribution['placement'] | undefined {
+  switch (injection.position) {
+    case 'at-depth':
+      return { kind: 'depth', depth: injection.depth, role: injection.role ?? 'system', order: 2 }
+    case 'before':
+      return { kind: 'system', order: 850 }
+    case 'after':
+      return { kind: 'system', order: 950 }
+    case 'none':
+      return undefined
+    default: {
+      const unreachable: never = injection.position
+      throw new AppError('internal', `unknown injection position ${String(unreachable)}`)
+    }
+  }
+}
+
 export function injectedContributions(entry: ChatEntry): Contribution[] {
   const contributions: Contribution[] = []
   // **Sorted by key, because upstream is**: `getExtensionPrompt` walks
@@ -1795,16 +1828,16 @@ export function injectedContributions(entry: ChatEntry): Contribution[] {
   for (const key of [...entry.extensionPrompts.keys()].sort()) {
     const injection = entry.extensionPrompts.get(key)
     if (injection === undefined) continue
-    // `position: 'none'` is registered but never assembled. Upstream's `-1` is
+    const placement = placementFor(injection)
+    // `position: 'none'` is registered but never assembled — upstream's `-1` is
     // queried by no call site, so such an injection exists to be overwritten or
-    // removed by key and contributes no text — a distinct state from absent.
-    if (injection.position === 'none') continue
+    // removed by key and contributes no text, which is a distinct state from
+    // absent. It is the one position that yields no placement.
+    if (placement === undefined) continue
     contributions.push({
       id: `script.${key}`,
       label: `Script injection (${key})`,
-      placement: injection.position === 'at-depth'
-        ? { kind: 'depth', depth: injection.depth, role: injection.role ?? 'system', order: 2 }
-        : { kind: 'system', order: injection.position === 'before' ? 850 : 950 },
+      placement,
       text: injection.value,
     })
   }
