@@ -162,6 +162,40 @@ export function lineTurns(session: Session): number[] {
   return turns
 }
 
+/**
+ * Whether each projected line is a system message, in line order.
+ *
+ * Mirrors {@link lineTurns} deliberately: the two walks must agree on what a
+ * line *is*, and the way they stop agreeing is by being written differently.
+ *
+ * `is_system` is not a field this host models — an imported system row becomes
+ * an ordinary candidate and the flag rides through `iris/st-meta` — so this
+ * reads it back from there rather than from the log's own shape.
+ * @param session - the chat log.
+ * @returns one flag per line, in the same order as {@link lineTurns}.
+ */
+export function lineSystemFlags(session: Session): boolean[] {
+  const bySeq = new Map<number, boolean>()
+  for (const event of session.events) {
+    if (event.type !== 'iris/st-meta') continue
+    bySeq.set(event.data.seq, event.data.fields['is_system'] === true)
+  }
+
+  const flags: boolean[] = []
+  const seen = new Set<number>()
+  for (const event of session.events) {
+    if (event.type === 'user/message') {
+      flags.push(bySeq.get(event.seq) ?? false)
+      continue
+    }
+    if (event.type !== 'assistant/message') continue
+    if (seen.has(event.data.turn)) continue
+    seen.add(event.data.turn)
+    flags.push(bySeq.get(event.seq) ?? false)
+  }
+  return flags
+}
+
 /** One live conversation and everything bound to it. */
 export class ChatEntry {
   readonly chatId: string

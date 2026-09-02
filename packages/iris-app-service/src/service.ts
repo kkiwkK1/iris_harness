@@ -38,7 +38,7 @@ import { ScriptButtonStore } from './script-buttons.ts'
 import { charWorldbookNames, WorldbookStore } from './worldbooks.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
-import { lineTurns } from './entry.ts'
+import { lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
 import type { PruneOptions } from './prune.ts'
@@ -1752,14 +1752,51 @@ export function injectedContributions(entry: ChatEntry): Contribution[] {
  */
 function turnForMessage(
   entry: ChatEntry,
-  messageId: number | 'latest' | undefined,
+  messageId: number | string | null | undefined,
 ): number | undefined {
-  // `'latest'` is upstream's sentinel for the newest floor, and two corpus
-  // cards pass it verbatim. Here it lands on the same answer as an absent id —
-  // the message scope with no `message_id` already means "the newest" — so the
-  // translation is one line rather than a second addressing mode.
-  if (messageId === undefined || messageId === 'latest') return undefined
-  const turn = lineTurns(entry.session)[messageId]
+  const lines = lineTurns(entry.session)
+
+  // **`null` is refused by name, and this is a policy rather than an
+  // improvement.** Upstream does not normalise it either, but its guards let it
+  // through by accident: `_.inRange(null, …)` is true and `chat.at(null)` is
+  // `chat.at(0)`, so a card that computed `null` for its target silently reads
+  // — and on the write path silently *overwrites* — the opening message. A
+  // read-modify-write aimed at floor 0 destroys data and then reports success,
+  // which is the one class of return value worth refusing outright.
+  if (messageId === null) {
+    throw invalid('message_id is null; SillyTavern would silently address the first message instead')
+  }
+  if (messageId === undefined) return undefined
+
+  // `'latest'` means the last **non-system** message, on the read path *and*
+  // the write path. Upstream reads the last non-system message and writes the
+  // last message, so a chat whose final row is a system message reads one floor
+  // and writes another — silently, and only sometimes. One rule here, so this
+  // host carries one fewer inconsistency rather than a matching one.
+  if (messageId === 'latest') {
+    const system = lineSystemFlags(entry.session)
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      if (system[index] === true) continue
+      return lines[index]
+    }
+    return undefined
+  }
+
+  // Numeric strings are accepted because upstream accepts them in effect:
+  // `_.inRange` and `Array.prototype.at` both coerce, so `'3'` works there, and
+  // a card that built its id by concatenation is not asking for anything
+  // upstream would have refused.
+  const asNumber = typeof messageId === 'string' ? Number(messageId) : messageId
+  if (!Number.isInteger(asNumber)) {
+    throw invalid(
+      `message_id must be an integer, "latest", or omitted; received ${JSON.stringify(messageId)}`,
+    )
+  }
+
+  // Negative ids count from the end — the domain of `Array.prototype.at`, which
+  // is what upstream indexes the chat with.
+  const index = asNumber < 0 ? lines.length + asNumber : asNumber
+  const turn = lines[index]
   // Refused rather than clamped: an id past the end is a card that has
   // miscounted, and answering the newest floor instead would hand it a table it
   // did not ask for and cannot tell apart from the one it wanted.

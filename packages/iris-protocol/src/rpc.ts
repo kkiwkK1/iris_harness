@@ -115,23 +115,27 @@ export const requestSchemas = {
   /**
    * Which floor a message-scope read or write addresses.
    *
-   * **A number or the string `'latest'`.** The sentinel is not decoration: two
-   * corpus cards write `Mvu.getMvuData({type:'message', message_id:'latest'})`
-   * verbatim, and MVU passes it straight through. A number-only schema rejects
-   * them at the door — and it would do so precisely as the frame starts
-   * forwarding explicit ids, so the change that opens this path would break the
-   * cards already using it.
+   * **An integer, a numeric string, `'latest'`, or omitted.** The domain is
+   * upstream's, and it is wider than it looks: `_.inRange` and
+   * `Array.prototype.at` both coerce, so `'3'` works there, and `at` gives a
+   * negative its from-the-end meaning. Two corpus cards write
+   * `message_id: 'latest'` verbatim.
    *
-   * `'latest'` and an absent id mean the same thing to this host (the newest
-   * floor). It is still accepted explicitly rather than folded into "absent",
-   * because a card that says `'latest'` is stating an intention, and a schema
-   * that refuses to hear it teaches nothing about why.
+   * **The range is deliberately not checked here.** How far a chat extends is
+   * not something a wire schema knows, and `-1` is only meaningful against a
+   * length — so the shape is checked here and the domain in `turnForMessage`,
+   * where an out-of-range id can be refused by name against the chat it was
+   * addressed to. Pinning `min(0)` would reject the negatives upstream accepts;
+   * pinning a maximum would be guessing.
+   *
+   * `null` is refused rather than normalised, and the reason lives with the
+   * behaviour in `turnForMessage`: upstream's guards let it through to floor 0.
    */
   'script.getVariables': z.object({
     chatId: z.string().min(1),
     scope: z.enum(['message', 'chat', 'global', 'script']),
     /** For `message`: which turn's candidate. Absent means the newest. */
-    messageId: z.number().int().min(0).optional(),
+    messageId: z.union([z.number().int(), z.string()]).optional(),
     /** For `script`: whose partition. */
     scriptId: z.string().min(1).optional(),
   }),
@@ -154,7 +158,7 @@ export const requestSchemas = {
     chatId: z.string().min(1),
     scope: z.enum(['message', 'chat', 'global', 'script']),
     /** For `message`: which turn's candidate. Absent means the newest. */
-    messageId: z.number().int().min(0).optional(),
+    messageId: z.union([z.number().int(), z.string()]).optional(),
     /** For `script`: whose partition. */
     scriptId: z.string().min(1).optional(),
     op: z.enum(['replace', 'insertOrAssign', 'insert', 'delete']),

@@ -760,3 +760,33 @@ not the prompt's. Nothing errors, and the table is well-formed.
 **What would overturn this.** A card that visibly depends on the two being
 different — or a measurement showing upstream's per-message tables actually
 differ between a user line and its reply often enough to matter.
+
+## 15. `message_id`: two upstream behaviours not copied
+
+The accepted domain is upstream's, and wider than it looks: an integer,
+a **numeric string** (`_.inRange` and `Array.prototype.at` both coerce), a
+**negative** counting from the end (`at`'s own meaning), `'latest'`, or omitted.
+Anything else — `'last'`, `NaN`, a fraction, out of range — is refused by name,
+which is what upstream does too.
+
+Two things are deliberately different.
+
+**`null` is refused; upstream silently addresses floor 0.** Upstream does not
+normalise `null` either, but its guards let it through by accident:
+`_.inRange(null, …)` is true and `chat.at(null)` is `chat.at(0)`. So a card that
+computed `null` for its target reads the opening message — and on the write path
+**overwrites** it. A read-modify-write aimed at floor 0 destroys data and then
+reports success, which is the one class of outcome worth refusing rather than
+reproducing. This is the refusal policy, not an improvement.
+
+**`'latest'` means one floor here, and two floors upstream.** Upstream's read
+resolves `'latest'` to the last **non-system** message and its write resolves it
+to the last message. In a chat whose final row is a system message those are
+different floors, so a card writes to one and reads from the other — silently,
+and only in that case. This host uses the last non-system message on both paths:
+**one fewer inconsistency than upstream rather than a matching one**, and a
+write through `'latest'` is always visible to a read through `'latest'`.
+
+**What would overturn this.** A card that depends on `'latest'` writing to a
+system row, or on `null` meaning "the beginning" — both would show up as a card
+that works upstream and refuses here, with our own error naming the reason.
