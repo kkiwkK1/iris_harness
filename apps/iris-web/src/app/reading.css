@@ -513,7 +513,22 @@
  * not.
  */
 .iris-interfaces__slot iframe[data-iris-sizing='viewport'] {
-  height: var(--iris-app-frame-height);
+  /*
+   * The fallback is not decoration — it is the difference between this rule
+   * degrading and this rule detonating.
+   *
+   * `var()` with no fallback and no definition is invalid at computed-value
+   * time, so `height` reverts to its initial value `auto`, and an iframe with
+   * `height:auto` is **150px** — a worse fault than the clipping this replaced,
+   * and one that appears only when the token is missing rather than when this
+   * file is wrong.
+   *
+   * It nearly happened: the rule was committed in one change and the token in
+   * `tokens.css` was left behind in another, so the tree carried a rule whose
+   * variable did not exist. A declaration that reaches across files for its
+   * value should survive the other file arriving late.
+   */
+  height: var(--iris-app-frame-height, 100vh);
 }
 
 /*

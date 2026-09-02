@@ -76,6 +76,15 @@
    * than full-bleed: these cards lay themselves out against the viewport they
    * are handed, and one drawn for a phone does not improve at 1600px.
    */
+  /*
+   * How tall a card that sizes itself to its viewport gets to be.
+   *
+   * Not a measurement — these cards clip their own overflow, so no measurement
+   * of them exists. A full screen is the most that can be given without
+   * inventing a number, and it is the knob to turn if a card still does not fit.
+   */
+  --iris-app-frame-height: 100vh;
+
   --iris-interface-max: 900px;
   --iris-turn-gap: 40px;
   --iris-radius: 3px;
