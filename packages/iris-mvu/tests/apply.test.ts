@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { applyCommands, extractCommands, type MvuData } from '../src/index.ts'
+import { applyCommands, extractCommands, type CommandInfo, type MvuData } from '../src/index.ts'
 
 /** A state tree shaped the way an `[InitVar]` entry declares one. */
 function initialState(): MvuData {
@@ -160,4 +160,27 @@ test('strictSet writes the whole leaf, destroying the description', () => {
   const result = applyCommands(extractCommands(`_.set('当前时间', 'x');`), initialState(), { strictSet: true })
 
   assert.equal(result.data.stat_data.当前时间, 'x')
+})
+
+test('a command type the fold does not handle is rejected, never dropped', () => {
+  /*
+   * The switch over `CommandType` had no `default`. All five members were
+   * handled, so it compiled and behaved — but a sixth would have been
+   * extracted, counted by `scanDialects`, and then neither applied nor
+   * rejected. **A silently dropped command is the worst of the three
+   * outcomes**: the caller sees a non-zero command count and no effect, and
+   * nothing names the command that did nothing.
+   *
+   * The guard is two guards. A `never` assignment makes a new member a compile
+   * error, which is where it should be caught. This test covers the other
+   * direction — a value arriving at run time that the type says cannot exist,
+   * from a hand-edited log or a newer build's data read by an older one.
+   */
+  const rogue = { type: 'teleport', full_match: '', args: ['a'], reason: '' } as unknown as CommandInfo
+  const result = applyCommands([rogue], { initialized_lorebooks: {}, stat_data: { a: 1 } })
+
+  assert.equal(result.failures.length, 1, 'an unknown command was dropped without a word')
+  assert.match(result.failures[0]?.reason ?? '', /unknown command type/u)
+  assert.equal(result.changed, false)
+  assert.deepEqual(result.data.stat_data, { a: 1 }, 'an unknown command changed the tree')
 })

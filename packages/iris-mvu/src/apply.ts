@@ -345,6 +345,27 @@ export function applyCommands(
         display_data[to] = renderChange(undefined, displayValue(moved), command.reason)
         break
       }
+
+      default: {
+        /*
+         * Two guards in one, because a command type can arrive from two
+         * directions.
+         *
+         * The `never` assignment fails to **compile** if `CommandType` grows a
+         * member this switch does not handle — without it, a new type would be
+         * extracted, counted by `scanDialects`, and then neither applied nor
+         * rejected. A command that is silently dropped is the worst of the three
+         * outcomes: the caller sees commands greater than zero and no effect,
+         * and nothing anywhere says which command did nothing.
+         *
+         * The rejection covers the other direction: a value that reaches here
+         * at run time despite the type saying it cannot — a hand-edited log, or
+         * a future build's data read by an older one.
+         */
+        const unreachable: never = command.type
+        reject(command, `unknown command type "${String(unreachable)}"`)
+        continue
+      }
     }
 
     changed = true
