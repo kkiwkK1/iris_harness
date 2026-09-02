@@ -38,8 +38,10 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    不可复制，两者皆修）。两条 fault `loadWorldInfo` / `getLorebookSettings` 门面 ✅（复读消失）。新露：界面 frame 的 TH 面缺
    `errorCatched`/toastr/EjsTemplate（上游 predefine 两种 frame 同一套）→ 界面 frame 门面补齐，44 普查界面侧
    成员集。楼层寻址读：每楼表已在快照 `chat[N].variables[swipe]`（677/677），frame 同步答即可，'latest'
-   哨兵已收；快照代价实测 224 ms 构建 + 85 ms 克隆/回合，变量表占克隆时间 91%（对象数而非字节）→ 49 出
-   「按楼字符串化、frame 按需 parse」设计；摘表与改读法必须同批。**跨 frame 前提**：上游两种 frame 读同一个 `Mvu` 是因为共享同一个 parent 页面；我们两种
+   哨兵已收；快照代价实测 224 ms 构建 + 85 ms 克隆/回合，变量表占克隆时间 91%（对象数而非字节）→ 已裁
+   SNAPSHOT-TRANSPORT.md 候选一：表以 JSON 文本携带（克隆 87.7→16.8 ms，payload 反而 +1 MiB——按字节
+   决策会选反），frame 被问时同步 parse、缓存随快照丢；增量快照出局（跨回合状态 + 过期表良构静默）；与
+   7b 楼层读门面同批切换，浏览器常数在真 frame 复核。摘表（WINDOWING）是其后一步，与改读法必须同批。**跨 frame 前提**：上游两种 frame 读同一个 `Mvu` 是因为共享同一个 parent 页面；我们两种
    frame 挂两个虚拟 parent，`parent.Mvu` 在界面 frame 恒 undefined。MVU 11 成员零响应式/零 this、
    6 同步（UPSTREAM-MVU-INIT-PATH.md 附录二）→ 按名 RPC 会把同步变异步，**裁方向：补前提（界面 frame
    作为聊天 realm 的子 frame，继承同一不透明源），不加中继**，7b 出设计。脚本 frame 楼层寻址
