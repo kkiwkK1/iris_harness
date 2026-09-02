@@ -24,6 +24,7 @@ import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
+import { describeOverlayAttempt } from './overlay-report.ts'
 import {
   describeHeightSources,
   heightSignal,
@@ -716,11 +717,39 @@ try {
  */
 function reportBodySummary(run: string, post: (message: FromFrame) => void): void {
   /*
-   * Only for a frame that was given markup. A script frame's body is script tags
-   * and nothing else, so a summary of it would be a permanent line saying that
-   * the frame that was never going to draw has not drawn.
+   * A script frame gets a **different** report, not no report.
+   *
+   * The summary below is for a frame that was given markup; a script frame's
+   * body is script tags and nothing else, so running it there would put a
+   * permanent line under every card saying that the frame which was never going
+   * to draw has not drawn.
+   *
+   * But [OVERLAY-CARDS.md] found a third class of card that draws *into* the
+   * script frame: it never touches `parent.*`, and upstream's `parent_jquery.js`
+   * makes its `$` the page's, so `.appendTo('body')` lands on the host page.
+   * Here `$` is the frame's own, so the card's whole interface is built in a
+   * frame nobody can see — and the early return meant we said nothing at all
+   * about the one case where silence is wrong.
    */
-  if (document.body?.hasAttribute('data-iris-interface') !== true) return
+  if (document.body?.hasAttribute('data-iris-interface') !== true) {
+    setTimeout(() => {
+      const body = document.body
+      if (body === null) return
+      const built = [...body.children].filter(
+        child => child.tagName !== 'SCRIPT' && child.tagName !== 'STYLE',
+      )
+      const line = describeOverlayAttempt({
+        built: built.length,
+        tags: built.map(child => child.tagName.toLowerCase()),
+        // The frame's own viewport, which is 0×0 for a script frame — the
+        // reason every measurement the card takes comes back zero.
+        viewportWidth: document.documentElement.clientWidth,
+        viewportHeight: document.documentElement.clientHeight,
+      })
+      if (line !== undefined) post({ iris: run, type: 'note', scriptId: undefined, message: line })
+    }, BLANK_AFTER_MS)
+    return
+  }
 
   setTimeout(() => {
     const body = document.body

@@ -827,6 +827,47 @@ class InMemoryClient implements FakeClient {
         )
       }
 
+      case 'debug.reports': {
+        // Placeholder in this client's existing refusal pattern, so the tree
+        // compiles; the sandbox half is 7b's to design. Refused rather than
+        // answered with an empty page for the same reason the host refuses when
+        // it holds no buffer: declaring the kinds with no records reads as
+        // "collected, nothing happened", and a fake that has collected nothing
+        // would be asserting all-clear about a host that is not there.
+        throw new FakeRpcError(
+          'unsupported',
+          'the fake client retains no diagnostic reports: it has no host bus to collect them from,'
+            + ' and an empty page would read as "nothing went wrong" rather than "nothing was watching"',
+        )
+      }
+
+      case 'debug.reports': {
+        /*
+         * Answered, and the answer is **empty** rather than invented.
+         *
+         * This fake seeds a lot on purpose — three script rows in three
+         * different states, a connection profile whose stored name contradicts
+         * its route — because a page cannot be built against states that never
+         * appear. Diagnostics are the one place where that reasoning inverts: a
+         * report says *something went wrong in the host*, and this client has no
+         * host. Seeding three plausible failures would let a page be developed
+         * against shapes that no real host ever produces, and the page would
+         * then be pinned to this file's imagination instead of to the reporter.
+         *
+         * So the three counters carry the true reading for a client that has
+         * retained nothing: nothing held, nothing dropped, no kinds seen. An
+         * empty bundle is a fact here, not a gap — the same call `worldbook.names`
+         * makes when a profile genuinely has no books.
+         *
+         * If the debug page needs developable fixtures, they belong behind an
+         * explicit option on this client rather than in its default answer, so
+         * that "the page shows nothing" and "the page was given invented data"
+         * stay distinguishable.
+         */
+        void params
+        return { reports: [], dropped: 0, oldest: 0, kinds: [] }
+      }
+
       default: {
         // Exhaustiveness guard: a method added to the protocol without an arm
         // here becomes a type error rather than a runtime surprise.
