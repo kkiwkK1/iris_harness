@@ -150,7 +150,10 @@ test('the snapshot shows a table-less user row its turn’s table', async (t) =>
   // exactly the arithmetic the first version of these tests got wrong.
   const userRow = snapshot.chat.find(line => line.mes === 'first')
   assert.equal(userRow?.is_user, true)
-  const projected = (userRow?.['variables'] as { stat_data?: unknown }[] | undefined)?.[0]
+  const carried = userRow?.['variables']
+  const projected = carried === undefined
+    ? undefined
+    : (JSON.parse(String(carried)) as { stat_data?: unknown }[])[0]
   assert.ok(projected?.stat_data !== undefined, 'the user row still shows no table to a restore walk')
 })
 
@@ -163,8 +166,12 @@ test('the projection fills absences and never overwrites a real table', async (t
   // `iris/st-meta`. That is the genuine article — an imported chat's real data —
   // and the projection must leave it exactly as it found it.
   const row = snapshot.chat.find(line => line.mes === 'second')
-  const owned = (row?.['variables'] as { stat_data?: { owner?: string } }[])[0]
-  assert.equal(owned?.stat_data?.owner, 'USER_ROW', 'the projection overwrote an imported table')
+  // Parsed, because the snapshot carries tables as JSON text now — clone cost
+  // is per object, so the trees were 45% of its bytes and ~91% of its clone
+  // time. The value is the same array the file holds; only the encoding
+  // differs, and only in transit.
+  const tables = JSON.parse(String(row?.['variables'])) as { stat_data?: { owner?: string } }[]
+  assert.equal(tables[0]?.stat_data?.owner, 'USER_ROW', 'the projection overwrote an imported table')
 })
 
 test('the export path is untouched — a table-less user row stays table-less on disk', async (t) => {
@@ -205,7 +212,18 @@ test('the export path is untouched — a table-less user row stays table-less on
  * @returns whether a replay would stop at this floor.
  */
 function carriesState(line: { variables?: unknown, swipe_id?: number } | undefined): boolean {
-  const table = (line?.variables as unknown[] | undefined)?.[line?.swipe_id ?? 0]
+  // **The parse is the boundary, and it belongs to the façade.** The host now
+  // ships these tables as JSON text, because clone cost is per object and the
+  // trees were ~91% of the snapshot's clone time. A *card* must still see the
+  // array — upstream's predicate indexes `variables[swipe_id]`, and against a
+  // string that yields a character, so a card transcribing it would silently
+  // read nothing. So the façade parses on the way in, and this predicate is
+  // applied to the parsed form: what it checks is that the tables survive the
+  // encoding, not that a card should do the decoding.
+  const carried = line?.variables
+  if (carried === undefined) return false
+  const tables = JSON.parse(String(carried)) as unknown[]
+  const table = tables[line?.swipe_id ?? 0]
   return typeof table === 'object' && table !== null && 'stat_data' in table
 }
 

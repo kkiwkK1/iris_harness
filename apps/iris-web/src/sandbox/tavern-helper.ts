@@ -399,13 +399,175 @@ export interface CardChatMessage {
 }
 
 /**
+ * Parsed floor tables, keyed by the row they came from.
+ *
+ * A `WeakMap` on the row object, which is what makes the cache's lifetime right
+ * without anyone managing it: a new snapshot brings new row objects, so the old
+ * parses become unreachable the moment the snapshot they belong to does. A cache
+ * keyed by floor number would have needed explicit invalidation, and in the
+ * window before someone wrote that, it would have answered from the previous
+ * turn's data.
+ */
+const parsedFloors = new WeakMap<ScriptChatMessage, readonly unknown[]>()
+
+/**
+ * The tables one floor's JSON text encodes.
+ *
+ * Takes the **text**, not the row, and that signature is load-bearing: the lazy
+ * getter installed by `restoreFloorTables` replaces the `variables` property, so
+ * anything that parses by re-reading that property calls the getter that called
+ * it. The first version did exactly that and every direct read of a floor blew
+ * the stack — one of the two shapes where a cache and a lazy accessor over the
+ * same name go wrong (the other is answering from a stale parse).
+ * @param text - the row's `variables`, as JSON.
+ * @param report - where to say it could not be read.
+ * @returns the tables, indexed by swipe; empty when the text cannot be trusted.
+ */
+function parseTables(
+  text: string,
+  report?: (message: string, failed: boolean) => void,
+): readonly unknown[] {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    // The contract says an array indexed by swipe. A different shape is the
+    // host's fault, not the card's, and it is worth saying which.
+    if (Array.isArray(parsed)) return parsed
+    report?.(
+      'a floor\u2019s variable tables are not the array the contract describes'
+      + ` (${typeof parsed}) \u2014 it was read as empty rather than guessed at`,
+      false,
+    )
+    return []
+  } catch (error: unknown) {
+    /*
+     * Reported and read as empty. A truncated or corrupt table is a transport
+     * fault, and letting the parse throw out of a synchronous read no card
+     * guards would turn one bad floor into a dead card.
+     */
+    report?.(
+      'a floor\u2019s variable tables could not be parsed: '
+      + (error instanceof Error ? error.message : String(error))
+      + ' \u2014 it was read as empty',
+      true,
+    )
+    return []
+  }
+}
+
+/**
+ * One floor's per-swipe variable tables, parsed once.
+ *
+ * **`variables` arrives as JSON text**, not as a tree, and that is a transport
+ * decision with a measurement behind it: structured clone charges per object
+ * rather than per byte. Measured in a real frame, 4 MiB of nested tables clone
+ * in 24.21 ms and the same content as one string in 1.77 ms — 16.5× — while
+ * parsing the **one floor** a card asked for costs 0.01 ms. So the snapshot
+ * arrives cheap and a reader pays only for what it reads.
+ *
+ * Here at module scope rather than inside the surface's closure because there
+ * are **two** readers — `swipes_data` on every message this file hands back, and
+ * `getVariables({message_id})` — and two parses of the same text would double
+ * the one cost this design exists to control, while two caches would disagree
+ * about which floor had been read.
+ * @param message - the floor, as the snapshot holds it.
+ * @param report - where to say that a floor's text could not be read; omitted by
+ *   callers with no channel, since a missing report is better than a throw out
+ *   of a synchronous read a card does not guard.
+ * @returns the tables, indexed by swipe. Empty when there are none to read.
+ */
+function floorTables(
+  message: ScriptChatMessage,
+  report?: (message: string, failed: boolean) => void,
+): readonly unknown[] {
+  const cached = parsedFloors.get(message)
+  if (cached !== undefined) return cached
+
+  const raw = message['variables']
+  /*
+   * Already an array: either the host sent one (older snapshots did) or the
+   * lazy getter below has resolved this row. Both are the same fact — the
+   * tables are in hand — and accepting both is what lets the getter be lazy
+   * without every reader knowing about it.
+   */
+  if (Array.isArray(raw)) return raw
+
+  const text = raw
+  if (typeof text !== 'string' || text === '') {
+    parsedFloors.set(message, [])
+    return []
+  }
+
+  const tables = parseTables(text, report)
+  parsedFloors.set(message, tables)
+  return tables
+}
+
+/**
+ * Make every floor's `variables` read as the tables, without parsing them all.
+ *
+ * **The case this exists for is a card reading the field directly.** MVU's
+ * restore guard is `_.has(chat[i].variables[swipe_id], 'stat_data')`, and on the
+ * JSON *text* `variables[swipe_id]` yields a single **character** — so `_.has`
+ * of a one-character string is false, forever, silently. The card then decides
+ * there is nothing to restore. No error, no report, and a save that looks empty.
+ *
+ * So the encoding cannot leak past this boundary. Restoring it eagerly would
+ * throw away what the encoding bought — parsing all 677 rows of the longest
+ * corpus chat costs the 7.75 ms the text transport exists to avoid — so each row
+ * gets a **getter** that parses that row on first read and remembers. A card
+ * touching one floor pays for one floor; a card iterating the chat and reading
+ * only `mes` pays for none.
+ *
+ * `configurable` so the definition can be replaced when a later snapshot brings
+ * the same row object, and enumerable/writable like the plain property it
+ * replaces, so `{...row}` and `JSON.stringify(row)` behave as they did.
+ * @param chat - the snapshot's chat array, mutated in place.
+ * @param report - where to say a floor could not be read.
+ */
+export function restoreFloorTables(
+  chat: readonly ScriptChatMessage[],
+  report?: (message: string, failed: boolean) => void,
+): void {
+  for (const row of chat) {
+    if (typeof row['variables'] !== 'string') continue
+    /*
+     * In place, so object identity survives. Upstream hands cards the live chat
+     * objects, and a card that writes `chat[i].something = x` expects the write
+     * to be seen by the next reader — copying the rows here would silently break
+     * that for every field, not just this one.
+     */
+    const text = row['variables']
+    Object.defineProperty(row, 'variables', {
+      get: () => {
+        /*
+         * Replaces itself with the value on first read, which is the cache and
+         * also the end of the laziness for this row: every later read is a plain
+         * property, so nothing pays for the getter twice and no other reader has
+         * to know one was ever there.
+         */
+        const tables = parseTables(text, report)
+        Object.defineProperty(row, 'variables', {
+          value: tables,
+          writable: true,
+          configurable: true,
+          enumerable: true,
+        })
+        return tables
+      },
+      configurable: true,
+      enumerable: true,
+    })
+  }
+}
+
+/**
  * Normalise a floor's per-swipe variables to one table per swipe.
  *
- * The data is already in the snapshot — `chat[i].variables[swipe_id]`, the same
- * position upstream keeps it — so this is derivation with no new transport, per
- * `FLOOR-VARIABLES.md`. Holes are filled with `{}` rather than left sparse: a
- * swipe nobody has written variables for has an empty table, and `undefined`
- * would make "no variables yet" indistinguishable from "out of range".
+ * The data is already in the snapshot — the same position upstream keeps it — so
+ * this is derivation with no new transport, per `FLOOR-VARIABLES.md`. Holes are
+ * filled with `{}` rather than left sparse: a swipe nobody has written variables
+ * for has an empty table, and `undefined` would make "no variables yet"
+ * indistinguishable from "out of range".
  *
  * Length follows the **swipes**, not the variables. A floor can have more swipes
  * than recorded tables (the usual case — only swipes that ran a variable update
@@ -419,9 +581,15 @@ function swipeVariables(
   message: ScriptChatMessage,
   swipes: readonly string[],
 ): Record<string, unknown>[] {
-  const recorded = Array.isArray(message['variables'])
-    ? (message['variables'] as unknown[])
-    : []
+  /*
+   * No report channel here on purpose. This runs for **every** message this file
+   * hands a card, so a corrupt floor would report once per read of the chat
+   * rather than once per floor — and the same text is parsed through
+   * `floorTables`, which does report when a card asks for that floor by number.
+   * One cache means the corrupt floor is diagnosed exactly once, by the reader
+   * that was actually asking about it.
+   */
+  const recorded = floorTables(message)
   return swipes.map((_unused, at) => {
     const table = recorded[at]
     return typeof table === 'object' && table !== null ? (table as Record<string, unknown>) : {}
@@ -829,7 +997,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     for (let at = chat.length - 1; at >= 0; at -= 1) {
       const row = chat[at]
       if (row === undefined || !isAddressable(row)) continue
-      return tableOf(row)
+      return tableOf(member, row)
     }
     return undefined
   }
@@ -837,10 +1005,17 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
   /**
    * One row's table for the swipe it is showing.
    *
-   * Read through the index signature with a runtime check rather than a declared
-   * field, because `variables` is attached by the host and `ScriptChatMessage`
-   * does not declare it — and this side is the untrusted-input side, which has
-   * to validate whatever arrived regardless of what a type says it is.
+   * **`variables` arrives as JSON text**, not as a tree, and that is a transport
+   * decision with a measurement behind it: structured clone charges per object
+   * rather than per byte, so the tables as trees were 45% of the snapshot's
+   * bytes and about 91% of its clone time. In a real frame a 4 MiB tree clones
+   * in 24.21 ms and the same content as one string in 1.77 ms — 16.5× — while
+   * parsing the **one floor** a card asked for costs 0.01 ms. So the whole
+   * snapshot arrives cheap and the reader pays only for what it reads.
+   *
+   * Parsed once per row and cached, because a card that reads a floor in a loop
+   * would otherwise re-parse it every time; `parsedFloors` above explains why
+   * the cache needs no invalidation.
    *
    * **`{}` for a row with no table, not `undefined`**, because upstream answers
    * `{}` and compatibility is the floor. It is not a comfortable answer: an
@@ -849,16 +1024,21 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
    * A card that breaks on that breaks on real SillyTavern too, and diverging
    * here would hide a card's bug rather than fix it. What Iris adds is the
    * report, not a different value.
+   * @param member - the calling member, for reports.
    * @param row - the message row.
    * @returns its table for the showing swipe, or `{}`.
    */
-  const tableOf = (row: ScriptChatMessage): Record<string, unknown> => {
-    const tables = row['variables']
-    if (typeof tables !== 'object' || tables === null) return {}
-    // Keyed by swipe, and the row's own `swipe_id` says which is showing;
-    // absent means swipe 0, the same default the rest of this file uses.
-    const swipe = typeof row.swipe_id === 'number' ? row.swipe_id : 0
-    const table = (tables as Record<string, unknown>)[String(swipe)]
+  const tableOf = (member: string, row: ScriptChatMessage): Record<string, unknown> => {
+    const tables = floorTables(row, (message, failed) => {
+      // The member is prepended here rather than inside `floorTables`, which has
+      // two callers and no business knowing which one is asking.
+      if (failed) host.reportFault(`${member}: ${message}`)
+      else host.reportGap(`${member}: ${message}`)
+    })
+
+    // The row's own `swipe_id` says which swipe is showing; absent means 0, the
+    // same default the rest of this file uses.
+    const table = tables[typeof row.swipe_id === 'number' ? row.swipe_id : 0]
     return typeof table === 'object' && table !== null
       ? (table as Record<string, unknown>)
       : {}
@@ -946,7 +1126,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * one that matters and looks no further, which is exactly the wrong place to
      * be looking when this property breaks.
      */
-    return tableOf(row)
+    return tableOf(member, row)
   }
 
   /**

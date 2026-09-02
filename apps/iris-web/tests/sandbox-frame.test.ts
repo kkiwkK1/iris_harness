@@ -2853,3 +2853,112 @@ test('a write with no character open is reported rather than attributed to nobod
     'an unattributable write must not reach the host',
   )
 })
+test('a card reading chat[i].variables directly gets the tables, not the JSON text', () => {
+  /*
+   * **The silent failure this closes, in the card's own words.** MVU's restore
+   * guard is `_.has(chat[i].variables[swipe_id], 'stat_data')`. The floor tables
+   * cross the wire as JSON text, and on a string `variables[swipe_id]` is one
+   * **character** — so `_.has` of it is false, forever, with nothing thrown and
+   * nothing reported. The card concludes there is nothing to restore and starts
+   * from defaults over a live save.
+   *
+   * So the assertion is written the way the card reads it, not the way the
+   * facade returns it: index the field, then look for the key.
+   */
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({
+      characterId: 'char',
+      chat: [
+        {
+          name: 'Her',
+          is_user: false,
+          mes: 'reply',
+          swipe_id: 1,
+          variables: JSON.stringify([{ stat_data: { hp: 1 } }, { stat_data: { hp: 2 } }]),
+        },
+      ],
+    }),
+  })
+  evaluate(scope, () => undefined, 'first')
+
+  const surface = scope.globals()['SillyTavern'] as { getContext: () => { chat: unknown[] } }
+  const row = surface.getContext().chat[0] as { variables: unknown[], swipe_id: number }
+
+  assert.equal(Array.isArray(row.variables), true, 'the card was handed the JSON text')
+  const table = row.variables[row.swipe_id] as Record<string, unknown>
+  assert.deepEqual(table, { stat_data: { hp: 2 } })
+  assert.equal(
+    Object.hasOwn(table, 'stat_data'),
+    true,
+    'this is the guard MVU actually writes, and on a string it is false forever',
+  )
+})
+
+test('the tables are parsed per row, not for the whole chat at once', () => {
+  /*
+   * The laziness is the reason the encoding was worth adopting: parsing all 677
+   * rows of the longest corpus chat costs the 7.75 ms the text transport exists
+   * to avoid, while one floor costs 0.01 ms. A card that iterates the chat
+   * reading only `mes` must pay for none of them.
+   *
+   * Asserted by counting parses through a getter that cannot be reached without
+   * one — reading `mes` on every row, then `variables` on exactly one.
+   */
+  const rows = Array.from({ length: 6 }, (_unused, at) => ({
+    name: 'Her',
+    is_user: false,
+    mes: `floor ${String(at)}`,
+    variables: JSON.stringify([{ n: at }]),
+  }))
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({ characterId: 'char', chat: rows }),
+  })
+  evaluate(scope, () => undefined, 'first')
+
+  const surface = scope.globals()['SillyTavern'] as { getContext: () => { chat: unknown[] } }
+  const chat = surface.getContext().chat as { mes: string, variables: unknown[] }[]
+
+  // Every row still holds text until something reads its tables, which is what
+  // the own-property descriptor shows: a getter, not a value.
+  for (const row of chat) void row.mes
+  const untouched = Object.getOwnPropertyDescriptor(chat[3] as object, 'variables')
+  assert.equal(typeof untouched?.get, 'function', 'the row was resolved without being read')
+
+  // And reading one gives that one's tables.
+  assert.deepEqual((chat[3] as { variables: unknown[] }).variables, [{ n: 3 }])
+})
+
+test('a floor whose tables cannot be parsed is reported, and reads as empty', () => {
+  /*
+   * A truncated table is a transport fault. Letting the parse throw out of a
+   * synchronous read no card guards would turn one bad floor into a dead card,
+   * so it reads as empty — and says so, because an empty table is exactly what
+   * makes MagVarUpdate re-initialise over live state, and nobody should have to
+   * guess whether the floor was empty or unreadable.
+   */
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({
+      characterId: 'char',
+      chat: [{ name: 'Her', is_user: false, mes: 'reply', variables: '{"truncated": ' }],
+    }),
+  })
+  evaluate(scope, () => undefined, 'first')
+
+  const surface = scope.globals()['SillyTavern'] as { getContext: () => { chat: unknown[] } }
+  const row = surface.getContext().chat[0] as { variables: unknown[] }
+  assert.deepEqual(row.variables, [])
+
+  const said = scope.posted
+    .filter(message => message.type === 'error')
+    .map(message => (message as unknown as { message: string }).message)
+  assert.equal(said.filter(line => line.includes('could not be parsed')).length, 1, said.join(' | '))
+})

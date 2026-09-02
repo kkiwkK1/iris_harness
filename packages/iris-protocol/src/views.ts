@@ -200,6 +200,21 @@ export interface ScriptChatMessage {
   extra?: Record<string, unknown>
   swipes?: string[]
   swipe_id?: number
+  /**
+   * This floor's per-swipe variable tables, **as JSON text**.
+   *
+   * A string, not an array of objects, and the reason is transport rather than
+   * taste: structured clone costs per object rather than per byte, so carrying
+   * the tables as trees made them 45% of the snapshot's bytes and roughly 91%
+   * of its clone time. As text the whole `chat` array clones in a fifth of the
+   * time; a reader parses the one floor it wants, which measured at 0.83 ms for
+   * the largest table in the longest corpus chat and 0.00 ms at the median.
+   *
+   * Parse it to read it: `JSON.parse(line.variables)[line.swipe_id ?? 0]`. The
+   * value is the same array the chat file holds — only its encoding differs,
+   * and only in transit.
+   */
+  variables?: string
   [key: string]: unknown
 }
 

@@ -597,25 +597,44 @@ function reportStorage(run: string, post: (message: FromFrame) => void): void {
   }
 
   try {
-    void window.localStorage.length
+    void window.sessionStorage.length
   } catch {
+    /*
+     * `sessionStorage`, and **not** `localStorage` any more.
+     *
+     * This probe used to open with "localStorage is not available in this
+     * frame", which was true when written and became **false** the moment the
+     * storage façade landed — the frame does have one now, backed by the
+     * profile store. It kept saying so for a build because the probe runs at
+     * bootstrap and the façade is installed on `run`, so the probe measured a
+     * window that no longer matters. A report whose truth depends on running
+     * before the fix is a report that will outlive the fix.
+     *
+     * `sessionStorage` has no façade and still throws — measured in a real
+     * opaque-origin frame, in the same probe that showed the `localStorage`
+     * shadow working. So the named absence moves here rather than being
+     * deleted: it is the same fact about the same origin, now said about the
+     * member it is still true of.
+     */
     say(
-      'localStorage is not available in this frame — an opaque origin has no storage, so a card' +
-        ' that remembers anything between openings will not',
+      'sessionStorage is not available in this frame — an opaque origin has no storage, and'
+      + ' unlike localStorage this one has no Iris facade behind it, so a card using it for'
+      + ' per-session state will not remember anything',
     )
   }
 
-  let database: IDBFactory | undefined
-  try {
-    database = window.indexedDB
-  } catch {
-    say('indexedDB is not available in this frame — an opaque origin has no storage')
-    return
-  }
-  if (database === undefined || database === null) {
-    say('indexedDB is not available in this frame — an opaque origin has no storage')
-    return
-  }
+  /*
+   * `indexedDB` is **present**, and that was measured rather than assumed.
+   *
+   * The two branches that used to stand here — a throw on reading the property,
+   * and the property being `undefined`/`null` — could not fire: in a real
+   * `sandbox="allow-scripts"` frame `window.indexedDB` hands back a working
+   * `IDBFactory`. They were dead code stating a false thing about the property
+   * layer, and someone reading them would have concluded the storage APIs fail
+   * uniformly at access. They do not: `localStorage` throws on access,
+   * `indexedDB` does not.
+   */
+  const database = window.indexedDB
 
   /*
    * Present is not the same as working. The probe opens a database and waits a

@@ -24,6 +24,7 @@ import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isOnSillyTavernSurface } from './card-api.ts'
 import { createEventSource, createFrameTavernHelper } from './tavern-helper.ts'
 import { createCardStorage } from './card-storage.ts'
+import { restoreFloorTables } from './tavern-helper.ts'
 import { MEMBER_KINDS, SHARED_ORIGINAL, identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
 import { SCRIPT_REGISTRY, withPreamble } from './preamble.ts'
@@ -1453,6 +1454,24 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       context = carried === undefined
         ? message.context
         : { ...message.context, chatMetadata: carried }
+      /*
+       * Before anything can read the chat, and on **every** snapshot.
+       *
+       * The floor tables cross the wire as JSON text, and a card reading
+       * `chat[i].variables[swipe_id]` directly would get one character of that
+       * string — which is what MVU's restore guard reads, and it is false
+       * forever without a word said. This installs the per-row getters that
+       * hide the encoding; it parses nothing until a row is actually read.
+       *
+       * Per snapshot rather than once, because each snapshot brings new row
+       * objects. The report goes on the note channel through `reportGap`: a
+       * floor that cannot be parsed is a transport fault, and this is the only
+       * place that would ever notice it.
+       */
+      restoreFloorTables(context.chat, (text, failed) => {
+        if (failed) reportFault(text)
+        else reportGap(text)
+      })
       extensionSettings = settingsProxy({ ...message.context.extensionSettings })
       return
     }

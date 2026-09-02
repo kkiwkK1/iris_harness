@@ -949,13 +949,13 @@ test('a floor-addressed read is answered from that floor\u2019s own table', () =
     context: {
       ...context(),
       chat: [
-        { name: 'u', is_user: true, mes: 'hi', variables: { '0': { stat: 'from floor 0' } } },
+        { name: 'u', is_user: true, mes: 'hi', variables: JSON.stringify([{ stat: 'from floor 0' }]) },
         {
           name: 'a',
           is_user: false,
           mes: 'yo',
           swipe_id: 1,
-          variables: { '0': { stat: 'swipe 0' }, '1': { stat: 'swipe 1' } },
+          variables: JSON.stringify([{ stat: 'swipe 0' }, { stat: 'swipe 1' }]),
         },
       ],
     },
@@ -986,7 +986,7 @@ test('the table a card is handed is a copy, because the caller merges and writes
   const { api } = surface({
     context: {
       ...context(),
-      chat: [{ name: 'u', is_user: true, mes: 'hi', variables: { '0': { stat: { hp: 1 } } } }],
+      chat: [{ name: 'u', is_user: true, mes: 'hi', variables: JSON.stringify([{ stat: { hp: 1 } }]) }],
     },
   })
   const read = api['getVariables'] as (option?: unknown) => Record<string, unknown>
@@ -1014,8 +1014,8 @@ test('the message_id domain is upstream\u2019s, including the shapes that throw'
     context: {
       ...context(),
       chat: [
-        { name: 'u', is_user: true, mes: 'hi', variables: { '0': { stat: 'zero' } } },
-        { name: 'a', is_user: false, mes: 'yo', variables: { '0': { stat: 'one' } } },
+        { name: 'u', is_user: true, mes: 'hi', variables: JSON.stringify([{ stat: 'zero' }]) },
+        { name: 'a', is_user: false, mes: 'yo', variables: JSON.stringify([{ stat: 'one' }]) },
       ],
     },
   })
@@ -1051,7 +1051,7 @@ test('a null message_id is refused rather than resolved to floor 0', () => {
   const { api } = surface({
     context: {
       ...context(),
-      chat: [{ name: 'u', is_user: true, mes: 'hi', variables: { '0': { stat: 'zero' } } }],
+      chat: [{ name: 'u', is_user: true, mes: 'hi', variables: JSON.stringify([{ stat: 'zero' }]) }],
     },
   })
   const read = api['getVariables'] as (option?: unknown) => unknown
@@ -1074,7 +1074,7 @@ test('a floor with no table of its own is an empty object, as upstream answers',
       ...context(),
       chat: [
         { name: 'a', is_user: false, mes: 'no table at all' },
-        { name: 'a', is_user: false, mes: 'no table for this swipe', swipe_id: 2, variables: { '0': { a: 1 } } },
+        { name: 'a', is_user: false, mes: 'no table for this swipe', swipe_id: 2, variables: JSON.stringify([{ a: 1 }]) },
       ],
     },
   })
@@ -1102,7 +1102,7 @@ test('the two readings of \u2018latest\u2019 are compared, not chosen between', 
       ...context(),
       variables: { stat: 'current' },
       chat: [
-        { name: 'a', is_user: false, mes: 'reply', variables: { '0': { stat: 'from the row' } } },
+        { name: 'a', is_user: false, mes: 'reply', variables: JSON.stringify([{ stat: 'from the row' }]) },
         // A system row, which floor addressing does not count, so the row above
         // is the last addressable one.
         { name: 'sys', is_user: false, is_system: true, mes: 'joined' },
@@ -1138,13 +1138,13 @@ test('agreeing tables produce no report, and a system row cannot make them disag
       ...context(),
       variables: { stat: 'same' },
       chat: [
-        { name: 'a', is_user: false, mes: 'reply', variables: { '0': { stat: 'same' } } },
+        { name: 'a', is_user: false, mes: 'reply', variables: JSON.stringify([{ stat: 'same' }]) },
         {
           name: 'sys',
           is_user: false,
           is_system: true,
           mes: 'joined',
-          variables: { '0': { stat: 'a system row\u2019s own table' } },
+          variables: JSON.stringify([{ stat: 'a system row\u2019s own table' }]),
         },
       ],
     },
@@ -1279,7 +1279,7 @@ function chatWithFloorVariables(): ScriptContext {
   return {
     ...context(),
     chat: [
-      { name: 'You', is_user: true, mes: 'ask', variables: [{ turn: 'user-row' }] },
+      { name: 'You', is_user: true, mes: 'ask', variables: JSON.stringify([{ turn: 'user-row' }]) },
       {
         name: 'Her',
         is_user: false,
@@ -1288,9 +1288,9 @@ function chatWithFloorVariables(): ScriptContext {
         swipe_id: 1,
         // Only two tables for three swipes: the usual case, since a swipe that
         // never ran a variable update has none.
-        variables: [{ floor: 'middle-0' }, { floor: 'middle-1' }],
+        variables: JSON.stringify([{ floor: 'middle-0' }, { floor: 'middle-1' }]),
       },
-      { name: 'Her', is_user: false, mes: 'last', variables: [{ floor: 'last-0' }] },
+      { name: 'Her', is_user: false, mes: 'last', variables: JSON.stringify([{ floor: 'last-0' }]) },
     ],
   } as ScriptContext
 }

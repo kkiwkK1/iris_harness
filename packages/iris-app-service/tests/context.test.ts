@@ -224,7 +224,12 @@ test('a status-bar card reaches its MVU state at the path the corpus uses', () =
   const message = context.chat[0]
   assert.ok(message !== undefined)
 
-  const perSwipe = message['variables'] as Record<string, unknown>[] | undefined
+  // JSON text on the wire: clone cost is per object, so carrying these as
+  // trees was ~91% of the snapshot's clone time for 45% of its bytes. Parsing
+  // one floor when asked costs under a millisecond.
+  const carried = message['variables']
+  assert.equal(typeof carried, 'string', 'the bridged chat carries its tables as JSON text')
+  const perSwipe = JSON.parse(String(carried)) as Record<string, unknown>[]
   assert.ok(Array.isArray(perSwipe), 'the bridged chat carries per-swipe variables')
   const mine = perSwipe[message.swipe_id ?? 0]
   assert.deepEqual((mine?.['stat_data'] as Record<string, unknown>)['mood'], ['calm', 'how she seems'])
