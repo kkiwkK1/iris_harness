@@ -1437,19 +1437,37 @@ pointer-events:none; background:transparent`)。路线 ①(`$('body')` 落自身
 | `#chat` | 新楼层到达时,`银麒系统面板` 的观察者在 **100 ms 内重注入** | **就地改文本而不新增节点**的实现 → `MutationObserver` 的 `childList` 不响;判据必须是"新增了节点",不是"内容变了" |
 | `#mes_stop` | 生成中**可见**,生成结束**消失** | 常驻但 `display:none` 的桩:`querySelector` 拿得到、卡以为在生成中 |
 
-**方案 C 特有的记账:一卡多层,跨脚本节点互不可见**
+**方案 C 特有的记账:切开的是_跨卡_,不是跨脚本**
 
-上游是一个共享 body;方案 C 下**每个脚本 frame 一层**。语料里逐卡查过
-(`scratchpad/cross-script-dom.mjs`,15 张多脚本卡):
+> ~~方案 C 下每个脚本 frame 一层,所以 `银麒系统面板` 查不到 `手机UI` 建的
+> `#phone-app-body`。~~ **这一条是错的,已撤回(总指挥指出,复核确认)。**
+>
+> 共居粒度写在 `apps/iris-web/src/app/useCardScripts.tsx:164` 的注释里,原文:
+>
+> > `One frame for the card's whole set. Each script still evaluates as its own`
+> > `module, so their top-level bindings stay separate; what they share is`
+> > `window, which is what lets a provider hand a live interface to its siblings.`
+>
+> **一张卡的全部脚本共居一个 frame、共享同一个 `window` 与 document**,只是各自作为独立
+> module 求值。所以 **`#phone-app-body` 在方案 C 下查得到**,与上游一致。
+>
+> 我错在**从方案描述("脚本 frame 就是表面")推拓扑,而没有去读 frame 是怎么分配的** ——
+> 与 FA 那次「两步推理只查实第一步」同一形状:读了"表面是什么",没读"有几个表面"。
 
-> **命中 1 张:`银麒赎世` 的 `银麒系统面板` 查询 `#phone-app-body`,而该节点由 `手机UI` 创建。**
-> 方案 C 下这两个脚本在两个 frame 里,**`银麒系统面板` 将查不到它** —— 上游查得到。
+**真正被切开的是跨卡**:一卡一 frame ⇒ 两张卡各一层,**A 卡的节点对 B 卡不可见**,
+而上游是同一个共享 body。
 
-**这是方案 C 的已知代价,不是缺陷**,但它有名有姓:验收 `银麒赎世` 时**四个脚本要分开看**,
-`银麒系统面板` 即使 `document.readyState` 那条修好了,**仍会在 `#phone-app-body` 上再断一次**。
+**语料里今天有没有消费者:没有观察到。** 单聊里同时只有一张卡的脚本在跑。
+**这条要变成真问题,需要"多张卡的脚本同时活"** —— 即群聊类场景。**未量**(本地语料 31 个
+chat 都是单角色)。所以它是**与上游的一处已记账偏离,当前无语料消费者**,不是待修缺陷。
 
-口径:这是**下界** —— 运行时拼接的 id(`'panel-' + n`)两侧都看不见,所以 1 是"至少 1",
-零不能读成"没有耦合"。
+**同卡跨脚本的耦合仍然值得记,因为它说明"共享 window"不是可选项**:
+逐卡查过 15 张多脚本卡(`scratchpad/cross-script-dom.mjs`),**命中 1 张** ——
+`银麒赎世` 的 `银麒系统面板` 查询 `#phone-app-body`(由 `手机UI` 创建)。
+**在共居 frame 下这条正常工作**;若将来有人把粒度改成"一脚本一 frame",**这张卡会立刻断**,
+而它是全语料唯一会断的那张 —— **粒度改动的验收样本就是它**。
+
+口径:**下界** —— 运行时拼接的 id 两侧都看不见,1 是"至少 1",零不能读成"没有耦合"。
 
 **方案 A/B 落地后才增加的判据**(现在不测):`parent.Mvu` 转发 getter + `global_Mvu_initialized`
 事件(§七之四);创世回廊那三个红点**只应剩 `phone` 一个**(§七之四末)。
