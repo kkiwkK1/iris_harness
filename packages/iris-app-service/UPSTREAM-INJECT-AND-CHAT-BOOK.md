@@ -85,7 +85,19 @@ function injectPrompts(prompts: InjectionPrompt[], { once = false } = {}): { uni
 
 - `once: true` 时挂 `GENERATION_ENDED` / `GENERATION_STOPPED` 自动撤销；
 - **无论 once 与否，总是挂 `$(window).on('pagehide', uninject)`**（`inject.ts:50`）。
-  那是**脚本 frame 的** window，所以**脚本 frame 一销毁，它的注入就撤**。
+
+  > **⚠ 一处更正（2026-09-03）。**初版这里写的是「那是**脚本 frame 的** window，
+  > 所以**脚本 frame 一销毁，它的注入就撤**」。**那句是错的。**
+  >
+  > `injectPrompts` 在 `function/index.ts:333` **位于 `TavernHelper` 的外层对象**
+  > （`_bind` 是 `:219-265`，缩进 6 空格；`:333` 缩进 4 空格），
+  > 所以 `predefine.js:13` 的 `_.omit(TavernHelper, '_bind')` 把它**原样合并**进 frame 的
+  > window，**没有 `.bind(window)`**——只有 `_bind` 那一组才在 `predefine.js:15-18` 被绑定。
+  >
+  > 函数体里的 `window` 是**它定义所在模块**的 window，也就是 **ST 页面**。
+  > **所以 `pagehide` 挂在 ST 页面上，frame 销毁不会触发它，注入不会被撤。**
+  >
+  > **正确说法**：这个 `pagehide` 是**整页卸载**时的兜底，**不是 frame 级的生命周期**。
 
 ### 一之三 生命周期：三个问题的答案
 
@@ -120,7 +132,7 @@ eventSource.makeFirst(event_types.CHAT_CHANGED, () => {
 ```
 卡持有的句柄 S      仍在，S.deleted === false      ← 卡认为自己注入着
 ST 的 extension_prompts   已被 clearChat 清空       ← 实际没有
-通知                无                              ← pagehide 没触发，frame 还活着
+通知                无                              ← pagehide 挂在 ST 页面上，整页不卸载就不触发
 ```
 
 **卡相信自己注入着，而它没有。**
