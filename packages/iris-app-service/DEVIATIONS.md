@@ -687,3 +687,46 @@ were test fixtures, which were relying on the channel this change removed.
 assembly, or a measurement showing users expect a card update to overwrite their
 edited book — the report would then be the wrong answer rather than the careful
 one.
+
+## 13. Reading a user's SillyTavern installation, and one member not copied
+
+A card can name a world book that never travelled with it. Rather than leaving
+such a card on the embedded copy for ever, Iris will read the real book out of
+the user's own SillyTavern profile when one is configured (`sillyTavernDir`,
+unset by default and never guessed).
+
+**Read-only, and structurally so.** Only `worlds/*.json` and `settings.json` are
+opened; an overlap between that directory and Iris's own `dataDir` is refused at
+startup rather than at first write, because that overlap is exactly how "we
+never write to your install" stops being true. The install may be running, so a
+file that will not parse is reported as *unreadable this time* rather than
+absent — telling a user a book is missing when they have it sends them looking
+for the wrong thing.
+
+**Their filename rule, not ours.** SillyTavern writes
+``sanitize(`${name}.json`)`` through `sanitize-filename`; this host mirrors that
+in `stFileName`. Using Iris's own `toId` here would be wrong in a way worse than
+a miss: it strips what looks like a trailing extension, so `创世回廊1.3` becomes
+`创世回廊1` and a dotted version number resolves to **a different book**.
+Measured against the reference install: their rule finds 18 of 18, `toId` finds
+5 of 18.
+
+**A fetched book outranks a seed, and never outranks the user.** The four-way
+table from §12 applies unchanged: a seed nobody has edited is replaced by the
+real book and the binding's origin becomes `imported-from-st`; a seed the user
+*has* edited is kept, with a report, because the install's copy is not more
+authoritative than their own work — merely different.
+
+### Not copied: enumerating IndexedDB to find another extension's data
+
+One corpus card (银麒赎世's phone UI) enumerates every IndexedDB database in its
+origin, finds a third-party extension's store (智绘姬) by name, and reads images
+out of it. **Structurally inapplicable rather than withheld**: it depends on
+another *extension* being installed, not on a host capability, so there is
+nothing for this host to implement. The card already degrades on its own —
+its guard resolves `false` — so nothing is broken by the absence. Source:
+`apps/iris-web/UPSTREAM-FRAME-ORIGIN.md` §六.
+
+**What would overturn this.** Iris growing an extension ecosystem of its own, at
+which point "read another extension's data" becomes a capability question rather
+than a category error.

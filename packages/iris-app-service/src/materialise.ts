@@ -30,10 +30,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { CharacterCard } from '@iris/character'
-import { fromCharacterBook } from '@iris/lorebook'
+import { fromCharacterBook, parseLorebook } from '@iris/lorebook'
 
 import type { WorldbookEntry } from '@iris/protocol'
 
+import type { FetchFailure, StInstall } from './st-install.ts'
 import { charWorldbookNames, toWorldbookEntry, type WorldbookStore } from './worldbooks.ts'
 
 /** How a binding's name was arrived at. */
@@ -44,6 +45,8 @@ export type BindingOrigin =
   | 'seeded-from-embedded'
   /** The wanted name was taken by a book this card does not own. */
   | 'minted'
+  /** Fetched from the user's SillyTavern install, which outranks a seed. */
+  | 'imported-from-st'
 
 /** What was materialised for one character, and from what. */
 export interface MaterialisedBinding {
@@ -243,6 +246,7 @@ export async function materialiseEmbeddedBook(
   card: CharacterCard | undefined,
   worldbooks: WorldbookStore,
   bindings: WorldbookBindingStore,
+  stInstall?: StInstall,
 ): Promise<MaterialiseResult | undefined> {
   const embedded = card?.data.character_book
   if (embedded === undefined) return undefined
@@ -262,6 +266,14 @@ export async function materialiseEmbeddedBook(
   const existing = await bindings.get(characterId)
 
   if (existing !== undefined) {
+    // A seed can be replaced by the real book the moment it becomes reachable —
+    // the user's own copy outranks the one the card carried. Only a seed: a
+    // book already imported from SillyTavern, or one the user made, is not
+    // re-fetched behind their back.
+    if (existing.origin === 'seeded-from-embedded' && stInstall?.configured === true) {
+      const upgraded = await upgradeFromSt(characterId, existing, worldbooks, bindings, stInstall)
+      if (upgraded !== undefined) return upgraded
+    }
     if (existing.sourceHash === sourceHash) return { name: existing.name, reports }
 
     // The card changed. Whether we may rewrite the book depends on one
@@ -325,6 +337,29 @@ export async function materialiseEmbeddedBook(
     )
   }
 
+  // The real book first, the seed only if it cannot be had. A card's embedded
+  // copy is what the card's author shipped; the book in the user's install is
+  // what the user has been playing with.
+  const fetched = stInstall === undefined ? undefined : await stInstall.book(wanted)
+  if (fetched?.found === true && name === wanted) {
+    const real = entriesOf(fetched.book)
+    if (real !== undefined) {
+      const written = await worldbooks.create(name, real)
+      await bindings.set(characterId, {
+        name,
+        sourceHash,
+        materialisedHash: sha256(written),
+        origin: 'imported-from-st',
+        at: Date.now(),
+      })
+      return {
+        name,
+        reports: [`"${name}" was taken from your SillyTavern installation rather than from the card's embedded copy`],
+      }
+    }
+  }
+  if (fetched !== undefined && !fetched.found) reports.push(fetchNote(wanted, fetched.why))
+
   const text = await worldbooks.create(name, entries)
   await bindings.set(characterId, {
     name,
@@ -336,6 +371,97 @@ export async function materialiseEmbeddedBook(
     at: Date.now(),
   })
   return { name, reports }
+}
+
+/**
+ * Read a SillyTavern book file into entries this host can write.
+ * @param book - the raw saved object.
+ * @returns the entries, or undefined when the file is not a book.
+ */
+function entriesOf(book: unknown): WorldbookEntry[] | undefined {
+  try {
+    return Object.values(parseLorebook(book).entries).map(toWorldbookEntry)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * What to tell a user when the named book could not be fetched.
+ *
+ * **Three kinds of "not there", kept apart because only one has an action and
+ * one of them may succeed next time.** Collapsing them would send someone
+ * hunting for a book they actually have.
+ * @param name - the book the card named.
+ * @param why - which kind of nothing this was.
+ * @returns the sentence to report.
+ */
+function fetchNote(name: string, why: FetchFailure): string {
+  if (why === 'not-configured') {
+    return `"${name}" is named by the card but was not imported with it; if you have a SillyTavern`
+      + ' installation, point Iris at it and reopen this chat to use the real book'
+  }
+  if (why === 'unreadable') {
+    return `"${name}" exists in your SillyTavern installation but could not be read this time`
+      + ' (SillyTavern may be writing it); the card is using its embedded copy for now'
+  }
+  return `"${name}" is named by the card and is not in your SillyTavern installation either;`
+    + ' the card is using its embedded copy'
+}
+
+/**
+ * Replace a seed with the real book, when the user has not edited the seed.
+ * @param characterId - whose card.
+ * @param existing - the binding recording the seed.
+ * @param worldbooks - where named books live.
+ * @param bindings - the binding table.
+ * @param stInstall - the user's installation.
+ * @returns the result when something was done, undefined to fall through.
+ */
+async function upgradeFromSt(
+  characterId: string,
+  existing: MaterialisedBinding,
+  worldbooks: WorldbookStore,
+  bindings: WorldbookBindingStore,
+  stInstall: StInstall,
+): Promise<MaterialiseResult | undefined> {
+  const fetched = await stInstall.book(existing.name)
+  if (!fetched.found) return undefined
+
+  const current = await worldbooks.readRaw(existing.name)
+  const untouched = current !== undefined
+    && sha256(JSON.stringify(current, null, 2)) === existing.materialisedHash
+  if (!untouched) {
+    // The same two-legitimate-claims case as a card update: the user has worked
+    // on the copy we seeded, so the install's version is not more authoritative
+    // than theirs — it is merely different. Keep theirs, and say so.
+    return {
+      name: existing.name,
+      reports: [
+        `"${existing.name}" is now available from your SillyTavern installation, but you have edited`
+        + ' the copy Iris seeded from the card, so it was left as it is',
+      ],
+    }
+  }
+
+  const real = entriesOf(fetched.book)
+  if (real === undefined) return undefined
+
+  await worldbooks.replace(existing.name, real)
+  const written = await worldbooks.readRaw(existing.name)
+  await bindings.set(characterId, {
+    ...existing,
+    materialisedHash: sha256(JSON.stringify(written, null, 2)),
+    origin: 'imported-from-st',
+    at: Date.now(),
+  })
+  return {
+    name: existing.name,
+    reports: [
+      `"${existing.name}" was replaced with the copy from your SillyTavern installation;`
+      + ' Iris had seeded it from the embedded copy the card carried',
+    ],
+  }
 }
 
 /** Replace a book's contents, returning exactly the bytes written. */

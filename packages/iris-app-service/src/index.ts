@@ -27,6 +27,7 @@ import type { CharacterCard } from '@iris/character'
 
 import { DiagnosticBuffer } from './diagnostics.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
+import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
@@ -115,6 +116,17 @@ export interface Config {
    */
   dataDir?: string
   /**
+   * A SillyTavern **profile** directory to read books from — `…/data/<user>`,
+   * not the install root.
+   *
+   * Unset by default, and never guessed: without it the feature does not exist.
+   * Read-only, and refused at startup if it overlaps `dataDir`, because the way
+   * "Iris never writes to your install" breaks is the two being one tree.
+   * Users with several profiles name the one they want; enumerating them is
+   * deliberately not designed, since choosing on their behalf is the wrong part.
+   */
+  sillyTavernDir?: string
+  /**
    * Which profile's data to open.
    *
    * Multi-profile is a founding decision: the storage layer is shaped for it
@@ -202,6 +214,7 @@ export interface Config {
 /** Runtime schema for the application row. */
 export const Config: z<Config> = z.object({
   dataDir: z.string().default('./data'),
+  sillyTavernDir: z.string(),
   profile: z.string().default(DEFAULT_PROFILE),
   provider: z.string().default('default'),
   model: z.string().default('local-model'),
@@ -379,12 +392,21 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
    * profile migrates the first time each of its chats is opened rather than
    * needing an offline pass.
    */
+  // Refused before anything reads or writes: discovering the overlap later is
+  // not recoverable, because by then our writes have landed in their library.
+  const overlap = config.sillyTavernDir === undefined
+    ? undefined
+    : refuseOverlappingInstall(config.sillyTavernDir, dataDir)
+  if (overlap !== undefined) throw new Error(overlap)
+  const stInstall = new StInstall(config.sillyTavernDir)
+
   const bookFor = async (
     characterId: string | undefined,
     card: CharacterCard | undefined,
   ): Promise<string | undefined> => {
     if (characterId === undefined || worldbooks === undefined) return undefined
-    const done = await materialiseEmbeddedBook(characterId, card, worldbooks, worldbookBindings)
+    const done = await materialiseEmbeddedBook(
+      characterId, card, worldbooks, worldbookBindings, stInstall)
     for (const line of done?.reports ?? []) ctx.logger.warn(`worldbook: ${line}`)
     return done?.name
   }
