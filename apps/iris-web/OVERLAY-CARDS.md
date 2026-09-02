@@ -456,6 +456,104 @@ ST-Amily2-Chat-Optimisation / xiaobaix-template / juqingtuijin   共 480 B  代�
 
 ---
 
+## 六之二、ST 锚点面：覆盖层卡对宿主 DOM 的实际要求
+
+**这一节的对象不是 V1.5.4**，是**手机UI 那一族**（银麒赎世 / 魔法少女的扣扣审判1.0，
+44 测得是同一份代码的两个分叉）。它们通过 `window.parent.document` 拿 ST 的三个元素。
+
+**结论**：**三个锚点没有一个是只读的。**`send_textarea` + `send_but` 是完整的
+**「写值 + 派发事件 + 点发送」**——通过 DOM 驱动 ST 的**真实发送管线**。
+**给一个只读镜像不够。**
+
+行号是卡内脚本正文行号（`decodeCardPng` + `extractScripts` 解出，渲染前）。
+
+### `#send_textarea`
+
+三处：银麒赎世/手机UI `:14180`、银麒赎世/银麒系统面板 `:278`、魔法少女/外置状态栏 `:5456`。
+
+**DOM 变体**（手机UI `:14180-14191`；外置状态栏 `:5456-5478` 逐句同构）：
+
+```js
+const originalInput = targetDocument.getElementById("send_textarea");
+const sendButton    = targetDocument.getElementById("send_but");
+if (!originalInput || !sendButton) return false;
+if (originalInput.disabled || sendButton.classList.contains("disabled")) return false;
+originalInput.value = originalInput.value ? originalInput.value + "\n" + message : message;
+originalInput.dispatchEvent(new Event("input",  { bubbles: true }));
+originalInput.dispatchEvent(new Event("change", { bubbles: true }));
+await new Promise(r => setTimeout(r, 300));
+sendButton.click();
+```
+
+操作集：**读 `.disabled`｜读 `.value`｜写 `.value`（非空则换行追加）｜派发 `input`｜派发 `change`**。
+
+**jQuery 变体**（银麒系统面板 `:276-286`）：
+
+```js
+var $input = $p("#send_textarea");
+if ($input.length) { $input.val(text); $p("#send_but").trigger("click"); }
+```
+
+**两个变体不等价**：`$.val()` **不派发 `input`/`change`**。
+**同一张卡里两条发送路径，一条让宿主的输入处理器看到变更，一条不会。**
+只支持其中一种语义，另一条会**静默失效**。
+
+> **这是"读 DOM 值"而非"听事件"的理由**：发送键必须在按下时**去读输入框当前的值**，
+> 才能容纳那条不派发事件的路径。
+
+### `#send_but`
+
+三处，与上一一对应：`:14181`、`:281`、`:5457`。
+
+操作集：**读 `.classList.contains("disabled")`｜`.click()`**（DOM 变体，**写值后延迟 300 ms**）；
+jQuery 变体是 **`.trigger("click")`**。
+
+**那 300 ms 是卡对宿主输入处理器的时序假设**，写死在卡里，**我们改不了**。
+
+### `#chat`
+
+**只有一处**：银麒赎世/银麒系统面板 `:9562`。**不读值、不量尺寸、不读 scroll。**
+
+```js
+var observer = new MutationObserver(function (mutations) {
+  if (_streamFreeze && _streamFreezeEnabled) { _needsRefreshAfterStream = true; return; }
+  for (var m of mutations) for (var n of m.addedNodes)
+    if (n.classList && n.classList.contains("mes")) { setTimeout(injectPanel, 100); return; }
+});
+var chatEl = _pd.getElementById("chat");
+if (chatEl) observer.observe(chatEl, { childList: true, subtree: true });
+```
+
+**它把 `#chat` 当"有新楼层了"的信号源，不是数据源。**
+
+**这条是对我们 DOM 结构的具体约束**，不只是"给个元素"：
+
+- 新楼层必须是 **`#chat` 子树里的新增节点**（`childList` + `subtree`）；
+- 那个节点必须**带 class `mes`**。
+
+**否则观察者永不触发、面板不重注入——而且这个失败是静默的**：观察者装上了，只是不响。
+
+### 两条同族的腿（不在原任务单上，就在旁边）
+
+| 锚点 | 行号 | 操作 |
+| --- | --- | --- |
+| **`#mes_stop`** | 银麒系统面板 `:9525-9526` | `$p("#mes_stop").is(":visible")` → 当作"正在生成" |
+| **宿主全局 `is_send_press`** | 同 `:9521` | `isSending = !!_pw.is_send_press`（`_pw` = `window.parent`） |
+
+**这两条和 `#chat` 的观察者是同一套机制的三条腿**：
+`is_send_press` / `#mes_stop` 可见性判断**生成中 → 冻结面板刷新**；
+`#chat` 的 childList 变化判断**生成完 → 重注入面板**。
+
+**缺一条，另两条的行为会变**——例如没有冻结信号，面板会在流式输出期间**反复重注入**。
+
+### 口径
+
+第一版探针把 `#chat` 数成 20+ 处：它匹配了卡**自己的** `#chat-back-btn` / `#chat-send-btn`
+等元素，以及 `channelKey === "chat"` 这类字符串。**收紧成精确 id 形式后是 1 处。**
+上面所有数是收紧后的。
+
+---
+
 ## 七、未查 / 只是预测
 
 1. **§三那条 realm 不一致是静态读出来的预测，不是观测。**
