@@ -39,9 +39,13 @@ import { spawn } from 'node:child_process'
  * source-choice test, and 20 → 21 with the MVU listener premise guard; both are
  * gated the same way; 21 → 22 with the global-selection acceptance case;
  * 22 → 23 with the JSON Patch tag-spelling acceptance case, which reads every
- * corpus chat to check that no reply carrying a patch block reads as silence.
+ * corpus chat to check that no reply carrying a patch block reads as silence;
+ * 23 → 24 with "real cards decode their embedded book to an array", which pins
+ * the decoder rather than the mirror — the two existing `character_book` tests
+ * both build their own book, so neither could catch a real card arriving in the
+ * disk's uid-keyed shape.
  */
-const EXPECTED_SKIPPED = 23
+const EXPECTED_SKIPPED = 24
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 

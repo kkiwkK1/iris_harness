@@ -350,6 +350,42 @@ test('the played character carries its own book; the others stay summaries', () 
   assert.equal(other?.data, undefined)
 })
 
+test('real cards decode their embedded book to an array', { skip: !existsSync(CORPUS) }, async () => {
+  /*
+   * The two tests above pin the MIRROR: hand it an array and it does not
+   * helpfully normalise it into the disk shape. Neither can pin the DECODER,
+   * because both build their own `character_book`. So the premise the card's
+   * `.length` / `[i]` walk actually rests on — that a real card decodes to an
+   * array — was recorded only in prose (`TEST-CARDS.md` §七), and prose cannot
+   * notice when it goes stale.
+   *
+   * SillyTavern's own disk world books key `entries` by uid; the V2/V3 card spec
+   * uses an array. A card whose embedded book arrived in the keyed shape would
+   * give `entries.length === undefined`, zero iterations, and a green run.
+   */
+  const { decodeCardPng } = await import('@iris/character')
+  const files = (await import('node:fs')).readdirSync(CORPUS)
+    .filter(name => name.toLowerCase().endsWith('.png'))
+
+  let withBook = 0
+  const keyed: string[] = []
+  for (const name of files) {
+    let decoded
+    try { decoded = decodeCardPng((await import('node:fs')).readFileSync(`${CORPUS}/${name}`)) } catch { continue }
+    const book = (decoded as { data?: { character_book?: { entries?: unknown } } }).data?.character_book
+    if (book?.entries === undefined) continue
+    withBook += 1
+    if (!Array.isArray(book.entries)) keyed.push(name)
+  }
+
+  // A floor, not a bonus: without it a decoder that stopped attaching
+  // `character_book` at all would leave `withBook === 0` and this test would
+  // pass having compared nothing — the shape of failure this repo has already
+  // shipped once (a loop that compared 4 of 26 and stayed green).
+  assert.ok(withBook > 0, 'no corpus card decoded with an embedded book — the decoder or this path changed')
+  assert.deepEqual(keyed, [], 'these cards decode `character_book.entries` to a keyed object, which a card walking it with .length reads as empty')
+})
+
 test('a chat with no card leaves every entry a summary', () => {
   const built = new ChatEntry({
     chatId: 'none-1',
