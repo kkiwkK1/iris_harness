@@ -26,9 +26,18 @@
 
 扩展键：`talkativeness, fav, world, depth_prompt, regex_scripts, tavern_helper, xiaobaix-tasks`
 
-**`xiaobaix-tasks` 是我们已知集合外的第三个脚本承载键**（我们认的是 `tavern_helper` /
-`TavernHelper` / `regex_scripts`）。本卡的四个脚本都在 `tavern_helper` 下，
-`xiaobaix-tasks` 里是什么我没展开（§七）。
+**`xiaobaix-tasks` 不在我们的脚本承载键名单里。**名单是 [此处]
+`packages/iris-script/src/extract.ts:28`：
+
+```ts
+const KEYS = ['tavern_helper', 'TavernHelper_scripts'] as const
+```
+
+**两个键。**（初版我写成三个、且把第二个的名字写成 `TavernHelper`、还把 `regex_scripts`
+算了进去——都错。`regex_scripts` 走的是另一条路，`iris-app-service/src/regex.ts:52`，
+不经 `extractScripts`。44 指出，我复核后确认。）
+
+本卡四个脚本都在 `tavern_helper` 下。`xiaobaix-tasks` 里是什么见 §五之三。
 
 ### 正则：确认「零产界面」
 
@@ -250,8 +259,8 @@ x && typeof N.createWorldbookEntries === 'function'
 
 | # | 上游假设 | 上游依据 | 共居 realm + 虚拟 parent 下 |
 | --- | --- | --- | --- |
-| 1 | **`$` 是宿主页面的 jQuery**，字符串选择器落在页面上 | `parent_jquery.js` 全文两行 | **不成立**。我们在 frame 内装自己那份 jQuery（预设里的 3.5.1），`$('body')` 落在 **frame 自己的 body**。 |
-| 2 | 脚本 frame 隐藏，可见界面必须挂到页面 | `Iframe.vue:2` `v-show="false"` | **前提不同**：我们的 frame 本身就是可见表面。 |
+| 1 | **`$` 是宿主页面的 jQuery**，字符串选择器落在页面上 | `parent_jquery.js` 全文两行 | **不成立**。[此处] `sandbox/preset-entry.ts:100` `host['$'] = jquery`，是**绑在 frame 自己 document 上的真 jQuery**（3.5.1，对齐 ST 服务的那版）。所以 `$('body')` 落在 **frame 自己的 body**。 |
+| 2 | 脚本 frame 隐藏，可见界面必须挂到页面 | `Iframe.vue:2` `v-show="false"` | **同样成立**，机制不同——见 §五之二。 |
 | 3 | `position:fixed; 100vw/100vh; z-index:9999` 能覆盖整个应用 | 挂在页面 body 上时成立 | **不成立**。frame 内的 `fixed` 相对 **frame 的视口**。卡里 `position:fixed` 49 处、`100vh` 23 处、`100vw` 6 处。 |
 | 4 | `document`（裸）= frame 自己 | `createSrcContent` 用 `<script type="module">`，无人重定义 | **成立**，且我们相同。 |
 | 5 | overlay iframe 的 `window.parent` = 挂载它的那个 window | 浏览器语义 | **成立**，但**指向谁**随假设 1 变。 |
@@ -260,6 +269,48 @@ x && typeof N.createWorldbookEntries === 'function'
 | 8 | 自带 `pagehide` 清理 | 覆盖层脚本含 `pagehide` | **顺带一条上游事实**：`iframe.ts:13` 的注入条件是 `use_cleanup_protector && !content.includes('pagehide')`，**这张卡因为自己写了 pagehide 而永远拿不到保护器**。而这台机器上 `use_cleanup_protector: false`（我读的 `settings.json`），**本来也没开**。 |
 
 **假设 1 是根，2/3/5 都挂在它下面。**
+
+## 五之二、一处更正：我们的脚本 frame 也是隐藏的，但隐藏法不一样
+
+**初版这张表的第 2 行我写错了**——写成「我们的 frame 本身就是可见表面」。
+那句对**消息/前端 frame** 成立，对**卡脚本 frame 不成立**。实测：
+
+```jsx
+// [此处] apps/iris-web/src/app/useCardScripts.tsx:384-390
+<div ref={mount} aria-hidden="true"
+  style={{ position:'absolute', width:0, height:0, overflow:'hidden', left:'-9999px' }} />
+```
+
+**卡脚本 frame 挂在一个 0×0、`overflow:hidden`、移到 −9999px、`aria-hidden` 的容器里。**
+和上游一样是隐藏的。改这一行，是因为原话会让读者以为这类卡在我们这能显示出界面——**正好反了。**
+
+### 两种隐藏法不等价，验收要按我们这种写
+
+| | 上游 | 我们 |
+| --- | --- | --- |
+| 机制 | `v-show="false"` → `display:none` | 0×0 + `overflow:hidden` + 移出视口 |
+| frame 有没有布局 | **没有** | **有，只是尺寸为 0** |
+| 里面的代码 | 部分观测器/测量可能根本不跑 | **照跑，量到一排 0，然后若无其事继续** |
+
+**差别是可观测的**：`display:none` 下「什么都没发生」，0×0 下「一切都发生了，只是全是零」。
+V1.5.4 会走到底——建 iframe、mount Vue、钉 `!important` 样式、装监听——
+**`100vh`/`100vw` 全解析成 0，`aria-hidden` 连辅助技术也看不到，且不抛任何错。**
+
+**所以验收断言该写「量到 0」，不该写「没有布局」。**
+
+### 这个坑代码里已经写着了，且预告了它什么时候会咬
+
+同一文件那个 `<div>` 上方的注释（`useCardScripts.tsx:377-383`）原文大意：
+卡自我测量会得到零，bootstrap 发布的 `--TH-viewport-height` 会不再描述任何真实的东西；
+**「这些脚本今天什么都不渲染，所以还咬不到——但『现在还不要紧』正是一个 frame
+最后表现得和消息管线不一致的路径。」**
+
+**V1.5.4 就是让它开始咬的那张卡。**
+
+同理，§五第 1 行那条也不是我的发现：`preset-entry.ts:81-95` 早把它写成
+**「Iris 刻意偏离上游的唯一一处」**，并且写明了理由（frame 跨源、够到真页面正是每卡
+document 授权要管的事）和一个我没量到的细节（版本对齐 ST **服务**的 3.5.1，
+而不是 MVU manifest 里声明的 `^4.0.0`）。**我做的是把它和这张卡接上，不是发现它。**
 
 ---
 
