@@ -48,13 +48,19 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    6 同步（UPSTREAM-MVU-INIT-PATH.md 附录二）→ 按名 RPC 会把同步变异步，**裁方向：补前提（界面 frame
    作为聊天 realm 的子 frame，继承同一不透明源），不加中继**，7b 出设计。脚本 frame 楼层寻址
    `getVariables({message_id})` 被拒（上游同步可用）→ 49 出脚本 frame 快照携带楼层表的设计。
-   验收 = 爱衣 `<UpdateVariable>` 真被 `initResponse` 处理。
+   **发布链闭合**（b82ac8f 复读：银麒赎世面板注销 note「parent.Mvu has since been published by this frame」，
+   此前 unpublished 全是轮询首读早于发布的时序）；虚拟 document 只读状态成员按「读=答」重分（readyState 等），
+   银麒赎世 4/4 活。剩界面 frame 读不到（拓扑，OVERLAY-HOST.md 方案 A 第 5–7 步）。
+   验收 = 爱衣 `<UpdateVariable>` 真被 `initResponse` 处理（待一次真模型生成）。
 4. **消息内联 HTML 消毒渲染**——设计 INLINE-HTML.md；CSS 作用域器 ✅、区域切分 ✅（真语料：
    命定之诗 677 楼 334 有区域）、消毒 seam 在建。爱衣 6/8 楼即此。
-5. **覆盖层界面宿主**（OVERLAY-CARDS.md）——**用户已亲眼撞上**：V1.5.4 开场白字面只一个「·」，
-   整张卡的界面由 990 KB 脚本建在全视口宿主表面上；今天空白。裁点待 7b 列（表面归属、z 层、
-   `pagehide` 自清映射、page-access 是否需要）。前置：预置 showdown + VueRouter（上游两种 frame
-   都预置，UPSTREAM-ESM-DEPS.md §三；`libraries.ts` 当年按语料零未搬，被此卡推翻）。
+5. **覆盖层界面宿主**（OVERLAY-CARDS.md + OVERLAY-HOST.md，b82ac8f）——五组件（手机UI 两分叉、外置状态栏两分叉、
+   状态栏、论坛覆盖层、正文美化）存储门面后全部活着并撞到「no overlay surface yet」。裁点 A1–A9 通过；
+   **方案 C 先行**（脚本 frame 自身作全视口表面，两条路线与 dvh 阶梯自动成立，一卡一层记账）+ 三个 ST id
+   真锚点（`#send_textarea`/`#send_but` 读 DOM 值走真发送并出 note、`#chat` 楼层带 `mes` 且新楼层为新增节点、
+   `#mes_stop`/`is_send_press`）+ 切/关聊天归零（上游残留无人负责，我们多一个清理点）。方案 A（阅读区进
+   realm，补「同一 parent」前提，解 `parent.Mvu`/`__X_loaded__` 握手）与 B（投影）并排算账，3c 核对照、
+   44 出验收单后定；按名异步代理彻底出局（`Mvu.events.*` 同步当事件名）。
 6. ~~世界书单通道 + 内嵌书物化~~ ✅（957eaca：装配层只读绑定名；`bookFor` 挂导入与打开两路，
    已有 profile 首开就地迁移；两哈希四格表；撞名不覆盖比上游严；"书没跟过来"种子化+报告；
    DEVIATIONS §12）。从 ST 安装取绑定书 ✅（8cba1b3，ST-BOOK-FETCH.md：显式 `IRIS_ST_DIR` 只读、按需经
