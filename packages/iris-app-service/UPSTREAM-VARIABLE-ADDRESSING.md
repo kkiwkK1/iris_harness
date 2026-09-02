@@ -144,4 +144,59 @@ return chat_message?.variables?.[chat_message?.swipe_id ?? 0] ?? {};
 
 1. **`type: 'script'` / `'character'` / `'global'` 三支的寻址我没展开**，本文只覆盖 `'message'`。
 2. **`swipe_id` 越界或缺失时的行为**没单独验（读侧有 `?? 0` 兜底，写侧按 `swipes.length` 建）。
-3. **语料里有多少卡传非数字的 `message_id`** 没量——**本文是机制，不是用量**。
+3. ~~**语料里有多少卡传非数字的 `message_id`** 没量~~ **已量，见 §六。**
+
+---
+
+## 六、语料用量：三条裁定各自打到谁
+
+22 张卡，**8 张含 `message_id:`，共 59 处**（齿检通过）。字面形状：
+
+```
+  37  'latest'          ← 压倒性多数
+   5  "latest"
+   4  n                 ← 变量
+   3  message_id        ← 变量（同名传递）
+   2  null              ← ⚠ 见下，不是 API 参数
+   2  -3                ← 负数字面量
+   2  e                 ← 变量
+   1  msgId / msg.message_id / message.message_id / number | null
+```
+
+**逐条对裁定：**
+
+| 裁定 | 打到谁 |
+| --- | --- |
+| **收下负数** | **有真实用例**：`-3` 出现 2 次。不收会打到现存卡 |
+| **拒绝 `null`** | **零成本**——见下 |
+| **收下字符串数字** | 语料里**一次都没有**。纯兼容余量，不是现实需求 |
+
+### ⚠ 那 2 处 `message_id: null` 不是 API 参数——我的探针差点报反
+
+两处都在 **OVERLORD不死者之王 / ERA**，是这张卡**自己的辅助函数的返回值形状**：
+
+```js
+const ensureMkForLatestMessage = async () => {
+  const msg = getChatMessages(-1, { include_swipes: true })?.[0];
+  if (!msg || typeof msg.message_id !== 'number') {
+    return { mk: '', message_id: null, isNewKey: false };      // ← 失败路径的返回值
+  }
+  …
+  return { mk, message_id: msg.message_id, isNewKey: isNew };
+};
+```
+
+`message_id: null` 在这里表示「没能确定楼号」，**从不传给 `getVariables`**。
+另两处 `number | null` 一个是这个函数的 JSDoc 返回类型、一个是 V1.5.4 里
+`ref<number | null>(null)` 的 Vue ref，都与本 API 无关。
+
+**所以「拒绝 `null`」在这批语料上零成本。**
+
+**成因记一笔**：我的探针匹配的是「`message_id:` 后面跟什么」，
+**没有区分"API 选项对象里的键"和"卡自己的对象字面量里的同名键"**。
+**同一个键名，两种语境，而只有一种是 API 调用。**
+差点得出「拒绝 null 会打到 OVERLORD」这个反向结论——
+**而那个结论会让一条正确的政策裁定被撤回。**
+
+*（那张卡自己是有守卫的：`if (!msg || typeof msg.message_id !== 'number')`。
+**它比上游更严——上游让 `null` 静默落到第 0 楼，这张卡先把它拦下来了。**）*
