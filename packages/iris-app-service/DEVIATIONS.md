@@ -711,6 +711,33 @@ a miss: it strips what looks like a trailing extension, so `创世回廊1.3` bec
 Measured against the reference install: their rule finds 18 of 18, `toId` finds
 5 of 18.
 
+**`toId` has a second victim surface: the character id itself.** The same
+extension strip clips a card's own id — `创世回廊1.3` mints `创世回廊1`, and
+`魔法少女的扣扣审判1.0` mints `魔法少女的扣扣审判1`. Measured over the 19 cards in
+the reference install: **8 ids differ from the card's name, 5 of them because a
+dotted version was read as a file extension.**
+
+**No collision exists today** — 0 ids claimed by two different cards, in either
+the install or this profile — and `characterId` is an opaque id by contract
+(§5), so nothing reads it as a version. The cost is therefore confusion rather
+than corruption: the id a user sees in a report or a filename is their card's
+name with the version filed off.
+
+**Not changed, and the reason is the blast radius rather than the merit.** The
+id keys the worldbook binding table and every per-character store — script
+variables, script buttons, extension settings, script policy. Reminting would
+orphan all of them for every existing profile: the cards would keep working and
+quietly lose their stored state, which is the failure mode this ledger exists to
+avoid. If it is changed, the right change is narrow — strip only the extensions
+a card file actually has (`.png`, `.json`, `.charx`) instead of anything after a
+final dot, which is the same correction `stFileName` made for book names — and
+it must land with a migration that renames the keys, in its own batch.
+
+**What would overturn this.** Two versions of one card in a profile: they mint
+one id, the second is minted `… (2)`, and from then on the ids mislead about
+which is which. The collision itself is handled; the confusion is what would
+force the change.
+
 **A fetched book outranks a seed, and never outranks the user.** The four-way
 table from §12 applies unchanged: a seed nobody has edited is replaced by the
 real book and the binding's origin becomes `imported-from-st`; a seed the user
