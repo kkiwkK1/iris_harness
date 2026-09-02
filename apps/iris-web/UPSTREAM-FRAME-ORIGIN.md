@@ -143,17 +143,63 @@ if (MIGRATABLE_KEYS.some(k => k.test(key))) {
 每个各只有 1 个。**我先前说「族代表该是银麒赎世」结论对、理由错**：
 对的理由是它有一个顶层裸调用，**不是因为它次数最多**。
 
-## 未查
+## 六、`indexedDB`：语料里唯一的消费者，**两种用法，裁定只覆盖了一种**
 
-1. **同源没有在浏览器里实证过**（只读纪律：那要开 DevTools 看用户的 ST）。
-   §二 的代码自证比推论硬，但它证的是"上游代码假定同源"，不是"我观察到同源"。
-2. **`sessionStorage` / `indexedDB` 的共享面我没单独量**——同源结论同样适用于它们，
-   但语料里只有银麒赎世一张用 `indexedDB`（5 次），我没看它的用法。
-3. ~~**`typeof localStorage` 在不透明源上会不会抛**~~ **已结**，见 §六。
+`localStorage` 的裁定（§五）没有提 `indexedDB`。语料里只有一张卡用它——
+**银麒赎世 / 手机UI**，5 处，**但那 5 处属于两个完全不同的用途。**
+
+```
+indexedDB 5   createObjectStore 1   transaction( 6   objectStore( 6
+onupgradeneeded 1   onsuccess 5   onerror 32   .result 15
+```
+
+### 用法一：卡自己的存储（`PhoneImageStore`，`:20749-20770`）
+
+```js
+var req = indexedDB.open(self.DB_NAME, self.DB_VERSION);
+req.onupgradeneeded = e => { if (!db.objectStoreNames.contains(self.STORE_NAME)) db.createObjectStore(self.STORE_NAME); };
+req.onsuccess = e => { self._db = e.target.result; …; self._migrateOldData(); };
+req.onerror = () => { console.warn(…) };          // ← 降级
+```
+
+**存的是图片**，不是键值字符串。**这是 `localStorage` 裁定覆盖不到的形状**：
+容量级别不同（blob 级 vs 字符串级），失败语义不同（**异步的 `onerror`**，
+不是同步抛的 getter）。而且它带一条 **`_migrateOldData()`**——**它是从别处搬过来的**，
+大概率就是因为 `localStorage` 装不下。
+
+### 用法二：读**另一个扩展**的数据库（`Chatu8ImageReader`，`:20412-20442`）
+
+```js
+if (indexedDB.databases) {                                   // ← Chromium-only，Firefox 没有
+  indexedDB.databases().then(dbs => {
+    for (…) { var name = dbs[i].name || '';
+      if (name.indexOf('chatu8') !== -1 || name.indexOf('st-chatu') !== -1) {   // ← 智绘姬
+        var req = indexedDB.open(name);
+        req.onsuccess = e => { self._storeName = Array.from(e.target.result.objectStoreNames)[0]; … };
+```
+
+**它枚举整个源里的所有数据库，按名字找「智绘姬」这个第三方扩展的库，然后打开来读图。**
+
+**这是第三种形状，前面两节都没覆盖到**：不是"我的数据"，也不是"共享键空间里的碰撞"，
+而是**读邻居扩展的私有存储**。同源把这件事变成可能——`indexedDB` 没有跨扩展隔离，
+**一个源里的所有数据库对这个源里的任何代码都是可枚举、可打开的。**
+
+### 三条对我们的含义
+
+1. **用法二在我们这里必然失败，而且这是对的。**我们没有智绘姬这个扩展，
+   名字扫描找不到任何库 → `resolve(false)` → 降级。
+   **这是一个"忠实兼容既不可能也不必要"的例子**：它依赖的不是宿主能力，
+   **是另一个扩展的存在**。**不该进兼容账本，该进"结构上不适用"那一栏。**
+2. **用法一需要一个独立于 `localStorage` 的决定。**存图片、blob 级、异步失败语义、
+   带迁移路径。§五 的「真持久化 + profile 级共享」是按键值存储裁的，
+   **套到这里要重新想一遍容量和清理**。
+3. **两处都有守卫、都能降级**（`try` + `if (indexedDB.databases)` + `onerror`），
+   所以**存储不可用不会让这张卡启动即死**——它的"启动即死"点在 `localStorage`
+   那一侧（§五之口径注），不在这里。
 
 ---
 
-## 六、探测手段：`typeof` 会抛，`in` 不会（44 实测，2026-09-03）
+## 七、探测手段：`typeof` 会抛，`in` 不会（44 实测，2026-09-03）
 
 这一节决定我们门面的形状，所以把机制写清。
 
@@ -207,3 +253,15 @@ if (MIGRATABLE_KEYS.some(k => k.test(key))) {
 **但那是推论，前提是"这些卡在全新 profile 上跑得起来"，这个前提没有人验证过。**
 
 **要确认得拿一张空 profile 实跑，那是浏览器验收的事，语料回答不了。**
+
+---
+
+## 未查
+
+1. **同源没有在浏览器里实证过**（只读纪律：那要开 DevTools 看用户的 ST）。
+   §二 的代码自证比推论硬，但它证的是"上游代码假定同源"，不是"我观察到同源"。
+2. ~~**`sessionStorage` / `indexedDB` 的共享面我没单独量**~~ **`indexedDB` 已查，见 §六。**
+   （`sessionStorage` 语料里零使用，同源结论同样适用，未单独展开。）
+3. ~~**`typeof localStorage` 在不透明源上会不会抛**~~ **已结**，见 §七。
+4. **§六 用法一（卡自己的图片库）需要一条独立于 `localStorage` 的裁定**，
+   §五 那条是按键值存储裁的。这条我没有答案，是提出来的问题。
