@@ -103,6 +103,18 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
    * call as `SillyTavern.loadWorldInfo(name)`. The two live in the same file and
    * belong on opposite lists, which is the distinction that table exists for.
    */
+  /*
+   * The card-storage writes.
+   *
+   * Routed like any other card action rather than through a private channel,
+   * because that is what they are: a card calls `localStorage.setItem` and the
+   * façade translates. Going around this table would mean one set of card
+   * effects the shell's gate does not see, and the gate is the only place that
+   * knows which chat is open.
+   */
+  storageSet: 'storage.set',
+  storageRemove: 'storage.remove',
+  storageClear: 'storage.clear',
   loadWorldInfo: 'worldbook.load',
   replaceScriptButtons: 'script.replaceScriptButtons',
   getWorldbook: 'worldbook.get',
@@ -160,6 +172,16 @@ export const OFF_ST_SURFACE: readonly string[] = [
   // `st-context.js`'s 145 keys, so `SillyTavern.replaceScriptButtons` would be
   // Iris adding a member to the surface it is mirroring.
   'replaceScriptButtons',
+  /*
+   * The storage writes are Iris's own names for Iris's own translation of
+   * `localStorage`, which upstream has no context member for at all — a card
+   * reaches storage through the global, never through `SillyTavern`. Putting
+   * them on that surface would invent three members on a surface being
+   * mirrored, and invite a card to depend on names no other host has.
+   */
+  'storageSet',
+  'storageRemove',
+  'storageClear',
 ]
 
 /** Whether a card may invoke this action. */

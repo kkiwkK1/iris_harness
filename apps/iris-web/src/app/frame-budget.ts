@@ -39,7 +39,8 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * per-member argument translation that replaced a single shared fallthrough,
  * and the stack-frame reader; then another 1.8 KiB for floor-addressed variable
  * reads and the Tavern Helper surface an interface frame now gets, and 1.2 KiB
- * more for the prompt-injection façade.
+ * more for the prompt-injection façade, and 4.2 KiB for the `localStorage` a
+ * frame on an opaque origin has to be given instead of having.
  *
  * **No current figure is written here on purpose.** Two earlier versions of this
  * comment carried "as this line is written" numbers and both were stale within
@@ -54,7 +55,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 53 * 1024
+export const FRAME_OVERHEAD_BYTES = 57 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -70,12 +71,12 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 38 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 36 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
- * 16 leaves about 1.2 MiB for content (overhead ≈ 848 KiB, 40%), and 16 live
+ * 16 leaves about 1.1 MiB for content (overhead ≈ 912 KiB, 45%), and 16 live
  * panels on one screen is already past any reading scenario. It is a trade-off
  * point rather than a threshold — moving it means revisiting the two measured
  * values above, not just this line.
@@ -89,9 +90,12 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * reasonable-looking response was to raise the constant above and treat the
  * ratio as incidental.
  *
- * 16 rather than 19, which is the largest value that satisfies the invariant
- * today: 19 would put this back on the boundary and make the next kilobyte of
- * bootstrap relitigate it. 16 holds through a 56 KiB frame.
+ * 16 rather than 19, which was the largest value satisfying the invariant on
+ * the day it moved: 19 would have put this back on the boundary and made the
+ * next kilobyte of bootstrap relitigate it. That headroom was spent almost
+ * immediately — the frame went 53 → 57 KiB in the next change — and the
+ * invariant still holds, which is the whole return on picking 16. It holds to
+ * about 64 KiB.
  *
  * **This is a behaviour change and it is small in the only place it shows.**
  * Frames past the sixteenth on one screen now get a named placeholder instead

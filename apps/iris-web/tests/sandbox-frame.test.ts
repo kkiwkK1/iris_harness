@@ -29,6 +29,8 @@ function realm(options?: { interfaceFrame?: boolean }): {
   forwarded: (name: string) => unknown
   /** The reporter the toastr substitute was handed, if it was handed one. */
   reportFromToastr: () => ((message: string, channel: 'note' | 'error') => void) | undefined
+  /** The `localStorage` the frame asked to have installed, if it asked. */
+  storage: () => Record<string, unknown> | undefined
   /**
    * One published value.
    *
@@ -61,12 +63,16 @@ function realm(options?: { interfaceFrame?: boolean }): {
   const container = { id: 'card-root', querySelector: () => null, querySelectorAll: () => [] }
 
   let toastrReport: ((message: string, channel: 'note' | 'error') => void) | undefined
+  let installedStorage: Record<string, unknown> | undefined
   const env: FrameEnv = {
     token: 'tok',
     container,
     ...(options?.interfaceFrame === true ? { interfaceFrame: true } : {}),
     provideToastr: report => {
       toastrReport = report
+    },
+    provideStorage: value => {
+      installedStorage = value as Record<string, unknown>
     },
     factory: {
       createElement: tagName => ({ tagName }),
@@ -107,6 +113,7 @@ function realm(options?: { interfaceFrame?: boolean }): {
     forwarded: (name: string) => forwarded.get(name)?.(),
     listed: () => listed,
     reportFromToastr: () => toastrReport,
+    storage: () => installedStorage,
     run: next => {
       body = next
     },
@@ -2751,4 +2758,98 @@ test('a script frame still publishes nothing before it is asked to run', () => {
   const scope = realm()
   assert.deepEqual(scope.publishedNames(), [], 'a script frame published before running')
   assert.deepEqual(scope.posted, [], 'installing must not announce anything')
+})
+test('a frame is given a localStorage before its card code runs', () => {
+  /*
+   * **Before**, not merely at some point. pinia pulls in `@vue/devtools-kit`,
+   * which decides whether it has storage with `typeof localStorage > 'u'` — and
+   * on an opaque origin *that read itself throws*. So the shadow has to be in
+   * place before the preset's modules evaluate, which is why the frame offers it
+   * ahead of the libraries rather than beside the card's body.
+   */
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({ characterId: 'char', storage: { wallpaper: 'data:abc' } }),
+  })
+  evaluate(scope, () => undefined, 'first')
+
+  const storage = scope.storage()
+  assert.notEqual(storage, undefined, 'the frame never asked for storage to be installed')
+  assert.equal((storage?.['getItem'] as (key: string) => unknown)('wallpaper'), 'data:abc')
+  // The property spelling too, which is how 44's four bare startup points reach
+  // it — all four are `localStorage.x` at module top level.
+  assert.equal(storage?.['wallpaper'], 'data:abc')
+})
+
+test('an interface frame gets storage too, since its markup runs at parse time', () => {
+  // Interface-side storage use is not zero: 44 measured 5 cards and 50 access
+  // points, none at top level but all in interaction handlers. A frame that
+  // received storage only on `run` would serve none of them.
+  const scope = realm({ interfaceFrame: true })
+  assert.notEqual(scope.storage(), undefined)
+})
+
+test('a card write goes out as a routed action, attributed to the card', async () => {
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({ characterId: 'char', storage: {} }),
+  })
+  evaluate(scope, () => undefined, 'first')
+
+  const storage = scope.storage() as Record<string, unknown>
+  ;(storage['setItem'] as (key: string, value: string) => void)('theme', 'dark')
+
+  // Visible immediately, which the overlay is what provides: the write has not
+  // reached the host yet, and a card reading back its own value must not miss.
+  assert.equal((storage['getItem'] as (key: string) => unknown)('theme'), 'dark')
+
+  await Promise.resolve()
+  const call = scope.posted.find(
+    message => message.type === 'call'
+      && (message as unknown as { method: string }).method === 'storageSet',
+  ) as unknown as { params: Record<string, unknown> } | undefined
+  assert.notEqual(call, undefined, `the write never reached the wire: ${JSON.stringify(scope.posted)}`)
+  assert.equal(call?.params['key'], 'theme')
+  assert.equal(call?.params['value'], 'dark')
+  /*
+   * `characterId` is attribution, not ownership: the store is one profile-wide
+   * store, so the id records who wrote a key last — which is what lets a later
+   * `clear()` report whose keys it took.
+   */
+  assert.equal(call?.params['characterId'], 'char')
+})
+
+test('a write with no character open is reported rather than attributed to nobody', async () => {
+  /*
+   * The contract requires a `characterId` and the frame will not invent one. A
+   * write in this window is reachable while a chat is closing, and the honest
+   * outcome is the value living in this frame and a report saying it will not
+   * survive — which is exactly what a rejected write-through produces.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ storage: {} }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const storage = scope.storage() as Record<string, unknown>
+  ;(storage['setItem'] as (key: string, value: string) => void)('k', 'v')
+  await Promise.resolve()
+  await Promise.resolve()
+
+  const said = scope.posted
+    .filter(message => message.type === 'error')
+    .map(message => (message as unknown as { message: string }).message)
+  assert.equal(said.filter(line => line.includes('no character is open')).length, 1, said.join(' | '))
+  assert.match(said.join(' '), /gone when this chat is opened again/)
+  assert.equal(
+    scope.posted.some(
+      message => message.type === 'call'
+        && (message as unknown as { method: string }).method === 'storageSet',
+    ),
+    false,
+    'an unattributable write must not reach the host',
+  )
 })

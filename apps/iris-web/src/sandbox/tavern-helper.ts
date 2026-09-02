@@ -37,29 +37,40 @@ import { buttonEventName } from './button-event.ts'
 import { UnsupportedApiError } from './errors.ts'
 
 /**
- * The bus event that says a generation has settled, however it settled.
+ * The event names a settled generation is announced under.
  *
- * **Not one of upstream's names, and that is the point.** Upstream revokes a
- * `once` injection on `GENERATION_ENDED` *and* `GENERATION_STOPPED`, so its
- * cards can tell a completed generation from an aborted one. Iris's host
- * broadcasts `stream.end` for both — normal settle and abort go through the same
- * `#settle` — and the event carries `{ chatId, turn, view }` with **no reason
- * and no aborted flag**. The discriminator does not exist on this wire.
+ * **Upstream's own, and briefly they were not.** Upstream revokes a `once`
+ * injection on Tavern Helper's `js_generation_ended`, SillyTavern's
+ * `generation_ended`, and `generation_stopped` so an abort revokes too — and for
+ * one round this frame subscribed to all three while **nothing in this app
+ * emitted any of them**. A `once` injection would never have been revoked: no
+ * error, no report, the text quietly appearing in every later prompt.
  *
- * So the frame is given a name that claims only what it knows. Emitting
- * upstream's two names off one undifferentiated event would be worse in both
- * directions: emit `generation_ended` alone and a card watching for aborts never
- * hears one; emit both and every completed generation looks aborted. A card
- * subscribing to either upstream name gets nothing, which is a gap it can be
- * *told* about — and `script-run-state.ts` does tell it, since both names are in
- * upstream's declared surface.
+ * The fix at the time was a single Iris-only name, because `stream.end` carried
+ * `{ chatId, turn, view }` and no reason — so "completed" and "aborted" were
+ * indistinguishable, and emitting upstream's names off one undifferentiated
+ * event would have been wrong in both directions: `generation_ended` alone and a
+ * card watching for aborts never hears one; both, and every completion looks
+ * aborted.
  *
- * The missing discriminator is a host-shape question, reported rather than
- * patched around here: adding a reason to `stream.end` is the fix, and inventing
- * one from the frame would be a guess wearing upstream's name.
+ * `stream.end` now carries `reason`, so the discriminator exists and the
+ * Iris-only name is gone with it. **Not synthesising was right only while the
+ * answer was unknown; keeping it afterwards would have been knowing the answer
+ * and not saying it** — and these names serve every card that subscribes to
+ * them, not only `injectPrompts`.
+ * @param reason - how the generation ended.
+ * @returns the bus events to emit, in order.
  */
-export const GENERATION_SETTLED = 'iris:generation-settled'
-
+export function settledEvents(reason: 'completed' | 'aborted'): readonly string[] {
+  /*
+   * An abort emits `generation_stopped` **only**. Upstream's abort path does not
+   * also fire `GENERATION_ENDED`, and a card that revoked on the first and
+   * re-armed on the second would be left in the wrong state if both arrived.
+   */
+  return reason === 'aborted'
+    ? ['generation_stopped']
+    : ['js_generation_ended', 'generation_ended']
+}
 /** A scope selector, in the shape upstream's cards pass it. */
 export interface VariableOption {
   type?: string
@@ -1734,19 +1745,21 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
          * itself in several places.
          */
         /*
-         * One event, because one is what the host broadcasts.
+         * Upstream's three, which the shell now emits — two on a completion and
+         * one on an abort. Subscribing to all three is safe because `uninject`
+         * is idempotent, and it has to be anyway: the measured card calls it
+         * itself in several places.
          *
-         * A first version subscribed to `js_generation_ended`,
-         * `generation_ended` and `generation_stopped` — upstream's three — and
-         * **nothing in this app emits any of them**. All three subscriptions
-         * would have sat there forever and a `once` injection would simply never
-         * have been revoked: no error, no report, the text just keeps appearing.
-         * Three plausible names are not more robust than one real one; they are
-         * the same silence, harder to notice.
+         * These names were emitted by nothing for one round, and all three
+         * subscriptions sat there doing nothing while a `once` injection was
+         * never revoked — silently. The lesson kept beside the fix: **a
+         * subscription is not evidence that anything emits.**
          */
-        events.eventOnce(GENERATION_SETTLED, () => {
-          uninject()
-        })
+        for (const event of ['js_generation_ended', 'generation_ended', 'generation_stopped']) {
+          events.eventOnce(event, () => {
+            uninject()
+          })
+        }
       }
 
       return { uninject }

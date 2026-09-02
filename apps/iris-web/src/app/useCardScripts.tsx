@@ -35,7 +35,7 @@ import {
   type SandboxAssets,
 } from '../sandbox/asset-manifest.ts'
 import { runCard } from '../sandbox/runner.ts'
-import { GENERATION_SETTLED } from '../sandbox/tavern-helper.ts'
+import { settledEvents } from '../sandbox/tavern-helper.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun } from '../sandbox/script-run-state.ts'
@@ -348,20 +348,29 @@ export function CardScriptFrames(): ReactElement {
       if (event.type !== 'chat.updated' && event.type !== 'stream.end') return
       if (event.chatId !== chatId) return
       /*
-       * A settled generation is announced into the frames, not only used here.
+       * A settled generation is announced into the frames under upstream's own
+       * names, not only used here.
        *
-       * `injectPrompts({once: true})` has to revoke itself when a generation
-       * ends, and the frame has no other way to learn that it did: upstream's
-       * `GENERATION_ENDED` and `GENERATION_STOPPED` are emitted by nothing in
-       * this app, so a façade subscribing to them waits forever and the
-       * injection is never removed — silently, which is the failure mode this
-       * whole layer keeps paying for.
+       * Nothing in this app emitted `generation_ended` or `generation_stopped`
+       * for most of its life, so every card subscribing to them — and
+       * `injectPrompts({once:true})`, which revokes on them — waited forever and
+       * was never told. Silently: no error, no report, the injected text simply
+       * kept appearing in every later prompt.
+       *
+       * Which names go out is decided by `settledEvents` from `reason`, so a
+       * completion and an abort are distinguishable the way they are upstream.
+       * That field arrived after this call site did; before it, one Iris-only
+       * name was the honest answer, because emitting either upstream name off an
+       * undifferentiated event would have made completions look like aborts or
+       * hidden aborts entirely.
        *
        * `stream.end` only. `chat.updated` covers edits, swipes and script
        * writes, none of which is a generation settling, and revoking a `once`
        * injection on a swipe would take it away mid-conversation.
        */
-      if (event.type === 'stream.end') running.emit(GENERATION_SETTLED, [])
+      if (event.type === 'stream.end') {
+        for (const name of settledEvents(event.reason)) running.emit(name, [])
+      }
       /*
        * Not awaited, and failures are the controller’s to report: a refresh
        * that loses a race with teardown is already guarded inside `refresh`,

@@ -1001,6 +1001,39 @@ try {
      * markup.
      */
     interfaceFrame: document.body?.hasAttribute('data-iris-interface') === true,
+    /*
+     * An own property of `window`, which is what the measurement said to do.
+     *
+     * In a real `sandbox="allow-scripts"` frame, `localStorage` is an own,
+     * configurable property of `window` with nothing on `Window.prototype` — so
+     * one `defineProperty` shadows the getter that throws, and afterwards
+     * `typeof localStorage` is `'object'` and bare-identifier access works.
+     * `sessionStorage`, left alone in the same probe, still throws, which is
+     * what makes that a reading about the shadow rather than about a frame that
+     * happened to have storage.
+     *
+     * Reported rather than thrown if it fails: a frame without storage is worse
+     * than one with, and a frame that died installing it is worse than both.
+     */
+    provideStorage: storage => {
+      try {
+        Object.defineProperty(window, 'localStorage', {
+          value: storage,
+          configurable: true,
+          writable: true,
+        })
+      } catch (error: unknown) {
+        post({
+          iris: run,
+          type: 'error',
+          scriptId: undefined,
+          message:
+            'Iris could not install card storage in this frame, so localStorage will throw on'
+            + ' access as an opaque origin’s does: '
+            + (error instanceof Error ? error.message : String(error)),
+        })
+      }
+    },
 
   token: run,
   container: document.body,

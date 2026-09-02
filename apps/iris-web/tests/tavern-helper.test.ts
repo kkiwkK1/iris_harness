@@ -24,10 +24,10 @@ import { readFile } from 'node:fs/promises'
 
 import { CARD_METHODS } from '../src/sandbox/card-api.ts'
 import {
-  GENERATION_SETTLED,
   TAVERN_HELPER_VERSION,
   createFrameTavernHelper,
   resolveRange,
+  settledEvents,
 } from '../src/sandbox/tavern-helper.ts'
 
 /** A snapshot with three messages, the last carrying two swipes. */
@@ -1641,6 +1641,21 @@ test('a repeated id is one injection, because upstream overwrites the whole row'
   assert.deepEqual(removals.map(call => call.params['key']), ['same'], 'one key, one removal')
 })
 
+test('the names a settled generation goes out under are upstream’s, split by reason', () => {
+  /*
+   * An abort emits `generation_stopped` **only** — upstream's abort path does
+   * not also fire `GENERATION_ENDED`, and a card that revoked on the first and
+   * re-armed on the second would be left in the wrong state if both arrived.
+   *
+   * This function exists because for one round the answer was "none of them":
+   * `stream.end` carried no reason, so these three names were emitted by nothing
+   * and every subscription to them was silent. The `reason` field is what made
+   * synthesising them honest rather than a guess wearing upstream's name.
+   */
+  assert.deepEqual(settledEvents('aborted'), ['generation_stopped'])
+  assert.deepEqual(settledEvents('completed'), ['js_generation_ended', 'generation_ended'])
+})
+
 test('once revokes on the event the host actually broadcasts', async () => {
   /*
    * **The silence this closes.** A first version subscribed to upstream's three
@@ -1662,7 +1677,7 @@ test('once revokes on the event the host actually broadcasts', async () => {
     'revoked before any generation settled',
   )
 
-  await events.eventEmit(GENERATION_SETTLED)
+  await events.eventEmit('generation_ended')
   const removals = calls.filter(
     call => call.method === 'setExtensionPrompt' && call.params['value'] === '',
   )
@@ -1682,7 +1697,7 @@ test('an injection without once survives a settled generation', () => {
   const inject = api['injectPrompts'] as (p: unknown, o?: unknown) => { uninject: () => void }
 
   inject([{ id: 'durable', content: 'x' }])
-  void events.eventEmit(GENERATION_SETTLED)
+  void events.eventEmit('generation_ended')
 
   assert.deepEqual(
     calls.filter(call => call.method === 'setExtensionPrompt' && call.params['value'] === ''),

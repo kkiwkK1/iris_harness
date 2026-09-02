@@ -23,6 +23,7 @@ import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virt
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isOnSillyTavernSurface } from './card-api.ts'
 import { createEventSource, createFrameTavernHelper } from './tavern-helper.ts'
+import { createCardStorage } from './card-storage.ts'
 import { MEMBER_KINDS, SHARED_ORIGINAL, identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
 import { SCRIPT_REGISTRY, withPreamble } from './preamble.ts'
@@ -97,6 +98,16 @@ export interface FrameEnv {
    * only side a member is used from.
    */
   interfaceFrame?: boolean
+  /**
+   * Install the card storage as this frame's `localStorage`.
+   *
+   * Handed over rather than installed here for the usual reason — this module
+   * touches no document — and it has to be *installed*, not merely offered: the
+   * failure it addresses is the **property access**, so the value must be an own
+   * property of `window` before any card code reads it.
+   * @param storage - the object to shadow `localStorage` with.
+   */
+  provideStorage?: (storage: unknown) => void
   /**
    * Define a name on the frame's own window that reads through to a live source.
    *
@@ -1049,6 +1060,60 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     say(message, 'error')
   }
 
+  /*
+   * `localStorage`, which this frame does not have.
+   *
+   * Built here because it needs the context snapshot and the wire, and installed
+   * by the entry because it needs the document. The three writes go through
+   * `callAction` like any other card action, so the shell's gate sees them.
+   *
+   * `characterId` is required by the contract and is attribution, not ownership:
+   * the store is one profile-wide store, so the id says who wrote a key last —
+   * which is what lets a later `clear()` report whose keys it took. A frame with
+   * no character open cannot attribute a write and says so rather than inventing
+   * an id.
+   */
+  const cardStorage = createCardStorage({
+    snapshot: () => context?.storage ?? {},
+    write: async (key, value) => {
+      const characterId = context?.characterId
+      if (characterId === undefined) {
+        throw new Error('no character is open, so this write could not be attributed to a card')
+      }
+      await callAction('storageSet', { characterId, key, value })
+    },
+    remove: async key => {
+      const characterId = context?.characterId
+      if (characterId === undefined) {
+        throw new Error('no character is open, so this removal could not be attributed to a card')
+      }
+      await callAction('storageRemove', { characterId, key })
+    },
+    clear: async () => {
+      const characterId = context?.characterId
+      if (characterId === undefined) {
+        throw new Error('no character is open, so this clear could not be attributed to a card')
+      }
+      const reply = await callAction('storageClear', { characterId })
+      const counts = reply as { removed?: unknown, foreign?: unknown } | undefined
+      return {
+        removed: typeof counts?.removed === 'number' ? counts.removed : 0,
+        foreign: typeof counts?.foreign === 'number' ? counts.foreign : 0,
+      }
+    },
+    /*
+     * `reportFault` for a refused write, `reportGap` for the rest, which is the
+     * same rule as everywhere else on this surface: did the caller get what it
+     * asked for? A `clear()` that worked is a note even though it destroyed
+     * data, and a refused `setItem` is a fault even though nothing threw for the
+     * user to see.
+     */
+    report: (message, failed) => {
+      if (failed) reportFault(message)
+      else reportGap(message)
+    },
+  })
+
   const tavernHelper = createFrameTavernHelper({
     context: () => context,
     scriptId: () => scriptId,
@@ -1512,6 +1577,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * banner that lists something we provide sends a reader looking for a gap
        * that is not there — the same class of error as omitting one we do not.
        */
+      /*
+       * Storage before the libraries, and before the body.
+       *
+       * pinia pulls in `@vue/devtools-kit`, which decides whether it has storage
+       * with `typeof localStorage > 'u'` — and on an opaque origin *that read
+       * itself throws*. So the shadow has to be in place before the preset's
+       * modules evaluate, not merely before the card's own code.
+       */
+      env.provideStorage?.(cardStorage)
+
       // `say`, not `reportGap`: a card's own `toastr.error` is the card’s claim
       // that something failed, and its `toastr.success` is not.
       env.provideToastr?.(say)
@@ -1605,6 +1680,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
          */
         ...Object.entries(coordination(undefined)),
       ])
+      env.provideStorage?.(cardStorage)
       env.provideToastr?.(say)
       env.reportMissingGlobals?.(EXPECTED_GLOBALS)
     } catch (error: unknown) {
