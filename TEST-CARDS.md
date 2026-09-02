@@ -136,51 +136,84 @@ artifact 的内部依赖。
 VueRouter、showdown。下表量的是**语料里谁会因此坏掉**,给 7b 定补的顺序。
 命令 `node scratchpad/deps-census.mjs` / `deps-selfhosted.mjs`。
 
-| 差集 | 命中卡 | **需要我们补** | 观察到的族 |
-|---|---|---|---|
-| **Font Awesome** | **7 / 22** | **7** | FRAME-FENCED ×4、FRAGMENT ×2、FRAME-BARE ×1(+2 张无观察族) |
-| **Tailwind** | 2(字面)/ 1(utility) | **2** | FRAME-FENCED ×1(+1 张 SCRIPT-DOM 能力卡) |
-| **showdown** | 2 / 22 | **2** | FRAME-FENCED ×1(+1 张无观察族) |
-| jQuery UI | **0** | — | — |
-| VueRouter | **0** | — | — |
+**先把口径钉住:覆盖是按 frame 种类算的,不是按卡算的。**
+`message-preset-entry.ts:70` 里 `import './preset-entry.ts'` —— **message preset 是 script
+preset 的超集,反过来不成立**,而且那份文件的头注释写明这是刻意的:「a script frame has no
+interface to draw」。所以下表的「需要我们补」= **该卡画界面的那个 frame 里没有**。
 
-命中明细(命中在哪个 population 也记下来,因为坏的时机不同:`regex`/`script` 是建界面时就坏,
-`floors` 只影响已存在的对话):
+| 差集 | 命中卡 | 我们已预置 | **仍需要补** | 观察到的族 |
+|---|---|---|---|---|
+| **Font Awesome** | **6 / 22** | message frame(6.5.2,base+solid+brands+regular+**v4**) | **0**,待 7b 实测确认 | FRAME-FENCED ×4、FRAGMENT ×2、FRAME-BARE ×1(+1 无观察族) |
+| **Tailwind** | 2(字面)/ 1(utility) | message frame(4.1.12) | **1 —— V1.5.4_,恰好是 SCRIPT-DOM** | FRAME-FENCED ×1 + SCRIPT-DOM ×1 |
+| **showdown** | 2 / 22 | 无 | **2** | FRAME-FENCED ×1(+1 无观察族) |
+| jQuery UI | **0** | 无(但 `jquery-plugin-gap.ts` 会报缺) | — | — |
+| VueRouter | **0** | 无 | — | — |
+
+命中明细(记 population,因为坏的时机不同:`regex`/`script` 是建界面时就坏,`floors` 只影响
+已存在的对话):
 
 - **Font Awesome**:创世回廊1.3(regex)、魔法禁书目录(regex)、魔法少女的扣扣审判1.0
-  (regex+script)、魔法少女是不会败北恶堕的吧!(regex)、希尔(regex)、银麒赎世(script)、
-  V1.5.4_(script)
+  (regex+script)、魔法少女是不会败北恶堕的吧!(regex)、希尔(regex)、银麒赎世(script)
 - **Tailwind**:创世回廊1.3(regex,字面 + utility)、V1.5.4_(script,字面)
 - **showdown**:魔法少女的扣扣审判1.0(regex)、萧谴写卡助手版_V4.5.1(regex)
 
-#### 「自带」不等于「不用我们补」——这条差点把顺序搞反
+**类名前缀全部兼容**,已逐卡核过:卡用到的是 `fa-solid` `fa-regular` `fa-brands` `fas`,
+我们 ship 的 `fontawesome+solid+brands+regular+v4-font-face` 全覆盖(v4 那份让裸 `fa` 前缀
+也能解析)。**没有任何一张用 Pro 专有前缀**(`fal`/`fad`/`fa-light`/`fa-thin`/`fa-duotone`)。
 
-7 张 Font Awesome 卡里有 **6 张自己注入 `<link>`**(全部指向
-`cdnjs.cloudflare.com/ajax/libs/font-awesome/6.x/css/all.min.css`),两张(魔法少女的扣扣审判1.0、
-银麒赎世)甚至先判断「已经加载过就不重复加」。按「自带 = 自足」读,这条差集只砸 1 张卡,
-排在最后。
+#### 「自带」不等于「自足」——但这次结论是反的,记下来是因为形状值得记
 
-**但那 6 张在我们的 frame 里一样坏,而且两种模式都坏。** 读 `sandbox/policy.ts:77` 与
-`sandbox/srcdoc.ts:framePolicy`:
+6 张 FA 卡**全部自己注入 `<link>`** 到 `cdnjs.cloudflare.com/…/font-awesome/6.x/css/all.min.css`,
+而 `REMOTE_ALLOWLIST` 只有 `*.jsdelivr.net` 和 `raw.githubusercontent.com`,**cdnjs 不在里面**;
+`font-src data: https://fonts.gstatic.com` 且**不随授网放宽**。照这条读,卡自带的那份两种模式
+都拿不到 —— 我据此写过「授网也救不回来」。
 
-- `REMOTE_ALLOWLIST = ['*.jsdelivr.net', 'raw.githubusercontent.com']` —— **cdnjs 不在里面**。
-- 未授网:`style-src 'unsafe-inline' https://fonts.googleapis.com data:` —— cdnjs 的 CSS 被挡。
-- 已授网:`style-src 'unsafe-inline' https: data:` —— CSS 过得去了,**但**
-  `font-src data: https://fonts.gstatic.com` **不随授权放宽**,而 FA 的字形文件在 cdnjs,
-  所以图标仍然是空框。
-- Tailwind 同理走 `script-src`,而 `script-src` **也不随授权放宽**,两种模式都拿不到。
+**那句是错的,因为对象错了:拿不到的是卡自带的那份,而不是图标。** 我们自己在 message
+frame 里预置了 FA 6.5.2,图标由预置供给,卡那条 `<link>` 挂掉是无害的。**不扩 allowlist,
+机制上由预置覆盖。**
 
-> **所以「需要我们补」= 7 / 2 / 2,不是 1 / 0 / 2。** 「卡自带」只在宿主放行的前提下成立,
-> 而这里的宿主是我们自己的 CSP。
+> 留下来的教训是那个前提:**「卡自带」只在宿主放行时才等于「自足」,而「宿主没放行」也只有
+> 在宿主自己没有预置时才等于「坏」。** 两步推理,我把第一步查实了就当第二步也成立。
 
-顺带一条对验收有用的:那两张会先探测 `$('link[href*="font-awesome"]').length` 的卡,
-**我们预置之后它们的加载器会自动变成空操作**——它们本来就是照「宿主可能已经提供」写的。
+**待定稿**:卡自带的 `<link>` 被 CSP 拒是**要报 note** 的(用户会看到一条被拒记录,而界面
+其实是好的),报法待 7b 在创世回廊上实测图标是否有字形后定。两张会先探测
+`$('link[href*="font-awesome"]').length` 的卡(魔法少女的扣扣审判1.0、银麒赎世)**预置之后
+它们的加载器自动变成空操作**——它们本来就照「宿主可能已提供」写的,所以验收时「卡自己的
+loader 没跑」是正常现象。
+
+#### 实测前必须知道的两个混淆源
+
+**① 5 / 6 张卡引用了 FA Free 里根本不存在的图标名**,与预置无关,与 allowlist 无关,
+**空框是它们本来就有的缺陷**——但在截图里和「预置没生效」长得一模一样:
+
+| 卡 | 用到图标 | Free 6.5.2 没有的 |
+|---|---|---|
+| 创世回廊1.3 | 28 | `fa-sparkles` |
+| 希尔 | 75 | `fa-sparkles` `fa-blanket` |
+| 魔法少女是不会败北恶堕的吧! | 58 | `fa-radar` |
+| 魔法禁书目录 | 59 | `fa-user-hair` |
+| 银麒赎世 | 63 | `fa-chevron-`(疑似模板拼接 `fa-chevron-${…}`,非真名) |
+| 魔法少女的扣扣审判1.0 | 40 | —— |
+
+(口径:图标名读自 `node_modules/@fortawesome/fontawesome-free/css/*.css` 里实际定义的
+2491 个 `.fa-*::before`,不是凭记忆。)**所以「创世回廊上有个空框」不能推出「预置没生效」,
+得指名是哪个图标。** 反过来,`魔法少女的扣扣审判1.0` 是唯一一张图标全部存在的卡,
+**它才是判断预置是否生效的干净样本**。
+
+**② 银麒赎世的 FA 用在 `script` population,不是 `regex`。** 由于预置只进 message frame,
+「这张卡的图标由哪个 frame 画」决定它是否被覆盖,而 population 只是代理、不是答案。
+它的族是 FRAGMENT(界面在消息正文),所以大概率覆盖得到,但这条要实测才算数。
 
 #### 谓词与鉴别力(每条差集单独说,弱的分开报)
 
-- **Font Awesome**:只在 `class` 属性值里匹配 `fa-`/`fas`/`far`/`fab`/`fa-solid`。
-  **不是**裸 `/fa-/`——语料里 `fa-` 的字面命中全部落在 `chat_metadata` 的 UUID 里
-  (`1316a7fa-ce03-…`),裸匹配会给出假阳性。精度可辩护。
+- **Font Awesome**:只在 `class` 属性值里、且**按整个 token 相等**匹配。两道都必要,
+  各挡住一类假阳性:
+  - 限定在 `class` 属性内 —— 语料里 `fa-` 的字面命中**全部**落在 `chat_metadata` 的 UUID
+    (`1316a7fa-ce03-…`),裸 `/fa-/` 会误报。
+  - 整 token 相等 —— **第一版没这么做,`\bfab\b` 匹配到了 `recovery-fab` 里的 `fab`
+    (`-` 是词边界),于是 V1.5.4_ 被误算成 FA 卡,数字一度是 7。** 它 1076 个 class 值里
+    真正的 FA token 是零。**正确的数是 6**,而且因此**没有任何 SCRIPT-DOM 卡用 FA**——
+    这恰好是「预置只进 message frame」下最要紧的那一格。
 - **Tailwind**:分两栏报,因为强度差很多。`tailwind`/`@apply` 字面是硬证据(2 张);
   utility 名单是启发式,且加了一道过滤——**只有卡自己的 CSS 里没有定义该类名时才算命中**,
   否则那是卡自己写的同名类。过滤后只剩创世回廊1.3 一张,命中 token 如
