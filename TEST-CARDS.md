@@ -514,6 +514,50 @@ AST 分析成立。抛点是 devtools-kit 自己的 `typeof localStorage` 守卫
 > **本行结论:正文 1 处受 try 保护;抛点在远程依赖 `@vue/devtools-kit`,由存储门面覆盖。**
 > 预测与实测**不矛盾**——它们说的是两个对象(卡的正文 / 卡的传递依赖)。
 
+### 补表甲:写进去的值有多大 —— 上限由一张卡定,而且是图片级
+
+`scratchpad/storage-size-and-iface.mjs` + `wallpaper-trace.mjs`。先给能静态定死的:
+
+- **绝大多数键存的是 `JSON.stringify(小对象)`**:`阵营系统_last_data`、`好感度_last_data`、
+  `mobile-trigger-btn-position`、`moshen-forum-settings`、`unlocked_cg`、`rpg_diff_override`…
+- **字面量级**:`mobile-trigger-btn-user-dragged`(4 B)、`rpg_diff_choice`(6 B)、
+  `mobile-phone-width/height`(数字)、`forum_api_*`(设置字符串)。
+- **9 个脚本里 6 个完全没有 data-URL 产生器**(`readAsDataURL`/`toDataURL`/
+  `createObjectURL`/`btoa`/`data:` 字面)——**它们不可能在存内联图片**,这一半是确定的。
+
+**剩下的两个是同一组件的两个分叉,而且结论相反:**
+
+| 卡 / 脚本 | `moshen-phone-wallpaper` 存什么 | 依据 |
+|---|---|---|
+| **银麒赎世 / 手机UI** | **可以是 data URL(图片级)** | 恢复路径注释原文:「验证保存的壁纸URL是否有效(**支持http URL和data: base64**)」;脚本含 `readAsDataURL`×2、`toDataURL`、`createObjectURL`、`btoa`、`data:` 字面;写入值 `curUrl = $("#image-viewer img.viewer-main-img").attr("src") \|\| imageUrl` |
+| 魔法少女的扣扣审判1.0 / 外置状态栏 | **只会是 http URL** | 恢复路径**校验并覆盖**:`if (!savedWallpaper \|\| … \|\| !savedWallpaper.startsWith('http')) { savedWallpaper = defaultWallpaper; localStorage.setItem(…, defaultWallpaper) }`;`imageUrl` 来自 `gitgud.io/...webp` 模板 |
+
+> **所以门面的上限不能按 8 KB 设:银麒赎世 这一张就能把用户上传的壁纸以 base64 存进去。**
+> 具体多大**静态估不出来**——它等于用户选的那张图,实际天花板是浏览器给该 origin 的配额
+> (通常 5–10 MB),不是卡里的任何常数。
+>
+> **单键最大 / 单卡合计都无法静态给出**,原因是同一个:值来自运行时用户输入。
+> 能给的是**分类上界**:除 银麒赎世 的壁纸键外,其余全部是设置/坐标/开关级的小值。
+
+### 补表乙:界面侧也在用存储 —— 不是近零,失败壳不够
+
+原先 §七之二 的 9 个脚本全在 **script** population。界面正文里另有:
+
+| 卡 | 块 | 访问点 | 顶层 | 在 try |
+|---|---|---|---|---|
+| 创世回廊1.3 | 3 个块 | 7 + 7 + 19 = **33** | 0 | 6 + 7 + 7 = 20 |
+| 爱衣 | 1 | **7** | 0 | **0** |
+| 可攻略女主拒绝被攻略 | 1 | **4** | 0 | **0** |
+| 萧谴写卡助手版_V4.5.1 | 2 | 3 + 3 = **6** | 0 | **0** |
+
+**5 张卡、7 个块、50 个访问点,其中 17 个不在 try 里。**
+
+> **两条结论:**
+> ① **界面侧不是近零**,所以界面 frame 的门面**不能只做"存在但失败"的壳** ——
+> 那 17 个裸点会抛。
+> ② **但界面侧顶层访问是 0**,所以它**不会"启动即死"**;失败形态是
+> **交互时抛**(点击处理器里),界面本身出得来。**与 script 侧那 4 个启动即死不同档。**
+
 ### 族内其实只有 6 个组件,不是 9 个脚本
 
 按内容哈希比对(`scratchpad/storage-family.mjs` + 内容 sha256):**14 个脚本只有 9 份不同内容**,
@@ -948,6 +992,65 @@ if (_.has(window.parent, 'Mvu')) {
 - **`toastr` 的脚本侧 871 次(银麒赎世)是子串计数**,含字符串与注释,不是调用数;
   界面侧那 63 次同理。**要排优先级用卡数,不要用次数。**
 - 远程 bundle 内部照旧看不见,所有数是下界。
+
+## 七之六、脚本执行模式 —— classic 卡脚本是 0,但那是构造出来的 0
+
+**这一格的答案不是语料统计,是一条代码事实:**
+
+```
+apps/iris-web/src/sandbox/script-source.ts:49   modeFor(kind: 'card-script' | 'probe')
+apps/iris-web/src/sandbox/script-source.ts:50   return kind === 'card-script' ? 'module' : 'classic'
+```
+
+**只有两种 kind,卡脚本恒为 `module`;`classic` 那条路只走 `probe`(Iris 自己的探针)。**
+上游同样是构造性的:`JS-Slash-Runner/src/panel/script/iframe.ts` 无条件输出
+`<script type="module">`,没有分支。
+
+| | 数 |
+|---|---|
+| 卡脚本总数 | 58(**49 份不同内容**) |
+| `module` | **49 / 49** |
+| `classic` | **0** |
+
+> **所以「classic 脚本里引用那对全局的有几张」在今天是 0,而且是_结构性_的 0
+> ——不是语料里恰好没有。** 那对按下标配对的表,**没有任何一张卡在等它**。
+
+### 但反事实那一栏很大,值得记下来
+
+| | 数 |
+|---|---|
+| 引用 `waitGlobalInitialized` 的不同脚本 | **10**(6 张卡) |
+| 引用 `initializeGlobal` 的 | **0** |
+| 上述 10 份里**没有任何 ESM 语法**的 | **9** |
+| 全部 49 份里没有 ESM 语法的 | **24**(几乎一半) |
+
+| 脚本 | ESM? | `waitGlobalInitialized` | `typeof` 守卫 | 卡 |
+|---|---|---|---|---|
+| 论坛覆盖层 | **yes** | 6 | 2 | V1.5.4_ |
+| 手机UI | NO | 4 | 1 | 银麒赎世 |
+| 章节管理器 | NO | 4 | 2 | 魔法少女的扣扣审判1.0 |
+| 外置状态栏 | NO | 4 | 1 | 魔法少女的扣扣审判1.0 |
+| MVU | NO | 3 | 1 | 2.1.0 |
+| MVU好感度管理系统 | NO | 1 | **0** | OVERLORD不死者之王 |
+| MVU升级系统 | NO | 1 | **0** | OVERLORD不死者之王 |
+| MVU阵营系统 | NO | 1 | **0** | OVERLORD不死者之王 |
+| 辅助计算脚本 | NO | 1 | **0** | 创世回廊1.3 |
+| 游戏引擎 | NO | 1 | **0** | V1.5.4_ |
+
+**10 份里 5 份没有守卫**,缺席即抛;另 5 份有 `typeof` 守卫(这里的守卫**有效**,
+`waitGlobalInitialized` 是普通函数,不是抛异常的 getter —— 与 §七之二 的 `localStorage` 相反)。
+
+> **可操作的结论:今天不用修那对表;但如果谁给执行模式加一个"看源码猜"的嗅探器,
+> 这 9 份就会被判成 classic 而失去那对全局,其中 5 份连守卫都没有。**
+> `modeFor` 现在按 **kind** 决定而不是按源码决定,**这正是它对的地方**
+> ——`script-source.ts` 的注释已经写明「不发明嗅探器,否则卡的行为会因卡作者无法预测的
+> 理由而不同」。这一节给那条注释配上了数字:**嗅探器会误判 49 份里的 24 份。**
+
+### 一条与 §七之四 相互印证的旁证
+
+**`initializeGlobal` 全语料引用 0 次,而 `waitGlobalInitialized` 有 10 处。**
+卡只**等**全局,从不**发布**全局 —— 这与 §七之四 用完全不同的量法得到的
+「卡脚本往 `parent`/`top` 写 0 次」是同一个事实的两次独立观测。
 
 ## 八、未量
 
