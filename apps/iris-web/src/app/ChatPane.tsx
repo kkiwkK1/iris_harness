@@ -20,6 +20,7 @@ import { Composer } from './Composer.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
 import { PromptPanel } from './PromptPanel.tsx'
 import { groupByTurn, lastReplyId, swipeTarget, withStream } from './project.ts'
+import { DEFAULT_WINDOW, grow, readingWindow } from './reading-window.ts'
 import { stepReading } from './rail.ts'
 
 /**
@@ -34,8 +35,27 @@ export function ChatPane(): ReactElement {
   const actions = useIrisActions()
 
   const generating = stream !== undefined
-  const messages = useMemo(() => withStream(view, stream), [view, stream])
+  const all = useMemo(() => withStream(view, stream), [view, stream])
+
+  /*
+   * How much of the conversation is mounted. A tail, so a chat that grows
+   * while the reader watches needs no recalculation — and so the anchor is the
+   * end of the conversation, which is where a reader of a live chat already is.
+   */
+  const [shown, setShown] = useState(DEFAULT_WINDOW)
+  const window_ = useMemo(() => readingWindow(all, shown), [all, shown])
+  const messages = window_.visible
   const groups = useMemo(() => groupByTurn(messages), [messages])
+
+  /*
+   * A new chat starts at its own tail. Without this, opening a short
+   * conversation after scrolling back through a long one would inherit the
+   * widened window — harmless there, but it also means opening the long one
+   * again would silently mount everything.
+   */
+  useEffect(() => {
+    setShown(DEFAULT_WINDOW)
+  }, [chatId])
   const retryId = lastReplyId(messages)
 
   // `undefined` means "preview the next request"; a number means "the record for
@@ -44,6 +64,8 @@ export function ChatPane(): ReactElement {
   const [explaining, setExplaining] = useState<{ turn: number | undefined } | undefined>(undefined)
   const scroller = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
+  /** The load-more control, so a press can ask whether it was on screen. */
+  const more = useRef<HTMLButtonElement>(null)
 
   const onScroll = useCallback(() => {
     const node = scroller.current
@@ -130,6 +152,52 @@ export function ChatPane(): ReactElement {
     <>
       <div className="iris-scroll" ref={scroller} onScroll={onScroll}>
         <div className="iris-column">
+          {window_.hidden === 0 ? null : (
+            <button
+              type="button"
+              ref={more}
+              className="iris-more"
+              onClick={() => {
+                /*
+                 * Compensate the scroll position **only if this button was
+                 * visible when it was pressed** — upstream measures the same
+                 * thing before adjusting (`script.js:1445`, used at `:1466`).
+                 *
+                 * What it defends against: content growing above the viewport
+                 * pushes everything down, so a reader who is not looking at the
+                 * top has the passage they *are* reading yanked away. When the
+                 * button is on screen the reader is at the top and expects the
+                 * new messages to appear where they are looking; when it is not,
+                 * they pressed it by keyboard or from far away and the sane
+                 * outcome is that nothing under their eyes moves.
+                 *
+                 * Written out because copying a defensive line without knowing
+                 * what it defends is how it gets deleted in the next refactor.
+                 */
+                const scroller_ = scroller.current
+                const button = more.current
+                const wasVisible =
+                  scroller_ !== null &&
+                  button !== null &&
+                  button.getBoundingClientRect().bottom > scroller_.getBoundingClientRect().top
+                const before = scroller_?.scrollHeight ?? 0
+                const at = scroller_?.scrollTop ?? 0
+
+                setShown(current => grow(current, DEFAULT_WINDOW, all.length))
+
+                if (!wasVisible || scroller_ === null) return
+                // After the new rows land, keep the reader's passage where it was.
+                requestAnimationFrame(() => {
+                  scroller_.scrollTop = at + (scroller_.scrollHeight - before)
+                })
+              }}
+            >
+              {`Show ${String(Math.min(DEFAULT_WINDOW, window_.hidden))} earlier`}
+              <span className="iris-more__count">
+                {`${String(window_.hidden)} above`}
+              </span>
+            </button>
+          )}
           {messages.length === 0 ? (
             <div className="iris-empty">
               <p className="iris-empty__line">The page is blank.</p>
