@@ -42,6 +42,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { ScriptView } from '@iris/protocol'
+import { effectiveButtons, type ScriptButton } from './script-buttons.ts'
 import { extractScripts, type CardScript } from '@iris/script'
 
 /** Per-character policy, keyed by character id. */
@@ -200,12 +201,25 @@ export class ScriptPolicyStore {
    * Project a card's scripts for a list view.
    * @param characterId - the card.
    * @param card - the decoded card.
+   * @param buttonOverrides - button tables scripts rewrote at runtime, by script
+   *   id. Absent means every script shows what its card declares.
+   *
+   *   Passed in rather than read here because this store owns the user's
+   *   decisions and the button store owns the scripts' — but **both read paths
+   *   must merge the same way**. The panel's bar and the card-facing snapshot
+   *   are two views of one fact, and a bar built from the declaration alone
+   *   would keep showing buttons a script had already replaced, with the card
+   *   and the UI disagreeing and neither of them wrong on its own terms.
    * @returns one row per script the card carries, disabled ones included.
    */
-  async view(characterId: string, card: unknown): Promise<ScriptView[]> {
+  async view(
+    characterId: string,
+    card: unknown,
+    buttonOverrides: Record<string, ScriptButton[]> = {},
+  ): Promise<ScriptView[]> {
     await this.#load()
     const overrides = this.#file.characters[characterId]?.enabled ?? {}
-    return extractScripts(card).scripts.map(script => this.#row(script, overrides))
+    return extractScripts(card).scripts.map(script => this.#row(script, overrides, buttonOverrides))
   }
 
   /**
@@ -221,7 +235,12 @@ export class ScriptPolicyStore {
   }
 
   /** One row, with both switches reported separately. */
-  #row(script: CardScript, overrides: Record<string, boolean>): ScriptView {
+  #row(
+    script: CardScript,
+    overrides: Record<string, boolean>,
+    buttonOverrides: Record<string, ScriptButton[]> = {},
+  ): ScriptView {
+    const buttons = effectiveButtons(script.buttons, buttonOverrides[script.id])
     return {
       id: script.id,
       name: script.name,
@@ -235,7 +254,9 @@ export class ScriptPolicyStore {
       // and this number is about to be shown to a user being asked whether to
       // run that code. Measured over the corpus's 47 scripts: 1.13x in total,
       // 2.07x on the worst single script.
-      ...script.buttons === undefined ? {} : { buttons: script.buttons },
+      // Declaration ⊕ runtime override, the same merge the snapshot does. One
+      // fact, two views: see `view`'s parameter for why they cannot diverge.
+      ...buttons === undefined ? {} : { buttons },
       ...script.buttonsEnabled === undefined ? {} : { buttonsEnabled: script.buttonsEnabled },
       bytes: Buffer.byteLength(script.content, 'utf8'),
     }

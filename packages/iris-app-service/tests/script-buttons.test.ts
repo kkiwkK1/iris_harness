@@ -9,6 +9,7 @@ import type { StreamFn } from '@iris/turn'
 import { ChatStore } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { effectiveButtons, ScriptButtonStore } from '../src/script-buttons.ts'
+import { ScriptPolicyStore } from '../src/scripts.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 
@@ -66,6 +67,10 @@ async function fixture(t: TestContext, withStore = true): Promise<Fixture> {
     settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
     broadcast: () => {},
     userName: 'U',
+    // Needed for `script.list` to answer at all — without it the handler
+    // returns an empty list, and a test asserting on `scripts[0]` would have
+    // been comparing against `undefined` rather than against a wrong merge.
+    scripts: new ScriptPolicyStore(join(dir, 'script-policy.json')),
     ...withStore ? { scriptButtons: new ScriptButtonStore(join(dir, 'script-buttons.json')) } : {},
   }).handlers()
 
@@ -187,4 +192,25 @@ test('an empty override is a real state, not an absent one', () => {
   assert.deepEqual(effectiveButtons(BUTTONS, []), [])
   assert.deepEqual(effectiveButtons(BUTTONS, undefined), BUTTONS)
   assert.equal(effectiveButtons(undefined, undefined), undefined)
+})
+
+test('the bar and the snapshot never disagree — both read the same merge', async (t) => {
+  const fixed = await fixture(t)
+
+  const before = await fixed.handlers['script.list']({ characterId: 'aria' })
+  assert.deepEqual(before.scripts[0]?.buttons, BUTTONS, 'the list starts from the declaration')
+
+  await fixed.handlers['script.replaceScriptButtons']({
+    characterId: 'aria', scriptId: 'panel',
+    buttons: [{ name: 'after', visible: true }],
+  })
+
+  // Two read paths, one fact. `ScriptView.buttons` feeds the panel's bar and
+  // `ScriptContext.scriptButtons` feeds the card; if only the snapshot merged,
+  // the bar would keep offering a button the script had already replaced — each
+  // side correct on its own terms and disagreeing with the other, which is the
+  // failure nobody can attribute.
+  const after = await fixed.handlers['script.list']({ characterId: 'aria' })
+  assert.deepEqual(after.scripts[0]?.buttons, [{ name: 'after', visible: true }])
+  assert.deepEqual(await seen(fixed), after.scripts[0]?.buttons)
 })

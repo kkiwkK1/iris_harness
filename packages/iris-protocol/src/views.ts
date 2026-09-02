@@ -155,6 +155,14 @@ export interface ScriptView {
    * **`visible: false` is the common case**: 58 of the corpus's 89 buttons.
    * Rendering the whole array shows a pile of controls their authors hid on
    * purpose. `buttonsEnabled` is the author's separate switch for the group.
+   *
+   * **The card's declaration, overridden by whatever the script has since
+   * written** through `script.replaceScriptButtons` —
+   * `ScriptContext.scriptButtons` merges identically. The panel's bar and the
+   * card-facing snapshot are two views of one fact; building the bar from the
+   * declaration alone would leave it showing buttons a script had already
+   * replaced, with the card and the UI each correct on their own terms and
+   * disagreeing with each other.
    */
   buttons?: { name: string, visible: boolean }[]
   /** Whether the card's author left this script's button group switched on. */
@@ -291,9 +299,20 @@ export interface ScriptContext {
    * correct: the panel shows the right buttons, and the script simply cannot
    * find the one it wants to reveal.
    *
+   * **What it carries is the card's declaration overridden by whatever the
+   * script has since written** — not the declaration alone. That distinction
+   * used to be wrong in this very comment: the field merged from the moment
+   * `replaceScriptButtons` existed, while the words still said "declared". A
+   * contract's prose has to hold up the semantics, or the next reader builds
+   * against the sentence.
+   *
+   * `ScriptView.buttons` merges the same way, so the panel's bar and this
+   * snapshot are two views of one fact rather than two sources that can
+   * disagree.
+   *
    * The script-level `buttonsEnabled` switch and the panel's own rendering
    * rules are separate layers that live where the rendering happens; this is the
-   * data layer and carries what the card declared.
+   * data layer.
    */
   scriptButtons?: Record<string, { name: string, visible: boolean }[]>
   /**

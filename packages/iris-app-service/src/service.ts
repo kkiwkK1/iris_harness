@@ -743,7 +743,7 @@ export class IrisAppService {
         const card = await library.load(characterId)
         const allowed = await scripts.scriptsAllowed(characterId)
         return {
-          scripts: await scripts.view(characterId, card),
+          scripts: await scripts.view(characterId, card, await this.#options.scriptButtons?.all(characterId) ?? {}),
           documentGranted: await scripts.documentGranted(characterId),
           // Omitted rather than sent as `undefined`, because the key's absence
           // is the third state and `exactOptionalPropertyTypes` makes the
@@ -767,12 +767,12 @@ export class IrisAppService {
         // Refused for a script the card does not have, rather than stored: a
         // policy file that accumulates ids from typos and stale cards is a
         // policy file nobody can audit.
-        const known = await scripts.view(characterId, card)
+        const known = await scripts.view(characterId, card, await this.#options.scriptButtons?.all(characterId) ?? {})
         if (!known.some(row => row.id === scriptId)) {
           throw notFound(`${characterId} has no script "${scriptId}"`)
         }
         await scripts.setEnabled(characterId, scriptId, enabled)
-        return { scripts: await scripts.view(characterId, card) }
+        return { scripts: await scripts.view(characterId, card, await this.#options.scriptButtons?.all(characterId) ?? {}) }
       },
 
       'script.body': async ({ characterId, scriptId }) => {
@@ -783,7 +783,7 @@ export class IrisAppService {
         // in the list: a runner that could fetch a disabled script's body would
         // make the switches advisory.
         if (scripts !== undefined) {
-          const view = (await scripts.view(characterId, card)).find(row => row.id === scriptId)
+          const view = (await scripts.view(characterId, card, await this.#options.scriptButtons?.all(characterId) ?? {})).find(row => row.id === scriptId)
           if (view !== undefined && !view.enabled) {
             throw new AppError('unsupported', `"${script.name}" is switched off`)
           }
