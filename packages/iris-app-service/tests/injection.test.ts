@@ -1,0 +1,197 @@
+import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test, type TestContext } from 'node:test'
+
+import type { StreamFn } from '@iris/turn'
+
+import { ChatStore } from '../src/chats.ts'
+import { CharacterLibrary } from '../src/library.ts'
+import { injectedContributions, IrisAppService, type Handlers } from '../src/service.ts'
+import { SettingsStore } from '../src/settings.ts'
+
+/**
+ * A card script's prompt injections, built to upstream's whole signature.
+ *
+ * `injectPrompts` is a thin wrapper over `setExtensionPrompt` — the handle it
+ * returns is the key, and `uninject()` is `_.unset(extension_prompts, id)`. So
+ * the host arm is the primitive, and the wrapper composes in the façade. What
+ * has to be right here is the primitive's full shape: `id / position / depth /
+ * role / content / should_scan`, and the two assembly rules that go with it.
+ *
+ * These are written from upstream's mechanism rather than from what any card
+ * was observed doing. A corpus count of zero means "not yet met", never "not
+ * needed".
+ */
+
+const CARD = JSON.stringify({
+  spec: 'chara_card_v2', spec_version: '2.0',
+  data: {
+    name: 'Aria', description: '', personality: '', scenario: '',
+    first_mes: 'Hello.', mes_example: '', creator_notes: '', system_prompt: '',
+    post_history_instructions: '', alternate_greetings: [], tags: [],
+    creator: '', character_version: '1', extensions: {},
+  },
+})
+
+/** A host with one open chat. */
+async function fixture(
+  t: TestContext,
+): Promise<{ handlers: Handlers, chats: ChatStore, chatId: string, dir: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-inject-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const chats = new ChatStore(join(dir, 'chats'), library)
+  const stream: StreamFn = async function* () { yield { type: 'finish', reason: { kind: 'stop' } } }
+  const handlers = new IrisAppService({
+    stream, library, chats,
+    settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
+    broadcast: () => {},
+    userName: 'Traveller',
+  }).handlers()
+
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  return { handlers, chats, chatId: created.view.chatId, dir }
+}
+
+test('assembly order is the keys’ lexicographic order, not the order they arrived', async (t) => {
+  const fixed = await fixture(t)
+
+  // Registered deliberately out of alphabetical order.
+  for (const key of ['zebra', 'alpha', 'middle']) {
+    await fixed.handlers['script.setExtensionPrompt']({
+      chatId: fixed.chatId, key, value: `text for ${key}`, position: 'at-depth', depth: 0,
+    })
+  }
+
+  const entry = await fixed.chats.open(fixed.chatId)
+  const ids = injectedContributions(entry).map(contribution => contribution.id)
+
+  // Upstream walks `Object.keys(extension_prompts).sort()`, so the
+  // concatenation order inside one group is the key order. Iterating the Map
+  // gave insertion order, which agrees only when a card injects alphabetically
+  // — and nothing would report the difference, because both orders produce a
+  // well-formed prompt. This is why upstream names its own keys `1_memory`,
+  // `2_floating_prompt`, `3_vectors`: the digits are a sorting device.
+  assert.deepEqual(ids, ['script.alpha', 'script.middle', 'script.zebra'])
+})
+
+test('an injection at position none is held but never assembled', async (t) => {
+  const fixed = await fixture(t)
+
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'parked', value: 'not in the prompt', position: 'none', depth: 0,
+  })
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'live', value: 'in the prompt', position: 'at-depth', depth: 0,
+  })
+
+  const entry = await fixed.chats.open(fixed.chatId)
+
+  // Upstream's `NONE: -1` is queried by no call site, so the injection exists
+  // to be overwritten or removed by key and contributes nothing. Three states,
+  // not two: assembled, registered-but-silent, and absent.
+  assert.deepEqual(injectedContributions(entry).map(item => item.id), ['script.live'])
+  assert.equal(entry.extensionPrompts.has('parked'), true, 'a parked injection was dropped instead of held')
+})
+
+test('a role rides through to the depth placement', async (t) => {
+  const fixed = await fixture(t)
+
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'a', value: 'as the user', position: 'at-depth', depth: 2, role: 'user',
+  })
+
+  const entry = await fixed.chats.open(fixed.chatId)
+  const placement = injectedContributions(entry)[0]?.placement as { kind: string, role?: string, depth?: number }
+
+  assert.equal(placement.kind, 'depth')
+  assert.equal(placement.role, 'user')
+  assert.equal(placement.depth, 2)
+})
+
+test('no role means system, which is what the depth placement always assumed', async (t) => {
+  const fixed = await fixture(t)
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0,
+  })
+
+  const entry = await fixed.chats.open(fixed.chatId)
+  const placement = injectedContributions(entry)[0]?.placement as { role?: string }
+  assert.equal(placement.role, 'system')
+})
+
+test('an empty value removes the injection, which is how uninject works', async (t) => {
+  const fixed = await fixture(t)
+
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'yinqi-npc-messages', value: 'some text', position: 'at-depth', depth: 0,
+  })
+  // Exactly the call a corpus card makes to clear its own injection.
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'yinqi-npc-messages', value: '', position: 'at-depth', depth: 0,
+  })
+
+  const entry = await fixed.chats.open(fixed.chatId)
+  assert.deepEqual(injectedContributions(entry), [])
+  assert.equal(entry.extensionPrompts.has('yinqi-npc-messages'), false)
+})
+
+test('the same key overwrites rather than accumulating', async (t) => {
+  const fixed = await fixture(t)
+
+  for (const value of ['first', 'second', 'third']) {
+    await fixed.handlers['script.setExtensionPrompt']({
+      chatId: fixed.chatId, key: 'same', value, position: 'at-depth', depth: 0,
+    })
+  }
+
+  // Upstream assigns the whole record per key. Accumulating would grow the
+  // prompt without bound across a long chat, and the symptom — the model losing
+  // the early conversation — looks nothing like its cause.
+  const entry = await fixed.chats.open(fixed.chatId)
+  const contributions = injectedContributions(entry)
+  assert.equal(contributions.length, 1)
+  assert.equal(contributions[0]?.text, 'third')
+})
+
+test('should_scan is kept rather than flattened to false', async (t) => {
+  const fixed = await fixture(t)
+
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'scanned', value: 'mentions a keyword', position: 'at-depth', depth: 0, scan: true,
+  })
+
+  // The scan pass does not honour this yet. Storing it is the difference
+  // between a gap someone can find and a request silently answered with its
+  // opposite — the request survives, and the day the scan pass reads it, the
+  // cards that asked for it are already asking correctly.
+  const entry = await fixed.chats.open(fixed.chatId)
+  assert.equal(entry.extensionPrompts.get('scanned')?.scan, true)
+})
+
+test('injections do not survive a reload, matching upstream', async (t) => {
+  const fixed = await fixture(t)
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0,
+  })
+
+  // Upstream keeps `extension_prompts` in a module-level object with no
+  // serialisation anywhere, and `clearChat()` empties it. An injection belongs
+  // to a running script; one that is not running should not still shape the
+  // prompt. Verified through a second store over the same directory, which is
+  // what a restart looks like.
+  const entry = await fixed.chats.open(fixed.chatId)
+  assert.equal(injectedContributions(entry).length, 1)
+
+  const reopened = new ChatStore(
+    join(fixed.dir, 'chats'),
+    new CharacterLibrary(join(fixed.dir, 'characters'), '/iris/avatar'),
+  )
+  const reloaded = await reopened.open(fixed.chatId)
+  assert.deepEqual(injectedContributions(reloaded), [])
+})

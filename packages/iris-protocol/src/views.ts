@@ -368,7 +368,15 @@ export interface ScriptContext {
 }
 
 /** Where a script's injected prompt goes. Mirrors upstream's positions. */
-export type ScriptPromptPosition = 'before' | 'after' | 'at-depth'
+/**
+ * Where a script's injection goes.
+ *
+ * `'none'` is upstream's `NONE: -1` — **registered but never assembled**. No
+ * call site of `getExtensionPrompt` ever queries that position, so such an
+ * injection holds its key (to be overwritten or removed) and contributes no
+ * text. That is a third state, distinct from both "assembled" and "absent".
+ */
+export type ScriptPromptPosition = 'before' | 'after' | 'at-depth' | 'none'
 
 /** One part of an assembled prompt, and what it cost. */
 export interface PromptItemEntry {

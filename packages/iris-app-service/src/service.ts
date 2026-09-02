@@ -885,9 +885,15 @@ export class IrisAppService {
         return {}
       },
 
-      'script.setExtensionPrompt': async ({ chatId, key, value, position, depth }) => {
+      'script.setExtensionPrompt': async ({ chatId, key, value, position, depth, role, scan }) => {
         const entry = await chats.open(chatId)
-        entry.setExtensionPrompt(key, { value, position, depth })
+        entry.setExtensionPrompt(key, {
+          value,
+          position,
+          depth,
+          ...role === undefined ? {} : { role },
+          ...scan === undefined ? {} : { scan },
+        })
         return {}
       },
 
@@ -1636,12 +1642,30 @@ export class IrisAppService {
  */
 export function injectedContributions(entry: ChatEntry): Contribution[] {
   const contributions: Contribution[] = []
-  for (const [key, injection] of entry.extensionPrompts) {
+  // **Sorted by key, because upstream is**: `getExtensionPrompt` walks
+  // `Object.keys(extension_prompts).sort()` (`script.js:3249`), so within one
+  // (position, depth, role) group the concatenation order is the *lexicographic
+  // key order* — not the order the injections were registered in. That is why
+  // upstream names its own keys `1_memory` / `2_floating_prompt` / `3_vectors`:
+  // the digits are a sorting device, not a naming habit.
+  //
+  // Iterating the Map gave insertion order, which agrees with upstream only
+  // when a card happens to inject in alphabetical order. Nothing would have
+  // reported the difference — two injections would simply arrive in the other
+  // sequence, and a card whose id is a UUID lands at a random position in that
+  // order either way.
+  for (const key of [...entry.extensionPrompts.keys()].sort()) {
+    const injection = entry.extensionPrompts.get(key)
+    if (injection === undefined) continue
+    // `position: 'none'` is registered but never assembled. Upstream's `-1` is
+    // queried by no call site, so such an injection exists to be overwritten or
+    // removed by key and contributes no text — a distinct state from absent.
+    if (injection.position === 'none') continue
     contributions.push({
       id: `script.${key}`,
       label: `Script injection (${key})`,
       placement: injection.position === 'at-depth'
-        ? { kind: 'depth', depth: injection.depth, role: 'system', order: 2 }
+        ? { kind: 'depth', depth: injection.depth, role: injection.role ?? 'system', order: 2 }
         : { kind: 'system', order: injection.position === 'before' ? 850 : 950 },
       text: injection.value,
     })

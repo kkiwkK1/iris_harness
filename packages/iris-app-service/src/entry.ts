@@ -53,6 +53,32 @@ export interface IrisChatMeta {
   parentChatId?: string
 }
 
+/**
+ * One injection a card script registered, in upstream's full shape.
+ *
+ * Built to the upstream signature rather than to what any one card happens to
+ * call: `injectPrompts` is a thin wrapper over `setExtensionPrompt`, and its
+ * fields are `id / position / depth / role / content / should_scan / filter`.
+ * All but `filter` cross this boundary — a filter is a **function**, evaluated
+ * afresh on every assembly, so it composes in the façade the way
+ * `updateVariablesWith` does.
+ */
+export interface ScriptInjection {
+  value: string
+  position: ScriptPromptPosition
+  depth: number
+  /** Upstream's `{system, user, assistant}` → `0 | 1 | 2`. */
+  role?: 'system' | 'user' | 'assistant'
+  /**
+   * Whether this text is itself scanned for world-book keywords.
+   *
+   * Upstream's `should_scan`, default false. **Stored and not yet honoured** by
+   * the scan pass — recorded here so a request that asks for it is kept rather
+   * than quietly flattened to false, and so the gap is findable.
+   */
+  scan?: boolean
+}
+
 /** An empty MVU tree, before any book has declared anything. */
 const EMPTY_MVU: MvuData = { initialized_lorebooks: {}, stat_data: {} }
 
@@ -168,7 +194,7 @@ export class ChatEntry {
    * Not persisted: an injection belongs to a running script, and a script that
    * is not running should not still be shaping the prompt.
    */
-  readonly extensionPrompts = new Map<string, { value: string, position: ScriptPromptPosition, depth: number }>()
+  readonly extensionPrompts = new Map<string, ScriptInjection>()
   /**
    * What each turn's prompt was made of, recorded as it was assembled.
    *
@@ -448,7 +474,7 @@ export class ChatEntry {
    */
   setExtensionPrompt(
     key: string,
-    injection: { value: string, position: ScriptPromptPosition, depth: number } | undefined,
+    injection: ScriptInjection | undefined,
   ): void {
     // An empty string is how upstream clears one, so it is treated as removal
     // rather than stored as a contribution that renders to nothing.

@@ -499,10 +499,30 @@ export const requestSchemas = {
    */
   'script.setExtensionPrompt': z.object({
     chatId: z.string().min(1),
+    /**
+     * The injection's identity, and its handle.
+     *
+     * Upstream's key is `prompt.id ?? uuidv4()` with **no script prefix**, so
+     * two scripts choosing the same id overwrite each other there too — this
+     * matches rather than diverges. Note the consequence a card author rarely
+     * expects: assembly order within a group is the lexicographic order of
+     * these keys, so a UUID id lands at a random position in the prompt.
+     */
     key: z.string().min(1).max(200),
+    /** An empty value removes the injection, which is how `uninject` works. */
     value: z.string().max(32_000),
-    position: z.enum(['before', 'after', 'at-depth']).default('at-depth'),
+    position: z.enum(['before', 'after', 'at-depth', 'none']).default('at-depth'),
     depth: z.number().int().min(0).max(1000).default(0),
+    /** Upstream maps `{system, user, assistant}` onto `0 | 1 | 2`. */
+    role: z.enum(['system', 'user', 'assistant']).optional(),
+    /**
+     * Whether the injected text is itself scanned for world-book keywords.
+     *
+     * Upstream's `should_scan`, default false. Carried through the contract and
+     * **stored but not yet honoured** by the scan pass; a request that sets it
+     * is recorded rather than silently treated as false.
+     */
+    scan: z.boolean().optional(),
   }),
   /**
    * One script's body, for the runner about to execute it.
