@@ -327,10 +327,16 @@ export async function materialiseEmbeddedBook(
       `"${wanted}" is already the name of another world book, so the embedded book of`
       + ` "${card?.data.name ?? characterId}" was materialised as "${name}" instead`,
     )
-  } else if (charWorldbookNames(card).primary !== null) {
+  } else if (charWorldbookNames(card).primary !== null && stInstall?.configured !== true) {
     // The card names a book that did not travel with it. Seeding from the
     // embedded copy is the best available guess — it is what SillyTavern would
     // have materialised too — but the user may hold the real one.
+    //
+    // **Only when no install is configured.** With one configured, the fetch
+    // below reports the same situation with more in it — it can say the book
+    // is not in the install *either*. Emitting both was measured on a real
+    // import: two sentences about one fact, the second strictly better. A
+    // diagnostic channel that repeats itself trains its reader to skim.
     reports.push(
       `"${wanted}" is named by the card but was not imported with it, so Iris seeded that book from`
       + ' the card\'s embedded copy; importing the original book will take precedence',
