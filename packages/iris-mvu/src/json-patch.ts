@@ -60,29 +60,64 @@ export interface JsonPatchScan {
   rejected: string[]
 }
 
-/** `<JSONPatch>` … `</JSONPatch>`, tolerant of case and surrounding whitespace. */
-const BLOCK = /<JSONPatch>([\s\S]*?)<\/JSONPatch>/gi
+/**
+ * `<JSONPatch>` … `</JSONPatch>`, in every spelling a model actually writes.
+ *
+ * **The underscore is not a nicety.** Models emit `<json_patch>` about as
+ * readily as `<JSONPatch>`, and upstream matches `json_?patch` on purpose —
+ * `update_variables.ts:296`, with the comment 「主要有两种情况，llm加了
+ * `<json_patch>` 和没有加的情况」. A case-insensitive pattern without the
+ * optional underscore looks tolerant and is not: `<json_patch>` fails it.
+ *
+ * Measured on the corpus: 156 floors carry a patch block, 22 of them in the
+ * underscore spelling, and under the old pattern **21 floors read as a reply
+ * that asked for nothing at all** — no block, no rejection, no report. One
+ * missed block does not lose one floor's update, it diverges every later
+ * floor's state, because each fold is the next one's baseline.
+ *
+ * The backreference makes the closing tag agree with the opening one, and the
+ * optional fences absorb a model that wrapped its array in ```` ```json ````.
+ * Both are mirrored from upstream rather than invented; the corpus exercises
+ * neither (0 fenced blocks, 0 mismatched pairs), so they are compatibility
+ * cover, not a measured need.
+ */
+const BLOCK = /<(json_?patch)>(?:\s*```.*)?((?:(?!<json_?patch>)[\s\S])*?)(?:```\s*)?<\/\1>/gim
 
 /**
  * RFC 6902 operations this dialect does **not** carry, and what to say instead.
  *
- * A model that has read the RFC rather than the card writes `add` or `copy`, and
- * a refusal reading `unknown op "add"` blames it for inventing something that is
- * in fact the standard's own name. The message has to say which side the gap is
- * on: this dialect is the card's, not the RFC's, and it spells three of the five
- * differently.
+ * `add` used to be listed here, on the reasoning that this dialect spells the
+ * same idea `insert` and a model writing `add` had read the RFC instead of the
+ * card. **That was wrong, and the corpus said so.** Upstream handles the two in
+ * one branch — `case 'insert': case 'add':`
+ * (`update_variables.ts:243`) — so `add` is one of the dialect's own spellings,
+ * not an import from the standard. 37 corpus operations used it and every one
+ * was refused with a message explaining a rule that does not exist. The refusal
+ * was audible, which is why it looked defensible; being audible is no help when
+ * what it says is untrue.
+ *
+ * What remains here is genuinely absent upstream: there is no `case` for either,
+ * so upstream drops them without a word. Refusing them by name is the
+ * documented improvement — the silence is the part not worth copying.
  */
 const RFC_ONLY: Readonly<Record<string, string>> = {
-  add: 'RFC 6902 calls this "add"; this dialect spells the same thing "insert"',
   copy: '"copy" belongs to RFC 6902; this dialect has no equivalent, and a "move" followed by a re-set is the nearest',
   test: '"test" is the RFC 6902 assertion op; this dialect has no equivalent and nothing in the corpus uses it',
 }
 
-/** JSON Patch op names mapped onto the canonical verbs `apply` implements. */
+/**
+ * JSON Patch op names mapped onto the canonical verbs `apply` implements.
+ *
+ * Two pairs of the mapping are counter-intuitive and both come from upstream
+ * rather than from the RFC: `delta` is the *arithmetic* add, and `add` is the
+ * *container* insert. A reader who assumes `add` means `delta` because the RFC
+ * has no `delta` gets numeric accumulation where the card asked for a new key.
+ */
 const OPS: Readonly<Record<string, CommandType>> = {
   replace: 'set',
   delta: 'add',
   insert: 'insert',
+  add: 'insert',
   remove: 'delete',
   move: 'move',
 }
@@ -219,7 +254,9 @@ export function scanJsonPatch(text: string): JsonPatchScan {
   BLOCK.lastIndex = 0
   for (let match = BLOCK.exec(text); match !== null; match = BLOCK.exec(text)) {
     blocks += 1
-    const body = (match[1] ?? '').trim()
+    // Group 1 is the tag spelling, held only so the closing tag can agree with
+    // it; the body is group 2.
+    const body = (match[2] ?? '').trim()
     let parsed: unknown
     try {
       parsed = JSON.parse(body)

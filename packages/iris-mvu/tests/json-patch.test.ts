@@ -261,14 +261,27 @@ test('a block is found without the <UpdateVariable> wrapper the card asks for', 
   assert.equal(wrapped.length, 1)
 })
 
-test('an RFC operation this dialect lacks is refused by the right name', () => {
-  // A model that has read RFC 6902 rather than the card writes `add`, and it is
-  // not inventing anything: `add` is the standard's own name for what this
-  // dialect calls `insert`. "unknown op" would blame it for the difference
-  // between two specifications.
-  const added = scanJsonPatch('<JSONPatch>[{ "op": "add", "path": "/a", "value": 1 }]</JSONPatch>')
-  assert.match(added.rejected[0] ?? '', /RFC 6902 calls this "add"/u)
-  assert.match(added.rejected[0] ?? '', /"insert"/u, 'the refusal does not say what to write instead')
+test('"add" is one of this dialect’s own spellings, not an RFC import', () => {
+  // This test used to assert the opposite, and the corpus overturned it. The
+  // reasoning was that `add` is RFC 6902's name for what the card calls
+  // `insert`, so a model writing it had read the standard instead of the card.
+  // Upstream handles both in a single branch — `case 'insert': case 'add':`
+  // (`update_variables.ts:243`) — so `add` is the dialect's, and 37 corpus
+  // operations were being refused against a rule that does not exist.
+  const added = scanJsonPatch('<JSONPatch>[{ "op": "add", "path": "/a/b", "value": 1 }]</JSONPatch>')
+  assert.deepEqual(added.rejected, [], 'a first-class op was refused')
+  assert.equal(added.commands.length, 1)
+
+  // Same command either way: a model choosing between the two spellings must
+  // not be choosing between two behaviours. `full_match` is deliberately left
+  // out of the comparison — it quotes the operation as written, so it *should*
+  // differ; folding it in would assert that the two spellings are the same
+  // text, which is the one thing they are not.
+  const inserted = scanJsonPatch('<JSONPatch>[{ "op": "insert", "path": "/a/b", "value": 1 }]</JSONPatch>')
+  const behaviour = (scan: typeof added): unknown =>
+    scan.commands.map(({ type, args }) => ({ type, args }))
+  assert.deepEqual(behaviour(added), behaviour(inserted))
+  assert.equal(added.commands[0]?.type, 'insert')
 
   for (const op of ['copy', 'test']) {
     const result = scanJsonPatch(`<JSONPatch>[{ "op": "${op}", "path": "/a", "value": 1 }]</JSONPatch>`)
