@@ -31,14 +31,17 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * Rounded **up** to the next whole KiB above the measured artifact, so a small
  * build-to-build drift does not make the figure wrong — only stale.
  *
- * It has moved twice: 38.5 → 39.4 KiB across two slimming passes, then to 41.8
- * when the script-button members joined the frame's import chain. That last
- * move was found by `tools/check-bootstrap.mjs`, which compares this constant
- * against the artifact on every sandbox build — before that check existed the
- * documented figure was 39 KiB against a real 41.8, and every frame was being
- * charged about 2.9 KB less than it cost.
+ * It has moved three times: 38.5 → 39.4 KiB across two slimming passes, then
+ * to 41.8 when the script-button members joined the frame's import chain, then
+ * to 42.3 when the height reporter gained a second observer.
+ *
+ * Only the first two were found by hand. `tools/check-bootstrap.mjs` compares
+ * this constant against the artifact on every sandbox build, and it caught the
+ * second move retroactively — the documented figure had been 39 KiB against a
+ * real 41.8, charging every frame about 2.9 KB less than it cost — and the
+ * third **as it happened**, failing the build in the same commit that caused it.
  */
-export const FRAME_OVERHEAD_BYTES = 42 * 1024
+export const FRAME_OVERHEAD_BYTES = 43 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -54,12 +57,12 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 49 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 48 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
- * 20 leaves about 1.2 MiB for content (overhead ≈ 840 KiB, 41%), and 20 live
+ * 20 leaves about 1.2 MiB for content (overhead ≈ 860 KiB, 42%), and 20 live
  * panels on one screen is already past any reading scenario. It is a trade-off
  * point rather than a threshold — moving it means revisiting the two measured
  * values above, not just this line.

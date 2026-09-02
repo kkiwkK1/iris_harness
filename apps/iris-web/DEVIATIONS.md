@@ -536,11 +536,11 @@ every build, and exact bytes in code go stale before they go wrong.
 
 | constant | value | source |
 | --- | --- | --- |
-| `FRAME_OVERHEAD_BYTES` | 42 KiB | bootstrap + snapshot + srcdoc wrapper, all inlined and uncacheable |
+| `FRAME_OVERHEAD_BYTES` | 43 KiB | bootstrap + snapshot + srcdoc wrapper, all inlined and uncacheable |
 | `FRAME_BUDGET_BYTES` | 2 MiB | `RENDER.md` |
-| `FRAME_COUNT_LIMIT` | 20 | below the ≈49-frame point where overhead alone eats the budget |
+| `FRAME_COUNT_LIMIT` | 20 | below the ≈48-frame point where overhead alone eats the budget |
 
-The count gate is not a precaution. At 2 MiB / 42 KiB ≈ 49 frames the fixed
+The count gate is not a precaution. At 2 MiB / 43 KiB ≈ 48 frames the fixed
 overhead consumes the entire budget and not one byte of card content fits, so a
 pure byte budget degrades into "all scaffolding, no content" exactly when there
 are most frames. A test pins the *relationship* rather than the numbers: change
@@ -548,9 +548,14 @@ either constant so the gate rises above that point and it fails.
 
 ### The overhead figure was wrong, and now a build says so
 
-**42 KiB, not the 39 KiB this section first claimed.** The measured bootstrap is
-41,807 bytes; with about a KiB of srcdoc wrapper that is 42,831, and the
+**43 KiB, not the 39 KiB this section first claimed.** The measured bootstrap is
+42,343 bytes; with about a KiB of srcdoc wrapper that is 43,367, and the
 constant rounds **up** to the next whole KiB above it.
+
+It has since moved again, and that move is the check earning its keep twice
+over: adding a second observer to the height reporter grew the bootstrap by 536
+bytes, and the build **failed in the same commit that caused it** rather than
+leaving a stale figure for someone to find later.
 
 The 39 KiB came from a measurement taken before the script-button members joined
 the frame's import chain. Nothing pointed at it: the budget went on charging

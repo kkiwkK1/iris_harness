@@ -24,6 +24,7 @@ import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
+import { overflowsViewport } from './frame-height.ts'
 
 /**
  * Tell the shell the frame is usable — but not before its libraries are.
@@ -82,6 +83,7 @@ function announceReady(run: string, post: (message: FromFrame) => void): void {
 /** How long a module gets to load before the frame says so. */
 const IMPORT_TIMEOUT_MS = 15_000
 
+
 /**
  * Resource timing entries, or undefined when this frame cannot produce them.
  *
@@ -118,8 +120,11 @@ function token(): string {
 /**
  * Report the content height to the shell, so it can size the frame.
  *
- * `ResizeObserver` on the body rather than a poll — the same source upstream
- * observes. Card UI changes height when the card decides to, not on a schedule.
+ * Observers rather than a poll — card UI changes height when the card decides
+ * to, not on a schedule. Upstream observes resizes; **a resize observer alone
+ * is not enough here**, and the reason is written where the observers are
+ * registered below: it watches a box, and these cards pin that box to the
+ * frame, so the growth that matters changes nothing it can see.
  *
  * **A known divergence from upstream lives here.** Tavern Helper's injected
  * script writes the parent's `frameElement.style.height` directly from inside the
@@ -167,6 +172,40 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
     const pixels = document.body.scrollHeight
     if (!Number.isFinite(pixels) || pixels <= 0) return
     post({ iris: run, type: 'height', pixels })
+
+    /*
+     * **Whatever is past the frame's own viewport has to stay reachable.**
+     *
+     * The reset copies upstream's `overflow:hidden!important` on `html,body`,
+     * which is safe *for upstream* because upstream writes
+     * `frameElement.style.height` same-origin and synchronously — its frame is
+     * always exactly content height, so there is never anything past the
+     * viewport to reach. Iris posts the height instead, so there is always at
+     * least one frame of lag, and any moment where the applied height is short
+     * of the content is a moment where `hidden` means **gone**: not clipped with
+     * a scrollbar, simply absent, and the wheel over it does nothing because
+     * the document under the pointer has nowhere to scroll.
+     *
+     * A user found exactly that: an SPA card whose screen grew, top and bottom
+     * cut off, wheel dead. The height fix below stops the common case, but it
+     * cannot be the only answer — a card that pins its own height, a slow
+     * report, or any future cap puts the content out of reach again, and each
+     * would need its own fix. So the frame checks the invariant it actually
+     * cares about, on every measurement, and needs to know nothing about why.
+     *
+     * Turned on only when it is needed, so a card that fits still lays out
+     * against no scrollbar, which is the reason the `hidden` was copied.
+     */
+    const wanted = overflowsViewport(pixels, document.documentElement.clientHeight)
+      ? 'auto'
+      : ''
+    for (const element of [document.documentElement, document.body]) {
+      // `important`, because the rule it has to beat is `!important` — and it is
+      // upstream's line, not ours to soften for everyone.
+      if (element.style.getPropertyValue('overflow-y') === wanted) continue
+      if (wanted === '') element.style.removeProperty('overflow-y')
+      else element.style.setProperty('overflow-y', wanted, 'important')
+    }
   }
   const schedule = (): void => {
     if (scheduled) return
@@ -175,7 +214,46 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
     else setTimeout(send, 500)
   }
 
+  /*
+   * **A `ResizeObserver` on the body is blind to the change that matters most.**
+   *
+   * It observes a *box*, and the cards this frame exists for set
+   * `html,body{height:100%}` — the same fact recorded above as the reason
+   * `documentElement` cannot be measured. So the body's box is pinned to the
+   * frame's height and does not change when the content inside it grows: an SPA
+   * card switching from a short screen to a tall one resizes nothing the
+   * observer is watching, the callback never fires, and the height stands at
+   * whatever the first measurement made it.
+   *
+   * That is the defect a user reported — top and bottom of a screen cut off
+   * after the card navigated — and its shape is worth naming: the height was
+   * not "measured once at mount" by design, it was measured continuously by a
+   * mechanism that could not see this kind of change. An instrument watching
+   * the wrong quantity looks exactly like an instrument that is not running.
+   *
+   * So a `MutationObserver` sits beside it, watching what an SPA actually does:
+   * replace subtrees. Both feed the same rAF-coalesced `schedule`, so a card
+   * mutating a hundred nodes still measures once per animation frame — the cost
+   * is bounded by the frame rate, not by how busy the card is.
+   */
   new ResizeObserver(schedule).observe(document.body)
+  new MutationObserver(schedule).observe(document.body, {
+    childList: true,
+    subtree: true,
+    // Attributes and text too: a card that switches screens by toggling a class
+    // or by swapping text changes no node structure at all, and that is a normal
+    // way for a Vue card to work.
+    attributes: true,
+    characterData: true,
+  })
+
+  /*
+   * Fonts land after first paint and change every line's height with them, and
+   * neither observer above sees a repaint that moves no box and mutates no
+   * node. One await, not a poll.
+   */
+  if (typeof document.fonts?.ready?.then === 'function') void document.fonts.ready.then(schedule)
+
   send()
 }
 
