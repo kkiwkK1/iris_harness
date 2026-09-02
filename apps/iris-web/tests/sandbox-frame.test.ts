@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { UnsupportedApiError } from '../src/sandbox/errors.ts'
 import { CARD_METHODS, isCardMethod, isOnSillyTavernSurface } from '../src/sandbox/card-api.ts'
 import { installSandbox, type FrameEnv } from '../src/sandbox/frame.ts'
+import { UPSTREAM_MEMBERS } from '../src/sandbox/upstream-surface.ts'
 import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
 
 /** A frame realm made of stubs, plus the levers a test needs. */
@@ -2242,4 +2243,57 @@ test('a body with no script id gets an empty list rather than another script’s
     const helper = globals['getScriptButtons'] as () => { name: string, visible: boolean }[]
     assert.equal(helper().length, 0)
   })
+})
+
+test('an existence check never throws, on any surface, for any upstream member', () => {
+  /*
+   * **`typeof x` must be safe even where `x()` is refused.**
+   *
+   * [OVERLAY-CARDS.md, V1.5.4] That card probes every Tavern Helper member with
+   * `typeof … === 'function'` and warns-and-degrades when one is missing. If a
+   * refusal threw at *property access* time, the probe itself would explode and
+   * the card's own fallback — the thing it wrote to survive a missing member —
+   * would never run. A named refusal that prevents the degradation it was meant
+   * to make legible is worse than an absence.
+   *
+   * `COHABITATION.md` already fixes this for `has`/`in` on the virtual parent.
+   * This walks the whole declared upstream surface across all three faces, so
+   * the rule cannot hold in one place and lapse in another.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  const threw: string[] = []
+  let probed = 0
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    const sillyTavern = parent['SillyTavern'] as Record<string, unknown>
+    const helper = parent['TavernHelper'] as Record<string, unknown>
+
+    for (const name of [...UPSTREAM_MEMBERS, 'noSuchMemberAnywhere']) {
+      for (const [face, object] of [
+        ['parent', parent],
+        ['SillyTavern', sillyTavern],
+        ['TavernHelper', helper],
+      ] as [string, Record<string, unknown>][]) {
+        probed += 1
+        try {
+          // Deliberately only `typeof`: this is the probe a card makes, and it
+          // must not become a call.
+          void (typeof object[name])
+        } catch {
+          threw.push(`${face}.${name}`)
+        }
+      }
+    }
+  })
+
+  assert.deepEqual(threw, [], `existence checks threw on: ${threw.slice(0, 8).join(', ')}`)
+  /*
+   * The count is asserted because every read above sits inside a `try`: if the
+   * loop stopped early, or a face came back undefined and the inner loop turned
+   * into nothing, this test would report "nothing threw" having probed almost
+   * nothing.
+   */
+  assert.ok(probed > 400, `only ${String(probed)} probes ran`)
 })
