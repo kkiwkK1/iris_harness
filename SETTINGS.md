@@ -182,3 +182,10 @@ intent removes more confusion than any other entry in the table.
 - **One profile.** See the scope note; the two decisions above do not depend on it.
 - **The census reads ST's source structure and is therefore brittle.** See the
   header of `scripts/settings-usage-census.mjs`.
+
+## Implementation-level IA
+
+This document stops at what was measured and what the measurements decide. The
+screen-by-screen information architecture built on top of it lives in
+`SETTINGS-IA.md`, so that a change to the layout does not edit the evidence and
+a re-measurement does not edit the layout.
