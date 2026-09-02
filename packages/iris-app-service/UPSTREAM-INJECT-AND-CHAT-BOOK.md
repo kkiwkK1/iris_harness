@@ -299,6 +299,98 @@ while (uid_set.has(index)) { index = (index + i * i) % MAX_UID; ++i; }  // 二�
 
 ---
 
+### 二之六 名字怎么变成文件：写路径、读侧、以及一个会把人带偏的端点
+
+§二之一 讲的是**铸什么名**，这一节讲**那个名怎么落成文件、又怎么被读回来**。
+它不只管 chat 书——**所有世界书都走这一条**。
+
+#### 写路径：`sanitize(name + '.json')`
+
+```js
+// [ST] src/endpoints/worldinfo.js:151   POST /api/worldinfo/edit
+const filename = sanitize(`${request.body.name}.json`);
+const pathToFile = path.join(request.user.directories.worlds, filename);
+writeFileAtomicSync(pathToFile, JSON.stringify(request.body.data, null, 4));
+```
+
+读单本（`readWorldInfoFile`，被 `/get` 用）与删除是同一形状：
+`worldinfo.js:24`、`worldinfo.js:87`。**三处都是 `sanitize(name + '.json')`。**
+包是 `sanitize-filename` **1.6.3**（`worldinfo.js:5` 导入）。
+
+#### `sanitize` 的确切规则
+
+ST 只传一个参数 → **`replacement` 是空串 → 一律删除，不替换**。
+
+```js
+illegalRe         = /[\/\?<>\\:\*\|"]/g              // 删除 / ? < > \ : * | "
+controlRe         = /[\x00-\x1f\x80-\x9f]/g          // 删除 C0 与 C1 控制字符
+reservedRe        = /^\.+$/                           // 整串只有点 → 整体删除
+windowsReservedRe = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i   // 整体删除
+windowsTrailingRe = /[\. ]+$/                         // 删除结尾的点和空格
+return truncate(sanitized, 255)                       // truncate-utf8-bytes：255 字节
+```
+
+一句话：**删掉 9 个非法字符与控制字符、去掉尾部点空格、截到 255 字节；
+Unicode 保留、大小写保留。**中文书名原样落盘。
+
+#### 读侧：`world_names` **纯从文件名来**
+
+```js
+// [ST] src/endpoints/settings.js:253-257   POST /api/settings/get
+const worldFiles = fs.readdirSync(request.user.directories.worlds)
+    .filter(file => path.extname(file).toLowerCase() === '.json')
+    .sort((a, b) => a.localeCompare(b));
+const world_names = worldFiles.map(item => path.parse(item).name);
+```
+
+客户端 `updateWorldInfoList()`（`public/scripts/world-info.js:2061-2071`）直接
+`world_names = data.world_names`。**文件内的 `name` 字段一个字都没读。**
+
+#### ⚠ 陷阱：有两个 list 端点，语义相反
+
+```js
+// [ST] src/endpoints/worldinfo.js:52-58   POST /api/worldinfo/list   ← 不是 world_names 的来源
+file_id: fileNameWithoutExt,
+name: fileContentsParsed?.name || fileNameWithoutExt,   // ← 这个才读文件内 name
+```
+
+**`/worldinfo/list` 确实读文件内 `name`（回退文件名），但它填的不是 `world_names`。**
+先看到这个端点会得出相反的结论。**判存在、判匹配用的是 `world_names`，也就是文件名。**
+
+#### 三条边界，按严重性排
+
+**① 写与读的名字不对称——上游用了两套判据。**
+
+写时 sanitize，`world_names` 里是 sanitize **之后**的 basename；
+而卡里存的 `extensions.world` 是**原始名**。名字含非法字符时：
+
+- `world_names.includes(原始名)` → **false**（判存在失败，即使文件在）
+- `/worldinfo/get` 带原始名 → 服务端**再 sanitize 一次** → **读得到**
+
+`getCharacterLore()` 与 `getOrCreateChatLorebook` 都先用 `world_names.includes(...)`
+判存在再决定走哪条路（§二之一 记过那个守卫），**所以这条不是假想。**
+
+> **已裁：这一处不照抄**（总指挥，2026-09-03）。我们取书**只用
+> `sanitize(name + '.json')` 一套**——**我们没有 `world_names` 那一层，
+> 照抄不一致没有对象。**
+
+**② `.json` 参与 sanitize，能把整个名字吃空。**
+
+传进去的是 `name + '.json'`，而 `windowsReservedRe` 带 `(\..*)?`——
+**一本叫 `con` 的世界书 → `sanitize('con.json')` 整串命中 → 返回空串 →
+`path.join(worlds, '')` 就是 worlds 目录本身。**
+`prn` `aux` `nul` `com1`–`com9` `lpt1`–`lpt9` 同理。**上游没有任何一层挡这件事。**
+
+**③ 255 是字节不是字符**（`truncate-utf8-bytes`）。
+中文名约 **83 字**，还要扣掉 `.json` 的 5 字节。
+
+#### 给实现的一句
+
+**按 ST 的规则实现：`sanitize(name + '.json')` 得文件名。
+不要用我们的 `toId`**——它的规则和这个不同，**而卡里存的名字是按 ST 的规则往返过的**。
+
+---
+
 ## 三、语料使用面：**不是只有 V1.5.4**
 
 判据：22 张卡（19 语料 + 3 新增），经产品解码器取脚本正文，**子串计数**。
@@ -419,6 +511,13 @@ if (entries.length === 0 && ctx.chat_metadata && ctx.chat_metadata.world_info) {
 3. **装配顺序按 key 字典序**（§一之五）——若我们按注册顺序或按 scriptId 排，是偏离，要记。
 4. **uid 随机 + 二次探测，非自增**（§二之四）。若我们自增，卡若依赖"uid 不可预测"不会受伤，
    但**若我们复用 uid**，`createWorldbookEntries` 的切片认领会认错。
+5. **书名 → 文件名只用一套判据**（§二之六，**已裁不照抄**）。
+   上游是两套：判存在用 `world_names`（sanitize 后的 basename），
+   取内容用 `/get`（服务端再 sanitize 一次），**名字含非法字符时两者结论相反**。
+   **我们没有 `world_names` 那一层，所以照抄不一致没有对象**——
+   取书统一走 `sanitize(name + '.json')`。
+   **要写进偏离账本的是"我们少了一个不一致"，不是"我们改了规则"**：
+   规则照抄，少的是上游那条多余的判存在路径。
 
 ---
 
