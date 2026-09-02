@@ -73,7 +73,10 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    storage 报告带 last-writer 字节分布）、写节流合并。**frame 门面 ✅**（f351937：Proxy 门面在预置库之前
    `defineProperty`，两种拼法、真 Storage 细节、覆盖层、配额同步抛、`getItem=1` 拒绝）。**实测**：绿茵好莱坞
    3/3、V1.5.4 4/4 全部 loaded and listening，状态栏与论坛覆盖层不再死于存储，阻塞转移至覆盖层宿主。
-   待验：手机UI 两分叉、外置状态栏、正文美化（导入中）、空 profile 首次路径、`clear()` 报告。frame 协议
+   组件验收（四卡从 ST 语料导入，3 张绑定书 `imported-from-st`）：手机UI 两分叉活、外置状态栏两分叉活、正文
+   美化无载入期异常——存储族六组件全部脱离存储阻塞；新阻塞各异：覆盖层宿主（全部）、`refused
+   document.readyState`（银麒系统面板，虚拟 document 拒绝良性读）、远程依赖 404（创世回廊小手机脚本）、
+   `Invalid regular expression`（可攻略女主插入状态栏，查源变换）。待验：空 profile 首次路径、`clear()` 报告。frame 协议
    加 `kind`（storage 独立栏）排在覆盖层裁点前。AST：165 引用里 4 个裸启动点承担全部"启动即死"，
    按组件验收；「论坛覆盖层」预测静默降级、实测启动即死，44 复核判据。**indexedDB**：1 卡 blob 级
    图片库，本轮报告+降级，容量清理另议；枚举源内数据库读邻居扩展结构上不适用。
