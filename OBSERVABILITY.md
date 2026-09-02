@@ -396,6 +396,45 @@ export function isFrontend(content: string): boolean {
   462 处），但**没有查**它自己是否有日志级别开关。如果有，第二节「说给 console.debug，
   没有人会读到」这句需要按那个机制重新表述。
 
+## 三之三、一个我们已经有、但没人当仪器用的东西：`script-bundles/`
+
+**`apps/iris/data/default-user/script-bundles/` 是「实际加载了什么」的卡尺。**
+
+每个远程依赖落两份文件：`<sha256>.js` 是取回的正文，`<sha256>.json` 是它的凭据：
+
+```json
+{ "url": "https://testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate@beta/artifact/bundle.js",
+  "fetchedAt": 1788245590499,
+  "bytes": 307765 }
+```
+
+**它回答的是别处回答不了的一个问题：卡真正跑的是哪一份代码。**
+
+签出、git tag、`package.json` 的版本号，回答的都是「仓库里有什么」。
+而卡通过一个**无版本号的 CDN 地址**加载远程 bundle（`UPSTREAM-ESM-DEPS.md` §三），
+所以「仓库里有什么」和「运行时跑的是什么」之间**没有任何约束关系**。
+
+**实测过一次这条缝的宽度**（2026-09-03）：
+
+```
+be149c7f… 307765 B   MagVarUpdate@beta/artifact/bundle.js
+be149c7f… 307765 B   MagVarUpdate/artifact/bundle.js        ← 两个地址，同一份产物
+1376fbd5… 307658 B   .reference/MagVarUpdate/artifact/bundle.js（本地签出）
+```
+
+**本地签出和实际加载的差 107 字节。**当时一份基于签出源码的分析压在
+`initGlobals` / `initChatLevel` 的先后顺序上——**对着实际加载的那份重核，四条承重结构一致，
+结论保住了；但那是核出来的，不是推出来的。**
+
+**用法**：任何「卡为什么这样」的结论，若依赖于某个远程 bundle 的内部结构，
+**卡尺是 `script-bundles/` 里那一份，不是任何签出**。
+两个地址哈希相同就核一次，不同就各核一次。
+
+**它同时是一份使用面清单**：目录里有哪些 URL，就是这台机器上实际被拉过哪些远程依赖——
+比任何静态扫描都准，因为它记录的是发生过的事，不是可能发生的事。
+
+---
+
 ## 参考
 
 - [渲染器 | 酒馆助手](https://n0vi028.github.io/JS-Slash-Runner-Doc/guide/%E5%9F%BA%E6%9C%AC%E7%94%A8%E6%B3%95/%E6%B8%B2%E6%9F%93%E5%99%A8.html)
