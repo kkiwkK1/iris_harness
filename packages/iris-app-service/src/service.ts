@@ -1146,7 +1146,7 @@ export class IrisAppService {
     this.#options.broadcast({ type: 'stream.start', chatId, turn, key: entry.streamingKeyFor(turn) })
 
     void running.then(
-      candidate => this.#settle(entry, turn, textOf(candidate.message)),
+      candidate => this.#settle(entry, turn, textOf(candidate.message), 'completed'),
       error => this.#fail(entry, turn, signal, error),
     )
 
@@ -1154,7 +1154,12 @@ export class IrisAppService {
   }
 
   /** Record a finished candidate and tell every page. */
-  async #settle(entry: ChatEntry, turn: number, text: string): Promise<void> {
+  async #settle(
+    entry: ChatEntry,
+    turn: number,
+    text: string,
+    reason: 'completed' | 'aborted',
+  ): Promise<void> {
     try {
       // Variables first: a permanent script may be there precisely to strip the
       // command block, and the commands have to be read before it does.
@@ -1180,7 +1185,9 @@ export class IrisAppService {
         entry.prune(prune, message => { this.#report(message, { kind: 'variables', chatId: entry.chatId }) })
       }
       await this.#options.chats.save(entry)
-      this.#options.broadcast({ type: 'stream.end', chatId: entry.chatId, turn, view: entry.toView() })
+      this.#options.broadcast({
+        type: 'stream.end', chatId: entry.chatId, turn, view: entry.toView(), reason,
+      })
       await this.#announceChats()
     } catch (cause: unknown) {
       entry.finish()
@@ -1209,7 +1216,10 @@ export class IrisAppService {
             source: INTERRUPTED_SOURCE,
           }),
         })
-        await this.#settle(entry, turn, partial)
+        // The interrupted path. Both paths converge here, which is why the
+        // reason has to travel with the call: by the time the event is built,
+        // nothing in the entry says whether the text arrived or was cut off.
+        await this.#settle(entry, turn, partial, 'aborted')
         return
       } catch (cause: unknown) {
         this.#report(cause, { kind: 'host', chatId: entry.chatId })

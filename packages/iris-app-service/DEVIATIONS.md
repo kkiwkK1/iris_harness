@@ -825,6 +825,52 @@ and a divergence to take deliberately rather than by tidying.
 
 ---
 
+# Upstream bugs, deliberately not reproduced
+
+A third column, and the reasoning in it differs from both neighbours. The
+numbered sections above are places Iris **chose** differently; the column below
+is behaviour reproduced **because** it is upstream's. This one is neither: the
+upstream behaviour is broken on its own terms — it defeats something upstream
+itself is trying to do — so copying it would import a defect rather than a
+compatibility.
+
+The bar is deliberately high. "Upstream is wrong" is the easiest thing in the
+world to believe about code one is reimplementing, and the compatibility floor
+exists precisely because that belief is usually the reimplementer's error. An
+entry belongs here only when the behaviour **contradicts upstream's own
+intent**, not merely our taste.
+
+## An injection with no `id` cannot be removed
+
+**Upstream.** `injectPrompts` keys each injection with `prompt.id ?? uuidv4()`,
+so an injection that arrives without an id gets a generated one — used as the
+key and **not written back to the prompt object**. The handle's `uninject()`
+then reads `p.id`, finds `undefined`, and removes nothing. The injection stays
+for the life of the page, and the card holding the handle has no way to tell:
+`deleted` reports true, and the text keeps appearing in every prompt.
+
+**Why this is a bug rather than a behaviour.** `uninject` exists to remove the
+injection. An id is generated *so that* the injection can be addressed. The two
+halves are written to work together and do not, which is the difference between
+"upstream does it differently" and "upstream does not do what it is trying to
+do".
+
+**Iris.** The id is filled in from a counter and **written back**, so the handle
+addresses the same key the registration used and `uninject` removes what it
+names. A counter rather than a UUID because assembly order inside a group is the
+keys' lexicographic order (§11) — sequential ids keep a card's own injections in
+the order it made them, where UUIDs would scatter them.
+
+**What a card sees.** One that always supplies its own `id` sees no difference
+at all. One that omits it gets an injection it can actually remove — which is
+what it was asking for.
+
+**What would overturn this.** Upstream fixing it, at which point this stops
+being a divergence and becomes agreement; or a card that depends on an
+un-removable injection, which would be depending on the defect itself.
+
+---
+
 # Faithful reproductions a user may report as a bug
 
 The two columns above record where Iris **differs** from SillyTavern. This one

@@ -35,7 +35,23 @@ export type IrisEvent =
    * optimistic streaming state with the host's truth in one step, rather than
    * trying to reconcile deltas it may have missed.
    */
-  | { type: 'stream.end', chatId: string, turn: number, view: ChatView }
+  /**
+   * The turn finished, and **how** it finished.
+   *
+   * `reason` exists because both paths used to emit this event identically:
+   * a generation that ran to completion and one the user aborted were
+   * indistinguishable to any subscriber. Upstream has two separate events —
+   * `generation_ended` and `generation_stopped` — so a card written against
+   * them could never hear the second, and no amount of frame-side work could
+   * synthesise it from a signal that does not carry the difference.
+   */
+  | {
+    type: 'stream.end'
+    chatId: string
+    turn: number
+    view: ChatView
+    reason: 'completed' | 'aborted'
+  }
   /** The turn failed. The user's message survives, so a retry is meaningful. */
   | { type: 'stream.error', chatId: string, turn: number, code: string, message: string }
   /** Something other than streaming changed this chat — an edit, a swipe, a delete. */

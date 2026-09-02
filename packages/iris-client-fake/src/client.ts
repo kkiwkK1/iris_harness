@@ -1021,7 +1021,10 @@ class InMemoryClient implements FakeClient {
     this.#streams.delete(chatId)
     // Whatever arrived stays. A partial reply the reader can keep, edit or
     // regenerate is more useful than a message that vanishes on cancel.
-    this.#emit({ type: 'stream.end', chatId, turn: stream.turn, view: toChatView(this.#require(chatId)) })
+    this.#emit({
+      type: 'stream.end', chatId, turn: stream.turn,
+      view: toChatView(this.#require(chatId)), reason: 'aborted',
+    })
   }
 
   /**
@@ -1070,7 +1073,7 @@ class InMemoryClient implements FakeClient {
       this.#streams.delete(chatId)
       chat.updatedAt = Date.now()
       this.#bumpVariables(chat)
-      this.#emit({ type: 'stream.end', chatId, turn, view: toChatView(chat) })
+      this.#emit({ type: 'stream.end', chatId, turn, view: toChatView(chat), reason: 'completed' })
       this.#emit({ type: 'chats.updated', chats: this.#summaries() })
     })
 

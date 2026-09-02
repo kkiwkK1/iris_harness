@@ -212,6 +212,9 @@ test('a send resolves when the turn opens, not when the reply is finished', asyn
   assert.ok(deltas.length > 1, 'the reply arrives as deltas, not one lump')
   assert.equal(deltas.join(''), '*She looks up.* Hello.')
   assert.equal(end.turn, 1)
+  // The other half of the pair: a generation that ran to the end says so, or
+  // the field would carry one value and discriminate nothing.
+  assert.equal(end.reason, 'completed')
   assert.equal(last(end.view).text, '*She looks up.* Hello.')
   assert.equal(last(end.view).streaming, undefined, 'the settled view is not still streaming')
 })
@@ -518,6 +521,14 @@ test('aborting a turn keeps what the model had already written', async (t) => {
   // Upstream keeps a stopped reply, and throwing away half a message the user
   // decided was good enough is worse than the interruption itself.
   assert.equal(last(end.view).text, '*She opens her mouth to')
+
+  // **And the event says which of the two endings this was.** Both paths reach
+  // one `stream.end`, so without this a subscriber cannot tell a finished
+  // generation from a cancelled one — and upstream has two separate events
+  // (`generation_ended`, `generation_stopped`), so a card written against the
+  // second could never hear it. Nothing in the frame can synthesise a
+  // difference the signal does not carry.
+  assert.equal(end.reason, 'aborted')
   assert.equal(chats.cached(chatId)?.generating, false)
   assert.equal(sink.events.some(event => event.type === 'stream.error'), false)
 })
