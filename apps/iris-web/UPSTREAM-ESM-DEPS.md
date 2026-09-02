@@ -260,6 +260,99 @@ pinia 4.0.0+ 在运行时读它们；缺了会在控制台告警或走错分支�
 
 ---
 
+## 三之二、那张「从宿主取的全局」表背后的机制：谁挂的、缺了会怎样
+
+§三 的 B 表说这六个名字「从宿主页面取」。这一节回答**取自谁、取不到会怎样**。
+**结论：`predefine.js` 在 parent 不对时不降级——它抛，抛在三个点之一，之后整段引导都没了。**
+
+### 六个名字，三个发布者
+
+| 名字 | 谁挂 | 行号 |
+| --- | --- | --- |
+| `showdown` | **ST 本体**，条件挂 | `public/lib.js:66-68` `if (!('showdown' in window)) window.showdown = showdown` |
+| `toastr` | **ST 本体**，经典 `<script src>` 全局 | `public/index.html:8194` `<script src="lib/toastr.min.js">` |
+| `YAML` | **TH 挂的**（npm `yaml`） | `src/third_party_object.ts:11` `globalThis.YAML = YAML_object` |
+| `z` | **TH 挂的**（npm `zod`） | `src/third_party_object.ts:12` `globalThis.z = z_object` |
+| `TavernHelper` | **TH 挂的** | `src/function/index.ts:477-479` `globalThis.TavernHelper = getTavernHelper()` |
+| `EjsTemplate` | **另一个扩展**：ST-Prompt-Template | `public/scripts/extensions/third-party/ST-Prompt-Template/dist/index.js` → `globalThis.EjsTemplate = { evalTemplate: … }` |
+
+**2 个来自 ST 本体、3 个来自酒馆助手、1 个来自一个完全不同的扩展。**
+那一行 `_.pick` **横跨三个发布者，并假定它们都已经跑过**。
+
+TH 自己那三个在 `index.ts:38-43` 的 `$(() => {…})` 里挂，早于 `:47` 的 `app.mount`，
+所以脚本 frame 建起来时它们已在。**`EjsTemplate` 不装那个扩展就根本没有。**
+
+### merge 链的实际行为
+
+```js
+// [TH] iframe/predefine.js:11-19
+let result = _(window);
+result = result.merge(_.pick(window.parent, ['EjsTemplate','TavernHelper','YAML','showdown','toastr','z']));
+result = result.merge(_.omit(_.get(window.parent, 'TavernHelper'), '_bind'));
+result = result.merge(...Object.entries(_.get(window.parent, 'TavernHelper')._bind)
+  .map(([k, v]) => ({ [k.replace('_','')]: v.bind(window) })));
+result.value();
+```
+
+**是 `_(window).merge(...)` 的 lodash 链（`_.merge` 就地改 `window`），
+不是 `Object.assign`，也不是逐名 `defineProperty`。**
+
+`_.pick` 对不存在的键**直接略过** → 那个名字**从未在 frame 的 window 上创建** → **真正的未声明**：
+
+| 卡怎么写 | 结果 |
+| --- | --- |
+| `window.showdown` | `undefined` |
+| 裸 `showdown.makeHtml(…)` | **ReferenceError** |
+| **`typeof showdown`** | **`'undefined'`，不抛** |
+
+> **⚠ 一对值得并排记的反例。**
+> **这里 `typeof` 是有效防护**（名字压根没创建）；
+> 而 **`localStorage` 那里 `typeof` 会抛**（它是解析得到的 getter，`typeof` 会走进去）——
+> 见 `UPSTREAM-FRAME-ORIGIN.md` §七。
+> **同一个写法，两种结果，取决于"名字不存在"还是"名字存在但读它会抛"。**
+> **卡用 `typeof X === 'undefined'` 探测时，只有前一种情形它是对的。**
+
+### 三处无守卫的硬依赖
+
+| 行 | 依赖 | parent 缺它时 |
+| --- | --- | --- |
+| `predefine.js:1` | `window.parent._` | 赋成 `undefined` → **`:11` 的 `_(window)` 抛 TypeError（`_ is not a function`）** |
+| `predefine.js:15` | `window.parent.TavernHelper._bind` | **`undefined._bind` → TypeError** |
+| `parent_jquery.js:1-2` | `window.parent.$` | 赋成 `undefined`，当场不抛；但 **`predefine.js` 末尾的 `$(window).on('pagehide', …)` 抛**，且此后每张用 `$` 的卡都坏 |
+
+**`:13` 是安全的**（`_.omit(undefined, '_bind')` → `{}`），**`:15` 不是**——
+**同一个 `_.get` 结果，一处被 lodash 兜住、一处直接解引用。这不是设计，是巧合。**
+
+### 「引导只跑一半」，而失败点在最前面
+
+抛在 `:11` 或 `:15` 之后，下面这些**全都不执行**：
+
+```
+:21-24   三个 __VUE_*__ 旗标（pinia 4.0.0+ 要的）
+:26+     SillyTavern getter
+:38-45   Mvu getter
+末尾     $(window).on('pagehide', eventClearAll)      ← 事件清理也没挂上
+```
+
+**而且它抛在 iframe 内部，宿主侧看不到。**症状是「这个 frame 什么都没发生」。
+
+### 对「界面 frame 变成脚本 frame 的子」的直接含义
+
+界面 frame 的 `predefine.js` 会去 pick **脚本 frame 的 window**。所以脚本 realm 上**必须有**：
+
+1. **`_`（lodash）**——否则 `:11` 就死；
+2. **`TavernHelper` 且带 `_bind`**——否则 `:15` 死；
+3. **`$`**——否则 `predefine` 末尾死。
+
+**前两个是「整段引导消失」级，第三个是「引导完成但 `$` 是 undefined」级。**
+
+这三个**恰好都是我们已经在脚本 realm 上提供的**（`preset-entry.ts` 挂 `$`/`jQuery`，
+`tavern-helper.ts` 挂 `TavernHelper`）。**但 `_bind` 那个内部形状要对**——
+`:15` 读的不是 `TavernHelper` 本身，是它的 `_bind` 属性并遍历 entries。
+**我们的 `TavernHelper` 若没有 `_bind`，界面 frame 的引导整段死掉。**
+
+---
+
 ## 四、④ ST 确实有一个代理端点，但它不为这件事而设，且默认关
 
 ```js
