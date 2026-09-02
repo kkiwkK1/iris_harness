@@ -992,6 +992,16 @@ export interface RpcError {
     | 'provider-error'
     | 'busy'
     | 'unsupported'
+    /**
+     * The card storage is full.
+     *
+     * Its own code rather than `invalid-request`, because the frame has to turn
+     * it into the exception a card already knows: a browser refusing
+     * `setItem` throws `QuotaExceededError`, and cards in SillyTavern are
+     * written against that. A generic failure would make them handle a case
+     * they already handle, under a name they do not recognise.
+     */
+    | 'quota-exceeded'
     | 'internal'
   /** Human-readable detail. Safe to show; must not carry a credential. */
   message: string

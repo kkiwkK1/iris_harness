@@ -19,31 +19,68 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 /**
- * The largest value one key may hold.
+ * How much the whole store may hold, in bytes of keys and values.
  *
- * **Still a placeholder, but no longer for the reason first written here.**
- * The original note said the number should be "what one value costs to clone
- * per turn". Measured, that is not the binding cost: storage values are
- * **strings**, and a string clones far more cheaply per byte than the object
- * trees that make the snapshot expensive.
+ * **Built to the mechanism a card already lives under.** A browser gives one
+ * origin roughly 5–10 MiB of `localStorage` and throws `QuotaExceededError`
+ * from `setItem` when it is full, so every card that stores anything is already
+ * written against a quota. This is the upper end of that range: below it,
+ * behaviour matches what the card met in SillyTavern; above it, no browser would
+ * have accepted the write either.
  *
- * ```
- * one 4 MiB string value, cloned in a flat store   1.39 ms
- * 1 MiB of the same bytes as an object tree        9.97 ms   (26k leaves)
- * ```
+ * **There is deliberately no per-value limit.** Browsers do not impose one — a
+ * 2 MB wallpaper stores fine in SillyTavern, so it must store fine here. An
+ * earlier draft capped a single value at 1 MiB on fairness grounds; that is a
+ * rule upstream does not have, and fairness is carried instead by the total
+ * quota plus the attribution in the report, which together say *who* filled the
+ * store rather than forbidding anyone from trying.
  *
- * So a large *value* is close to free on the path this cap was meant to
- * protect. What actually scales is the **write**: every `set` re-serialises the
- * whole store (2.53 ms at 4 MiB), so the cost is a function of the store's
- * total size and the write rate, not of any one value.
- *
- * This therefore bounds a runaway single value — which is worth bounding on its
- * own, since one card should not be able to fill a shared file — while the
- * question it does not answer is **how large the whole store may get**. That
- * needs a decision rather than a constant, and it is recorded as open rather
- * than guessed at here.
+ * Counted over keys and values, which is what a browser counts and what a card
+ * can control. The file on disk is slightly larger, because it also carries the
+ * writer of each key.
  */
-export const MAX_VALUE_BYTES = 1_048_576
+export const MAX_STORE_BYTES = 10 * 1_048_576
+
+/**
+ * How long writes are coalesced before touching the disk.
+ *
+ * Every write re-serialises the whole store, so the cost scales with the
+ * store's size times the write rate rather than with any one value — measured
+ * at 2.53 ms per write against a 4 MiB store. A card updating a key each turn
+ * pays that every time. Upstream has the same shape and the same answer:
+ * `saveSettingsDebounced`.
+ *
+ * Reads are **not** delayed: a card that writes and immediately reads must see
+ * its own write, so the in-memory table is updated synchronously and only the
+ * disk write waits.
+ */
+export const WRITE_DEBOUNCE_MS = 400
+
+/**
+ * The store is full, in the shape a card already understands.
+ *
+ * Carries what a browser cannot: how large the store is and which card's keys
+ * make it up. A quota refusal that only says "full" leaves the user with no way
+ * to act; naming the writers is the part upstream has no answer for.
+ */
+export class QuotaExceeded extends Error {
+  readonly size: number
+  readonly byWriter: Record<string, number>
+
+  /**
+   * @param size - what the store would have become, in bytes.
+   * @param byWriter - bytes per character id.
+   */
+  constructor(size: number, byWriter: Record<string, number>) {
+    super(
+      `card storage is full: the write would take it to ${String(size)} bytes,`
+      + ` over the ${String(MAX_STORE_BYTES)} limit`,
+    )
+    this.name = 'QuotaExceeded'
+    this.size = size
+    this.byWriter = byWriter
+  }
+}
 
 /** One key's value and the last card to write it. */
 export interface StoredValue {
@@ -86,6 +123,8 @@ export class CardStorageStore {
   readonly #onError: (error: Error) => void
   #entries: Record<string, StoredValue> = {}
   #loaded = false
+  #pending: ReturnType<typeof setTimeout> | undefined
+  #writing: Promise<void> | undefined
 
   /**
    * @param path - the JSON file backing the store.
@@ -137,20 +176,57 @@ export class CardStorageStore {
     }
   }
 
+  /** Bytes of keys and values, which is what a browser's quota counts. */
+  async size(): Promise<number> {
+    await this.#load()
+    return Object.entries(this.#entries).reduce(
+      (total, [key, held]) => total + Buffer.byteLength(key, 'utf8') + Buffer.byteLength(held.value, 'utf8'),
+      0,
+    )
+  }
+
+  /**
+   * How the stored bytes divide between the cards that wrote them.
+   *
+   * The other half of the quota answer: a card told the store is full needs to
+   * know *whose* it is, and upstream cannot say — a browser reports the quota
+   * and nothing about who filled it.
+   * @returns bytes per character id, with unattributed keys under `unknown`.
+   */
+  async bytesByWriter(): Promise<Record<string, number>> {
+    await this.#load()
+    const byWriter: Record<string, number> = {}
+    for (const [key, held] of Object.entries(this.#entries)) {
+      const who = held.characterId ?? 'unknown'
+      byWriter[who] = (byWriter[who] ?? 0)
+        + Buffer.byteLength(key, 'utf8') + Buffer.byteLength(held.value, 'utf8')
+    }
+    return byWriter
+  }
+
   /**
    * Write one key.
+   *
+   * The disk write is coalesced; the in-memory table is updated at once, so a
+   * card that writes and reads back sees its own value.
    * @param key - the key.
    * @param value - the value; strings only, as `localStorage` stores.
    * @param by - which card and script is writing.
-   * @throws {Error} when the value exceeds {@link MAX_VALUE_BYTES}.
+   * @throws {QuotaExceeded} when the store would pass {@link MAX_STORE_BYTES}.
    */
   async set(key: string, value: string, by: { characterId?: string, scriptId?: string }): Promise<void> {
     await this.#load()
-    const size = Buffer.byteLength(value, 'utf8')
-    if (size > MAX_VALUE_BYTES) {
-      throw new Error(
-        `value for "${key}" is ${String(size)} bytes, over the ${String(MAX_VALUE_BYTES)} limit`,
-      )
+    // The size *after* this write, counting the key only once whether it is new
+    // or being replaced — a card overwriting its own value must not be refused
+    // for the bytes it is about to release.
+    const held = this.#entries[key]
+    const heldBytes = held === undefined ? 0 : Buffer.byteLength(held.value, 'utf8')
+    const after = await this.size()
+      - heldBytes
+      + Buffer.byteLength(value, 'utf8')
+      + (held === undefined ? Buffer.byteLength(key, 'utf8') : 0)
+    if (after > MAX_STORE_BYTES) {
+      throw new QuotaExceeded(after, await this.bytesByWriter())
     }
     this.#entries[key] = {
       value,
@@ -158,7 +234,7 @@ export class CardStorageStore {
       ...by.scriptId === undefined ? {} : { scriptId: by.scriptId },
       at: Date.now(),
     }
-    await this.#save()
+    this.#schedule()
   }
 
   /**
@@ -174,7 +250,7 @@ export class CardStorageStore {
 
     const writer = await this.lastWriter(key)
     delete this.#entries[key]
-    await this.#save()
+    this.#schedule()
     return {
       key,
       ...writer === undefined ? {} : { lastWriter: writer },
@@ -208,8 +284,41 @@ export class CardStorageStore {
       })
     }
     this.#entries = {}
-    await this.#save()
+    this.#schedule()
     return reports
+  }
+
+  /**
+   * Ask for a disk write soon, coalescing with any already pending.
+   *
+   * The timer is unref'd so a pending write cannot hold the process open; a
+   * clean shutdown calls {@link flush}, and an unclean one loses at most the
+   * last few hundred milliseconds — which is the same bargain upstream's
+   * `saveSettingsDebounced` makes.
+   */
+  #schedule(): void {
+    if (this.#pending !== undefined) return
+    this.#pending = setTimeout(() => {
+      this.#pending = undefined
+      this.#writing = this.#save()
+    }, WRITE_DEBOUNCE_MS)
+    this.#pending.unref?.()
+  }
+
+  /**
+   * Write anything still pending, now.
+   *
+   * Called on shutdown. Without it the debounce would turn "the host stopped"
+   * into "the last write never happened", which is the failure the debounce is
+   * supposed to be too small to cause.
+   */
+  async flush(): Promise<void> {
+    if (this.#pending !== undefined) {
+      clearTimeout(this.#pending)
+      this.#pending = undefined
+      this.#writing = this.#save()
+    }
+    await this.#writing
   }
 
   async #save(): Promise<void> {

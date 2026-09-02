@@ -542,6 +542,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()
+      // Drain the coalesced storage writes. Without this the debounce turns a
+      // shutdown into "the last few hundred milliseconds of a card's state
+      // never happened" — and a card cannot tell that apart from a write that
+      // was refused, because neither says anything.
+      void cardStorage.flush().catch((error: unknown) => {
+        ctx.logger.warn(error instanceof Error ? error.message : String(error))
+      })
     }
   }, 'irisApp.handlers')
 

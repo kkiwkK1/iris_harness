@@ -791,6 +791,38 @@ write through `'latest'` is always visible to a read through `'latest'`.
 system row, or on `null` meaning "the beginning" — both would show up as a card
 that works upstream and refuses here, with our own error naming the reason.
 
+## 16. Card storage is shared, quota'd like a browser, and says who filled it
+
+A card's scripts get one key–value store **shared across the profile**, because
+upstream gives them one `localStorage` per origin — two cards choosing the same
+key see each other's values there, measured on the corpus as four shared keys
+between two cards. Partitioning per card would be tidier and would break every
+card that relies on the sharing.
+
+**The quota is built to the mechanism, not to our costs.** A browser gives an
+origin roughly 5–10 MiB and throws `QuotaExceededError` from `setItem`; the
+store caps at the top of that range and refuses past it, and the frame raises
+the exception cards are already written against. **No per-value limit**, because
+browsers have none: a 2 MB wallpaper stores in SillyTavern, so it stores here.
+An earlier draft capped one value at 1 MiB on fairness grounds and was removed —
+a rule upstream does not have, invented to solve a cost that measurement then
+showed was not there (a 4 MiB string clones in 1.39 ms; what actually scales is
+re-serialising the whole store on every write, which is why writes are
+coalesced).
+
+**Two additions upstream has no answer for.** A removal that takes a key another
+card wrote is reported with the key and its last writer; a refused write is
+reported with the store's size and its **bytes per card**. A browser can only
+say "full" — it cannot say whose bytes those are, so a user meeting the quota
+upstream has nothing to act on. `lastWriter` is attribution for these reports
+and **not ownership**: it is deliberately not a basis for deletion, which is why
+`character.delete` does not forget this store the way it forgets the
+per-character ones.
+
+**What would overturn this.** Cards colliding on keys often enough that the
+sharing costs more than it buys — which would be an argument for a namespace,
+and a divergence to take deliberately rather than by tidying.
+
 ---
 
 # Faithful reproductions a user may report as a bug

@@ -40,7 +40,7 @@ import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
-import { CardStorageStore, removalNote } from './card-storage.ts'
+import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
 import type { PruneOptions } from './prune.ts'
 import { runScripts } from './regex.ts'
@@ -933,10 +933,26 @@ export class IrisAppService {
         if (cardStorage === undefined) {
           throw new AppError('unsupported', 'card storage is not configured on this host')
         }
-        await cardStorage.set(key, value, {
-          characterId,
-          ...scriptId === undefined ? {} : { scriptId },
-        })
+        try {
+          await cardStorage.set(key, value, {
+            characterId,
+            ...scriptId === undefined ? {} : { scriptId },
+          })
+        } catch (error: unknown) {
+          if (!(error instanceof QuotaExceeded)) throw error
+          // Reported as well as refused. A browser's quota failure tells a card
+          // it is full and tells the user nothing about why; the distribution
+          // is what turns "storage is full" into something anyone can act on.
+          const shares = Object.entries(error.byWriter)
+            .sort(([, a], [, b]) => b - a)
+            .map(([who, bytes]) => `${who} ${String(Math.round(bytes / 1024))} KiB`)
+            .join(', ')
+          this.#report(
+            `card storage is full (${String(Math.round(error.size / 1024))} KiB); by writer: ${shares}`,
+            { kind: 'storage', characterId, ...scriptId === undefined ? {} : { scriptId } },
+          )
+          throw new AppError('quota-exceeded', error.message)
+        }
         return { value }
       },
 

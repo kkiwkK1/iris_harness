@@ -6,7 +6,7 @@ import { test, type TestContext } from 'node:test'
 
 import type { StreamFn } from '@iris/turn'
 
-import { CardStorageStore, MAX_VALUE_BYTES, removalNote } from '../src/card-storage.ts'
+import { CardStorageStore, MAX_STORE_BYTES, removalNote } from '../src/card-storage.ts'
 import { ChatStore } from '../src/chats.ts'
 import { DiagnosticBuffer } from '../src/diagnostics.ts'
 import { CharacterLibrary } from '../src/library.ts'
@@ -156,22 +156,79 @@ test('a removal of a key that is not there is not an error', async (t) => {
   assert.equal(result.removed, false)
 })
 
-test('an oversized value is refused rather than stored', async (t) => {
+test('a large single value is accepted, because browsers accept one', async (t) => {
   const fixed = await fixture(t)
 
-  // The cap is a placeholder pending a real-frame measurement of what one value
-  // costs to clone per turn — bytes are the wrong unit, but an unbounded value
-  // is the wrong answer while waiting for the right one.
+  // No per-value limit: a 2 MB wallpaper stores fine in SillyTavern, so it has
+  // to store fine here. An earlier draft capped one value at 1 MiB on fairness
+  // grounds — a rule upstream does not have. Fairness is carried by the total
+  // quota and the attribution report instead.
+  await fixed.handlers['storage.set']({
+    characterId: 'aria', key: 'wallpaper', value: 'x'.repeat(2 * 1_048_576),
+  })
+  assert.equal((await fixed.storage.snapshot())['wallpaper']?.length, 2 * 1_048_576)
+})
+
+test('the store refuses a write past its quota, and says whose bytes those are', async (t) => {
+  const fixed = await fixture(t)
+  const chunk = 'x'.repeat(3 * 1_048_576)
+  await fixed.handlers['storage.set']({ characterId: 'hog', key: 'a', value: chunk })
+  await fixed.handlers['storage.set']({ characterId: 'hog', key: 'b', value: chunk })
+  await fixed.handlers['storage.set']({ characterId: 'hog', key: 'c', value: chunk })
+
+  // Built to the mechanism a card already lives under: a browser gives an
+  // origin 5-10 MiB and throws `QuotaExceededError` from `setItem`.
   await assert.rejects(
-    () => fixed.storage.set('big', 'x'.repeat(MAX_VALUE_BYTES + 1), { characterId: 'aria' }),
-    /over the .* limit/u,
+    () => fixed.handlers['storage.set']({ characterId: 'aria', key: 'd', value: chunk }),
+    (error: unknown) => (error as { code?: string }).code === 'quota-exceeded',
   )
-  assert.deepEqual(await fixed.storage.snapshot(), {})
+
+  // The part a browser cannot do: name who filled it.
+  const page = await fixed.handlers['debug.reports']({})
+  const quota = page.reports.filter(report => /storage is full/u.test(report.message))
+  assert.equal(quota.length, 1, `expected a quota report, saw ${JSON.stringify(page.reports.map(r => r.message))}`)
+  assert.match(quota[0]?.message ?? '', /hog/u, 'the report does not say whose bytes filled it')
+  assert.equal(quota[0]?.characterId, 'aria', 'the report does not say who was refused')
+})
+
+test('overwriting your own key does not count its old bytes twice', async (t) => {
+  const fixed = await fixture(t)
+  const big = 'x'.repeat(9 * 1_048_576)
+  await fixed.handlers['storage.set']({ characterId: 'aria', key: 'k', value: big })
+
+  // Replacing a value releases the bytes it held. Counting the store as it is
+  // *after* the write is what makes a card able to keep updating one large key
+  // rather than being refused for the space it is about to free.
+  await fixed.handlers['storage.set']({ characterId: 'aria', key: 'k', value: big })
+  assert.ok(await fixed.storage.size() <= MAX_STORE_BYTES)
+})
+
+test('writes are coalesced, and a flush is what makes that safe', async (t) => {
+  const fixed = await fixture(t)
+
+  for (let index = 0; index < 5; index += 1) {
+    await fixed.handlers['storage.set']({ characterId: 'aria', key: `k${String(index)}`, value: 'v' })
+  }
+
+  // Reads never wait: the in-memory table is updated at once, so a card that
+  // writes and reads back sees its own value.
+  assert.equal(Object.keys(await fixed.storage.snapshot()).length, 5)
+
+  // The disk lags by design, and `flush` is the reason that is a debounce
+  // rather than a data-loss window.
+  await fixed.storage.flush()
+  const reopened = new CardStorageStore(join(fixed.dir, 'card-storage.json'))
+  assert.equal(Object.keys(await reopened.snapshot()).length, 5)
 })
 
 test('the store survives a restart, because a card expects its state to', async (t) => {
   const fixed = await fixture(t)
   await fixed.handlers['storage.set']({ characterId: 'aria', key: 'kept', value: 'across restarts' })
+
+  // The flush is not ceremony. Writes are coalesced now, so "the host stopped"
+  // and "the last write never happened" are the same event unless something
+  // drains the queue — which is exactly what a clean shutdown calls.
+  await fixed.storage.flush()
 
   const reopened = new CardStorageStore(join(fixed.dir, 'card-storage.json'))
   assert.deepEqual(await reopened.snapshot(), { kept: 'across restarts' })
