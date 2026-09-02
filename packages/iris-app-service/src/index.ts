@@ -23,7 +23,10 @@ import type { ChatCompletionPreset } from '@iris/preset'
 import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
+import type { CharacterCard } from '@iris/character'
+
 import { DiagnosticBuffer } from './diagnostics.ts'
+import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
@@ -363,11 +366,35 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     provider: config.provider ?? 'default',
     model: config.model ?? 'local-model',
   })
+  // Which named book each card's embedded book became. Beside the installation
+  // rather than in the card, so a card exported back to SillyTavern is
+  // unchanged — the same decision as `script-variables.json`.
+  const worldbookBindings = new WorldbookBindingStore(
+    paths.worldbookBindings, error => { ctx.logger.warn(error.message) })
+
+  /**
+   * Materialise a card's embedded book, once, however the card first arrives.
+   *
+   * The same function backs the import path and the open path, so an existing
+   * profile migrates the first time each of its chats is opened rather than
+   * needing an offline pass.
+   */
+  const bookFor = async (
+    characterId: string | undefined,
+    card: CharacterCard | undefined,
+  ): Promise<string | undefined> => {
+    if (characterId === undefined || worldbooks === undefined) return undefined
+    const done = await materialiseEmbeddedBook(characterId, card, worldbooks, worldbookBindings)
+    for (const line of done?.reports ?? []) ctx.logger.warn(`worldbook: ${line}`)
+    return done?.name
+  }
+
   const chats = new ChatStore(
     paths.chats, library, scriptVariables, globalScope, worldbooks,
     // Read through a closure rather than captured: the selection is a setting
     // the user can change at runtime, and a value read here would freeze it.
     () => settings.globalSelect(),
+    bookFor,
   )
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset

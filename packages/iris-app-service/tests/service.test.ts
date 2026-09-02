@@ -9,6 +9,7 @@ import type { ChatView, IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
+import { materialisingChatStore } from './support/materialising-store.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
@@ -142,7 +143,7 @@ async function open(dir: string, options: {
   seen?: GenerateOptions[]
 } = {}): Promise<Omit<Fixture, 'dir'>> {
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
+  const chats = materialisingChatStore(dir, library)
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
   await settings.load()
   const sink = collector()
@@ -493,7 +494,7 @@ test('aborting a turn keeps what the model had already written', async (t) => {
   await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
+  const chats = materialisingChatStore(dir, library)
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
   const sink = collector()
   const service = new IrisAppService({
@@ -528,7 +529,7 @@ test('a provider failure is reported and the user’s message survives', async (
   await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
+  const chats = materialisingChatStore(dir, library)
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
   const sink = collector()
   const handlers = new IrisAppService({

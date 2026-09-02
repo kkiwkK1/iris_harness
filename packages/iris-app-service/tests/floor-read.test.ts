@@ -9,6 +9,7 @@ import type { IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
+import { materialisingChatStore } from './support/materialising-store.ts'
 import type { ChatEntry } from '../src/entry.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService } from '../src/service.ts'
@@ -64,7 +65,7 @@ async function pruned(t: TestContext, turns: number): Promise<{ entry: ChatEntry
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
+  const chats = materialisingChatStore(dir, library)
   let turn = 0
   let ends = 0
   let waited = 0

@@ -621,3 +621,69 @@ the wrapper composes in the façade.
 
 **What would overturn this.** Upstream partitioning keys by script, or exposing
 the two positions it currently hides.
+
+## 12. An embedded world book is materialised into a named one, and the binding is ours
+
+SillyTavern's assembly layer reads exactly one character-book channel: the bound
+name in `extensions.world` (`world-info.js:4363-4380`; `character_book` appears
+nowhere in it). An embedded book reaches assembly only after
+`importEmbeddedWorldInfo` has written it out as a named book — and both of that
+function's call sites are UI clicks, so materialisation upstream always follows
+a user action.
+
+Iris read the embedded book directly during assembly. That was a **second
+channel upstream does not have**, and the duplication it produced — 1122 of 2246
+corpus entries — is what the old "choose one, never both" rule existed to hide.
+The rule was patching a problem only we could create.
+
+Now: the embedded book is materialised on the import and open paths, and
+assembly reads the bound name and nothing else. Three things differ from
+upstream, and the third is the one to read carefully.
+
+| | SillyTavern | Iris |
+| --- | --- | --- |
+| when it materialises | when the user clicks the world-info button | **on import, and on first open of an existing chat** |
+| where the binding goes | written back into the card's `extensions.world` | **recorded in `worldbook-bindings.json`** |
+| a card exported back | carries `extensions.world`, embedded book stripped | **unchanged, still carrying its embedded book** |
+
+The middle row is the whole design: the assembly layer is still single-channel,
+and only the bookkeeping of *which book* lives somewhere else. It keeps the
+standing position that runtime state does not go into a shared card file (§1,
+§7), and it means a card taken back to SillyTavern behaves there exactly as it
+did before Iris touched it.
+
+**On name collisions this host is stricter than upstream, and that is an
+upgrade rather than an alignment.** Upstream has three behaviours: an explicitly
+named book that already exists is **refused** (`world-info.js:1184-1204`); a
+minted name that collides gets an automatic ` (i)` suffix (`getUniqueName`,
+`utils.js:701-713`); and an **embedded-book materialisation that collides
+overwrites the existing book** — `saveWorldInfo(bookName, …, true)` at
+`:5625-5640`, on a path where `skipPopup` is true, so the user never sees it.
+Iris matches the first two and refuses the third: a name wanted by one card but
+already belonging to another is given up, the book is materialised under
+` (i)` instead, and a report says why. **The link between a card and its book is
+the binding table, not the filename**, which is what makes the name the thing
+that can safely give way.
+
+**When the card is updated, four states, and only one of them speaks.** The
+binding records two hashes: `sourceHash` over the **normalised** embedded book
+(so an author reordering entries is not read as new content) and
+`materialisedHash` over the **bytes written** (so "is this still the file I
+wrote" is answered exactly). Card unchanged: nothing happens, whether or not the
+user edited the book — the user's copy is authoritative and the embedded one was
+only a seed. Card changed and the book untouched: re-materialised silently,
+because no one's work is at risk. **Card changed and the book edited: the user's
+book is kept and a report is emitted**, because both parties changed the same
+book legitimately, merging would betray both, and silently keeping the user's
+version produces "I updated the card and nothing appeared" — which is
+indistinguishable from an update that failed.
+
+**A consequence worth stating.** A host with no world-book store has nowhere to
+materialise into and therefore no character-book channel at all. Production
+always builds one (`index.ts:360`, unconditional); the hosts that lacked one
+were test fixtures, which were relying on the channel this change removed.
+
+**What would overturn this.** Upstream moving embedded-book reading into
+assembly, or a measurement showing users expect a card update to overwrite their
+edited book — the report would then be the wrong answer rather than the careful
+one.

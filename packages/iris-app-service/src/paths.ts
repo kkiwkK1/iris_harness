@@ -158,6 +158,8 @@ export interface ProfilePaths {
    * card file through a deep watcher; this host does not.
    */
   scriptButtons: string
+  /** Which named book each card's embedded book was materialised into. */
+  worldbookBindings: string
   /**
    * Remote script bundles the host has fetched on a card's behalf.
    *
@@ -206,6 +208,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     extensionSettings: join(root, 'extension-settings.json'),
     scriptVariables: join(root, 'script-variables.json'),
     scriptButtons: join(root, 'script-buttons.json'),
+    worldbookBindings: join(root, 'worldbook-bindings.json'),
     scriptBundles: join(root, 'script-bundles'),
     connections: join(root, 'connections.json'),
   }

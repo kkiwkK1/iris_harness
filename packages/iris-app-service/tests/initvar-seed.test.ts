@@ -10,6 +10,7 @@ import type { IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
+import { materialisingChatStore } from './support/materialising-store.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
@@ -47,7 +48,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
   await copyFile(CARD, join(dir, 'characters', '爱衣.png'))
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
+  const chats = materialisingChatStore(dir, library)
   const stream: StreamFn = async function* (_options: GenerateOptions): AsyncIterable<StreamChunk> {
     yield { type: 'finish', reason: { kind: 'stop' } }
   }

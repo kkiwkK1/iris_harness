@@ -113,19 +113,49 @@ test('the two sources are never combined', async () => {
   assert.equal(resolved.entries.some(e => e.content === 'embedded only'), false)
 })
 
-test('a binding with no file behind it falls back to the embedded book', async () => {
+test('a binding with no file behind it resolves to nothing — assembly reads one channel', async () => {
   const store = await storeWith({ Somewhere: ['unrelated'] })
   const resolved = await resolveCardWorldbook(
     cardWith({ world: 'no such book', embedded: ['still playable'] }),
     store,
   )
 
-  // Deliberately better than upstream, which reads nothing here until the user
-  // accepts an import prompt. Their prompt guards a data migration that writes a
-  // file and rebinds the card; this fallback only reads, so it has nothing to
-  // ask permission for. Two corpus cards depend on it for 102 and 153 entries.
-  assert.equal(resolved.source, 'embedded')
-  assert.deepEqual(resolved.entries.map(e => e.content), ['still playable'])
+  /*
+   * This test asserted the opposite until 2026-09-03, and the reversal is the
+   * point. Reading the embedded book here was a **second assembly channel that
+   * upstream does not have**: SillyTavern's `getCharacterLore` reads only the
+   * bound name, and an embedded book reaches assembly only after being
+   * materialised into a named book. The duplication the old "choose one" rule
+   * guarded against — 1122 of 2246 entries — was produced by that second
+   * channel and by nothing else.
+   *
+   * So the embedded book is not lost; it is materialised *before* resolution
+   * runs, and by the time this function is asked the card is bound to a real
+   * named book. That happens on the import and open paths, not here — see
+   * `materialise.ts`. This function's job is now exactly upstream's: one
+   * channel, the bound name.
+   */
+  assert.equal(resolved.source, 'none')
+  assert.deepEqual(resolved.entries, [])
+})
+
+test('a materialised binding outranks the name written on the card', async () => {
+  const store = await storeWith({ 'Aria (2)': ['the materialised copy'] })
+
+  // When the wanted name collided, materialisation minted a different one and
+  // recorded it. The binding table is the link between card and book, so it is
+  // what resolution follows — the card's own `extensions.world` may name a book
+  // belonging to someone else entirely.
+  const resolved = await resolveCardWorldbook(
+    cardWith({ world: 'Eldoria', embedded: ['unused now'] }),
+    store,
+    [],
+    'Aria (2)',
+  )
+
+  assert.equal(resolved.source, 'named')
+  assert.equal(resolved.world, 'Aria (2)')
+  assert.deepEqual(resolved.entries.map(e => e.content), ['the materialised copy'])
 })
 
 test('a card with no books at all resolves to nothing, not to an error', async () => {
@@ -133,10 +163,12 @@ test('a card with no books at all resolves to nothing, not to an error', async (
   const resolved = await resolveCardWorldbook(cardWith({}), store)
   assert.deepEqual(resolved, { entries: [], source: 'none', world: 'Aria', global: [] })
 
-  // And a host with no store behaves like a host whose books are all missing,
-  // rather than throwing on every chat it opens.
+  // A host with no store has nowhere to materialise into and therefore no
+  // world-info channel at all. It answers empty rather than throwing on every
+  // chat it opens — but it does not quietly fall back to the embedded book,
+  // because that is the second channel this change removed.
   const noStore = await resolveCardWorldbook(cardWith({ world: 'Eldoria', embedded: ['x'] }), undefined)
-  assert.equal(noStore.source, 'embedded')
+  assert.equal(noStore.source, 'none')
 })
 
 // ---------------------------------------------------------------- corpus facts
@@ -147,7 +179,7 @@ test('choosing changes nothing for cards whose two books agree', { skip: !hasCor
 
   let agreed = 0
   let gained = 0
-  let fellBack = 0
+  let needsMaterialising = 0
 
   for (const file of await readdir(dir)) {
     let card: CharacterCard
@@ -204,16 +236,24 @@ test('choosing changes nothing for cards whose two books agree', { skip: !hasCor
       }
     }
     if (embedded.length === 0 && resolved.entries.length > 0) gained += 1
-    if (resolved.source === 'embedded' && card.data.extensions?.['world'] !== undefined) fellBack += 1
+    // Cards whose binding does not resolve but which carry an embedded book:
+    // before 2026-09-03 these were read through the second assembly channel.
+    // Now they resolve to nothing *here* and are covered by materialisation on
+    // the import and open paths instead — so this counts the exact set that
+    // migration has to reach, which is a sharper claim than the old one.
+    if (resolved.source === 'none' && embedded.length > 0) needsMaterialising += 1
   }
 
-  // Measured 2026-09-02: 14 agreed, 1 gained (19 entries), 2 fell back (102 and
-  // 153 entries). Asserted as "the buckets are non-empty and the majority is
-  // unchanged", because the numbers move when the user edits a book and the
-  // shape does not.
+  // Measured 2026-09-02: 14 agreed, 1 gained (19 entries), 2 previously fell
+  // back (102 and 153 entries) and are now the materialisation set. Asserted as
+  // "the buckets are non-empty and the majority is unchanged", because the
+  // numbers move when the user edits a book and the shape does not.
   assert.ok(agreed > 0, 'no card had its two books agree — the import relationship may have changed')
   assert.ok(gained > 0, 'no card gained a book it could not previously read')
-  assert.ok(fellBack > 0, 'no card fell back to its embedded book')
+  assert.ok(
+    needsMaterialising > 0,
+    'no card needs materialising — either the corpus changed or resolution is still reading embedded books',
+  )
 })
 
 test('the chosen book reaches prompt assembly, not just the resolver', async () => {

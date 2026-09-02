@@ -9,6 +9,7 @@ import type { IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
+import { materialisingChatStore } from './support/materialising-store.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { MACRO_SCOPES, isHelperMacroName } from '@iris/compat-tavernhelper'
 import { defaultRegistry } from '@iris/macro'
@@ -79,7 +80,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
   await writeFile(join(dir, 'characters', 'aria.json'), cardWithStatusEntry(), 'utf8')
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
+  const chats = materialisingChatStore(dir, library)
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
   const seen: GenerateOptions[] = []
   const errors: Error[] = []
@@ -263,7 +264,7 @@ test('a scope with no store is named, not rendered as emptiness', async (t) => {
   )
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
+  const chats = materialisingChatStore(dir, library)
   const errors: Error[] = []
   let ends = 0
   const handlers = new IrisAppService({

@@ -9,6 +9,7 @@ import type { IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
+import { materialisingChatStore } from './support/materialising-store.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
@@ -66,7 +67,7 @@ async function fixture(t: TestContext, replies: readonly string[]): Promise<Fixt
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
+  const chats = materialisingChatStore(dir, library)
   let call = 0
   let ends = 0
   let waited = 0

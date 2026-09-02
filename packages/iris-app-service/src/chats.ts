@@ -88,6 +88,16 @@ export class ChatStore {
    */
   readonly #globalSelect: (() => readonly string[]) | undefined
   readonly #entries = new Map<string, ChatEntry>()
+  /**
+   * Materialise a card's embedded book and say which named book it became.
+   *
+   * Injected rather than built here so this store stays unaware of bindings and
+   * hashes; the same function runs on the import path, so a card materialises
+   * once however it first arrives.
+   */
+  readonly #bookFor:
+    | ((characterId: string | undefined, card: CharacterCard | undefined) => Promise<string | undefined>)
+    | undefined
 
   /**
    * @param dir - the folder holding chat files.
@@ -102,12 +112,14 @@ export class ChatStore {
     globalScope?: ScopeBackend,
     worldbooks?: WorldbookStore,
     globalSelect?: () => readonly string[],
+    bookFor?: (characterId: string | undefined, card: CharacterCard | undefined) => Promise<string | undefined>,
   ) {
     this.#dir = dir
     this.#library = library
     this.#scriptVariables = scriptVariables
     this.#globalScope = globalScope
     this.#worldbooks = worldbooks
+    this.#bookFor = bookFor
     this.#globalSelect = globalSelect
   }
 
@@ -197,7 +209,10 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(meta.characterId, card)
     const entry = new ChatEntry({
       chatId, header: file.header, session, card,
-      worldbook: await resolveCardWorldbook(card, this.#worldbooks, this.#globalSelect?.() ?? []),
+      worldbook: await resolveCardWorldbook(
+        card, this.#worldbooks, this.#globalSelect?.() ?? [],
+        await this.#bookFor?.(meta.characterId, card),
+      ),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
     })
@@ -240,7 +255,10 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(characterId, card)
     const entry = new ChatEntry({
       chatId, header, session, card,
-      worldbook: await resolveCardWorldbook(card, this.#worldbooks, this.#globalSelect?.() ?? []),
+      worldbook: await resolveCardWorldbook(
+        card, this.#worldbooks, this.#globalSelect?.() ?? [],
+        await this.#bookFor?.(characterId, card),
+      ),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
     })

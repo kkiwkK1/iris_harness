@@ -12,6 +12,7 @@ import type { IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
+import { materialisingChatStore } from './support/materialising-store.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
@@ -61,7 +62,7 @@ async function fixture(t: TestContext, inputTokens?: number): Promise<Fixture> {
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
+  const chats = materialisingChatStore(dir, library)
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
   let ends = 0
   let waited = 0
@@ -177,7 +178,7 @@ test('on real data, one world-info entry is most of the prompt', {
   await writeFile(join(dir, 'characters', 'yinqi.png'), await readFile(REAL_CARD))
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
+  const chats = materialisingChatStore(dir, library)
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
   const preset = JSON.parse(await readFile(PRESET, 'utf8')) as ChatCompletionPreset
 

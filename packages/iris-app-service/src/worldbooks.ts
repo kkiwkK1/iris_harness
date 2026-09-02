@@ -30,13 +30,14 @@
  * @module @iris/app-service/worldbooks
  */
 
-import { readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 
 import { fromCharacterBook, parseLorebook, type Lorebook, type LorebookEntry } from '@iris/lorebook'
 import type { CharacterCard } from '@iris/character'
 import type { SecondaryLogic, WorldbookEntry, WorldbookPosition } from '@iris/protocol'
 
-import { notFound } from './errors.ts'
+import { invalid, notFound } from './errors.ts'
 import { fileFor } from './paths.ts'
 
 /** The books a card is bound to, by name. */
@@ -437,6 +438,41 @@ export class WorldbookStore {
 
     return this.get(name)
   }
+
+  /**
+   * Write a book that does not exist yet.
+   *
+   * Separate from {@link replace}, which refuses a name with no file behind it.
+   * The two callers want opposite guarantees: an edit must not create, and a
+   * materialisation must not overwrite. Collapsing them into an upsert would
+   * make each one able to do the other's damage silently.
+   * @param name - the book's name, used verbatim as the filename.
+   * @param entries - the whole book.
+   * @returns the bytes written, so a caller can hash exactly what landed.
+   * @throws {Error} when a book of that name already exists.
+   */
+  async create(name: string, entries: readonly PartialWorldbookEntry[]): Promise<string> {
+    const path = fileFor(this.dir, name, '.json')
+    if (existsSync(path)) throw invalid(`world book "${name}" already exists`)
+
+    const resolved = resolveUidCollisions(entries)
+    const stored: Record<string, unknown> = {}
+    resolved.forEach((entry, index) => {
+      const row = fromWorldbookEntry(entry, index)
+      stored[String(row['uid'])] = row
+    })
+
+    const text = JSON.stringify({ entries: stored }, null, 2)
+    await mkdir(this.dir, { recursive: true })
+    const temporary = `${path}.${String(process.pid)}.tmp`
+    await writeFile(temporary, text, 'utf8')
+    // `rename` over a path checked absent above: two materialisations racing for
+    // one name would both pass the check, and the loser's book would vanish
+    // without a word. The check narrows the window; the binding table is what
+    // actually closes it, by never reusing a name it did not record.
+    await rename(temporary, path)
+    return text
+  }
 }
 
 /**
@@ -509,9 +545,13 @@ export async function resolveCardWorldbook(
   card: CharacterCard | undefined,
   store: WorldbookStore | undefined,
   globalSelect: readonly string[] = [],
+  materialised?: string,
 ): Promise<ResolvedWorldbook> {
   const fallbackName = card?.data.name ?? 'character book'
-  const bound = charWorldbookNames(card).primary
+  // The materialised binding wins over the card's own `extensions.world`: it is
+  // the book this host actually wrote, and when a wanted name collided the two
+  // deliberately differ. Absent, the card's binding stands.
+  const bound = materialised ?? charWorldbookNames(card).primary
 
   // The globally selected books, read once and shared by every branch below.
   const global: { world: string, entries: LorebookEntry[] }[] = []
@@ -549,21 +589,14 @@ export async function resolveCardWorldbook(
     }
   }
 
-  const embedded = card?.data.character_book
-  if (embedded !== undefined) {
-    try {
-      return {
-        entries: Object.values(fromCharacterBook(embedded).entries),
-        source: 'embedded',
-        world: fallbackName,
-        global,
-      }
-    } catch {
-      // A book Iris cannot read is a reason to play the character without it,
-      // not a reason to refuse the chat.
-    }
-  }
-
+  // **No embedded fallback.** SillyTavern's assembly layer reads one
+  // character-book channel — the bound name — and reaches the embedded book
+  // only after it has been materialised into a named book. Reading it here was
+  // a second channel with no upstream counterpart, and the duplication it
+  // produced (1122 of 2246 entries) is what the old "choose one" rule existed
+  // to paper over. Materialisation happens on the import and open paths, before
+  // this runs; by the time resolution asks, an embedded book is already a named
+  // one. See `materialise.ts` and `EMBEDDED-BOOK-MATERIALISATION.md`.
   return { entries: [], source: 'none', world: fallbackName, global }
 }
 
