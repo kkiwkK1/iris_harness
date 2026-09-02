@@ -75,6 +75,49 @@ export function informsShell(measured: number, viewport: number): boolean {
   return Math.abs(measured - viewport) > OVERFLOW_SLACK_PX
 }
 
+/** What a measurement should make the frame say. */
+export type HeightSignal =
+  /** Report this content height; the shell sizes the frame to it. */
+  | { kind: 'height', pixels: number }
+  /** Say once that this card cannot be measured, so the shell gives it a screen. */
+  | { kind: 'sizing' }
+  /** Say nothing: the measurement adds nothing to what the shell already did. */
+  | { kind: 'silent' }
+
+/**
+ * Turn one measurement into one thing to say.
+ *
+ * The whole decision in one place because it is a small state machine, and the
+ * two halves used to live apart: `informsShell` refused the echo, and a boolean
+ * in the frame entry decided whether the refusal had already been announced.
+ * Apart, they missed the case that matters most.
+ *
+ * **A card can stop being measurable and start again.** These cards switch
+ * screens; one screen clips its overflow and the next does not. So:
+ *
+ * - measurable → report the height, and **re-arm**, because the card may become
+ *   unmeasurable again and the shell has to be told a second time. Announcing
+ *   once and never again is how the frame would freeze at the last real height
+ *   the moment a later screen clipped itself — the original fault, narrowed.
+ * - unmeasurable and not yet announced → announce it once.
+ * - unmeasurable and already announced → silence. Repeating it is a log, and the
+ *   shell's answer has not changed.
+ *
+ * @param measured - the content height this frame read.
+ * @param viewport - the frame's own viewport height.
+ * @param announced - whether the frame has already said it cannot be measured.
+ * @returns what to say.
+ */
+export function heightSignal(
+  measured: number,
+  viewport: number,
+  announced: boolean,
+): HeightSignal {
+  if (!Number.isFinite(measured) || measured <= 0) return { kind: 'silent' }
+  if (informsShell(measured, viewport)) return { kind: 'height', pixels: measured }
+  return announced ? { kind: 'silent' } : { kind: 'sizing' }
+}
+
 /** Every candidate measure of "how tall is this card", read at one moment. */
 export interface HeightSources {
   /** How many times the resize observer has fired. */

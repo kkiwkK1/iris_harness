@@ -26,7 +26,7 @@ import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.
 import { describeLibraryState } from './library-state.ts'
 import {
   describeHeightSources,
-  informsShell,
+  heightSignal,
   overflowsViewport,
 } from './frame-height.ts'
 
@@ -207,15 +207,21 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
      * for a content height has no answer. Once — a card cannot un-clip itself,
      * and repeating it would be a log.
      */
-    if (!informsShell(pixels, document.documentElement.clientHeight)) {
-      if (!sizingReported) {
-        sizingReported = true
-        post({ iris: run, type: 'sizing', mode: 'viewport' })
-      }
+    const signal = heightSignal(pixels, document.documentElement.clientHeight, sizingReported)
+    if (signal.kind === 'silent') return
+    if (signal.kind === 'sizing') {
+      sizingReported = true
+      post({ iris: run, type: 'sizing', mode: 'viewport' })
       return
     }
 
-    post({ iris: run, type: 'height', pixels })
+    /*
+     * Re-armed on every real height, so a card whose next screen clips itself
+     * can say so again. The decision lives in `heightSignal`; this only carries
+     * the flag it reads.
+     */
+    sizingReported = false
+    post({ iris: run, type: 'height', pixels: signal.pixels })
 
     /*
      * **Whatever is past the frame's own viewport has to stay reachable.**

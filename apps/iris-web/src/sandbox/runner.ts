@@ -394,6 +394,19 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
          */
         if (Number.isFinite(message.pixels) && message.pixels > 0) {
           frame.style.height = `${message.pixels}px`
+          /*
+           * The frame is being sized by a measurement again, so the mark that
+           * says it cannot be measured has to go.
+           *
+           * It changes no behaviour — an inline height beats the stylesheet rule
+           * the mark selects — and that is exactly why it is worth removing. A
+           * mark left on the element is a **claim about the element**, and this
+           * one had become false: `data-iris-sizing="viewport"` beside a frame
+           * whose height came from `body.scrollHeight` reads as evidence for a
+           * model that is no longer true. It cost a debugging round to a reader
+           * who trusted it — the reader was me.
+           */
+          delete frame.dataset['irisSizing']
         }
         host.onHeight?.(message.pixels)
         return

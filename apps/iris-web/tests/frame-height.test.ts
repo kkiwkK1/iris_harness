@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import {
   OVERFLOW_SLACK_PX,
   describeHeightSources,
+  heightSignal,
   informsShell,
   overflowsViewport,
 } from '../src/sandbox/frame-height.ts'
@@ -152,4 +153,48 @@ test('a non-positive measurement is never information', () => {
   assert.equal(informsShell(0, 807), false)
   assert.equal(informsShell(-5, 807), false)
   assert.equal(informsShell(Number.NaN, 807), false)
+})
+
+test('a measurable card reports its height', () => {
+  assert.deepEqual(heightSignal(1200, 812, false), { kind: 'height', pixels: 1200 })
+  assert.deepEqual(heightSignal(1200, 812, true), { kind: 'height', pixels: 1200 })
+})
+
+test('an unmeasurable card says so once, then goes quiet', () => {
+  assert.deepEqual(heightSignal(812, 812, false), { kind: 'sizing' })
+  assert.deepEqual(heightSignal(812, 812, true), { kind: 'silent' })
+})
+
+test('a card that becomes measurable again re-arms the announcement', () => {
+  /*
+   * The case the two halves missed while they lived apart, and the one that
+   * matters most: these cards switch screens, and one screen clips its overflow
+   * while the next does not.
+   *
+   * Announcing once and never again would freeze the frame at the last real
+   * height the moment a later screen clipped itself — the original fault, one
+   * screen narrower. So a real height must leave the frame able to say
+   * "unmeasurable" a second time.
+   */
+  let announced = false
+
+  // Screen one clips: announce, and the shell gives it a screen.
+  const first = heightSignal(812, 812, announced)
+  assert.deepEqual(first, { kind: 'sizing' })
+  announced = true
+
+  // Screen two does not clip: a real height, which must re-arm.
+  const second = heightSignal(1400, 812, announced)
+  assert.deepEqual(second, { kind: 'height', pixels: 1400 })
+  if (second.kind === 'height') announced = false
+
+  // Screen three clips again: it must be able to say so.
+  assert.deepEqual(heightSignal(1400, 1400, announced), { kind: 'sizing' })
+})
+
+test('a non-positive measurement says nothing at all', () => {
+  // Not `sizing` either: zero is not evidence that a card is unmeasurable, it
+  // is evidence that this measurement is worthless.
+  assert.deepEqual(heightSignal(0, 812, false), { kind: 'silent' })
+  assert.deepEqual(heightSignal(Number.NaN, 812, false), { kind: 'silent' })
 })
