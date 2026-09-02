@@ -426,6 +426,22 @@ CSS 侧：url( ) 0、@import 0、url(http 0、url(data: 0、@font-face 0、image
 7. **「卡片样式作用于全页」如果将来要做**，照上游的形状：挪出消息流、每卡、默认关、
    显式同意（§2.4）。
 
+8. **导入的聊天文件里，消息自带的消毒豁免旗标一律不认。**
+
+   上游用 `message.extra.uses_system_ui` 放宽消毒（豁免 class 名字空间化，
+   让消息能用宿主真按钮样式）。上游侧它只由 `system-messages.js` 设，安全——
+   **但它落在 `extra` 里，也就是写进 chat JSONL，而 JSONL 是我们从外部导入的。**
+
+   上游那条「只有宿主设得了」的保证**依赖于文件没被别人写过**；
+   导入路径上这个前提不成立：一个手工编辑过的、或从别处拿来的聊天文件，
+   可以给任意一条 AI 消息挂上这个旗标。
+
+   **语料现状**：`data/default-user/chats/` 下 `uses_system_ui` **0 个文件 0 次出现**
+   （我量的，2026-09-02）。**所以不认它是零成本的。**
+
+   做法：**豁免只能由宿主在运行时授予，永远不从消息数据里读。**
+   这不只针对这一个旗标——**「消毒策略的输入不能来自被消毒的那份数据」**是条通则。
+
 ---
 
 ## 七、未查 / 需要别人补的
@@ -440,9 +456,32 @@ CSS 侧：url( ) 0、@import 0、url(http 0、url(data: 0、@font-face 0、image
 3. **`@scope` 在我们目标浏览器上的可用性**我没测。兜底方案已写（§4.4）。
 4. **`<form>`/`<input>` 保留后的提交行为**我只列了要挡的面，**没有查我们现在的框架里
    一个 `<form>` 提交会发生什么**——那是 a8 的域，我不进去。
-5. **上游 `sanitizerOverrides` 参数（`script.js:1753` 第 6 个形参）有哪些调用点传了非空值**——
-   我只确认了消息主路径传 `{}`（`script.js:1978`）。别处若有传值的调用，
-   那是我这份「上游地板」描述的例外，我没有穷举。
+5. ~~**`sanitizerOverrides`（`script.js:1753` 第 6 形参）有哪些调用点传了非空值**~~
+   **已结**（我，2026-09-02）：**穷举了 14 个调用点，恰好 1 个传非空值。**
+
+   ```
+   13 个传 {}         script.js:1978 2611 3656 8162 8172 8260 8351
+                      power-user.js:1523  reasoning.js:555
+                      streaming-display.js:265 281
+                      regex/index.js:1253（省略第 6 参，默认 {}）
+    1 个传非空        script.js:2469
+   ```
+
+   那唯一一处是 `script.js:2467`：
+
+   ```js
+   // if mes.extra.uses_system_ui is true, set an override on the sanitizer options
+   const sanitizerOverrides = message.extra?.uses_system_ui ? { MESSAGE_ALLOW_SYSTEM_UI: true } : {};
+   ```
+
+   作用是让钩子（`chats.js:1917`）**豁免 `menu_button` 类的 class 名字空间化**，
+   使那条消息能用 ST 真正的按钮样式。**`uses_system_ui: true` 只在
+   `scripts/system-messages.js:69, 84, 92` 被设**——**宿主自己的系统消息，卡片和模型输出都设不了。**
+
+   **所以 §一「上游地板」对一切卡片/模型内容成立，例外只是宿主自撰的系统消息。**
+
+   **但发现了一个新的面，见 §六 第 8 条**：这个旗标存在 `message.extra` 里，
+   也就是**存进 chat JSONL**——而我们要导入 ST 的聊天文件。
 
 ---
 
