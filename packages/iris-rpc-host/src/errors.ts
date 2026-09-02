@@ -12,15 +12,30 @@
 
 import type { RpcError } from '@iris/protocol'
 
-/** The codes the contract defines. Anything else is not a wire code. */
-const CODES: ReadonlySet<string> = new Set<RpcError['code']>([
-  'not-found',
-  'invalid-request',
-  'provider-error',
-  'busy',
-  'unsupported',
-  'internal',
-])
+/**
+ * The codes the contract defines. Anything else is not a wire code.
+ *
+ * **Written as a `Record` so the compiler requires every member.** This was a
+ * `new Set<RpcError['code']>([...])`, which type-checks each element without
+ * demanding all of them — so adding a code to the contract compiled cleanly
+ * while this list silently lacked it, and `toWireError` downgraded the new code
+ * to `internal`. That failure is invisible from either end: the thrower sees
+ * its own code, the reader sees a generic internal error, and the frame's copy
+ * for the real code never appears. It happened once, with `quota-exceeded`.
+ *
+ * A `Record` keyed by the union cannot be short a key.
+ */
+const CODES_BY_NAME: Record<RpcError['code'], true> = {
+  'not-found': true,
+  'invalid-request': true,
+  'provider-error': true,
+  busy: true,
+  unsupported: true,
+  'quota-exceeded': true,
+  internal: true,
+}
+
+const CODES: ReadonlySet<string> = new Set(Object.keys(CODES_BY_NAME))
 
 /**
  * A failure a handler raises on purpose, with the wire code it should carry.

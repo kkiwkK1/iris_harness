@@ -3,6 +3,8 @@ import { test } from 'node:test'
 
 import { describeHubError } from '../src/errors.ts'
 
+import type { RpcError } from '@iris/protocol'
+
 import { isJsonContentType, isOriginAllowed, isRpcErrorCode, toRpcError } from '../src/index.ts'
 
 /**
@@ -57,6 +59,35 @@ test('only the contract’s own codes are wire codes', () => {
   assert.equal(isRpcErrorCode('TRANSPORT'), false)
   assert.equal(isRpcErrorCode(404), false)
   assert.equal(isRpcErrorCode(undefined), false)
+})
+
+test('every code the contract defines is recognised at run time', () => {
+  /*
+   * The list this guards used to be a `Set` whose type annotation checked each
+   * element without requiring all of them, so a code added to the contract
+   * compiled cleanly while the runtime list lacked it — and `toRpcError` then
+   * downgraded that code to `internal`. Invisible from both ends: the thrower
+   * sees its own code, the reader sees a generic internal failure, and the
+   * copy written for the real code never appears. It happened with
+   * `quota-exceeded`.
+   *
+   * The source list is a `Record` keyed by the union now, so the compiler
+   * catches an omission. This asserts the other half — that the runtime guard
+   * agrees with the contract — because the two could still drift if someone
+   * rebuilt the set from something narrower.
+   */
+  const codes: RpcError['code'][] = [
+    'not-found', 'invalid-request', 'provider-error', 'busy', 'unsupported', 'quota-exceeded', 'internal',
+  ]
+  for (const code of codes) {
+    assert.equal(isRpcErrorCode(code), true, `${code} is in the contract but not recognised`)
+  }
+
+  // And a code carried end to end keeps its identity rather than becoming
+  // `internal` — which is the failure the omission actually produced.
+  const refused = new Error('card storage is full') as Error & { code: string }
+  refused.code = 'quota-exceeded'
+  assert.deepEqual(toRpcError(refused), { code: 'quota-exceeded', message: 'card storage is full' })
 })
 
 test('a thrown value becomes a wire error without inventing a code', () => {
