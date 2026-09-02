@@ -216,6 +216,8 @@ export function buildCardContext(
     scriptButtons?: Record<string, { name: string, visible: boolean }[]>
     /** Globally selected book names, for the lorebook settings snapshot. */
     globalSelect?: readonly string[]
+    /** The profile's shared card storage, key to value. */
+    storage?: Record<string, string>
     /** Reports a growth alarm; see {@link variableLayersOf}. */
     onReport?: (message: string) => void
   },
@@ -250,6 +252,10 @@ export function buildCardContext(
     // is synchronous upstream — MVU invokes it both with and without `await`,
     // and only a value already in hand satisfies both.
     lorebookSettings: lorebookSettings(extras.globalSelect ?? []),
+    // Values only. Which card wrote a key is the host's bookkeeping — a frame
+    // has no use for it, and the snapshot is already the expensive part of
+    // every turn.
+    ...extras.storage === undefined ? {} : { storage: extras.storage },
   }
 }
 

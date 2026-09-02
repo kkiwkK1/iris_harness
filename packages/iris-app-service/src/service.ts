@@ -40,6 +40,7 @@ import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
+import { CardStorageStore, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
 import type { PruneOptions } from './prune.ts'
 import { runScripts } from './regex.ts'
@@ -96,6 +97,13 @@ export interface AppServiceOptions {
    * its card declared, which is the correct first-run state anyway.
    */
   scriptButtons?: ScriptButtonStore
+  /**
+   * The key–value store cards use as browser storage, shared per profile.
+   *
+   * Absent means the arms refuse: a host with nowhere to keep it must not let
+   * a card believe a write landed.
+   */
+  cardStorage?: CardStorageStore
   /**
    * The named world books beside the installation.
    *
@@ -186,12 +194,13 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
       extensionSettings?: ExtensionSettingsStore
       scriptButtons?: ScriptButtonStore
+      cardStorage?: CardStorageStore
       worldbooks?: WorldbookStore
       connections?: ConnectionStore
       templates?: TemplateOptions
@@ -229,6 +238,7 @@ export class IrisAppService {
       ...options.scriptVariables === undefined ? {} : { scriptVariables: options.scriptVariables },
       ...options.pruneVariables === undefined ? {} : { pruneVariables: options.pruneVariables },
       ...options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics },
+      ...options.cardStorage === undefined ? {} : { cardStorage: options.cardStorage },
     }
   }
 
@@ -244,6 +254,7 @@ export class IrisAppService {
   handlers(): Handlers {
     const { chats, library, settings, worldbooks } = this.#options
     const scripts = this.#options.scripts
+    const cardStorage = this.#options.cardStorage
 
     return {
       'chat.list': async () => ({ chats: await chats.list() }),
@@ -731,6 +742,16 @@ export class IrisAppService {
         await this.#options.scriptButtons?.forget(characterId)
         await this.#options.scriptVariables?.forget(characterId)
         await scripts?.forget(characterId)
+        // **`cardStorage` is deliberately not in this list, and it is the one
+        // store where forgetting would be wrong.** The others are partitioned
+        // *by* character, so a leftover partition is a stale answer waiting for
+        // whichever card next takes that id. Card storage is shared across the
+        // whole profile — upstream's one `localStorage` per origin — so a key
+        // this card wrote may be the key another card reads. Dropping it here
+        // would delete a living card's data because a different card was
+        // removed. `lastWriter` records who wrote a key last; that is
+        // attribution for a report, **not ownership**, and it is not a basis
+        // for deletion.
         return {}
       },
 
@@ -890,6 +911,7 @@ export class IrisAppService {
             // partition read whole would hand one card another's panel state.
             scriptButtons: await this.#options.scriptButtons?.all(characterId) ?? {},
             globalSelect: settings.globalSelect(),
+            ...cardStorage === undefined ? {} : { storage: await cardStorage.snapshot() },
             characters: await library.list(),
             ...messageId === undefined ? {} : { messageId },
             onReport: message => { this.#report(message, { kind: 'script', chatId, characterId }) },
@@ -905,6 +927,56 @@ export class IrisAppService {
         // Echoed back as stored, so a card can see what survived rather than
         // assuming its object round-tripped intact.
         return { metadata: entry.header.chat_metadata }
+      },
+
+      'storage.set': async ({ characterId, scriptId, key, value }) => {
+        if (cardStorage === undefined) {
+          throw new AppError('unsupported', 'card storage is not configured on this host')
+        }
+        await cardStorage.set(key, value, {
+          characterId,
+          ...scriptId === undefined ? {} : { scriptId },
+        })
+        return { value }
+      },
+
+      'storage.remove': async ({ characterId, scriptId, key }) => {
+        if (cardStorage === undefined) {
+          throw new AppError('unsupported', 'card storage is not configured on this host')
+        }
+        const removed = await cardStorage.remove(key, { characterId })
+        if (removed !== undefined) {
+          const note = removalNote(removed, 'remove')
+          if (note !== undefined) {
+            this.#report(note, {
+              kind: 'storage',
+              characterId,
+              ...scriptId === undefined ? {} : { scriptId },
+            })
+          }
+        }
+        return { removed: removed !== undefined }
+      },
+
+      'storage.clear': async ({ characterId, scriptId }) => {
+        if (cardStorage === undefined) {
+          throw new AppError('unsupported', 'card storage is not configured on this host')
+        }
+        // Upstream's `clear()` empties the whole origin, taking every other
+        // card's keys with it. Reproduced — but each key another card wrote is
+        // named, because upstream's version of this loss is unattributable.
+        const removed = await cardStorage.clear({ characterId })
+        for (const report of removed) {
+          const note = removalNote(report, 'clear')
+          if (note !== undefined) {
+            this.#report(note, {
+              kind: 'storage',
+              characterId,
+              ...scriptId === undefined ? {} : { scriptId },
+            })
+          }
+        }
+        return { removed: removed.length, foreign: removed.filter(one => one.foreign).length }
       },
 
       'script.setExtensionSettings': async ({ characterId, settings }) => {

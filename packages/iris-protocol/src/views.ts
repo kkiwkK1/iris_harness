@@ -330,6 +330,15 @@ export interface ScriptContext {
    */
   lorebookSettings?: LorebookSettings
   /**
+   * The card storage shared across this profile, as key to value.
+   *
+   * Flat and string-valued, matching `localStorage`. Provenance — which card
+   * wrote a key last — is kept by the host and deliberately not shipped here: a
+   * frame has no use for it, and the snapshot is already the expensive part of
+   * every turn.
+   */
+  storage?: Record<string, string>
+  /**
    * The layers `getAllVariables` merges, each unmerged and labelled by source.
    *
    * Upstream's `_getAllVariables` (`JS-Slash-Runner/src/function/variables.ts`)
@@ -608,7 +617,7 @@ export interface DebugReport {
   seq: number
   /** Unix epoch milliseconds. */
   at: number
-  /** `mvu | template | prompt | script | variables | host`. */
+  /** `mvu | template | prompt | script | variables | storage | host`. */
   kind: string
   chatId?: string
   characterId?: string

@@ -282,6 +282,40 @@ export const requestSchemas = {
    * the charter asked for a page, not a platform. A `since` cursor with polling
    * is enough, and it costs nothing while the page is closed.
    */
+  /**
+   * Write one key of the card storage shared across this profile.
+   *
+   * **Shared, as `localStorage` is shared per origin upstream.** Two cards
+   * choosing the same key see each other's values; that is reproduced rather
+   * than partitioned away. What is added is attribution: the host records which
+   * card and script wrote a key last, so a later removal can say whose it was.
+   */
+  'storage.set': z.object({
+    /** The card doing the writing, for attribution. */
+    characterId: z.string().min(1),
+    /** Which of its scripts, when the caller knows. */
+    scriptId: z.string().min(1).optional(),
+    key: z.string().min(1).max(400),
+    /** `localStorage` values are strings; so are these. */
+    value: z.string(),
+  }),
+  'storage.remove': z.object({
+    characterId: z.string().min(1),
+    scriptId: z.string().min(1).optional(),
+    key: z.string().min(1).max(400),
+  }),
+  /**
+   * Empty the whole store, as upstream's `clear()` empties the origin.
+   *
+   * Every key goes, including other cards'. The host reports each removal that
+   * took a key another card had written — upstream wipes them with no way to
+   * attribute the loss.
+   */
+  'storage.clear': z.object({
+    characterId: z.string().min(1),
+    scriptId: z.string().min(1).optional(),
+  }),
+
   'debug.reports': z.object({
     /** Return records newer than this `seq`. Absent means from the oldest held. */
     since: z.number().int().nonnegative().optional(),
@@ -910,6 +944,13 @@ export interface RpcResponseMap {
    * a diagnostic page reporting "all clear" when it means "not instrumented" is
    * the one lie it must never tell.
    */
+  /** The value as stored, so a writer sees what survived. */
+  'storage.set': { value: string }
+  /** Whether a key was there to remove. */
+  'storage.remove': { removed: boolean }
+  /** How many keys went, and how many of those belonged to other cards. */
+  'storage.clear': { removed: number, foreign: number }
+
   'debug.reports': {
     reports: DebugReport[]
     dropped: number

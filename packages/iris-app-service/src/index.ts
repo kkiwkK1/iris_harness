@@ -25,6 +25,7 @@ import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
 import type { CharacterCard } from '@iris/character'
 
+import { CardStorageStore } from './card-storage.ts'
 import { DiagnosticBuffer } from './diagnostics.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
@@ -430,6 +431,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const scriptButtons = new ScriptButtonStore(
     paths.scriptButtons, error => { ctx.logger.warn(error.message) })
   const connections = new ConnectionStore(paths.connections)
+  // Shared across the profile, matching upstream's one `localStorage` per
+  // origin. Not partitioned per card, and deliberately not forgotten when a
+  // card is deleted — see `character.delete`.
+  const cardStorage = new CardStorageStore(
+    paths.cardStorage, error => { ctx.logger.warn(error.message) })
   // Retention for the diagnostic bus. Reports already reached the logger and
   // stopped there, so a debug page had nothing to ask for; this keeps a bounded
   // window of them in memory. Not persisted deliberately — a restart empties it
@@ -455,6 +461,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     preset: await loadPreset(config.presetPath),
     broadcast: event => { ctx.irisRpc.broadcast(event) },
     diagnostics,
+    cardStorage,
     ...config.userName === undefined ? {} : { userName: config.userName },
     ...config.contextWindow === undefined ? {} : { contextWindow: config.contextWindow },
     ...config.reserveTokens === undefined ? {} : { reserveTokens: config.reserveTokens },
@@ -477,6 +484,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(() => {
     const disposers = [
       ctx.irisRpc.register('debug.reports', handlers['debug.reports']),
+      ctx.irisRpc.register('storage.set', handlers['storage.set']),
+      ctx.irisRpc.register('storage.remove', handlers['storage.remove']),
+      ctx.irisRpc.register('storage.clear', handlers['storage.clear']),
       ctx.irisRpc.register('chat.list', handlers['chat.list']),
       ctx.irisRpc.register('chat.create', handlers['chat.create']),
       ctx.irisRpc.register('chat.open', handlers['chat.open']),

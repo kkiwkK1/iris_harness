@@ -878,6 +878,52 @@ class InMemoryClient implements FakeClient {
         return { reports: [], dropped: 0, oldest: 0, kinds: [] }
       }
 
+      case 'storage.set':
+      case 'storage.remove':
+      case 'storage.clear': {
+        // Placeholder in this client's existing refusal idiom; the sandbox half
+        // is 7b's to design. Refused for the reason `setVariables` is refused,
+        // which applies here word for word: a card that appeared to persist
+        // state against this client and lost it against a real host is exactly
+        // the failure the fake exists to prevent. Card storage is shared across
+        // the whole profile upstream, and modelling that sharing — plus the
+        // last-writer attribution a removal reports — would put a second copy
+        // of the rule in the half that is not authoritative.
+        throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
+      }
+
+      /*
+       * Card storage: refused, and the reason is attribution rather than
+       * difficulty.
+       *
+       * The values themselves would be trivial to fake — `localStorage` is a
+       * flat `Record<string, string>` and this package already holds seeded
+       * state. What it cannot fake is the half the replies are *about*. Every
+       * one of these three carries the host's record of **who wrote a key
+       * last**: `storage.clear` answers `{ removed, foreign }`, where `foreign`
+       * counts the keys this card wiped that another card had written, and that
+       * number exists precisely so a reader can be told what a `clear()` cost
+       * them. A fake that returned `foreign: 0` would be inventing the answer
+       * to the only question the field was added for, and inventing it in the
+       * reassuring direction.
+       *
+       * The store is also **profile-wide shared**, which is the compatibility
+       * behaviour rather than an accident — two cards choosing one key see each
+       * other's values, as they do on one origin upstream. Sharing across a
+       * fake profile that has no other cards in it would make every
+       * cross-card effect invisible in development and visible only in front of
+       * a user, which is the failure this package exists to prevent.
+       *
+       * So a card developing against the fake sees its writes refused and
+       * reported, takes its own empty-storage path, and finds out here rather
+       * than later that this host does not keep anything.
+       */
+      case 'storage.set':
+      case 'storage.remove':
+      case 'storage.clear': {
+        throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
+      }
+
       default: {
         // Exhaustiveness guard: a method added to the protocol without an arm
         // here becomes a type error rather than a runtime surprise.

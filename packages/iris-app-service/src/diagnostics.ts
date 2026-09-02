@@ -24,6 +24,7 @@ export type ReportKind =
   | 'prompt'
   | 'script'
   | 'variables'
+  | 'storage'
   | 'host'
 
 /**
@@ -43,6 +44,10 @@ export const WIRED_KINDS: readonly ReportKind[] = [
   'prompt',
   'script',
   'variables',
+  // Its own kind rather than folded into `script`: a `clear()` that took
+  // another card's keys is **data being removed**, not a script misbehaving,
+  // and a reader looking for one is not looking for the other.
+  'storage',
   'host',
 ]
 

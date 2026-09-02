@@ -160,6 +160,8 @@ export interface ProfilePaths {
   scriptButtons: string
   /** Which named book each card's embedded book was materialised into. */
   worldbookBindings: string
+  /** Key–value storage cards share across this profile. */
+  cardStorage: string
   /**
    * Remote script bundles the host has fetched on a card's behalf.
    *
@@ -209,6 +211,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     scriptVariables: join(root, 'script-variables.json'),
     scriptButtons: join(root, 'script-buttons.json'),
     worldbookBindings: join(root, 'worldbook-bindings.json'),
+    cardStorage: join(root, 'card-storage.json'),
     scriptBundles: join(root, 'script-bundles'),
     connections: join(root, 'connections.json'),
   }

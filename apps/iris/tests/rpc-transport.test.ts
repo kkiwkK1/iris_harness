@@ -248,6 +248,11 @@ const PROBES: Record<string, unknown> = {
   // Empty params: the cursor and the limit are both optional, and reading
   // from the oldest held record is the page's first call.
   'debug.reports': {},
+  // Storage arms refuse on a host without the store configured, which is what
+  // the probe host is; the guard checks reachability, not success.
+  'storage.set': { characterId: 'no-such-character', key: 'k', value: 'v' },
+  'storage.remove': { characterId: 'no-such-character', key: 'k' },
+  'storage.clear': { characterId: 'no-such-character' },
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {
