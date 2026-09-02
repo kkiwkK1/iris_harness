@@ -542,3 +542,84 @@ error.stack ? (error instanceof ZodError ? [error.message, error.stack].join('\n
 
 *（`toastClass` 里有 Tailwind 类 `w-fit!` / `min-w-[300px]`，依赖 Tailwind 在宿主存在。
 不影响正确性，只影响宽度。知道即可，不值得为它做事。）*
+
+---
+
+## 附录二：`Mvu` 对象的成员清单
+
+**用途**：裁「按名 RPC 代理」还是「共居 realm」。
+判据是**同步且返回响应式/函数的成员只能共居**——**实测这一支是空集。**
+
+**口径**：签出 `.reference/MagVarUpdate/src/function/global/index.ts:7-160`（`createMvu()`）；
+**11 个成员在实际加载的 bundle 里逐个核过，全部存在**
+（`apps/iris/data/default-user/script-bundles/d2245aa5….js`）。
+
+| 成员 | 签名 | 同/异 | 返回什么 | 碰宿主状态 | `this` |
+| --- | --- | --- | --- | --- | --- |
+| `events` | **属性，非函数** | — | **纯数据**：字符串常量对象（`variable_def.ts:175+`） | 否 | 否 |
+| `getMvuData(options)` | `(VariableOption) => MvuData` | **同步** | **纯数据**——`getVariables` 返回 `klona(...)` 深拷贝（[TH] `variables.ts:96-98`） | 读 | 否 |
+| `getCurrentMvuData()` | `() => MvuData` | **同步** | **纯数据**，同上 | 读（含 `getCurrentMessageId()`） | 否 |
+| `getMvuVariable(data, path, opts)` | `(MvuData, string, {category,default_value}) => any` | **同步** | 传入数据里的一个值（VWD 取 `[0]`） | **否——纯函数** | 否 |
+| `getRecordFromMvuData(data, category)` | `(MvuData, 'stat'\|'display'\|'delta') => Record` | **同步** | **传入对象的子引用** | **否——纯函数** | 否 |
+| `isDuringExtraAnalysis()` | `() => boolean` | **同步** | boolean，**但是活值**（读 Pinia `useDataStore().runtimes`） | **读** | 否 |
+| `replaceMvuData(data, options)` | `=> Promise` | **异步** | void | 写 | 否 |
+| `replaceCurrentMvuData(data)` | `async => Promise<void>` | **异步** | void | 写 | 否 |
+| `parseMessage(message, old_data)` | `async => Promise<MvuData\|undefined>` | **异步** | 纯数据（`klona` 后就地改） | **读 + 发事件**（走 `substitudeMacros` → ST 宏） | 否 |
+| `reloadInitVar(data)` | `async => Promise<boolean>` | **异步** | boolean | 读初始化配置 | 否 |
+| `setMvuVariable(data, path, value, opts)` | `async => Promise<boolean>` | **异步** | boolean | **改的是传入的 `mvu_data.stat_data`** | 否 |
+
+### 两条读法
+
+**① 零个成员依赖 `this`。**全是 `createMvu()` 闭包里的普通函数，没有一处 `.call(this)`。
+**对代理是好消息**：可以自由重绑定，不像 TavernHelper 那些 `_` 前缀成员靠 `this` 认脚本。
+
+**② 「按名 RPC」不能无差别套到 6 个同步成员上**——**代理会把它们变成异步，而卡是按同步写的**
+（`const d = Mvu.getMvuData(...)` 直接用返回值）。
+
+### 三档
+
+| 档 | 成员 | 做法 |
+| --- | --- | --- |
+| **根本不用跨 frame** | `getMvuVariable`、`getRecordFromMvuData` | **纯函数，对传入数据操作**。任一 frame 本地实现即可，不需要任何通道 |
+| **快照 + 失效推送** | `events`（常量，一次即可）、`getMvuData`、`getCurrentMvuData`、`isDuringExtraAnalysis` | 返回纯数据，可复制。**`isDuringExtraAnalysis` 是活值，快照必然过期，只能靠推送** |
+| **按名 RPC（异步）** | `replaceMvuData`、`replaceCurrentMvuData`、`parseMessage`、`reloadInitVar`、`setMvuVariable` | 本来就返回 Promise，**跨 frame 不改变契约** |
+
+### 一条代理层不能"顺手优化"的
+
+**`getRecordFromMvuData` 返回的是传入对象的子引用，不是拷贝**：
+
+```ts
+// [MVU] global/index.ts:135-152
+case 'stat': data = mvu_data.stat_data; break;
+…
+return data;                          // ← 直接给出去，没有 klona
+```
+
+**调用方改它就改了自己那份 `mvu_data`。**这在共居下和跨 frame 下都成立，因为那个对象**本来就是调用方的**。
+
+**但如果我们在代理层"顺手"深拷贝返回值，就破坏了这个语义**——
+卡改了返回的 record，以为改到了自己的 `mvu_data`，实际改在一份副本上。
+**症状是变量改了但没生效，而且没有任何错误。**
+
+### 单例是靠共享 parent 达成的，不是靠中继
+
+```js
+// [TH] iframe/predefine.js:38-45  —— 两种 frame 都注入
+if (_.has(window.parent, 'Mvu')) {
+  Object.defineProperty(window, 'Mvu', {
+    get: () => _.get(window.parent, 'Mvu'),
+    set: () => {},            // ← 空 set，卡写不进去
+    configurable: true,
+  });
+}
+```
+
+`predefine.js` 在**脚本 frame**（`panel/script/iframe.ts:12`）与
+**界面 frame**（`panel/render/iframe.ts:94`）**都注入**。
+两种 frame 的 `window.parent` 是**同一个 ST 页面**，所以它们读到的是**同一个对象**。
+
+**「两个 Map、无中继」的根源在这里**：我们的两种 frame 挂在**两个不同的虚拟 parent** 上。
+**这不是缺一条中继，是上游那个单例的成立条件在我们这里不存在。**
+
+*（「加中继」和「让两种 frame 共享同一个 parent 命名空间」是两种修法：
+前者补通道，后者补上游依赖的那个前提。）*
