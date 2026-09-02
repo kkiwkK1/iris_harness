@@ -21,14 +21,69 @@
    * System stacks, not webfonts. Iris is local-first — a chat that stops
    * rendering correctly when the network is down is not local-first — so the
    * personality has to come from the setting rather than from an exotic face.
-   * The CJK fallbacks are load-bearing: a serif stack with no Chinese serif
-   * silently drops to a UI sans for half this project's cards.
+   *
+   * **The face is 幼圆 (YouYuan), and the user chose it** from eight rendered
+   * candidates on this machine. It is the only genuinely *round* Chinese text
+   * face installed here, which is what was asked for — the previous stacks read
+   * as "default" because they were: every characterful family they named was
+   * macOS-only or absent, so Chinese prose fell through to the generic `serif`
+   * (SimSun) and the UI landed on Microsoft YaHei. The old comment claimed the
+   * CJK fallbacks were load-bearing, and the reasoning was right while every
+   * name in it was wrong for this platform.
+   *
+   * **Do not "modernise" this back toward a neutral sans.** It is a decision by
+   * the person reading the product, taken with the alternatives in front of
+   * them, and it costs nothing: every family named here is installed, so no byte
+   * is fetched and nothing lands in the message-preset budget.
+   *
+   * **Latin and digits are Corbel, and that is measured, not taste.** 幼圆's own
+   * Latin is wide, and in the rendered comparison it pushed the meta line
+   * ("第 12 回 · deepseek-v4-flash · 2 个读数") onto two lines. Corbel is compact
+   * and friendly and fixes it. Century Gothic is rounder — a better match on
+   * looks alone — and was rejected because it is wider still, so it would have
+   * kept the defect that prompted the check.
+   *
+   * A Latin family first and the CJK family second is how per-script pairing
+   * works: each glyph takes the first family that can draw it.
+   *
+   * Names verified against the fonts' own name tables rather than the registry's
+   * display names, because the two disagree: 华文楷体 is registered only under
+   * its Chinese name, and MiSans is registered as `MiSans-Regular` while its
+   * family is `MiSans`. A family name the system cannot match falls through in
+   * silence, which is the failure this whole stack was already suffering from.
    */
-  --iris-font-prose: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia,
-    'Songti SC', 'Source Han Serif SC', 'Noto Serif CJK SC', serif;
-  --iris-font-ui: Inter, 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system,
-    'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --iris-font-mono: 'Cascadia Code', ui-monospace, 'SF Mono', Consolas, 'DejaVu Sans Mono', monospace;
+  --iris-font-prose: Corbel, YouYuan, 幼圆, 'Segoe UI', sans-serif;
+  --iris-font-ui: Corbel, YouYuan, 幼圆, 'Segoe UI', sans-serif;
+  /*
+   * Consolas first, because `Cascadia Code` is **not installed here** and a
+   * leading name the system cannot match is decoration that costs a lookup.
+   * `ui-monospace` stays as the cross-platform door.
+   */
+  --iris-font-mono: Consolas, ui-monospace, 'Cascadia Code', 'DejaVu Sans Mono', monospace;
+
+  /*
+   * The reading surface is set in synthetic bold, and that is a choice.
+   *
+   * 幼圆 ships **one weight** on this machine, so there is no real bold to
+   * select. Five treatments were rendered at the real type sizes and the user
+   * picked this one (2026-09-02) with all five in front of them.
+   *
+   * **Do not "fix" this back to 400.** Synthetic bold on CJK is usually a
+   * defect — it fattens strokes rather than redrawing them — so the next
+   * reader has every reason to take it for one. It is not: it is what the
+   * person reading the product asked for after seeing the alternatives
+   * (a micro text-stroke, a size-and-colour compensation, and plain 400).
+   *
+   * **Weight is no longer a hierarchy axis, and that is measured.** Ink
+   * coverage of the same line at 17px: `500` adds **0%**, `600` adds **+61%**,
+   * `700` adds **+61%** — 600 and 700 are the identical bitmap, because
+   * synthesis is a cliff rather than a dial. So this face has exactly two
+   * weights, and anything already set to 600 now renders the same as the body
+   * around it. Every distinction on this surface has to come from size,
+   * colour, tracking or case instead. The one `font-weight: 600` left in
+   * `reading.css` is the turn ordinal, which is already separated by all four.
+   */
+  --iris-text-weight: 700;
 
   /* ------------------------------------------------------------------ type */
 

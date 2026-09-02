@@ -130,7 +130,7 @@
 }
 
 .iris-msg__text {
-  font: var(--iris-prose-size) / var(--iris-prose-leading) var(--iris-font-prose);
+  font: var(--iris-text-weight) var(--iris-prose-size) / var(--iris-prose-leading) var(--iris-font-prose);
   color: var(--iris-ink);
   overflow-wrap: break-word;
 }
@@ -146,13 +146,13 @@
 /* The reader's own voice: an editor's query in the margin of a proof, not
    typeset prose. Smaller, sans, and one step back in the ink. */
 .iris-msg--user .iris-msg__text {
-  font: 15px / 1.62 var(--iris-font-ui);
+  font: var(--iris-text-weight) 15px / 1.62 var(--iris-font-ui);
   color: var(--iris-ink-secondary);
   white-space: pre-wrap;
 }
 
 .iris-msg--system .iris-msg__text {
-  font: 13.5px / 1.6 var(--iris-font-ui);
+  font: var(--iris-text-weight) 13.5px / 1.6 var(--iris-font-ui);
   color: var(--iris-ink-tertiary);
   font-style: italic;
 }
@@ -398,7 +398,7 @@
   border: var(--iris-hairline) solid var(--iris-rule-strong);
   border-radius: var(--iris-radius);
   padding: 10px 12px;
-  font: var(--iris-prose-size) / var(--iris-prose-leading) var(--iris-font-prose);
+  font: var(--iris-text-weight) var(--iris-prose-size) / var(--iris-prose-leading) var(--iris-font-prose);
 }
 
 /* ---------------------------------------------------------------- streaming */
