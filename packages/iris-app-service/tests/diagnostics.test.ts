@@ -8,7 +8,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
-import { DiagnosticBuffer, WIRED_KINDS } from '../src/diagnostics.ts'
+import { DiagnosticBuffer, WIRED_KINDS, type ReportKind } from '../src/diagnostics.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
@@ -206,6 +206,26 @@ test('the answer declares which kinds are collected, so empty is not ambiguous',
   assert.deepEqual(page.reports, [])
   assert.deepEqual([...page.kinds].sort(), [...WIRED_KINDS].sort())
   assert.ok(page.kinds.length > 0, 'an empty answer with no declared kinds is a bare blank')
+})
+
+test('every kind the host can report is one it declares', () => {
+  /*
+   * `WIRED_KINDS` is what tells a page which empty it is looking at, so a kind
+   * missing from it reads as "nobody is looking" — for a kind whose reports are
+   * arriving. The list used to be `readonly ReportKind[]`, which type-checks
+   * each entry without requiring all of them, so adding a kind and forgetting
+   * the list would have compiled and lied. It is derived from a `Record` keyed
+   * by the union now; this asserts the derivation still covers everything the
+   * host actually reports with.
+   */
+  const reported: ReportKind[] = ['mvu', 'template', 'prompt', 'script', 'variables', 'storage', 'host']
+  for (const kind of reported) {
+    assert.equal(
+      WIRED_KINDS.includes(kind),
+      true,
+      `${kind} is reported by the host but not declared, so a page would call it uninstrumented`,
+    )
+  }
 })
 
 test('a host that retains nothing refuses instead of reporting all clear', async (t) => {

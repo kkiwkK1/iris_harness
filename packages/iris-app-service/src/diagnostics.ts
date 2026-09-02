@@ -28,6 +28,35 @@ export type ReportKind =
   | 'host'
 
 /**
+ * Whether each kind has a report site behind it.
+ *
+ * **A `Record` keyed by the union, not a list of the wired ones**, and the
+ * difference is the one that bites: `readonly ReportKind[]` type-checks each
+ * entry without requiring all of them, so a kind added to `ReportKind` and
+ * forgotten here would be **absent from what the host declares** — and by
+ * {@link WIRED_KINDS}'s own contract, absent means "nobody is looking". The
+ * page would then report that a kind is uninstrumented while its reports were
+ * arriving, which is the exact lie that field exists to prevent.
+ *
+ * The value is a boolean rather than the key merely being present, because
+ * "declared but deliberately not wired" is a real state — a kind can exist in
+ * the type before its site does. This forces that to be a decision written
+ * down, instead of an omission that reads the same way.
+ */
+const KIND_WIRED: Record<ReportKind, boolean> = {
+  mvu: true,
+  template: true,
+  prompt: true,
+  script: true,
+  variables: true,
+  // Its own kind rather than folded into `script`: a `clear()` that took
+  // another card's keys is **data being removed**, not a script misbehaving,
+  // and a reader looking for one is not looking for the other.
+  storage: true,
+  host: true,
+}
+
+/**
  * Every kind the host has actually wired a report site for.
  *
  * Handed to the page verbatim so an empty section can say which of the two
@@ -38,18 +67,9 @@ export type ReportKind =
  * instrumented" is the failure a diagnostic page can least afford, because it
  * is the tool people use when they suspect something else is lying.
  */
-export const WIRED_KINDS: readonly ReportKind[] = [
-  'mvu',
-  'template',
-  'prompt',
-  'script',
-  'variables',
-  // Its own kind rather than folded into `script`: a `clear()` that took
-  // another card's keys is **data being removed**, not a script misbehaving,
-  // and a reader looking for one is not looking for the other.
-  'storage',
-  'host',
-]
+export const WIRED_KINDS: readonly ReportKind[] = Object.entries(KIND_WIRED)
+  .filter(([, wired]) => wired)
+  .map(([kind]) => kind as ReportKind)
 
 /** One survived failure, as the debug page reads it. */
 export interface DebugReport {
