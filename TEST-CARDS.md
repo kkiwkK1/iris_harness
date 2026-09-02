@@ -130,6 +130,75 @@ artifact 的内部依赖。
 拦截"两类修法**在这一层的行为相同**——它们分叉在**传递依赖**那一层,恰好是这里测不到的
 那层。所以 11 这个数**排除了**"几十上百个各不相同",但**不构成**"名单够用"的证据。
 
+### 副轴之二:上游界面 frame 预置、我们没有的那几样,各砸到谁
+
+3c 查出上游界面 frame 比我们多预置 Tailwind、Font Awesome CSS、jQuery UI + touch-punch、
+VueRouter、showdown。下表量的是**语料里谁会因此坏掉**,给 7b 定补的顺序。
+命令 `node scratchpad/deps-census.mjs` / `deps-selfhosted.mjs`。
+
+| 差集 | 命中卡 | **需要我们补** | 观察到的族 |
+|---|---|---|---|
+| **Font Awesome** | **7 / 22** | **7** | FRAME-FENCED ×4、FRAGMENT ×2、FRAME-BARE ×1(+2 张无观察族) |
+| **Tailwind** | 2(字面)/ 1(utility) | **2** | FRAME-FENCED ×1(+1 张 SCRIPT-DOM 能力卡) |
+| **showdown** | 2 / 22 | **2** | FRAME-FENCED ×1(+1 张无观察族) |
+| jQuery UI | **0** | — | — |
+| VueRouter | **0** | — | — |
+
+命中明细(命中在哪个 population 也记下来,因为坏的时机不同:`regex`/`script` 是建界面时就坏,
+`floors` 只影响已存在的对话):
+
+- **Font Awesome**:创世回廊1.3(regex)、魔法禁书目录(regex)、魔法少女的扣扣审判1.0
+  (regex+script)、魔法少女是不会败北恶堕的吧!(regex)、希尔(regex)、银麒赎世(script)、
+  V1.5.4_(script)
+- **Tailwind**:创世回廊1.3(regex,字面 + utility)、V1.5.4_(script,字面)
+- **showdown**:魔法少女的扣扣审判1.0(regex)、萧谴写卡助手版_V4.5.1(regex)
+
+#### 「自带」不等于「不用我们补」——这条差点把顺序搞反
+
+7 张 Font Awesome 卡里有 **6 张自己注入 `<link>`**(全部指向
+`cdnjs.cloudflare.com/ajax/libs/font-awesome/6.x/css/all.min.css`),两张(魔法少女的扣扣审判1.0、
+银麒赎世)甚至先判断「已经加载过就不重复加」。按「自带 = 自足」读,这条差集只砸 1 张卡,
+排在最后。
+
+**但那 6 张在我们的 frame 里一样坏,而且两种模式都坏。** 读 `sandbox/policy.ts:77` 与
+`sandbox/srcdoc.ts:framePolicy`:
+
+- `REMOTE_ALLOWLIST = ['*.jsdelivr.net', 'raw.githubusercontent.com']` —— **cdnjs 不在里面**。
+- 未授网:`style-src 'unsafe-inline' https://fonts.googleapis.com data:` —— cdnjs 的 CSS 被挡。
+- 已授网:`style-src 'unsafe-inline' https: data:` —— CSS 过得去了,**但**
+  `font-src data: https://fonts.gstatic.com` **不随授权放宽**,而 FA 的字形文件在 cdnjs,
+  所以图标仍然是空框。
+- Tailwind 同理走 `script-src`,而 `script-src` **也不随授权放宽**,两种模式都拿不到。
+
+> **所以「需要我们补」= 7 / 2 / 2,不是 1 / 0 / 2。** 「卡自带」只在宿主放行的前提下成立,
+> 而这里的宿主是我们自己的 CSP。
+
+顺带一条对验收有用的:那两张会先探测 `$('link[href*="font-awesome"]').length` 的卡,
+**我们预置之后它们的加载器会自动变成空操作**——它们本来就是照「宿主可能已经提供」写的。
+
+#### 谓词与鉴别力(每条差集单独说,弱的分开报)
+
+- **Font Awesome**:只在 `class` 属性值里匹配 `fa-`/`fas`/`far`/`fab`/`fa-solid`。
+  **不是**裸 `/fa-/`——语料里 `fa-` 的字面命中全部落在 `chat_metadata` 的 UUID 里
+  (`1316a7fa-ce03-…`),裸匹配会给出假阳性。精度可辩护。
+- **Tailwind**:分两栏报,因为强度差很多。`tailwind`/`@apply` 字面是硬证据(2 张);
+  utility 名单是启发式,且加了一道过滤——**只有卡自己的 CSS 里没有定义该类名时才算命中**,
+  否则那是卡自己写的同名类。过滤后只剩创世回廊1.3 一张,命中 token 如
+  `rounded-lg text-xs items-center justify-between grid gap-4`。**utility 那栏不要单独当证据用。**
+- **jQuery UI**:`.draggable(`/`.sortable(`/`.resizable(`/`.dialog(`/`.accordion(`/`.tabs(`。
+  零。注意这个谓词只认 jQuery 插件式调用,**卡自己实现的拖拽不会命中,也不该命中**。
+- **showdown** / **VueRouter**:`showdown` 字面;`VueRouter`/`createRouter`/
+  `createWebHashHistory`/`<router-view`。
+- **两个零按族纪律读:`jQuery UI` 和 `VueRouter` 是「还没遇到」,不是「不需要」。**
+
+范围:22 张卡的 greeting / card-text / 内嵌世界书 / 界面正则 / 卡内脚本 / 语料楼层正文
+(共 13.9 M 字符楼层、4.5 M 字符脚本;各 population 的规模与已点亮的探针见
+`scratchpad/deps-pops.mjs`)。**远程 bundle 看不见**——内联 bundle 可见(V1.5.4 的命中就来自
+卡内内联正文),所以每个数都是下界,和 §一之二 ESM 那栏同一个边界。
+
+两个语料 chat 目录(`【Sgw】又看一集1`、`缄默之秋2.5 MVU`)没匹配到卡,它们的楼层不在任何
+一栏里,合计 10.3 万字符。
+
 ### 还没有代表的族
 
 - **`FRAME-BARE`(真正无围栏的完整文档)** —— 零。判据可以据此收紧。
