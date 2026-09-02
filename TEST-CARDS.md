@@ -887,6 +887,43 @@ if (typeof toastr !== "undefined") toastr.success("已设为壁纸");   // ← �
 > **下面这一节的 0 保留原样**,因为它仍然是真的、只是范围更窄:**字面直写
 > `parent.X = …` 确实 0 处**。改的是那句总结,不是那张表。
 
+### 这套握手的两端:拼法相同,realm 不同
+
+读方找到了 —— **在界面代码里**(我上一轮只扫了 `extractScripts`,又一次population 漏),
+`创世回廊1.3` 的界面文档里有一段依赖自检:
+
+```js
+function getWin() { try { return window.parent || window; } catch (e) { return window; } }
+…
+const win = getWin();
+allOk &= checkDep('calc',      () => { try { return !!(win.__辅助计算脚本_loaded__); } catch (e) { return false; } });
+allOk &= checkDep('phone',     () => { try { return !!(win.__小手机脚本_loaded__);   } catch (e) { return false; } });
+allOk &= checkDep('statusbar', () => { try { return !!(win.__状态栏_loaded__);      } catch (e) { return false; } });
+```
+
+**两端的拼法完全一致,都是 `window.parent || window`,两端都没有用裸 `parent`。**
+所以「`window.parent` 与裸 `parent` 落到不同对象」这条假设**在这张卡上不成立**——拼法不是断口。
+
+**断口在拓扑:写方在_脚本 frame_,读方在_界面 frame_。** 两边各自求值 `window.parent`:
+上游两种 frame 都是 ST 页面的子帧,**两个 `window.parent` 指向同一个对象**(ST 页面),握手成立;
+我们这边若每种 frame 各自拿到自己的 parent,**同一个拼法在两个 frame 里指的是两个对象**。
+这与本节开头那条是同一件事的另一面:**上游「宿主全局」与「脚本发布的全局」本来就是一回事。**
+
+#### 两条互不相关的静默路径,合起来使这次失败无声
+
+| 端 | 兜底 | 后果 |
+|---|---|---|
+| 写方 | `catch(e) { window.__X_loaded__ = true }` | 父窗口写被拒时**静默改写到脚本 frame 自己的 window** —— 旗标去了读方永远不看的地方 |
+| 读方 | `catch (e) { return false; }` | 读被拒时**静默当作"未加载"** |
+
+> **所以这条握手可以在_任何地方都不报错_的情况下失败**,而卡自己的界面会显示「依赖未加载」——
+> 一条**卡级的错误诊断**,指向的原因是错的。验收时看到那面板上的红点,
+> **不能据此判断被点名的脚本真的没加载**。
+
+**这也是那 3 读 / 2 写不对称的解释**:`__小手机脚本_loaded__` 没有写方,因为
+`小手机脚本` 的远程模块 404(§一之二),它根本没跑到写旗标那一步 —— **那个红点是真的**,
+另外两个红点才是可疑的。
+
 ### 写方向:字面直写 0(但复合接收者 2,见上)
 
 | 写法 | 命中 |
