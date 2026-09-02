@@ -35,6 +35,13 @@
   font-family: var(--iris-font-ui);
   font-size: 15px;
   line-height: 1.6;
+  /*
+   * Stated rather than inherited: a `textarea` does not take the page's font,
+   * it takes the browser's, so the reading surface's weight stopped at the
+   * composer's edge. Measured at 400 against 700 everywhere around it, which
+   * read as a change that had not finished rather than as a choice.
+   */
+  font-weight: var(--iris-text-weight);
 }
 
 .iris-composer__field::placeholder {
