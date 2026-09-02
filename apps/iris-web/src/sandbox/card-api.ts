@@ -81,6 +81,21 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
   setChatMessages: 'script.setChatMessages',
   createChatMessages: 'script.createChatMessages',
   deleteChatMessages: 'script.deleteChatMessages',
+  /*
+   * The button writers' one wire call.
+   *
+   * Absent until a real card hit it, and the absence was expensive to read:
+   * `writeButtons` reports "the host refused to store the table" with the
+   * rejection's own text, and the rejection came from `callAction` in this
+   * frame — so a refusal issued three functions away, by this file, was
+   * presented to the reader as the host's answer. Two sides were checked for a
+   * protocol mismatch before the list was checked for a missing line.
+   *
+   * The lesson is in the message, not here: a refusal must name which side
+   * refused. `LIMIT_NOT_YOUR_FAULT` does that for the card author; this one did
+   * not do it for us.
+   */
+  replaceScriptButtons: 'script.replaceScriptButtons',
   getWorldbook: 'worldbook.get',
   /*
    * `updateWorldbookWith` is deliberately absent and is **not** a gap.
@@ -132,6 +147,10 @@ export const OFF_ST_SURFACE: readonly string[] = [
   'getVariables',
   'getWorldbook',
   'replaceWorldbook',
+  // A Tavern Helper member, like the three above it: not among
+  // `st-context.js`'s 145 keys, so `SillyTavern.replaceScriptButtons` would be
+  // Iris adding a member to the surface it is mirroring.
+  'replaceScriptButtons',
 ]
 
 /** Whether a card may invoke this action. */

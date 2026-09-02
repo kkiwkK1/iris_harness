@@ -212,8 +212,10 @@ export function MessageInterfaces({
           onSlash: async command => actionsOf(store).runSlash(command),
           onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
           onError: message => actionsOf(store).addCardReport(`interface: ${message}`),
-          onBlocked: (host, directive) => {
-            const line = `blocked ${host} (${directive})`
+          onBlocked: (host, directive, detail) => {
+            const line = detail === undefined
+              ? `blocked ${host} (${directive})`
+              : `blocked ${host}${detail} (${directive})`
             actionsOf(store).addCardReport(line)
             actionsOf(store).notify('info', line)
           },

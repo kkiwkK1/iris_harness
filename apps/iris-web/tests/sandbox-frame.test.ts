@@ -362,7 +362,7 @@ test('an unpublished parent member yields undefined and is reported, not thrown'
 
   assert.equal(threw, false, 'throwing here breaks read-with-default, which is how publishing starts')
   assert.equal(read, undefined)
-  const said = scope.posted.filter(m => m.type === 'error').map(m => (m as { message: string }).message)
+  const said = scope.posted.filter(m => m.type === 'note').map(m => (m as { message: string }).message)
   assert.match(said.join(' '), /parent\.toastr/, 'yielding quietly is what loses a gap')
   assert.match(said.join(' '), /not a statement that the host has no such member/)
 })
@@ -561,9 +561,9 @@ test('a member the bridge does not carry is named in a report, not thrown', () =
   assert.equal(threw, false, 'throwing here breaks the truthiness guards every measured card uses')
   assert.equal(read, undefined, 'upstream yields undefined for an absent property')
 
-  const reports = scope.posted.filter(message => message.type === 'error')
+  const reports = scope.posted.filter(message => message.type === 'note')
   assert.ok(
-    reports.some(message => message.type === 'error' && message.message.includes('generateQuietPrompt')),
+    reports.some(message => message.type === 'note' && message.message.includes('generateQuietPrompt')),
     'the member was not named anywhere — silence is what turns a gap into a failure three steps away',
   )
 })
@@ -580,7 +580,7 @@ test('a member read in a loop is reported once, not once per read', () => {
   })
 
   const named = scope.posted.filter(
-    message => message.type === 'error' && message.message.includes('generateQuietPrompt'),
+    message => message.type === 'note' && message.message.includes('generateQuietPrompt'),
   )
   assert.equal(named.length, 1)
 })
@@ -837,7 +837,7 @@ test('a member outside the measured set is still reported', () => {
 
   assert.ok(
     scope.posted.some(
-      message => message.type === 'error' && message.message.includes('deleteAllChats'),
+      message => message.type === 'note' && message.message.includes('deleteAllChats'),
     ),
     'an unbuilt member went unnamed',
   )
@@ -1732,7 +1732,7 @@ test('arguments this contract does not carry are reported, not dropped quietly',
 
   assert.ok(
     scope.posted.some(
-      message => message.type === 'error' && message.message.includes('setExtensionPrompt'),
+      message => message.type === 'note' && message.message.includes('setExtensionPrompt'),
     ),
     'the dropped arguments went unmentioned',
   )
@@ -2388,5 +2388,64 @@ test('the one-argument button write lands under the calling script, not the last
   assert.deepEqual(
     writes.map(write => (write.params['buttons'] as { name: string }[])[0]?.name),
     ['甲', '乙'],
+  )
+})
+test('a refusal and a gap leave the frame on different channels', () => {
+  /*
+   * **The teeth for the split.** The panel groups by channel before a reader
+   * reads a word, so the channel is the report's first sentence — and for a
+   * while every report Iris made said the same one. `reportGap`'s own contract
+   * read "not an error: the card carries on" while its wiring posted
+   * `type: 'error'` for all seventeen call sites, which put "a card read
+   * parent.Mvu, which nothing has published" directly under a heading counting
+   * scripts that failed to start. Three true sentences and one true heading
+   * composed into a false causal story, twice, in front of the user.
+   *
+   * Both halves are asserted in one test on purpose. Pinning only the fault
+   * side passes for an implementation that posts everything as `error` — which
+   * is the implementation this replaced.
+   */
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({ characterId: 'char', scriptButtons: { first: [] } }),
+  })
+  evaluate(scope, () => undefined, 'first')
+
+  const registry = scope.publishedValue(SCRIPT_REGISTRY) as (id: string) => Record<string, unknown>
+  const append = registry('first')['appendInexistentScriptButtons'] as (buttons: unknown) => void
+
+  // A malformed row rejects the **whole** table and stores nothing, so the card
+  // did not get what it asked for even though nothing threw.
+  append([{ name: 'ok', visible: true }, { name: 'no boolean' }])
+
+  const faults = scope.posted
+    .filter(message => message.type === 'error')
+    .map(message => (message as unknown as { message: string }).message)
+  assert.equal(
+    faults.filter(line => line.includes('visible')).length,
+    1,
+    `a rejected write must be a fault: ${JSON.stringify(scope.posted)}`,
+  )
+
+  // And the other direction, in the same frame: reading a member the host does
+  // not carry is served — `undefined` is what upstream answers too — so it is a
+  // note, and a note is what must come out.
+  const parent = scope.globals()['parent'] as Record<string, unknown>
+  void parent['SomeGlobalNobodyPublished']
+
+  const notes = scope.posted
+    .filter(message => message.type === 'note')
+    .map(message => (message as unknown as { message: string }).message)
+  assert.equal(
+    notes.filter(line => line.includes('SomeGlobalNobodyPublished')).length,
+    1,
+    `an unpublished read must be a note: ${JSON.stringify(notes)}`,
+  )
+  assert.equal(
+    faults.filter(line => line.includes('SomeGlobalNobodyPublished')).length,
+    0,
+    'the note must not also be filed as a failure',
   )
 })

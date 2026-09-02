@@ -101,7 +101,7 @@ export interface RunnerHost {
    * pre-written "your Tavern is broken" for this exact case. A caller that has
    * nowhere to show this should not be running cards.
    */
-  onBlocked: (host: string, directive: string) => void
+  onBlocked: (host: string, directive: string, detail?: string) => void
   /**
    * Something the frame observed that is not a failure.
    *
@@ -462,7 +462,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         host.onError(message.message, message.member, message.scriptId)
         return
       case 'blocked':
-        host.onBlocked(message.host, message.directive)
+        host.onBlocked(message.host, message.directive, message.detail)
         return
       case 'note':
         host.onNote?.(message.message)

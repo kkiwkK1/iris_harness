@@ -22,6 +22,7 @@ import { describeAttempts, type TimedResource } from './import-attempts.ts'
 import { describeTransferCost, type TransferTiming } from './transfer-cost.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
+import { describeBlocked } from './blocked-report.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
@@ -576,8 +577,23 @@ function shortenAssetName(url: string): string {
  * @param post - the channel to the shell.
  */
 function reportStorage(run: string, post: (message: FromFrame) => void): void {
+  /*
+   * `note`, not `error`, and the reason is what a reader does with the panel.
+   *
+   * These two lines are a property of the **frame**, not of any card: an opaque
+   * origin has no storage, every frame reports the same two sentences, and no
+   * card asked for anything that was refused at the moment they are posted. On
+   * the `error` channel they landed under "failed" directly above "1 of 2
+   * loaded, 1 still starting", and read as its cause. They were not: 3c checked
+   * the three libraries involved and none of them touches storage — the MVU
+   * bundle references it zero times. Two true sentences and one true heading
+   * composed into a false story, and the composition was the channel's doing.
+   *
+   * The hazard the paragraph above describes is real and stays reported. What
+   * changes is that it no longer claims to be someone's failure.
+   */
   const say = (message: string): void => {
-    post({ iris: run, type: 'error', scriptId: undefined, message })
+    post({ iris: run, type: 'note', scriptId: undefined, message })
   }
 
   try {
@@ -891,15 +907,16 @@ function reportBodySummary(run: string, post: (message: FromFrame) => void): voi
 
 function reportBlocked(run: string, post: (message: FromFrame) => void): void {
   document.addEventListener('securitypolicyviolation', event => {
-    let host = event.blockedURI
-    try {
-      host = new URL(event.blockedURI).host || event.blockedURI
-    } catch {
-      // `blockedURI` is not always a URL — `inline`, `eval` and `data` all
-      // appear. Reported as they are: the shell says what was refused, and it is
-      // better to name something unparseable than to drop it.
-    }
-    post({ iris: run, type: 'blocked', host, directive: event.effectiveDirective })
+    // The decision lives in `blocked-report.ts`, which needs neither a document
+    // nor a policy to fire — and the decision is the part that was wrong.
+    const { host, detail } = describeBlocked(event, location.origin)
+    post({
+      iris: run,
+      type: 'blocked',
+      host,
+      directive: event.effectiveDirective,
+      ...(detail === undefined ? {} : { detail }),
+    })
   })
 }
 

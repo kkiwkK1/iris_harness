@@ -117,7 +117,7 @@ export interface FrameEnv {
    * frame is the smallest thing that has one.
    * @param report - the gap channel this frame's toasts are forwarded to.
    */
-  provideToastr?: (report: (message: string) => void) => void
+  provideToastr?: (report: (message: string, channel: 'note' | 'error') => void) => void
   /**
    * Publish the viewport into the frame's own realm.
    *
@@ -914,16 +914,49 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   const activeWaits = new Map<string | undefined, { global: string, since: number }>()
 
   const reportedGaps = new Set<string>()
-  const reportGap = (message: string): void => {
+
+  /**
+   * One report, on the channel its own first sentence names.
+   *
+   * The panel groups by channel, so the channel is read before the words are:
+   * `error` puts a line under "failed" beside the scripts that did not start,
+   * and a reader who sees three of those reads them as one causal story. That
+   * happened twice. `reportGap`'s own contract said "not an error: the card
+   * carries on" while the wiring posted `error` for every message it had — the
+   * doc was right and the channel was wrong, which is why nothing caught it.
+   *
+   * Two names rather than a channel argument, because the choice is a claim
+   * about what happened and a name states it at the call site. Deduplication is
+   * shared: a message is one or the other, never both.
+   */
+  const say = (message: string, type: 'note' | 'error'): void => {
     if (reportedGaps.has(message)) return
     reportedGaps.add(message)
-    env.post({ iris: env.token, type: 'error', scriptId: undefined, message })
+    env.post({ iris: env.token, type, scriptId: undefined, message })
+  }
+
+  /** A capability that is missing or was degraded — the card carried on. */
+  const reportGap = (message: string): void => {
+    say(message, 'note')
+  }
+
+  /**
+   * Something the card asked for that did not happen.
+   *
+   * The discriminator is not severity but whether the caller got what it asked
+   * for: "the buttons were not stored" is a fault even when nothing threw, and
+   * "it returned undefined, which is not a statement that the host has no such
+   * member" is a note even though a card may die of it three steps later.
+   */
+  const reportFault = (message: string): void => {
+    say(message, 'error')
   }
 
   const tavernHelper = createFrameTavernHelper({
     context: () => context,
     scriptId: () => scriptId,
     reportGap,
+    reportFault,
     call: callAction,
     triggerSlash,
     events,
@@ -1050,6 +1083,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       context: () => context,
       scriptId: () => forScript,
       reportGap,
+      reportFault,
       call: callAction,
       triggerSlash,
       events,
@@ -1365,7 +1399,9 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * banner that lists something we provide sends a reader looking for a gap
        * that is not there — the same class of error as omitting one we do not.
        */
-      env.provideToastr?.(reportGap)
+      // `say`, not `reportGap`: a card's own `toastr.error` is the card’s claim
+      // that something failed, and its `toastr.success` is not.
+      env.provideToastr?.(say)
 
       // Which of upstream's seeded globals this frame does NOT have. Reported
       // rather than waited for: without it, each missing library costs a full

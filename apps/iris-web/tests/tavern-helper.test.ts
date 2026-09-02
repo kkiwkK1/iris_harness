@@ -72,6 +72,7 @@ function surface(overrides?: {
     context: () => snapshot,
     scriptId: () => overrides?.scriptId,
     reportGap: message => gaps.push(message),
+    reportFault: message => gaps.push(message),
     adoptVariables: variables => {
       if (snapshot !== undefined) snapshot = { ...snapshot, variables }
     },
@@ -489,6 +490,7 @@ test('a failed read writes nothing at all', async () => {
     scriptId: () => undefined,
     adoptVariables: () => undefined,
     reportGap: () => undefined,
+    reportFault: () => undefined,
     call: async method => {
       if (method === 'getVariables') throw new Error('host said no')
       calls.push({ method, params: {} })

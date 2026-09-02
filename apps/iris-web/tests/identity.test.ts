@@ -48,6 +48,7 @@ function surfaceNames(): string[] {
     context: () => undefined,
     scriptId: () => undefined,
     reportGap: message => gaps.push(message),
+    reportFault: message => gaps.push(message),
     adoptVariables: () => undefined,
     call: async () => undefined,
     triggerSlash: async () => '',

@@ -123,6 +123,7 @@ function surface(answer: unknown, fails?: Error) {
     context: () => context(),
     scriptId: () => undefined,
     reportGap: () => undefined,
+    reportFault: () => undefined,
     adoptVariables: () => undefined,
     call: async (method, params) => {
       calls.push({ method, params })
@@ -153,6 +154,7 @@ function bound(charWorldbooks?: { primary: string | null, additional: string[] }
     }),
     scriptId: () => undefined,
     reportGap: () => undefined,
+    reportFault: () => undefined,
     adoptVariables: () => undefined,
     call: async method => {
       calls.push(method)
@@ -244,6 +246,7 @@ function duplex(answers: Record<string, unknown>, fails?: Record<string, Error>)
     context: () => context(),
     scriptId: () => undefined,
     reportGap: () => undefined,
+    reportFault: () => undefined,
     adoptVariables: () => undefined,
     call: async (method, params) => {
       calls.push({ method, params })

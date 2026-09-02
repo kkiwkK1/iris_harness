@@ -21,6 +21,8 @@
 
 import jquery from 'jquery'
 import * as vue from 'vue'
+import * as vueRouter from 'vue-router'
+import showdown from 'showdown'
 
 import { PRESET_MARKER } from './preset-globals.ts'
 import * as lodashModule from 'lodash-es'
@@ -151,22 +153,57 @@ host['jQuery'] = jquery
 host['Vue'] = vue
 
 /*
- * `vue-router` is deliberately **not** here, and its absence is reported rather
- * than hidden — it is in `EXPECTED_GLOBALS`, so a frame that lacks it says so.
+ * `showdown`, upstream's markdown converter.
  *
- * Upstream loads it beside Vue, so parity argues for it. Two measurements argue
- * against, and they were taken before deciding: across the 19 local cards (14
- * with scripts, 41 runnable) **no card source names `VueRouter`**, and the
- * MagVarUpdate bundle — which declares it as a webpack external — references it
- * **zero** times. Meanwhile the version upstream's unpinned tag resolves to,
- * `vue-router@5.3.0`, cannot be installed here without a peer conflict: it wants
- * `vite@^7 || ^8` and this app is on an older one.
+ * Two cards in the corpus use it. That number is not why it is here — a corpus
+ * count of two and a corpus count of zero are the same instruction under the
+ * standing discipline, because a zero means "not reached yet" and never "not
+ * needed". Upstream's `predefine.js` seeds it for every script frame, so a card
+ * may assume it the way it assumes `_`.
  *
- * So the choice was between forcing a resolution, or vendoring a prebuilt file,
- * for a global nothing measured uses. Neither is worth doing silently, and the
- * banner now names the gap the moment a card needs it — which is the outcome the
- * missing-libraries reporting exists to produce.
+ * **Ships with an open advisory**, and that is recorded rather than accepted
+ * quietly: 2.1.0 is the last release, it carries a moderate ReDoS in link and
+ * anchor parsing, and `npm audit` reports "no fix available". This is the first
+ * dependency Iris ships with a known unfixed vulnerability. What makes it
+ * tolerable is where it runs: inside a card frame, on text that frame already
+ * had, so a pathological input costs that frame its own main thread and reaches
+ * neither the shell nor another card. That is the frame isolation earning its
+ * keep, not a reason the advisory does not apply — it belongs in the ledger.
+ *
+ * The default export, not the namespace, for the reason lodash is: cards write
+ * `new showdown.Converter()`, and upstream's global is the UMD object.
  */
+host['showdown'] = showdown
+
+/*
+ * `vue-router`, and the version is a deliberate divergence.
+ *
+ * This comment used to say vue-router was "deliberately not here", on two
+ * measurements: no card source in the corpus names `VueRouter`, and the
+ * MagVarUpdate bundle declares it as a webpack external and references it zero
+ * times. Both measurements still hold. The reasoning built on them does not —
+ * under "every family must run as it does in ST" a corpus zero says a family
+ * has not been reached, so upstream's mechanism is what to implement, and
+ * upstream loads this beside Vue for every script frame.
+ *
+ * **4.6.4, where upstream's unpinned tag resolves to 5.3.x.** Recorded here
+ * because it is a fidelity gap a card can observe, and because the reason is
+ * not incompatibility: 5.3.1's `vue` peer is `^3.5.34 || ^4.0.0`, which our
+ * pinned `vue@3.5.42` satisfies. What objects is its **peerOptional `vite`**
+ * (`^7.3.0 || ^8.0.0`, for its own `unplugin` typed-router plugin) against this
+ * app's vite 6 — tooling we do not use to bundle a runtime router.
+ *
+ * Taking 5.3.1 anyway was tried and rolled back, on a measurement rather than a
+ * feeling: `--legacy-peer-deps` is tree-wide, and the lockfile diff added 28
+ * build-tool packages, moved `@vue/devtools-api` 6.6.4 → 8.2.1, and **dropped
+ * `@deepseek-ai/dsh-host-webserver` entirely** — a dependency this session does
+ * not own, in a tree four sessions share. A router that costs someone else's
+ * package is the wrong trade, so 4.6.4 stands and the gap is written down.
+ *
+ * The namespace, matching upstream's UMD global: cards reach
+ * `VueRouter.createRouter` and `VueRouter.createWebHashHistory`.
+ */
+host['VueRouter'] = vueRouter
 
 host['__VUE_PROD_DEVTOOLS__'] = true
 host['__VUE_OPTIONS_API__'] = true

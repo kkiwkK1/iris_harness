@@ -127,21 +127,50 @@ export const TOASTR_SUBSTITUTION_NOTICE =
   ' \u2014 the text is the card\u2019s own, not Iris\u2019s'
 
 /**
+ * Which channel one toastr level belongs on.
+ *
+ * `describeToast` above says the level "is named rather than styled away"
+ * because "a report list that flattened them would make a routine notice look
+ * like a fault" — and until this function existed the module named the level in
+ * the *text* and flattened it in the *channel*, which is the same mistake one
+ * layer down, committed by the code whose own comment forbids it.
+ *
+ * Only `error` is the card claiming something failed. `warning` is a card
+ * saying it coped, and `info`/`success` are a card talking to its reader; none
+ * of the three belongs in a column headed by scripts that did not start. The
+ * distribution makes this worth getting right rather than tidy: 36 of the MVU
+ * bundle's 73 toastr calls are `error`, so a flattening in either direction
+ * loses a real signal.
+ * @param level - the toastr method the card called.
+ * @returns the channel to post its line on.
+ */
+function channelFor(level: ToastLevel): 'note' | 'error' {
+  return level === 'error' ? 'error' : 'note'
+}
+
+/**
  * Build the `toastr` a card frame provides.
  *
- * @param report - the frame's gap channel; it already discards a repeat of an
- *   identical message, which is also the de-duplication a toast loop needs.
+ * @param report - the frame's report channel, taking the channel to post on; it
+ *   already discards a repeat of an identical message, which is also the
+ *   de-duplication a toast loop needs.
  * @returns the object to seed as `window.toastr`.
  */
-export function createReportingToastr(report: (message: string) => void): ReportingToastr {
+export function createReportingToastr(
+  report: (message: string, channel: 'note' | 'error') => void,
+): ReportingToastr {
   let announced = false
 
   const at = (level: ToastLevel) => (message?: unknown, title?: unknown): void => {
     if (!announced) {
       announced = true
-      report(TOASTR_SUBSTITUTION_NOTICE)
+      // The notice is about this frame, not about the card's message, and it is
+      // posted before the card's first word — on the error channel it would put
+      // "this frame has no toastr" at the top of the failure list of every card
+      // that merely called `toastr.success`.
+      report(TOASTR_SUBSTITUTION_NOTICE, 'note')
     }
-    report(describeToast(level, message, title))
+    report(describeToast(level, message, title), channelFor(level))
   }
 
   return {

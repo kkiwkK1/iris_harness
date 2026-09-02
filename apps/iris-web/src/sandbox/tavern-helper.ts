@@ -69,8 +69,23 @@ export interface TavernHelperFrameHost {
    *
    * Not an error: the card carries on, and upstream would too. It exists because
    * the alternative is a gap that looks like an ordinary answer.
+   *
+   * This paragraph was true and the wiring did not obey it — every message went
+   * out on the `error` channel, so the panel filed each one under "failed"
+   * beside the scripts that genuinely had not started. Use `reportFault` when
+   * that is what happened, and this one when the card carried on.
    */
   reportGap: (message: string) => void
+  /**
+   * Report something the card asked for that did not happen.
+   *
+   * The line between the two is not severity: it is whether the call was
+   * served. `replaceScriptButtons` handed a malformed row rejects the **whole**
+   * table and stores nothing, so it belongs here even though nothing threw —
+   * while a read that answers `undefined` for an unbuilt member belongs above
+   * even though a card may die of it three steps later.
+   */
+  reportFault: (message: string) => void
 }
 
 /**
@@ -489,7 +504,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
        * surface as "this call was wrong", it surfaces as everything after it
        * never running. That is exactly what happened.
        */
-      host.reportGap(
+      host.reportFault(
         `card called ${member} with no usable script id`
           + (oneArgument ? ' — this body has no entry in the host script list' : '')
           + ', so the buttons were not stored',
@@ -525,22 +540,22 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     buttons: unknown,
   ): { name: string, visible: boolean }[] | undefined => {
     if (!Array.isArray(buttons)) {
-      host.reportGap(`card called ${member} without an array of buttons, so nothing was stored`)
+      host.reportFault(`card called ${member} without an array of buttons, so nothing was stored`)
       return undefined
     }
     const table: { name: string, visible: boolean }[] = []
     for (const [at, button] of buttons.entries()) {
       const row = button as { name?: unknown, visible?: unknown } | null
       if (row === null || typeof row !== 'object') {
-        host.reportGap(`card called ${member} with buttons[${String(at)}] not an object`)
+        host.reportFault(`card called ${member} with buttons[${String(at)}] not an object`)
         return undefined
       }
       if (typeof row.name !== 'string' || row.name === '') {
-        host.reportGap(`card called ${member} with buttons[${String(at)}] having no name`)
+        host.reportFault(`card called ${member} with buttons[${String(at)}] having no name`)
         return undefined
       }
       if (typeof row.visible !== 'boolean') {
-        host.reportGap(
+        host.reportFault(
           `card called ${member} with buttons[${String(at)}] ("${row.name}") missing a boolean`
             + ' visible — upstream requires it, and guessing would store a table the card did'
             + ' not ask for',
@@ -604,8 +619,10 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     void host.call('replaceScriptButtons', { characterId, scriptId: id, buttons: next }).then(
       undefined,
       (error: unknown) => {
-        host.reportGap(
-          `card called ${member} and the host refused to store the table: `
+        host.reportFault(
+          // "the write was refused", not "the host refused": this rejection can
+          // come from Iris's own routing gate, which the host never sees.
+          `card called ${member} and the write was refused: `
             + (error instanceof Error ? error.message : String(error)),
         )
       },
@@ -962,7 +979,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
         const detail = typeof named.stack === 'string' && named.stack !== ''
           ? (isZod ? `${String(named.message)}\n${named.stack}` : named.stack)
           : String(named.message ?? error)
-        host.reportGap(
+        host.reportFault(
           `a function a card wrapped in errorCatched threw: ${detail}`
             + ' — reported and re-thrown, which is what upstream does with it, so the caller'
             + ' still sees the exception',
@@ -1168,11 +1185,11 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       const updater = typeof first === 'function' ? first : second
       const rawId = typeof first === 'function' ? host.scriptId() : first
       if (typeof updater !== 'function') {
-        host.reportGap(`card called ${member} without an updater function, so nothing was written`)
+        host.reportFault(`card called ${member} without an updater function, so nothing was written`)
         return undefined
       }
       if (typeof rawId !== 'string' || rawId === '') {
-        host.reportGap(`card called ${member} with no usable script id, so nothing was written`)
+        host.reportFault(`card called ${member} with no usable script id, so nothing was written`)
         return undefined
       }
       const id = rawId

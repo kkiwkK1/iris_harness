@@ -187,8 +187,10 @@ export function CardScriptFrames(): ReactElement {
               // Reported, not swallowed: a blocked subresource is the policy
               // doing its job, and the card author needs the host and directive
               // to know what they reached for.
-              onBlocked: (blocked, directive) => {
-                const text = `blocked ${blocked} (${directive})`
+              onBlocked: (blocked, directive, detail) => {
+                const text = detail === undefined
+                  ? `blocked ${blocked} (${directive})`
+                  : `blocked ${blocked}${detail} (${directive})`
                 /*
                  * Both channels, and the durable one is the point.
                  *

@@ -147,6 +147,28 @@ const seeds = {
    * this check passing on a husk and catching the thing that actually broke.
    */
   Vue: value => typeof value.watch === 'function' && typeof value.ref === 'function',
+  /*
+   * The constructor cards actually reach for, and a round trip through it.
+   *
+   * `typeof value.Converter === 'function'` would pass on a showdown whose
+   * bundling had gone wrong in the way that matters here — the UMD file assigns
+   * its exports at the end of a factory, so a half-included bundle can leave a
+   * constructor that throws on `new`. Cards write
+   * `new showdown.Converter().makeHtml(text)` and nothing else, so that is what
+   * is exercised.
+   */
+  showdown: value => SHOWDOWN_CONVERTS(value),
+  /*
+   * The two factories, by name.
+   *
+   * `createRouter` alone would pass on a build that dropped the history
+   * implementations, and a router with no history throws at `createRouter` time
+   * rather than at import time — inside a card's own setup, where the frame
+   * reports it as the card's fault. Upstream cards use the hash history because
+   * a script frame has no server to route against.
+   */
+  VueRouter: value =>
+    typeof value.createRouter === 'function' && typeof value.createWebHashHistory === 'function',
 }
 
 /**
@@ -163,6 +185,18 @@ function LODASH_IS_CALLABLE(value) {
   return chained === 2
 }
 
+/**
+ * Whether showdown converts, rather than merely being present.
+ * @param value - the seeded global.
+ * @returns true when a converter can be constructed and produces markup.
+ */
+function SHOWDOWN_CONVERTS(value) {
+  if (typeof value !== 'object' || value === null) return false
+  if (typeof value.Converter !== 'function') return false
+  const html = new value.Converter().makeHtml('**bold**')
+  return typeof html === 'string' && html.includes('<strong>')
+}
+
 /** `parse` and `stringify` are the whole of what MVU uses; both must survive. */
 function YAML_ROUND_TRIPS(value) {
   if (typeof value.parse !== 'function' || typeof value.stringify !== 'function') return false
@@ -173,8 +207,33 @@ function YAML_ROUND_TRIPS(value) {
 const broken = []
 for (const [name, works] of Object.entries(seeds)) {
   const value = win[name]
-  if (value === undefined || value === null) broken.push(`${name} (absent)`)
-  else if (!works(value)) broken.push(`${name} (present but not usable)`)
+  if (value === undefined || value === null) {
+    broken.push(`${name} (absent)`)
+    continue
+  }
+  /*
+   * A predicate that throws is answering the question, not failing to.
+   *
+   * Every one of these probes *uses* the library — `_([…]).map(…)`,
+   * `value.parse(…)`, `new value.Converter()` — precisely so that a husk cannot
+   * pass, and using a broken library is how you find out it is broken. Unguarded,
+   * the throw escaped this loop and the build died with a raw stack from a check
+   * script, which reads as "the checker is broken" rather than "the preset is".
+   *
+   * Found by exercising the new showdown probe against a `Converter` that throws
+   * on `new` — a shape its own comment had named as the reason to construct one
+   * rather than inspect it. The comment described the case the code did not
+   * handle, which is the more useful half of why this is guarded here, at the one
+   * place all six probes pass through, rather than inside each of them.
+   */
+  let usable
+  try {
+    usable = works(value)
+  } catch (error) {
+    broken.push(`${name} (present but threw: ${error instanceof Error ? error.message : String(error)})`)
+    continue
+  }
+  if (!usable) broken.push(`${name} (present but not usable)`)
 }
 
 /*

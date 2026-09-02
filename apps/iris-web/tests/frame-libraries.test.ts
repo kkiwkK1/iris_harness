@@ -22,12 +22,12 @@ function scope(): {
   run: () => void
   order: string[]
   posted: FromFrame[]
-  reportFromToastr: () => ((message: string) => void) | undefined
+  reportFromToastr: () => ((message: string, channel: 'note' | 'error') => void) | undefined
 } {
   const order: string[] = []
   const posted: FromFrame[] = []
   const listeners: ((message: ToFrame) => void)[] = []
-  let captured: ((message: string) => void) | undefined
+  let captured: ((message: string, channel: 'note' | 'error') => void) | undefined
 
   const env: FrameEnv = {
     token: 'tok',
@@ -82,7 +82,7 @@ test('the toastr stub is handed the frame\u2019s real gap channel, not a stub of
   assert.notEqual(report, undefined, 'provideToastr was never called with a channel')
 
   const before = frame.posted.length
-  report?.('a card\u2019s toast')
+  report?.('a card\u2019s toast', 'error')
   const added = frame.posted.slice(before)
 
   /*
@@ -95,6 +95,16 @@ test('the toastr stub is handed the frame\u2019s real gap channel, not a stub of
   const message = added[0] as { type?: string, message?: string }
   assert.equal(message.type, 'error')
   assert.ok(message.message?.includes('a card\u2019s toast'))
+
+  /*
+   * And that the channel is a channel rather than a decoration: the same
+   * reporter asked for a note must produce a note. Without this half, handing
+   * the toastr stub a reporter that ignored its second argument would pass —
+   * and ignoring it is the shape the bug had when there was no second argument.
+   */
+  const noted = frame.posted.length
+  report?.('a card\u2019s notice', 'note')
+  assert.equal((frame.posted[noted] as { type?: string }).type, 'note')
 })
 
 test('the gap channel still discards an exact repeat, which is a toast loop\u2019s de-duplication', () => {
@@ -103,7 +113,7 @@ test('the gap channel still discards an exact repeat, which is a toast loop\u201
   const report = frame.reportFromToastr()
 
   const before = frame.posted.length
-  report?.('same text')
-  report?.('same text')
+  report?.('same text', 'note')
+  report?.('same text', 'note')
   assert.equal(frame.posted.length - before, 1)
 })

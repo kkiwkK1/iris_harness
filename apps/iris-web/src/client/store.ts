@@ -791,9 +791,23 @@ export function createIrisStore(
            * reason. Announcing a gap as a prohibition tells the reader the
            * question is settled, so nobody asks for it.
            */
+          /*
+           * Named as **this app's** refusal, because that is whose it is.
+           *
+           * It used to say only "is not one of the actions a card can ask Iris
+           * for", and `writeButtons` wraps a rejection as "the host refused to
+           * store the table" — so a refusal decided at this line was presented
+           * to the reader as the host's answer to a request the host never
+           * received. Two sessions checked the host's handler, its registration
+           * and its contract across three commits before anyone checked this
+           * list for a missing line, which is the cost of a report that names
+           * the wrong layer. Same family as a report on the wrong channel: what
+           * a reader acts on first is where it says the fault is.
+           */
           throw new Error(
-            `${method} is not one of the actions a card can ask Iris for` +
-              ' — either it is deliberately withheld or it has not been built; the list is CARD_METHODS',
+            `${method} was not forwarded: this app does not list it among the actions a card` +
+              ' may ask for, so the host was never asked — either it is deliberately withheld' +
+              ' or it has not been built; the list is CARD_METHODS',
           )
         }
 

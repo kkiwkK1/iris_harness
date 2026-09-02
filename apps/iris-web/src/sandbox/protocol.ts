@@ -102,7 +102,7 @@ export type FromFrame =
    * installed? open your console!" as a fallback for exactly this situation, so a
    * silent refusal is delivered to the user as the card's misdiagnosis of Iris.
    */
-  | { iris: string, type: 'blocked', host: string, directive: string }
+  | { iris: string, type: 'blocked', host: string, directive: string, detail?: string }
   /**
    * The card assigned something into its extension settings.
    *
@@ -348,6 +348,7 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
     case 'blocked': {
       const host = message['host']
       const directive = message['directive']
+      const detail = message['detail']
       return typeof host === 'string' && typeof directive === 'string'
         ? {
             iris: token,
@@ -355,6 +356,14 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
             // Card-influenced strings, so bounded before they reach the UI.
             host: host.slice(0, 253),
             directive: directive.slice(0, 40),
+            /*
+             * Present only when the host alone does not identify the request —
+             * see `reportBlocked`. Bounded harder than the host because it
+             * carries a path and a source location, both card-authored.
+             */
+            ...(typeof detail === 'string' && detail !== ''
+              ? { detail: detail.slice(0, 300) }
+              : {}),
           }
         : undefined
     }

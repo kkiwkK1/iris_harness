@@ -392,8 +392,17 @@ test('a card action not on the allowlist is refused by the shell, by name', () =
         // "Iris does not let card scripts call X" read as a settled decision,
         // and the usual reason a name is missing from that table is that nobody
         // has built it yet — which is a request, not a refusal.
-        assert.match(String(error), /deleteAllChats is not one of the actions/)
+        assert.match(String(error), /deleteAllChats was not forwarded/)
         assert.doesNotMatch(String(error), /does not let/)
+        /*
+         * And says whose refusal it is. `writeButtons` wraps a rejection from
+         * this line for the reader, so a message that did not name this app was
+         * read as the host's answer to a request the host never received — two
+         * sessions checked the host's handler, registration and contract across
+         * three commits before either checked this list for a missing line.
+         */
+        assert.match(String(error), /this app does not list it/)
+        assert.match(String(error), /the host was never asked/)
         dispose()
       },
     )
