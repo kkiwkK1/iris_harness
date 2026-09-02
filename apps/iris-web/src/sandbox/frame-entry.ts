@@ -1001,6 +1001,7 @@ try {
      * markup.
      */
     interfaceFrame: document.body?.hasAttribute('data-iris-interface') === true,
+
   token: run,
   container: document.body,
   factory: {

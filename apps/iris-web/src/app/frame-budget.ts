@@ -38,7 +38,8 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * about a kilobyte for the `loadWorldInfo` / `getLorebookSettings` facades, the
  * per-member argument translation that replaced a single shared fallthrough,
  * and the stack-frame reader; then another 1.8 KiB for floor-addressed variable
- * reads and the Tavern Helper surface an interface frame now gets.
+ * reads and the Tavern Helper surface an interface frame now gets, and 1.2 KiB
+ * more for the prompt-injection façade.
  *
  * **No current figure is written here on purpose.** Two earlier versions of this
  * comment carried "as this line is written" numbers and both were stale within
@@ -53,7 +54,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 51 * 1024
+export const FRAME_OVERHEAD_BYTES = 53 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -69,24 +70,34 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 40 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 38 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
- * 20 leaves about 1.0 MiB for content (overhead ≈ 1020 KiB, **50%**), and 20
- * live panels on one screen is already past any reading scenario. It is a
- * trade-off point rather than a threshold — moving it means revisiting the two
- * measured values above, not just this line.
+ * 16 leaves about 1.2 MiB for content (overhead ≈ 848 KiB, 40%), and 16 live
+ * panels on one screen is already past any reading scenario. It is a trade-off
+ * point rather than a threshold — moving it means revisiting the two measured
+ * values above, not just this line.
  *
- * **That 50% is worth reading as a trend, not a figure.** It was 38% when the
- * design named this number and has crossed half the budget without the gate
- * moving, because every capability the frame gains is paid twenty times over
- * here. Nothing is wrong yet — the byte budget is a default and the count gate
- * is what actually binds — but the next few kilobytes of bootstrap buy a
- * shrinking amount of card content, and the honest response when that starts to
- * matter is to move `FRAME_COUNT_LIMIT` down rather than to keep raising the
- * constant above and calling the ratio incidental.
+ * **It was 20, and the test beside this is what moved it.** The design's own
+ * invariant is that the gate stays *well* below the degradation point, written
+ * down as `FRAME_COUNT_LIMIT < degradesAt / 2`. Each bootstrap increment lowers
+ * `degradesAt`, and at 53 KiB it reached 38.6 — so half of it, 19.3, had fallen
+ * under the gate at 20 and the invariant was false. The overhead share had gone
+ * 38% → 47% → 50% → 52% across those increments, and the whole time the
+ * reasonable-looking response was to raise the constant above and treat the
+ * ratio as incidental.
+ *
+ * 16 rather than 19, which is the largest value that satisfies the invariant
+ * today: 19 would put this back on the boundary and make the next kilobyte of
+ * bootstrap relitigate it. 16 holds through a 56 KiB frame.
+ *
+ * **This is a behaviour change and it is small in the only place it shows.**
+ * Frames past the sixteenth on one screen now get a named placeholder instead
+ * of a live panel, and the placeholder is openable. `WINDOWING.md` measured 189
+ * rendered interface floors across the corpus with no chat putting sixteen on
+ * one screen, so no measured reading scenario reaches the gate at all.
  *
  * The design named ≈53 and 38%, computed against a 39 KiB overhead; a later
  * pass read ≈43 and 47% at 48 KiB. Those are the same statement about a smaller
@@ -95,7 +106,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * rather than any of the three numbers. Every figure in this paragraph is stale
  * the moment the bootstrap moves; the guard in `build:sandbox` is what is not.
  */
-export const FRAME_COUNT_LIMIT = 20
+export const FRAME_COUNT_LIMIT = 16
 
 /** One interface block that could become a frame. */
 export interface FrameCandidate {

@@ -212,16 +212,19 @@ test('the count gate sits below the point where overhead eats the whole budget',
   const degradesAt = FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES
 
   /*
-   * A wide band, and it has already moved once: the design derived ≈53 from a
-   * 39 KiB frame, and the frame is now 42 KiB, so the point is ≈49. Both are the
-   * same statement — the ratio moves whenever the bootstrap does.
+   * A wide band, and it has moved twice: the design derived ≈53 from a 39 KiB
+   * frame, a later pass read ≈49 at 42 KiB, and it is ≈38.6 at 53 KiB. All three
+   * are the same statement — the ratio moves whenever the bootstrap does.
    *
    * So this band is only a sanity rail against a constant being changed by an
-   * order of magnitude or having its units confused. The assertion that carries
-   * the design is the next one: the gate must stay well below the point,
-   * whatever the point currently is.
+   * order of magnitude or having its units confused; it is **not** the design,
+   * and widening it is not how a breach gets resolved. The assertion that
+   * carries the design is the next one, and when that one failed the gate moved
+   * rather than the band: `FRAME_COUNT_LIMIT` went 20 → 16 because 53 KiB put
+   * half the degradation point under it. Widening this rail to accommodate that
+   * would have been repairing the instrument to fit the reading.
    */
-  assert.ok(degradesAt > 40 && degradesAt < 60, `derived ${degradesAt.toFixed(1)}`)
+  assert.ok(degradesAt > 30 && degradesAt < 60, `derived ${degradesAt.toFixed(1)}`)
   assert.ok(
     FRAME_COUNT_LIMIT < degradesAt / 2,
     `the gate at ${String(FRAME_COUNT_LIMIT)} leaves no room below ${degradesAt.toFixed(1)}`,

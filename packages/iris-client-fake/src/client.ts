@@ -878,20 +878,6 @@ class InMemoryClient implements FakeClient {
         return { reports: [], dropped: 0, oldest: 0, kinds: [] }
       }
 
-      case 'storage.set':
-      case 'storage.remove':
-      case 'storage.clear': {
-        // Placeholder in this client's existing refusal idiom; the sandbox half
-        // is 7b's to design. Refused for the reason `setVariables` is refused,
-        // which applies here word for word: a card that appeared to persist
-        // state against this client and lost it against a real host is exactly
-        // the failure the fake exists to prevent. Card storage is shared across
-        // the whole profile upstream, and modelling that sharing — plus the
-        // last-writer attribution a removal reports — would put a second copy
-        // of the rule in the half that is not authoritative.
-        throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
-      }
-
       /*
        * Card storage: refused, and the reason is attribution rather than
        * difficulty.
@@ -917,6 +903,12 @@ class InMemoryClient implements FakeClient {
        * So a card developing against the fake sees its writes refused and
        * reported, takes its own empty-storage path, and finds out here rather
        * than later that this host does not keep anything.
+       *
+       * 49's placeholder for these three put it in one line that is worth
+       * keeping: refused for the reason `setVariables` is refused, which applies
+       * here word for word — modelling the sharing, plus the last-writer
+       * attribution a removal reports, would put a second copy of the rule in
+       * the half that is not authoritative.
        */
       case 'storage.set':
       case 'storage.remove':

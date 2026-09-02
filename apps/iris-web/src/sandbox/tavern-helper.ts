@@ -34,7 +34,31 @@ import type {
 } from '@iris/protocol'
 
 import { buttonEventName } from './button-event.ts'
-import { UnsupportedApiError } from './errors.ts'
+import { UnsupportedApiError } from './errors.ts'
+
+/**
+ * The bus event that says a generation has settled, however it settled.
+ *
+ * **Not one of upstream's names, and that is the point.** Upstream revokes a
+ * `once` injection on `GENERATION_ENDED` *and* `GENERATION_STOPPED`, so its
+ * cards can tell a completed generation from an aborted one. Iris's host
+ * broadcasts `stream.end` for both — normal settle and abort go through the same
+ * `#settle` — and the event carries `{ chatId, turn, view }` with **no reason
+ * and no aborted flag**. The discriminator does not exist on this wire.
+ *
+ * So the frame is given a name that claims only what it knows. Emitting
+ * upstream's two names off one undifferentiated event would be worse in both
+ * directions: emit `generation_ended` alone and a card watching for aborts never
+ * hears one; emit both and every completed generation looks aborted. A card
+ * subscribing to either upstream name gets nothing, which is a gap it can be
+ * *told* about — and `script-run-state.ts` does tell it, since both names are in
+ * upstream's declared surface.
+ *
+ * The missing discriminator is a host-shape question, reported rather than
+ * patched around here: adding a reason to `stream.end` is the fix, and inventing
+ * one from the frame would be a guess wearing upstream's name.
+ */
+export const GENERATION_SETTLED = 'iris:generation-settled'
 
 /** A scope selector, in the shape upstream's cards pass it. */
 export interface VariableOption {
@@ -946,6 +970,17 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
   }
 
   /** The scopes `script.setVariables` accepts. */
+  /*
+   * Only for keys of id-less injections, and deliberately not a UUID.
+   *
+   * Upstream uses `uuidv4()`, and its own contract comment records what that
+   * costs: assembly order within a group is the **lexicographic** order of the
+   * keys, so a UUID lands the injection at a random position in the prompt. A
+   * counter at least makes the order the card's own call order, which is the
+   * order its author was thinking in.
+   */
+  let nextInjection = 0
+
   const WIRE_SCOPES = new Set(['message', 'chat', 'global', 'script'])
 
   /**
@@ -1539,6 +1574,214 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       // spread would hand out the same one.
       return { ...settings, selected_global_lorebooks: [...settings.selected_global_lorebooks] }
     },
+    /**
+     * A runtime prompt injection the card holds a handle to.
+     *
+     * The host implements the primitive and this composes the wrapper, which is
+     * upstream's own division: `injectPrompts` is a thin layer over
+     * `setExtensionPrompt` whose **key is the handle**, and `uninject()` is the
+     * removal of that key [`DEVIATIONS.md` §11]. So nothing new goes on the
+     * wire; what goes here is the composition, the lifetime, and three things a
+     * frame cannot do that the composition has to say something about.
+     *
+     * **A fourth assembly surface.** This is neither preset, worldbook nor
+     * message: it is a run of text the card can revoke and re-add at will,
+     * depth 0, role `user` in the one measured use — and the card revokes it
+     * around a wrapped `withIsolatedRawGeneration`, so two prompt-assembly
+     * states exist within one chat on purpose [`OVERLAY-CARDS.md` §四].
+     *
+     * **`once` defaults to false and the measured card relies on that.** It
+     * passes one argument, so the injection survives the generation that
+     * follows and every generation after it, until the card calls `uninject()`
+     * or the frame goes. An implementation that cleared after one generation
+     * would be silently wrong in the direction nobody checks: the text simply
+     * stops appearing.
+     *
+     * **`filter` cannot cross the frame boundary.** It is a function, upstream
+     * evaluates it at assembly time on its own page, and no measured card
+     * passes one. Reported by name rather than dropped, because a filter that
+     * silently never runs turns "inject this when X" into "inject this always"
+     * — a wrong prompt rather than a missing feature.
+     *
+     * **Teardown is not this frame's business, and a first version had that
+     * wrong.** Upstream's `$(window).on('pagehide', uninject)` is on the
+     * SillyTavern *page*, not on a frame — so a frame being destroyed uninjects
+     * nothing upstream, and an injection outlives every frame rebuild. This
+     * frame therefore registers no unload cleanup: doing so would revoke, on
+     * every re-render, injections upstream keeps.
+     *
+     * The lifetime Iris gives them is **one chat session** — narrower than
+     * upstream's page, which lets an injection leak across a chat switch until
+     * the page itself goes. That is a deliberate divergence in the safer
+     * direction and belongs in `DEVIATIONS.md`; the clearing is host-side, on
+     * chat teardown, not here.
+     * @param prompts - upstream's `InjectionPrompt[]`.
+     * @param options - upstream's `{ once }`, default false.
+     * @returns the handle, whose `uninject` removes every key this call set.
+     */
+    injectPrompts: (prompts: unknown, options?: unknown): { uninject: () => void } => {
+      const member = 'injectPrompts'
+      const rows = Array.isArray(prompts) ? prompts : []
+      if (!Array.isArray(prompts)) {
+        host.reportFault(
+          `card called ${member} without an array of prompts, so nothing was injected`,
+        )
+        // A handle regardless: the card stores it and calls `uninject()` later,
+        // and `undefined.uninject` would fail somewhere else entirely.
+        return { uninject: () => {} }
+      }
+
+      const keys: string[] = []
+      for (const [at, row] of rows.entries()) {
+        const prompt = row as Record<string, unknown> | null
+        if (prompt === null || typeof prompt !== 'object') {
+          host.reportFault(`card called ${member} with prompts[${String(at)}] not an object`)
+          continue
+        }
+
+        /*
+         * `id ?? uuid`, **written back onto the prompt** — and the write-back is
+         * where Iris has one fewer bug than upstream.
+         *
+         * Upstream computes `prompt.id ?? uuidv4()` for the key and never stores
+         * it, so its own `uninject` later reads `p.id`, finds `undefined`, and
+         * removes nothing: an id-less injection upstream **cannot be revoked**.
+         * Storing it makes the handle work. The card never sees the difference
+         * except that `uninject()` does what it says, so this is compatible in
+         * every direction a card can observe — noted in `DEVIATIONS.md` as a bug
+         * not reproduced.
+         *
+         * Not a UUID, deliberately: upstream's own contract comment records that
+         * assembly order within a group is the **lexicographic** order of keys,
+         * so a UUID drops the injection at a random position in the prompt. A
+         * counter makes the order the card's own call order, which is the order
+         * its author was thinking in.
+         */
+        if (typeof prompt['id'] !== 'string' || prompt['id'] === '') {
+          prompt['id'] = `iris-injection-${String(nextInjection += 1)}`
+        }
+        const key = prompt['id'] as string
+
+        if (typeof prompt['filter'] === 'function') {
+          host.reportGap(
+            `card called ${member} with a filter on ${key} \u2014 a function cannot cross this`
+            + ' frame\u2019s boundary, so the injection is unconditional here; upstream would'
+            + ' have asked the filter before assembling it',
+          )
+        }
+
+        // Deduplicated, because a repeated id **overwrites** the whole row
+        // rather than adding a second injection — so it is one key, and
+        // `uninject` should issue one removal for it.
+        if (!keys.includes(key)) keys.push(key)
+        void host.call('setExtensionPrompt', {
+          key,
+          value: String(prompt['content'] ?? ''),
+          /*
+           * `'none'` only for the exact literal; **everything else, including an
+           * absent or misspelled position, is IN_CHAT**. That is upstream's
+           * behaviour rather than a lenient reading of it: its check is
+           * `position === 'none' ? NONE : IN_CHAT`, so a typo injects at depth
+           * instead of being refused, and a card written against the typo works.
+           */
+          position: prompt['position'] === 'none' ? 'none' : 'at-depth',
+          depth: typeof prompt['depth'] === 'number' ? prompt['depth'] : 0,
+          // `'system'` when absent, which is upstream's default — not omitted.
+          // The contract's own default would be the host's choice rather than
+          // upstream's, and the two need not agree.
+          role: typeof prompt['role'] === 'string' ? prompt['role'] : 'system',
+          should_scan: prompt['should_scan'] === true,
+        }).then(undefined, (error: unknown) => {
+          host.reportFault(
+            `card called ${member} and the injection ${key} was refused: `
+            + (error instanceof Error ? error.message : String(error)),
+          )
+        })
+      }
+
+      let gone = false
+      const uninject = (): void => {
+        // Idempotent: the measured card calls `S.uninject(); S = null` in
+        // several places and a wrapper calls it again around an isolated
+        // generation, so a second call must not re-issue every removal.
+        if (gone) return
+        gone = true
+        for (const key of keys) {
+          // An empty value **is** the removal — the contract says so, so this is
+          // not a trick.
+          void host.call('setExtensionPrompt', { key, value: '' }).then(undefined, () => {})
+        }
+      }
+
+      if (options !== null && typeof options === 'object'
+        && (options as Record<string, unknown>)['once'] === true) {
+        /*
+         * Upstream hangs the auto-removal on ST's own generation events, not on
+         * Tavern Helper's `js_*` ones. Both names exist in these tables and mean
+         * different moments, and picking the wrong pair would clear the
+         * injection at a time no card asked for.
+         */
+        /*
+         * **Three events, not two.** Upstream hangs the auto-removal on Tavern
+         * Helper's `js_generation_ended` *and* SillyTavern's own
+         * `generation_ended`, plus `generation_stopped` so that an aborted
+         * generation also revokes. Both `GENERATION_ENDED` names exist in these
+         * tables and mean different moments; subscribing to one is a `once`
+         * injection that sometimes stays.
+         *
+         * `uninject` is idempotent, which is what makes three subscriptions
+         * safe — and it has to be anyway, because the measured card calls it
+         * itself in several places.
+         */
+        /*
+         * One event, because one is what the host broadcasts.
+         *
+         * A first version subscribed to `js_generation_ended`,
+         * `generation_ended` and `generation_stopped` — upstream's three — and
+         * **nothing in this app emits any of them**. All three subscriptions
+         * would have sat there forever and a `once` injection would simply never
+         * have been revoked: no error, no report, the text just keeps appearing.
+         * Three plausible names are not more robust than one real one; they are
+         * the same silence, harder to notice.
+         */
+        events.eventOnce(GENERATION_SETTLED, () => {
+          uninject()
+        })
+      }
+
+      return { uninject }
+    },
+
+    /**
+     * Revoke injections by id, without holding their handle.
+     *
+     * Upstream's top-level companion to `injectPrompts`, and **synchronous** for
+     * the same reason: a card treats the removal as done on the next line. No
+     * measured card calls it, and it is built anyway — it is four lines over the
+     * same primitive, and leaving it out while `injectPrompts` exists makes the
+     * gap unfalsifiable in the one direction that matters, since a card removing
+     * by id has no handle to fall back on.
+     * @param ids - the injection ids to remove.
+     */
+    uninjectPrompts: (ids: unknown): void => {
+      const list = Array.isArray(ids) ? ids : []
+      if (!Array.isArray(ids)) {
+        host.reportFault(
+          'card called uninjectPrompts without an array of ids, so nothing was removed',
+        )
+        return
+      }
+      for (const id of list) {
+        if (typeof id !== 'string' || id === '') {
+          host.reportFault(
+            `card called uninjectPrompts with ${JSON.stringify(id)}, which names no injection`,
+          )
+          continue
+        }
+        // An empty value is the removal, per the contract.
+        void host.call('setExtensionPrompt', { key: id, value: '' }).then(undefined, () => {})
+      }
+    },
     getSwipes: (messageId?: number): string[] => {
       const chat = chatOf('getSwipes')
       const at = messageId ?? chat.length - 1
@@ -1896,6 +2139,13 @@ const HANDLE_RETURNS: ReadonlySet<string> = new Set([
   'eventOnce',
   'eventMakeFirst',
   'eventMakeLast',
+  /*
+   * `{ uninject }` is a live revocation, and a structured copy of one is an
+   * object whose method is gone. The card stores this handle in a module
+   * variable and calls it from several places later, so a clone would fail at
+   * the call rather than at the copy — far from the cause.
+   */
+  'injectPrompts',
 ])
 
 function detachReturns(

@@ -75,6 +75,19 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
    * copy per script would be sixteen identical fields duplicated per binding.
    */
   getLorebookSettings: 'shared',
+  /*
+   * `shared`: upstream's injection keys carry no script prefix, so the answer
+   * does not depend on which script asks — two scripts choosing one id
+   * overwrite each other upstream too. The per-call state that matters (the
+   * keys, and whether the handle has been used) lives in the handle's closure,
+   * not in a per-script binding.
+   */
+  injectPrompts: 'shared',
+  /*
+   * `shared` for the same reason: removal is by id, and an id belongs to the
+   * card rather than to one of its scripts.
+   */
+  uninjectPrompts: 'shared',
   getVariables: 'identity',
   getAllVariables: 'identity',
   replaceVariables: 'identity',

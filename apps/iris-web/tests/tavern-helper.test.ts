@@ -23,7 +23,12 @@ import { UnsupportedApiError } from '../src/sandbox/errors.ts'
 import { readFile } from 'node:fs/promises'
 
 import { CARD_METHODS } from '../src/sandbox/card-api.ts'
-import { TAVERN_HELPER_VERSION, createFrameTavernHelper, resolveRange } from '../src/sandbox/tavern-helper.ts'
+import {
+  GENERATION_SETTLED,
+  TAVERN_HELPER_VERSION,
+  createFrameTavernHelper,
+  resolveRange,
+} from '../src/sandbox/tavern-helper.ts'
 
 /** A snapshot with three messages, the last carrying two swipes. */
 function context(): ScriptContext {
@@ -64,6 +69,15 @@ function surface(overrides?: {
   answer?: unknown
   /** Per-method answers, for members that make more than one call. */
   answers?: Record<string, unknown>
+  /**
+   * The bus, when a test needs to emit on the same one the surface listens to.
+   *
+   * `injectPrompts({once:true})` subscribes to a generation settling, and a
+   * test that could not emit that event could only assert the subscription was
+   * made — which is what the implementation this replaced also did, to three
+   * event names nothing emits.
+   */
+  events?: EventBus
 }) {
   const calls: { method: string, params: Record<string, unknown> }[] = []
   const gaps: string[] = []
@@ -83,7 +97,7 @@ function surface(overrides?: {
       return overrides?.answer
     },
     triggerSlash: async command => `ran ${command}`,
-    events: new EventBus(),
+    events: overrides?.events ?? new EventBus(),
   })
   return { api, calls, gaps }
 }
@@ -1510,4 +1524,229 @@ test('getScriptButtons answers this script’s table and not the first one it fi
   const read = api['getScriptButtons'] as () => { name: string, visible: boolean }[]
 
   assert.deepEqual(read().map(button => button.name), ['开始'])
+})
+test('injectPrompts composes upstream\u2019s wrapper over the host\u2019s primitive', () => {
+  const { api, calls } = surface()
+  const inject = api['injectPrompts'] as (
+    prompts: unknown,
+    options?: unknown,
+  ) => { uninject: () => void }
+
+  const handle = inject([
+    { id: 'a', position: 'in_chat', depth: 0, role: 'user', content: 'hello', should_scan: false },
+  ])
+
+  /*
+   * **Synchronous.** The measured card stores the handle in a module variable
+   * and calls `S.uninject()` from several places later, so a promise here would
+   * mean `S.uninject` is not a function at every one of them.
+   */
+  assert.equal(typeof handle.uninject, 'function')
+
+  const wire = calls.filter(call => call.method === 'setExtensionPrompt')
+  assert.equal(wire.length, 1)
+  assert.equal(wire[0]?.params['key'], 'a')
+  assert.equal(wire[0]?.params['value'], 'hello')
+  assert.equal(wire[0]?.params['position'], 'at-depth')
+  assert.equal(wire[0]?.params['role'], 'user')
+  assert.equal(wire[0]?.params['should_scan'], false)
+})
+
+test('an id-less injection is still revocable, which upstream\u2019s is not', () => {
+  /*
+   * Upstream computes `prompt.id ?? uuidv4()` for the key and never writes it
+   * back, so its own `uninject` reads `p.id`, finds `undefined`, and removes
+   * nothing: an id-less injection upstream cannot be revoked. Writing the
+   * generated id onto the prompt makes the handle work, and a card cannot
+   * observe the difference except that `uninject()` does what it says.
+   */
+  const { api, calls } = surface()
+  const inject = api['injectPrompts'] as (p: unknown) => { uninject: () => void }
+
+  const prompt: Record<string, unknown> = { content: 'no id here' }
+  const handle = inject([prompt])
+  assert.equal(typeof prompt['id'], 'string', 'the id was not written back')
+
+  handle.uninject()
+  const removals = calls.filter(
+    call => call.method === 'setExtensionPrompt' && call.params['value'] === '',
+  )
+  assert.equal(removals.length, 1)
+  assert.equal(removals[0]?.params['key'], prompt['id'])
+})
+
+test('the defaults are upstream\u2019s, including the ones a contract would choose differently', () => {
+  const { api, calls } = surface()
+  const inject = api['injectPrompts'] as (p: unknown) => { uninject: () => void }
+
+  inject([{ id: 'bare' }])
+  const sent = calls.find(call => call.method === 'setExtensionPrompt')?.params ?? {}
+  assert.equal(sent['value'], '')
+  assert.equal(sent['depth'], 0)
+  assert.equal(sent['should_scan'], false)
+  /*
+   * `'system'` **sent explicitly**, not omitted. Leaving it out would let the
+   * contract's own default decide, and the contract's default is the host's
+   * choice rather than upstream's — the two need not agree, and a role is which
+   * voice the text speaks in.
+   */
+  assert.equal(sent['role'], 'system')
+})
+
+test('only the literal \u2018none\u2019 is a silent injection; a typo injects at depth', () => {
+  /*
+   * Upstream's check is `position === 'none' ? NONE : IN_CHAT`, so a misspelled
+   * position lands the text at depth rather than being refused — and a card
+   * written against the typo works. Matching that is compatibility; refusing the
+   * typo would break a working card in the name of tidiness.
+   */
+  const { api, calls } = surface()
+  const inject = api['injectPrompts'] as (p: unknown) => { uninject: () => void }
+
+  inject([
+    { id: 'silent', position: 'none', content: 'x' },
+    { id: 'typo', position: 'in-chat', content: 'y' },
+    { id: 'absent', content: 'z' },
+  ])
+  const positions = calls
+    .filter(call => call.method === 'setExtensionPrompt')
+    .map(call => call.params['position'])
+  assert.deepEqual(positions, ['none', 'at-depth', 'at-depth'])
+})
+
+test('uninject is idempotent, because the measured card calls it more than once', () => {
+  const { api, calls } = surface()
+  const inject = api['injectPrompts'] as (p: unknown) => { uninject: () => void }
+
+  const handle = inject([{ id: 'a', content: 'x' }, { id: 'b', content: 'y' }])
+  handle.uninject()
+  handle.uninject()
+
+  const removals = calls.filter(
+    call => call.method === 'setExtensionPrompt' && call.params['value'] === '',
+  )
+  assert.deepEqual(removals.map(call => call.params['key']), ['a', 'b'])
+})
+
+test('a repeated id is one injection, because upstream overwrites the whole row', () => {
+  const { api, calls } = surface()
+  const inject = api['injectPrompts'] as (p: unknown) => { uninject: () => void }
+
+  const handle = inject([{ id: 'same', content: 'first' }, { id: 'same', content: 'second' }])
+  handle.uninject()
+
+  const removals = calls.filter(
+    call => call.method === 'setExtensionPrompt' && call.params['value'] === '',
+  )
+  assert.deepEqual(removals.map(call => call.params['key']), ['same'], 'one key, one removal')
+})
+
+test('once revokes on the event the host actually broadcasts', async () => {
+  /*
+   * **The silence this closes.** A first version subscribed to upstream's three
+   * names — `js_generation_ended`, `generation_ended`, `generation_stopped` —
+   * and *nothing in this app emits any of them*. All three subscriptions would
+   * have waited forever and a `once` injection would never have been revoked:
+   * no error, no report, the text simply keeps appearing in every later prompt.
+   * Three plausible names are not more robust than one real one; they are the
+   * same silence, harder to notice.
+   */
+  const events = new EventBus()
+  const { api, calls } = surface({ events })
+  const inject = api['injectPrompts'] as (p: unknown, o?: unknown) => { uninject: () => void }
+
+  inject([{ id: 'temporary', content: 'x' }], { once: true })
+  assert.equal(
+    calls.filter(call => call.method === 'setExtensionPrompt' && call.params['value'] === '').length,
+    0,
+    'revoked before any generation settled',
+  )
+
+  await events.eventEmit(GENERATION_SETTLED)
+  const removals = calls.filter(
+    call => call.method === 'setExtensionPrompt' && call.params['value'] === '',
+  )
+  assert.deepEqual(removals.map(call => call.params['key']), ['temporary'])
+})
+
+test('an injection without once survives a settled generation', () => {
+  /*
+   * The other half, and the one the measured card depends on: it passes a single
+   * argument, so `once` is false and the injection outlives the generation that
+   * follows it and every generation after. An implementation that cleared
+   * anyway would be wrong in the direction nobody checks — the text just stops
+   * appearing.
+   */
+  const events = new EventBus()
+  const { api, calls } = surface({ events })
+  const inject = api['injectPrompts'] as (p: unknown, o?: unknown) => { uninject: () => void }
+
+  inject([{ id: 'durable', content: 'x' }])
+  void events.eventEmit(GENERATION_SETTLED)
+
+  assert.deepEqual(
+    calls.filter(call => call.method === 'setExtensionPrompt' && call.params['value'] === ''),
+    [],
+    'a durable injection was revoked by a generation ending',
+  )
+})
+
+test('a filter is reported, because a filter that never runs changes the prompt', () => {
+  /*
+   * `filter` is a function; upstream evaluates it at assembly time on its own
+   * page, and a function cannot cross this frame's boundary. Dropping it
+   * silently turns "inject this when X" into "inject this always" — a wrong
+   * prompt rather than a missing feature, and wrong prompts are the class of
+   * failure that surfaces as a bad reply instead of an error.
+   */
+  const { api, gaps } = surface()
+  const inject = api['injectPrompts'] as (p: unknown) => { uninject: () => void }
+
+  inject([{ id: 'conditional', content: 'x', filter: () => true }])
+  assert.equal(gaps.filter(line => line.includes('filter')).length, 1, gaps.join(' | '))
+  assert.match(gaps.join(' '), /unconditional here/)
+})
+
+test('the handle survives the detach layer, which would otherwise strip its method', () => {
+  /*
+   * `{ uninject }` is a live revocation, and `structuredClone` of one is an
+   * object whose method is gone. The card stores the handle and calls it from
+   * several places later, so a clone fails at the call rather than at the copy
+   * — far from the cause. `HANDLE_RETURNS` exempts it, and this is the
+   * assertion that says so.
+   */
+  const { api, gaps } = surface()
+  const inject = api['injectPrompts'] as (p: unknown) => unknown
+  const handle = inject([{ id: 'a', content: 'x' }]) as { uninject?: unknown }
+  assert.equal(typeof handle.uninject, 'function', 'the handle was cloned into a plain object')
+
+  /*
+   * **And no report, which is the half with teeth.** A mutation removing this
+   * member from `HANDLE_RETURNS` left the assertion above green: the clone of a
+   * handle *throws* `DataCloneError`, and `detach`'s own fallback hands back the
+   * original — so the value survives either way. What does not survive is the
+   * truth of the report, which says "returned a value Iris could not copy, so
+   * the card holds a live reference" and is a **false alarm** for a member whose
+   * contract is a live reference. That is the whole reason the exemption list
+   * exists, so it is what this asserts.
+   */
+  assert.deepEqual(
+    gaps.filter(line => line.includes('could not copy')),
+    [],
+    'the handle was reported as a failed copy, which is the alarm the exemption exists to silence',
+  )
+})
+
+test('uninjectPrompts removes by id, without a handle', () => {
+  const { api, calls, gaps } = surface()
+  const uninject = api['uninjectPrompts'] as (ids: unknown) => void
+
+  uninject(['a', 'b'])
+  const removals = calls.filter(
+    call => call.method === 'setExtensionPrompt' && call.params['value'] === '',
+  )
+  assert.deepEqual(removals.map(call => call.params['key']), ['a', 'b'])
+
+  uninject(['', 7])
+  assert.equal(gaps.length, 2, gaps.join(' | '))
 })

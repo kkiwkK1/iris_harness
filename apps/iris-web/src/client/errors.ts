@@ -25,6 +25,15 @@ const COPY: Record<RpcError['code'], string> = {
   'provider-error': 'The model refused the request.',
   busy: 'This chat is still generating. Stop it first.',
   unsupported: 'This build of Iris cannot do that yet.',
+  /*
+   * A card filled the shared card storage, and the shared part is what a reader
+   * has to be told: the store is one profile-wide store, as `localStorage` is
+   * one store per origin upstream, so the card that hit the ceiling is not
+   * necessarily the card that filled it. A message naming only "this card"
+   * would send a reader to delete the wrong thing.
+   */
+  'quota-exceeded': 'The cards’ shared storage is full. Its contents are shared across every'
+    + ' card in this profile, so the one that ran out may not be the one that filled it.',
   internal: 'Something broke on the host side.',
 }
 
