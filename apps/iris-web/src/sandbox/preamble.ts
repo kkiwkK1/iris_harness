@@ -63,7 +63,21 @@ export function withPreamble(scriptId: string | undefined, body: string): string
 /**
  * How many lines the preamble shifts a card's own source by.
  *
- * Exported so error reporting can subtract it rather than hard-coding a number
- * that would drift the moment the preamble grew.
+ * **One, and this is a pin rather than a parameter.** Nothing in the frame
+ * consumes it: card failures are reported as `name: message` with no line
+ * numbers at all, so there is no reporting to subtract it from. The comment here
+ * used to say it was "exported so error reporting can subtract it", which
+ * described a consumer that does not exist — a stated purpose is not evidence
+ * of one, and this file's own tests were its only readers.
+ *
+ * It stays because the **property** matters and is cheap to hold: the preamble
+ * is prepended to a card's source, so a multi-line one shifts every line of the
+ * card in whatever eventually reads line numbers — a browser devtools view
+ * today, this frame's own reporting if it ever grows them. A literal checked
+ * against the generated text is the right shape for that, and deliberately not
+ * a value derived from it: a derived constant would absorb the change silently,
+ * which is the opposite of a pin.
+ *
+ * Three tests fail if the preamble becomes two lines.
  */
 export const PREAMBLE_LINES = 1
