@@ -52,6 +52,20 @@ export type MemberKind =
  * rots silently and the rot is invisible until a card reads someone else's
  * variables.
  */
+/**
+ * Where a shared-surface wrapper keeps the member it wraps.
+ *
+ * The published copy of an `identity` member is wrapped so that calling it
+ * through the shared surface says so (attribution is impossible there). That
+ * wrapper is a different function object, which broke the check that every
+ * published binding is the member the parent proxy answers for the same name —
+ * the check that catches the two hand-written parallel lists drifting apart.
+ *
+ * Rather than excuse those names from the check, which would blind it exactly
+ * where a shift is hardest to see, the wrapper carries the original here.
+ */
+export const SHARED_ORIGINAL = '__irisSharedOriginal'
+
 export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   // ── identity: partitions by the calling script ───────────────────────
   getScriptId: 'identity',

@@ -146,6 +146,22 @@ export function createEventSource(events: EventBus): Record<string, unknown> {
 }
 
 /**
+ * Said in every refusal that stays a throw, because the card author reads it.
+ *
+ * [ruling ②] These refusals are Iris's limits rather than the card's mistakes,
+ * and the reason they throw instead of returning something harmless is that
+ * **nothing harmless is available**: the only value they could produce is
+ * another floor's data, and MVU's flow is read → merge → store. An approximate
+ * answer would not be a wrong read, it would be a wrong **write** over the
+ * reader's saved state.
+ *
+ * A card author seeing an exception from their own call will look for their own
+ * bug first. This sentence is what stops that search.
+ */
+const LIMIT_NOT_YOUR_FAULT = ' This is a limit in Iris, not a mistake in the card:'
+  + ' returning an approximate answer here would be written back over your saved state.'
+
+/**
  * Build the flattened Tavern Helper surface for one frame.
  * @param host - what the frame can offer.
  * @returns every name a card expects, ready to publish.
@@ -412,7 +428,10 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
   const snapshot = (member: string): ScriptContext => {
     const context = host.context()
     if (context === undefined) {
-      throw new UnsupportedApiError(member, 'The host snapshot has not arrived yet.')
+      throw new UnsupportedApiError(
+        member,
+        'The host snapshot has not arrived yet.' + LIMIT_NOT_YOUR_FAULT,
+      )
     }
     return context
   }
@@ -643,7 +662,8 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       if (id === undefined) {
         throw new UnsupportedApiError(
           `${member}({type:'script'})`,
-          'A script scope needs a script_id, and this body has no identity of its own.',
+          'A script scope needs a script_id, and this body has no identity of its own.'
+            + LIMIT_NOT_YOUR_FAULT,
         )
       }
       return layers.script[id] ?? {}
@@ -693,7 +713,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
         `${member}({message_id:${String(addressed)}})`,
         'This frame answers from one snapshot that does not record which floor it holds, so a' +
           ' floor-addressed read cannot be answered correctly here. Floor-addressed reads arrive' +
-          ' with the message-frame project.',
+          ' with the message-frame project.' + LIMIT_NOT_YOUR_FAULT,
       )
     }
 
@@ -802,7 +822,8 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       if (scriptId === undefined) {
         throw new UnsupportedApiError(
           `${member}({type:'script'})`,
-          'A script scope needs a script_id, and this body has no identity of its own.',
+          'A script scope needs a script_id, and this body has no identity of its own.'
+            + LIMIT_NOT_YOUR_FAULT,
         )
       }
       fields['scriptId'] = scriptId

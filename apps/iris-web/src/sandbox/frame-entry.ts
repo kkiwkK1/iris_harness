@@ -25,6 +25,7 @@ import { createReportingToastr } from './toastr-report.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
+import { describeFailure } from './failure-attribution.ts'
 import {
   describeHeightSources,
   heightSignal,
@@ -458,12 +459,11 @@ function reportAsyncFailures(
        * callback, and sent a reader looking at the card.
        */
       message:
-        (bodyHasRun()
-          ? `${kind} after a card body ran: ${text}` +
-            ' — the frame refused nothing, so this is code the card scheduled'
-          : `${kind} before any card body ran: ${text}` +
-            " — no card code had started, so this belongs to the frame's own setup")
-        + absentGlobalsNow(),
+        describeFailure(kind, text, {
+          bodyRan: bodyHasRun(),
+          // Read now rather than captured: the attribute is set with the markup.
+          interfaceFrame: document.body?.hasAttribute('data-iris-interface') === true,
+        }) + absentGlobalsNow(),
     })
   }
 

@@ -22,7 +22,7 @@ import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virt
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isOnSillyTavernSurface } from './card-api.ts'
 import { createEventSource, createFrameTavernHelper } from './tavern-helper.ts'
-import { identityMembers } from './identity.ts'
+import { MEMBER_KINDS, SHARED_ORIGINAL, identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
 import { SCRIPT_REGISTRY, withPreamble } from './preamble.ts'
 import { EventBus, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
@@ -1127,6 +1127,43 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   const shadowed = [...core, ...helperNames]
 
   /**
+   * A shared-surface member, with a word said when it is one that has an owner.
+   *
+   * [ruling ③] The published globals are **one** surface for the whole frame,
+   * and Iris runs a card's scripts together in one. So a member classified
+   * `identity` — one whose answer depends on *which* script is asking — cannot be
+   * attributed here, and the shared copy answers for whichever script ran last.
+   *
+   * A card reaching it through the preamble binding gets the right answer; a card
+   * writing `window.appendInexistentScriptButtons(...)` explicitly gets this one.
+   * **The two spellings look identical in a card**, and answering the second
+   * silently by last-run is the shape of "the same call gives different results
+   * in different frames".
+   *
+   * Reported on **call**, never on property access: a card probing with
+   * `typeof` must not be charged for asking, which is the rule the whole surface
+   * already holds (see the existence-check test).
+   * @param name - the member's name.
+   * @param value - the shared surface's copy of it.
+   * @returns the value, wrapped only when attribution is impossible.
+   */
+  const sharedCopy = (name: string, value: unknown): unknown => {
+    if (typeof value !== 'function' || MEMBER_KINDS[name] !== 'identity') return value
+    const wrapper = (...args: unknown[]): unknown => {
+      reportGap(
+        `card called ${name} through the shared surface, where Iris cannot tell which script is`
+          + ` asking — this member is answered per script, and it was handled as`
+          + ` ${scriptId ?? 'the body with no script id'}.`
+          + ' Reaching it through the script binding instead removes the ambiguity.',
+      )
+      return (value as (...rest: unknown[]) => unknown)(...args)
+    }
+    // Not enumerable: `Object.keys` on the surface is a card-visible list.
+    Object.defineProperty(wrapper, SHARED_ORIGINAL, { value, enumerable: false })
+    return wrapper
+  }
+
+  /**
    * Values are resolved per evaluation, not at install.
    *
    * `extension_settings` does not exist until the context arrives, and the
@@ -1160,7 +1197,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * `EjsTemplate` above without this line did exactly that.
      */
     ejsTemplate,
-    ...helperNames.map(name => tavernHelper[name]),
+    ...helperNames.map(name => sharedCopy(name, tavernHelper[name])),
   ]
 
   env.onMessage(message => {

@@ -25,7 +25,26 @@ import * as vue from 'vue'
 import { PRESET_MARKER } from './preset-globals.ts'
 import * as lodashModule from 'lodash-es'
 import * as YAML from 'yaml'
-import { z } from 'zod'
+/*
+ * The **namespace**, not the named export, and a real card decided this.
+ *
+ * A remote bundle (`gh:StageDog/tavern_resource/dist/util/mvu_zod.js`, cached
+ * under `script-bundles/`) does:
+ *
+ *   const r = z                                    // the bare global
+ *   … t instanceof r.z.ZodObject ? r.z.looseObject(t.shape) : t
+ *
+ * So it dereferences `z` → `.z` → `.ZodObject`. Seeding the named export gave
+ * a `z` with `ZodObject` on it but **no `.z`**, so that line read a property of
+ * `undefined` and the card's variable schema never registered.
+ *
+ * The measurement that chose this: on the installed zod (4.5.4) the namespace
+ * carries **both** spellings — `ns.z.ZodObject` and `ns.ZodObject`, `ns.z.looseObject`
+ * and `ns.looseObject` — while the named export carries only one. So the
+ * namespace is not a guess about what upstream exposes; it is the shape that
+ * satisfies every spelling a card has been observed to use.
+ */
+import * as z from 'zod'
 
 const host = window as unknown as Record<string, unknown>
 

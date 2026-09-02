@@ -6,6 +6,7 @@ import { CARD_METHODS, isCardMethod, isOnSillyTavernSurface } from '../src/sandb
 import { installSandbox, type FrameEnv } from '../src/sandbox/frame.ts'
 import { UPSTREAM_MEMBERS } from '../src/sandbox/upstream-surface.ts'
 import { SCRIPT_REGISTRY } from '../src/sandbox/preamble.ts'
+import { SHARED_ORIGINAL } from '../src/sandbox/identity.ts'
 import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
 
 /** A frame realm made of stubs, plus the levers a test needs. */
@@ -2150,8 +2151,19 @@ test('every published binding matches what the parent proxy answers for that nam
     const onParent = virtualParent[name] ?? onTable[name]
     if (onParent === undefined) continue
     checked.push(name)
+    /*
+     * Unwrapped first. A published `identity` member is wrapped so that calling
+     * it through the shared surface reports that attribution is impossible
+     * there, and the wrapper is a different function object. It carries the
+     * member it wraps under `SHARED_ORIGINAL` precisely so this check keeps its
+     * reach — excusing those names would blind it exactly where an index shift
+     * is hardest to notice.
+     */
+    const published = scope.publishedValue(name)
+    const unwrapped = (published as Record<string, unknown> | undefined)?.[SHARED_ORIGINAL]
+      ?? published
     assert.equal(
-      scope.publishedValue(name),
+      unwrapped,
       onParent,
       `published ${name} is not the member the parent proxy answers for that name`,
     )
