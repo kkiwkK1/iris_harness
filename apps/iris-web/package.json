@@ -25,6 +25,7 @@
     "@iris/client-fake": "file:../../packages/iris-client-fake",
     "@iris/compat-tavernhelper-core": "file:../../packages/iris-compat-tavernhelper-core",
     "@tailwindcss/browser": "4.1.12",
+    "dompurify": "^3.4.14",
     "jquery": "3.5.1",
     "jquery-ui": "1.13.2",
     "jquery-ui-touch-punch": "0.2.3",
