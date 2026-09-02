@@ -76,7 +76,8 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    组件验收（四卡从 ST 语料导入，3 张绑定书 `imported-from-st`）：手机UI 两分叉活、外置状态栏两分叉活、正文
    美化无载入期异常——存储族六组件全部脱离存储阻塞；新阻塞各异：覆盖层宿主（全部）、`refused
    document.readyState`（银麒系统面板，虚拟 document 拒绝良性读）、远程依赖 404（创世回廊小手机脚本）、
-   `Invalid regular expression`（可攻略女主插入状态栏，查源变换）。待验：空 profile 首次路径、`clear()` 报告。frame 协议
+   `Invalid regular expression`（可攻略女主插入状态栏——卡原文正则字面量跨行，TS+V8 皆拒，上游同死；
+   我们把解析期失败显式报出是多做的事）。待验：空 profile 首次路径、`clear()` 报告。frame 协议
    加 `kind`（storage 独立栏）排在覆盖层裁点前。AST：165 引用里 4 个裸启动点承担全部"启动即死"，
    按组件验收；「论坛覆盖层」预测静默降级、实测启动即死，44 复核判据。**indexedDB**：1 卡 blob 级
    图片库，本轮报告+降级，容量清理另议；枚举源内数据库读邻居扩展结构上不适用。
