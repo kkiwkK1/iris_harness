@@ -254,6 +254,10 @@ if (indexedDB.databases) {                                   // ← Chromium-onl
 
 **要确认得拿一张空 profile 实跑，那是浏览器验收的事，语料回答不了。**
 
+> **反例在别处**：`typeof` 在这里会抛，但**在另一种缺席上它恰恰是有效防护**——
+> 见 `apps/iris-web/UPSTREAM-ESM-DEPS.md` §三之二。
+> **判据是「名字存在但读它会抛」还是「名字压根没创建」。**
+
 ---
 
 ## 未查
