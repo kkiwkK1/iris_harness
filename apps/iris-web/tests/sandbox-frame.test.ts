@@ -5,6 +5,7 @@ import { UnsupportedApiError } from '../src/sandbox/errors.ts'
 import { CARD_METHODS, isCardMethod, isOnSillyTavernSurface } from '../src/sandbox/card-api.ts'
 import { installSandbox, type FrameEnv } from '../src/sandbox/frame.ts'
 import { UPSTREAM_MEMBERS } from '../src/sandbox/upstream-surface.ts'
+import { SCRIPT_REGISTRY } from '../src/sandbox/preamble.ts'
 import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
 
 /** A frame realm made of stubs, plus the levers a test needs. */
@@ -2296,4 +2297,72 @@ test('an existence check never throws, on any surface, for any upstream member',
    * nothing.
    */
   assert.ok(probed > 400, `only ${String(probed)} probes ran`)
+})
+
+test('the one-argument button write lands under the calling script, not the last one', () => {
+  /*
+   * **The family-level risk in accepting the one-argument form.**
+   *
+   * Upstream resolves the omitted script id from `this` — bound to the calling
+   * frame's window — because upstream runs **one script per frame**. Iris runs a
+   * card's scripts together in one frame, so "the frame's script" is not a
+   * question with an answer: a shared surface would answer for whichever script
+   * ran last, and MVU's `appendInexistentScriptButtons(buttons)` would write its
+   * table under a neighbour's id.
+   *
+   * It resolves correctly because these members are classified `identity` in
+   * `MEMBER_KINDS` and `viewFor` builds each script its own bound surface. That
+   * classification was made when the writers still took the id explicitly and
+   * did not need it — "classify by what they are, not by what the current
+   * implementation happens to require" — and this is the change that cashed it.
+   */
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({ characterId: 'char', scriptButtons: { first: [], second: [] } }),
+  })
+
+  // One evaluate to install and publish; the registry is a **published** global,
+  // not one of the shadowed names handed to a body, so it is reached here rather
+  // than from inside the card code.
+  evaluate(scope, () => undefined, 'first')
+  const registry = scope.publishedValue(SCRIPT_REGISTRY) as (id: string) => Record<string, unknown>
+  assert.equal(typeof registry, 'function', 'the script registry must be published')
+
+  for (const [scriptId, label] of [['first', '甲'], ['second', '乙']] as [string, string][]) {
+    /*
+     * Through the registry, because that is the path a card's script takes:
+     * `withPreamble` prepends one line destructuring the identity-bearing
+     * members out of `globalThis[SCRIPT_REGISTRY](id)`, so a bare
+     * `appendInexistentScriptButtons(...)` in a script body resolves to that
+     * script's own binding.
+     *
+     * An earlier version of this test read the **published global of the same
+     * name** — the shared surface — and both writes landed under `first`. That
+     * is not a bug in the writers; it is the thing `MEMBER_KINDS`'s `identity`
+     * classification exists to say, and the test was reaching past it to the one
+     * surface that cannot answer the question.
+     */
+    const append = registry(scriptId)['appendInexistentScriptButtons'] as
+      (buttons: unknown) => void
+    // One argument, exactly as MVU's bundle calls it.
+    append([{ name: label, visible: false }])
+  }
+
+  const writes = scope.posted
+    .filter(message => message.type === 'call')
+    .map(message => message as unknown as { method: string, params: Record<string, unknown> })
+    .filter(message => message.method === 'replaceScriptButtons')
+
+  assert.equal(writes.length, 2, `expected one write per script: ${JSON.stringify(writes)}`)
+  assert.deepEqual(
+    writes.map(write => write.params['scriptId']),
+    ['first', 'second'],
+    'each script wrote under its own id',
+  )
+  assert.deepEqual(
+    writes.map(write => (write.params['buttons'] as { name: string }[])[0]?.name),
+    ['甲', '乙'],
+  )
 })

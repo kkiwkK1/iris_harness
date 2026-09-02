@@ -29,11 +29,33 @@ export interface OverlayAttempt {
   built: number
   /** The tag names, for the first few, so the report names something concrete. */
   tags: readonly string[]
+  /**
+   * How much text the built subtree contains, trimmed.
+   *
+   * The difference between an interface and a mount point. MVU appends a single
+   * empty `div` to the script frame and hangs its own panel off it later — in
+   * upstream that div also lives in a hidden frame, and nobody was ever meant to
+   * see it. Reporting it would put a permanent line under **every one of the 13
+   * cards that bundle MVU**, saying something true about a thing that is not
+   * wrong.
+   */
+  textLength: number
   /** The frame's own viewport width. */
   viewportWidth: number
   /** The frame's own viewport height. */
   viewportHeight: number
 }
+
+/**
+ * Tags that only exist to be looked at.
+ *
+ * A card can build a visible interface with no text at all — a canvas game, an
+ * SVG dial — so text alone would miss those. These say "intended to be seen"
+ * on their own.
+ */
+const VISUAL_TAGS: ReadonlySet<string> = new Set([
+  'canvas', 'svg', 'img', 'video', 'iframe', 'picture', 'object',
+])
 
 /**
  * Describe a card drawing inside a script frame, or say nothing.
@@ -48,6 +70,29 @@ export interface OverlayAttempt {
  */
 export function describeOverlayAttempt(attempt: OverlayAttempt): string | undefined {
   if (!Number.isFinite(attempt.built) || attempt.built <= 0) return undefined
+
+  /*
+   * **A single empty element is a mount point, not an interface.**
+   *
+   * The first version of this reported any appended element, and on its first
+   * live reading it fired on 爱衣 — because MVU appends one empty `div` to hang
+   * its panel off, exactly as it does upstream, where that div also sits in a
+   * hidden frame nobody sees. So the line was *true* and would have appeared
+   * under **every card that bundles MVU** (13 of them), saying the same thing
+   * about a thing that is not wrong. "Built one div" and "built a whole
+   * application" were the same sentence.
+   *
+   * `RENDER.md`'s own rule: the value of a report depends on what it does not
+   * report. So the gate is a shape rather than a count — text, or something
+   * whose only purpose is to be looked at, or more than one element.
+   *
+   * **Named risk**: a card that builds an interface out of several empty styled
+   * divs and fills them later would be silent here. That shape is not in any
+   * measured card, and it is the cost of not being noise in 13 of them.
+   */
+  const visual = attempt.tags.some(tag => VISUAL_TAGS.has(tag.toLowerCase()))
+  const speaks = attempt.built > 1 || attempt.textLength > 0 || visual
+  if (!speaks) return undefined
 
   const named = attempt.tags.slice(0, 4).join(', ')
   const size = `${String(Math.round(attempt.viewportWidth))}x${String(Math.round(attempt.viewportHeight))}`

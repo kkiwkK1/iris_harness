@@ -16,7 +16,7 @@ test('a script frame that drew nothing says nothing', () => {
    * card forever, and a report that always speaks is one nobody reads.
    */
   assert.equal(
-    describeOverlayAttempt({ built: 0, tags: [], viewportWidth: 0, viewportHeight: 0 }),
+    describeOverlayAttempt({ built: 0, tags: [], textLength: 0, viewportWidth: 0, viewportHeight: 0 }),
     undefined,
   )
 })
@@ -25,6 +25,7 @@ test('a card that built elements is reported, with what it built', () => {
   const line = describeOverlayAttempt({
     built: 3,
     tags: ['div', 'button', 'canvas'],
+    textLength: 40,
     viewportWidth: 0,
     viewportHeight: 0,
   })
@@ -49,6 +50,7 @@ test('the zero viewport is named as one cause, not left to be inferred', () => {
   const line = describeOverlayAttempt({
     built: 1,
     tags: ['div'],
+    textLength: 12,
     viewportWidth: 0,
     viewportHeight: 0,
   })
@@ -64,6 +66,7 @@ test('a frame that does have a viewport does not get the zero explanation', () =
   const line = describeOverlayAttempt({
     built: 2,
     tags: ['div'],
+    textLength: 5,
     viewportWidth: 900,
     viewportHeight: 400,
   })
@@ -76,9 +79,59 @@ test('a frame that does have a viewport does not get the zero explanation', () =
 test('a nonsense count says nothing rather than reporting nonsense', () => {
   for (const built of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {
     assert.equal(
-      describeOverlayAttempt({ built, tags: ['div'], viewportWidth: 0, viewportHeight: 0 }),
+      describeOverlayAttempt({ built, tags: ['div'], textLength: 9, viewportWidth: 0, viewportHeight: 0 }),
       undefined,
       `built=${String(built)}`,
     )
   }
+})
+
+test('a single empty element is a mount point and says nothing', () => {
+  /*
+   * The live reading that forced this gate: on 爱衣 the first version fired,
+   * because MVU appends one empty `div` to hang its panel off — as it does
+   * upstream, where that div also sits in a hidden frame nobody sees.
+   *
+   * The line was **true**, and would have appeared under every one of the 13
+   * cards that bundle MVU, saying the same thing about something that is not
+   * wrong. "Built one div" and "built a whole application" were one sentence.
+   */
+  assert.equal(
+    describeOverlayAttempt({
+      built: 1,
+      tags: ['div'],
+      textLength: 0,
+      viewportWidth: 0,
+      viewportHeight: 0,
+    }),
+    undefined,
+  )
+})
+
+test('one element that is meant to be looked at does speak', () => {
+  /*
+   * Text alone would miss a card that draws with no text — a canvas game, an
+   * SVG dial. These tags say "intended to be seen" on their own.
+   */
+  for (const tag of ['canvas', 'svg', 'img', 'video']) {
+    const line = describeOverlayAttempt({
+      built: 1,
+      tags: [tag],
+      textLength: 0,
+      viewportWidth: 0,
+      viewportHeight: 0,
+    })
+    assert.ok(line !== undefined, `${tag} should be reported`)
+    assert.match(line, new RegExp(tag))
+  }
+})
+
+test('one element with text speaks, and two empty ones speak', () => {
+  assert.ok(describeOverlayAttempt({
+    built: 1, tags: ['div'], textLength: 3, viewportWidth: 0, viewportHeight: 0,
+  }) !== undefined, 'text is an interface')
+
+  assert.ok(describeOverlayAttempt({
+    built: 2, tags: ['div', 'div'], textLength: 0, viewportWidth: 0, viewportHeight: 0,
+  }) !== undefined, 'a structure of more than one element is not a mount point')
 })

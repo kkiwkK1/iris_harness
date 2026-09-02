@@ -741,6 +741,12 @@ function reportBodySummary(run: string, post: (message: FromFrame) => void): voi
       const line = describeOverlayAttempt({
         built: built.length,
         tags: built.map(child => child.tagName.toLowerCase()),
+        /*
+         * Text, so a mount point can be told from an interface. MVU appends one
+         * empty `div` here — as it does upstream, in a frame nobody sees — and
+         * without this the report fired on every card bundling it.
+         */
+        textLength: built.map(child => child.textContent ?? '').join('').trim().length,
         // The frame's own viewport, which is 0×0 for a script frame — the
         // reason every measurement the card takes comes back zero.
         viewportWidth: document.documentElement.clientWidth,

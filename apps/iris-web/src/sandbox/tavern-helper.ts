@@ -425,30 +425,61 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     }))
 
   /**
-   * The script id a button writer was called with.
+   * Which script and which buttons a writer was called about.
    *
-   * Upstream takes it explicitly — `replaceScriptButtons(getScriptId(), [...])`
-   * — and the frame does **not** fall back to this frame's own id when it is
-   * missing. A default would be leniency past upstream, and this project has
-   * already recorded what that buys: a card that works only here, whose author
-   * finds out in real SillyTavern. Worse here than usually, because the thing
-   * defaulted is *which script gets written*.
-   * @param member - named in the refusal.
-   * @param scriptId - the first argument, as the card passed it.
-   * @returns the id.
+   * **Both call shapes are accepted, and that is a correction.** An earlier
+   * version required `(script_id, buttons)` and refused a lone array *by name*,
+   * citing upstream's 3.2.5 changelog example
+   * (`replaceScriptButtons(getScriptId(), [...])`). Then a real card threw an
+   * uncaught refusal, and the caller turned out not to be the card at all:
+   *
+   * ```js
+   * // MagVarUpdate@beta/artifact/bundle.js, fetched from jsdelivr
+   * appendInexistentScriptButtons(ja.map(e => ({ name: e.name, visible: !1 })))
+   * const n = getScriptButtons(); if (n) return void replaceScriptButtons(...)
+   * ```
+   *
+   * **MVU calls both writers with one argument**, and 13 corpus cards bundle
+   * MVU — so the refusal broke every one of them, during setup, with a throw
+   * that killed the rest of MVU's initialisation. The changelog example and
+   * MVU's usage are only both true if upstream accepts either shape, so this
+   * does too.
+   *
+   * The lesson is not "read the changelog harder": the evidence that settled it
+   * was **the bytes that actually run**, and they were not in the card. A member
+   * whose only measured caller is a fetched bundle cannot be verified from the
+   * card corpus at all.
+   * @param member - named in any report.
+   * @param first - either the script id or the buttons.
+   * @param second - the buttons, when the id came first.
+   * @returns the pair, or undefined when it could not be worked out.
    */
-  const requireScriptId = (member: string, scriptId: unknown): string => {
-    if (Array.isArray(scriptId)) {
-      throw new UnsupportedApiError(
-        member,
-        `${member}(script_id, buttons) takes the script id first; it was called with the`
-          + ' button array as its only argument.',
+  const buttonCall = (
+    member: string,
+    first: unknown,
+    second: unknown,
+  ): { scriptId: string, buttons: { name: string, visible: boolean }[] } | undefined => {
+    const oneArgument = Array.isArray(first)
+    const rawButtons = oneArgument ? first : second
+    const id = oneArgument ? host.scriptId() : first
+
+    if (typeof id !== 'string' || id === '') {
+      /*
+       * Reported, not thrown. Upstream's writers return `void` and no card
+       * awaits them — MVU calls this while wiring up — so a throw here does not
+       * surface as "this call was wrong", it surfaces as everything after it
+       * never running. That is exactly what happened.
+       */
+      host.reportGap(
+        `card called ${member} with no usable script id`
+          + (oneArgument ? ' — this body has no entry in the host script list' : '')
+          + ', so the buttons were not stored',
       )
+      return undefined
     }
-    if (typeof scriptId !== 'string' || scriptId === '') {
-      throw new UnsupportedApiError(member, 'The first argument must be a script id.')
-    }
-    return scriptId
+
+    const buttons = readButtons(member, rawButtons)
+    return buttons === undefined ? undefined : { scriptId: id, buttons }
   }
 
   /**
@@ -459,33 +490,47 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
    * one: `visible: false` is the **common** case in the corpus (58 of 89
    * buttons), so a missing field is at least as likely to have meant hidden as
    * shown, and inventing either answer writes a table the card did not ask for.
-   * @param member - named in the refusal.
+   *
+   * **Reports and returns undefined; it does not throw.** These writers return
+   * `void` upstream and nothing awaits them — MVU calls one while wiring up — so
+   * a throw does not read as "that call was malformed", it reads as everything
+   * after the call never happening. A real card produced exactly that: an
+   * uncaught `UnsupportedApiError` during setup, with the rest of MVU's
+   * initialisation silently abandoned behind it.
+   * @param member - named in the report.
    * @param buttons - the candidate table.
-   * @returns the validated table, copied.
+   * @returns the validated table, or undefined when it was refused.
    */
-  const requireButtons = (
+  const readButtons = (
     member: string,
     buttons: unknown,
-  ): { name: string, visible: boolean }[] => {
+  ): { name: string, visible: boolean }[] | undefined => {
     if (!Array.isArray(buttons)) {
-      throw new UnsupportedApiError(member, 'The buttons argument must be an array.')
+      host.reportGap(`card called ${member} without an array of buttons, so nothing was stored`)
+      return undefined
     }
-    return buttons.map((button: unknown, at) => {
+    const table: { name: string, visible: boolean }[] = []
+    for (const [at, button] of buttons.entries()) {
       const row = button as { name?: unknown, visible?: unknown } | null
       if (row === null || typeof row !== 'object') {
-        throw new UnsupportedApiError(member, `buttons[${String(at)}] is not an object.`)
+        host.reportGap(`card called ${member} with buttons[${String(at)}] not an object`)
+        return undefined
       }
       if (typeof row.name !== 'string' || row.name === '') {
-        throw new UnsupportedApiError(member, `buttons[${String(at)}] has no name.`)
+        host.reportGap(`card called ${member} with buttons[${String(at)}] having no name`)
+        return undefined
       }
       if (typeof row.visible !== 'boolean') {
-        throw new UnsupportedApiError(
-          member,
-          `buttons[${String(at)}] ("${row.name}") has no boolean visible; upstream requires it.`,
+        host.reportGap(
+          `card called ${member} with buttons[${String(at)}] ("${row.name}") missing a boolean`
+            + ' visible — upstream requires it, and guessing would store a table the card did'
+            + ' not ask for',
         )
+        return undefined
       }
-      return { name: row.name, visible: row.visible }
-    })
+      table.push({ name: row.name, visible: row.visible })
+    }
+    return table
   }
 
   /**
@@ -506,9 +551,11 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
    * @param scriptId - the script whose table this is.
    * @param buttons - the table to store.
    */
-  const writeButtons = (member: string, scriptId: unknown, buttons: unknown): void => {
-    const id = requireScriptId(member, scriptId)
-    const next = requireButtons(member, buttons)
+  const writeButtons = (
+    member: string,
+    id: string,
+    next: readonly { name: string, visible: boolean }[],
+  ): void => {
     const current = buttonsOf(member, id)
     const same =
       current.length === next.length
@@ -961,8 +1008,10 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * @param scriptId - which script's table, as upstream requires.
      * @param buttons - the whole table to store.
      */
-    replaceScriptButtons: (scriptId: unknown, buttons: unknown): void => {
-      writeButtons('replaceScriptButtons', scriptId, buttons)
+    replaceScriptButtons: (first: unknown, second?: unknown): void => {
+      const call = buttonCall('replaceScriptButtons', first, second)
+      if (call === undefined) return
+      writeButtons('replaceScriptButtons', call.scriptId, call.buttons)
     },
 
     /**
@@ -979,9 +1028,10 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * @param scriptId - which script's table.
      * @param buttons - candidates; those whose names are present are dropped.
      */
-    appendInexistentScriptButtons: (scriptId: unknown, buttons: unknown): void => {
-      const id = requireScriptId('appendInexistentScriptButtons', scriptId)
-      const incoming = requireButtons('appendInexistentScriptButtons', buttons)
+    appendInexistentScriptButtons: (first: unknown, second?: unknown): void => {
+      const call = buttonCall('appendInexistentScriptButtons', first, second)
+      if (call === undefined) return
+      const { scriptId: id, buttons: incoming } = call
       const current = buttonsOf('appendInexistentScriptButtons', id)
       const known = new Set(current.map(button => button.name))
       const added = incoming.filter(button => !known.has(button.name))
@@ -1010,12 +1060,24 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * @param updater - given the current table, returns the new one.
      * @returns a promise when the updater is asynchronous, otherwise undefined.
      */
-    updateScriptButtonsWith: (scriptId: unknown, updater: unknown): unknown => {
+    updateScriptButtonsWith: (first: unknown, second?: unknown): unknown => {
       const member = 'updateScriptButtonsWith'
-      const id = requireScriptId(member, scriptId)
+      /*
+       * Either shape here too, for the same reason as its siblings: the updater
+       * may be the only argument. Resolved before the function check, because
+       * "which of these is the updater" depends on it.
+       */
+      const updater = typeof first === 'function' ? first : second
+      const rawId = typeof first === 'function' ? host.scriptId() : first
       if (typeof updater !== 'function') {
-        throw new UnsupportedApiError(member, 'The second argument must be a function.')
+        host.reportGap(`card called ${member} without an updater function, so nothing was written`)
+        return undefined
       }
+      if (typeof rawId !== 'string' || rawId === '') {
+        host.reportGap(`card called ${member} with no usable script id, so nothing was written`)
+        return undefined
+      }
+      const id = rawId
       const produced = (updater as (current: { name: string, visible: boolean }[]) => unknown)(
         buttonsOf(member, id),
       )
@@ -1027,12 +1089,14 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
        * `instanceof` check would call `requireButtons` on a promise object and
        * refuse a perfectly good async updater.
        */
-      if (typeof (produced as { then?: unknown } | undefined)?.then === 'function') {
-        return (produced as Promise<unknown>).then(resolved => {
-          writeButtons(member, id, resolved)
-        })
+      const store = (value: unknown): void => {
+        const table = readButtons(member, value)
+        if (table !== undefined) writeButtons(member, id, table)
       }
-      writeButtons(member, id, produced)
+      if (typeof (produced as { then?: unknown } | undefined)?.then === 'function') {
+        return (produced as Promise<unknown>).then(store)
+      }
+      store(produced)
       return undefined
     },
     /**

@@ -708,43 +708,77 @@ test('replacing with the table that is already stored writes nothing', () => {
   assert.equal(calls.length, 1, 'a reordered table is a different table')
 })
 
-test('a button writer called with upstream’s old one-argument shape is refused by name', () => {
+test('a button writer accepts the one-argument shape MVU actually uses', () => {
   /*
-   * This member used to take one argument, back when it discarded it. Upstream
-   * takes `(script_id, buttons)`, so a card writing the real call would have
-   * had its script id land in `buttons` — and the refusal has to name the
-   * signature, because the alternative is writing a table under a script id
-   * taken from an array.
+   * **This test asserted the opposite, and the opposite was wrong.**
+   *
+   * It required `(script_id, buttons)` and pinned a refusal of the lone array,
+   * citing upstream's 3.2.5 changelog example. Then a real card threw an
+   * uncaught refusal during setup, and the caller was not the card — it was
+   * MVU's fetched bundle:
+   *
+   *   appendInexistentScriptButtons(ja.map(e => ({ name: e.name, visible: !1 })))
+   *   const n = getScriptButtons(); if (n) return void replaceScriptButtons(...)
+   *
+   * One argument, both writers, and **13 corpus cards bundle MVU** — so the
+   * refusal broke every one of them, and it broke them at wiring-up time with a
+   * throw that abandoned the rest of MVU's initialisation.
+   *
+   * The changelog example and MVU's usage are only both true if upstream takes
+   * either shape. What settled it was the bytes that actually run, and those
+   * were not in the card at all: this member's only measured caller is a fetched
+   * bundle, so no amount of reading the card corpus could have found it.
    */
-  const { api } = surface({
+  const { api, calls } = surface({
+    context: { ...context(), characterId: 'char', scriptButtons: { s1: [] } },
+    scriptId: 's1',
+  })
+
+  const append = api['appendInexistentScriptButtons'] as (...args: unknown[]) => void
+  append([{ name: '开始', visible: false }])
+
+  assert.equal(calls.length, 1, 'the one-argument call must be honoured')
+  assert.deepEqual(calls[0]?.params, {
+    characterId: 'char',
+    // Defaulted to the running script, which is what the omitted argument means.
+    scriptId: 's1',
+    buttons: [{ name: '开始', visible: false }],
+  })
+
+  // And the two-argument form still works, because upstream's own example uses it.
+  const replace = api['replaceScriptButtons'] as (...args: unknown[]) => void
+  replace('s1', [{ name: '结束', visible: true }])
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls[1]?.params['buttons'], [{ name: '结束', visible: true }])
+})
+
+test('a malformed button table is reported, not thrown', () => {
+  /*
+   * `visible: false` is the **common** case — 58 of the corpus's 89 buttons — so
+   * a missing field is at least as likely to have meant hidden as shown, and
+   * inventing either answer stores a table the card did not ask for. So it is
+   * still refused.
+   *
+   * **But it is refused by reporting.** These writers return `void` upstream and
+   * nothing awaits them; a throw does not read as "that call was malformed", it
+   * reads as everything after the call never happening — which is precisely the
+   * failure a real card produced.
+   */
+  const { api, calls, gaps } = surface({
     context: { ...context(), characterId: 'char', scriptButtons: { s1: [] } },
     scriptId: 's1',
   })
   const replace = api['replaceScriptButtons'] as (...args: unknown[]) => void
 
-  assert.throws(
-    () => replace([{ name: 'a', visible: true }]),
-    /script_id, buttons/,
-    'the refusal must name the real signature',
-  )
-})
+  assert.doesNotThrow(() => replace('s1', [{ name: '开始' }]))
+  assert.doesNotThrow(() => replace('s1', [{ visible: true }]))
+  assert.doesNotThrow(() => replace('s1', 'not an array'))
 
-test('a button with no boolean visible is refused rather than defaulted', () => {
-  /*
-   * `visible: false` is the **common** case — 58 of the corpus's 89 buttons — so
-   * a missing field is at least as likely to have meant hidden as shown.
-   * Defaulting it either way stores a table the card did not ask for, and the
-   * card's author would be debugging the bar instead of their call.
-   */
-  const { api } = surface({
-    context: { ...context(), characterId: 'char', scriptButtons: { s1: [] } },
-    scriptId: 's1',
-  })
-  const replace = api['replaceScriptButtons'] as (id: string, buttons: unknown) => void
-
-  assert.throws(() => replace('s1', [{ name: '开始' }]), /visible/)
-  assert.throws(() => replace('s1', [{ visible: true }]), /name/)
-  assert.throws(() => replace('s1', 'not an array'), /array/)
+  assert.equal(calls.length, 0, 'nothing malformed reaches the host')
+  assert.equal(gaps.length, 3, `each refusal is reported once: ${gaps.join(' | ')}`)
+  assert.ok(gaps.some(gap => gap.includes('visible')), gaps.join(' | '))
+  assert.ok(gaps.some(gap => gap.includes('no name')), gaps.join(' | '))
+  assert.ok(gaps.some(gap => gap.includes('array')), gaps.join(' | '))
 })
 
 test('appendInexistent adds only the names that are not already there', () => {
