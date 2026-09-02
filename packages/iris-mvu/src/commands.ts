@@ -196,6 +196,26 @@ export function normalizeCommandPaths(commands: CommandInfo[]): CommandInfo[] {
 }
 
 /**
+ * How many verb calls the reply attempted, understood or not.
+ *
+ * The counterpart of {@link DialectScan.jsonPatchOperations}, and it exists for
+ * the same reason: {@link extractCommands} drops a malformed call silently,
+ * because upstream does. Silence is the correct *behaviour* and a terrible
+ * *signal* — without this number, a reply whose commands were all dropped
+ * reads exactly like a reply that never asked for anything.
+ * @param text - the whole message.
+ * @returns how many `_.verb(` calls were started.
+ */
+export function countVerbAttempts(text: string): number {
+  // A fresh global copy, so a shared lastIndex cannot make this depend on who
+  // scanned last.
+  const scanner = new RegExp(VERB_PATTERN.source, 'g')
+  let count = 0
+  while (scanner.exec(text) !== null) count += 1
+  return count
+}
+
+/**
  * Scan a model reply for variable-update commands.
  * @param text - the whole message; no wrapper tag is required or assumed.
  * @returns the commands in source order. Malformed or wrong-arity matches are

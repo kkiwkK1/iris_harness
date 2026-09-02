@@ -10,7 +10,7 @@
  * @module @iris/mvu/dialects
  */
 
-import { extractCommands, type CommandInfo } from './commands.ts'
+import { countVerbAttempts, extractCommands, type CommandInfo } from './commands.ts'
 import { scanJsonPatch } from './json-patch.ts'
 
 /** What a reply turned out to contain. */
@@ -29,6 +29,14 @@ export interface DialectScan {
   jsonPatchOperations: number
   /** How many commands came from the legacy `_.verb();` dialect. */
   legacyCommands: number
+  /**
+   * How many legacy verb calls the reply started, understood or not.
+   *
+   * Greater than {@link legacyCommands} means the reply asked for something
+   * this could not read — the legacy half of the signal that was missing when
+   * the JSON Patch dialect went unread for a release.
+   */
+  legacyAttempts: number
   /**
    * Anything the reply asked for and this could not read.
    *
@@ -59,6 +67,7 @@ export function scanDialects(text: string): DialectScan {
     jsonPatchBlocks: patch.blocks,
     jsonPatchOperations: patch.operations,
     legacyCommands: legacy.length,
+    legacyAttempts: countVerbAttempts(text),
     rejected: patch.rejected,
   }
 }

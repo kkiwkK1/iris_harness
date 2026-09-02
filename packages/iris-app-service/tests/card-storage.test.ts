@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -258,4 +259,25 @@ test('a host with no store refuses rather than pretending the write landed', asy
     () => fixed.handlers['storage.set']({ characterId: 'aria', key: 'k', value: 'v' }),
     (error: unknown) => (error as { code?: string }).code === 'unsupported',
   )
+})
+
+test('a clear that removes nothing does not create the store file', async (t) => {
+  const fixed = await fixture(t)
+  const file = join(fixed.dir, "card-storage.json")
+
+  // A first run has no store. Whether the file exists is how anyone reading
+  // the profile answers "did a card store something?", so a clear that took
+  // nothing must leave that answer alone.
+  const empty = await fixed.handlers['storage.clear']({ characterId: 'aria' })
+  await fixed.storage.flush()
+  assert.equal(empty.removed, 0)
+  assert.equal(existsSync(file), false, "a no-op clear wrote the store file")
+
+  // The other arm, so the assertion above cannot pass by the store simply
+  // never writing.
+  await fixed.handlers['storage.set']({ characterId: 'aria', key: 'k', value: 'v' })
+  const real = await fixed.handlers['storage.clear']({ characterId: 'aria' })
+  await fixed.storage.flush()
+  assert.equal(real.removed, 1)
+  assert.equal(existsSync(file), true, "a clear that took a key did not persist")
 })

@@ -284,7 +284,11 @@ export class CardStorageStore {
       })
     }
     this.#entries = {}
-    this.#schedule()
+    // Nothing went, so nothing is written. A clear() over an empty store
+    // would otherwise create the file on a first run, and the file existing is
+    // what says "a card stored something" — remove() of a missing key already
+    // declines in the same way.
+    if (reports.length > 0) this.#schedule()
     return reports
   }
 

@@ -655,6 +655,13 @@ export class ChatEntry {
     if (scan.jsonPatchOperations > 0 && scan.commands.length === 0) {
       onReport?.(`MVU: a reply carried ${String(scan.jsonPatchOperations)} <JSONPatch> operation(s) that produced no commands`)
     }
+    // The same signal for the other dialect. Not gated on the command count
+    // being zero: a reply where four calls of five were understood has lost an
+    // update, and upstream loses it in silence. Every drop is worth a line.
+    if (scan.legacyAttempts > scan.legacyCommands) {
+      const dropped = scan.legacyAttempts - scan.legacyCommands
+      onReport?.(`MVU: a reply started ${String(scan.legacyAttempts)} _.verb() call(s) and ${String(dropped)} could not be read`)
+    }
     const result = applyCommands(scan.commands, this.baselineFor(turn))
     for (const failure of result.failures) onReport?.(`MVU: ${failure.reason}`)
     this.variables.replaceVariables(
