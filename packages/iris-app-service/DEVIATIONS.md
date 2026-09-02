@@ -405,3 +405,47 @@ Reachability is also **measured absence, not structural impossibility**: it was
 computed from the call arguments present in the card's current source (five
 literals and one half-dynamic `renderEntry("人物_" + ch.name)`, whose prefix is
 open-ended). One edited line in the card changes the set.
+
+---
+
+## 7. A script's runtime buttons are stored beside the installation, not in the card
+
+**Upstream.** `replaceScriptButtons` (`JS-Slash-Runner/src/function/script.ts:73`)
+calls no save of its own — it assigns `script.button.buttons` and returns. What
+persists it is a **deep watcher** on the character settings store
+(`store/settings/character.ts:150`), which writes the character card
+*immediately*: 「酒馆经常读取角色卡数据, 所以这里需要立即保存」. So on
+SillyTavern, a script rearranging its own panel edits the card file on disk.
+
+This is the identical mechanism to §1, and it caught the same way: the write path
+reads as pure assignment, and only the watcher makes it a file write. §1 records
+that reading `script.ts` alone will miss it. It nearly did again.
+
+**Iris.** The card's button table is a **seed**. A `replaceScriptButtons` write
+becomes an override in `<profile>/script-buttons.json`, partitioned by character
+and then by script, and the snapshot hands out the two merged — the override
+replacing the declaration **whole**, because upstream's writer assigns the array
+it is given, so a button the script dropped is meant to be gone. Merging by name
+would resurrect exactly what the script removed.
+
+**Why, and why the same answer as §1.** The standing rule is that runtime state
+is not written into a shared card file. The deciding factor was consistency
+rather than the rule alone: `script.data` and the button table are two runtime
+states of the same script, and splitting them across two persistence schemes
+would leave nobody able to say which kind of state lives where.
+
+**The cost, stated rather than left to be found.** A card exported back to a real
+SillyTavern carries the buttons it **declared**, not the ones a script
+rearranged. A user who moves a card across finds the panel as its author shipped
+it. That follows from seed semantics and is the price of not touching the shared
+file — the same trade §1 made for `script.data`, with the same shape of loss.
+
+**Not implemented, deliberately.** `appendInexistentScriptButtons` and
+`updateScriptButtonsWith` get no arms: upstream builds the first out of
+`replaceScriptButtons` (`script.ts:110`, deduplicating by name then appending)
+and the second takes a **function**, which cannot cross this boundary. Both are
+composed in the façade, on the `updateVariablesWith` precedent.
+
+**What would overturn this.** A card that expects its rearranged panel to
+survive an export — or a user reporting exactly that. The reports would look like
+"my buttons reset when I moved the card", which is the sentence to recognise.

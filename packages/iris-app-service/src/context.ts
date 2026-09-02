@@ -23,6 +23,8 @@ import type { CharacterSummary, ScriptContext } from '@iris/protocol'
 import { extractScripts } from '@iris/script'
 
 import type { SillyTavernMessage } from '@iris/persistence'
+
+import { effectiveButtons } from './script-buttons.ts'
 import type { ScopeBackend } from '@iris/variables'
 
 import type { ChatEntry } from './entry.ts'
@@ -88,14 +90,22 @@ export function assertStorable(value: unknown, path = 'value'): void {
  * @param entry - the open conversation.
  * @returns buttons by script id; scripts declaring none are absent.
  */
-function scriptButtonsOf(entry: ChatEntry): Record<string, { name: string, visible: boolean }[]> {
+function scriptButtonsOf(
+  entry: ChatEntry,
+  overrides: Record<string, { name: string, visible: boolean }[]> = {},
+): Record<string, { name: string, visible: boolean }[]> {
   const byScript: Record<string, { name: string, visible: boolean }[]> = {}
   for (const declared of entry.card === undefined ? [] : extractScripts(entry.card).scripts) {
-    if (declared.buttons === undefined) continue
+    // The card's declaration is the seed; a table the script rewrote at runtime
+    // replaces it **whole**. Not merged by name: upstream's writer assigns the
+    // array it is given, so a button the script dropped is meant to be gone, and
+    // merging the declaration back in would resurrect exactly what it removed.
+    const effective = effectiveButtons(declared.buttons, overrides[declared.id])
+    if (effective === undefined) continue
     // Copied, like everything else a frame is handed: upstream's own
     // `_getScriptButtons` returns `klona(script.button.buttons)`, so a card
     // scribbling on the array it received changes nothing here either.
-    byScript[declared.id] = declared.buttons.map(button => ({ ...button }))
+    byScript[declared.id] = effective
   }
   return byScript
 }
@@ -195,6 +205,14 @@ export function buildCardContext(
     characters: CharacterSummary[]
     /** The floor a message frame belongs to; absent for a script frame. */
     messageId?: number
+    /**
+     * Button tables scripts rewrote at runtime, by script id.
+     *
+     * Read by the caller rather than here, because this function is synchronous
+     * and the store is not. Absent means every script shows what its card
+     * declares.
+     */
+    scriptButtons?: Record<string, { name: string, visible: boolean }[]>
     /** Reports a growth alarm; see {@link variableLayersOf}. */
     onReport?: (message: string) => void
   },
@@ -224,7 +242,7 @@ export function buildCardContext(
     // time, because a card may rebind its book mid-chat and the frame answers
     // `getCharWorldbookNames('current')` from this field.
     charWorldbooks: charWorldbookNames(entry.card),
-    scriptButtons: scriptButtonsOf(entry),
+    scriptButtons: scriptButtonsOf(entry, extras.scriptButtons),
   }
 }
 

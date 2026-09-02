@@ -800,6 +800,33 @@ class InMemoryClient implements FakeClient {
         throw new FakeRpcError('not-found', `no world book named ${name}`)
       }
 
+      case 'script.replaceScriptButtons': {
+        /*
+         * Refused, and the reason is specific rather than "not built yet".
+         *
+         * The whole observable effect of this write is that the **next**
+         * `script.context` snapshot carries the new table — that is how a card
+         * reads its own buttons back, and how the button bar learns what to
+         * draw. This fake refuses `script.context`, so there is no snapshot here
+         * for the write to show up in.
+         *
+         * Accepting it would therefore report success for a change nothing in
+         * this package can ever reflect: the card's `getScriptButtons` would
+         * keep answering whatever it answered before, and the mismatch would
+         * look like a bug in the card. That is the exact failure the fake exists
+         * to prevent, stated in its own header — an apparent persist that a real
+         * host would not have lost.
+         *
+         * The arm to write is the one after `script.context` is modelled, and it
+         * belongs on the same store the snapshot is built from, not beside it.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          'the fake client cannot persist script buttons: their only readable effect is'
+            + ' the next script.context snapshot, which this client refuses',
+        )
+      }
+
       default: {
         // Exhaustiveness guard: a method added to the protocol without an arm
         // here becomes a type error rather than a runtime surprise.

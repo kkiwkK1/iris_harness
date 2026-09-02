@@ -27,6 +27,7 @@ import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
+import { ScriptButtonStore } from './script-buttons.ts'
 import { WorldbookStore } from './worldbooks.ts'
 import { openGlobalScope } from './context.ts'
 import { serveSandboxAsset } from './sandbox-assets.ts'
@@ -364,6 +365,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Kept apart from `script-policy.json` because they answer to different
   // owners: the policy file is the user's decisions, this is data cards wrote.
   const extensionSettings = extensionSettingsStore
+  // Runtime button tables, beside the installation rather than in the card —
+  // the same decision as `script-variables.json`, and for the same reason.
+  const scriptButtons = new ScriptButtonStore(
+    paths.scriptButtons, error => { ctx.logger.warn(error.message) })
   const connections = new ConnectionStore(paths.connections)
 
   // The folders are created on first write, not on boot: a host that has never
@@ -378,6 +383,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     settings,
     scripts,
     extensionSettings,
+    scriptButtons,
     worldbooks,
     connections,
     scriptVariables,
@@ -445,6 +451,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('script.generate', handlers['script.generate']),
       ctx.irisRpc.register('script.setChatMessages', handlers['script.setChatMessages']),
       ctx.irisRpc.register('script.evalTemplate', handlers['script.evalTemplate']),
+      ctx.irisRpc.register('script.replaceScriptButtons', handlers['script.replaceScriptButtons']),
       ctx.irisRpc.register('script.getPreset', handlers['script.getPreset']),
       ctx.irisRpc.register('script.createChatMessages', handlers['script.createChatMessages']),
       ctx.irisRpc.register('script.deleteChatMessages', handlers['script.deleteChatMessages']),

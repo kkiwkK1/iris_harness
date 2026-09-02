@@ -34,6 +34,7 @@ import { ConnectionStore } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
+import { ScriptButtonStore } from './script-buttons.ts'
 import { charWorldbookNames, WorldbookStore } from './worldbooks.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
@@ -87,6 +88,13 @@ export interface AppServiceOptions {
    * empty partition, which is what "not configured" should look like.
    */
   extensionSettings?: ExtensionSettingsStore
+  /**
+   * Button tables a script rewrote at runtime.
+   *
+   * Optional like the other stores: absent means every script shows the buttons
+   * its card declared, which is the correct first-run state anyway.
+   */
+  scriptButtons?: ScriptButtonStore
   /**
    * The named world books beside the installation.
    *
@@ -169,11 +177,12 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
       extensionSettings?: ExtensionSettingsStore
+      scriptButtons?: ScriptButtonStore
       worldbooks?: WorldbookStore
       connections?: ConnectionStore
       templates?: TemplateOptions
@@ -203,6 +212,7 @@ export class IrisAppService {
       fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
       ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
+      ...options.scriptButtons === undefined ? {} : { scriptButtons: options.scriptButtons },
       ...options.worldbooks === undefined ? {} : { worldbooks: options.worldbooks },
       ...options.connections === undefined ? {} : { connections: options.connections },
       ...options.templates === undefined ? {} : { templates: options.templates },
@@ -396,6 +406,32 @@ export class IrisAppService {
         }
 
         return { text: result.text }
+      },
+
+      'script.replaceScriptButtons': async ({ characterId, scriptId, buttons }) => {
+        // Refused rather than answered when there is nowhere to keep it. A
+        // script told its rearrangement succeeded, on a host that dropped it,
+        // would rebuild the panel from a table that never changed and have
+        // nothing to look at.
+        const store = this.#options.scriptButtons
+        if (store === undefined) {
+          throw new AppError(
+            'unsupported',
+            'script.replaceScriptButtons needs a button store, which this host is running without',
+          )
+        }
+
+        // The card must declare the script. Writing an override for an id the
+        // card does not have would create state nothing can ever read — the
+        // snapshot only carries declared ids — and would look like it worked.
+        const card = await library.load(characterId)
+        const declared = extractScripts(card).scripts.find(script => script.id === scriptId)
+        if (declared === undefined) {
+          throw notFound(`character "${characterId}" declares no script "${scriptId}"`)
+        }
+
+        await store.set(characterId, scriptId, buttons)
+        return { buttons: await store.get(characterId, scriptId) ?? [] }
       },
 
       'script.getPreset': async ({ name }) => {
@@ -651,6 +687,7 @@ export class IrisAppService {
         // that includes `documentGranted` — a grant the user gave to one card
         // would silently apply to another.
         await this.#options.extensionSettings?.forget(characterId)
+        await this.#options.scriptButtons?.forget(characterId)
         await this.#options.scriptVariables?.forget(characterId)
         await scripts?.forget(characterId)
         return {}
@@ -776,6 +813,9 @@ export class IrisAppService {
             // The asking card's partition, never the whole store: one card
             // reading another's settings would defeat the per-card grant.
             extensionSettings: await this.#options.extensionSettings?.get(characterId) ?? {},
+            // Overrides for this card only, for the same reason: a per-card
+            // partition read whole would hand one card another's panel state.
+            scriptButtons: await this.#options.scriptButtons?.all(characterId) ?? {},
             characters: await library.list(),
             ...messageId === undefined ? {} : { messageId },
             onReport: message => { this.#report(new Error(`script.context: ${message}`)) },

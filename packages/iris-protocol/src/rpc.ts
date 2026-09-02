@@ -453,6 +453,28 @@ export const requestSchemas = {
     chatId: z.string().min(1),
     content: z.string().max(200_000),
   }),
+  /**
+   * Replace one script's button table.
+   *
+   * Upstream's `replaceScriptButtons`. Whole-table: a button left out of
+   * `buttons` is gone, because upstream's writer assigns the array it is given
+   * rather than merging into it.
+   *
+   * `appendInexistentScriptButtons` is **not** a separate method here — upstream
+   * builds it out of this one (`script.ts:110` → `_updateScriptButtonsWith` →
+   * `_replaceScriptButtons`, deduplicating by name and appending), and
+   * `updateScriptButtonsWith` takes a function, which cannot cross this
+   * boundary. Both stay in the façade, composed from this.
+   */
+  'script.replaceScriptButtons': z.object({
+    characterId: z.string().min(1),
+    scriptId: z.string().min(1),
+    buttons: z.array(z.object({
+      name: z.string().min(1).max(200),
+      /** Required, never defaulted: upstream's type has no default either. */
+      visible: z.boolean(),
+    })).max(200),
+  }),
   'script.saveChat': z.object({ chatId: z.string().min(1) }),
   /**
    * Inject a script's text into the prompt.
@@ -800,6 +822,8 @@ export interface RpcResponseMap {
     prompts: { id: string, enabled: boolean, role?: string, content?: string }[]
   }
   'script.evalTemplate': { text: string }
+  /** The table as stored, so a writer sees what its replace produced. */
+  'script.replaceScriptButtons': { buttons: { name: string, visible: boolean }[] }
   'script.saveChat': Record<string, never>
   'script.setExtensionPrompt': Record<string, never>
   /** The settings as stored, so a card can see what survived. */

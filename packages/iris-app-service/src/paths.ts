@@ -151,6 +151,14 @@ export interface ProfilePaths {
    */
   scriptVariables: string
   /**
+   * Button tables a script rewrote at runtime.
+   *
+   * Beside the installation rather than in the card, for the same reason
+   * `scriptVariables` is — see `script-buttons.ts`. Upstream's writer edits the
+   * card file through a deep watcher; this host does not.
+   */
+  scriptButtons: string
+  /**
    * Remote script bundles the host has fetched on a card's behalf.
    *
    * Not profile-specific in principle — the same jsDelivr URL is the same bytes
@@ -197,6 +205,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     scriptPolicy: join(root, 'script-policy.json'),
     extensionSettings: join(root, 'extension-settings.json'),
     scriptVariables: join(root, 'script-variables.json'),
+    scriptButtons: join(root, 'script-buttons.json'),
     scriptBundles: join(root, 'script-bundles'),
     connections: join(root, 'connections.json'),
   }
