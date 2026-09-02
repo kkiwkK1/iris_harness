@@ -24,7 +24,7 @@ import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
-import { overflowsViewport } from './frame-height.ts'
+import { describeHeightSources, overflowsViewport } from './frame-height.ts'
 
 /**
  * Tell the shell the frame is usable — but not before its libraries are.
@@ -140,6 +140,20 @@ function token(): string {
  */
 function reportHeight(run: string, post: (message: FromFrame) => void): void {
   let scheduled = false
+  /*
+   * Counters, because they answer a question the measures cannot.
+   *
+   * A fix that added a mutation observer did not make the frame grow, and two
+   * explanations fitted: the observer never fires, or it fires and the quantity
+   * is pinned. Those need different repairs and look identical from outside an
+   * opaque origin. A count separates them in one reading.
+   */
+  let resizes = 0
+  let mutations = 0
+  /** The last line reported, so a still card reports nothing. */
+  let lastReported = ''
+  /** A cap, so a busy card cannot turn the panel into a log. */
+  let reportsLeft = 8
   const send = (): void => {
     scheduled = false
 
@@ -196,6 +210,42 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
      * Turned on only when it is needed, so a card that fits still lays out
      * against no scrollbar, which is the reason the `hidden` was copied.
      */
+    /*
+     * Every height this frame can see, reported when it changes.
+     *
+     * Diagnostic, and it stays: "the card is taller than its frame and the
+     * frame does not know" is a fault this project has now hit twice, from two
+     * different causes, and both times the missing thing was **which measure
+     * moved**. Capped and change-gated, so a still card is silent and a busy
+     * one cannot flood the panel.
+     */
+    if (reportsLeft > 0) {
+      const range = document.createRange()
+      range.selectNodeContents(document.body)
+      const bodyTop = document.body.getBoundingClientRect().top
+      let childBottom = 0
+      for (const child of document.body.children) {
+        const bottom = child.getBoundingClientRect().bottom - bodyTop
+        if (bottom > childBottom) childBottom = bottom
+      }
+      const line = describeHeightSources({
+        resizes,
+        mutations,
+        bodyScroll: pixels,
+        docScroll: document.documentElement.scrollHeight,
+        docClient: document.documentElement.clientHeight,
+        bodyRect: document.body.getBoundingClientRect().height,
+        rangeHeight: range.getBoundingClientRect().height,
+        childBottom,
+      })
+      range.detach()
+      if (line !== lastReported) {
+        lastReported = line
+        reportsLeft -= 1
+        post({ iris: run, type: 'note', scriptId: undefined, message: line })
+      }
+    }
+
     const wanted = overflowsViewport(pixels, document.documentElement.clientHeight)
       ? 'auto'
       : ''
@@ -236,8 +286,14 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
    * mutating a hundred nodes still measures once per animation frame — the cost
    * is bounded by the frame rate, not by how busy the card is.
    */
-  new ResizeObserver(schedule).observe(document.body)
-  new MutationObserver(schedule).observe(document.body, {
+  new ResizeObserver(() => {
+    resizes += 1
+    schedule()
+  }).observe(document.body)
+  new MutationObserver(() => {
+    mutations += 1
+    schedule()
+  }).observe(document.body, {
     childList: true,
     subtree: true,
     // Attributes and text too: a card that switches screens by toggling a class

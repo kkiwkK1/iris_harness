@@ -7,7 +7,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { OVERFLOW_SLACK_PX, overflowsViewport } from '../src/sandbox/frame-height.ts'
+import {
+  OVERFLOW_SLACK_PX,
+  describeHeightSources,
+  overflowsViewport,
+} from '../src/sandbox/frame-height.ts'
 
 test('content past the viewport makes the frame scrollable', () => {
   /*
@@ -62,4 +66,52 @@ test('a measurement that is not a number decides nothing', () => {
   assert.equal(overflowsViewport(Number.NaN, 524), false)
   assert.equal(overflowsViewport(1200, Number.NaN), false)
   assert.equal(overflowsViewport(Number.POSITIVE_INFINITY, 524), false)
+})
+
+test('the height report names every source, so a reading cannot be ambiguous', () => {
+  const line = describeHeightSources({
+    resizes: 3,
+    mutations: 11,
+    bodyScroll: 807,
+    docScroll: 807,
+    docClient: 807,
+    bodyRect: 807,
+    rangeHeight: 1480,
+    childBottom: 1502,
+    })
+
+  /*
+   * Every measure appears, because the point of this line is *which one moved*.
+   * A report that showed only the one the frame currently uses would say
+   * "807, still 807" through exactly the failure it exists to diagnose.
+   */
+  for (const expected of ['viewport 807', 'body.scrollHeight 807', 'doc.scrollHeight 807',
+    'body rect 807', 'range 1480', 'child bottom 1502']) {
+    assert.ok(line.includes(expected), `missing ${expected} in: ${line}`)
+  }
+
+  /*
+   * And the counters, which answer the question no measure can: whether the
+   * observers woke at all. "Never fired" and "fired and read a pinned number"
+   * are different repairs and identical from outside an opaque origin.
+   */
+  assert.ok(line.includes('fired resize 3 mutation 11'), line)
+})
+
+test('a measure that is not a number is reported as unknown, not as zero', () => {
+  // Zero is a height. `?` is the absence of one, and the difference matters in a
+  // report whose whole job is to say which number is wrong.
+  const line = describeHeightSources({
+    resizes: 0,
+    mutations: 0,
+    bodyScroll: Number.NaN,
+    docScroll: 0,
+    docClient: 0,
+    bodyRect: 0,
+    rangeHeight: Number.POSITIVE_INFINITY,
+    childBottom: 0,
+  })
+  assert.ok(line.includes('body.scrollHeight ?'), line)
+  assert.ok(line.includes('range ?'), line)
+  assert.ok(line.includes('doc.scrollHeight 0'), line)
 })

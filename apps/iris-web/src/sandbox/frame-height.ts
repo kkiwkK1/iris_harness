@@ -45,6 +45,60 @@ export const OVERFLOW_SLACK_PX = 2
  * @param viewport - the frame's own viewport, `documentElement.clientHeight`.
  * @returns whether the frame should allow itself to scroll.
  */
+/** Every candidate measure of "how tall is this card", read at one moment. */
+export interface HeightSources {
+  /** How many times the resize observer has fired. */
+  resizes: number
+  /** How many times the mutation observer has fired. */
+  mutations: number
+  /** `document.body.scrollHeight` — what the frame currently reports. */
+  bodyScroll: number
+  /** `document.documentElement.scrollHeight`. */
+  docScroll: number
+  /** The frame's own viewport. */
+  docClient: number
+  /** `body.getBoundingClientRect().height` — the box, not its content. */
+  bodyRect: number
+  /** A range over the body's contents, which ignores the body's own box. */
+  rangeHeight: number
+  /** The furthest bottom edge among the body's direct children. */
+  childBottom: number
+}
+
+/**
+ * One line naming every height this frame can see, and which of them moved.
+ *
+ * Built because a fix failed and two explanations fitted equally well. The
+ * height reporter gained a mutation observer, and the frame still did not grow:
+ * either the observer never fires, or it fires and the quantity it measures is
+ * pinned — `body.scrollHeight` cannot exceed the frame when `html,body` are
+ * `height:100%` **and** the card clips its own overflow in a descendant. A
+ * third reading is worse than both: the card may genuinely have no measurable
+ * content height from outside, because it lays out against the viewport it is
+ * given and scrolls internally.
+ *
+ * Those are three different repairs, and no amount of reading the code from
+ * outside separates them — an opaque origin means the parent cannot reach
+ * `contentDocument`. So the frame says what it sees, and the counters are as
+ * important as the measures: they are what distinguishes "never woke up" from
+ * "woke up and read a pinned number".
+ * @param sources - the measures, read at one moment.
+ * @returns a compact line for the panel.
+ */
+export function describeHeightSources(sources: HeightSources): string {
+  const round = (value: number): string =>
+    Number.isFinite(value) ? String(Math.round(value)) : '?'
+  return (
+    `height sources: viewport ${round(sources.docClient)}`
+    + ` | body.scrollHeight ${round(sources.bodyScroll)}`
+    + ` | doc.scrollHeight ${round(sources.docScroll)}`
+    + ` | body rect ${round(sources.bodyRect)}`
+    + ` | range ${round(sources.rangeHeight)}`
+    + ` | child bottom ${round(sources.childBottom)}`
+    + ` | fired resize ${String(sources.resizes)} mutation ${String(sources.mutations)}`
+  )
+}
+
 export function overflowsViewport(content: number, viewport: number): boolean {
   if (!Number.isFinite(content) || !Number.isFinite(viewport)) return false
   if (viewport <= 0) return false
