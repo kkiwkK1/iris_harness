@@ -11,12 +11,12 @@
  * the chat is in the foreground. A message frame is another frame of the same
  * card, and this is where that sentence becomes a lifetime.
  *
- * **What it does not yet protect against.** Iris's reading view is not windowed
- * — `ChatPane.tsx` maps every message — so on a long conversation every floor is
- * mounted and the anchor holds nothing back. `render-window.ts` is the interim
- * limit until the view is windowed, which is a separate project on purpose: a
- * rewrite of the reading view does not belong inside the first cut of this
- * pipeline.
+ * **What bounds it.** The reading view mounts a tail of the conversation
+ * (`reading-window.ts`), so the anchor now holds something back: an unmounted
+ * floor has no frames because nothing built them. Weight is rationed separately
+ * by `frame-budget.ts`, which is why this hook takes a per-instance gate as well
+ * as a mounted/not-mounted one — a floor can be displayed and still be told
+ * there is no room for its interface right now.
  *
  * @module iris-web/app/useMessageInterfaces
  */
@@ -35,8 +35,33 @@ export interface MessageInterfacesInput {
   floor: number
   /** Its text, **after** display regex — see `RENDER.md` on ordering. */
   text: string
-  /** Whether this floor is inside the render window. */
+  /**
+   * Whether a frame may exist for this floor at all.
+   *
+   * Consent and build assets, not room: no grant, or no bootstrap yet, and
+   * nothing can be built for any instance. Distinct from `refusedInstances`
+   * below, which is about there being no room right now for one of them.
+   */
   allowed: boolean
+  /**
+   * Instances the frame budget refused, which build a placeholder instead.
+   *
+   * Separate from `allowed`, which is about consent and build assets — whether
+   * a frame *may* exist at all. This is about whether there is room for it right
+   * now, and it is reversible by the reader.
+   */
+  refusedInstances?: ReadonlySet<number>
+  /**
+   * A stable signature of `refusedInstances`, used as the effect's dependency.
+   *
+   * The set is rebuilt on every plan, so depending on it directly would tear
+   * down and rebuild every frame in the view each time any interface anywhere
+   * changed state — which is the cost this layer exists to ration. The signature
+   * changes only when this floor's own decisions change, and then a rebuild is
+   * exactly right: an interface the reader just opened has to be built, and one
+   * that lost its budget has to go.
+   */
+  gate?: string
   /**
    * Build one frame. Supplied by the caller so this file never touches
    * `runCard`, `window` or the srcdoc — the same seam `card-scripts.ts` uses,
@@ -94,7 +119,9 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
       return undefined
     }
 
+    const refused = input.refusedInstances
     const running = runMessageInterfaces(blocks, input.floor, {
+      ...(refused === undefined ? {} : { allow: (instance: number) => !refused.has(instance) }),
       start: (...args) => callbacks.current.start(...args),
       attach: (...args) => {
         callbacks.current.attach(...args)
@@ -135,7 +162,13 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
      * destroys and rebuilds on the same events, and carrying a frame across a
      * swipe would show one swipe's panel over another's content.
      */
-  }, [input.floor, input.text, input.allowed])
+    /*
+     * `input.gate` and not `input.refusedInstances`: the set's identity changes
+     * on every plan, and the signature changes only when this floor's own
+     * decisions do. See the field's own note — the difference is a rebuild of
+     * every frame in the view versus a rebuild of the ones that changed.
+     */
+  }, [input.floor, input.text, input.allowed, input.gate])
 
   return states
 }

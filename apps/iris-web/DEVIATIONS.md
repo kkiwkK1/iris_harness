@@ -522,3 +522,92 @@ The comment above `helperNames` had asserted the opposite — "both carry the sa
 behaviour, so which one wins does not change what a card sees" — and had been
 wrong for as long as it had been written down. It now records why the claim
 holds rather than asserting that it does.
+
+## 15. The frame budget: layer ③ of the reading window
+
+**Compatibility ledger — upstream has no equivalent, and its absence is the bug
+this replaces.** Upstream's own valve is `chat_truncation`, whose default is `0`
+(meaning *all*), so upstream ships with no limit at all and a long chat builds a
+frame per interface floor.
+
+`frame-budget.ts` holds the figures, each a named constant citing
+`WINDOWING.md`, rounded on purpose — the measurements behind them drift with
+every build, and exact bytes in code go stale before they go wrong.
+
+| constant | value | source |
+| --- | --- | --- |
+| `FRAME_OVERHEAD_BYTES` | 39 KiB | bootstrap + snapshot + srcdoc wrapper, all inlined and uncacheable |
+| `FRAME_BUDGET_BYTES` | 2 MiB | `RENDER.md` |
+| `FRAME_COUNT_LIMIT` | 20 | below the ≈53-frame point where overhead alone eats the budget |
+
+The count gate is not a precaution. At 2 MiB / 39 KiB ≈ 53 frames the fixed
+overhead consumes the entire budget and not one byte of card content fits, so a
+pure byte budget degrades into "all scaffolding, no content" exactly when there
+are most frames. A test pins the *relationship* rather than the numbers: change
+either constant so the gate rises above that point and it fails.
+
+### Three claims on the budget, settled in this order
+
+1. **What the reader opted into**, unconditionally. The budget is a default, not
+   a ceiling.
+2. **What is already rendering**, which growth may never revoke — the layer's one
+   hard invariant. Budget returns only when the window *shrinks*.
+3. **Everything else**, newest floor first, until bytes or count run out.
+
+A refusal does not stop the walk. One heavy interface early on would otherwise
+close the budget for every smaller one behind it, which reads as "the rest of
+this chat is broken" rather than "this one did not fit".
+
+### Deviations from `WINDOWING.md`'s own text, and why
+
+**The unit is a frame, not a floor.** A floor can carry several interface
+blocks, and the count gate counts frames. Keys are `floor:instance`.
+
+**No AI/user distinction in the accounting.** The design says the budget counts
+AI floors only, resting on a measured 0 user rows among 189 interface floors
+with nothing enforcing it. Charging the *actual* interface bytes of whatever
+builds a frame makes the distinction unnecessary — user rows contribute nothing
+because they carry no interfaces, which is the same result with no
+un-mechanised premise. Two things now hold the line instead: `Message.tsx`
+routes only `role === 'assistant'` through `MessageInterfaces`, so a user row
+has no path to a frame at all; and the plan reports any user row that carries
+one, which fires if that routing ever changes.
+
+**Hysteresis is not built.** The design proposes a half-screen band so scrolling
+across the boundary does not build and tear frames. Layer ② grows the window by
+an explicit button and never shrinks it, so there is no boundary to oscillate
+across — the mechanism would be dead code guarding a case the shell cannot
+reach. It becomes necessary the day the window follows the scroll position, and
+`WINDOWING.md` §五之二 holds the figure for then.
+
+### Bytes, not code units
+
+`String.length` counts UTF-16 code units. On this corpus — Chinese — that is
+about a third of the bytes the browser inlines, so a budget built on it
+undercounts by 3× on exactly the data it exists to bound. `encodedBytes` in
+`message-frames.ts` is the one definition, shared with the reader-facing
+"KB of markup" figure so the panel's number and the budget's number are the same
+quantity. **Both were `String.length` before this layer was built**, which is
+why the interface state readout has been quietly reporting a third of the truth.
+
+### The placeholder is a main surface, not an error caption
+
+[WINDOWING.md §五之二] a reader scrolling back sees a placeholder more often
+than a live panel. So `over-budget` is its own `InterfacePhase` rather than a
+`never-started` with a reason: `never-started` is a **failure**, this is a
+**decision**, it is reversible, and the reader can reverse it. Folding a policy
+into a failure bucket is how "we chose not to" comes to read as "it broke".
+
+It says three things and offers the third: there **is** an interface here, the
+budget is why it did not render, and *Render this one* renders it — for that one
+only, taking nothing from any other. Deliberately **not** a fallback to the raw
+code block: that is what upstream does with rendering off, and it pours a screen
+of HTML into the prose, which is noise that also reads as a broken card.
+
+### `render-window.ts` is deleted
+
+Acceptance item 5. It counted floors back from the end as a stopgap for an
+unwindowed view, and it answered the same question this layer answers. Two
+windows stacked are not safer — they give "why has this floor no interface?" two
+answers. The count is now layer ②'s (which floors mount at all) and the weight
+is layer ③'s.

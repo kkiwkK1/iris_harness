@@ -31,7 +31,7 @@ import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { claimFrontendBlocks, splitAroundInterfaces } from '../sandbox/frontend-blocks.ts'
 import { describeInterface, type InterfaceState } from '../sandbox/message-frames.ts'
-import { floorsToRender } from '../sandbox/render-window.ts'
+import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
 
@@ -99,7 +99,6 @@ export function MessageInterfaces({
   const chatId = useIris(state => state.chatId)
   const characterId = useIris(state => state.view?.characterId)
   const consent = useIris(state => state.scriptsAllowed)
-  const messageCount = useIris(state => state.view?.messages.length ?? 0)
   const store = useIrisStore()
 
   /*
@@ -168,19 +167,21 @@ export function MessageInterfaces({
   }, [characterId, consent, chatId, store])
 
   /*
-   * The interim window, until the reading view is windowed. Every message is
-   * mounted today, so without this a long conversation would build a frame for
-   * every floor that has one.
+   * How much of the budget this floor got.
+   *
+   * This replaced a depth-counting stopgap that stood in for a windowed reading
+   * view. Both existed to answer "why has this floor no interface?" and two
+   * answers to that is worse than either — the count is now layer ②'s job
+   * (which floors are mounted at all) and the weight is this.
    */
-  const allowed = floorsToRender(
-    Array.from({ length: messageCount }, (_unused, id) => ({ id })),
-    { depth: 0 },
-  ).has(floor)
+  const { refusedInstances, gate, open } = useFloorGate(floor)
 
   const states = useMessageInterfaces({
     floor,
     text,
-    allowed: allowed && ready !== undefined && chatId !== undefined,
+    refusedInstances,
+    gate,
+    allowed: ready !== undefined && chatId !== undefined,
     start: input => {
       const current = ready
       if (current === undefined || chatId === undefined) {
@@ -318,6 +319,9 @@ export function MessageInterfaces({
             instance={segment.instance}
             state={byInstance.get(segment.instance)}
             adopt={node => slots.current.set(segment.instance, node)}
+            onOpen={() => {
+              open(segment.instance)
+            }}
           />
         ),
       )}
@@ -338,15 +342,34 @@ function InterfaceSlot({
   instance,
   state,
   adopt,
+  onOpen,
 }: {
   instance: number
   state: InterfaceState | undefined
   adopt: (node: HTMLDivElement | null) => void
+  onOpen: () => void
 }): ReactElement {
   return (
     <div className="iris-interfaces__slot" data-instance={instance}>
       <div ref={adopt} />
-      {state === undefined || state.phase === 'live' ? null : (
+      {state?.phase === 'over-budget' ? (
+        /*
+         * The placeholder, and the button is the part that matters. Without it
+         * the budget would be a ceiling; with it the budget is a default and the
+         * reader can always reach the one interface they actually want, paying
+         * for that one only.
+         *
+         * Deliberately not a fallback to the raw code block. That is what
+         * upstream does with rendering off, and it pours a screen of HTML into
+         * the prose — noise that also reads as the card having broken.
+         */
+        <p className="iris-interfaces__over">
+          <span className="iris-interfaces__state">{describeInterface(state)}</span>
+          <button type="button" className="iris-interfaces__open" onClick={onOpen}>
+            Render this one
+          </button>
+        </p>
+      ) : state === undefined || state.phase === 'live' ? null : (
         /*
          * Only when it is not live. A working interface is its own evidence — it
          * is on screen — and a caption under every one would be noise. A frame

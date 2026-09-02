@@ -30,10 +30,12 @@ test('zero means everything, matching both upstream and the frame window', () =>
   /*
    * Upstream's `power_user.chat_truncation || Number.MAX_SAFE_INTEGER`
    * (`script.js:1477`): dragging the slider to zero switches truncation *off*.
-   * `render-window.ts` already uses the same convention for the frame window.
+   * The frame layer used to spell a depth the same way, in `render-window.ts`;
+   * that file is gone and the frame layer rations bytes instead, so this is now
+   * the only window in the product with a count.
    *
-   * The two must agree. One number meaning "everything" in one window and
-   * "nothing" in the other, inside one product, is a defect lying in wait for
+   * The convention still has to be right here. One number meaning "everything"
+   * in one place and "nothing" in another, inside one product, is a defect lying in wait for
    * whoever reads only one of them — and the reading of it that produces an
    * empty screen looks like a crash rather than a setting.
    */

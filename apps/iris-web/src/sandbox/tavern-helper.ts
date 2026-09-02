@@ -750,15 +750,38 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      */
 
     /**
-     * The buttons this script has published — none, because none can be.
-     * @returns an empty list.
+     * The buttons this script has published.
+     *
+     * Answered from the pushed snapshot, synchronously, because upstream's is
+     * synchronous — `getScriptButtons(): ScriptButton[]`, and MVU feeds the
+     * result straight into `_.intersectionBy`. A promise here would hand that
+     * call a promise to intersect, which succeeds and produces nothing.
+     *
+     * **Unfiltered.** `visible: false` hides a button from the bar; it does not
+     * remove it from the table. A card reads this list, edits one entry and
+     * writes the whole thing back, so answering with only the visible ones would
+     * make the read-modify-write silently delete every hidden button — the
+     * card's own bug report would say "my buttons disappeared when I toggled
+     * one".
+     *
+     * A copy, matching upstream's `klona`: the array a card gets back is its
+     * own, so mutating it changes nothing until it writes the table back.
+     * @returns this script's table, or empty when it has published none.
      */
     getScriptButtons: (): { name: string, visible: boolean }[] => {
-      reportButtonGap('getScriptButtons')
-      // An empty array rather than undefined: MVU passes the result straight
-      // into `_.intersectionBy`, and the shape a card destructures matters more
-      // than the emptiness it finds.
-      return []
+      const id = host.scriptId()
+      /*
+       * No id means no table to look up, and this is a real state rather than a
+       * defect: a body with no entry in the host's script list has no identity
+       * to publish buttons under. Empty rather than a refusal, for the same
+       * reason the stub returned empty — the shape a card destructures matters
+       * more than the emptiness it finds.
+       */
+      if (id === undefined) return []
+
+      const published = snapshot('getScriptButtons').scriptButtons?.[id]
+      if (published === undefined) return []
+      return published.map(button => ({ name: button.name, visible: button.visible }))
     },
 
     /**

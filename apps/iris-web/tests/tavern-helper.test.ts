@@ -659,12 +659,31 @@ test('the script-button members answer instead of being absent', () => {
   const buttons = (api['getScriptButtons'] as () => unknown[])()
   assert.deepEqual(buttons, [], 'MVU feeds this straight into _.intersectionBy')
 
+  /*
+   * **The read half no longer reports a gap, and the split is the assertion.**
+   *
+   * It is answered from the snapshot now, so an empty list here means "this
+   * script has published nothing" — a true answer about the data. Reporting a
+   * gap beside a true answer is the thing the gap list must not do: a reader
+   * who sees "Iris has not built this" beside a correct empty list has been
+   * told to distrust a member that works, and every reading of that panel
+   * afterwards is worth less.
+   */
+  assert.equal(
+    gaps.filter(gap => gap.includes('getScriptButtons')).length,
+    0,
+    'an answered member must not also be reported as a gap',
+  )
+
+  // The writers are still stubs, and still say so: they accept the call so the
+  // card finishes starting, and record once that nothing was written.
   assert.doesNotThrow(() => {
     ;(api['replaceScriptButtons'] as (b: unknown) => void)([{ name: 'a', visible: true }])
     ;(api['appendInexistentScriptButtons'] as (b: unknown) => void)([{ name: 'b', visible: false }])
   })
 
-  assert.ok(gaps.some(gap => gap.includes('getScriptButtons')))
+  assert.ok(gaps.some(gap => gap.includes('replaceScriptButtons')))
+  assert.ok(gaps.some(gap => gap.includes('appendInexistentScriptButtons')))
   assert.ok(gaps.some(gap => gap.includes('script buttons are scope Iris has not built')))
 })
 
@@ -686,15 +705,21 @@ test('getButtonEvent returns a usable event name, as upstream declares', () => {
 
 test('a script-button gap is reported once per member, not once per call', () => {
   const { api, gaps } = surface({ scriptId: 's1' })
-  const get = api['getScriptButtons'] as () => unknown[]
-  get()
-  get()
-  get()
+  /*
+   * Asked of a writer, because the reader stopped being a gap when it was
+   * implemented. The dedupe still matters here and matters more: a card that
+   * republishes its buttons on every variable change calls this repeatedly, and
+   * one fact repeated forty times is a panel a reader stops reading.
+   */
+  const replace = api['replaceScriptButtons'] as (buttons: unknown) => void
+  replace([{ name: 'a', visible: true }])
+  replace([{ name: 'a', visible: false }])
+  replace([])
 
   assert.equal(
-    gaps.filter(gap => gap.includes('getScriptButtons')).length,
+    gaps.filter(gap => gap.includes('replaceScriptButtons')).length,
     1,
-    'a card polling its buttons would fill the panel with one fact',
+    'a card republishing its buttons would fill the panel with one fact',
   )
 })
 
@@ -978,4 +1003,105 @@ test('a narrator row on a user message is role "unknown", and filtering loses it
     ['plain user'],
     'the narrator-on-user floor must not come back under role:user',
   )
+})
+
+test('a card cannot reach the host’s button table through getScriptButtons', () => {
+  /*
+   * **What this test can and cannot tell you, because the first version of it
+   * claimed more than it could show.**
+   *
+   * Two layers keep the host's array out of a card's hands: the member copies
+   * its answer, and `createFrameTavernHelper` returns its surface through
+   * `detachReturns`, which `structuredClone`s every call result. Both are inside
+   * this factory, so there is **no route a test can take** that has one and not
+   * the other.
+   *
+   * So this pins the contract — a card's edit must not reach the host table —
+   * and it cannot attribute it to either layer: deleting exactly one keeps this
+   * green. It was written as "at the member, not only at the wrapper", which was
+   * a claim about attribution that the test never had the power to make.
+   *
+   * The member's own copy stays anyway, for a caller the detach layer does not
+   * cover: composition **inside** this file (the append and update sugar are
+   * both built on the raw surface, not the detached one).
+   */
+  const table = [
+    { name: '开始', visible: true },
+    { name: '调试', visible: false },
+  ]
+  const { api } = surface({
+    context: { ...context(), scriptButtons: { mine: table } },
+    scriptId: 'mine',
+  })
+
+  // The façade is a loose record, so members are reached by key and typed at
+  // the call site — the convention every other test in this file follows.
+  const read = api['getScriptButtons'] as () => { name: string, visible: boolean }[]
+  const answered = read()
+  const entry = answered[0]
+  assert.ok(entry !== undefined)
+  entry.name = 'clobbered'
+  entry.visible = false
+
+  assert.deepEqual(table, [
+    { name: '开始', visible: true },
+    { name: '调试', visible: false },
+  ], 'the snapshot the host pushed must be untouched')
+  assert.deepEqual(read(), [
+    { name: '开始', visible: true },
+    { name: '调试', visible: false },
+  ], 'and the next read must not see the card’s edit')
+})
+
+test('getScriptButtons keeps hidden buttons in the table it answers with', () => {
+  /*
+   * `visible: false` hides a button from the bar; it does not remove it from the
+   * table. The failure this pins is a read-modify-write: a card reads the list,
+   * flips one entry, writes the whole table back — and if the read had dropped
+   * the hidden ones, the write deletes them. The card author sees "toggling one
+   * button deleted my others" and has no reason to suspect the read.
+   */
+  const { api } = surface({
+    context: {
+      ...context(),
+      scriptButtons: {
+        mine: [
+          { name: '开始', visible: true },
+          { name: '调试', visible: false },
+        ],
+      },
+    },
+    scriptId: 'mine',
+  })
+
+  // The façade is a loose record, so members are reached by key and typed at
+  // the call site — the convention every other test in this file follows.
+  const read = api['getScriptButtons'] as () => { name: string, visible: boolean }[]
+  assert.deepEqual(read().map(button => button.name), ['开始', '调试'])
+})
+
+test('getScriptButtons answers this script’s table and not the first one it finds', () => {
+  /*
+   * Another script's table is listed **first** on purpose. With only one script
+   * published, or with this one first, an implementation that ignored the id
+   * entirely — `Object.values(scriptButtons)[0]` — returns the right answer for
+   * the wrong reason and every test agrees with it.
+   *
+   * The failure it hides is not a wrong list: it is one card publishing buttons
+   * and a different card's frame answering with them, which upstream's
+   * per-script registry exists to prevent.
+   */
+  const { api } = surface({
+    context: {
+      ...context(),
+      scriptButtons: {
+        theirs: [{ name: 'not mine', visible: true }],
+        mine: [{ name: '开始', visible: true }],
+      },
+    },
+    scriptId: 'mine',
+  })
+  const read = api['getScriptButtons'] as () => { name: string, visible: boolean }[]
+
+  assert.deepEqual(read().map(button => button.name), ['开始'])
 })

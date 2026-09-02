@@ -16,6 +16,7 @@ import type { ReactElement } from 'react'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { buttonEventName } from '../sandbox/button-event.ts'
 import { emitToCard } from './card-bus.ts'
+import { FrameBudgetProvider, type BudgetedFloor } from './FrameBudget.tsx'
 import { Composer } from './Composer.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
 import { PromptPanel } from './PromptPanel.tsx'
@@ -46,6 +47,23 @@ export function ChatPane(): ReactElement {
   const window_ = useMemo(() => readingWindow(all, shown), [all, shown])
   const messages = window_.visible
   const groups = useMemo(() => groupByTurn(messages), [messages])
+
+  /*
+   * What the frame budget plans over: the mounted rows, in conversation order.
+   *
+   * Derived here rather than in the provider because this is where the window is
+   * known. Only the text and the role matter to it, so a row whose reasoning or
+   * swipe index changed does not re-plan — planning claims blocks over every
+   * mounted message, which is the one part of this that is not free.
+   */
+  const budgeted = useMemo<BudgetedFloor[]>(
+    () => messages.map(message => ({
+      id: message.id,
+      text: message.text,
+      isUser: message.role === 'user',
+    })),
+    [messages],
+  )
 
   /*
    * A new chat starts at its own tail. Without this, opening a short
@@ -204,7 +222,14 @@ export function ChatPane(): ReactElement {
               <p className="iris-empty__hint">Write the first line and {view.title} will answer.</p>
             </div>
           ) : (
-            groups.map((group, at) => (
+            /*
+             * Keyed on the chat so opening another conversation starts with a
+             * clean budget. Without the key, the grants and the reader's
+             * per-interface opt-ins would carry over by floor index — and floor
+             * 12 of the next chat is a different interface entirely.
+             */
+            <FrameBudgetProvider key={chatId} floors={budgeted}>
+            {groups.map((group, at) => (
               <section className="iris-turn" key={group.turn ?? `loose-${at}`}>
                 {/*
                   On the boundary, and only where there is one. The number names
@@ -231,7 +256,8 @@ export function ChatPane(): ReactElement {
                   />
                 ))}
               </section>
-            ))
+            ))}
+            </FrameBudgetProvider>
           )}
         </div>
       </div>

@@ -9,7 +9,7 @@
  * | --- | --- | --- |
  * | ① transport | a whole `ChatView` crosses the wire on every `stream.end` and every `chat.updated` | **untouched** |
  * | ② mounting | every message becomes DOM and rendered markdown | this module |
- * | ③ frames | a card interface costs bytes, by four orders of magnitude more than a message | `render-window.ts` |
+ * | ③ frames | a card interface costs bytes, by four orders of magnitude more than a message | `frame-budget.ts` |
  *
  * So on a 677-message chat, every completed reply still re-serialises 677
  * messages across the boundary after this lands. Render cost drops; wire cost
@@ -54,10 +54,12 @@ export interface ReadingWindow<T> {
  * **`0` means all of them**, not none. That is upstream's convention —
  * `power_user.chat_truncation || Number.MAX_SAFE_INTEGER`
  * (`script.js:1477`), where dragging the slider to zero switches truncation off
- * — and it is already the convention in `render-window.ts` for the frame window.
- * The two must agree: one number meaning "everything" in one window and
- * "nothing" in the other, in the same product, is a defect waiting for whoever
- * reads only one of them.
+ * — so it is the convention this window follows.
+ *
+ * It used to have to agree with a second window, `render-window.ts`, which
+ * spelled its own depth the same way. That file is gone: the frame layer now
+ * rations bytes rather than counting floors (`frame-budget.ts`), so there is one
+ * count in the product and no pair of numbers that could drift apart.
  *
  * A negative value is treated the same way, because `slice(-n)` on a negative
  * `n` returns the whole array anyway and an explicit branch is better than

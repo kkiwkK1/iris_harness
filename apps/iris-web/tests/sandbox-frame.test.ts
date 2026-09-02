@@ -106,8 +106,34 @@ function evaluate(
   body: (globals: Record<string, unknown>) => void,
   scriptId?: string,
 ): void {
-  scope.run(body)
+  /*
+   * **An assertion inside the body has to be carried back out by hand.**
+   *
+   * The body runs where a card's body runs, which is inside the sandbox's own
+   * try/catch — that is deliberate and correct in production: a card that throws
+   * must be reported, not take the frame down with it. The consequence for this
+   * file is severe, and it was live for a while: an assertion that failed inside
+   * a body was caught, posted as a card error, and the test **passed**. A test
+   * whose only assertions are in the body could not fail at all.
+   *
+   * Found by probing rather than by reading — a deliberately false assertion in
+   * a body was still green.
+   *
+   * Only `AssertionError` is re-thrown. Several tests here throw from a body on
+   * purpose, to check that a card's own failure is reported; those throws are
+   * the subject under test and must stay inside.
+   */
+  let failure: unknown
+  scope.run(globals => {
+    try {
+      body(globals)
+    } catch (error) {
+      if (error instanceof assert.AssertionError) failure = error
+      else throw error
+    }
+  })
   scope.send({ iris: 'tok', type: 'run', code: '/* card */', mode: 'classic', scriptId })
+  if (failure !== undefined) throw failure
 }
 
 test('installing announces nothing, because readiness is not this module to judge', () => {
@@ -147,10 +173,12 @@ test('exactly the outward-reaching names are shadowed', () => {
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
-    // Answered, not implemented: the version is real (transcribed from the
-    // installed extension), the four button members are reporting stubs. They
-    // are here because absence is the one answer that breaks a card outright —
-    // MVU calls three of them while wiring up, before it publishes anything.
+    // Mixed, and the mixture is the point: the version is real (transcribed
+    // from the installed extension), `getScriptButtons` and `getButtonEvent`
+    // are real, and the two writers are still reporting stubs pending a host
+    // arm. All four are here because absence is the one answer that breaks a
+    // card outright — MVU calls three of them while wiring up, before it has
+    // published anything.
     'getTavernHelperVersion',
     'getScriptButtons',
     'getButtonEvent',
@@ -589,10 +617,12 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
-    // Answered, not implemented: the version is real (transcribed from the
-    // installed extension), the four button members are reporting stubs. They
-    // are here because absence is the one answer that breaks a card outright —
-    // MVU calls three of them while wiring up, before it publishes anything.
+    // Mixed, and the mixture is the point: the version is real (transcribed
+    // from the installed extension), `getScriptButtons` and `getButtonEvent`
+    // are real, and the two writers are still reporting stubs pending a host
+    // arm. All four are here because absence is the one answer that breaks a
+    // card outright — MVU calls three of them while wiring up, before it has
+    // published anything.
     'getTavernHelperVersion',
     'getScriptButtons',
     'getButtonEvent',
@@ -1525,13 +1555,31 @@ test('a typeof guard degrades too, which the throw also defeated', () => {
    * right through it. `typeof` guards an undeclared *identifier*, never a
    * missing property — which is exactly the confusion that makes this style
    * feel defensive.
+   *
+   * **`setExtensionPrompt` is no longer the example**, because it has since been
+   * built — the corpus's own guard now takes its true branch, which is the
+   * outcome that was wanted. The test kept asserting `'undefined'` for it and
+   * went on passing anyway: its assertion lived inside a body, where a failure
+   * was being swallowed. Both halves are fixed here; the subject is the
+   * degradation, so it needs a member that is actually absent.
    */
   const scope = realm()
   scope.send({ iris: 'tok', type: 'context', context: snapshot() })
 
   evaluate(scope, globals => {
     const bare = globals['SillyTavern'] as Record<string, unknown>
-    assert.equal(typeof bare['setExtensionPrompt'], 'undefined')
+
+    // Built: the guard a card writes around this one succeeds.
+    assert.equal(typeof bare['setExtensionPrompt'], 'function')
+
+    /*
+     * Absent, and the point of the test: reading it neither throws nor produces
+     * a stub that would pass a `typeof … === 'function'` check. A card guarding
+     * this way takes its fallback path, which is what a card guarding this way
+     * asked for.
+     */
+    assert.equal(typeof bare['printMessages'], 'undefined')
+    assert.equal(typeof bare['getRequestHeaders'], 'undefined')
   })
 })
 
@@ -2120,4 +2168,80 @@ test('every published binding matches what the parent proxy answers for that nam
     checked.length >= 20,
     `only ${String(checked.length)} names were actually compared: ${checked.join(', ')}`,
   )
+})
+
+test('getScriptButtons answers this script’s table from the snapshot, unfiltered', () => {
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({
+      scriptButtons: {
+        mine: [
+          { name: '开始', visible: true },
+          { name: '调试', visible: false },
+          { name: '结束', visible: true },
+        ],
+        theirs: [{ name: 'not mine', visible: true }],
+      },
+    }),
+  })
+
+  evaluate(
+    scope,
+    globals => {
+      const helper = globals['getScriptButtons'] as () => { name: string, visible: boolean }[]
+      const answered = helper()
+
+      /*
+       * All three, hidden one included. `visible: false` hides a button from the
+       * bar; it does not remove it from the table. Cards read this list, edit one
+       * entry and write the whole thing back, so a filtered answer would make
+       * that read-modify-write delete every hidden button — and the card author
+       * would report it as "toggling one button deleted the others".
+       */
+      assert.deepEqual(answered.map(button => button.name), ['开始', '调试', '结束'])
+      assert.deepEqual(
+        answered.map(button => button.visible),
+        [true, false, true],
+      )
+    },
+    'mine',
+  )
+})
+
+test('a script with no published table gets an empty list, not undefined', () => {
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(
+    scope,
+    globals => {
+      const helper = globals['getScriptButtons'] as () => { name: string, visible: boolean }[]
+      /*
+       * MVU passes this straight into `_.intersectionBy`, which given
+       * `undefined` returns an empty array and reports nothing. The shape a card
+       * destructures matters more than the emptiness it finds.
+       */
+      const answered = helper()
+      assert.equal(Array.isArray(answered), true)
+      assert.equal(answered.length, 0)
+    },
+    'unpublished',
+  )
+})
+
+test('a body with no script id gets an empty list rather than another script’s', () => {
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({ scriptButtons: { mine: [{ name: '开始', visible: true }] } }),
+  })
+
+  // No third argument: a body with no entry in the host's script list.
+  evaluate(scope, globals => {
+    const helper = globals['getScriptButtons'] as () => { name: string, visible: boolean }[]
+    assert.equal(helper().length, 0)
+  })
 })

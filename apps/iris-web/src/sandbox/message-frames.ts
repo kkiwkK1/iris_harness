@@ -56,6 +56,37 @@ export type InterfacePhase =
   | 'never-started'
   /** Torn down because its message stopped being displayed. */
   | 'closed'
+  /**
+   * Claimed and deliberately not built: the reading view's frame budget is
+   * spent.
+   *
+   * A distinct phase rather than a `never-started` with a reason, because the
+   * two are opposite kinds of answer. `never-started` is a failure — something
+   * was meant to happen and did not. This is a **decision**, it is reversible
+   * on the spot, and the reader can undo it. Folding a policy into a failure
+   * bucket is how "we chose not to" comes to read as "it broke".
+   */
+  | 'over-budget'
+
+/** Encoder reused across calls; one per block is measurable on a long chat. */
+const encoder = new TextEncoder()
+
+/**
+ * How many bytes a piece of markup is, as the browser will inline it.
+ *
+ * One definition on purpose, shared with the frame budget: the number a reader
+ * sees under an interface and the number the budget spends have to be the same
+ * quantity, or the panel explains a decision it does not describe.
+ *
+ * `String.length` is the wrong measure here and wrong in the direction that
+ * matters: it counts UTF-16 code units, and this corpus is Chinese, so it
+ * reports roughly a third of the bytes actually paid.
+ * @param markup - the block body.
+ * @returns the encoded length in bytes.
+ */
+export function encodedBytes(markup: string): number {
+  return encoder.encode(markup).length
+}
 
 /** One interface's state, as a reader sees it. */
 export interface InterfaceState {
@@ -121,6 +152,17 @@ export interface MessageFramesEnv {
   onState: (states: readonly InterfaceState[]) => void
   /** How long a frame may take to become ready before silence is a finding. */
   readyTimeoutMs?: number
+  /**
+   * Whether this instance may build a frame at all.
+   *
+   * Supplied by the reading view's frame budget. Absent means every claimed
+   * block builds — which is what the tests and any caller without a budget
+   * want, and it keeps the budget out of this file: the controller asks, it does
+   * not decide.
+   * @param instance - the block's index within its message.
+   * @returns whether to build.
+   */
+  allow?: (instance: number) => boolean
 }
 
 /** A running set of interfaces for one message. */
@@ -180,13 +222,27 @@ export function runMessageInterfaces(
       floor,
       instance,
       phase: 'claimed',
-      bytes: block.body.length,
+      bytes: encodedBytes(block.body),
     })
   })
   publish()
 
   blocks.forEach((block, instance) => {
     if (disposed) return
+
+    /*
+     * Refused before construction, and the instance number is kept.
+     *
+     * Not by filtering the list: `instance` is this block's index, and it is
+     * also what `splitAroundInterfaces` uses to decide which slot an interface
+     * belongs in. A filtered list renumbers, and every interface after a refused
+     * one would render into its neighbour's slot — a fault with no error
+     * attached to it, just interfaces one place out of position.
+     */
+    if (env.allow !== undefined && !env.allow(instance)) {
+      move(instance, { phase: 'over-budget' })
+      return
+    }
 
     const started = env.start({
       markup: block.body,
@@ -260,5 +316,20 @@ export function describeInterface(state: InterfaceState): string {
       return `never started: ${state.detail ?? 'no reason given'}`
     case 'closed':
       return 'closed with its message'
+    case 'over-budget':
+      /*
+       * Three things, because a placeholder that says fewer is worse than none.
+       * [WINDOWING.md §五之二] on this corpus a placeholder is what a reader
+       * scrolling back sees **most** of the time — more often than a live panel
+       * — so this string is a main surface of the feature, not an error caption.
+       *
+       * 1. there **is** an interface here (not: nothing was written);
+       * 2. **why** it did not render (a budget, not a fault);
+       * 3. **what to do** — and the button beside this line is the answer, which
+       *    is why this text does not end in an apology.
+       */
+      return `interface not rendered — the reading view's frame budget is spent (${String(
+        Math.round(state.bytes / 1024),
+      )} KB of markup)`
   }
 }
