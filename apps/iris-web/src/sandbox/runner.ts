@@ -215,7 +215,26 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   // document is created, or the frame is briefly not sandboxed at all.
   frame.setAttribute('sandbox', frameSandbox(host.documentGranted))
   frame.setAttribute('title', 'Card interface')
-  frame.setAttribute('scrolling', 'no')
+  /*
+   * **`scrolling="no"` is deliberately not set here, and it used to be.**
+   *
+   * It is the legacy attribute for the frame's *scrolling mode*, and a browser
+   * honours it by forcing the frame's viewport to `overflow:hidden` at a level
+   * the inner document's own CSS cannot override. That made a fix built inside
+   * the frame — turning `overflow-y:auto` on when content exceeds the viewport —
+   * incapable of ever working: the frame had been told from outside that it may
+   * not scroll, so the reader's wheel had nowhere to go no matter what the
+   * document said.
+   *
+   * Removing it does not put scrollbars on frames that fit. The injected reset
+   * already sets `overflow:hidden` on `html,body` (`srcdoc.ts`, copied from
+   * upstream), so a frame stays scrollbar-free by *the document's* choice —
+   * which is a choice something can reverse when the content needs it. The
+   * attribute made it a fact nothing could reverse.
+   *
+   * The two look identical on every card that fits, which is why this line
+   * survived unremarked while the one case it broke was the one being debugged.
+   */
   frame.style.width = '100%'
   frame.style.border = '0'
   frame.style.display = 'block'
