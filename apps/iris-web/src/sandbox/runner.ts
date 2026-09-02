@@ -378,6 +378,21 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         }
         host.onHeight?.(message.pixels)
         return
+      case 'sizing':
+        /*
+         * The card sizes itself to whatever viewport it is given, so there is no
+         * content height to follow. Handed to CSS rather than answered with a
+         * number here: how tall a full-screen card should be is a design
+         * decision, and it belongs where the other spatial decisions are.
+         *
+         * **The inline height is removed**, not overwritten. It is whatever the
+         * frame reported before it noticed it could not be measured — the
+         * height the loop would have frozen at — and leaving it would beat the
+         * stylesheet rule that is now meant to decide.
+         */
+        frame.dataset['irisSizing'] = message.mode
+        frame.style.removeProperty('height')
+        return
       case 'settings':
         host.onSettings(message.settings)
         return

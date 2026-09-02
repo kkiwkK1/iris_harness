@@ -496,6 +496,27 @@
 }
 
 /*
+ * A card that sizes itself to its viewport gets a screen, not a measurement.
+ *
+ * Set when the frame reports that it cannot be measured: every ruler it has
+ * returns its own viewport, because the card clips its overflow inside a
+ * descendant. There is no content height to follow, so following one is not an
+ * option — the loop that produces is what froze these cards at whatever height
+ * they happened to start at.
+ *
+ * **`100vh` is the knob, and it is a trade, not a measurement.** A full screen
+ * is the most a viewport-driven card can be handed without inventing a number
+ * for it, and it is more than the 807px that was cutting this card's screens
+ * off. The cost is that the frame is taller than the visible band — the reading
+ * column scrolls to reach the rest — which for a card that expects to *be* the
+ * screen is a compromise. Everything is reachable, which the alternative was
+ * not.
+ */
+.iris-interfaces__slot iframe[data-iris-sizing='viewport'] {
+  height: var(--iris-app-frame-height);
+}
+
+/*
  * An interface breaks out of the reading measure, because it is not reading.
  *
  * 68ch is a book measure and it is right for prose. Applied to a card it was

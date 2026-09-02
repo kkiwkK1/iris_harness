@@ -187,6 +187,21 @@ export type FromFrame =
   | { iris: string, type: 'call', id: string, method: string, params: unknown }
   /** The card's content changed height; the shell sizes the frame to it. */
   | { iris: string, type: 'height', pixels: number }
+  /**
+   * The card sizes itself to whatever viewport it is given, so its content
+   * height cannot be measured from outside.
+   *
+   * A separate message from `height` because it is a different kind of fact.
+   * `height` says "my content is this tall"; this says "asking me how tall my
+   * content is has no answer" — every ruler returns the frame's own viewport,
+   * because the card clips its overflow inside a descendant. Sent once, when
+   * the frame notices; a card cannot un-notice it.
+   *
+   * The shell needs it because the alternative is the loop: a frame that
+   * reports its own viewside back gets that height applied and reports it again,
+   * so its starting height becomes permanent.
+   */
+  | { iris: string, type: 'sizing', mode: 'viewport' }
 
 /**
  * Validate a message arriving at the frame.
@@ -403,6 +418,13 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
       // page cannot scroll past, which is a denial of the interface by a card
       // that may only have a bug.
       return { iris: token, type: 'height', pixels: Math.min(Math.round(pixels), 20_000) }
+    }
+    case 'sizing': {
+      // One value today, and validated rather than passed through: a frame is
+      // untrusted, and a mode the shell does not know would reach a switch that
+      // has no arm for it.
+      if (message['mode'] !== 'viewport') return undefined
+      return { iris: token, type: 'sizing', mode: 'viewport' }
     }
     default:
       return undefined

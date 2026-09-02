@@ -45,6 +45,36 @@ export const OVERFLOW_SLACK_PX = 2
  * @param viewport - the frame's own viewport, `documentElement.clientHeight`.
  * @returns whether the frame should allow itself to scroll.
  */
+/**
+ * Whether a measured height carries any information.
+ *
+ * **A card that clips its own overflow closes the height loop.** Measured on a
+ * real card: every available ruler — `body.scrollHeight`, `documentElement`'s,
+ * the body's box, a range over its contents, the furthest child edge — returned
+ * exactly the frame's own viewport, while the screen visibly overflowed. The
+ * overflow was clipped by the card's own descendant, so nothing outside that
+ * descendant can see it.
+ *
+ * Reporting such a measurement is worse than reporting nothing: the frame tells
+ * the shell "make me the height I already am", the shell obliges, and the next
+ * measurement says the same. Whatever height the frame happened to start with
+ * becomes the height it keeps forever — which looks exactly like a height that
+ * was measured once at mount, and is why that was the first diagnosis. It is
+ * measured continuously and the answer is a fixed point.
+ *
+ * So a measurement equal to the viewport is refused *as a measurement*. It is
+ * still a fact, but a fact about the card's layout rather than about its
+ * content, and it belongs in a different message.
+ * @param measured - the content height this frame read.
+ * @param viewport - the frame's own viewport height.
+ * @returns whether the measurement says anything the shell does not know.
+ */
+export function informsShell(measured: number, viewport: number): boolean {
+  if (!Number.isFinite(measured) || measured <= 0) return false
+  if (!Number.isFinite(viewport) || viewport <= 0) return true
+  return Math.abs(measured - viewport) > OVERFLOW_SLACK_PX
+}
+
 /** Every candidate measure of "how tall is this card", read at one moment. */
 export interface HeightSources {
   /** How many times the resize observer has fired. */

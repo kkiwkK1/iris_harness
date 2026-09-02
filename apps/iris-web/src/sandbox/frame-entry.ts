@@ -24,7 +24,11 @@ import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
-import { describeHeightSources, overflowsViewport } from './frame-height.ts'
+import {
+  describeHeightSources,
+  informsShell,
+  overflowsViewport,
+} from './frame-height.ts'
 
 /**
  * Tell the shell the frame is usable — but not before its libraries are.
@@ -152,6 +156,8 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
   let mutations = 0
   /** The last line reported, so a still card reports nothing. */
   let lastReported = ''
+  /** Whether this frame has already said it cannot be measured. */
+  let sizingReported = false
   /** A cap, so a busy card cannot turn the panel into a log. */
   let reportsLeft = 8
   const send = (): void => {
@@ -185,6 +191,30 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
      */
     const pixels = document.body.scrollHeight
     if (!Number.isFinite(pixels) || pixels <= 0) return
+
+    /*
+     * **A height equal to the viewport is not reported, it is diagnosed.**
+     *
+     * Measured on a real card: every ruler returned exactly the frame's own
+     * viewport while the screen visibly overflowed, because the card clips its
+     * overflow inside a descendant. Posting that closes a loop — the shell
+     * applies the height the frame already has, the next measurement returns the
+     * same number, and the height the frame started with becomes permanent.
+     * That is indistinguishable from "measured once at mount", which is what it
+     * was first diagnosed as.
+     *
+     * So the frame says the one thing it has actually learned: that asking it
+     * for a content height has no answer. Once — a card cannot un-clip itself,
+     * and repeating it would be a log.
+     */
+    if (!informsShell(pixels, document.documentElement.clientHeight)) {
+      if (!sizingReported) {
+        sizingReported = true
+        post({ iris: run, type: 'sizing', mode: 'viewport' })
+      }
+      return
+    }
+
     post({ iris: run, type: 'height', pixels })
 
     /*

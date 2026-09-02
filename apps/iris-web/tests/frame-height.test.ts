@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import {
   OVERFLOW_SLACK_PX,
   describeHeightSources,
+  informsShell,
   overflowsViewport,
 } from '../src/sandbox/frame-height.ts'
 
@@ -114,4 +115,41 @@ test('a measure that is not a number is reported as unknown, not as zero', () =>
   assert.ok(line.includes('body.scrollHeight ?'), line)
   assert.ok(line.includes('range ?'), line)
   assert.ok(line.includes('doc.scrollHeight 0'), line)
+})
+
+test('a measurement equal to the viewport tells the shell nothing', () => {
+  /*
+   * The fixed point, measured on a real card: every ruler returned exactly the
+   * frame's viewport while the screen visibly overflowed, because the card
+   * clipped its own overflow inside a descendant.
+   *
+   * Posting that height makes the shell apply the height the frame already has,
+   * so the next measurement returns the same number — whatever the frame started
+   * at becomes permanent. It looks identical to "measured once at mount", which
+   * is exactly why that was the first (wrong) diagnosis.
+   */
+  assert.equal(informsShell(807, 807), false)
+  assert.equal(informsShell(807 + OVERFLOW_SLACK_PX, 807), false)
+})
+
+test('a measurement that differs from the viewport is worth sending', () => {
+  assert.equal(informsShell(1480, 807), true, 'taller content must be reported')
+  assert.equal(informsShell(400, 807), true, 'shorter content must be reported too')
+})
+
+test('before the frame has a viewport, any positive measurement is information', () => {
+  /*
+   * The first measurement happens before the shell has applied anything, and
+   * refusing it would leave the frame at its CSS starting height with nothing
+   * ever correcting it — the self-reinforcing zero, one door along.
+   */
+  assert.equal(informsShell(500, 0), true)
+})
+
+test('a non-positive measurement is never information', () => {
+  // The reason the reporter has always refused these: an inline `height: 0px`
+  // beats any CSS floor, so a frame that reports zero can never be seen again.
+  assert.equal(informsShell(0, 807), false)
+  assert.equal(informsShell(-5, 807), false)
+  assert.equal(informsShell(Number.NaN, 807), false)
 })
