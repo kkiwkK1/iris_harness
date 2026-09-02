@@ -33,11 +33,15 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
 **队列**（2026-09-03 重排；"设计 ✅ / 实现待排"分开记，不再把已付的成本算第二遍）：
 1. ~~脚本按钮 UI~~ ✅（设计 SCRIPT-BUTTONS.md，实现已落，爱衣 2 按钮端到端）
 2. ~~阅读视图窗口化~~ ✅（WINDOWING.md ②③ 层 + CI 不变式；固定开销由构建核对，只在低估时失败）
-3. **MVU 聊天级五件活**（2026-09-03，族级：所有 MVU 卡）——两缺席成员 `loadWorldInfo` /
-   `getLorebookSettings` 宿主 arm ✅（原始盘面形状；同步成员进快照不做 RPC），frame 门面待接；
-   `Mvu` 未发布已收窄到**多实例选举**（UPSTREAM-MVU-INIT-PATH.md §三之四：`#tavern_helper
-   div[data-script-id]` 选优先实例，选不到即静默不发布），三环在树上皆备，剩时序，运行探针在跑。
-   验收 = 爱衣 `<UpdateVariable>` 真被 `initResponse` 处理，不看 `Mvu` 在不在。
+3. **MVU 聊天级五件活**（族级：所有 MVU 卡）——8f22e5f 复读：爱衣「2 of 2 loaded and listening」、
+   MVU 九条 toast 全部回来（still-starting 消失；成因是 reportGap 全走 error 通道 + eventOn 句柄被判
+   不可复制，两者皆修）。剩两条 fault = `loadWorldInfo` / `getLorebookSettings`（宿主 arm ✅，frame 门面
+   在建）。**跨 frame 前提**：上游两种 frame 读同一个 `Mvu` 是因为共享同一个 parent 页面；我们两种
+   frame 挂两个虚拟 parent，`parent.Mvu` 在界面 frame 恒 undefined。MVU 11 成员零响应式/零 this、
+   6 同步（UPSTREAM-MVU-INIT-PATH.md 附录二）→ 按名 RPC 会把同步变异步，**裁方向：补前提（界面 frame
+   作为聊天 realm 的子 frame，继承同一不透明源），不加中继**，7b 出设计。脚本 frame 楼层寻址
+   `getVariables({message_id})` 被拒（上游同步可用）→ 49 出脚本 frame 快照携带楼层表的设计。
+   验收 = 爱衣 `<UpdateVariable>` 真被 `initResponse` 处理。
 4. **消息内联 HTML 消毒渲染**——设计 INLINE-HTML.md；CSS 作用域器 ✅、区域切分 ✅（真语料：
    命定之诗 677 楼 334 有区域）、消毒 seam 在建。爱衣 6/8 楼即此。
 5. **覆盖层界面宿主**（OVERLAY-CARDS.md）——**用户已亲眼撞上**：V1.5.4 开场白字面只一个「·」，
@@ -47,12 +51,14 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
 6. ~~世界书单通道 + 内嵌书物化~~ ✅（957eaca：装配层只读绑定名；`bookFor` 挂导入与打开两路，
    已有 profile 首开就地迁移；两哈希四格表；撞名不覆盖比上游严；"书没跟过来"种子化+报告；
    DEVIATIONS §12）。**遗留待办**：从 ST 安装取绑定书（dev 里 3 张卡的书在 ST 有、这里没有）。
-7. **存储族**（2026-09-03 新增）——语料 8 卡 9 脚本用 `localStorage`（银麒赎世 109 次 + 唯一
-   indexedDB，族代表），ST frame 同源可用、我们不透明源不可用。要受管 `localStorage` 门面：同步
-   API → 加载时快照 + 写穿宿主；作用域按上游机制 profile 级共享不按卡分区（UPSTREAM-FRAME-ORIGIN.md：
-   上游 iframe 无 sandbox、同源共用一个键空间）。AST 普查：165 引用里 4 个裸启动点承担全部"启动即死"，
-   6 个组件按组件验收。**indexedDB**：1 卡、blob 级图片库，本轮报告+降级，容量与清理另议；枚举源内
-   数据库读邻居扩展（智绘姬）结构上不适用。
+7. **存储族**（2026-09-03 新增，**提前到覆盖层之前**）——8f22e5f 复读：绿茵好莱坞「状态栏」与 V1.5.4
+   「论坛覆盖层」都在第一行死于 `localStorage`（不透明源属性访问即抛），覆盖层宿主建好了也到不了它。
+   语料 8 卡 9 脚本 / 6 组件（银麒赎世 109 次 + 唯一 indexedDB，族代表）；ST frame 同源可用
+   （UPSTREAM-FRAME-ORIGIN.md：无 sandbox、与 ST 共用一个键空间、无前缀约定）。门面：属性层可用对象、
+   同步 API → 加载快照 + 写穿宿主、profile 级共享不按卡分区（跨卡串台是忠实复现，入账）、写失败报告、
+   宿主不可达时失败壳、`clear()` 抹别卡键报告。AST：165 引用里 4 个裸启动点承担全部"启动即死"，
+   按组件验收；「论坛覆盖层」预测静默降级、实测启动即死，44 复核判据。**indexedDB**：1 卡 blob 级
+   图片库，本轮报告+降级，容量清理另议；枚举源内数据库读邻居扩展结构上不适用。
 8. **卡自带 ESM 依赖的代理**（族级基建）——13 卡 binding 导入 + 15 卡 MVU bundle；去重 11 个地址、
    6 个无版本（TEST-CARDS 副轴：名单会自己过期）；`script-bundles/` 是实际加载的卡尺。待测冷取。
 9. ~~导入体积 C~~ ✅（st-meta 记每文件键序表不记值：27.58 → 11.74 MiB，2454/2454 行键序保持；不变式
