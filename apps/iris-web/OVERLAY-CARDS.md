@@ -554,6 +554,143 @@ if (chatEl) observer.observe(chatEl, { childList: true, subtree: true });
 
 ---
 
+## 六之三、宿主 DOM 与尺寸：覆盖层宿主（父子化）要对齐的那几个数
+
+**给 `OVERLAY-HOST.md` 当上游对照。**§六之二 讲卡对三个锚点**做什么**，
+这一节讲它们**长什么样、什么时候消失、以及尺寸是谁定的**。
+
+### 一 · body 层的挂靶（只列卡真用到的）
+
+| 选择器 | 谁用、做什么 | 出处 |
+| --- | --- | --- |
+| **`body`** | 覆盖层 iframe 的挂载点（`.appendTo('body')`） | V1.5.4 `论坛覆盖层`，**全卡仅此 1 处**（§二） |
+| **`#chat`** | `MutationObserver.observe(el, { childList:true, subtree:true })`，当"有新楼层"的信号源 | 银麒系统面板 `:9562` |
+| **`#send_textarea`** | 读 `.disabled`／读写 `.value`／派发 `input`+`change` | 手机UI `:14180`、系统面板 `:278`、外置状态栏 `:5456` |
+| **`#send_but`** | 读 `.classList.contains('disabled')`／`.click()` | 同上三处 |
+| **`#mes_stop`** | `.is(':visible')` 当"正在生成" | 系统面板 `:9525-9526` |
+
+**`#send_form` / `#sheld` 语料里零命中。**（`#tavern_helper` 是 MVU 的选举用，不是卡挂靶，见
+`packages/iris-app-service/UPSTREAM-MVU-INIT-PATH.md` §三之六。）
+
+### 二 · `.mes` 的结构（`[ST] index.html:7377-7378`）
+
+```html
+<div id="message_template" class="template_element">
+  <div class="mes" mesid="" ch_name="" is_user="" is_system="" bookmark_link="">
+```
+
+**是 HTML 属性，不是 `data-*`**：`mesid` `ch_name` `is_user` `is_system` `bookmark_link`。
+子结构里卡会碰到的：**`.mes_text`**（正文，界面 frame 就挂在它里面）、
+`.mes_reasoning` `.mes_media_wrapper` `.mes_file_wrapper` `.mes_bias`
+`.swipe_right` `.swipes-counter` `.mesAvatarWrapper > .avatar > img`。
+
+`chatElement = $('#chat')`（`[ST] script.js:448`）。
+
+> **⚠ `mesid` 是位置性的、会被重写。**删除/交换时
+> `$(element).attr('mesid', minId + index)`（`script.js:9411`）、
+> `:8319-8320` 直接对调两个节点的 `mesid`。
+> **任何"按 mesid 记住某一楼"的做法在删楼后会指到别人**——
+> 和 §四之四 给 `@scope` 选候选序号而非楼号是同一条理由。
+
+### 三 · 切聊天时 body 上的卡节点：**残留**
+
+```js
+// [ST] script.js:1584-1603   clearChat()
+extension_prompts = {};
+//This will also remove non '.mes' elements, e.g. '<div id="show_more_messages">Show more messages</div>'.
+chatElement.children().remove();                                    // ← 只清 #chat 的子节点
+if ($('.zoomed_avatar[forChar]').length) { $('.zoomed_avatar[forChar]').remove(); }   // ← 一个具名 class
+```
+
+**全函数只碰两处 DOM：`#chat` 的子节点、`.zoomed_avatar[forChar]`。body 层一个都不碰。**
+
+所以覆盖层 iframe **跨聊天存活**，直到卡自己 `pagehide` 清、整页刷新、
+或卡的 MutationObserver 发现它被移除后重新挂（§六之二）。
+
+**账本措辞**：上游是**「残留且无人负责」**，不是"上游会清"。
+我们若在切聊天时清，写成**「我们多一个清理点」**——对账动作是"确认我们多做了一步"，
+写成"和上游不同"会让人去逐条比对两边的清理规则，而规则并不冲突。
+
+### 四 · 界面 frame 的尺寸：**它自己写 `frameElement.style.height`**
+
+```js
+// [TH] iframe/adjust_iframe_height.js  全文 57 行
+height = body.scrollHeight;                     // :15   量自己的 body
+frameElement.style.height = `${height}px`;      // :21   ← 直接写自己那个 iframe 元素
+const resize_observer = new ResizeObserver(() => postIframeHeight());   // :47
+resize_observer.observe(body);                                          // :50
+$(() => { postIframeHeight(); observeHeightChange(); });                // :53-56
+```
+
+- rAF 调度，无 rAF 时退到 `_.throttle(…, 500)`（`:26`/`:34-38`）。
+- **整个 `measureAndPost` 包在 `try/catch {}` 里，catch 体是空的**（`:22-24`）——**失败完全静默**。
+- **只注入界面/消息 frame**（`panel/render/iframe.ts:96`），**脚本 frame 没有**。
+
+**`frameElement` 是跨文档访问自己的宿主元素，要求同源。**
+父子化后它指向 realm frame 文档里的那个 iframe 元素——**机制仍成立，前提是两者同源。**
+
+*（这正是 V1.5.4 注释里"早期版本在 iframe 内直接改 `frameElement.style.display`，
+跟 style 守护 observer 冲突"说的那个写法——**同一个模式，一个改 height 一个改 display**。）*
+
+### 五 · 已有一条 host→frame 的 postMessage 协议
+
+```js
+// [TH] iframe/adjust_viewport.js  全文 6 行
+$('html').css('--TH-viewport-height', `${window.parent.innerHeight}px`);        // :1
+window.addEventListener('message', function (event) {
+  if (event.data?.type === 'TH_UPDATE_VIEWPORT_HEIGHT') {                       // :3
+    $('html').css('--TH-viewport-height', `${window.parent.innerHeight}px`);
+  }
+});
+```
+
+发送方两处：`panel/render/Iframe.vue:35`、`panel/render/StreamingIframe.vue:28`——
+`iframe_ref.value?.contentWindow?.postMessage({ type: 'TH_UPDATE_VIEWPORT_HEIGHT' }, '*')`。
+
+**两条对父子化直接相关：**
+
+1. **`--TH-viewport-height` 取的是 `window.parent.innerHeight`。**父子化后 message frame 的
+   `parent` 变成 realm frame——**realm frame 若不是全视口，这个数就变了**，
+   而它正是 `sandbox/viewport-units.ts` 重写 `min-height:100vh` 时指向的属性。
+   **要对齐的定位关系就是这一个数。**
+2. **通道不用发明**（`postMessage` + 一个 type 常量已存在），
+   **但要决定父子化后"host"是 realm frame 还是外壳。**
+
+### 六 · ⚠ 但 V1.5.4 根本不用那个变量——它用 `dvh`/`svh`
+
+```
+论坛覆盖层：  --TH-viewport-height = 0     TH_UPDATE_VIEWPORT_HEIGHT = 0
+             100vh = 23   100vw = 6   dvh = 22   svh = 17
+             window.innerHeight = 6（都是 window 自己的，不是 parent）
+```
+
+用法是**经典的三行降级阶梯**：
+
+```css
+.conn-page { min-height: 100vh; min-height: 100svh; min-height: 100dvh; }
+```
+
+**我们的重写在这条阶梯前是无效的，而且不是因为正则写错了：**
+
+`viewport-units.ts:66` 的 `/min-height\s*:\s*(\d+(?:\.\d+)?)vh/gi` 要求数字后**紧跟** `vh`，
+所以 `100dvh` / `100svh` **正确地不被匹配**（`100` 后面是 `d`/`s`）。
+**但支持这两个单位的浏览器里，后两行会盖掉被我们重写过的第一行**——
+**层叠的最后一条赢，而那一条解析的是 frame 自己的视口。**
+
+*（`mentionsViewportHeight` 的 `/vh\b/i` 会被 `dvh` 命中，于是三次替换空跑一遍——
+那正是该函数注释里预期的"假阳性只花三次找不到的替换"，无害。）*
+
+**所以这一节的结论是两句，别只记住第一句：**
+
+1. 上游有一个 `--TH-viewport-height` 通道，父子化后要重新对齐它指向的那个数；
+2. **而现存最复杂的覆盖层卡根本不走那个通道**——它用 `dvh`/`svh` 直接向浏览器要视口。
+   **对那类卡，"把变量指对"不够，得让 frame 自己的视口就是对的。**
+
+*（另有 `calc(100dvh - 40px - env(safe-area-inset-…))` 的写法，
+`env()` 的安全区在 frame 里同样是 frame 的，不是页面的。这一条我没有单独展开。）*
+
+---
+
 ## 七、未查 / 只是预测
 
 1. **§三那条 realm 不一致是静态读出来的预测，不是观测。**
