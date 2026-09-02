@@ -143,6 +143,7 @@ test('exactly the outward-reaching names are shadowed', () => {
     'extension_settings',
     'triggerSlash',
     'getScriptId',
+    'EjsTemplate',
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
@@ -584,6 +585,7 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'extension_settings',
     'triggerSlash',
     'getScriptId',
+    'EjsTemplate',
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
@@ -2064,5 +2066,58 @@ test('a template goes to the host, and a rejection is left for the card to catch
     pending as Promise<unknown>,
     /initial scope is not available/u,
     'the card must receive the reason, not undefined',
+  )
+})
+
+/**
+ * The published names and their values are index-matched by hand, and a
+ * mismatch is silent: it slides every later binding one place along, so a card
+ * calling `getChatMessages` gets whatever function happened to sit next to it.
+ * That failure has no symptom at the boundary — the name is present, the value
+ * is callable, and only the card's own behaviour goes wrong.
+ *
+ * This checks the alignment against a source that does not share the array:
+ * the parent proxy resolves each member by name, independently. Same-source
+ * checking would be no check at all here, because the names and the values that
+ * could disagree both come out of the same two literals.
+ */
+test('every published binding matches what the parent proxy answers for that name', () => {
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  evaluate(scope, () => undefined)
+
+  const virtualParent = scope.publishedValue('parent') as Record<string, unknown>
+  /*
+   * Most Tavern Helper members are not on `parent` directly — upstream reaches
+   * them as `window.parent.TavernHelper.getChatMessages` — so this table is the
+   * second place to look. It is still an independent source for what this test
+   * is about: the hazard is a shifted **index**, and both `parent` and this
+   * table answer by **name**.
+   */
+  const onTable = virtualParent['TavernHelper'] as Record<string, unknown>
+  const checked: string[] = []
+  for (const name of scope.publishedNames()) {
+    // The window aliases are the frame's own realm, not members to compare.
+    if (name === 'parent' || name === 'top') continue
+    const onParent = virtualParent[name] ?? onTable[name]
+    if (onParent === undefined) continue
+    checked.push(name)
+    assert.equal(
+      scope.publishedValue(name),
+      onParent,
+      `published ${name} is not the member the parent proxy answers for that name`,
+    )
+  }
+
+  /*
+   * The count is asserted because the loop's `continue` is the way this test
+   * can pass while measuring nothing: one wrong `undefined` on the parent proxy
+   * would skip a name silently, and a whole-list regression would leave the
+   * loop with nothing to compare. The number is a floor, not a pin — new
+   * members should raise it, and only a drop means the check stopped reaching.
+   */
+  assert.ok(
+    checked.length >= 20,
+    `only ${String(checked.length)} names were actually compared: ${checked.join(', ')}`,
   )
 })

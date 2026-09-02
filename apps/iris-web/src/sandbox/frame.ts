@@ -828,13 +828,6 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   let scriptId: string | undefined
   let scriptIdFixed = false
 
-  /**
-   * Upstream's `getScriptId`, the one member a card uses to name its own
-   * variable scope. Returns `undefined` for a body with no entry in the host's
-   * list, matching what the host answers for an unidentified caller.
-   * @returns the running script's id, or `undefined` when it has none.
-   */
-  const getScriptId = (): string | undefined => scriptId
 
   /**
    * The bus is the frame's, not the host's.
@@ -1098,6 +1091,21 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     'extension_settings',
     'triggerSlash',
     'getScriptId',
+    /*
+     * Bare as well as on `parent`, which is what upstream does with all seven of
+     * its borrowed globals — its shim copies them onto the child window, so a
+     * card may write either `EjsTemplate` or `window.parent.EjsTemplate`.
+     *
+     * Added because leaving it off made an instrument lie. `EXPECTED_GLOBALS`
+     * drives the missing-library banner, which reads the frame's own window — so
+     * with this member reachable only through `parent`, the banner announced
+     * `EjsTemplate` among "libraries Iris does not carry", which had just stopped
+     * being true. Two ways to stop a report being false: make it accurate, or
+     * make the thing it reports on true. Here the second is also the more
+     * upstream-faithful, so it is not a wider surface so much as the member
+     * finished at both the names upstream offers it under.
+     */
+    'EjsTemplate',
   ] as const
 
   /**
@@ -1105,8 +1113,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    *
    * A name may only be bound once — it becomes a function parameter in classic
    * mode — and `triggerSlash` and `getScriptId` appear on both lists because
-   * upstream exposes them through both surfaces. The core binding wins; both
-   * carry the same behaviour, so which one wins does not change what a card sees.
+   * upstream exposes them through both surfaces. The core binding wins, and it
+   * is resolved out of `tavernHelper` so that winning changes nothing: this
+   * comment used to assert the two were equivalent, and they were not — the
+   * core route skipped the detach layer that every other member goes through.
+   * An assumption stated in a comment is not a property of the code, and this
+   * one was wrong for as long as it was written down.
    */
   const helperNames = Object.keys(tavernHelper).filter(
     name => !(core as readonly string[]).includes(name),
@@ -1129,8 +1141,25 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     virtualParent,
     context === undefined ? undefined : sillyTavern,
     extensionSettings,
-    triggerSlash,
-    getScriptId,
+    /*
+     * Read out of `tavernHelper` rather than the two bridge functions above,
+     * so a card reaching `triggerSlash` bare and one reaching
+     * `parent.TavernHelper.triggerSlash` get the same object. They did not:
+     * `helperNames` filters out whatever `core` already binds, so these two
+     * names alone skipped the detach layer on the bare route and returned live
+     * host values where every sibling returned a clone. Upstream has one
+     * function per name, and so should this.
+     */
+    tavernHelper['triggerSlash'],
+    tavernHelper['getScriptId'],
+    /*
+     * Positional, and that is a hazard worth naming: this array is index-matched
+     * to `core`, so a name appended to one list and not the other does not fail
+     * loudly — it slides every Tavern Helper binding one place along, handing
+     * cards a neighbour's function under the name they asked for. Adding
+     * `EjsTemplate` above without this line did exactly that.
+     */
+    ejsTemplate,
     ...helperNames.map(name => tavernHelper[name]),
   ]
 

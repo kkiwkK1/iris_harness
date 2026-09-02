@@ -22,7 +22,7 @@ import { describeAttempts, type TimedResource } from './import-attempts.ts'
 import { describeTransferCost, type TransferTiming } from './transfer-cost.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
-import { PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
+import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
 
 /**
@@ -219,6 +219,38 @@ function applyViewport(size: { width: number, height: number }): void {
  */
 let bodyStarted = false
 
+/**
+ * Which expected globals are absent **at this moment**.
+ *
+ * The library banner already reports what was missing when the frame finished
+ * loading, and that turned out to answer a different question than the one a
+ * failure asks. A real case: the banner said the preset had run and did not name
+ * `z`, while a card's module died on `z.ZodObject` — so `z` was present at load
+ * time and absent at evaluation time, and nothing on screen could tell those
+ * apart. Two readings of one name at two moments, and only the second one
+ * explains the error.
+ *
+ * Appended to the failure itself rather than reported separately, because a
+ * separate line has to be *correlated* with the error by whoever is reading, and
+ * the whole difficulty here was that the load-time reading looked like it
+ * already covered it.
+ *
+ * Bounded by construction: at most the handful of names in `EXPECTED_GLOBALS`,
+ * and silent when they are all present — an empty clause on every healthy error
+ * would be noise for the majority of errors, which have nothing to do with
+ * libraries.
+ * @returns a clause naming the absent globals, or an empty string.
+ */
+function absentGlobalsNow(): string {
+  const host = window as unknown as Record<string, unknown>
+  const absent = EXPECTED_GLOBALS.filter(name => host[name] === undefined)
+  if (absent.length === 0) return ''
+  return (
+    `. Absent globals at the moment of the failure: ${absent.join(', ')}`
+    + ' — read now, not at load time, because the two can differ'
+  )
+}
+
 function reportAsyncFailures(
   run: string,
   post: (message: FromFrame) => void,
@@ -254,11 +286,13 @@ function reportAsyncFailures(
        * whose own preset threw during load reported it as the card failing in a
        * callback, and sent a reader looking at the card.
        */
-      message: bodyHasRun()
-        ? `${kind} after a card body ran: ${text}` +
-          ' — the frame refused nothing, so this is code the card scheduled'
-        : `${kind} before any card body ran: ${text}` +
-          " — no card code had started, so this belongs to the frame's own setup",
+      message:
+        (bodyHasRun()
+          ? `${kind} after a card body ran: ${text}` +
+            ' — the frame refused nothing, so this is code the card scheduled'
+          : `${kind} before any card body ran: ${text}` +
+            " — no card code had started, so this belongs to the frame's own setup")
+        + absentGlobalsNow(),
     })
   }
 

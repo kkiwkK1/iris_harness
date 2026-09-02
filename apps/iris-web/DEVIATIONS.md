@@ -467,3 +467,58 @@ Two entries match and contain no `<%`. They return their content directly, so
 So `saveMetadata` = 1 is the primary criterion: it is unaffected by how many
 characters get iterated. The call count is corroborating evidence read as a
 range.
+
+## 14. `EjsTemplate` is a frame global as well as a parent member
+
+**Improvement ledger, and a correction to an instrument.**
+
+`EjsTemplate` was built on the virtual parent only, because that is where the
+corpus card reads it (`window.parent.EjsTemplate`). Upstream's shim copies all
+seven of its borrowed globals onto the child window, so upstream cards may write
+either spelling; Iris answered only one of them.
+
+What forced the issue was not a card but a lie. `EXPECTED_GLOBALS` drives the
+frame's missing-library banner, and that banner reads the frame's own `window`.
+With the member reachable only through `parent`, the banner announced
+`EjsTemplate` among "libraries a card may expect are not present in this frame"
+— a sentence that had been true when it was written and was not true any more.
+A false report is worse than a missing one, because it sends a reader looking
+for a gap that is not there. This one cost a peer a diagnosis round.
+
+Two ways out of a false report: make the report accurate, or make the thing it
+reports on true. Here the second is also the more upstream-faithful, so
+`EjsTemplate` joins the shadowed-and-published list and the banner falls silent
+about it on its own.
+
+### The bug that came with the fix
+
+Adding one name to `core` broke every Tavern Helper binding, because the names
+and their values are two hand-written lists matched **by index**. The tenth name
+now met the first helper's value, and all twenty-six slid one place along.
+
+That failure has no symptom at the boundary a test usually watches: each name is
+still present, each value is still a callable function, and only the card's own
+behaviour goes wrong — `getChatMessages` running whatever code sat next to it.
+The suite caught it as a hang, not as a mismatch.
+
+So the alignment is now checked against a source that does not share the array:
+the virtual parent resolves each member **by name**, so comparing the published
+value for `name` against `parent[name]` (falling back to
+`parent.TavernHelper[name]`, since that is where most members live) fails on any
+shift. Checking the two literals against each other would have been no check at
+all — they are the two things that can disagree.
+
+### What that check found on its first run
+
+Two names — `triggerSlash` and `getScriptId` — were **not** the same object on
+the two routes. `helperNames` filters out whatever `core` already binds, so
+those two alone skipped the detach layer every sibling passes through: a card
+calling `triggerSlash` bare received live host values, and the same card calling
+`parent.TavernHelper.triggerSlash` received a clone. Upstream has one function
+per name. The core positions now resolve out of `tavernHelper`, so both routes
+hand out the same object.
+
+The comment above `helperNames` had asserted the opposite — "both carry the same
+behaviour, so which one wins does not change what a card sees" — and had been
+wrong for as long as it had been written down. It now records why the claim
+holds rather than asserting that it does.
