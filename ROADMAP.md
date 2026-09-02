@@ -70,7 +70,11 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    探针证实 `defineProperty(window,'localStorage')` 可遮蔽抛错 getter（`sessionStorage` 对照仍抛）。规格定稿：
    脚本 frame 随 `context`、界面 frame load 后 push（界面侧 50 点全在交互期、顶层 0）、**无单值上限**（字符串
    clone 4 MiB 1.4 ms，不是约束）、**整份 10 MiB 配额照浏览器机制**（超出 `setItem` 抛 QuotaExceededError +
-   storage 报告带 last-writer 字节分布）、写节流合并。frame 门面在建。AST：165 引用里 4 个裸启动点承担全部"启动即死"，
+   storage 报告带 last-writer 字节分布）、写节流合并。**frame 门面 ✅**（f351937：Proxy 门面在预置库之前
+   `defineProperty`，两种拼法、真 Storage 细节、覆盖层、配额同步抛、`getItem=1` 拒绝）。**实测**：绿茵好莱坞
+   3/3、V1.5.4 4/4 全部 loaded and listening，状态栏与论坛覆盖层不再死于存储，阻塞转移至覆盖层宿主。
+   待验：手机UI 两分叉、外置状态栏、正文美化（导入中）、空 profile 首次路径、`clear()` 报告。frame 协议
+   加 `kind`（storage 独立栏）排在覆盖层裁点前。AST：165 引用里 4 个裸启动点承担全部"启动即死"，
    按组件验收；「论坛覆盖层」预测静默降级、实测启动即死，44 复核判据。**indexedDB**：1 卡 blob 级
    图片库，本轮报告+降级，容量清理另议；枚举源内数据库读邻居扩展结构上不适用。
 8. **卡自带 ESM 依赖的代理**（族级基建）——13 卡 binding 导入 + 15 卡 MVU bundle；去重 11 个地址、
