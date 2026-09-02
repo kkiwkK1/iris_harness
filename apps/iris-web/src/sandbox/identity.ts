@@ -122,6 +122,12 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   updateScriptButtonsWith: 'identity',
 
   // ── shared: the same answer whoever asks ─────────────────────────────
+  /**
+   * A wrapper, not a capability: it takes the card's own function and hands back
+   * a function. Nothing about which script is asking changes what it does.
+   */
+  errorCatched: 'shared',
+
   /** The blueprint's version: one number, the same for every caller. */
   getTavernHelperVersion: 'shared',
   /** Emission is card-wide on purpose: it is how scripts reach each other. */

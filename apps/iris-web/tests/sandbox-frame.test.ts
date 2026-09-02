@@ -181,6 +181,12 @@ test('exactly the outward-reaching names are shadowed', () => {
     // the one answer that breaks a card outright, since MVU calls three of them
     // while wiring up, before it has published anything.
     'getTavernHelperVersion',
+    /*
+     * Seeded because a card **calls** it: a bare identifier cannot be absent
+     * politely, and `undefined` would only turn a `ReferenceError` into a
+     * `TypeError` a line later. It reports and re-throws, as upstream does.
+     */
+    'errorCatched',
     'getScriptButtons',
     'getButtonEvent',
     'replaceScriptButtons',
@@ -624,6 +630,12 @@ test('the bridged globals are published, and the window aliases are not', () => 
     // the one answer that breaks a card outright, since MVU calls three of them
     // while wiring up, before it has published anything.
     'getTavernHelperVersion',
+    /*
+     * Seeded because a card **calls** it: a bare identifier cannot be absent
+     * politely, and `undefined` would only turn a `ReferenceError` into a
+     * `TypeError` a line later. It reports and re-throws, as upstream does.
+     */
+    'errorCatched',
     'getScriptButtons',
     'getButtonEvent',
     'replaceScriptButtons',

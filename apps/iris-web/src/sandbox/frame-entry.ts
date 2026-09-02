@@ -1133,9 +1133,26 @@ try {
       typeof recorded === 'string' ? recorded : undefined,
     )
     if (message === undefined) return
+
+    /*
+     * **The channel has to agree with the sentence.**
+     *
+     * This was always posted as an `error`, and the panel renders an error under
+     * the card-script heading as *failed*. So a frame whose preset loaded fine
+     * and merely lacks `showdown` announced "card scripts: failed" — while the
+     * message itself said "the preset ran, so these are libraries Iris does not
+     * carry **rather than a failed load**". The text and the channel contradicted
+     * each other, and the channel is what a reader sees first.
+     *
+     * A recorded preset throw is a real failure and stays an error. Absent
+     * libraries with a preset that ran are a **note**: a fact worth having when
+     * something else goes wrong, and not itself something going wrong. That is
+     * the same split `describeTransferCost` already uses one screen up.
+     */
+    const presetThrew = typeof recorded === 'string' && recorded !== ''
     post({
       iris: run,
-      type: 'error',
+      type: presetThrew ? 'error' : 'note',
       // No script owns this: it happened outside any body.
       scriptId: undefined,
       message,

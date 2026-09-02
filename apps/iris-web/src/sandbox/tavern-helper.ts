@@ -911,6 +911,83 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      */
     getTavernHelperVersion: (): string => TAVERN_HELPER_VERSION,
 
+    /**
+     * Upstream's error-catching wrapper, seeded because a bare name cannot be
+     * absent politely.
+     *
+     * A real card produced `ReferenceError: errorCatched is not defined`, and
+     * this is the one class of gap where "report and return undefined" is not
+     * available: the card **calls** it, so `undefined` only trades a
+     * `ReferenceError` for a `TypeError` one line later. A bare identifier is
+     * either seeded or it throws; there is no third answer.
+     *
+     * **It re-throws.** [TH `src/function/util.ts:17-41`, via 3c] `onError`'s
+     * last statement is `throw error`, so the wrapper's value is in the
+     * *reporting*, not in the catching — the caller still sees the exception.
+     * A first draft of this swallowed the error, which would have changed the
+     * control flow of every card that wrapped a function expecting it to throw.
+     *
+     * **Async is covered by the same path.** Upstream branches on `isPromise`
+     * and attaches `.then(undefined, onError)`, so a rejected promise is
+     * reported and then rejects with the same error. A success value is returned
+     * **unchanged** — no wrapping — in both branches.
+     *
+     * **One deliberate difference, worth its line in `DEVIATIONS.md`:** upstream
+     * double-writes, a `toastr.error` for the reader and a `_log` for its panel.
+     * This reports to the panel only. Upstream's toast passes the message with
+     * `escapeHtml: false`, and `error.message` can carry model-authored text —
+     * so injecting it as HTML is a choice to make explicitly rather than inherit
+     * by copying.
+     * @param fn - the function the card wants wrapped.
+     * @returns a function of the same shape that reports and re-throws.
+     */
+    errorCatched: (fn: unknown): unknown => {
+      if (typeof fn !== 'function') {
+        host.reportGap(
+          'card called errorCatched with something that is not a function — it was returned'
+            + ' unchanged, because wrapping a non-callable would fail later and further away',
+        )
+        return fn
+      }
+
+      const report = (error: unknown): void => {
+        /*
+         * `stack` when there is one, and both for a `ZodError` — upstream's own
+         * special case, because a Zod stack carries none of the validation
+         * detail. That case is live in this corpus: `mvu_zod.js` is the line
+         * that produces them.
+         */
+        const named = error as { name?: unknown, message?: unknown, stack?: unknown }
+        const isZod = typeof named.name === 'string' && named.name.includes('ZodError')
+        const detail = typeof named.stack === 'string' && named.stack !== ''
+          ? (isZod ? `${String(named.message)}\n${named.stack}` : named.stack)
+          : String(named.message ?? error)
+        host.reportGap(
+          `a function a card wrapped in errorCatched threw: ${detail}`
+            + ' — reported and re-thrown, which is what upstream does with it, so the caller'
+            + ' still sees the exception',
+        )
+      }
+
+      return (...args: unknown[]): unknown => {
+        try {
+          const result = (fn as (...rest: unknown[]) => unknown)(...args)
+          if (typeof (result as { then?: unknown } | undefined)?.then === 'function') {
+            // Duck-typed, for the reason the button writers are: a card's
+            // promise may come from its own realm or its own bundled library.
+            return (result as Promise<unknown>).then(undefined, (error: unknown) => {
+              report(error)
+              throw error
+            })
+          }
+          return result
+        } catch (error: unknown) {
+          report(error)
+          throw error
+        }
+      }
+    },
+
     /*
      * ── script buttons: answered, reported, and not implemented ──────────
      *
@@ -1564,6 +1641,33 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
  * @param report - where to say that something could not be detached.
  * @returns the same surface, with call results copied.
  */
+/**
+ * Members whose return value is a **handle**, and so must not be copied.
+ *
+ * Measured: `eventOn`, `eventOnce`, `eventMakeFirst` and `eventMakeLast` all
+ * return `{ stop: () => void }` — a live unsubscribe. A structured copy of one
+ * is impossible (it holds a function) and would be **useless if it were
+ * possible**: calling `stop` on a copy would unsubscribe nothing.
+ *
+ * They were not exempt, so every script's first `eventOn` produced
+ * "returned a value Iris could not copy, so the card holds a live reference
+ * into the frame's snapshot" — a sentence whose premise is false for a handle,
+ * reported as an error, and therefore rendered by the panel as the card's
+ * scripts having **failed**. Every card with a script hit it: `eventOn` is
+ * ordinarily the first thing a script does.
+ *
+ * The distinction the detach layer actually cares about is a live reference into
+ * the frame's **snapshot data**. A handle is not data, and upstream hands the
+ * same handle back by reference too — copying it was never the compatible
+ * behaviour.
+ */
+const HANDLE_RETURNS: ReadonlySet<string> = new Set([
+  'eventOn',
+  'eventOnce',
+  'eventMakeFirst',
+  'eventMakeLast',
+])
+
 function detachReturns(
   api: Record<string, unknown>,
   report: (message: string) => void,
@@ -1571,6 +1675,12 @@ function detachReturns(
   const out: Record<string, unknown> = {}
   for (const [name, member] of Object.entries(api)) {
     if (typeof member !== 'function') {
+      out[name] = member
+      continue
+    }
+    if (HANDLE_RETURNS.has(name)) {
+      // Handed back by reference, with nothing said: this is the contract, not
+      // a fallback from a failed copy.
       out[name] = member
       continue
     }
