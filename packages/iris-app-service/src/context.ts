@@ -73,6 +73,34 @@ export function assertStorable(value: unknown, path = 'value'): void {
 }
 
 /**
+ * Every declared script's buttons, by script id.
+ *
+ * **Unfiltered, and that is the contract.** `getScriptButtons()` returns hidden
+ * buttons too — `visible: false` means "not rendered", not "not there", and 58
+ * of the corpus's 89 buttons are hidden. A script reveals one by flipping that
+ * flag, which it can only do if it can see it. Filtering here would produce a
+ * panel that looks right and a script that cannot find the button it means to
+ * show.
+ *
+ * Keyed by the ids the **card declares**, matching the `script` variable
+ * partition beside it: a frame runs one of the card's scripts, so its own id is
+ * always present, and an id the card no longer declares is not carried.
+ * @param entry - the open conversation.
+ * @returns buttons by script id; scripts declaring none are absent.
+ */
+function scriptButtonsOf(entry: ChatEntry): Record<string, { name: string, visible: boolean }[]> {
+  const byScript: Record<string, { name: string, visible: boolean }[]> = {}
+  for (const declared of entry.card === undefined ? [] : extractScripts(entry.card).scripts) {
+    if (declared.buttons === undefined) continue
+    // Copied, like everything else a frame is handed: upstream's own
+    // `_getScriptButtons` returns `klona(script.button.buttons)`, so a card
+    // scribbling on the array it received changes nothing here either.
+    byScript[declared.id] = declared.buttons.map(button => ({ ...button }))
+  }
+  return byScript
+}
+
+/**
  * The library summaries, with the played character's own card data attached.
  *
  * Upstream hands a card script whole cards; this attaches `data.character_book`
@@ -196,6 +224,7 @@ export function buildCardContext(
     // time, because a card may rebind its book mid-chat and the frame answers
     // `getCharWorldbookNames('current')` from this field.
     charWorldbooks: charWorldbookNames(entry.card),
+    scriptButtons: scriptButtonsOf(entry),
   }
 }
 

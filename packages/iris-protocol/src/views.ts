@@ -278,6 +278,25 @@ export interface ScriptContext {
    */
   charWorldbooks?: { primary: string | null, additional: string[] }
   /**
+   * Each script's buttons, by script id — **unfiltered**.
+   *
+   * `getScriptButtons()` is synchronous upstream
+   * (`JS-Slash-Runner/src/function/script.ts:58`), so it has to be answerable
+   * from this snapshot rather than over the wire.
+   *
+   * **Every button, including the hidden ones.** `visible: false` means "do not
+   * render", not "does not exist" — 58 of the corpus's 89 buttons are hidden,
+   * and a script flipping one to `true` is how it makes a button appear. A
+   * surface that filtered here would make that impossible and would look
+   * correct: the panel shows the right buttons, and the script simply cannot
+   * find the one it wants to reveal.
+   *
+   * The script-level `buttonsEnabled` switch and the panel's own rendering
+   * rules are separate layers that live where the rendering happens; this is the
+   * data layer and carries what the card declared.
+   */
+  scriptButtons?: Record<string, { name: string, visible: boolean }[]>
+  /**
    * The layers `getAllVariables` merges, each unmerged and labelled by source.
    *
    * Upstream's `_getAllVariables` (`JS-Slash-Runner/src/function/variables.ts`)

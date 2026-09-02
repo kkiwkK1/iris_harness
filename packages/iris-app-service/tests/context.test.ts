@@ -367,3 +367,75 @@ test('a chat with no card leaves every entry a summary', () => {
   })
   assert.equal(context.characters[0]?.data, undefined)
 })
+
+test('the snapshot carries every declared button, hidden ones included', () => {
+  const withButtons = card()
+  withButtons.data.extensions = {
+    tavern_helper: {
+      scripts: [{
+        id: 'panel', name: 'Panel', type: 'script', enabled: true, content: 'noop()',
+        button: {
+          enabled: true,
+          buttons: [
+            { name: '显示', visible: true },
+            { name: '隐藏', visible: false },
+          ],
+        },
+      }],
+    },
+  } as never
+  const built = new ChatEntry({
+    chatId: 'aria-1',
+    header: {
+      user_name: 'Traveller', character_name: 'Aria',
+      create_date: '2026-09-01 @10h00m00s', chat_metadata: {},
+      iris: { chatId: 'aria-1', characterId: 'aria', title: 'Aria', updatedAt: 0 },
+    },
+    session: createSession('aria-1'),
+    card: withButtons,
+  })
+
+  // `getScriptButtons()` is synchronous upstream, so it is answered from here
+  // rather than over the wire — and it returns **every** button. `visible:
+  // false` is "not rendered", not "not there": 58 of the corpus's 89 buttons are
+  // hidden, and flipping one to `true` is how a script reveals it. A filtered
+  // surface would give a correct-looking panel and a script that cannot find the
+  // button it means to show.
+  const buttons = contextOf(built).scriptButtons?.['panel']
+  assert.deepEqual(buttons, [
+    { name: '显示', visible: true },
+    { name: '隐藏', visible: false },
+  ])
+})
+
+test('what a card is handed is a copy of its buttons, not the declaration', () => {
+  const withButtons = card()
+  withButtons.data.extensions = {
+    tavern_helper: {
+      scripts: [{
+        id: 'panel', name: 'Panel', type: 'script', enabled: true, content: 'noop()',
+        button: { enabled: true, buttons: [{ name: 'one', visible: true }] },
+      }],
+    },
+  } as never
+  const built = new ChatEntry({
+    chatId: 'aria-1',
+    header: {
+      user_name: 'Traveller', character_name: 'Aria',
+      create_date: '2026-09-01 @10h00m00s', chat_metadata: {},
+      iris: { chatId: 'aria-1', characterId: 'aria', title: 'Aria', updatedAt: 0 },
+    },
+    session: createSession('aria-1'),
+    card: withButtons,
+  })
+
+  // Upstream's own `_getScriptButtons` returns `klona(...)`, so a card that
+  // scribbles on what it received changes nothing. Matched here: a frame is a
+  // separate trust domain, and a shared array would be a way into the card's
+  // declaration that passes no check on the way.
+  const handed = contextOf(built).scriptButtons?.['panel']
+  assert.ok(handed)
+  handed[0] = { name: 'rewritten', visible: false }
+
+  assert.deepEqual(contextOf(built).scriptButtons?.['panel'], [{ name: 'one', visible: true }])
+})
