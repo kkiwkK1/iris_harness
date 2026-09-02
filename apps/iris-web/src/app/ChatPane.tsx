@@ -171,6 +171,25 @@ export function ChatPane(): ReactElement {
         onSend={text => void actions.send(text)}
         onStop={() => void actions.abort()}
         onPreviewPrompt={() => setExplaining({ turn: undefined })}
+        onPressButton={button => {
+          /*
+           * The press is recorded, not delivered — **for now, and loudly**.
+           *
+           * Delivering it means emitting `${scriptId}_${cyrb53(name)}` into the
+           * card's frames, and that hash is being consolidated into one shared
+           * module rather than copied a third time (it already exists twice
+           * host-side). A copy made here to finish the wiring sooner is exactly
+           * the shape that produced two incompatible `getChatMessages`.
+           *
+           * Reported by name rather than silently dropped: a button that does
+           * nothing and says nothing is worse than no button, and this way the
+           * gap is visible in the same list every other card gap appears in.
+           */
+          actions.addCardReport(
+            `button "${button.name}" (${button.scriptName}) was pressed;`
+              + ' Iris cannot deliver it yet — the button event name is not wired',
+          )
+        }}
       />
       <PromptPanel
         open={explaining !== undefined}

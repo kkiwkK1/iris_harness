@@ -378,3 +378,35 @@ either. The cost of *not* copying it is higher and less visible.
 
 **What would overturn it.** Upstream widening the filter, or a corpus card that
 depends on those floors being reachable — none does today.
+
+---
+
+## 11. jQuery UI is installed but deliberately not bundled
+
+**Kind:** deliberate improvement, recorded because the evidence for it is invisible.
+
+**Upstream** ships jQuery UI and touch-punch into every frame.
+
+**Iris** does not put them in the message preset. Measured at **zero uses**
+across the corpus by two independent probes — method calls and theme class names
+— against 349,109 bytes that every message frame fetches cold, because the HTTP
+cache is partitioned by origin and each of these frames is its own opaque origin.
+
+A card that reaches for one gets `undefined`, which is what a SillyTavern install
+without the plugin gives it, plus a report naming the method
+(`jquery-plugin-gap.ts`). No list of jQuery UI methods exists anywhere in this
+repo; the rule catches any name jQuery does not have.
+
+**The packages remain in `package.json` on purpose.** Removing them would touch
+the lockfile, which needs a quiet window while several sessions share this tree —
+but the substantive reason is that the version-pinning test guards the property
+*"every message-frame library is pinned to an exact version"*, and that property
+should not be weakened for two libraries that merely stopped being bundled.
+
+**So the absence is a decision, not an oversight**, and this paragraph is the
+only thing that distinguishes the two: an installed-but-unimported dependency
+looks identical to a forgotten one. Delete them in a quiet window if the pinning
+test is reworked at the same time.
+
+**What would overturn it.** A corpus card using jQuery UI — the reports would
+name it.

@@ -13,7 +13,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
+import { useIris } from '../client/provider.tsx'
+import type { ResolvedButton } from './script-buttons.ts'
 import { Slot } from '../slots/Slot.tsx'
+import { ScriptButtons } from './ScriptButtons.tsx'
 
 /**
  * Render the composer.
@@ -30,13 +33,30 @@ export function Composer({
   onSend,
   onStop,
   onPreviewPrompt,
+  onPressButton,
 }: {
   chatId: string
   generating: boolean
   onSend: (text: string) => void
   onStop: () => void
   onPreviewPrompt: () => void
+  /**
+   * Press one of the card-script buttons.
+   *
+   * A prop rather than something this component resolves, for the reason the
+   * seam exists: the event name a press must emit is
+   * `${scriptId}_${cyrb53(buttonName)}`, and that hash has to be bit-identical
+   * to upstream’s or the card’s own listener is never called — silently. The
+   * hash lives in one shared place; this file does not get a copy.
+   */
+  onPressButton: (button: ResolvedButton) => void
 }): ReactElement {
+  /*
+   * Read here rather than threaded down. The script list is store state, and
+   * this component already re-renders on every keystroke of the draft — one
+   * more prop through that path is one more chance to hold a stale copy.
+   */
+  const scripts = useIris(state => state.scripts)
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
 
@@ -68,6 +88,12 @@ export function Composer({
   return (
     <div className="iris-composer">
       <div className="iris-composer__inner">
+        {/*
+          * Above the field, which is where upstream puts it — it prepends its bar
+          * to the send form. Inside `__inner` rather than beside it so the bar
+          * lines up with the field's own left edge instead of the panel's.
+          */}
+        <ScriptButtons scripts={scripts} onPress={onPressButton} />
         <textarea
           ref={field}
           className="iris-composer__field"

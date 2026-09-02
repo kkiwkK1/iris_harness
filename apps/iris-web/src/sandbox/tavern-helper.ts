@@ -28,6 +28,7 @@ import {
 } from '@iris/compat-tavernhelper-core'
 import type { ScriptChatMessage, ScriptContext, WorldbookEntry } from '@iris/protocol'
 
+import { buttonEventName } from './button-event.ts'
 import { UnsupportedApiError } from './errors.ts'
 
 /** A scope selector, in the shape upstream's cards pass it. */
@@ -777,11 +778,31 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * @param buttonName - the button's name.
      * @returns the event name.
      */
-    getButtonEvent: (buttonName: unknown): string => {
-      reportButtonGap('getButtonEvent')
-      const scriptId = host.scriptId() ?? 'script'
-      return `iris_button_${scriptId}_${String(buttonName)}`
-    },
+    /**
+     * The event name a button press emits.
+     *
+     * Upstream's, exactly: `${script_id}_${getStringHash(button_name)}`
+     * (`store/iframe_runtimes/script.ts:6-8`). There is no separate event type —
+     * the button id **is** the event name, computed independently on both sides
+     * and expected to agree.
+     *
+     * That agreement is the whole mechanism, and it fails silently: a card does
+     * `eventOn(getButtonEvent('名前'), handler)`, the bar emits what it computed,
+     * and if the two hashes differ by a bit the handler is simply never called.
+     * No error, no warning, nothing to see. So the hash is imported from
+     * `@iris/compat-tavernhelper-core` rather than written here — it was already
+     * present twice in this repo before this member needed it, and a third copy
+     * is how two implementations start disagreeing.
+     *
+     * **Renaming a button changes its event.** The name is an input to the hash,
+     * so an author who edits a label silently orphans every listener registered
+     * against the old one. That is upstream's design, copied; the bar reports it
+     * rather than repairing it.
+     * @param buttonName - the label, as the card wrote it.
+     * @returns the event name both sides compute.
+     */
+    getButtonEvent: (buttonName: unknown): string =>
+      buttonEventName(host.scriptId(), String(buttonName)),
 
     /**
      * Replace this script's button list — accepted, not performed.
