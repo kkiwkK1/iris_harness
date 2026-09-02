@@ -44,6 +44,15 @@ function realm(options?: { interfaceFrame?: boolean }): {
   /** Make the next module evaluation return this promise. */
   runAsync: (next: () => Promise<void>) => void
   container: { id: string }
+  /**
+   * The stub standing in for the frame's own window.
+   *
+   * Exposed so a test can seed a global the way the **preset** does — by
+   * running after the frame is installed. `parent.$` is read live off this for
+   * exactly that reason, and a test that could only seed it up front could not
+   * tell a live read from a captured one.
+   */
+  realWindow: Record<string, unknown>
 } {
   const posted: FromFrame[] = []
   const listeners: ((message: ToFrame) => void)[] = []
@@ -112,6 +121,7 @@ function realm(options?: { interfaceFrame?: boolean }): {
     publishedValue: (name: string) => publishedValues[name],
     forwarded: (name: string) => forwarded.get(name)?.(),
     listed: () => listed,
+    realWindow: env.realWindow as unknown as Record<string, unknown>,
     reportFromToastr: () => toastrReport,
     storage: () => installedStorage,
     run: next => {
@@ -3017,4 +3027,78 @@ test('a publish nobody asked about first says nothing extra', () => {
       .length,
     0,
   )
+})
+test('parent.$ answers with this frame’s jQuery, so a card’s guard does not swallow it', () => {
+  /*
+   * **258 silent no-ops.** 銀麒赎世's system panel wraps every lookup in
+   * `$p(sel){ var jq = _pw.$ || _pw.jQuery; if (!jq) return $(); ... }` and calls
+   * it 258 times [3c]. With `$` absent from the parent proxy every one of those
+   * took the guard, returned an empty jQuery set, and did nothing — no error,
+   * no report, no render. The panel would have shown a card that loaded and
+   * listened while drawing nothing, which is the failure this project is least
+   * able to see.
+   *
+   * Upstream's `parent_jquery.js` is `window.$ = window.parent.$`, so a card's
+   * `$` there is the host page's instance bound to the document that carries the
+   * overlay. This frame's own jQuery is bound to this frame's document, which is
+   * that surface — the equivalence holds where it matters.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const parent = scope.globals()['parent'] as Record<string, unknown>
+  // The realm stub has no jQuery seeded, so absent must read as absent rather
+  // than as a broken stand-in: the card's own guard is then correct.
+  assert.equal(parent['$'], undefined)
+  assert.equal('$' in parent, false, 'has must agree with get')
+
+  // Seeded the way the preset seeds it, on the frame's own window.
+  const marker = { jquery: '3.5.1' }
+  ;(scope.realWindow as Record<string, unknown>)['$'] = marker
+  ;(scope.realWindow as Record<string, unknown>)['jQuery'] = marker
+
+  assert.equal(parent['$'], marker)
+  assert.equal(parent['jQuery'], marker)
+  assert.equal('$' in parent, true, 'has must agree with get')
+
+  /*
+   * Read **live**, not captured: the preset loads as a script and may not have
+   * run when this proxy is built, so a captured value would be `undefined`
+   * forever for every card whose preset arrived a tick late.
+   */
+  const replaced = { jquery: '3.5.1-later' }
+  ;(scope.realWindow as Record<string, unknown>)['$'] = replaced
+  assert.equal(parent['$'], replaced)
+
+  /*
+   * **`top` too, and it is the same object.** 魔法少女的扣扣审判1.0's interface
+   * code uses `top.jQuery('#send_textarea').val(...)` then
+   * `top.jQuery('#send_but').trigger('click')` as a fallback send path, 6 times
+   * [44] — so a fix that reached only `parent` would leave that card silently
+   * doing nothing. The shadow returns one object for both names, which is why
+   * this holds; asserted because nothing else says so, and because 3c measured
+   * `parent === top` as a zero-risk axis (no card depends on telling them
+   * apart).
+   */
+  const top = scope.globals()['top'] as Record<string, unknown>
+  assert.equal(top, parent, 'top and parent must be the same virtual object')
+  assert.equal(top['$'], replaced)
+  // `jQuery` was seeded once and not replaced, so it still reads the first
+  // marker — which also shows the two names are read independently rather
+  // than one aliasing the other.
+  assert.equal(top['jQuery'], marker)
+})
+
+test('a card cannot replace parent.$ for its siblings', () => {
+  // Read-only like `document`, and for the same reason: one card's scripts share
+  // this frame, so an assignment here would replace every sibling's selector
+  // engine. Upstream cannot be written to either — there it is SillyTavern's own
+  // global, and a card overwriting it would break the host UI, not a neighbour's.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const parent = scope.globals()['parent'] as Record<string, unknown>
+  assert.throws(() => { parent['$'] = () => undefined }, /not writable|parent\.\$/)
 })

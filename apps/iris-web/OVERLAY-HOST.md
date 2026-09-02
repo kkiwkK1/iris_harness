@@ -101,6 +101,40 @@ background:transparent`,`z-index: var(--iris-overlay-z, 40)`。
 - `--TH-viewport-height` = `parent.innerHeight` 也对(parent 是 shell,shell 就是全视口)。
 - 三个 ST id 锚点、生成状态三条腿、`#chat` 信号:**与方案无关**,在任一方案下都是同一份活。
 
+### C 的一处裁定不成立,以及量出来的替代 **[实测]**
+
+原裁定是「frame `pointer-events:none`,卡节点自恢复 `auto`」。**跨不过 frame 边界**:
+浏览器先对 iframe **元素**做命中测试,frame 内的内容改不了那一层。
+
+```
+A  frame auto,无 clip     shell 按钮 = iframe   卡节点 = iframe   空白 = iframe   ← shell 全被吞
+B  frame none(原裁定)    shell 按钮 = beneath  卡节点 = html                     ← 卡点不动
+C  frame auto + clip-path  shell 按钮 = beneath  卡节点 = iframe   空白 = html     ← 成立
+```
+
+不相连的多区域也成立(真卡同时建浮动按钮与面板),`polygon()` 只能一个多边形,要
+`path()` 多子路径:
+
+```
+clip-path: path('M200 200H280V280H200Z M600 400H720V460H600Z')
+  区域内 = iframe(两处)   两者之间 = html   shell = beneath
+```
+
+**顺带一条实现事实,它本来会让我发一个假的全视口 frame**:`position:fixed; inset:0`
+**不会**撑满 iframe——它是替换元素,`width:auto` 解析成**固有** 300×150。我第一版探针的
+frame 就是 300×150,而我差点据此判定「C 也不行」。必须显式 `width:100%; height:100%`。
+
+所以 C 多一个机制:**frame 上报被卡节点占据的矩形,shell 据此设 `clip-path`**
+(新报告类型 `regions`,不复用 `height` —— 那条已承载三义)。空列表 → 零面积路径,
+全穿透,比在两种 `pointer-events` 状态间切换更简单。
+
+- **[3c] 卡自己声明 `pointer-events:none` 的装饰层要从矩形里减掉**,否则我们比上游多挡。
+- **[3c] 全屏覆盖层卡**(V1.5.4 建全视口 `<iframe>`)的矩形就是整屏 → 等价整层 `auto`,
+  而那正是它在 ST 里的本来效果,**退路不必单设**。
+- **代价与方案 B 同族,量级不同**:也是第二个真相源、移动时晚一帧。但 C 是**一张卡自己的
+  1–3 个 `position:fixed` 矩形**(不随滚动移动),B 是**每帧 16 个随滚动的槽位矩形**。
+  C 的晚一帧只在卡自己做动画或拖动时可见。
+
 **代价,逐条**:
 
 - **脚本 frame 从此可见。** 今天它是隐藏的,而 `describeOverlayAttempt` 这套仪器正是建立在
@@ -165,7 +199,15 @@ shell;realm 内 `#chat` 只做信号(每新楼层追加一个空 `.mes` 节点,�
    而这个项目已经付过「两份真相各自正确、合起来错」的学费。
 3. **高度回报多两跳。** 今天:frame 报高度 → shell 回流。B 下:frame → realm → shell →
    新矩形 → realm。而高度变化很频繁(字体加载、图片解码)。
-4. **层叠只有一个方向。** 投影的 frame 永远在 shell 文字之上(另一个文档、fixed 层),
+4. **`#chat` 空 `.mes` 存根不够 [3c,自认前一轮说法不足]。** §六之二 的「只消费
+   childList」是**observer** 的消费;而银麒赎世的 `injectPanel()` 把 `#chat` 当**挂载点**:
+   它要最后一条 `.mes` **内有 `.mes_text`**(`.find().append()` 对空集是静默 no-op)、要往
+   主页面 `<head>` 注 CSS、还找 `[id*="dice"]` 骰子面板插在它前面。所以存根要长到
+   `.mes > .mes_text` 才行,而这已经不是「信号」了。
+   **顺带对 C 是一分**:3c 复核 `[id*="dice"]` 在**全语料没有任何脚本建 dice 节点**——那是
+   一个恒假的死分支,`.mes_text` append 是唯一活路。所以跨组件依赖这条 **C 零风险**,而 B
+   的存根若缺 `.mes_text` 则两个分支**都** no-op 且**都不报错**。
+5. **层叠只有一个方向。** 投影的 frame 永远在 shell 文字之上(另一个文档、fixed 层),
    文字无法压在面板上。今天也是如此(frame 就在文字之上),**所以这条不算回归**。
 
 ---
@@ -183,7 +225,10 @@ shell;realm 内 `#chat` 只做信号(每新楼层追加一个空 `.mes` 节点,�
 | 阅读区搬迁 | 无 | **全部** | 无 |
 | shell↔阅读区通信 | 不变 | **全部 postMessage** | 不变 |
 | 新的真相源 | 0 | 0 | **每帧 16 个矩形** |
-| 改动规模 | 一个 style + 一条报告口径 | 最大 | 中 |
+| 新增机制 | **`regions` + clip-path** | 无 | 投影协议 |
+| 那个机制的代价 | 1–3 个 fixed 矩形,晚一帧 | — | 16 个滚动矩形,晚一帧 |
+| 跨组件依赖(`[id*="dice"]`) | **零风险**(见下) | 零风险 | 失分(见下) |
+| 改动规模 | 一个 style + `regions` + 一条报告口径 | 最大 | 中 |
 
 ---
 
@@ -214,9 +259,27 @@ A 方案下**两个入口两个 bundle**:`shell.html`(作曲器/设置/侧栏)�
 - `FRAME_OVERHEAD_BYTES` **不变**:子 frame 的 bootstrap 仍逐个内联。realm 多一份。
   **未量**:子 frame 的 srcdoc 内联是否仍不走缓存——可在真 frame 里量,和其余浏览器常数一批。
 
+## 五之二、一张卡的多个脚本共居**一个** frame
+
+`card-scripts.ts:56-59` 写着理由:
+
+> One frame for the whole set, not one per script: a provider publishes a live
+> interface for its siblings to use, and a live object cannot cross an opaque
+> origin. Sharing a realm is what makes `waitGlobalInitialized` expressible.
+
+所以:
+
+- 银麒赎世的 `系统面板` 查 `手机UI` 建的 `#phone-app-body` —— **查得到**,共居同一 document。
+- **C 下这个表面是「每卡一层」,不是「每脚本一层」**;C 只在**跨卡**这条轴上与上游不同
+  (上游一个共享 body),**不切跨脚本**。
+- 同卡两脚本靠「枚举父文档所有 iframe + postMessage」通信(10 处)[3c],C 下同卡共居仍通
+  —— **这不是损失**。
+
 ## 六、③ 迁移分步(每步单独验收、每步树保持绿)
 
-1. **方案 C**:脚本 frame 变全视口表面 + `describeOverlayAttempt` 改口径。
+1. **方案 C**:脚本 frame 变全视口表面(显式 `width/height:100%`)+ `regions` 上报与
+   clip-path + `describeOverlayAttempt` 改口径 + **虚拟 parent 暴露 `$`/`jQuery`**(见 §八,
+   缺它验收从第一天起不可能过)。
    验收:V1.5.4 覆盖层出现在视口上、能点开;greeting 那个「·」照常渲染。
 2. **三个 ST id 锚点 + 生成状态三条腿 + `#chat` 的 `mes` class/`mesid`**。
    验收:银麒赎世系统面板新楼层后 100 ms 重注入、生成中冻结。
@@ -246,9 +309,32 @@ showdown, toastr, z]))` 假定 parent 是 ST 页面。父子化后 parent 是 re
   `:15` 的 `parent.TavernHelper._bind`(同样整段消失)、`parent_jquery.js` 的 `parent.$`
   (缺则 `predefine` 末尾 `$(window).on('pagehide')` 抛)。
 - **失败形态是静默**:frame 建了、引导跑一行就抛、宿主看不到。
-- **裁定,当设计的一部分而不是事后检查**:realm window 上保证 `_`、带 `_bind` 的
-  `TavernHelper`、`$`、以及那六个名字齐;**界面 frame 的引导若从 parent 取任何名,缺一个就报
-  一条具名 fault**,而不是在 frame 里抛。
+- **名单,最终版 [3c]**:六个 pick 名(`EjsTemplate` `TavernHelper` `YAML` `showdown`
+  `toastr` `z`)+ `_` + 带 `_bind` 的 `TavernHelper` + **`$` / `jQuery`** + **`SillyTavern`**
+  (`predefine.js:26-36` 的 getter 内部读 `parent.SillyTavern`,同类硬依赖)。
+- **`_th_impl` 记账不建 [3c]**:上游自己的内部管道(`log.js` / `_errorCatched` 双写 /
+  predefine getter),卡**零使用**。同栏一行:`writeExtensionField` 经
+  `SillyTavern.getContext()` 的返回值对卡可见,语料 **0 调用**,也记账不建。
+- **裁定,当设计的一部分而不是事后检查**:**界面 frame 的引导若从 parent 取任何名,缺一个
+  就报一条具名 fault**,而不是在 frame 里抛。
+
+### `$` / `jQuery` 不能等到第 7 步 [3c]
+
+这一条改的是**步骤表**,不是名单:银麒赎世的系统面板把每次查找包在
+`$p(sel){ var jq = _pw.$ || _pw.jQuery; if (!jq) return $(); … }` 里,**调 258 次**
+(`_pw.` 127、`_pd.` 37)。虚拟 parent 不暴露 `$` 时,**每一次都走守卫、返回空 jQuery 集、
+什么都不做——不报错、不渲染**。
+
+> 一个静默降级的守卫把「少一个成员」变成 258 次空操作,而面板会显示一张
+> 「loaded and listening」却什么都不画的卡。
+
+所以它**进步骤 1/2**,并且已经做了:虚拟 parent 现在对 `$`/`jQuery` 答**本 frame 的 jQuery
+实例**(C 下它的 document 就是覆盖层表面,与上游「父页面的 `$` 绑在承载覆盖层的文档」等价),
+**live 读**而非捕获(预置是脚本,可能晚于代理构建),`has` 与 `get` 一致,并且**只读**——
+同一张卡的脚本共居一个 frame,写它会替换所有兄弟的选择器引擎。
+
+**这条判据值得单记**:缺它的话验收从第一天起就不可能过,而七步里**每一步都会是绿的**——
+比先拆后补更难发现。
 
 ## 八之二、验收判据:哪些红点该消失,哪些不该
 

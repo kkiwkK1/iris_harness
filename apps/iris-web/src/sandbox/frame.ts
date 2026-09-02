@@ -650,6 +650,15 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   /** Members the frame bridges itself, which a card may never overwrite. */
   const isBridged = (property: string): boolean =>
     property === 'document' ||
+    /*
+     * Read-only like `document`: within one card the scripts share this frame,
+     * so a script assigning `parent.$` would replace every sibling's selector
+     * engine. Upstream cannot be written to either — its `parent.$` is the host
+     * page's global, and a card that overwrote it would be breaking
+     * SillyTavern's own UI rather than its neighbour's.
+     */
+    property === '$' ||
+    property === 'jQuery' ||
     property === 'innerWidth' ||
     property === 'innerHeight' ||
     property === 'SillyTavern' ||
@@ -695,6 +704,32 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * to offer, and wrongly now that we do.
        */
       if (property === 'EjsTemplate') return ejsTemplate
+
+      /*
+       * `parent.$` and `parent.jQuery`, answered with **this frame's** jQuery.
+       *
+       * Upstream's `parent_jquery.js` is two lines — `window.$ = window.parent.$`
+       * — so a card's `$` upstream is the host page's instance and its selectors
+       * run against the document that carries the overlay. This frame's own
+       * jQuery is bound to this frame's document, and that document *is* the
+       * surface a card mounts into, so the equivalence holds where it matters.
+       *
+       * **Not a convenience.** 3c counted 银麒赎世's system panel calling
+       * `$p(sel){ var jq = _pw.$ || _pw.jQuery; if (!jq) return $(); … }`
+       * **258 times** (`_pw.` 127, `_pd.` 37). With `$` absent from this proxy
+       * every one of those calls took the guard, returned an empty jQuery set,
+       * and did nothing — **no error, no report, no render**. A guard that
+       * degrades silently turns a missing member into 258 no-ops, and the panel
+       * would have shown a card that loaded and listened while drawing nothing.
+       *
+       * Read live off the frame's window rather than captured, because the
+       * preset that seeds it loads as a script and may not have run when this
+       * proxy is built. Absent means absent: the card's own guard is then
+       * correct, and this returns undefined rather than a broken stand-in.
+       */
+      if (property === '$' || property === 'jQuery') {
+        return (env.realWindow as unknown as Record<string, unknown>)[property]
+      }
 
       // members so a card cannot shadow `document` by writing to it.
       if (published.has(property)) return published.get(property)
@@ -764,6 +799,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       return (
         published.has(property) ||
         property === 'document' ||
+        /*
+         * Agreeing with the `get` trap, which is the only reason this line
+         * exists: a card's guard is `_pw.$ || _pw.jQuery` (a read), but
+         * `_.has(parent, '$')` is a different question asked by the same cards
+         * about other members, and a proxy whose `has` disagrees with its `get`
+         * is the shape that made `waitGlobalInitialized` poll false forever
+         * while `in` said true.
+         */
+        ((property === '$' || property === 'jQuery')
+          && (env.realWindow as unknown as Record<string, unknown>)[property] !== undefined) ||
         property === 'innerWidth' ||
         property === 'innerHeight' ||
         property === 'TavernHelper' ||
