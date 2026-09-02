@@ -16,6 +16,7 @@
  */
 
 import { UnsupportedApiError } from './errors.ts'
+import { topFrame } from './failure-attribution.ts'
 import { UNBRIDGED_GLOBALS } from './policy.ts'
 import type { FromFrame, ToFrame } from './protocol.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
@@ -413,25 +414,96 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
             })
           }
         }
-        return (...args: unknown[]) => {
-          // `generateRaw`'s upstream signature varies by caller, and guessing
-          // wrong here would send a malformed request that fails as a host error
-          // rather than as a shape problem. A string is the contract's shape; an
-          // object with a prompt-ish field is the other common one; anything else
-          // is refused by name so the next real card tells us what it actually
-          // passes instead of us inferring it.
-          const first = args[0]
-          if (typeof first === 'string') return callAction('generateRaw', { prompt: first })
-          if (typeof first === 'object' && first !== null) {
-            const bag = first as Record<string, unknown>
-            const prompt = bag['prompt'] ?? bag['user_input']
-            if (typeof prompt === 'string') return callAction('generateRaw', { prompt })
+        /*
+         * One book, in the shape it is saved in.
+         *
+         * **The uid-keyed raw object, not our normalised entry array.** MVU
+         * guards its result with `isPlainObject(loaded.entries)` and then indexes
+         * it by uid, so handing back the array `getWorldbook` returns would pass
+         * a `typeof` check and fail at the first index — the failure mode this
+         * project keeps paying for, where the shape is wrong and only the use
+         * site can tell.
+         *
+         * Three answers, kept apart because upstream keeps them apart:
+         *
+         * - **an object** — the book was found and loaded;
+         * - **`null`** — a name was asked for and there is no such book. The
+         *   contract's reply is `{ book?: unknown }`, so an absent key means
+         *   asked-and-missing, and `null` is what upstream's own
+         *   `loadWorldInfo` returns for it;
+         * - **`undefined`** — nothing was asked. Upstream opens with
+         *   `if (!name) return`, returning undefined without touching storage,
+         *   and a card that tests `if (loaded === undefined)` is testing for its
+         *   own missing argument rather than for a missing book. Collapsing the
+         *   two would answer "there is no such book" to a card that never named
+         *   one.
+         */
+        if (property === 'loadWorldInfo') {
+          return async (name?: unknown): Promise<unknown> => {
+            // Upstream's falsy test, not a typeof: it takes `''`, `0` and `null`
+            // through the same early return.
+            if (name === undefined || name === null || name === '' || name === false) {
+              return undefined
+            }
+            const reply = await callAction('loadWorldInfo', { name: String(name) })
+            const book = (reply as { book?: unknown } | undefined)?.book
+            return book === undefined ? null : book
           }
-          throw new UnsupportedApiError(
-            `SillyTavern.${property}`,
-            `Iris does not recognise this call's arguments (${typeof first}); the shape a card passes has not been measured yet.`,
-          )
         }
+
+        /*
+         * `generate` and `generateRaw` are two wire methods, and this used to be
+         * one.
+         *
+         * Every surface member without its own branch above fell into a body
+         * that called `generateRaw` regardless of the name read — so
+         * `SillyTavern.generate('hi')` ran `script.generateRaw`, which takes
+         * `prompt` and carries no chat history, in place of `script.generate`,
+         * which takes `userInput` and does. It reached no card only because the
+         * surrounding shape check throws by name for a non-string argument, so
+         * `setVariables` and `swipeTo` were refused rather than misrouted; a
+         * string argument to either would have been sent as a generation.
+         *
+         * The pin beside this asserts the surface's *names*, which is exactly
+         * the assertion a misroute passes.
+         */
+        if (property === 'generate' || property === 'generateRaw') {
+          const field = property === 'generate' ? 'userInput' : 'prompt'
+          return (...args: unknown[]) => {
+            // Upstream's signature varies by caller, and guessing wrong would
+            // send a malformed request that fails as a host error rather than as
+            // a shape problem. A string is the contract's shape; an object with
+            // a prompt-ish field is the other common one; anything else is
+            // refused by name so the next real card tells us what it actually
+            // passes instead of us inferring it.
+            const first = args[0]
+            if (typeof first === 'string') return callAction(property, { [field]: first })
+            if (typeof first === 'object' && first !== null) {
+              const bag = first as Record<string, unknown>
+              const text = bag['prompt'] ?? bag['user_input'] ?? bag['userInput']
+              if (typeof text === 'string') return callAction(property, { [field]: text })
+            }
+            throw new UnsupportedApiError(
+              `SillyTavern.${property}`,
+              `Iris does not recognise this call's arguments (${typeof first}); the shape a card passes has not been measured yet.`,
+            )
+          }
+        }
+
+        /*
+         * Routable, on the surface, and with no branch that knows its arguments.
+         *
+         * Refused by name rather than handed to whichever branch happens to be
+         * last. A member reaches here by being added to `CARD_METHODS` without a
+         * translation, which is a gap in this file — and saying so is the
+         * difference between one round trip and a card that appears to work
+         * while calling something else entirely.
+         */
+        throw new UnsupportedApiError(
+          `SillyTavern.${property}`,
+          'Iris can route this action but has not built the translation from a card\u2019s'
+          + ' arguments to it, so it is refused rather than sent as some other call.',
+        )
       }
       const fields = context as unknown as Record<string, unknown>
       if (Object.hasOwn(fields, property)) return fields[property]
@@ -1310,7 +1382,23 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       // A refusal and a bug in the card both land here, and the shell shows them
       // differently: `member` is what tells them apart.
       const member = error instanceof UnsupportedApiError ? error.member : undefined
-      const text = error instanceof Error ? error.message : String(error)
+      /*
+       * The message **and** where it was thrown.
+       *
+       * `error.stack` used to be dropped here. That is survivable for a message
+       * naming its own cause and useless for one that does not — a card whose
+       * first line dies on `localStorage` reported "Failed to read the
+       * 'localStorage' property from 'Window'" with no location, and a census
+       * predicting which cards survive an unavailable `localStorage` had nothing
+       * to check itself against.
+       *
+       * Not appended for a refusal: `UnsupportedApiError` is raised by this
+       * frame, so its top stack frame is our own code and naming it would point
+       * a reader at the bridge for a decision the bridge made on purpose.
+       */
+      const text = error instanceof Error
+        ? `${error.message}${member === undefined ? topFrame(error) : ''}`
+        : String(error)
       /*
        * A stalled import has two very different causes and one sentence, so the
        * sentence is split here by the only evidence that separates them.

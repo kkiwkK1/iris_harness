@@ -26,7 +26,12 @@ import {
   parseRegexFromString,
   type Listener,
 } from '@iris/compat-tavernhelper-core'
-import type { ScriptChatMessage, ScriptContext, WorldbookEntry } from '@iris/protocol'
+import type {
+  LorebookSettings,
+  ScriptChatMessage,
+  ScriptContext,
+  WorldbookEntry,
+} from '@iris/protocol'
 
 import { buttonEventName } from './button-event.ts'
 import { UnsupportedApiError } from './errors.ts'
@@ -1325,6 +1330,42 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
        */
       const bound = snapshot('getCharWorldbookNames').charWorldbooks
       return { primary: bound?.primary ?? null, additional: [...(bound?.additional ?? [])] }
+    },
+    /**
+     * World-info settings, read from the snapshot.
+     *
+     * **Synchronous, and that is the whole design decision.** Upstream's is, and
+     * the MVU bundle has one call site that does not `await` it — as an RPC this
+     * would hand that site a `Promise`, every field read off it would be
+     * `undefined`, and nothing would throw. A silent read of sixteen undefineds
+     * is the worst available failure: the card configures its scan against
+     * nothing and produces a subtly wrong prompt, with no report anywhere. So it
+     * lives in the pushed snapshot beside `charWorldbooks` rather than on the
+     * wire.
+     *
+     * Absent means the host has not sent it, which is not the same as "there are
+     * no settings" — so this reports rather than inventing a default table.
+     * Sixteen invented values would each be plausible and the composite would be
+     * a configuration nobody chose; `undefined` at least fails where it is read.
+     *
+     * Cloned on the way out, for the reason `getCharWorldbookNames` is: this
+     * surface is shared between a card's scripts, and
+     * `selected_global_lorebooks` is an array a card could sort in place under
+     * the next reader.
+     * @returns the settings, or undefined when the snapshot carries none.
+     */
+    getLorebookSettings: (): LorebookSettings | undefined => {
+      const settings = snapshot('getLorebookSettings').lorebookSettings
+      if (settings === undefined) {
+        host.reportGap(
+          'a card called getLorebookSettings and this frame\u2019s snapshot carries no world-info'
+          + ' settings \u2014 it returned undefined, which is not a statement that none are set',
+        )
+        return undefined
+      }
+      // Structurally, not by spread: the only nested member is an array, and a
+      // spread would hand out the same one.
+      return { ...settings, selected_global_lorebooks: [...settings.selected_global_lorebooks] }
     },
     getSwipes: (messageId?: number): string[] => {
       const chat = chatOf('getSwipes')

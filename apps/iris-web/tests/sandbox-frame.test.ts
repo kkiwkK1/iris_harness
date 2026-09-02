@@ -195,6 +195,7 @@ test('exactly the outward-reaching names are shadowed', () => {
     'getCurrentMessageId',
     'getChatMessages',
     'getCharWorldbookNames',
+    'getLorebookSettings',
     'getSwipes',
     'replaceVariables',
     'insertOrAssignVariables',
@@ -644,6 +645,7 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'getCurrentMessageId',
     'getChatMessages',
     'getCharWorldbookNames',
+    'getLorebookSettings',
     'getSwipes',
     'replaceVariables',
     'insertOrAssignVariables',
@@ -1826,6 +1828,7 @@ test('the SillyTavern surface carries exactly these members', () => {
     'generate',
     'generateRaw',
     'getContext',
+    'loadWorldInfo',
     'name1',
     'name2',
     'saveChat',
@@ -2447,5 +2450,222 @@ test('a refusal and a gap leave the frame on different channels', () => {
     faults.filter(line => line.includes('SomeGlobalNobodyPublished')).length,
     0,
     'the note must not also be filed as a failure',
+  )
+})
+test('loadWorldInfo keeps its three answers apart', async () => {
+  /*
+   * **Three answers, not two.** Upstream opens with `if (!name) return`, so a
+   * card that asked nothing gets `undefined` without storage being touched;
+   * a card that named a book nobody has gets `null`. Collapsing them answers
+   * "there is no such book" to a card that never named one — and MVU's own
+   * guard reads `loaded.entries`, so it distinguishes them by whether it may
+   * index the result at all.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const surface = scope.globals()['SillyTavern'] as Record<string, unknown>
+  const load = surface['loadWorldInfo'] as (name?: unknown) => Promise<unknown>
+  assert.equal(typeof load, 'function', 'the member a real card found missing')
+
+  // Nothing asked: no wire call at all, which is the half a mock could not show
+  // if the call were merely ignored.
+  const before = scope.posted.filter(message => message.type === 'call').length
+  assert.equal(await load(), undefined, 'an absent name must not become a lookup')
+  assert.equal(await load(''), undefined, 'upstream takes the empty string through the same return')
+  assert.equal(
+    scope.posted.filter(message => message.type === 'call').length,
+    before,
+    'a name-less call reached the wire',
+  )
+})
+
+test('loadWorldInfo hands back the raw uid-keyed object, not our entry array', async () => {
+  /*
+   * The shape is the point. `getWorldbook` normalises to an array of entries;
+   * this returns the book as saved, keyed by uid, because MVU guards with
+   * `isPlainObject(loaded.entries)` and then indexes by uid — an array passes
+   * that guard's spirit-less form and fails at the first index, which is the
+   * failure this project keeps paying for.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const surface = scope.globals()['SillyTavern'] as Record<string, unknown>
+  const load = surface['loadWorldInfo'] as (name?: unknown) => Promise<unknown>
+
+  const pending = load('\u4e16\u754c\u4e66')
+  const call = scope.posted.find(
+    message => message.type === 'call'
+      && (message as unknown as { method: string }).method === 'loadWorldInfo',
+  ) as unknown as { id: string, params: Record<string, unknown> } | undefined
+  assert.notEqual(call, undefined, 'the lookup never reached the wire')
+  assert.equal(call?.params['name'], '\u4e16\u754c\u4e66')
+
+  const book = { entries: { '0': { uid: 0, comment: 'a' }, '7': { uid: 7, comment: 'b' } } }
+  scope.send({ iris: 'tok', type: 'call:ok', id: call?.id ?? '', result: { book } })
+  const loaded = await pending
+  assert.deepEqual(loaded, book, 'the book must arrive in the shape it is saved in')
+  assert.equal(Array.isArray((loaded as { entries: unknown }).entries), false)
+})
+
+test('a book nobody has is null, which is not the same as not asking', async () => {
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const surface = scope.globals()['SillyTavern'] as Record<string, unknown>
+  const load = surface['loadWorldInfo'] as (name?: unknown) => Promise<unknown>
+
+  const pending = load('missing')
+  const call = scope.posted.find(
+    message => message.type === 'call'
+      && (message as unknown as { method: string }).method === 'loadWorldInfo',
+  ) as unknown as { id: string } | undefined
+  // The contract's reply is `{ book?: unknown }`, so an absent key is the host
+  // saying it looked and found nothing.
+  scope.send({ iris: 'tok', type: 'call:ok', id: call?.id ?? '', result: {} })
+  assert.equal(await pending, null)
+})
+
+test('getLorebookSettings answers synchronously, from the snapshot', () => {
+  /*
+   * **Synchronous is the requirement, not a convenience.** The MVU bundle has a
+   * call site that does not `await` it; as an RPC that site would hold a
+   * `Promise` and read sixteen `undefined` fields off it without throwing, then
+   * configure its scan against nothing. So this asserts the return is not a
+   * promise — a test that only checked the values would pass on the async
+   * implementation the moment someone "tidied" this onto the wire.
+   */
+  const settings = {
+    selected_global_lorebooks: ['a', 'b'],
+    scan_depth: 4,
+    context_percentage: 25,
+    budget_cap: 0,
+    min_activations: 0,
+    max_depth: 0,
+    max_recursion_steps: 0,
+    insertion_strategy: 'evenly' as const,
+    include_names: true,
+    recursive: false,
+    case_sensitive: false,
+    match_whole_words: true,
+    use_group_scoring: false,
+    overflow_alert: false,
+  }
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({ characterId: 'char', lorebookSettings: settings }),
+  })
+  evaluate(scope, () => undefined, 'first')
+
+  const read = scope.globals()['getLorebookSettings'] as () => unknown
+  assert.equal(typeof read, 'function', 'the bare global a real card found undefined')
+
+  const got = read() as Record<string, unknown>
+  assert.equal(typeof (got as { then?: unknown }).then, 'undefined', 'it must not be a promise')
+  assert.deepEqual(got, settings)
+
+  // No wire call: reading settings must not be a round trip, or the synchronous
+  // answer above would be a lie about where the value came from.
+  assert.equal(
+    scope.posted.filter(message => message.type === 'call').length,
+    0,
+    'a snapshot read reached the wire',
+  )
+})
+
+test('the settings a card is handed cannot be edited under the next reader', () => {
+  // Same reasoning as `getCharWorldbookNames`: this surface is shared between a
+  // card's scripts, and `selected_global_lorebooks` is an array a card could
+  // sort in place.
+  const settings = {
+    selected_global_lorebooks: ['b', 'a'],
+    scan_depth: 4,
+    context_percentage: 25,
+    budget_cap: 0,
+    min_activations: 0,
+    max_depth: 0,
+    max_recursion_steps: 0,
+    insertion_strategy: 'evenly' as const,
+    include_names: true,
+    recursive: false,
+    case_sensitive: false,
+    match_whole_words: true,
+    use_group_scoring: false,
+    overflow_alert: false,
+  }
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({ characterId: 'char', lorebookSettings: settings }),
+  })
+  evaluate(scope, () => undefined, 'first')
+
+  const read = scope.globals()['getLorebookSettings'] as () => {
+    selected_global_lorebooks: string[]
+  }
+  const first = read()
+  first.selected_global_lorebooks.sort()
+  assert.deepEqual(read().selected_global_lorebooks, ['b', 'a'], 'the card mutated the snapshot')
+})
+
+test('no settings in the snapshot is reported, not defaulted', () => {
+  /*
+   * Sixteen invented values would each be plausible and the composite would be a
+   * configuration nobody chose — a card would then configure its scan against
+   * it and produce a subtly wrong prompt with nothing to read. Absent says
+   * absent, on the note channel, because nothing failed.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const read = scope.globals()['getLorebookSettings'] as () => unknown
+  assert.equal(read(), undefined)
+
+  const notes = scope.posted
+    .filter(message => message.type === 'note')
+    .map(message => (message as unknown as { message: string }).message)
+  assert.equal(notes.filter(line => line.includes('getLorebookSettings')).length, 1, notes.join(' | '))
+  assert.match(notes.join(' '), /not a statement that none are set/)
+})
+
+test('a surface member with no argument translation is refused, not sent as a generation', () => {
+  /*
+   * **The misroute this closes.** Every SillyTavern-surface member without its
+   * own branch used to fall into a body that called `script.generateRaw`
+   * whatever name had been read — so `SillyTavern.generate('hi')` ran
+   * `generateRaw`, which takes `prompt` and carries no history, in place of
+   * `generate`, which takes `userInput` and does. The surface pin asserts the
+   * member *names*, which is precisely the assertion a misroute passes.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const surface = scope.globals()['SillyTavern'] as Record<string, unknown>
+
+  // `generate` now sends its own method, with its own field name.
+  void (surface['generate'] as (input: unknown) => unknown)('hi')
+  void (surface['generateRaw'] as (input: unknown) => unknown)('hi')
+  const calls = scope.posted
+    .filter(message => message.type === 'call')
+    .map(message => message as unknown as { method: string, params: Record<string, unknown> })
+  assert.deepEqual(calls.map(call => call.method), ['generate', 'generateRaw'])
+  assert.equal(calls[0]?.params['userInput'], 'hi')
+  assert.equal(calls[1]?.params['prompt'], 'hi')
+
+  // And a routable member whose arguments nobody has translated says so by name
+  // rather than being handed to whichever branch is last.
+  assert.throws(
+    () => (surface['setVariables'] as (input: unknown) => unknown)('a string'),
+    /has not built the translation/,
+    'a string argument used to be sent as a generation',
   )
 })

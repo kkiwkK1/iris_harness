@@ -7,7 +7,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { describeFailure } from '../src/sandbox/failure-attribution.ts'
+import { describeFailure, topFrame } from '../src/sandbox/failure-attribution.ts'
 
 test('after a body ran, the card scheduled it', () => {
   const line = describeFailure('an unhandled rejection', 'boom', {
@@ -76,4 +76,60 @@ test('the error text and kind always survive into the message', () => {
       assert.match(line, /the-original-text/)
     }
   }
+})
+test('a throw carries the frame it came from', () => {
+  const error = new Error('Failed to read the \'localStorage\' property from \'Window\'')
+  error.stack = [
+    'Error: Failed to read the \'localStorage\' property from \'Window\'',
+    '    at readSetting (blob:http://127.0.0.1:8787/abc:12:9)',
+    '    at boot (blob:http://127.0.0.1:8787/abc:88:3)',
+  ].join('\n')
+
+  assert.equal(topFrame(error), ' at readSetting (blob:http://127.0.0.1:8787/abc:12:9)')
+})
+
+test('a multi-line message does not push the frame out of reach', () => {
+  /*
+   * **Why this is not `lines[1]`.** V8 writes `Error: message` first and the
+   * frames after — but a multi-line message occupies as many lines as it has,
+   * and `UnsupportedApiError` writes one while a `ZodError` writes several. So
+   * the second line of the stack is the second line of the *message* for
+   * exactly the errors whose location is hardest to guess from their text.
+   */
+  const error = new Error('two lines')
+  error.stack = [
+    'ZodError: [',
+    '  { "code": "invalid_type", "path": ["stat"] }',
+    ']',
+    '    at parse (blob:http://127.0.0.1:8787/z:4:1)',
+  ].join('\n')
+
+  assert.equal(topFrame(error), ' at parse (blob:http://127.0.0.1:8787/z:4:1)')
+})
+
+test('no stack yields nothing rather than a placeholder', () => {
+  // A report ending in "at unknown" reads as a failed lookup; in these cases the
+  // browser genuinely provided nothing, and the empty string says that by
+  // leaving the sentence as it was.
+  const bare = new Error('no stack here')
+  bare.stack = undefined as unknown as string
+  assert.equal(topFrame(bare), '')
+  assert.equal(topFrame('a thrown string'), '')
+  assert.equal(topFrame(undefined), '')
+
+  // A stack with a message and no frames at all — the shape a cross-origin
+  // redaction leaves behind.
+  const redacted = new Error('Script error.')
+  redacted.stack = 'Error: Script error.'
+  assert.equal(topFrame(redacted), '')
+})
+
+test('a frame carrying an inlined source is bounded', () => {
+  // A `blob:` or `data:` frame name can contain the whole inlined source, and
+  // this ends up on one panel line.
+  const error = new Error('boom')
+  error.stack = `Error: boom\n    at eval (data:text/javascript,${'x'.repeat(500)}:1:1)`
+  const frame = topFrame(error)
+  assert.ok(frame.length <= 202, `${String(frame.length)} characters reached the panel`)
+  assert.match(frame, /\u2026$/, 'a truncation must say it truncated')
 })

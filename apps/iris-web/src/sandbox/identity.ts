@@ -69,6 +69,12 @@ export const SHARED_ORIGINAL = '__irisSharedOriginal'
 export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   // ── identity: partitions by the calling script ───────────────────────
   getScriptId: 'identity',
+  /*
+   * `shared`: world-info settings are one table for the chat, not per script.
+   * Nothing about the answer changes with which script is asking, so a bound
+   * copy per script would be sixteen identical fields duplicated per binding.
+   */
+  getLorebookSettings: 'shared',
   getVariables: 'identity',
   getAllVariables: 'identity',
   replaceVariables: 'identity',

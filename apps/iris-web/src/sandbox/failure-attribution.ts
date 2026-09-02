@@ -30,6 +30,52 @@
  * @module iris-web/sandbox/failure-attribution
  */
 
+/**
+ * Where a throw came from, as one frame of its stack.
+ *
+ * The `threw` path reported `error.message` and dropped `error.stack`, which is
+ * survivable for a message that names its own cause and useless for one that
+ * does not. `Failed to read the 'localStorage' property from 'Window'` is the
+ * second kind: it identifies the API and says nothing about which of a card's
+ * call sites reached for it, and a minified bundle has many. A census predicting
+ * which cards survive an unavailable `localStorage` cannot be checked against a
+ * report that will not say where the access was.
+ *
+ * The **top** frame, not a search for the card's own code. Distinguishing card
+ * frames from the frame's own would mean pattern-matching our bundle's names,
+ * which is a guess that goes stale silently — and the top frame is where the
+ * throw happened, which is the fact rather than an interpretation of it. When
+ * the interesting frame is deeper, the top one at least says which layer to
+ * start from.
+ *
+ * @param error - whatever was thrown.
+ * @returns the location as ` at <frame>`, or the empty string when there is no
+ *   stack to read. Empty rather than a placeholder: a report ending in "at
+ *   unknown" reads as a failure to look it up, when in most of these cases the
+ *   browser genuinely provided nothing.
+ */
+export function topFrame(error: unknown): string {
+  if (!(error instanceof Error) || typeof error.stack !== 'string') return ''
+
+  /*
+   * The first line that looks like a frame, rather than line 2.
+   *
+   * V8 puts `Error: message` first and the frames after it, but a multi-line
+   * message — which `UnsupportedApiError` produces, and a `ZodError` produces
+   * several of — pushes the frames down by however many lines the message has.
+   * Taking `lines[1]` returned the second line of the *message* for exactly the
+   * errors whose location is hardest to guess from the text.
+   */
+  for (const line of error.stack.split('\n')) {
+    const frame = line.trim()
+    if (!frame.startsWith('at ')) continue
+    // Bounded: a stack frame from a `blob:` or `data:` URL can carry the whole
+    // inlined source in its name, and this ends up on one panel line.
+    return ` ${frame.length > 200 ? `${frame.slice(0, 200)}\u2026` : frame}`
+  }
+  return ''
+}
+
 /** What the frame knows at the moment an unattributable error arrives. */
 export interface FailureContext {
   /** Whether a card body has been handed over and begun. */

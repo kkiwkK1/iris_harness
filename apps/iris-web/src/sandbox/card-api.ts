@@ -95,6 +95,15 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
    * refused. `LIMIT_NOT_YOUR_FAULT` does that for the card author; this one did
    * not do it for us.
    */
+  /*
+   * On the SillyTavern surface, unlike the other worldbook arms.
+   *
+   * `getWorldbook` and `replaceWorldbook` are Tavern Helper members and sit in
+   * `OFF_ST_SURFACE`; this one is upstream's own context member, which cards
+   * call as `SillyTavern.loadWorldInfo(name)`. The two live in the same file and
+   * belong on opposite lists, which is the distinction that table exists for.
+   */
+  loadWorldInfo: 'worldbook.load',
   replaceScriptButtons: 'script.replaceScriptButtons',
   getWorldbook: 'worldbook.get',
   /*

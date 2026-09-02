@@ -34,7 +34,10 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * It keeps moving, and that is now normal rather than alarming: 38.5 → 39.4 KiB
  * across two slimming passes, 41.8 when the script-button members joined the
  * frame's import chain, then a few hundred bytes each for the height reporter's
- * second observer, the height-source diagnostic, and the overlay report.
+ * second observer, the height-source diagnostic, and the overlay report — and
+ * about a kilobyte for the `loadWorldInfo` / `getLorebookSettings` facades, the
+ * per-member argument translation that replaced a single shared fallthrough,
+ * and the stack-frame reader.
  *
  * **No current figure is written here on purpose.** Two earlier versions of this
  * comment carried "as this line is written" numbers and both were stale within
@@ -49,7 +52,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 48 * 1024
+export const FRAME_OVERHEAD_BYTES = 49 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -65,21 +68,22 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 43 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 41 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
- * 20 leaves about 1.1 MiB for content (overhead ≈ 960 KiB, 47%), and 20 live
+ * 20 leaves about 1.0 MiB for content (overhead ≈ 980 KiB, 48%), and 20 live
  * panels on one screen is already past any reading scenario. It is a trade-off
  * point rather than a threshold — moving it means revisiting the two measured
  * values above, not just this line.
  *
- * The design named ≈53 and 38%, computed against a 39 KiB overhead. Those are
- * the same statement about a smaller frame: the ratio moves whenever the
- * bootstrap does, which is why the test beside this asserts the **relationship**
- * — that the gate sits well below the degradation point — rather than either
- * number.
+ * The design named ≈53 and 38%, computed against a 39 KiB overhead; a later
+ * pass read ≈43 and 47% at 48 KiB. Those are the same statement about a smaller
+ * frame, and the drift is the reason the test beside this asserts the
+ * **relationship** — that the gate sits well below the degradation point —
+ * rather than any of the three numbers. Every figure in this paragraph is stale
+ * the moment the bootstrap moves; the guard in `build:sandbox` is what is not.
  */
 export const FRAME_COUNT_LIMIT = 20
 
