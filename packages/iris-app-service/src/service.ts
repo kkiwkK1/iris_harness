@@ -506,7 +506,13 @@ export class IrisAppService {
         // so the table has to be put back explicitly exactly as `hydrateVariables`
         // does on open. Reused rather than reimplemented: a second copy of this
         // walk is a second thing that can disagree with a reload.
-        if (created.some(line => line.variables !== undefined)) entry.hydrateVariables(lines)
+        if (created.some(line => line.variables !== undefined)) {
+          // Reported through the same channel as a fold rejection: a table
+          // dropped for want of a candidate is the one way this call can
+          // half-succeed, and the card would otherwise read its own write back
+          // as an inherited value with nothing anywhere saying why.
+          entry.hydrateVariables(lines, message => { this.#report(new Error(message)) })
+        }
         entry.touch()
 
         // Deliberately not saved. A card's replay batch is heterogeneous, so a

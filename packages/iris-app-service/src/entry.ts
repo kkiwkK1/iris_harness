@@ -693,9 +693,23 @@ export class ChatEntry {
    * it carries them through as opaque unmodelled fields. Reattaching them here
    * is what makes MVU state survive a reload rather than silently resetting to
    * the world book's declaration.
+   * **Two tables can be dropped here, and both used to go without saying so.**
+   * A file may carry more tables than the line has candidates, or a table that
+   * is not an object; each was a bare `continue`. Dropping is still the right
+   * behaviour — there is no candidate to attach the table to, and inventing one
+   * would fabricate a swipe the conversation never had — but a drop that says
+   * nothing is indistinguishable from a file that never carried the table, and
+   * the symptom reaches the user as variables that quietly reset.
+   *
+   * Measured on the corpus: 1 line in 1235 carries a surplus table
+   * (`floor 6: variables[2] vs swipes[1]`). Small, and audible now.
    * @param lines - the message lines the log was rebuilt from.
+   * @param onReport - told about each dropped table; absent means silence.
    */
-  hydrateVariables(lines: readonly SillyTavernMessage[]): void {
+  hydrateVariables(
+    lines: readonly SillyTavernMessage[],
+    onReport?: (message: string) => void,
+  ): void {
     const turns = lineTurns(this.session)
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index]
@@ -711,8 +725,20 @@ export class ChatEntry {
       for (let swipe = 0; swipe < stored.length; swipe += 1) {
         const variables = stored[swipe]
         const candidate = candidates[swipe]
-        if (candidate === undefined) continue
-        if (typeof variables !== 'object' || variables === null || Array.isArray(variables)) continue
+        if (candidate === undefined) {
+          onReport?.(
+            `variables: line ${String(index)} carries ${String(stored.length)} table(s) `
+            + `but the turn has ${String(candidates.length)} candidate(s); table ${String(swipe)} dropped`,
+          )
+          continue
+        }
+        if (typeof variables !== 'object' || variables === null || Array.isArray(variables)) {
+          onReport?.(
+            `variables: line ${String(index)} table ${String(swipe)} is `
+            + `${Array.isArray(variables) ? 'an array' : typeof variables}, not an object; dropped`,
+          )
+          continue
+        }
         this.session.append('iris/variables', { candidateSeq: candidate.seq, variables: variables as Variables })
       }
     }
