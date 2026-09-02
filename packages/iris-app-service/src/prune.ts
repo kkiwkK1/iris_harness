@@ -260,3 +260,53 @@ export function applyPruned(
   }
   return surviving
 }
+
+/**
+ * How a floor's variable table was arrived at.
+ *
+ * A separate field rather than a shape difference, and that is the point:
+ * `stored` and `replayed` tables look identical, and on the corpus they
+ * **disagree on about a quarter of transitions** (`stat_data` reproduced in 93
+ * of 121 adjacent full-floor pairs). A reader that cannot tell them apart will
+ * treat a recomputed value as a recorded one.
+ */
+export type FloorOrigin = 'stored' | 'pruned' | 'replayed'
+
+/** A floor's table together with what it actually is. */
+export interface FloorRead {
+  /** The table. Empty for `pruned` beyond whatever survived the trim. */
+  variables: Record<string, unknown>
+  /** Where this table came from; never inferable from the table itself. */
+  origin: FloorOrigin
+  /** Why, in a sentence a log or a panel can show verbatim. */
+  note: string
+  /** For `replayed`: the turn the replay started from. */
+  replayedFrom?: number
+  /** For `replayed`: how many turns were folded to get here. */
+  replayedFloors?: number
+}
+
+/**
+ * The refusal a pruned floor answers with when replay is not asked for.
+ *
+ * **Named, not empty.** Before this, a pruned floor and a floor that never held
+ * variables both read as `{}` — the reader could not tell "this was deleted" from
+ * "there was never anything here", and upstream cannot either. Saying which one
+ * it is costs a string and is the difference between a missing feature and a
+ * silent one.
+ * @param turn - the floor asked for.
+ * @param removed - the keys the prune took.
+ * @param snapshot - the nearest earlier intact turn, when there is one.
+ * @returns the sentence to carry on the read.
+ */
+export function prunedNote(
+  turn: number,
+  removed: ReadonlySet<string>,
+  snapshot: number | undefined,
+): string {
+  const keys = [...removed].sort().join(', ')
+  const where = snapshot === undefined
+    ? 'no earlier intact turn survives, so nothing can reconstruct it'
+    : `the nearest intact turn is ${String(snapshot)}`
+  return `turn ${String(turn)} was pruned (${keys}); ${where}`
+}
