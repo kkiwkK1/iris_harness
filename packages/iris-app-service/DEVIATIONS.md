@@ -256,15 +256,57 @@ the id is opaque by construction and a card written against upstream may
 reasonably assume otherwise. This is the same shape as the frame-opens-only-on-
 assistant-floors boundary: measured absence, not structural impossibility.
 
-**Why it is not being aligned.** Renumbering would make `characterId` a value
+~~**Why it is not being aligned.** Renumbering would make `characterId` a value
 like `'3'`, which changes it for every existing consumer of `script.context` —
 `charWorldbooks`, the façade's own lookups — to satisfy no measured need. The
 essence of upstream's semantics here is "`characters[characterId]` finds the
-character being played", and that already holds.
+character being played", and that already holds.~~
 
-**What would overturn this.** A card doing arithmetic on `characterId`. It would
-present as a lookup that silently finds nothing, since `characters[NaN]` is
-`undefined` and every corpus reader guards its result — so the symptom is a
+> **Corrected 2026-09-02. The struck paragraph rested on a false premise, and
+> the recommendation built on it was mine.**
+>
+> "That already holds" was wrong. The card does not *search* by the field, it
+> **indexes** with it — `ctx.characters[ctx.characterId]` — and an array
+> subscripted by a non-numeric string is `undefined` whatever any element's
+> `characterId` field says. Measured:
+>
+> ```
+> ours:      characters['aria'] -> undefined     (array + opaque id)
+> upstream:  characters['0']    -> FOUND         (array + stringified index)
+>            characters[0]      -> FOUND
+> ```
+>
+> JavaScript arrays accept numeric-string subscripts, which is exactly why
+> upstream's `this_chid` works and why the shape is not incidental.
+>
+> **Named, because the error has a shape worth recognising: I took "the two
+> values are equal" for "the lookup resolves."** They are different claims, and
+> only the second is what a caller depends on. The consequence was not
+> theoretical — the embedded book attached in §4 was hung on an element no card
+> could reach, so that work was correct in shape and unreachable in practice.
+
+**Ruling (2026-09-02): the translation lives in the façade, and this contract
+does not move.**
+
+- `ScriptContext.characterId` stays an opaque id; `charWorldbooks` and every
+  by-id lookup stay as they are. The migration cost that argued against
+  renumbering is genuinely avoided — it was the *conclusion* that was wrong, not
+  that concern.
+- The **SillyTavern-facing surface** presents `characterId` as the stringified
+  index of the played character within the snapshot's `characters` array, so a
+  card's `ctx.characters[ctx.characterId]` resolves and reaches the
+  `data.character_book` attached in §4.
+- Safe because measured: `characterId` appears in the corpus **only** as a
+  subscript — never persisted, never compared — so a façade-side `'0'` cannot
+  disturb anything else.
+- The principle: **upstream's shape is the compatibility surface's contract, not
+  the system's.** Two identities, each where it belongs, rather than one of them
+  flooding back into the protocol.
+
+**What would overturn this.** A card doing arithmetic on `characterId`, or one
+persisting it across sessions and expecting it to still name the same character.
+Either presents as a lookup that silently finds nothing — `characters[NaN]` is
+`undefined`, and every corpus reader guards its result — so the symptom is a
 card quietly behaving as though the character had no data, not an error.
 
 ---
@@ -313,3 +355,53 @@ write reaches beyond the card that made it.
 has no business writing — the reports are what would show it, and they are the
 reason C is not simply A. `tests/eval-template.test.ts` pins that a write both
 lands and is named.
+
+### 6a. The exposure is currently zero, and why that is not reassuring
+
+**Measured 2026-09-02: `script.evalTemplate` is never called on this host.** The
+one card that uses it reaches its templates through `renderEntry`, which gets its
+entries from two places and both are broken here:
+
+- **Main path** `ctx.characters[ctx.characterId].data.character_book`. The
+  `data` half now exists — `CharacterSummary.data` carries the played
+  character's embedded book. The **index** half does not: `characters` is an
+  array and `characterId` is an opaque string, and `array['aria']` is
+  `undefined`. Upstream works because its `this_chid` is a *stringified numeric*
+  index, and JavaScript arrays do accept those — `array['0']` resolves.
+- **Fallback** `ctx.chat_metadata.world_info`. Snake-case `chat_metadata` is not
+  a `getContext()` key at all — the 145-key surface has only camelCase
+  `chatMetadata` — so this branch is **dead code in SillyTavern too**. An
+  inherited dud, not a gap on our side, and it cannot rescue the main path.
+
+So `entries` stays `[]`, the loop never runs, `renderEntry` returns null, and the
+template is never evaluated.
+
+**Three consequences, and the third is the trap.**
+
+1. The guards in §6 are **pre-positioned, not wasted**. The write channel is
+   real; only its traffic is blocked, by a defect tracked elsewhere.
+2. The fork cost measured for this route (127 ms per call, of which 2 ms is the
+   actual template — 98.4% is process startup) **does not accrue yet** either,
+   for the same reason. Batching would not be a micro-optimisation but an
+   order-of-magnitude change, and its trigger date is the same as this one's.
+3. **Until the mirror lands, any "run a real card through it" acceptance is
+   false-green** — not because plan C is correct, but because nothing calls it.
+   A green end-to-end run today would be evidence of the blockage, read as
+   evidence of the feature.
+
+**This entry and the `characters`/`characterId` mirror are two links of one
+chain, tracked separately.** Whoever closes the mirror must come back and
+re-verify plan C end to end, because that is the moment this exposure goes from
+zero to non-zero — and nothing about closing the mirror would remind them.
+
+**Caliper on the reachability numbers in §6**, corrected by their author: the
+count came from the **disk** book `银麒赎世.json`, while `renderEntry` reads the
+card's **embedded** `character_book`. For this card the two are identical entry
+for entry (129/129), so the numbers stand — but that is a property of this card,
+not a rule: `干物吸血鬼少女与夜间工作` is 51 of 52. Redoing this measurement on
+another card means checking that step first.
+
+Reachability is also **measured absence, not structural impossibility**: it was
+computed from the call arguments present in the card's current source (five
+literals and one half-dynamic `renderEntry("人物_" + ch.name)`, whose prefix is
+open-ended). One edited line in the card changes the set.
