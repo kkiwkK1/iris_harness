@@ -9,8 +9,14 @@ import { SCRIPT_REGISTRY } from '../src/sandbox/preamble.ts'
 import { SHARED_ORIGINAL } from '../src/sandbox/identity.ts'
 import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
 
-/** A frame realm made of stubs, plus the levers a test needs. */
-function realm(): {
+/**
+ * A frame realm made of stubs, plus the levers a test needs.
+ * @param options - which kind of frame to install. An interface frame carries a
+ *   card's markup and never receives a `run` message, so it is served at
+ *   install; a script frame is served on `run`. Defaults to a script frame,
+ *   which is what every test written before the distinction existed assumes.
+ */
+function realm(options?: { interfaceFrame?: boolean }): {
   posted: FromFrame[]
   send: (message: ToFrame) => void
   /** The globals the last evaluation was handed, by name. */
@@ -21,6 +27,8 @@ function realm(): {
   listed: () => string[]
   /** What a forwarding global currently reads. */
   forwarded: (name: string) => unknown
+  /** The reporter the toastr substitute was handed, if it was handed one. */
+  reportFromToastr: () => ((message: string, channel: 'note' | 'error') => void) | undefined
   /**
    * One published value.
    *
@@ -52,9 +60,14 @@ function realm(): {
   let asyncBody: (() => Promise<void>) | undefined
   const container = { id: 'card-root', querySelector: () => null, querySelectorAll: () => [] }
 
+  let toastrReport: ((message: string, channel: 'note' | 'error') => void) | undefined
   const env: FrameEnv = {
     token: 'tok',
     container,
+    ...(options?.interfaceFrame === true ? { interfaceFrame: true } : {}),
+    provideToastr: report => {
+      toastrReport = report
+    },
     factory: {
       createElement: tagName => ({ tagName }),
       createTextNode: data => ({ data }),
@@ -93,6 +106,7 @@ function realm(): {
     publishedValue: (name: string) => publishedValues[name],
     forwarded: (name: string) => forwarded.get(name)?.(),
     listed: () => listed,
+    reportFromToastr: () => toastrReport,
     run: next => {
       body = next
     },
@@ -2668,4 +2682,69 @@ test('a surface member with no argument translation is refused, not sent as a ge
     /has not built the translation/,
     'a string argument used to be sent as a generation',
   )
+})
+test('an interface frame gets the same Tavern Helper surface, without being asked to run', () => {
+  /*
+   * **The bug this exists for.** Everything a card can touch — the bare Tavern
+   * Helper globals, the `toastr` substitute, the missing-libraries report — was
+   * published on the `run` message. An interface frame never receives one: its
+   * markup, `<script>` elements included, executes while the document parses. So
+   * it reached its card code with an *empty* surface, and a real card produced
+   * `ReferenceError: errorCatched is not defined` from markup upstream serves
+   * without trouble.
+   *
+   * Upstream has no such split: `predefine.js` goes into both frame kinds with
+   * the same member set, and in places the interface side is the *only* side a
+   * member is used from — 44 measured `triggerSlash` in 7 interface-side cards
+   * and zero script-side.
+   */
+  const scope = realm({ interfaceFrame: true })
+
+  const names = scope.publishedNames()
+  for (const name of ['errorCatched', 'triggerSlash', 'getChatMessages', 'waitGlobalInitialized']) {
+    assert.ok(names.includes(name), `${name} was not published: ${names.join(', ')}`)
+  }
+  // And `errorCatched` in particular is callable, not merely named: the card
+  // *calls* it, so a name bound to undefined trades a ReferenceError for a
+  // TypeError one line later.
+  const wrap = scope.publishedValue('errorCatched') as (fn: unknown) => unknown
+  assert.equal(typeof wrap, 'function')
+  assert.equal((wrap(() => 7) as () => number)(), 7)
+
+  // The toastr substitute too, since a card's `catch` block reaches for it and
+  // an absent one turns a handled error into the cause of death.
+  assert.notEqual(scope.reportFromToastr?.(), undefined, 'provideToastr was never called')
+})
+
+test('an interface frame publishes no script registry, because it has no scripts', () => {
+  /*
+   * Deliberately absent, not forgotten. The registry hands out per-script
+   * bindings, and this frame holds no script identity — so the identity-bearing
+   * members answer through the shared surface and report the ambiguity, which is
+   * the honest answer, rather than a registry issuing bindings for an id nobody
+   * holds.
+   */
+  const scope = realm({ interfaceFrame: true })
+  assert.equal(
+    scope.publishedNames().includes(SCRIPT_REGISTRY),
+    false,
+    'a frame with no scripts published a per-script registry',
+  )
+
+  // And it does not claim to have run anything, or the panel's script
+  // accounting would count a frame that has no scripts.
+  assert.equal(scope.posted.some(message => message.type === 'ran'), false)
+})
+
+test('a script frame still publishes nothing before it is asked to run', () => {
+  /*
+   * The other half, and the one that keeps the change honest: publishing at
+   * install for *every* frame would have made the test above pass while giving
+   * a script frame its surface before the `run` message that carries its
+   * identity — so `getScriptId()` would answer for a script that had not
+   * started.
+   */
+  const scope = realm()
+  assert.deepEqual(scope.publishedNames(), [], 'a script frame published before running')
+  assert.deepEqual(scope.posted, [], 'installing must not announce anything')
 })

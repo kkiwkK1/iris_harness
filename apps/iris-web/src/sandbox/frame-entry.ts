@@ -994,6 +994,13 @@ window.addEventListener('message', event => {
 
 try {
   installSandbox({
+    /*
+     * Read from the document here, because `frame.ts` is injected with
+     * everything it needs and knows nothing about the document it lands in. The
+     * attribute is set by `srcdoc.ts` on the body of a frame that carries card
+     * markup.
+     */
+    interfaceFrame: document.body?.hasAttribute('data-iris-interface') === true,
   token: run,
   container: document.body,
   factory: {

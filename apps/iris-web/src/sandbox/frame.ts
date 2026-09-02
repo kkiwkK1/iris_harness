@@ -73,6 +73,31 @@ export interface FrameEnv {
    */
   publishGlobals?: (entries: readonly [string, unknown][]) => void
   /**
+   * Whether this frame carries a card's markup instead of running its scripts.
+   *
+   * Injected rather than sniffed, like everything else here: the attribute lives
+   * on the document and this module deliberately knows nothing about the
+   * document it is installed into.
+   *
+   * It exists because the two frame kinds reach their card code by different
+   * routes and only one of them was served. A script frame receives a `run`
+   * message, and everything a card can touch — the bare Tavern Helper globals,
+   * the `toastr` substitute, the missing-libraries report — was published on
+   * that message. An interface frame never receives one: its markup, `<script>`
+   * elements included, executes while the document parses. So it reached its
+   * card code with an **empty** surface, and a real card produced
+   * `ReferenceError: errorCatched is not defined` from markup that upstream
+   * serves without trouble.
+   *
+   * Upstream has no such split. `predefine.js` is injected into both frame kinds
+   * with the same member set [3c, §三之二], and the corpus reads that way: 44
+   * measured `triggerSlash` in 7 interface-side cards and **zero** script-side,
+   * `errorCatched` in 5 interface-side, `waitGlobalInitialized` in 6 of each.
+   * The interface side is not a reduced surface upstream — in places it is the
+   * only side a member is used from.
+   */
+  interfaceFrame?: boolean
+  /**
    * Define a name on the frame's own window that reads through to a live source.
    *
    * Separate from `publishGlobals` because the difference is a getter. Publishing
@@ -1523,6 +1548,79 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       failed(error)
     }
   })
+
+  /*
+   * An interface frame is served at install, because nothing will ask it to run.
+   *
+   * The same names, from the same `resolveValues()`, so the two kinds cannot
+   * drift into different surfaces — which is the failure this replaced, in the
+   * strongest possible form: one of them had no surface at all.
+   *
+   * Three things are deliberately **not** published here:
+   *
+   * - `SCRIPT_REGISTRY`, because there are no co-located scripts to distinguish.
+   *   The identity-bearing members answer through the shared surface and report
+   *   the ambiguity, which is the honest answer for a frame that genuinely has
+   *   no script identity, rather than a registry that would hand out bindings
+   *   for an id nobody holds.
+   * - a preamble, for the same reason — there is no per-script binding to
+   *   destructure.
+   * - `ran`, since no body was evaluated. A frame that announced it had run
+   *   would make the panel's script accounting count a frame with no scripts.
+   *
+   * Ordering: this runs before any `context` message can arrive, so the surface
+   * exists before the data does — and that is upstream's order too. Members that
+   * read the snapshot report an absent one by name; a card's markup that reaches
+   * for data this early gets a named gap instead of a `ReferenceError` about the
+   * member.
+   */
+  if (env.interfaceFrame === true) {
+    try {
+      const values = resolveValues()
+      env.publishGlobals?.([
+        ...shadowed
+          .map((name, at) => [name, values[at]] as [string, unknown])
+          .filter(([name]) => name !== 'window' && name !== 'self' && name !== 'globalThis'),
+        /*
+         * The coordination pair, appended rather than added to `core`.
+         *
+         * `core` is index-matched to `resolveValues()`, and the comment there
+         * says what happens to a name added to one list and not the other: every
+         * Tavern Helper binding slides one place along and cards get a
+         * neighbour's function under the name they asked for. So these two go on
+         * as their own entries, where no index has to agree with anything.
+         *
+         * They reach a *script* frame's card through the per-script registry,
+         * which the module preamble destructures — a route an interface frame
+         * has no equivalent of, since there is no script and no preamble. Yet 44
+         * measured `waitGlobalInitialized` in 6 interface-side cards, and it is
+         * how a card tolerates a provider that is merely **late**: 7 of the 10
+         * cards reading `Mvu` wait on it rather than reading it once. Without
+         * this pair, those cards do not read the wrong thing — they never get to
+         * read at all.
+         *
+         * Bound to no script, which is honest rather than convenient: the pair
+         * uses its script id only to say who is waiting, and an interface frame
+         * genuinely is nobody.
+         */
+        ...Object.entries(coordination(undefined)),
+      ])
+      env.provideToastr?.(say)
+      env.reportMissingGlobals?.(EXPECTED_GLOBALS)
+    } catch (error: unknown) {
+      /*
+       * Reported, never thrown. There is no `run` message to attribute this to
+       * and no card body to fail, so an exception here would escape into the
+       * bootstrap and leave the frame silent for the rest of its life — the
+       * exact failure the run path's try/catch was moved to cover.
+       */
+      reportFault(
+        'Iris could not publish the Tavern Helper surface into this interface frame: '
+        + (error instanceof Error ? error.message : String(error))
+        + ' — the card\u2019s markup will see bare names as undefined',
+      )
+    }
+  }
 
   // Readiness is announced by the entry, not here: it depends on the frame's
   // subresources having settled, and this module deliberately knows nothing about

@@ -39,7 +39,7 @@ import { UnsupportedApiError } from './errors.ts'
 /** A scope selector, in the shape upstream's cards pass it. */
 export interface VariableOption {
   type?: string
-  message_id?: number | string
+  message_id?: number | string | null
   script_id?: string
 }
 
@@ -707,39 +707,211 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
    * @param option - whatever the card passed.
    * @returns the variables for that scope.
    */
-  const readVariables = (member: string, option?: VariableOption): Record<string, unknown> => {
+  const readVariables = (
+    member: string,
+    option?: VariableOption,
+  ): Record<string, unknown> | undefined => {
     const type = option?.type ?? 'message'
 
     if (type !== 'message') return layerOf(member, type)
 
     /*
-     * A floor-addressed read is **refused by name**, not answered from a
-     * snapshot that cannot tell floors apart.
+     * A floor-addressed read is answered **from the floor's own table**.
      *
-     * `ScriptContext.variables` is one flat record — "current variable state" —
-     * with no record of which floor it belongs to, and `variableLayers`
-     * deliberately carries no per-floor data: floor tables are folded in only
-     * for a *message* frame. So `message_id: 5` cannot be answered correctly here,
-     * and its wrongness **cannot even be detected**: there is no floor label to
-     * compare the request against.
+     * This used to be refused by name, on a premise that was true when it was
+     * written: "this frame answers from one snapshot that does not record which
+     * floor it holds". `ScriptContext.variables` is indeed one flat record with
+     * no floor label — but it is not the only thing the snapshot carries.
+     * `ScriptContext.chat` is built by `toFile()`, which attaches
+     * `chat[i].variables[swipe_id]` to **every** row: 677 of 677 on the corpus's
+     * longest chat [49, `FLOOR-ADDRESSED-VARIABLES.md` §一]. The data was in
+     * hand the whole time; only this function was looking in the wrong place.
      *
-     * Refusing rather than answering, because the alternative is the worst thing
-     * this file can do. MagVarUpdate's update flow is
-     * `getVariables({type:'message', message_id: i})` followed by a merge into
-     * `stat_data` and a write — so answering the wrong floor does not merely
-     * return a wrong value, it **persists a merge built on one**.
+     * That distinction is the lesson worth keeping over the fix. The refusal
+     * named a *transport* limit — "floor-addressed reads arrive with the
+     * message-frame project" — for what was really a **lookup** limit in this
+     * file. A refusal that misnames which layer it belongs to sends everyone to
+     * wait for the wrong project; this one sent V1.5.4's author to wait for a
+     * frame kind that would never have helped, and cost a reader here the
+     * question "is it perhaps already in `chat`?".
+     *
+     * Still not answered from `context.variables` for an explicit id, and that
+     * is the part of the old reasoning that survives: MagVarUpdate reads a floor,
+     * merges into `stat_data` and writes it back, so answering the *wrong* floor
+     * does not return a wrong value, it persists a merge built on one. Wrong is
+     * worse than absent here, which is why an unresolvable id is `undefined`
+     * rather than the latest table.
      */
     const addressed = option?.message_id
-    if (addressed !== undefined && addressed !== 'latest') {
+    if (addressed === undefined || addressed === 'latest') {
+      /*
+       * `'latest'` is a real sentinel, in use by two cards, and it has always
+       * been answered from `context.variables` — the host's computed current
+       * state.
+       *
+       * 3c's reading of upstream says this should be **the last non-system
+       * message's table** instead. The two agree except while a reply is
+       * in flight, and rewiring the default path — every card that reads
+       * variables without an id takes it — on a reading rather than on an
+       * observed disagreement is a large blast radius for a small claim.
+       *
+       * So this reports the disagreement instead of picking a side. When the
+       * two differ, the note names both and the next panel reading settles it;
+       * until then nothing that works today changes. The instrument is cheaper
+       * than the decision it informs, which is the trade this project keeps
+       * making on purpose.
+       */
+      const current = snapshot(member).variables
+      const tail = lastNonSystemTable(member)
+      if (tail !== undefined && JSON.stringify(tail) !== JSON.stringify(current)) {
+        host.reportGap(
+          `card called ${member} for the latest variables while this frame\u2019s current table`
+          + ' and the last non-system message\u2019s table disagree \u2014 it answered with the'
+          + ' current one, which is what Iris has always done; upstream is read as answering'
+          + ' with the message\u2019s',
+        )
+      }
+      return current
+    }
+
+    return floorVariables(member, addressed)
+  }
+
+  /** Whether a row is one upstream's floor addressing counts. */
+  const isAddressable = (row: ScriptChatMessage): boolean => row.is_system !== true
+
+  /**
+   * The last non-system message's table, for comparison only.
+   *
+   * Not an answer: it exists so the `'latest'` branch can say when the two
+   * candidate readings of "latest" disagree without having to choose between
+   * them first.
+   * @param member - the calling member, for reports.
+   * @returns that row's table, or undefined when there is no such row or table.
+   */
+  const lastNonSystemTable = (member: string): Record<string, unknown> | undefined => {
+    const chat = chatOf(member)
+    for (let at = chat.length - 1; at >= 0; at -= 1) {
+      const row = chat[at]
+      if (row === undefined || !isAddressable(row)) continue
+      return tableOf(row)
+    }
+    return undefined
+  }
+
+  /**
+   * One row's table for the swipe it is showing.
+   *
+   * Read through the index signature with a runtime check rather than a declared
+   * field, because `variables` is attached by the host and `ScriptChatMessage`
+   * does not declare it — and this side is the untrusted-input side, which has
+   * to validate whatever arrived regardless of what a type says it is.
+   *
+   * **`{}` for a row with no table, not `undefined`**, because upstream answers
+   * `{}` and compatibility is the floor. It is not a comfortable answer: an
+   * empty object is truthy, so it passes a card's `if (data)` guard and then
+   * reads as "nothing set yet" — which is what makes MagVarUpdate re-initialise.
+   * A card that breaks on that breaks on real SillyTavern too, and diverging
+   * here would hide a card's bug rather than fix it. What Iris adds is the
+   * report, not a different value.
+   * @param row - the message row.
+   * @returns its table for the showing swipe, or `{}`.
+   */
+  const tableOf = (row: ScriptChatMessage): Record<string, unknown> => {
+    const tables = row['variables']
+    if (typeof tables !== 'object' || tables === null) return {}
+    // Keyed by swipe, and the row's own `swipe_id` says which is showing;
+    // absent means swipe 0, the same default the rest of this file uses.
+    const swipe = typeof row.swipe_id === 'number' ? row.swipe_id : 0
+    const table = (tables as Record<string, unknown>)[String(swipe)]
+    return typeof table === 'object' && table !== null
+      ? (table as Record<string, unknown>)
+      : {}
+  }
+
+  /**
+   * One floor's variable table, addressed the way upstream addresses floors.
+   *
+   * **The value domain is measured, not inferred** [3c, via the coordinator;
+   * 49 is widening the protocol schema to match]. An earlier version of this
+   * function accepted whole non-negative numbers and reported everything else
+   * as unmeasured — the honest answer while the domain was unread, and the wrong
+   * one now that it has been read:
+   *
+   * - **a negative integer** counts from the end, `Array.at` semantics — the
+   *   same convention `resolveRange` already implements for message ranges;
+   * - **a numeric string** is converted, because upstream does;
+   * - **`null`** is refused by name. Upstream silently resolves it to floor 0,
+   *   and floor 0 is a *wrong write target* for a caller that reads, merges and
+   *   writes back — the one case where copying upstream's behaviour would help
+   *   nobody and corrupt a save. A deliberate divergence, and the only one here;
+   * - **`'last'`, `NaN`, anything else non-numeric, and any resolved index with
+   *   no row** throw, in upstream's own words about being out of range.
+   *
+   * Throwing rather than answering `undefined`, and that reverses an earlier
+   * choice in this file: absent is safe for a caller that only reads, and this
+   * caller merges and writes. A card told nothing about a floor it asked for by
+   * number will write its merge somewhere; a card that throws will not.
+   * @param member - the calling member, for refusals.
+   * @param id - upstream's `message_id`, already known not to be `'latest'`.
+   * @returns that floor's table.
+   */
+  const floorVariables = (
+    member: string,
+    id: number | string | null,
+  ): Record<string, unknown> => {
+    const chat = chatOf(member)
+
+    if (id === null) {
       throw new UnsupportedApiError(
-        `${member}({message_id:${String(addressed)}})`,
-        'This frame answers from one snapshot that does not record which floor it holds, so a' +
-          ' floor-addressed read cannot be answered correctly here. Floor-addressed reads arrive' +
-          ' with the message-frame project.' + LIMIT_NOT_YOUR_FAULT,
+        `${member}({message_id:null})`,
+        'A null message_id names no floor. Upstream resolves it to floor 0 silently, which is a'
+        + ' wrong target for a caller that reads a floor, merges into it and writes it back \u2014'
+        + ' so Iris refuses instead of storing a merge against the first message.'
+        + LIMIT_NOT_YOUR_FAULT,
       )
     }
 
-    return snapshot(member).variables
+    // A numeric string converts; anything else non-numeric becomes NaN and is
+    // refused below with the value the card actually passed.
+    const index = typeof id === 'number' ? id : Number(id)
+    if (!Number.isInteger(index)) {
+      throw new UnsupportedApiError(
+        `${member}({message_id:${JSON.stringify(id)}})`,
+        `\u8d85\u51fa\u4e86\u8303\u56f4: ${JSON.stringify(id)} does not name a floor of this`
+        + ` ${String(chat.length)}-message chat. Upstream accepts a floor number, a numeric`
+        + ' string, a negative index counted from the end, and \u2018latest\u2019.'
+        + LIMIT_NOT_YOUR_FAULT,
+      )
+    }
+
+    // `at`, so a negative counts from the end.
+    const row = chat.at(index)
+    if (row === undefined) {
+      throw new UnsupportedApiError(
+        `${member}({message_id:${String(index)}})`,
+        `\u8d85\u51fa\u4e86\u8303\u56f4: floor ${String(index)} of a`
+        + ` ${String(chat.length)}-message chat. Answering with a different floor\u2019s table`
+        + ' would be merged and written back by the caller.' + LIMIT_NOT_YOUR_FAULT,
+      )
+    }
+
+    /*
+     * Returned as found. The copy that keeps a card's merge out of the snapshot
+     * is made **once**, by `detachReturns`, which structured-clones every call
+     * result on this surface — and it matters here more than most, because
+     * MagVarUpdate's flow is read \u2192 merge into `stat_data` \u2192 write, so a
+     * live reference would land the merge in the snapshot before the host had
+     * agreed to it.
+     *
+     * A spread stood here first, and a mutation test is what removed it: making
+     * this line hand back the original changed **nothing** any test could see,
+     * because the detach layer had already made the copy. A second guard that
+     * cannot be observed is worse than none — the next reader takes it for the
+     * one that matters and looks no further, which is exactly the wrong place to
+     * be looking when this property breaks.
+     */
+    return tableOf(row)
   }
 
   /**

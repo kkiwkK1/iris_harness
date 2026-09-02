@@ -914,25 +914,231 @@ test('getButtonEvent returns a usable event name, as upstream declares', () => {
   assert.ok((event as string).includes('s1'), 'button events are per script upstream')
 })
 
-test('a floor-addressed read is refused by name rather than answered from the wrong floor', () => {
-  const { api } = surface()
+test('a floor-addressed read is answered from that floor\u2019s own table', () => {
+  /*
+   * **This test replaced a refusal, and the replaced reasoning is worth keeping
+   * beside the new behaviour.** It used to assert that
+   * `getVariables({message_id: 5})` threw, naming "the message-frame project" as
+   * where the answer would come from. The premise was that the frame's snapshot
+   * could not tell floors apart — true of `context.variables`, and false of the
+   * snapshot as a whole: `toFile()` attaches `chat[i].variables[swipe_id]` to
+   * every row, 677 of 677 on the corpus's longest chat. The refusal named a
+   * transport limit for what was a lookup limit in `tavern-helper.ts`, and sent
+   * a card author to wait for a frame kind that would never have helped.
+   *
+   * What survives is why a *wrong* floor is worse than none: MagVarUpdate reads
+   * a floor, merges it into `stat_data` and writes it back, so a wrong answer is
+   * not a wrong value but a persisted merge built on one. Every branch below
+   * chooses `undefined` over a neighbouring floor's table for that reason.
+   */
+  const { api } = surface({
+    context: {
+      ...context(),
+      chat: [
+        { name: 'u', is_user: true, mes: 'hi', variables: { '0': { stat: 'from floor 0' } } },
+        {
+          name: 'a',
+          is_user: false,
+          mes: 'yo',
+          swipe_id: 1,
+          variables: { '0': { stat: 'swipe 0' }, '1': { stat: 'swipe 1' } },
+        },
+      ],
+    },
+  })
   const read = api['getVariables'] as (option?: unknown) => unknown
 
-  /*
-   * The failure this prevents is a write, not a read. MagVarUpdate's update flow
-   * reads one floor's variables and merges them into `stat_data` before storing
-   * — so answering with a snapshot that cannot tell floors apart does not return
-   * a wrong value, it persists a merge built on one.
-   */
-  assert.throws(
-    () => read({ type: 'message', message_id: 5 }),
-    /message_id:5/,
-    'a floor-addressed read must name what it refused',
-  )
+  assert.deepEqual(read({ type: 'message', message_id: 0 }), { stat: 'from floor 0' })
 
-  // The refusal points at the project that will answer it, so a card author is
-  // not told a permanent limit about something already scheduled.
-  assert.throws(() => read({ type: 'message', message_id: 0 }), /message-frame project/)
+  // The row's own `swipe_id` picks the table, so a re-rolled reply reads the
+  // variables of the swipe on screen rather than of the first one generated.
+  assert.deepEqual(read({ type: 'message', message_id: 1 }), { stat: 'swipe 1' })
+})
+
+test('the table a card is handed is a copy, because the caller merges and writes it', () => {
+  /*
+   * **The guarantee is `detachReturns`', not this member's.** `floorVariables`
+   * once spread the table on the way out too; a mutation test showed that
+   * removing the spread changed nothing observable, because the detach layer
+   * structured-clones every call result on this surface. So the redundant copy
+   * came out, and this test is aimed at the layer that actually holds the
+   * property — break `detach` and this goes red, which is where a reader should
+   * be sent when it does.
+   *
+   * Kept as a test of *this* member regardless, because the property is what a
+   * card depends on and the layer providing it is an implementation detail that
+   * may move again.
+   */
+  const { api } = surface({
+    context: {
+      ...context(),
+      chat: [{ name: 'u', is_user: true, mes: 'hi', variables: { '0': { stat: { hp: 1 } } } }],
+    },
+  })
+  const read = api['getVariables'] as (option?: unknown) => Record<string, unknown>
+
+  const first = read({ type: 'message', message_id: 0 })
+  first['added'] = true
+  assert.deepEqual(
+    read({ type: 'message', message_id: 0 }),
+    { stat: { hp: 1 } },
+    'a merge landed in the snapshot before the host agreed to it',
+  )
+})
+
+test('the message_id domain is upstream\u2019s, including the shapes that throw', () => {
+  /*
+   * **This test was rewritten once, and the reason is the interesting part.**
+   * Its first version pinned "whole non-negative numbers are answered, every
+   * other shape returns undefined and is reported as unmeasured" — which was
+   * the right behaviour while the value domain was genuinely unread, and became
+   * the wrong behaviour the moment 3c measured it. Reporting "not measured yet"
+   * is a claim about our knowledge, so it expires; the assertion had to expire
+   * with it rather than stand as a specification.
+   */
+  const { api } = surface({
+    context: {
+      ...context(),
+      chat: [
+        { name: 'u', is_user: true, mes: 'hi', variables: { '0': { stat: 'zero' } } },
+        { name: 'a', is_user: false, mes: 'yo', variables: { '0': { stat: 'one' } } },
+      ],
+    },
+  })
+  const read = api['getVariables'] as (option?: unknown) => unknown
+
+  // A negative counts from the end, `Array.at` semantics — the convention
+  // `resolveRange` already implements for message ranges.
+  assert.deepEqual(read({ type: 'message', message_id: -1 }), { stat: 'one' })
+  assert.deepEqual(read({ type: 'message', message_id: -2 }), { stat: 'zero' })
+
+  // A numeric string converts, because upstream does.
+  assert.deepEqual(read({ type: 'message', message_id: '1' }), { stat: 'one' })
+
+  // Out of range, either direction, in upstream's own words.
+  assert.throws(() => read({ type: 'message', message_id: 9 }), /\u8d85\u51fa\u4e86\u8303\u56f4/)
+  assert.throws(() => read({ type: 'message', message_id: -9 }), /2-message chat/)
+
+  // `'last'` is not a sentinel upstream has; it converts to NaN and is refused
+  // with the value the card actually passed, so its author can see the typo.
+  assert.throws(() => read({ type: 'message', message_id: 'last' }), /"last"/)
+  assert.throws(() => read({ type: 'message', message_id: 1.5 }), /1\.5/)
+})
+
+test('a null message_id is refused rather than resolved to floor 0', () => {
+  /*
+   * **The one deliberate divergence here.** Upstream resolves `null` to floor 0
+   * silently. Floor 0 is a wrong *write* target for a caller that reads a floor,
+   * merges into it and writes it back — which is MagVarUpdate's whole flow — so
+   * copying this particular behaviour would help nobody and corrupt a save. It
+   * is the same judgement the rest of this file makes about wrong-versus-absent,
+   * applied to a case where upstream chose wrong.
+   */
+  const { api } = surface({
+    context: {
+      ...context(),
+      chat: [{ name: 'u', is_user: true, mes: 'hi', variables: { '0': { stat: 'zero' } } }],
+    },
+  })
+  const read = api['getVariables'] as (option?: unknown) => unknown
+
+  assert.throws(() => read({ type: 'message', message_id: null }), /names no floor/)
+  assert.throws(() => read({ type: 'message', message_id: null }), /wrong target/)
+})
+
+test('a floor with no table of its own is an empty object, as upstream answers', () => {
+  /*
+   * `{}` and not `undefined`, and it is not a comfortable answer: an empty
+   * object is **truthy**, so it passes a card's `if (data)` guard and then reads
+   * as "nothing set yet" — which is what makes MagVarUpdate re-initialise over
+   * live state. But upstream answers `{}`, so a card that breaks on it breaks on
+   * real SillyTavern too, and diverging would hide the card's bug instead of
+   * fixing it. What Iris adds here is a report, not a different value.
+   */
+  const { api } = surface({
+    context: {
+      ...context(),
+      chat: [
+        { name: 'a', is_user: false, mes: 'no table at all' },
+        { name: 'a', is_user: false, mes: 'no table for this swipe', swipe_id: 2, variables: { '0': { a: 1 } } },
+      ],
+    },
+  })
+  const read = api['getVariables'] as (option?: unknown) => unknown
+
+  assert.deepEqual(read({ type: 'message', message_id: 0 }), {})
+  assert.deepEqual(read({ type: 'message', message_id: 1 }), {})
+})
+
+test('the two readings of \u2018latest\u2019 are compared, not chosen between', () => {
+  /*
+   * `'latest'` has always been answered from `context.variables`, the host's
+   * computed current state. 3c reads upstream as answering with the **last
+   * non-system message's** table instead. The two agree except while a reply is
+   * in flight — and every card that reads variables without an id takes this
+   * path, so rewiring it on a reading rather than on an observed disagreement is
+   * a large blast radius for a small claim.
+   *
+   * So the disagreement is reported and the answer is unchanged. This asserts
+   * both halves: the value a card gets, and that the frame says when the other
+   * candidate differs.
+   */
+  const { api, gaps } = surface({
+    context: {
+      ...context(),
+      variables: { stat: 'current' },
+      chat: [
+        { name: 'a', is_user: false, mes: 'reply', variables: { '0': { stat: 'from the row' } } },
+        // A system row, which floor addressing does not count, so the row above
+        // is the last addressable one.
+        { name: 'sys', is_user: false, is_system: true, mes: 'joined' },
+      ],
+    },
+  })
+  const read = api['getVariables'] as (option?: unknown) => unknown
+
+  assert.deepEqual(read({ type: 'message', message_id: 'latest' }), { stat: 'current' })
+  assert.equal(gaps.length, 1, gaps.join(' | '))
+  assert.match(gaps[0] ?? '', /disagree/)
+  assert.match(gaps[0] ?? '', /answered with the current one/)
+})
+
+test('agreeing tables produce no report, and a system row cannot make them disagree', () => {
+  /*
+   * Two properties in one fixture, because one of them needed the other to be
+   * checkable.
+   *
+   * The first: without a case where the note stays quiet it would fire on every
+   * read and stop being a signal — the failure mode of an instrument that cannot
+   * be silent.
+   *
+   * The second: **the system row carries a different table on purpose.** An
+   * earlier fixture had the trailing system row carry none, so removing the
+   * `is_system` filter changed nothing a test could see — the comparison
+   * disagreed either way and the note fired either way. A mutation that counts
+   * system rows now flips this test from quiet to noisy, which is the only
+   * arrangement in which the filter is actually pinned.
+   */
+  const { api, gaps } = surface({
+    context: {
+      ...context(),
+      variables: { stat: 'same' },
+      chat: [
+        { name: 'a', is_user: false, mes: 'reply', variables: { '0': { stat: 'same' } } },
+        {
+          name: 'sys',
+          is_user: false,
+          is_system: true,
+          mes: 'joined',
+          variables: { '0': { stat: 'a system row\u2019s own table' } },
+        },
+      ],
+    },
+  })
+  const read = api['getVariables'] as (option?: unknown) => unknown
+
+  assert.deepEqual(read(), { stat: 'same' })
+  assert.deepEqual(gaps, [], 'a system row was counted as the last addressable floor')
 })
 
 test('an unaddressed read still works, because that is what a script frame can answer', () => {
@@ -944,6 +1150,15 @@ test('an unaddressed read still works, because that is what a script frame can a
   assert.doesNotThrow(() => read())
   assert.doesNotThrow(() => read({ type: 'message' }))
   assert.doesNotThrow(() => read({ type: 'message', message_id: 'latest' }))
+
+  /*
+   * And `'latest'` still answers from `context.variables` rather than from the
+   * last row of `chat`. The two are different objects whenever a reply is
+   * mid-flight, and the first is the one upstream answers — so routing
+   * `'latest'` through the floor lookup would have been a tidier
+   * implementation of a different member.
+   */
+  assert.deepEqual(read({ type: 'message', message_id: 'latest' }), read())
 })
 
 test('generate calls the assembling host method, not the raw one', async () => {

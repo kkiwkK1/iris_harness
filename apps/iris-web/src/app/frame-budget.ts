@@ -37,7 +37,8 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * second observer, the height-source diagnostic, and the overlay report — and
  * about a kilobyte for the `loadWorldInfo` / `getLorebookSettings` facades, the
  * per-member argument translation that replaced a single shared fallthrough,
- * and the stack-frame reader.
+ * and the stack-frame reader; then another 1.8 KiB for floor-addressed variable
+ * reads and the Tavern Helper surface an interface frame now gets.
  *
  * **No current figure is written here on purpose.** Two earlier versions of this
  * comment carried "as this line is written" numbers and both were stale within
@@ -52,7 +53,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 49 * 1024
+export const FRAME_OVERHEAD_BYTES = 51 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -68,15 +69,24 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 41 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 40 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
- * 20 leaves about 1.0 MiB for content (overhead ≈ 980 KiB, 48%), and 20 live
- * panels on one screen is already past any reading scenario. It is a trade-off
- * point rather than a threshold — moving it means revisiting the two measured
- * values above, not just this line.
+ * 20 leaves about 1.0 MiB for content (overhead ≈ 1020 KiB, **50%**), and 20
+ * live panels on one screen is already past any reading scenario. It is a
+ * trade-off point rather than a threshold — moving it means revisiting the two
+ * measured values above, not just this line.
+ *
+ * **That 50% is worth reading as a trend, not a figure.** It was 38% when the
+ * design named this number and has crossed half the budget without the gate
+ * moving, because every capability the frame gains is paid twenty times over
+ * here. Nothing is wrong yet — the byte budget is a default and the count gate
+ * is what actually binds — but the next few kilobytes of bootstrap buy a
+ * shrinking amount of card content, and the honest response when that starts to
+ * matter is to move `FRAME_COUNT_LIMIT` down rather than to keep raising the
+ * constant above and calling the ratio incidental.
  *
  * The design named ≈53 and 38%, computed against a 39 KiB overhead; a later
  * pass read ≈43 and 47% at 48 KiB. Those are the same statement about a smaller
