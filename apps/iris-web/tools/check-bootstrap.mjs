@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { checkBootstrap } from '../src/sandbox/bootstrap-source.ts'
+import { FRAME_OVERHEAD_BYTES } from '../src/app/frame-budget.ts'
 
 
 /**
@@ -80,4 +81,58 @@ if (sends !== 1) {
   process.exit(1)
 }
 
+/*
+ * The frame budget's basis, checked against the artifact it describes.
+ *
+ * `FRAME_OVERHEAD_BYTES` is what every frame costs before its card writes
+ * anything, and the whole reading-window budget is denominated in it — the
+ * count gate's position is derived from it. It is a **measurement of this
+ * bootstrap**, rounded to a whole KiB on purpose so that per-build drift does
+ * not make the documentation stale.
+ *
+ * Which leaves the question of who notices when the drift stops being small.
+ * `DEVIATIONS.md` §15 answered "run the build and read its output", and that
+ * is a person remembering — the weakest link a measurement can hang from. So
+ * the comparison happens here, where the number is produced.
+ *
+ * The two directions are not symmetric:
+ *
+ * - **Understating fails.** If the constant no longer covers the bootstrap plus
+ *   its wrapper, every frame is charged less than it costs, twenty frames
+ *   silently overshoot the budget, and the layer's only hard number is wrong in
+ *   the direction that removes the protection.
+ * - **Overstating warns.** A constant well above the artifact makes the budget
+ *   needlessly tight — fewer interfaces than the page could afford — which is a
+ *   visible, harmless conservatism, not a broken invariant.
+ */
+
+/**
+ * What the srcdoc wrapper adds around the bootstrap.
+ *
+ * The doctype, the meta tags, the CSP, the token and the reset — about a KiB,
+ * and stated here rather than measured because it is assembled at runtime per
+ * frame (`srcdoc.ts`) and there is no artifact on disk to weigh.
+ */
+const WRAPPER_ALLOWANCE = 1024
+
+const measured = source.length + WRAPPER_ALLOWANCE
+if (measured > FRAME_OVERHEAD_BYTES) {
+  console.error(
+    `bootstrap check failed: a frame now costs about ${measured} bytes (bootstrap ${source.length}`
+      + ` + ${WRAPPER_ALLOWANCE} wrapper) but FRAME_OVERHEAD_BYTES is ${FRAME_OVERHEAD_BYTES}`,
+  )
+  console.error('  the reading window would charge less per frame than a frame costs')
+  console.error('  raise FRAME_OVERHEAD_BYTES in src/app/frame-budget.ts and revisit')
+  console.error('  FRAME_COUNT_LIMIT with it, since the gate position is derived from this number')
+  process.exit(1)
+}
+if (measured < FRAME_OVERHEAD_BYTES * 0.75) {
+  console.warn(
+    `bootstrap check: FRAME_OVERHEAD_BYTES (${FRAME_OVERHEAD_BYTES}) now overstates a frame`
+      + ` by more than a quarter — measured about ${measured} bytes`,
+  )
+  console.warn('  harmless, but the budget is tighter than it needs to be')
+}
+
 console.log(`bootstrap check: ok (${source.length} bytes, classic, channel captured once)`)
+console.log(`  frame overhead: about ${measured} bytes against a budgeted ${FRAME_OVERHEAD_BYTES}`)

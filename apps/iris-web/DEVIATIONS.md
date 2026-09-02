@@ -536,15 +536,48 @@ every build, and exact bytes in code go stale before they go wrong.
 
 | constant | value | source |
 | --- | --- | --- |
-| `FRAME_OVERHEAD_BYTES` | 39 KiB | bootstrap + snapshot + srcdoc wrapper, all inlined and uncacheable |
+| `FRAME_OVERHEAD_BYTES` | 42 KiB | bootstrap + snapshot + srcdoc wrapper, all inlined and uncacheable |
 | `FRAME_BUDGET_BYTES` | 2 MiB | `RENDER.md` |
-| `FRAME_COUNT_LIMIT` | 20 | below the ≈53-frame point where overhead alone eats the budget |
+| `FRAME_COUNT_LIMIT` | 20 | below the ≈49-frame point where overhead alone eats the budget |
 
-The count gate is not a precaution. At 2 MiB / 39 KiB ≈ 53 frames the fixed
+The count gate is not a precaution. At 2 MiB / 42 KiB ≈ 49 frames the fixed
 overhead consumes the entire budget and not one byte of card content fits, so a
 pure byte budget degrades into "all scaffolding, no content" exactly when there
 are most frames. A test pins the *relationship* rather than the numbers: change
 either constant so the gate rises above that point and it fails.
+
+### The overhead figure was wrong, and now a build says so
+
+**42 KiB, not the 39 KiB this section first claimed.** The measured bootstrap is
+41,807 bytes; with about a KiB of srcdoc wrapper that is 42,831, and the
+constant rounds **up** to the next whole KiB above it.
+
+The 39 KiB came from a measurement taken before the script-button members joined
+the frame's import chain. Nothing pointed at it: the budget went on charging
+about 2.9 KB less per frame than a frame cost — roughly 58 KB unaccounted for at
+the 20-frame gate, which is small against 2 MiB and would have gone on growing
+with no signal at all.
+
+**The drift is unattributed beyond its total.** +2,453 bytes since the last
+recorded measurement (39,354). The button writers and their four validation
+helpers are the obvious candidate, and I did not itemise it: the helpers are
+function-scoped consts, so a stubbed build does not tree-shake them and the
+delta it reports would be an undercount. Stating the total and naming it
+unattributed is the same treatment the earlier +811 B got in `WINDOWING.md` §三.
+
+What changed structurally is that this number is no longer maintained by
+remembering. `tools/check-bootstrap.mjs` compares the constant against the
+artifact on every sandbox build, and the two directions are not symmetric:
+understating **fails** the build, because it silently removes the protection the
+layer exists to give; overstating only **warns**, because a tighter budget than
+necessary is visible and harmless. It printed the failure the first time it ran.
+
+Two figures moved with it, and both are consequences rather than decisions: the
+degradation point is ≈49 frames rather than ≈53, and the 20-frame gate holds
+about 840 KiB of overhead (41% of the budget) rather than 780 KiB (38%). The
+test beside the constants pins the **relationship** — the gate sits well below
+the degradation point — precisely because the numbers move whenever the
+bootstrap does. It caught this change on its own.
 
 ### Three claims on the budget, settled in this order
 

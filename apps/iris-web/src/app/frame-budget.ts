@@ -28,10 +28,17 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * with no cache. The preset and message-preset are not on this bill — they load
  * by content-hashed URL and are paid once for the page.
  *
- * Rounded to a whole KiB because the measured bootstrap moved 38.5 → 39.4 KiB
- * across two slimming passes without changing anything this number is used for.
+ * Rounded **up** to the next whole KiB above the measured artifact, so a small
+ * build-to-build drift does not make the figure wrong — only stale.
+ *
+ * It has moved twice: 38.5 → 39.4 KiB across two slimming passes, then to 41.8
+ * when the script-button members joined the frame's import chain. That last
+ * move was found by `tools/check-bootstrap.mjs`, which compares this constant
+ * against the artifact on every sandbox build — before that check existed the
+ * documented figure was 39 KiB against a real 41.8, and every frame was being
+ * charged about 2.9 KB less than it cost.
  */
-export const FRAME_OVERHEAD_BYTES = 39 * 1024
+export const FRAME_OVERHEAD_BYTES = 42 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -47,15 +54,21 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 53 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 49 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
- * 20 leaves about 1.2 MiB for content (overhead ≈ 780 KiB, 38%), and 20 live
+ * 20 leaves about 1.2 MiB for content (overhead ≈ 840 KiB, 41%), and 20 live
  * panels on one screen is already past any reading scenario. It is a trade-off
  * point rather than a threshold — moving it means revisiting the two measured
  * values above, not just this line.
+ *
+ * The design named ≈53 and 38%, computed against a 39 KiB overhead. Those are
+ * the same statement about a smaller frame: the ratio moves whenever the
+ * bootstrap does, which is why the test beside this asserts the **relationship**
+ * — that the gate sits well below the degradation point — rather than either
+ * number.
  */
 export const FRAME_COUNT_LIMIT = 20
 
@@ -121,6 +134,39 @@ export interface FramePlan {
  */
 export function frameKey(floor: number, instance: number): string {
   return `${String(floor)}:${String(instance)}`
+}
+
+/**
+ * Which instances of one floor a plan refused.
+ *
+ * Here rather than at the call sites because the key's format was being written
+ * in one place and taken apart by hand in three others — a component, and two
+ * helpers inside the tests that were supposed to be checking it. A test that
+ * re-derives the format it is verifying agrees with a broken implementation as
+ * readily as with a working one.
+ * @param floor - the floor index.
+ * @param keys - a plan's `refused` (or `render`) set.
+ * @returns the instances belonging to that floor, ascending.
+ */
+export function instancesOf(floor: number, keys: ReadonlySet<string>): number[] {
+  const mine: number[] = []
+  for (const key of keys) {
+    const [at, instance] = key.split(':')
+    if (at === String(floor) && instance !== undefined) mine.push(Number(instance))
+  }
+  return mine.sort((left, right) => left - right)
+}
+
+/**
+ * The floor a key belongs to.
+ * @param key - a key from a plan's sets.
+ * @returns the floor index, or undefined for a string that is not a key.
+ */
+export function floorOf(key: string): number | undefined {
+  const [at] = key.split(':')
+  if (at === undefined || at === '') return undefined
+  const floor = Number(at)
+  return Number.isInteger(floor) ? floor : undefined
 }
 
 /**

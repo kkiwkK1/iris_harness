@@ -210,7 +210,18 @@ test('the count gate sits below the point where overhead eats the whole budget',
    * the reason the gate is there, and no other test in this file would notice.
    */
   const degradesAt = FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES
-  assert.ok(degradesAt > 50 && degradesAt < 56, `derived ${degradesAt.toFixed(1)}`)
+
+  /*
+   * A wide band, and it has already moved once: the design derived ≈53 from a
+   * 39 KiB frame, and the frame is now 42 KiB, so the point is ≈49. Both are the
+   * same statement — the ratio moves whenever the bootstrap does.
+   *
+   * So this band is only a sanity rail against a constant being changed by an
+   * order of magnitude or having its units confused. The assertion that carries
+   * the design is the next one: the gate must stay well below the point,
+   * whatever the point currently is.
+   */
+  assert.ok(degradesAt > 40 && degradesAt < 60, `derived ${degradesAt.toFixed(1)}`)
   assert.ok(
     FRAME_COUNT_LIMIT < degradesAt / 2,
     `the gate at ${String(FRAME_COUNT_LIMIT)} leaves no room below ${degradesAt.toFixed(1)}`,

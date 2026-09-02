@@ -38,21 +38,37 @@ function oneInterface(markup = '<body><h1>console</h1></body>'): string {
  * every reference to `runCard`, `window` and the srcdoc lives in the caller, and
  * this file exercises the part that decides *what a reader is told*.
  */
-function harness(options?: { attachWorks?: boolean, readyTimeoutMs?: number }): {
+function harness(options?: {
+  attachWorks?: boolean
+  readyTimeoutMs?: number
+  /** The frame budget's gate, when the test is about being refused. */
+  allow?: (instance: number) => boolean
+}): {
   env: MessageFramesEnv
   states: () => InterfaceState[]
   attached: () => number
   becomeReady: (instance: number) => void
   /** Snapshots pushed into each frame after it was built, by instance. */
   refreshed: () => { instance: number, context: unknown }[]
+  /**
+   * What each `start` was actually handed.
+   *
+   * Recorded because the interesting failure is not "a frame was built" but
+   * "the wrong markup was built into it": refusing by filtering the block list
+   * renumbers every instance after the refused one, and each surviving frame
+   * then gets its neighbour's markup with nothing reporting anything.
+   */
+  started: () => { instance: number, markup: string }[]
 } {
   let latest: InterfaceState[] = []
   let attachedCount = 0
   const pushed: { instance: number, context: unknown }[] = []
+  const startedWith: { instance: number, markup: string }[] = []
   const readies = new Map<number, () => void>()
 
   const env: MessageFramesEnv = {
     start: input => {
+      startedWith.push({ instance: input.instance, markup: input.markup })
       readies.set(input.instance, input.onReady)
       return {
         element: { isConnected: options?.attachWorks !== false },
@@ -67,6 +83,7 @@ function harness(options?: { attachWorks?: boolean, readyTimeoutMs?: number }): 
       latest = [...states]
     },
     ...(options?.readyTimeoutMs === undefined ? {} : { readyTimeoutMs: options.readyTimeoutMs }),
+    ...(options?.allow === undefined ? {} : { allow: options.allow }),
   }
 
   return {
@@ -75,6 +92,7 @@ function harness(options?: { attachWorks?: boolean, readyTimeoutMs?: number }): 
     attached: () => attachedCount,
     becomeReady: instance => readies.get(instance)?.(),
     refreshed: () => pushed,
+    started: () => startedWith,
   }
 }
 
@@ -335,4 +353,90 @@ test('a refresh after teardown reaches nothing', () => {
   running.refresh({ chat: ['fresh'] })
 
   assert.equal(scope.refreshed().length, 0, 'a disposed message still pushed a snapshot')
+})
+
+test('a refused instance builds no frame and says so as a decision', () => {
+  const blocks = claimFrontendBlocks([oneInterface('<body>one'), '', oneInterface('<body>two')].join(NL))
+  assert.equal(blocks.length, 2, 'the fixture should contain two interfaces')
+
+  const scope = harness({ allow: instance => instance !== 0 })
+  const running = runMessageInterfaces(blocks, 7, scope.env)
+
+  /*
+   * The seam this tests is the join between two things that were each already
+   * tested: the plan decides, and the controller obeys. `planFrames` has twelve
+   * tests and this controller had none for `allow` — so the controller could
+   * have ignored the gate entirely and every one of those twelve would still
+   * have been green.
+   */
+  assert.deepEqual(scope.started().map(call => call.instance), [1], 'only the allowed instance builds')
+
+  const states = scope.states()
+  assert.equal(states.length, 2, 'a refused interface still has a state to show')
+  assert.equal(states.find(state => state.instance === 0)?.phase, 'over-budget')
+  assert.equal(states.find(state => state.instance === 1)?.phase, 'claimed')
+
+  running.dispose()
+})
+
+test('a refused instance keeps its number, so its neighbours keep their markup', () => {
+  /*
+   * The hazard is renumbering. `instance` is the block's index and it is also
+   * what `splitAroundInterfaces` uses to decide which slot an interface belongs
+   * in, so refusing by *filtering the list* shifts every instance after the
+   * refused one: each surviving frame is built with its neighbour's markup and
+   * rendered into its neighbour's slot, with no error anywhere.
+   *
+   * Asserted on the markup rather than on the count, because a filtered list
+   * produces the same count of frames and only the contents are wrong.
+   */
+  const blocks = claimFrontendBlocks(
+    [oneInterface('<body>zero'), '', oneInterface('<body>one'), '', oneInterface('<body>two')].join(NL),
+  )
+  assert.equal(blocks.length, 3, 'the fixture needs a middle block to refuse')
+
+  const scope = harness({ allow: instance => instance !== 1 })
+  const running = runMessageInterfaces(blocks, 3, scope.env)
+
+  const started = scope.started()
+  assert.deepEqual(started.map(call => call.instance), [0, 2])
+  assert.ok(started[0]?.markup.includes('zero'), `instance 0 got: ${started[0]?.markup ?? 'nothing'}`)
+  assert.ok(started[1]?.markup.includes('two'), `instance 2 got: ${started[1]?.markup ?? 'nothing'}`)
+
+  running.dispose()
+})
+
+test('a refused instance still reports its size, because the placeholder names it', () => {
+  const blocks = claimFrontendBlocks(oneInterface('<body>' + '界'.repeat(500)))
+  const scope = harness({ allow: () => false })
+  const running = runMessageInterfaces(blocks, 1, scope.env)
+
+  const state = scope.states()[0]
+  assert.ok(state !== undefined)
+  /*
+   * Encoded bytes, not code units: 500 Chinese characters are 1500 bytes, and
+   * the placeholder prints this number as the reason a reader is looking at a
+   * placeholder. A figure a third of the truth would make the budget look
+   * absurdly small to the one person trying to understand it.
+   */
+  assert.ok(state.bytes > 1500, `reported ${String(state.bytes)} bytes`)
+  assert.match(describeInterface(state), /budget/, 'the reader is told what refused it')
+  assert.doesNotMatch(
+    describeInterface(state),
+    /never started|failed/i,
+    'a decision must not be worded as a failure',
+  )
+
+  running.dispose()
+})
+
+test('no gate at all builds everything, which is what a caller without a budget wants', () => {
+  const blocks = claimFrontendBlocks([oneInterface('<body>one'), '', oneInterface('<body>two')].join(NL))
+  const scope = harness()
+  const running = runMessageInterfaces(blocks, 7, scope.env)
+
+  // `allow` absent means "no opinion", not "refuse": the controller asks, it
+  // does not decide, and every other test in this file relies on that default.
+  assert.deepEqual(scope.started().map(call => call.instance), [0, 1])
+  running.dispose()
 })

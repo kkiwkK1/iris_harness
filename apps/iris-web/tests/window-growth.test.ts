@@ -20,7 +20,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { DEFAULT_WINDOW, readingWindow } from '../src/app/reading-window.ts'
-import { planFrames, type FrameCandidate } from '../src/app/frame-budget.ts'
+import {
+  floorOf,
+  instancesOf,
+  planFrames,
+  type FrameCandidate,
+} from '../src/app/frame-budget.ts'
 
 /** One synthetic row, shaped like the fields the window and the plan read. */
 interface Row {
@@ -67,14 +72,16 @@ function candidatesOf(rows: readonly Row[]): FrameCandidate[] {
     .map(row => ({ floor: row.id, instance: 0, body: 'x'.repeat(row.interfaceBytes) }))
 }
 
-/** This floor's gate signature, the effect dependency the row actually sees. */
+/**
+ * This floor's gate signature, the effect dependency the row actually sees.
+ *
+ * Built from `instancesOf` rather than by splitting keys here. The first
+ * version of this helper re-derived the key format, which made it agree with a
+ * broken `frameKey` exactly as readily as with a working one — a check must not
+ * be same-source as the thing it checks.
+ */
 function gateOf(floor: number, refused: ReadonlySet<string>): string {
-  const mine: number[] = []
-  for (const key of refused) {
-    const [at, instance] = key.split(':')
-    if (at === String(floor) && instance !== undefined) mine.push(Number(instance))
-  }
-  return mine.sort((left, right) => left - right).join(',')
+  return instancesOf(floor, refused).join(',')
 }
 
 test('growing the window changes nothing a mounted row would rebuild on', () => {
@@ -176,8 +183,8 @@ test('a floor that leaves the window is the one case a frame does go', () => {
   const mounted = new Set(narrow.visible.map(row => row.id))
   let examined = 0
   for (const key of widePlan.render) {
-    const [floor] = key.split(':')
-    if (floor === undefined || mounted.has(Number(floor))) continue
+    const floor = floorOf(key)
+    if (floor === undefined || mounted.has(floor)) continue
     examined += 1
     assert.equal(narrowPlan.render.has(key), false, `${key} survived its row unmounting`)
   }

@@ -14,7 +14,13 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 import type { ReactElement, ReactNode } from 'react'
 
 import { claimFrontendBlocks } from '../sandbox/frontend-blocks.ts'
-import { frameKey, planFrames, type FrameCandidate, type FramePlan } from './frame-budget.ts'
+import {
+  frameKey,
+  instancesOf,
+  planFrames,
+  type FrameCandidate,
+  type FramePlan,
+} from './frame-budget.ts'
 
 /** One mounted row, as the budget needs to see it. */
 export interface BudgetedFloor {
@@ -140,20 +146,21 @@ export function useFloorGate(floor: number): {
   const value = useContext(FrameBudgetContext) ?? UNLIMITED
   const { plan } = value
 
-  const refusedInstances = useMemo(() => {
-    const mine = new Set<number>()
-    for (const key of plan.refused) {
-      const [at, instance] = key.split(':')
-      if (at === String(floor) && instance !== undefined) mine.add(Number(instance))
-    }
-    return mine
-  }, [plan, floor])
-
-  // Sorted, so two identical decisions always produce one string.
-  const gate = useMemo(
-    () => [...refusedInstances].sort((left, right) => left - right).join(','),
-    [refusedInstances],
-  )
+  /*
+   * **Absence of a decision is not a refusal**, and it falls out of asking for
+   * the refused set rather than the allowed one: no provider, or no plan yet,
+   * means nothing is refused and every interface builds.
+   *
+   * The distinction is visible at exactly one moment — the first paint of a
+   * chat. Reading "no plan yet" as refused would flash a placeholder under every
+   * interface a moment before it renders, which is the whole page flickering an
+   * apology for a budget that had not been consulted.
+   */
+  // `instancesOf` returns them sorted, so two identical decisions always
+  // produce one signature string.
+  const mine = useMemo(() => instancesOf(floor, plan.refused), [plan, floor])
+  const refusedInstances = useMemo(() => new Set(mine), [mine])
+  const gate = useMemo(() => mine.join(','), [mine])
 
   const open = useCallback(
     (instance: number) => {
@@ -163,39 +170,4 @@ export function useFloorGate(floor: number): {
   )
 
   return { refusedInstances, gate, open }
-}
-
-/** What one interface slot needs to know about its own budget. */
-export interface FrameSlot {
-  /** Whether this instance may build a frame. */
-  allowed: boolean
-  /** Whether it was refused and should show the named placeholder. */
-  refused: boolean
-  /** Render this one anyway, at the reader's request. */
-  open: () => void
-}
-
-/**
- * Ask the budget about one interface.
- *
- * @param floor - the floor index.
- * @param instance - the block's index within the floor.
- * @returns this slot's decision.
- */
-export function useFrameSlot(floor: number, instance: number): FrameSlot {
-  const value = useContext(FrameBudgetContext) ?? UNLIMITED
-  const key = frameKey(floor, instance)
-  const open = useCallback(() => {
-    value.open(key)
-  }, [value, key])
-
-  /*
-   * Outside a provider, or before the first plan, `refused` is false and
-   * `allowed` is true — absence of a decision is not a refusal. The distinction
-   * matters at exactly one moment that a reader can see: the first paint of a
-   * chat, where treating "no plan yet" as refused would flash a placeholder
-   * under every interface that is about to render.
-   */
-  const refused = value.plan.refused.has(key)
-  return { allowed: !refused, refused, open }
 }
