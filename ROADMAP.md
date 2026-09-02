@@ -43,8 +43,14 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
 4. **覆盖层界面宿主**（新增，OVERLAY-CARDS.md）——第三类表面：全视口、宿主定位、具名显隐
    API。由新测试卡 V1.5.4 逼出：脚本自建 DOM、不经消息文本、不碰 `parent.*`（靠 `$` 的
    realm 绑定落到宿主页）。当前表现为静默落进隐藏脚本 frame，先补具名报告，再建宿主。
-5. **调试页页面半**——章程 OBSERVABILITY.md 11 具名缺口（保真度 6 + 缄默 5），宿主半
-   契约 DEBUG-SURFACE.md（拉取不推、dropped 必需、宿主声明已接 kind、禁裸空白）
+5. **卡自带 ESM 依赖的代理**（2026-09-03 新增，族级基建）——22 卡里 13 卡的变量结构脚本
+   `import{…}from'…/gh/StageDog/tavern_resource/…'` 是**阻塞式 binding 导入**，15 卡的 MVU
+   bundle 是副作用导入；我们每聊天一个不透明源、HTTP 缓存分区，跨源 CDN 每次冷取 9–12s，
+   binding 失败=整脚本一行不执行。预置库只解 1 卡（pinia），**代理才解 13+15**。待测：冷取
+   里不透明源与 jsdelivr 各占多少；出厂卡里的 `localhost:5500` 地址要与冷取超时分开报。
+6. **调试页页面半**——章程 OBSERVABILITY.md 11 具名缺口（保真度 6 + 缄默 5），宿主半已落
+   （DEBUG-SURFACE.md：环形缓冲、17 处报告结构化、`debug.reports` 拉取、kinds 声明、stack
+   结构性诚实）
 4. MVU 长局变量清理（Tier 1.3，677 楼语料在手；注意 chat[i].variables 已是楼层读通路，
    裁剪不得静默答空——约束记在 WINDOWING.md）
 5. 受控口子二期（/api/backends/*）已归档 BRIDGE.md，等真实消费者
