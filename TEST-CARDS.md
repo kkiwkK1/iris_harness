@@ -1338,6 +1338,64 @@ V8 (new vm.Script): SyntaxError: Invalid regular expression: missing /
 > **验收含义:这张卡的正确表现就是"报一条解析错误、其余三个脚本照跑"。**
 > 若某次实现让它"看起来好了",那说明我们吞掉了一条真实的语法错误。
 
+## 七之八、嵌套 iframe 族 —— 五张卡,四种需求,只有一种是坏的
+
+口径:**两个 population**(`extractScripts` + 界面正文),按卡记归属,内容去重。
+命令 `node scratchpad/nested-iframes.mjs` / `iframe-read-targets.mjs`。
+**全语料没有一张卡给自己的 iframe 加 `sandbox` 属性(0 处)。**
+
+### A. 自建 iframe
+
+| 卡 | population | 形式 | src / srcdoc | 父侧读什么 | 需要什么 |
+|---|---|---|---|---|---|
+| 【Sgw】又看一集 | iface | `<iframe>` 字面 **×28** | `src='//music.163.com/outchain/player?…'` | **无** | **什么都不需要**(纯嵌入播放器) |
+| 创世回廊1.3 | iface | `<iframe>` 字面 ×1 | `src='https://tangquanghuy.github.io/dnf/map.html?v=10'` | `contentWindow.postMessage` ×1 | **已经可用** —— `postMessage` **跨源本来就通** |
+| **V1.5.4_** | **script** | `$('<iframe>')` + `<iframe>` 字面 | **`srcdoc`** ×1 | **`contentDocument` ×2** | **同源可达** ← 现在坏的就是这条 |
+
+> **28 个里 27 个不需要我们做任何事。** 把"卡自建 iframe"当成一个需求会把面放大 28 倍;
+> **决定需求的是父侧读什么,不是它建了几个。**
+
+### B. 不自建、但读别人的 frame(**帧发现**,和 A 是两件事)
+
+| 卡 | 怎么找 | 读什么 | 守卫 |
+|---|---|---|---|
+| 萧谴写卡助手版_V4.5.1(iface) | `iframes.each(...)` 遍历页面上全部 iframe | `iframe.contentDocument \|\| iframe.contentWindow.document` | 有 try |
+| **银麒赎世 / 银麒系统面板**(script) | `_pd = _pw.document` → `_pd.querySelectorAll("iframe")` | `contentWindow.phoneAPI`、`contentWindow.postMessage` | `if (fw && fw.phoneA…)` |
+
+#### 银麒赎世 这条对「虚拟 parent」提了一个没人列过的要求
+
+- **`手机UI` 把接口发布在 `window.phoneAPI`**(84 处直接引用、1 处赋值)。
+- **`银麒系统面板` 从不读 `window.phoneAPI`(0 处)** —— 它只用**帧发现**:
+  取 `_pw.document`(父文档)→ 枚举 iframe → 逐个试 `contentWindow.phoneAPI`。
+
+一卡一 frame 下两个脚本共享同一个 `window`,所以 `phoneAPI` 其实**就在手边**,
+但这张卡不往那儿看。它能成立的唯一路径是:**在父文档的 iframe 列表里找到_自己那个 frame_,
+再读它的 `contentWindow`。**
+
+> **所以虚拟 parent 要满足两条,缺一条这张卡的面板就哑:**
+> ① `parent.document.querySelectorAll('iframe')` **要能枚举到卡自己的 frame**;
+> ② 那个 iframe 元素的 **`contentWindow` 要可读**(同源)。
+>
+> 而它的守卫是 `if (fw && fw.phoneAPI)` —— **两条都不满足时它静默跳过**,
+> 与 §七之四 `__X_loaded__` 那套一样:**没有报错,只是面板永远不亮。**
+
+### C. 这一族要支持的访问,按"必须同源"分
+
+| 访问 | 谁用 | 跨源能用吗 |
+|---|---|---|
+| `contentWindow.postMessage` | 创世回廊1.3、银麒赎世 | **能** —— 不需要我们做事 |
+| `contentDocument` | V1.5.4_、萧谴写卡助手版 | 不能 |
+| `contentWindow.document` | 萧谴写卡助手版 | 不能 |
+| `contentWindow.<自定义名>` | 银麒赎世(`phoneAPI`) | 不能 |
+
+**净结论:需要"同源可达嵌套/兄弟 frame"的是 3 张卡** —— V1.5.4_(自建 srcdoc)、
+萧谴写卡助手版(遍历)、银麒赎世(遍历 + 自定义名)。**创世回廊只用 postMessage、
+【Sgw】只嵌入不读,这两张不在需求面内。**
+
+**口径边界**:`<iframe>` 字面计数含**界面正文里的静态 HTML**,那些在渲染前不是活的 frame;
+计入是因为它们渲染后会成为真 frame,但它们**没有父侧读**,所以不影响需求面。
+运行时拼接 `src` 的站点这里看不到 —— 与全文其它普查同一条**下界**说明。
+
 ## 八、未量
 
 - **渲染后的一切。** 三张卡还没有 chat,没有进 dev 数据目录,所以 frame 楼数、片段带、
