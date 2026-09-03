@@ -59,13 +59,40 @@ async function fixture(
   return { handlers, chats, chatId: created.view.chatId, dir }
 }
 
+/** One run for every injection in this file: the subject here is not run identity. */
+const RUN = 'chat:1'
+
+/**
+ * The same handlers, with reports collected.
+ *
+ * The file's own fixture has no diagnostics buffer, so a report is read one
+ * layer earlier through `onError` — the same sentence, before it is recorded.
+ * @param fixed - the fixture to reuse the stores of.
+ * @param into - collects each reported message.
+ * @returns handlers over the same chat.
+ */
+function reporting(
+  fixed: { chats: ChatStore, dir: string },
+  into: string[],
+): Handlers {
+  return new IrisAppService({
+    stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } },
+    library: new CharacterLibrary(join(fixed.dir, 'characters'), '/a'),
+    chats: fixed.chats,
+    settings: new SettingsStore(join(fixed.dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
+    broadcast: () => {},
+    userName: 'Traveller',
+    onError: (error: Error) => { into.push(error.message) },
+  }).handlers()
+}
+
 test('assembly order is the keys’ lexicographic order, not the order they arrived', async (t) => {
   const fixed = await fixture(t)
 
   // Registered deliberately out of alphabetical order.
   for (const key of ['zebra', 'alpha', 'middle']) {
     await fixed.handlers['script.setExtensionPrompt']({
-      chatId: fixed.chatId, key, value: `text for ${key}`, position: 'at-depth', depth: 0,
+      chatId: fixed.chatId, key, value: `text for ${key}`, position: 'at-depth', depth: 0, runId: RUN,
     })
   }
 
@@ -85,10 +112,10 @@ test('an injection at position none is held but never assembled', async (t) => {
   const fixed = await fixture(t)
 
   await fixed.handlers['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'parked', value: 'not in the prompt', position: 'none', depth: 0,
+    chatId: fixed.chatId, key: 'parked', value: 'not in the prompt', position: 'none', depth: 0, runId: RUN,
   })
   await fixed.handlers['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'live', value: 'in the prompt', position: 'at-depth', depth: 0,
+    chatId: fixed.chatId, key: 'live', value: 'in the prompt', position: 'at-depth', depth: 0, runId: RUN,
   })
 
   const entry = await fixed.chats.open(fixed.chatId)
@@ -104,7 +131,7 @@ test('a role rides through to the depth placement', async (t) => {
   const fixed = await fixture(t)
 
   await fixed.handlers['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'a', value: 'as the user', position: 'at-depth', depth: 2, role: 'user',
+    chatId: fixed.chatId, key: 'a', value: 'as the user', position: 'at-depth', depth: 2, runId: RUN, role: 'user',
   })
 
   const entry = await fixed.chats.open(fixed.chatId)
@@ -118,7 +145,7 @@ test('a role rides through to the depth placement', async (t) => {
 test('no role means system, which is what the depth placement always assumed', async (t) => {
   const fixed = await fixture(t)
   await fixed.handlers['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0,
+    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0, runId: RUN,
   })
 
   const entry = await fixed.chats.open(fixed.chatId)
@@ -130,11 +157,11 @@ test('an empty value removes the injection, which is how uninject works', async 
   const fixed = await fixture(t)
 
   await fixed.handlers['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'yinqi-npc-messages', value: 'some text', position: 'at-depth', depth: 0,
+    chatId: fixed.chatId, key: 'yinqi-npc-messages', value: 'some text', position: 'at-depth', depth: 0, runId: RUN,
   })
   // Exactly the call a corpus card makes to clear its own injection.
   await fixed.handlers['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'yinqi-npc-messages', value: '', position: 'at-depth', depth: 0,
+    chatId: fixed.chatId, key: 'yinqi-npc-messages', value: '', position: 'at-depth', depth: 0, runId: RUN,
   })
 
   const entry = await fixed.chats.open(fixed.chatId)
@@ -147,7 +174,7 @@ test('the same key overwrites rather than accumulating', async (t) => {
 
   for (const value of ['first', 'second', 'third']) {
     await fixed.handlers['script.setExtensionPrompt']({
-      chatId: fixed.chatId, key: 'same', value, position: 'at-depth', depth: 0,
+      chatId: fixed.chatId, key: 'same', value, position: 'at-depth', depth: 0, runId: RUN,
     })
   }
 
@@ -164,7 +191,7 @@ test('should_scan is kept rather than flattened to false', async (t) => {
   const fixed = await fixture(t)
 
   await fixed.handlers['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'scanned', value: 'mentions a keyword', position: 'at-depth', depth: 0, scan: true,
+    chatId: fixed.chatId, key: 'scanned', value: 'mentions a keyword', position: 'at-depth', depth: 0, runId: RUN, scan: true,
   })
 
   // The scan pass does not honour this yet. Storing it is the difference
@@ -178,7 +205,7 @@ test('should_scan is kept rather than flattened to false', async (t) => {
 test('injections do not survive a reload, matching upstream', async (t) => {
   const fixed = await fixture(t)
   await fixed.handlers['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0,
+    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0, runId: RUN,
   })
 
   // Upstream keeps `extension_prompts` in a module-level object with no
@@ -212,7 +239,7 @@ test('re-opening a chat that still holds injections says so', async (t) => {
   }).handlers()
 
   await watched['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0,
+    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0, runId: RUN,
   })
   await watched['chat.open']({ chatId: fixed.chatId })
 
@@ -274,41 +301,6 @@ test('ending a run clears its own injections and leaves another run alone', asyn
   assert.deepEqual([...entry.extensionPrompts.keys()], ['b'], 'the surviving run lost its injection')
 })
 
-test('an injection with no run is kept, and the leak is reported', async (t) => {
-  const fixed = await fixture(t)
-  const reports: string[] = []
-  // The fixture's service has no diagnostics buffer, so the report is read
-  // through `onError` — the same channel, one layer earlier.
-  const chats = fixed.chats
-  const handlers = new IrisAppService({
-    stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } },
-    library: new CharacterLibrary(join(fixed.dir, 'characters'), '/a'),
-    chats,
-    settings: new SettingsStore(join(fixed.dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
-    broadcast: () => {},
-    userName: 'Traveller',
-    onError: (error: Error) => { reports.push(error.message) },
-  }).handlers()
-
-  await handlers['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'orphan', value: 'text', position: 'at-depth', depth: 0,
-  })
-
-  // **Kept, not dropped.** This is what every injection did before runs existed,
-  // and refusing it would break a frame that has not shipped run ids yet.
-  const entry = await chats.open(fixed.chatId)
-  assert.equal(entry.extensionPrompts.get('orphan')?.value, 'text')
-
-  // But an injection nothing can clear is a leak, so it is named once.
-  assert.equal(reports.length, 1, `expected one report, got ${JSON.stringify(reports)}`)
-  assert.match(reports[0] ?? '', /without a run id/u)
-
-  // And a run ending cannot take it, which is the fact the report is about.
-  const done = await handlers['script.runEnded']({ chatId: fixed.chatId, runId: 'chat:1' })
-  assert.equal(done.cleared, 0)
-  assert.equal(entry.extensionPrompts.has('orphan'), true)
-})
-
 test('clearing an injection needs no run, because the key is the handle', async (t) => {
   const fixed = await fixture(t)
   await fixed.handlers['script.setExtensionPrompt']({
@@ -318,9 +310,58 @@ test('clearing an injection needs no run, because the key is the handle', async 
   // Upstream's `uninject` is an empty value on the same key, and that has to keep
   // working without the caller knowing which run wrote it.
   await fixed.handlers['script.setExtensionPrompt']({
-    chatId: fixed.chatId, key: 'a', value: '', position: 'at-depth', depth: 0,
+    chatId: fixed.chatId, key: 'a', value: '', position: 'at-depth', depth: 0, runId: RUN,
   })
 
   const entry = await fixed.chats.open(fixed.chatId)
   assert.equal(entry.extensionPrompts.size, 0, 'an empty value no longer removes an injection')
+})
+
+test('a run that ended with nothing left still says so', async (t) => {
+  const fixed = await fixture(t)
+  const reports: string[] = []
+  const handlers = reporting(fixed, reports)
+
+  await handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0, runId: 'chat:1',
+  })
+  await handlers['script.runEnded']({ chatId: fixed.chatId, runId: 'chat:1' })
+  reports.length = 0
+
+  // **A second end for the same run clears nothing, and must not be silent.**
+  // The first version of this spoke only when it cleared, so two full cycles of
+  // correctly paired ends produced no line at all — indistinguishable from a
+  // mechanism that had stopped.
+  const done = await handlers['script.runEnded']({ chatId: fixed.chatId, runId: 'chat:1' })
+
+  assert.equal(done.cleared, 0)
+  assert.equal(reports.length, 1, `expected one line, got ${JSON.stringify(reports)}`)
+  assert.match(reports[0] ?? '', /nothing left to clear/u)
+})
+
+test('a run this chat never saw is named, without reading its shape', async (t) => {
+  const fixed = await fixture(t)
+  const reports: string[] = []
+  const handlers = reporting(fixed, reports)
+
+  await handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0, runId: 'chat:1',
+  })
+  reports.length = 0
+
+  // A mismatched pair takes this shape: the run id is real, but not on this
+  // chat. Caught by never having *seen* the name — not by parsing `chatId:n`,
+  // which would give the host an opinion about how the shell counts runs.
+  await handlers['script.runEnded']({ chatId: fixed.chatId, runId: 'someone-elses-chat:7' })
+
+  assert.equal(reports.length, 1)
+  assert.match(reports[0] ?? '', /no injection on this chat ever named it/u)
+
+  // And it says both possibilities, because the host cannot tell them apart: a
+  // run that injected nothing was never announced either.
+  assert.match(reports[0] ?? '', /injected nothing, or this chat and run do not belong together/u)
+
+  // The real run is untouched by a stranger's end.
+  const entry = await fixed.chats.open(fixed.chatId)
+  assert.equal(entry.extensionPrompts.has('a'), true, 'a mismatched end cleared a live injection')
 })

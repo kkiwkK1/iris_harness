@@ -1063,16 +1063,6 @@ export class IrisAppService {
 
       'script.setExtensionPrompt': async ({ chatId, key, value, position, depth, role, scan, runId }) => {
         const entry = await chats.open(chatId)
-        // An injection with no run cannot be cleared by a run ending, so it
-        // outlives the frame that made it. Said once per key rather than
-        // defaulted, because the alternative is a leak nobody is told about.
-        if (runId === undefined && value.trim().length > 0) {
-          this.#report(
-            `a script injected "${key}" without a run id, so nothing can clear it when its`
-            + ' frame goes away; it will live until this chat is closed',
-            { kind: 'script', grade: 'fault', chatId },
-          )
-        }
         entry.setExtensionPrompt(key, {
           value,
           position,
@@ -1086,13 +1076,33 @@ export class IrisAppService {
 
       'script.runEnded': async ({ chatId, runId }) => {
         const entry = await chats.open(chatId)
+        const known = entry.hasScriptRun(runId)
         const cleared = entry.endScriptRun(runId)
-        // Said only when something went: a run that injected nothing ends on
-        // every chat close, and a line per close would bury the log.
-        if (cleared > 0) {
+
+        // **Every run end says something, including the quiet ones.** The first
+        // version spoke only when it cleared, and two whole cycles of correctly
+        // paired ends then produced no line at all — which reads exactly like a
+        // mechanism that has stopped working. A zero is the positive evidence
+        // that it still runs, and it cannot only appear the first time.
+        if (!known) {
+          // Deliberately says both possibilities. A run the host was never told
+          // about is indistinguishable from a mismatched `(chatId, runId)` pair,
+          // because nothing announces a run's start — only its injections do.
+          // Naming one of them would be a guess presented as a diagnosis.
+          this.#report(
+            `run ${runId} ended, but no injection on this chat ever named it: either that run`
+            + ' injected nothing, or this chat and run do not belong together',
+            { kind: 'script', grade: 'note', chatId },
+          )
+        } else if (cleared > 0) {
           this.#report(
             `cleared ${String(cleared)} injection(s) left by run ${runId}, as SillyTavern clears`
             + ' its own when a chat is closed',
+            { kind: 'script', grade: 'note', chatId },
+          )
+        } else {
+          this.#report(
+            `run ${runId} ended with nothing left to clear`,
             { kind: 'script', grade: 'note', chatId },
           )
         }

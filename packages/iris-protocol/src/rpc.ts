@@ -612,19 +612,15 @@ export const requestSchemas = {
      * still has that conversation open (the reason DEVIATIONS 10 keeps
      * injections per chat rather than clearing on switch).
      *
-     * **Optional as a transition, not as the settled shape.** A required field
-     * would reject every injection from a frame that has not shipped this yet,
-     * taking the feature down between two deploys; a silent default would make
-     * such an injection immortal with nothing said. So for now an injection with
-     * no run is stored, behaves as it always did, and produces one `script`
-     * fault naming what it gives up.
-     *
-     * **It becomes required once the frame sends it everywhere** — protocol and
-     * host in one batch at that point, with no window in which injections are
-     * refused. Left as-is it would read as a permanent allowance, and the fault
-     * would go on describing a state nobody intends to keep.
+     * **Required.** It was optional for exactly one batch, while the frame did
+     * not yet send it: rejecting those injections would have taken the feature
+     * down between two deploys, and defaulting them would have made each one
+     * immortal with nothing said, so they were stored and reported instead.
+     * The frame now sends it on every call — verified in the front end, twelve
+     * run ends paired with no missing-id fault — so the allowance is gone and
+     * an injection without a run is refused at the boundary.
      */
-    runId: z.string().min(1).max(200).optional(),
+    runId: z.string().min(1).max(200),
   }),
   /**
    * A frame run has ended, so its injections can go.

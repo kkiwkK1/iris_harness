@@ -96,6 +96,9 @@ async function fixture(t: TestContext, replies: readonly string[] = ['A reply.']
   }
 }
 
+/** One run for every injection in this file: the subject here is not run identity. */
+const RUN = 'chat:1'
+
 test('a card reads its chat through the frozen context shape', async (t) => {
   const { handlers } = await fixture(t)
   const created = await handlers['chat.create']({ characterId: 'aria' })
@@ -169,10 +172,10 @@ test('a keyed injection replaces its own text rather than accumulating', async (
   const chatId = created.view.chatId
 
   await handlers['script.setExtensionPrompt']({
-    chatId, key: 'status-bar', value: 'First version.', position: 'at-depth', depth: 0,
+    chatId, key: 'status-bar', value: 'First version.', position: 'at-depth', depth: 0, runId: RUN,
   })
   await handlers['script.setExtensionPrompt']({
-    chatId, key: 'status-bar', value: 'Second version.', position: 'at-depth', depth: 0,
+    chatId, key: 'status-bar', value: 'Second version.', position: 'at-depth', depth: 0, runId: RUN,
   })
 
   const entry = chats.cached(chatId)
@@ -197,10 +200,10 @@ test('an empty injection clears the key, the way upstream removes one', async (t
   const chatId = created.view.chatId
 
   await handlers['script.setExtensionPrompt']({
-    chatId, key: 'status-bar', value: 'Something.', position: 'before', depth: 0,
+    chatId, key: 'status-bar', value: 'Something.', position: 'before', depth: 0, runId: RUN,
   })
   await handlers['script.setExtensionPrompt']({
-    chatId, key: 'status-bar', value: '', position: 'before', depth: 0,
+    chatId, key: 'status-bar', value: '', position: 'before', depth: 0, runId: RUN,
   })
 
   assert.equal(chats.cached(chatId)?.extensionPrompts.size, 0)

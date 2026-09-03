@@ -530,6 +530,10 @@ export class ChatEntry {
     // rather than stored as a contribution that renders to nothing.
     if (injection === undefined || injection.value.trim().length === 0) this.extensionPrompts.delete(key)
     else this.extensionPrompts.set(key, injection)
+    // Remembered even when the value was empty — an `uninject` still proves the
+    // run exists, and forgetting it would make a later run end look like a
+    // mismatched pair.
+    if (injection?.runId !== undefined) this.#seenRuns.add(injection.runId)
   }
 
   /**
@@ -553,6 +557,29 @@ export class ChatEntry {
     }
     return cleared
   }
+
+  /**
+   * Whether any injection on this chat has ever named this run.
+   *
+   * **Not the same question as "did it clear anything".** A run that injected
+   * and was already cleared is known and clears nothing; a run this chat has
+   * never seen clears nothing either, and the second is the shape a mismatched
+   * `(chatId, runId)` pair takes. Telling them apart is the whole reason this
+   * exists — and it is decided by having *seen* the name, never by reading
+   * structure out of it.
+   *
+   * The one case it cannot separate: a run that legitimately injected nothing
+   * looks exactly like a mismatch, because the host was never told it started.
+   * The report says both possibilities rather than choosing one.
+   * @param runId - the run to ask about.
+   * @returns whether it has ever injected here.
+   */
+  hasScriptRun(runId: string): boolean {
+    return this.#seenRuns.has(runId)
+  }
+
+  /** Runs that have injected on this chat, so an unknown one can be named. */
+  readonly #seenRuns = new Set<string>()
 
   /**
    * Claim the chat for one generation.
