@@ -1399,6 +1399,66 @@ V8 (new vm.Script): SyntaxError: Invalid regular expression: missing /
 萧谴写卡助手版(遍历)、银麒赎世(遍历 + 自定义名)。**创世回廊只用 postMessage、
 【Sgw】只嵌入不读,这两张不在需求面内。**
 
+### D. 补表:div 替身会被什么认出来(对裁定 (A))
+
+裁定 (A) 用**带 shadow root 的 div 替身**替换 `createElement('iframe')`。替身的弱点是**身份**。
+逐条扫两个 population(`scratchpad/iframe-identity-checks.mjs`):
+
+| 探针 | 命中 | 替身覆盖? |
+|---|---|---|
+| `tagName === 'IFRAME'` | **0** | — |
+| `nodeName === 'IFRAME'` | **0** | — |
+| `matches('iframe')` / `closest('iframe')` | **0** | — |
+| `querySelector('iframe')`(单个) | **0** | — |
+| `getElementsByTagName('iframe')` | **0** | — |
+| `instanceof HTMLIFrameElement` | **1**(V1.5.4_,打包进来的 style-loader) | **不覆盖** —— 但见下,**这处是死代码** |
+| **`querySelectorAll('iframe')`** | **3 张卡 / 12 处** | **不覆盖 —— 返回空数组,静默** |
+| jQuery `.find('iframe')` | 1(萧谴,消息 frame) | **不覆盖** |
+| `contentDocument` / `contentWindow` | 2 / 3 张卡 | **覆盖**(替身正为此存在) |
+| `srcdoc` **读**(用于认帧) | 1(V1.5.4_ 复用扫描) | 覆盖,但要能被 `querySelectorAll` 找到才用得上 |
+| `allow` / `sandbox` / `referrerPolicy` | **全 0** | **不用支持** |
+| `frameborder` | 29(纯装饰) | 无所谓 |
+| `loading="lazy"` | 2 —— **都在 `<img>` 上,与 iframe 无关**(假阳性,已排除) | — |
+
+> **好消息是这一列几乎全零:卡不检查 iframe 的_类型_,只检查它_找得到_。**
+> 真正的风险面只有一个动作:**`querySelectorAll('iframe')` 找不到替身**。
+
+#### 两处会改变工作量的更正
+
+**① V1.5.4 里那处 `instanceof HTMLIFrameElement` 是死代码,不用管。**
+style-loader 的插入目标是 `IA.insert = wA().bind(null,'head')` —— `document.querySelector('head')`,
+**永远不是 iframe**,所以那个 `instanceof` 分支在这张卡上**本来就不会进**。3c 点出它是对的,
+但**它不在这条路径上**。
+
+**② 真正把样式送进覆盖层的是另一个类,它要的是 `ownerDocument`:**
+
+```js
+class RA {
+  targetHead                                   // = 覆盖层 iframe 的 contentDocument.head
+  sync () {
+    const e = []
+    for (const n of document.styleSheets)      // ← 读脚本 frame 自己的样式表
+      try { for (const t of n.cssRules) e.push(t.cssText) } catch {}
+    const n = this.targetHead.ownerDocument    // ← 用它 createElement
+    this.targetHead.querySelectorAll('style[data-style-sync]').forEach(e => e.remove())
+    …
+  }
+}
+```
+
+**所以「只给 `contentDocument` 替身、不给 `ownerDocument.createElement`」这条也会绿是精确的**
+(§九.4之二),现在有源码支撑。**而且它有第二条独立失效路径**:`sync()` 读的是
+`document.styleSheets` 的 `cssRules` —— **若样式改放进 shadow root 而不进 `document.styleSheets`,
+这里收集到的就是空的**,同样"挂上了但没样式",且 `catch {}` 吞掉一切。
+
+#### `querySelectorAll('iframe')` 的 12 处,按后果分
+
+| 卡 | 处数 | 找不到时会怎样 |
+|---|---|---|
+| **银麒赎世 / 银麒系统面板** | **10** | `if (fw && fw.phoneAPI)` **静默跳过** → 系统面板永不亮(§七之八 B) |
+| 创世回廊1.3(iface) | 1 | 向所有 iframe 广播 `postMessage`,**广播给空集** → 地图不更新,无报错 |
+| V1.5.4_ / 论坛覆盖层 | 1 | **复用扫描**(靠 `t.srcdoc.includes('viewport-fit=cover')` 认旧帧)找不到 → 复用分支失效。**但 `window.__forumOverlayMounted` 仍然拦着**,所以结果是"第二次什么都不做"而不是"叠一层新的" —— 除非那个标志所在的 window 被换掉 |
+
 **口径边界**:`<iframe>` 字面计数含**界面正文里的静态 HTML**,那些在渲染前不是活的 frame;
 计入是因为它们渲染后会成为真 frame,但它们**没有父侧读**,所以不影响需求面。
 运行时拼接 `src` 的站点这里看不到 —— 与全文其它普查同一条**下界**说明。
