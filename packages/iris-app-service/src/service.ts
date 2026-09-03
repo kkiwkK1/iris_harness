@@ -289,6 +289,18 @@ export class IrisAppService {
             },
           )
         }
+        // **Every open, with no memory of having asked.** Upstream hangs
+        // `checkAndCleanupLegacyChat` on the chat load itself, so opening a chat
+        // asks again. Gating this behind the report note — which speaks once per
+        // loaded entry — turned "we will ask again next time" into "next time the
+        // host loads this entry", so dismissing the dialog and reopening the chat
+        // was indistinguishable from having declined. The four gates are the only
+        // memory needed: once a sweep has run, the first floor no longer holds
+        // `stat_data`, and once someone declines, `ignore_cleanup` is on the chat.
+        const offer = entry.legacyCleanupOffer(this.#options.pruneVariables ?? DEFAULT_PRUNE)
+        if (offer !== undefined) {
+          this.#options.broadcast({ type: 'cleanup.offer', chatId, ...offer })
+        }
         return { view: entry.toView() }
       },
 
@@ -1227,13 +1239,10 @@ export class IrisAppService {
       if (prune !== undefined) {
         const note = entry.legacyCleanupNote(prune)
         if (note !== undefined) {
-          // The offer and the note travel together: the offer is what a shell can
-          // act on, and the note is what remains when no shell does. Neither is a
-          // deletion — nothing is swept until an answer arrives.
-          const offer = entry.legacyCleanupOffer(prune)
-          if (offer !== undefined) {
-            this.#options.broadcast({ type: 'cleanup.offer', chatId: entry.chatId, ...offer })
-          }
+          // The note only, once per loaded entry. **The dialog is raised on
+          // `chat.open` instead**, because that is when upstream asks and because a
+          // question asked once per host lifetime is not a question. This line is
+          // for the report view, which wants the fact recorded rather than repeated.
           this.#report(note, { kind: 'variables', grade: 'note', chatId: entry.chatId })
         }
       }

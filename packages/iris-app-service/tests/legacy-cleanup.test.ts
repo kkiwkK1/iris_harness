@@ -160,3 +160,56 @@ test('a backup that is written lands under the profile and the sweep follows', a
   assert.ok(done.cleaned > 0, 'the sweep did not run after a successful backup')
   assert.ok(await intactLayers(fixed.chats) < before, 'the sweep removed nothing')
 })
+
+test('the offer returns on every open until it is answered', async (t) => {
+  const fixed = await fixture(t)
+  const offers = (): number => fixed.events.filter(event => event.type === 'cleanup.offer').length
+
+  await fixed.handlers['chat.open']({ chatId: 'long' })
+  assert.equal(offers(), 1, 'opening a never-cleaned chat raised no offer')
+
+  // **A dismissal is not an answer.** Upstream hangs its check on the chat load,
+  // so reopening asks again. The first version of this gated the dialog behind a
+  // once-per-loaded-entry report note, which made "we will ask again" mean "next
+  // time the host loads this entry" — so pressing Esc and reopening the chat was
+  // indistinguishable from having declined for good.
+  await fixed.handlers['chat.open']({ chatId: 'long' })
+  assert.equal(offers(), 2, 'the offer did not come back after a dismissal')
+
+  await fixed.handlers['chat.open']({ chatId: 'long' })
+  assert.equal(offers(), 3, 'the offer stopped repeating on its own')
+})
+
+test('answering never is the only thing that stops the offer', async (t) => {
+  const fixed = await fixture(t)
+  await fixed.handlers['chat.open']({ chatId: 'long' })
+  const before = fixed.events.filter(event => event.type === 'cleanup.offer').length
+  assert.equal(before, 1)
+
+  await fixed.handlers['chat.answerCleanup']({ chatId: 'long', answer: 'never' })
+  await fixed.handlers['chat.open']({ chatId: 'long' })
+
+  assert.equal(
+    fixed.events.filter(event => event.type === 'cleanup.offer').length,
+    before,
+    'the offer came back after the user declined it',
+  )
+})
+
+test('a swept chat stops offering, with nothing recorded to remember it', async (t) => {
+  const fixed = await fixture(t)
+  await fixed.handlers['chat.open']({ chatId: 'long' })
+  await fixed.handlers['chat.answerCleanup']({ chatId: 'long', answer: 'clean' })
+  const after = fixed.events.filter(event => event.type === 'cleanup.offer').length
+
+  await fixed.handlers['chat.open']({ chatId: 'long' })
+  assert.equal(fixed.events.filter(event => event.type === 'cleanup.offer').length, after)
+
+  // **No bookkeeping was needed for that.** The sweep removes `stat_data` from
+  // the first floor, and the absence of it *is* the record that a cleanup has
+  // run — which is why upstream needs no flag either.
+  const entry = await fixed.chats.open('long')
+  const first = entry.readFloorVariables(1).variables ?? {}
+  assert.equal('stat_data' in first, false)
+  assert.equal(first[IGNORE_CLEANUP_KEY], undefined, 'a sweep recorded a refusal it was not given')
+})
