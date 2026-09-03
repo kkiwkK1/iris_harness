@@ -39,6 +39,7 @@ export function Masthead({
   const generating = useIris(state => state.stream !== undefined)
   const characters = useIris(state => state.characters)
   const transport = useIris(state => state.transport)
+  const origin = useIris(state => state.dataOrigin)
 
   const character = characters.find(row => row.characterId === view?.characterId)
   // Turns rather than messages: a turn is the unit the reader thinks in, and the
@@ -75,6 +76,19 @@ export function Masthead({
         <p className="iris-masthead__stub">
           Seeded data — this page is not talking to a host. Add{' '}
           <code>?transport=rpc</code> to use one.
+          {/*
+            And **where** the data came from, which is the half of this sentence
+            that was missing. `dataOrigin` has been in the store since the field
+            was added — with a doc saying the interface has to be able to say it
+            — and nothing read it: an audit of state fields against their readers
+            turned it up as the one written-but-never-read field.
+
+            A stored value nobody renders is the "looks done" shape this project
+            has ruled against twice; the half that was already shown
+            (`transport`) is what makes the omission easy to miss, because the
+            sentence reads complete without it.
+          */}
+          {' '}Source: <code>{origin}</code>.
         </p>
       ) : null}
       {view === undefined ? null : (
