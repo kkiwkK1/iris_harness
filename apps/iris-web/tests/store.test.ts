@@ -1116,7 +1116,7 @@ test('an injection carries the run it belongs to, and only that call does', asyn
    */
   const scope = recordingStore()
   actionsOf(scope.store).beginCardRun()
-  const runId = scope.store.getState().cardRunId
+  const runId = scope.store.getState().cardRun?.runId
   assert.equal(runId, 'c1:1', 'the readable form is ${chatId}:${generation}')
 
   await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' })
@@ -1138,7 +1138,7 @@ test('ending a run reports it once, with the id the injection carried', async ()
    */
   const scope = recordingStore()
   actionsOf(scope.store).beginCardRun()
-  const runId = scope.store.getState().cardRunId
+  const runId = scope.store.getState().cardRun?.runId
   await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' })
 
   await actionsOf(scope.store).endCardRun()
@@ -1147,7 +1147,7 @@ test('ending a run reports it once, with the id the injection carried', async ()
   const ended = scope.calls.filter(it => it.method === 'script.runEnded')
   assert.equal(ended.length, 1, 'runEnded was sent twice for one run')
   assert.deepEqual(ended[0]?.params, { chatId: 'c1', runId })
-  assert.equal(scope.store.getState().cardRunId, undefined)
+  assert.equal(scope.store.getState().cardRun?.runId, undefined)
   scope.dispose()
 })
 
@@ -1157,9 +1157,9 @@ test('a new run gets a new id, so the old run’s injections are not adopted', a
   // clear injections the first still owns — on another page, possibly.
   const scope = recordingStore()
   actionsOf(scope.store).beginCardRun()
-  const first = scope.store.getState().cardRunId
+  const first = scope.store.getState().cardRun?.runId
   actionsOf(scope.store).beginCardRun()
-  const second = scope.store.getState().cardRunId
+  const second = scope.store.getState().cardRun?.runId
 
   assert.notEqual(first, second)
   await actionsOf(scope.store).endCardRun()
@@ -1191,6 +1191,64 @@ test('a failed runEnded is silent here, because the host reports the orphan', as
   await actionsOf(scope.store).endCardRun()
 
   assert.equal(scope.store.getState().notice, undefined, 'teardown raised a notice')
-  assert.equal(scope.store.getState().cardRunId, undefined, 'the id survived a failed end')
+  assert.equal(scope.store.getState().cardRun?.runId, undefined, 'the id survived a failed end')
+  scope.dispose()
+})
+test('a run ends against its own chat, not the one now open', async () => {
+  /*
+   * **The bug the other five tests could not see, found in a browser.**
+   *
+   * `endCardRun` read `get().chatId`, and it runs from a React cleanup — which
+   * fires *after* the store's `chatId` has already become the next chat. So on
+   * every switch the shell sent a matched-looking pair whose halves belonged to
+   * different conversations:
+   *
+   *   { chatId: '爱衣-…',  runId: '不要被神隐挑战-…:19' }   ← wrong chat
+   *   { chatId: '爱衣-…',  runId: '爱衣-…:20' }            ← right, by luck
+   *
+   * The host matches a run by chat **and** id, so the mismatched half cleared
+   * nothing and the previous run's injections stayed live — measured on 8787 as
+   * exactly six, which is exactly what one V1.5.4 run injects.
+   *
+   * **Why the unit tests were green:** every one of them began and ended a run
+   * without ever changing `chatId`, so the run's chat and the open chat were
+   * the same string. The two sources were indistinguishable in the fixture, and
+   * the assertion could not tell which one the code had read. Switching the
+   * chat between begin and end is the whole discriminating power here.
+   */
+  const scope = recordingStore()
+  actionsOf(scope.store).beginCardRun()
+  const started = scope.store.getState().cardRun
+  assert.deepEqual(started, { runId: 'c1:1', chatId: 'c1' })
+
+  // The switch: the store learns the new chat before the old run's teardown.
+  scope.store.setState({ chatId: 'c2' })
+  await actionsOf(scope.store).endCardRun()
+
+  const ended = scope.calls.filter(it => it.method === 'script.runEnded')
+  assert.equal(ended.length, 1)
+  assert.deepEqual(
+    ended[0]?.params,
+    { chatId: 'c1', runId: 'c1:1' },
+    'the run was ended against the chat that is now open, not the one it ran in',
+  )
+  scope.dispose()
+})
+
+test('an injection uses the run’s id even after the open chat has moved on', async () => {
+  /*
+   * The same hazard on the other side of the pair. `runCardAction` sends
+   * `chatId` from current state — correct, because a card's call is about the
+   * chat it is running in — but the **run id** must stay the one minted when
+   * the run began, or an injection would be filed under a run that never
+   * existed and nothing would ever clear it.
+   */
+  const scope = recordingStore()
+  actionsOf(scope.store).beginCardRun()
+  scope.store.setState({ chatId: 'c2' })
+  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' })
+
+  const injection = scope.calls.find(it => it.method === 'script.setExtensionPrompt')
+  assert.equal((injection?.params as Record<string, unknown>)['runId'], 'c1:1')
   scope.dispose()
 })

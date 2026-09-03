@@ -300,19 +300,35 @@ export interface IrisState {
    */
   cardRunGeneration: number
   /**
-   * The open card run's identity, as the host will see it.
+   * The open card run: its identity **and the chat it belongs to**.
    *
-   * `${chatId}:${generation}` — readable so a host report can name which open
-   * an injection came from, and **opaque on the wire**: the host stores it and
-   * never parses it. The generation alone was not enough because it is not
-   * unique across chats, and the host has to be able to tell one page's run
-   * from another's.
+   * `runId` is `${chatId}:${generation}` — readable so a host report can name
+   * which open an injection came from, and **opaque on the wire**: the host
+   * stores it and never parses it. The generation alone was not enough because
+   * it is not unique across chats.
    *
-   * `undefined` between runs. An injection arriving without one is stored by
-   * the host and reported as a fault — a transitional state while both halves
-   * land, not a mode anything should rely on.
+   * **The chat is carried here rather than read from state when needed**, and
+   * that is a measured fix rather than tidiness. `endCardRun` used to read
+   * `get().chatId`, but it runs from a React cleanup — which fires *after* the
+   * store's `chatId` has already become the new chat. So half the `runEnded`
+   * calls named the wrong conversation:
+   *
+   * ```
+   * { chatId: '爱衣-…',  runId: '不要被神隐挑战-…:19' }   ← wrong chat
+   * { chatId: '爱衣-…',  runId: '爱衣-…:20' }            ← right, by luck
+   * ```
+   *
+   * The host looks a run up by chat and id together, so a mismatched pair
+   * cleared nothing and the previous run's injections stayed live — measured on
+   * 8787: exactly six, which is exactly what one V1.5.4 run injects.
+   *
+   * One field rather than two, because the pair must never drift: a run's chat
+   * is fixed when the run begins and reading either half from anywhere else is
+   * the bug this shape prevents.
+   *
+   * `undefined` between runs.
    */
-  cardRunId: string | undefined
+  cardRun: { runId: string, chatId: string } | undefined
   /** What each of this card's scripts is doing, once they start on their own. */
   runStates: ScriptRunState[]
 
@@ -584,7 +600,7 @@ export function createIrisStore(
       cleanupOffer: undefined,
       cleanupAnswered: [],
       cardRunGeneration: 0,
-      cardRunId: undefined,
+      cardRun: undefined,
       runStates: [],
       documentGranted: false,
       connections: [],
@@ -845,21 +861,29 @@ export function createIrisStore(
          */
         set({
           cardRunGeneration: generation,
-          cardRunId: chatId === undefined ? undefined : `${chatId}:${String(generation)}`,
+          cardRun: chatId === undefined
+            ? undefined
+            : { runId: `${chatId}:${String(generation)}`, chatId },
         })
       },
 
       async endCardRun(): Promise<void> {
-        const runId = get().cardRunId
-        const chatId = get().chatId
+        const run = get().cardRun
         /*
+         * **The run's own chat, not the open one.** This runs from a React
+         * cleanup, which fires after `chatId` has already become the *next*
+         * chat — so reading it here named the wrong conversation on every
+         * switch, the host matched nothing, and the injections it was asked to
+         * clear stayed live. Measured on 8787 before this line changed.
+         *
          * Cleared first, so a second call cannot send a second `runEnded` for
          * the same run. The teardown path and `pagehide` can both fire — a tab
          * closing during a chat switch — and the host counts what it cleared,
          * so a duplicate would report a second sweep of nothing.
          */
-        set({ cardRunId: undefined })
-        if (runId === undefined || chatId === undefined) return
+        set({ cardRun: undefined })
+        if (run === undefined) return
+        const { runId, chatId } = run
         /*
          * Not wrapped in `guard`: this runs during teardown, and a notice about
          * a run that has already ended would arrive over whatever the reader is
@@ -1221,7 +1245,7 @@ export function createIrisStore(
          * `setExtensionPrompt` takes it, because it is the only call that leaves
          * something behind for a run to own.
          */
-        const runId = get().cardRunId
+        const runId = get().cardRun?.runId
         const scoped = wire === 'script.setExtensionPrompt' && runId !== undefined
           ? { runId }
           : {}
