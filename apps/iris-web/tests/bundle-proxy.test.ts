@@ -285,3 +285,36 @@ test('every import spelling is found', () => {
   ].join(';')
   assert.deepEqual(moduleSpecifiers(source), ['a', 'b', 'c', 'd', 'e'])
 })
+test('a root-relative specifier is left alone, which is why the host must rewrite bodies', () => {
+  /*
+   * **The shape that cost one card its whole interface**, pinned here because
+   * the frame's half is correct and looks like the whole story.
+   *
+   * A jsDelivr `+esm` bundle imports its own dependencies root-relatively:
+   * `import{…}from"/npm/vue@3.5.41/+esm"`. This function leaves those exactly
+   * as written — correct, since a root-relative URL is not an allowed remote
+   * and rewriting it would invent a request. But the *consequence* is that once
+   * we serve that bundle from our own origin, the browser resolves them against
+   * **us**: measured, all three of pinia's nested specifiers are 404 on our
+   * host, and the failure surfaces as `Failed to fetch dynamically imported
+   * module: blob:null/…` — naming the card's top-level blob rather than the
+   * dependency.
+   *
+   * So this assertion is not "the rewriter handles it". It is the opposite: the
+   * rewriter cannot, and the host must rewrite the bodies it serves. If someone
+   * later makes this function rewrite them, this test should fail and be read
+   * before it is updated — a root-relative specifier rewritten here points at a
+   * bundle the card never asked for.
+   */
+  const nested = 'import{x}from"/npm/vue@3.5.41/+esm";import"/npm/side/+esm";'
+  assert.equal(rewriteBundleImports(nested, ORIGIN), nested)
+})
+
+test('an absolute allowed remote is still rewritten, minified or not', () => {
+  // The real card's first line is minified with no space after `from`, which is
+  // the form a whitespace-anchored pattern would miss entirely.
+  const minified = "import{createPinia as e}from'https://testingcf.jsdelivr.net/npm/pinia/+esm';"
+  const out = rewriteBundleImports(minified, ORIGIN)
+  assert.match(out, /\/iris\/script-bundle\?url=https%3A%2F%2Ftestingcf\.jsdelivr\.net/)
+  assert.ok(out.startsWith("import{createPinia as e}from'"), out.slice(0, 40))
+})

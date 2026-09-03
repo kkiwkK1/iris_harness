@@ -21,6 +21,29 @@
  * - **The allowlist here is advice.** The host enforces with its own list and
  *   refuses again regardless; this one exists so a card is not rewritten into a
  *   round trip that was never going to be served.
+ * - **Rewriting moves the module's base URL, so the host must rewrite the
+ *   bodies it serves.** This is the fourth property and it was missing from
+ *   this list, which cost one card its whole interface. A jsDelivr `+esm`
+ *   bundle imports its own dependencies with **root-relative** specifiers —
+ *   `import{…}from"/npm/vue@3.5.41/+esm"` — which resolve against whatever
+ *   origin served the module. Served from jsDelivr they are correct; served
+ *   from us they resolve to `http://our-host/npm/vue@3.5.41/+esm`, which is a
+ *   404 (measured: all three of pinia's nested specifiers). The browser then
+ *   reports `Failed to fetch dynamically imported module: blob:null/…` — naming
+ *   the card's own top-level blob, not the dependency — so the card looks
+ *   broken and the proxy looks innocent.
+ *
+ *   Nothing on this side can fix it: root-relative resolution ignores the
+ *   proxy's path, and the frame cannot fetch the upstream itself
+ *   (`connect-src 'none'` without a grant). The host has to resolve each nested
+ *   specifier against the **upstream** URL and re-wrap it in this same route,
+ *   which also keeps the whole dependency tree cached and keeps `script-src`
+ *   at nothing but our own origin.
+ *
+ *   Why it looks like it works: a self-contained bundle has no nested
+ *   specifiers, so the proxy is correct for those — MagVarUpdate's two mirrors
+ *   are exactly that, and they went on loading while the one bundle with a
+ *   dependency died.
  *
  * @module iris-web/sandbox/bundle-proxy
  */
