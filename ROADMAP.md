@@ -67,7 +67,12 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    状态栏、论坛覆盖层、正文美化）存储门面后全部活着并撞到「no overlay surface yet」。裁点 A1–A9 通过；
    **方案 C 先行**（脚本 frame 自身作全视口表面，两条路线与 dvh 阶梯自动成立，一卡一层记账）+ 三个 ST id
    真锚点（`#send_textarea`/`#send_but` 读 DOM 值走真发送并出 note、`#chat` 楼层带 `mes` 且新楼层为新增节点、
-   `#mes_stop`/`is_send_press`）+ 切/关聊天归零（上游残留无人负责，我们多一个清理点）。方案 A（阅读区进
+   `#mes_stop`/`is_send_press`）+ 切/关聊天归零（上游残留无人负责，我们多一个清理点）。**已落**：锚点接线
+   （4df5458，`composerSend` 走 CARD_METHODS 门；闸 16→12）、表面（0331320：脚本 frame 全视口 fixed +
+   `regions` 新报告类型 + clip-path 多子路径命中测试，空集=零面积路径）、虚拟 parent/top 暴露本 frame jQuery
+   （2a95f8e）。复读：表面/穿透正确（三点 elementFromPoint 全到 shell）；regions 未到达——后台标签页 rAF 不跑
+   （待非 rAF 兜底）；V1.5.4 在建节点前死于 `null.querySelector`（44 定位 X）。bootstrap 拆分（策略核内联 +
+   成员表按哈希 URL 取，`/sandbox` 路由现成、须进 manifest.json 才 immutable）批准，7b 在做。方案 A（阅读区进
    realm，补「同一 parent」前提，解 `parent.Mvu`/`__X_loaded__` 握手）与 B（投影）并排算账，3c 核对照、
    44 出验收单后定；按名异步代理彻底出局（`Mvu.events.*` 同步当事件名）。
 6. ~~世界书单通道 + 内嵌书物化~~ ✅（957eaca：装配层只读绑定名；`bookFor` 挂导入与打开两路，
