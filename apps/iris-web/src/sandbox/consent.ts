@@ -109,6 +109,32 @@ export function mayRun(state: ConsentState): boolean {
 }
 
 /**
+ * Whether a message interface may build its frame.
+ *
+ * The same yes as `mayRun`, with one widening the question itself cannot reach:
+ * a card whose script list is **empty** is never asked — `ConsentAsk` renders
+ * nothing for it ("a card with no scripts is not a decision"), and the settings
+ * panel has no row for a question nobody puts. An interface gate that demanded
+ * an answer anyway would strand that card's greeting forever, behind a silence
+ * nothing can break: measured on a real card whose greeting is a 30 KB HTML
+ * document — frame claimed, shell healthy, and no iframe in the row, with no
+ * sentence anywhere saying why.
+ *
+ * Upstream needs no gate here at all: a message interface runs the card's own
+ * embedded markup, which arrived when the user installed the card. So the
+ * unasked-with-nothing-to-ask state defaults the way upstream defaults, and
+ * every other state keeps Iris's rule — `unknown` is still in flight, `unasked`
+ * with scripts waits for the question, and `declined` is an answer.
+ * @param state - the consent state.
+ * @param scriptCount - how many scripts the card's pack carries.
+ * @returns true when the interface frame may be built.
+ */
+export function interfacesMayBuild(state: ConsentState, scriptCount: number): boolean {
+  if (state === 'allowed') return true
+  return state === 'unasked' && scriptCount === 0
+}
+
+/**
  * How many bytes a card's scripts come to, for the question.
  *
  * `bytes` is UTF-8 bytes, so dividing by 1024 is correct with no conversion.
