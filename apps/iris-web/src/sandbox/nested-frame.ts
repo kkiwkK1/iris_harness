@@ -433,50 +433,127 @@ export function createNestedFrame(env: NestedFrameEnv): NestedFrame {
       },
     }),
   })
-  define('srcdoc', {
-    get: () => srcdoc,
-    set: (value: unknown) => {
-      /*
-       * Stored **as written**, because a card reads it back to recognise its
-       * own frames: the overlay card's reuse scan is
-       * `t.srcdoc.includes('viewport-fit=cover')`. A stand-in that rendered the
-       * HTML but did not keep the string would fail that scan, and the card's
-       * re-entry guard would then make the second mount do nothing at all —
-       * which reads as "the overlay stopped working" rather than as a miss.
-       */
-      srcdoc = String(value)
-      for (const node of env.parseHtml(srcdoc)) {
-        if (HEAD_TAGS.includes(String(node.tagName).toUpperCase())) {
-          // Through the head's own append, so a `<style>` arriving this way is
-          // re-pointed by the same code that handles one appended later. Two
-          // paths installing CSS, one of them confined, is how a card ends up
-          // styled in one frame and not in the next.
-          head.appendChild?.(node)
-        } else {
-          body.appendChild?.(node)
-        }
+  /**
+   * Take a `srcdoc` value, however it arrived.
+   *
+   * A named function because there are **two arrival paths and they must not
+   * diverge** — the property and `setAttribute`. See the attribute interception
+   * below for why the second one is the path that matters.
+   * @param value - the markup the card wrote.
+   */
+  const applySrcdoc = (value: unknown): void => {
+    /*
+     * Stored **as written**, because a card reads it back to recognise its own
+     * frames: the overlay card's reuse scan is
+     * `t.srcdoc.includes('viewport-fit=cover')`. A stand-in that rendered the
+     * HTML but did not keep the string would fail that scan, and the card's
+     * re-entry guard would then make the second mount do nothing at all — which
+     * reads as "the overlay stopped working" rather than as a miss.
+     */
+    srcdoc = String(value)
+    for (const node of env.parseHtml(srcdoc)) {
+      if (HEAD_TAGS.includes(String(node.tagName).toUpperCase())) {
+        // Through the head's own append, so a `<style>` arriving this way is
+        // re-pointed by the same code that handles one appended later. Two
+        // paths installing CSS, one of them confined, is how a card ends up
+        // styled in one frame and not in the next.
+        head.appendChild?.(node)
+      } else {
+        body.appendChild?.(node)
       }
-      /*
-       * `load` is synthesised on a later task, never synchronously. A real
-       * frame's `load` cannot arrive before the assignment returns, so a card
-       * that sets `srcdoc` and *then* attaches its handler — the ordinary
-       * order — would miss a synchronous one and wait forever.
-       */
-      env.soon(fireLoad)
-    },
-  })
+    }
+    /*
+     * `load` is synthesised on a later task, never synchronously. A real
+     * frame's `load` cannot arrive before the assignment returns, so a card
+     * that sets `srcdoc` and *then* attaches its handler — the ordinary order —
+     * would miss a synchronous one and wait forever.
+     */
+    env.soon(fireLoad)
+  }
+
+  define('srcdoc', { get: () => srcdoc, set: applySrcdoc })
   define('src', {
     get: () => '',
     set: (value: unknown) => {
-      /*
-       * Refused, and said out loud. `frame-src 'none'` refuses every remote
-       * frame and a network grant does not widen it, so a real nested frame
-       * here would reproduce this same refusal one browsing context later —
-       * the coordinator's ruling, and the reason there is no real-iframe branch.
-       * Reporting it is the whole value: a card whose frame silently never
-       * loaded looks like a card with a bug.
-       */
-      env.refuse(String(value), 'a nested frame may not load a URL (frame-src)')
+      refuseSrc(value)
+    },
+  })
+
+  /**
+   * Report a refused frame URL.
+   *
+   * Shared by the `src` property and the `src` attribute, which are two paths
+   * to the same request — and on a stand-in they are genuinely separate code,
+   * unlike on a real `<iframe>` where the attribute drives the property.
+   *
+   * Refused, and said out loud. `frame-src 'none'` refuses every remote frame
+   * and a network grant does not widen it, so a real nested frame here would
+   * reproduce this same refusal one browsing context later. Reporting it is the
+   * whole value: a card whose frame silently never loaded looks like a card
+   * with a bug.
+   * @param value - the URL the card asked for.
+   */
+  function refuseSrc(value: unknown): void {
+    env.refuse(String(value), 'a nested frame may not load a URL (frame-src)')
+  }
+
+  /*
+   * **`setAttribute` is intercepted, and this is the path the real card takes.**
+   *
+   * Measured, with jQuery 3.5.1 — the version the frame is served:
+   *
+   * | what the card writes | `document.createElement` called with |
+   * | --- | --- |
+   * | `$('<iframe>')` / `<iframe/>` / `<iframe></iframe>` | `iframe` |
+   * | `$('<iframe srcdoc="x">')` | **`div`** (fragment builder, `innerHTML`) |
+   *
+   * V1.5.4's overlay does `$('<iframe>').attr({frameborder:'0', srcdoc:'…'})`,
+   * so it lands on the left column and the element patch does fire. But then
+   * `.attr()` calls **`setAttribute('srcdoc', …)`**, and on a plain element that
+   * does not touch the `srcdoc` property at all — measured: `setAttribute`
+   * received `frameborder` and `srcdoc`, and the property setter was called
+   * **zero** times.
+   *
+   * On a real `<iframe>` the two are the same thing, because the attribute
+   * drives the property. On a `<div>` stand-in they are not, so a stand-in that
+   * only defined the property would hand the card an element, accept its markup
+   * into a dead attribute, render nothing, and never fire `load` — the panel
+   * would mount empty with no error anywhere.
+   *
+   * `getAttribute` answers from the same store, because `.attr('srcdoc')` reads
+   * back through it and the reuse scan may well use that spelling.
+   *
+   * The right column is a **recorded gap**: a card writing its attributes
+   * inside the tag string gets a real, unreachable iframe. Not fixed here,
+   * because catching it means intercepting `innerHTML` on a temporary `<div>`
+   * jQuery owns; the corpus has no card doing it (44's full-corpus pass:
+   * `createElement('iframe')` and attribute-in-string forms both zero).
+   */
+  const realSetAttribute = element.setAttribute?.bind(element)
+  const realGetAttribute = (element['getAttribute'] as ((name: string) => string | null) | undefined)
+    ?.bind(element)
+  define('setAttribute', {
+    value: (name: string, value: string): void => {
+      const lowered = String(name).toLowerCase()
+      if (lowered === 'srcdoc') {
+        applySrcdoc(value)
+        return
+      }
+      if (lowered === 'src') {
+        refuseSrc(value)
+        return
+      }
+      realSetAttribute?.(name, value)
+    },
+  })
+  define('getAttribute', {
+    value: (name: string): string | null => {
+      const lowered = String(name).toLowerCase()
+      if (lowered === 'srcdoc') return srcdoc === '' ? null : srcdoc
+      // `src` reads empty rather than null: the card set something and it was
+      // refused, and `null` would say it never tried.
+      if (lowered === 'src') return ''
+      return realGetAttribute?.(name) ?? null
     },
   })
 

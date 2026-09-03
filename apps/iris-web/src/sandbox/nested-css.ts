@@ -118,7 +118,36 @@ function repointSelector(selector: string, ids: FrameStandInIds): string {
         && startsToken(index === 0 ? undefined : selector[index - 1])
         && endsToken(selector[index + found.length])
       ) {
-        out.push(`#${found === 'body' ? ids.body : ids.html}`)
+        /*
+         * **`html` and `:root` become `:scope`, not `#id`** — measured, and it
+         * is the difference between the height chain working and silently not.
+         *
+         * The sheet is wrapped in `@scope (#<html id>)`, and inside a scope
+         * every compound gets an implicit `:scope ` **descendant** prefix. So
+         * `#nf-html` there means "a descendant of #nf-html that is also
+         * #nf-html" and matches nothing at all — while `#nf-body`, a real
+         * descendant, matches fine. The root term is the one that fails, and it
+         * is the top of the chain, so everything under it resolves against
+         * `auto`.
+         *
+         * Measured in a laid-out page, one host 300px tall, content 900px:
+         *
+         * | root selector | html | body | #app | scrollable |
+         * | --- | --- | --- | --- | --- |
+         * | `#nf-html` | 900 | 900 | 900 | no |
+         * | `:scope`   | 300 | 300 | 300 | **yes** |
+         * | `&`        | 300 | 300 | 300 | yes |
+         * | no `@scope` (control) | 300 | 300 | 300 | yes |
+         *
+         * `:scope` over `&` because `&` inside `@scope` is newer and reads as
+         * nesting to anyone skimming; both measured identical.
+         *
+         * The failure had no error and no warning: the rules parse, `#app`'s
+         * background applies, and the panel is simply the wrong height. Without
+         * the control row it would have looked like a percentage-height problem
+         * rather than a selector-matching one.
+         */
+        out.push(found === 'body' ? `#${ids.body}` : ':scope')
         index += found.length
         continue
       }

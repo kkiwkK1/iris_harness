@@ -26,7 +26,31 @@ test('the height chain survives, which is the whole point', () => {
    * parent, and the panel is a zero-height nothing.
    */
   const { css } = repointFrameCss('html,body,#app{height:100%}', IDS, '1')
-  assert.match(css, /#iris-nf1-html/)
+
+  /*
+   * **The root term must be `:scope`, not the wrapper's id** — measured, and it
+   * is the whole difference between this chain working and silently not.
+   * Inside `@scope (#x)` every compound gets an implicit `:scope ` *descendant*
+   * prefix, so `#x` written there means "a descendant of #x that is also #x"
+   * and matches nothing. The same id in the `@scope (…)` prelude is a different
+   * position and still means the element.
+   *
+   * Measured in a laid-out page, host 300px, content 900px:
+   * `#x` gave 900/900/900 with no scrollbar; `:scope` gave 300/300/300 and
+   * scrolled — identical to a control with no `@scope` at all.
+   *
+   * **The first version of this test asserted `/#iris-nf1-html/`, which the
+   * `@scope (…)` prelude satisfies by itself** — so it passed against output
+   * whose height chain could not match. That is why the id is now checked
+   * *outside* the prelude, where it must not appear.
+   */
+  assert.match(css, /@scope \(#iris-nf1-html\)/)
+  assert.match(css, /:scope/, 'the root term is not :scope')
+  assert.doesNotMatch(
+    css.replace(/@scope \([^)]*\)/, ''),
+    /#iris-nf1-html/,
+    'the html id is used as a rule selector, where it cannot match',
+  )
   assert.match(css, /#iris-nf1-body/)
   assert.match(css, /#app/)
   assert.doesNotMatch(css, /(^|[^-\w#.])html\b/, 'a bare html selector survived')
@@ -42,7 +66,9 @@ test('the sheet is confined to the stand-in, not to a message', () => {
 
 test(':root is re-pointed too, since a card uses it for its variables', () => {
   const { css } = repointFrameCss(':root{--bg:#0e1028}', IDS, '1')
-  assert.match(css, /#iris-nf1-html\{--bg:#0e1028\}|#iris-nf1-html \{/)
+  // `:root` sits in the same position as `html` — the scoping root — so it takes
+  // `:scope` for the same measured reason.
+  assert.match(css, /:scope\s*\{--bg:#0e1028\}/)
   assert.doesNotMatch(css, /:root/)
 })
 
@@ -82,7 +108,9 @@ test('a string in a declaration naming html is data too', () => {
 
 test('a compound and a descendant selector both keep their shape', () => {
   const { css } = repointFrameCss('html.dark body > .card{a:1}', IDS, '1')
-  assert.match(css, /#iris-nf1-html\.dark #iris-nf1-body > \.card/)
+  // `:scope.dark` is a valid compound and keeps the card's intent: the root,
+  // when it also carries `.dark`.
+  assert.match(css, /:scope\.dark #iris-nf1-body > \.card/)
 })
 
 test('an at-rule prelude is copied through, and its inner selectors are not lost', () => {

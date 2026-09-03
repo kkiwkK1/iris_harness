@@ -399,3 +399,84 @@ test('querySelector prefers the document’s own answer, then a stand-in', () =>
   assert.equal(empty.querySelector('iframe'), second)
   assert.equal(empty.querySelector('.nothing'), null)
 })
+test('the attribute path works, which is the one the real card takes', async () => {
+  /*
+   * **V1.5.4's actual call chain**, read from the card's own script:
+   *
+   *   $('<iframe>').attr({ frameborder: '0', srcdoc: '<!DOCTYPE html>…' })
+   *
+   * Two measurements decide whether this reaches the stand-in at all, both made
+   * against jQuery 3.5.1 — the version the frame is served:
+   *
+   * 1. `$('<iframe>')` (a bare tag) calls `document.createElement('iframe')`,
+   *    so the element patch fires. `$('<iframe srcdoc="x">')` — attributes
+   *    inside the tag string — calls `createElement('div')` instead and builds
+   *    a real iframe through `innerHTML`, which the patch cannot see. The card
+   *    is on the working side of that split.
+   * 2. `.attr()` calls **`setAttribute`**, and on a plain element that does not
+   *    touch the `srcdoc` property: measured, `setAttribute` received
+   *    `frameborder` then `srcdoc`, and the property setter was called **zero**
+   *    times.
+   *
+   * So a stand-in defining only the property would take the card's markup into
+   * a dead attribute, render nothing, and never fire `load` — an empty panel
+   * with no error anywhere. This test drives the attribute, not the property.
+   */
+  resetNestedFrameCounter()
+  const scope = env()
+  const app = fakeElement('div')
+  app.id = 'app'
+  scope.parseHtml = () => [app]
+
+  const frame = createNestedFrame(scope)
+  const element = frame.element as Record<string, unknown>
+  const setAttribute = element['setAttribute'] as (name: string, value: string) => void
+
+  let loaded = 0
+  ;(element['addEventListener'] as (t: string, h: () => void) => void)('load', () => {
+    loaded += 1
+  })
+
+  // The card's own order and spelling: frameborder first, then srcdoc.
+  setAttribute('frameborder', '0')
+  setAttribute('srcdoc', '<!DOCTYPE html><html style="height:100%"><body><div id="app"></div></body></html>')
+
+  // Read back through the attribute, which is how `.attr('srcdoc')` reads.
+  assert.match(String((element['getAttribute'] as (n: string) => string | null)('srcdoc')), /DOCTYPE/)
+  // And through the property, since the reuse scan uses `t.srcdoc`.
+  assert.match(String(element['srcdoc']), /DOCTYPE/)
+  // The markup landed.
+  assert.equal((frame.document['body'] as NestedNode).querySelector?.('#app'), app)
+
+  scope.flush()
+  assert.equal(loaded, 1, 'load was never synthesised, so the card waits forever')
+})
+
+test('a src attribute is refused the same way the property is', () => {
+  // Two paths to one request. On a real iframe the attribute drives the
+  // property; on a stand-in they are separate code, so both are wired to the
+  // same refusal or one of them silently does nothing.
+  resetNestedFrameCounter()
+  const scope = env()
+  const frame = createNestedFrame(scope)
+  const element = frame.element as Record<string, unknown>
+
+  ;(element['setAttribute'] as (n: string, v: string) => void)('src', 'https://cdn.example/a.html')
+  element['src'] = 'https://cdn.example/b.html'
+
+  assert.deepEqual(scope.refusals.map(r => r.url), [
+    'https://cdn.example/a.html',
+    'https://cdn.example/b.html',
+  ])
+})
+
+test('an ordinary attribute still reaches the element', () => {
+  // The interception is for two names. Everything else must pass through, or a
+  // card setting `class`, `style` or `data-*` on its frame loses it.
+  resetNestedFrameCounter()
+  const scope = env()
+  const frame = createNestedFrame(scope)
+  const element = frame.element as Record<string, unknown>
+  ;(element['setAttribute'] as (n: string, v: string) => void)('data-role', 'overlay')
+  assert.equal((element['attributes'] as Record<string, string>)['data-role'], 'overlay')
+})
