@@ -41,11 +41,22 @@
  * replayed back, so half the snapshot density is simply a longer reach backwards
  * for anyone asking why a floor reads the way it does.
  *
- * **Floor 0 is a named rule upstream**, and an earlier version of this note said
- * the opposite. `legacy_chat.ts:94` carries an explicit comment for it and
- * expresses it as `start = 1`; the periodic path then also happens to keep it
- * through `0 % interval === 0`. Two mechanisms, one intent — it is protected on
- * purpose, not by arithmetic accident.
+ * **Floor 0 is a named rule upstream, with a stated purpose**, and an earlier
+ * version of this note said the opposite. `legacy_chat.ts:94` expresses it as
+ * `start = 1` and says why in its own comment — 「0 层永不清理，以保证始终有快照
+ * 能力。」, floor 0 is never cleaned *so that there is always a snapshot to work
+ * from*. The periodic path then also keeps it through `0 % interval === 0`. Two
+ * mechanisms, one intent; it is protected on purpose, not by arithmetic accident.
+ *
+ * **Both sweeps keep the interval snapshots, because both are one function.**
+ * The one-time sweep is not a full clear: `legacy_chat.ts:93-97` calls the same
+ * `cleanupMessageVariables(1, len - 1 - keep, interval)`, and inside it a layer
+ * already marked `snapshot` is returned untouched and a layer on the interval is
+ * marked and kept (`cleanup_variables.ts:22-28`). So a chat that has been through
+ * the one-time sweep still holds its ladder of snapshots — verified on the real
+ * host, where answering "back up and clean" left `{0, 50, … 650}` standing. This
+ * is agreement, not a divergence, and it is written down because "sweep the whole
+ * history" invites the opposite assumption.
  *
  * What remains true is the *testing* consequence, which is why the correction
  * matters less to the code than to the tests: because both mechanisms keep floor
