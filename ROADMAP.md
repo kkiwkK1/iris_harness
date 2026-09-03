@@ -412,3 +412,21 @@ ST 的 prompt itemization：点开一条消息，看到这次请求里每个部�
 默认虚拟 parent 代理，个别需要真实访问的卡按卡显式授权（GRANTS.md）。策略、实测与
 边界见 `SANDBOX.md` 与 `apps/iris-web/COHABITATION.md`。保留本节骨架是因为三个选项的
 利弊分析对将来同类裁决仍有参照价值；**但它已经不是问题,别再答一遍。**
+## 待补的一件基础设施:`@iris/protocol` 在 web 里没有运行时链接
+
+**事实(2026-09-03 实测)**:`apps/iris-web/node_modules/@iris/` 只链了 `client-fake` 与
+`compat-tavernhelper-core`。`@iris/protocol` 不在其中——而在此之前 app 里**每一处**对它的
+引用都是 `import type`(被擦除),所以它从来不需要在运行时解析,谁也没发现。
+
+`tsc` 靠 `tsconfig` 的 `paths` 认这个裸名;`node --test` 不认。所以从那个包 import 一个
+**值**的那一刻,整个测试套件以 `ERR_MODULE_NOT_FOUND` 起不来——不是某条测试红,是加载
+就失败。
+
+**现在的处置**:`src/sandbox/bundle-proxy.ts` 用一条相对路径直指
+`packages/iris-protocol/src/bundle-specifiers.ts`,理由写在那行 import 上面。**没有**往
+共用 `node_modules` 里加链接:三个会话共用一棵树,往依赖树里加东西正是之前害掉一个 peer
+的包那一类改动,属于用户级决定。顺带的好处是它绕开了包 index(index 拉 `rpc.ts` 与
+`zod`,而那个模块零依赖)。
+
+**下次 `pnpm install` 时补上链接**,然后这条相对路径可以换回裸名。在那之前:**从
+`@iris/protocol` import 值之前,先确认它链上了**——这条约束不写下来就只能靠再撞一次。
