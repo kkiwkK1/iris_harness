@@ -303,9 +303,30 @@ function reportRegions(
      * the whole reason to use it) and a timer while hidden (it is throttled to
      * about a second in a background tab, which is far more than enough for
      * something nobody is looking at).
+     *
+     * **And a timer beside the `rAF`, because there is a third state where
+     * `rAF` does not run at all: this one.** The shell attaches the frame with
+     * the zero-area clip this reporter exists to replace, and Chrome skips
+     * rendering a frame whose clip paints nothing — no paint runs, so no `rAF`
+     * fires, so no measurement is asked for, so the clip stays zero-area.
+     * Measured on a real card whose interface was fully mounted and correctly
+     * laid out inside the frame: the shell at 120 fps and the frame's `rAF`
+     * count at zero, for as long as the empty clip held. The state is a fixed
+     * point of the loop, and the timer is what breaks it — it is cancelled by
+     * the `rAF` path it rescues (`send` clears `scheduled`), so a painting
+     * frame pays one no-op timeout per schedule and nothing more. The interval
+     * is the height reporter's non-`rAF` fallback's, for the same reason: it
+     * bounds how long a mounted interface stays invisible, not how fast
+     * anything animates.
      */
-    if (document.hidden) setTimeout(send, 0)
-    else requestAnimationFrame(send)
+    if (document.hidden) {
+      setTimeout(send, 0)
+      return
+    }
+    requestAnimationFrame(send)
+    setTimeout(() => {
+      if (scheduled) send()
+    }, 500)
   }
 
   /*

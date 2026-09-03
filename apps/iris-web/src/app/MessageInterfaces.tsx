@@ -28,6 +28,7 @@ import {
   type SandboxAssets,
 } from '../sandbox/asset-manifest.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
+import { interfacesMayBuild } from '../sandbox/consent.ts'
 import { MVU_UPDATE_ENDED_EVENT } from '../sandbox/tavern-helper.ts'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 
@@ -123,7 +124,13 @@ export function MessageInterfaces({
   >(undefined)
 
   useEffect(() => {
-    if (characterId === undefined || consent !== 'allowed') {
+    /*
+     * `declined` and `unknown` leave before the round trip. `declined` is an
+     * answer; `unknown` is still in flight, and building against it would race
+     * the answer it is waiting for. `unasked` goes on deliberately: the scripts
+     * list decides whether it is final, and only the round trip knows that.
+     */
+    if (characterId === undefined || consent === 'declined' || consent === 'unknown') {
       setReady(undefined)
       return undefined
     }
@@ -143,6 +150,15 @@ export function MessageInterfaces({
           actionsOf(store).resolveScripts(characterId),
           actionsOf(store).scriptContext(chatId, characterId),
         ])
+        /*
+         * The consent gate, now that the round trip knows how big the question
+         * is. An unasked card carrying scripts waits for `ConsentAsk`'s answer
+         * — the state change re-runs this effect — but an unasked card with
+         * **no** scripts is never asked, so waiting here would be a wait that
+         * nothing can ever end; `interfacesMayBuild` is where that case is
+         * named and decided.
+         */
+        if (!interfacesMayBuild(consent, grants.scripts.length)) return
         /*
          * No snapshot, no frames. A card interface reads its variables in the
          * first line it runs, and seeding it with an invented empty context

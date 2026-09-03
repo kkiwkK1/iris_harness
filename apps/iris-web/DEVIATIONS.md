@@ -1023,3 +1023,39 @@ a rare transition rather than breaking the common case.
 applied" and "content is now clipped and pinned" that is not gameable by a
 continuously-mutating card — e.g. the shell reporting which of its writes
 landed, or a frame-side overflow probe that survives descendant clipping.
+
+---
+
+## 24. A card with no script pack renders its message interfaces unasked
+
+**Kind:** deliberate improvement, and the closing of a dead-end the gate and
+the question built together.
+
+**Upstream.** There is no consent step for a message interface: the card's own
+embedded markup arrives with the card, and rendering it is what "installed the
+card" means.
+
+**Iris.** Message interfaces are gated on script consent, and script consent is
+solicited exactly once — by `ConsentAsk`, which renders nothing for a card
+whose script list is empty ("a card with no scripts is not a decision"). A
+script-less card is therefore **never asked**, and an interface gate that
+demanded an answer anyway stranded its greeting forever: measured on a real
+card whose greeting is a 30 KB HTML document — frame claimed, shell healthy,
+and no iframe in the row, with no sentence anywhere saying why. The two halves
+each matched their own spec; the gap lived between them.
+
+**The rule now:** `interfacesMayBuild` — consent answers `allowed`, or the
+state is `unasked` **and** the card carries no scripts, the one state where
+waiting is a wait nothing can end. Every other state keeps Iris's rule:
+`unknown` is still in flight, `unasked` with scripts waits for the question,
+`declined` is an answer.
+
+**What it costs.** A script-less card's embedded interface scripts run without
+an explicit yes. That is upstream's own default, and the scripts in question
+are part of the message the user installed — not a separate pack the consent
+question was built to judge.
+
+**What would overturn it.** A surface that puts the question to script-less
+cards whose messages carry interfaces (then the widening folds back into
+`mayRun`), or evidence that a card ships an empty script pack as a marker with
+meaning beyond "nothing to run".
