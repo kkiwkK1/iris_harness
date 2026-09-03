@@ -110,7 +110,7 @@ export interface RunnerHost {
    * pre-written "your Tavern is broken" for this exact case. A caller that has
    * nowhere to show this should not be running cards.
    */
-  onBlocked: (host: string, directive: string, detail?: string) => void
+  onBlocked: (host: string, directive: string, detail?: string, covered?: string) => void
   /**
    * The clip describing which parts of this frame may catch a click.
    *
@@ -536,7 +536,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         host.onRegions?.(message.clip, message.detail)
         return
       case 'blocked':
-        host.onBlocked(message.host, message.directive, message.detail)
+        host.onBlocked(message.host, message.directive, message.detail, message.covered)
         return
       case 'note':
         host.onNote?.(message.message)

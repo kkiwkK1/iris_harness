@@ -40,6 +40,7 @@ import { STARTED_EVENTS, settledEvents } from '../sandbox/tavern-helper.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun } from '../sandbox/script-run-state.ts'
+import { describeRefusal } from './blocked-line.ts'
 
 /**
  * Resolve this build's sandbox artifacts, once per run.
@@ -274,23 +275,21 @@ export function CardScriptFrames(): ReactElement {
                   actionsOf(store).addCardReport(`overlay: ${detail}`)
                 }
               },
-              onBlocked: (blocked, directive, detail) => {
-                const text = detail === undefined
-                  ? `blocked ${blocked} (${directive})`
-                  : `blocked ${blocked}${detail} (${directive})`
+              onBlocked: (blocked, directive, detail, covered) => {
+                const refusal = describeRefusal(blocked, directive, detail, covered)
                 /*
-                 * Both channels, and the durable one is the point.
+                 * The durable channel always, the notice bar only when it is
+                 * worth interrupting for.
                  *
-                 * This used to be the notice bar alone — one slot that clears
-                 * itself after eight seconds. A card whose interface makes five
-                 * refused requests would overwrite its own evidence four times
-                 * and then erase the survivor, which is the exact failure the
-                 * card report list was introduced to end. A refusal is the
+                 * The report list exists because this used to be the notice bar
+                 * alone — one slot that clears itself after eight seconds, so a
+                 * card making five refused requests overwrote its own evidence
+                 * four times and then erased the survivor. A refusal is the
                  * sandbox working, and the author still needs to find out which
                  * host and which directive.
                  */
-                actionsOf(store).addCardReport(text)
-                actionsOf(store).notify('info', text)
+                actionsOf(store).addCardReport(refusal.text, undefined, refusal.grade)
+                if (refusal.notify) actionsOf(store).notify('info', refusal.text)
               },
               /*
                * What the frame paid for its libraries. Durable, because it is a

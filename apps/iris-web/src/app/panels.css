@@ -361,6 +361,36 @@
 }
 
 /*
+ * A report that describes something broken.
+ *
+ * **This class had no rule at all until now.** It was applied to every entry in
+ * the card report list and to failed run phases, and resolved to nothing — so a
+ * refusal that cost a card a capability and a note saying nothing was wrong
+ * rendered as the same plain paragraph. The grade existed in the sentence and
+ * nowhere a reader's eye could reach.
+ */
+.iris-script__failed {
+  color: var(--iris-danger);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/*
+ * A report that describes something already handled.
+ *
+ * The card reached for a library it already had and the policy refused the
+ * request: worth keeping, because it explains a network error in a devtools
+ * log, and not worth alarm. Deliberately quieter than the failure above rather
+ * than louder — it earns its place by being findable when someone is already
+ * looking, not by catching an eye that was somewhere else.
+ */
+.iris-script__note {
+  color: var(--iris-ink-tertiary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/*
  * A finding from a previous run, kept but visibly dated.
  *
  * Quieter than the report it trails, because it is metadata about the report

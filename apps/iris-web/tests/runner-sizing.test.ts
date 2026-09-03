@@ -38,6 +38,10 @@ function harness(host?: Partial<RunnerHost>): {
   dataset: Record<string, string>
   /** Deliver a frame message, as the frame's own window. */
   fromFrame: (message: unknown) => void
+  /** Become visible, or hidden, as the host document. */
+  setVisible: (visible: boolean) => void
+  /** What the runner posted into the frame, in order. */
+  posted: () => Record<string, unknown>[]
   heights: () => number[]
   listeners: () => number
 } {
@@ -51,7 +55,12 @@ function harness(host?: Partial<RunnerHost>): {
     },
   }
   const dataset: Record<string, string> = {}
-  const contentWindow = { postMessage: () => undefined }
+  const posted: Record<string, unknown>[] = []
+  const contentWindow = {
+    postMessage: (message: unknown) => {
+      posted.push(message as Record<string, unknown>)
+    },
+  }
   const element = {
     style,
     dataset,
@@ -61,7 +70,14 @@ function harness(host?: Partial<RunnerHost>): {
     remove: () => undefined,
   }
 
+  /*
+   * Two registries, because the runner uses two targets and the split is
+   * load-bearing: `message` and `resize` are the window's, `visibilitychange`
+   * is the document's — it does not fire on a window at all, so a harness that
+   * collapsed them would let a listener on the wrong target pass.
+   */
   const handlers = new Map<string, ((event: unknown) => void)[]>()
+  const docHandlers = new Map<string, ((event: unknown) => void)[]>()
   const view = {
     location: { origin: 'https://iris.test' },
     addEventListener: (type: string, fn: (event: unknown) => void) => {
@@ -74,6 +90,13 @@ function harness(host?: Partial<RunnerHost>): {
   const document = {
     defaultView: view,
     createElement: () => element,
+    hidden: false,
+    addEventListener: (type: string, fn: (event: unknown) => void) => {
+      docHandlers.set(type, [...(docHandlers.get(type) ?? []), fn])
+    },
+    removeEventListener: (type: string, fn: (event: unknown) => void) => {
+      docHandlers.set(type, (docHandlers.get(type) ?? []).filter(it => it !== fn))
+    },
   }
 
   const heights: number[] = []
@@ -111,8 +134,15 @@ function harness(host?: Partial<RunnerHost>): {
         fn({ source: contentWindow, data: message })
       }
     },
+    setVisible: visible => {
+      document.hidden = !visible
+      for (const fn of docHandlers.get('visibilitychange') ?? []) fn({})
+    },
+    posted: () => posted,
     heights: () => heights,
-    listeners: () => [...handlers.values()].reduce((total, list) => total + list.length, 0),
+    listeners: () =>
+      [...handlers.values(), ...docHandlers.values()]
+        .reduce((total, list) => total + list.length, 0),
   }
 }
 
@@ -171,6 +201,34 @@ test('a host-sized frame keeps the box the host gave it', () => {
   assert.deepEqual(scope.heights(), [420])
 })
 
+test('a tab returning to the foreground is re-told its viewport', () => {
+  /*
+   * **Why `resize` alone is not enough.** A backgrounded tab is throttled: the
+   * window can be resized, or the display changed, while nothing is being
+   * rendered — and what the frame is holding then is a viewport that stopped
+   * being true at a moment nothing observed. It is also the moment someone is
+   * about to look, because they just came back to this tab.
+   */
+  const scope = harness()
+  const before = scope.posted().filter(it => it['type'] === 'viewport').length
+
+  scope.setVisible(false)
+  assert.equal(
+    scope.posted().filter(it => it['type'] === 'viewport').length,
+    before,
+    'going hidden spent a message on a frame that cannot act on it',
+  )
+
+  scope.setVisible(true)
+  const pushed = scope.posted().filter(it => it['type'] === 'viewport')
+  assert.equal(pushed.length, before + 1)
+  assert.deepEqual(
+    { width: pushed.at(-1)?.['width'], height: pushed.at(-1)?.['height'] },
+    { width: 800, height: 600 },
+    'the push carried something other than the host viewport',
+  )
+})
+
 test('the listeners live on the injected document, not the global', () => {
   /*
    * The reason the three tests above can exist. `runCard` took a document as a
@@ -179,7 +237,7 @@ test('the listeners live on the injected document, not the global', () => {
    * from a test, which is exactly the region the height bug was in.
    */
   const scope = harness()
-  assert.equal(scope.listeners(), 2, 'message and resize, on the injected window')
+  assert.equal(scope.listeners(), 3, 'message and resize on the window, visibility on the document')
   scope.card.dispose()
   assert.equal(scope.listeners(), 0, 'disposal left a listener on a dead frame')
 })

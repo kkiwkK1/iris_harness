@@ -20,6 +20,7 @@ import type { ScriptContext } from '@iris/protocol'
 
 import { actionsOf, tapHostEvents } from '../client/store.ts'
 import { snapshotFor } from './shared-snapshot.ts'
+import { describeRefusal } from './blocked-line.ts'
 import { useIris, useIrisStore } from '../client/provider.tsx'
 import {
   SANDBOX_MANIFEST_PATH,
@@ -213,12 +214,10 @@ export function MessageInterfaces({
           onSlash: async command => actionsOf(store).runSlash(command),
           onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
           onError: message => actionsOf(store).addCardReport(`interface: ${message}`),
-          onBlocked: (host, directive, detail) => {
-            const line = detail === undefined
-              ? `blocked ${host} (${directive})`
-              : `blocked ${host}${detail} (${directive})`
-            actionsOf(store).addCardReport(line)
-            actionsOf(store).notify('info', line)
+          onBlocked: (host, directive, detail, covered) => {
+            const refusal = describeRefusal(host, directive, detail, covered)
+            actionsOf(store).addCardReport(refusal.text, undefined, refusal.grade)
+            if (refusal.notify) actionsOf(store).notify('info', refusal.text)
           },
           onNote: note => actionsOf(store).addCardReport(note),
           onReady: input.onReady,

@@ -97,3 +97,88 @@ test('the origin compared is the one passed in, not a hardcoded dev port', () =>
   // one, which is the same statement in the other direction.
   assert.equal(describeBlocked({ blockedURI: `${SELF}/api/x` }, deployed).detail, undefined)
 })
+test('a refused CDN library we already seed is named as covered', () => {
+  /*
+   * The whole point of the field. FontAwesome's rules are inlined in the frame
+   * before any card runs, but a card cannot ask that — it asks whether a
+   * stylesheet with `fontawesome` in its href loaded, does not find one, and
+   * injects this. The policy refuses it, and the refusal is real but harmless.
+   */
+  const report = describeBlocked(
+    { blockedURI: 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css' },
+    SELF,
+  )
+  assert.equal(report.covered, 'FontAwesome')
+})
+
+test('the unhyphenated spelling is recognised too', () => {
+  // The test above reaches for `font-awesome`; cards use both, and a table that
+  // knew one spelling would grade the same harmless refusal two different ways
+  // depending on which CDN the card happened to name.
+  const hyphen = describeBlocked(
+    { blockedURI: 'https://use.fontawesome.com/releases/v6.5.2/css/all.css' },
+    SELF,
+  )
+  assert.equal(hyphen.covered, 'FontAwesome')
+})
+
+test('vue-router is not reported as Vue', () => {
+  /*
+   * Ordering, and it is the one thing about this table that can silently be
+   * wrong: `vue-router` contains `vue`, so a table tested only on Vue's own URL
+   * passes while every router refusal claims the wrong library — a report that
+   * names a library the card was not asking for is worse than an ungraded one.
+   */
+  const router = describeBlocked(
+    { blockedURI: 'https://cdn.jsdelivr.net/npm/vue-router@4.6.4/dist/vue-router.global.js' },
+    SELF,
+  )
+  assert.equal(router.covered, 'vue-router')
+
+  const vue = describeBlocked(
+    { blockedURI: 'https://cdn.jsdelivr.net/npm/vue@3.5.42/dist/vue.global.prod.js' },
+    SELF,
+  )
+  assert.equal(vue.covered, 'Vue')
+})
+
+test('a library we do not seed is left ungraded, js-yaml included', () => {
+  /*
+   * **The near-miss is the case worth pinning.** We seed the `yaml` package as
+   * `YAML`; a card asking for js-yaml wants `jsyaml`, a different global with a
+   * different API. Grading that refusal as covered would tell a reader nothing
+   * is missing at the exact moment something is — and over-claiming here is the
+   * only direction that fails quietly, since under-claiming just leaves the
+   * ordinary red report.
+   */
+  const yaml = describeBlocked(
+    { blockedURI: 'https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js' },
+    SELF,
+  )
+  assert.equal(yaml.covered, undefined)
+
+  const chart = describeBlocked(
+    { blockedURI: 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js' },
+    SELF,
+  )
+  assert.equal(chart.covered, undefined)
+})
+
+test('our own origin can be covered too, and still carries its path', () => {
+  // A srcdoc frame resolves relative URLs against the parent's base, so a card
+  // fetching `/lib/jquery.min.js` is refused as us rather than as a CDN.
+  const report = describeBlocked(
+    { blockedURI: `${SELF}/lib/jquery.min.js`, sourceFile: `${SELF}/card.js`, lineNumber: 9 },
+    SELF,
+  )
+  assert.equal(report.covered, 'jQuery')
+  assert.equal(report.detail, '/lib/jquery.min.js from card.js:9')
+})
+
+test('an unparseable URI is never graded as covered', () => {
+  // `inline`, `eval`, `data`, `blob`: there is no URL to recognise a library in,
+  // and guessing from four fixed words would be inventing evidence.
+  for (const uri of ['inline', 'eval', 'data', 'blob']) {
+    assert.equal(describeBlocked({ blockedURI: uri }, SELF).covered, undefined, uri)
+  }
+})

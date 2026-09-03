@@ -27,6 +27,55 @@
  * @module iris-web/sandbox/blocked-report
  */
 
+/**
+ * Libraries the frame already has, keyed by what their CDN URLs contain.
+ *
+ * **Only what is genuinely seeded**, and each entry is a claim that can be
+ * checked: the seven scripts are the ones `preset-entry.ts` imports and
+ * `check-preset.mjs` exercises by calling them, and FontAwesome's rules are
+ * inlined by `message-preset-styles.ts`.
+ *
+ * Over-claiming here is the dangerous direction. A refusal graded as "already
+ * covered" is a refusal a reader stops looking at, so an entry for something we
+ * do *not* seed would hide a real breakage behind a reassuring line. Under-
+ * claiming only leaves an ordinary red report, which is where we started. That
+ * asymmetry is why the list is short and why `js-yaml` is deliberately absent:
+ * we seed the `yaml` package as `YAML`, and a card asking for `js-yaml` wants
+ * `jsyaml`, a different global with a different API. It is a near-miss, which
+ * is exactly the kind of entry that would be wrong in the quiet direction.
+ *
+ * Ordered, and it has to be: `vue-router` contains `vue`, so the longer name is
+ * tested first or every router refusal would be reported as Vue's.
+ */
+const PRESEEDED: readonly (readonly [string, string])[] = [
+  ['vue-router', 'vue-router'],
+  ['vuerouter', 'vue-router'],
+  ['font-awesome', 'FontAwesome'],
+  ['fontawesome', 'FontAwesome'],
+  ['jquery', 'jQuery'],
+  ['lodash', 'lodash'],
+  ['showdown', 'showdown'],
+  ['zod', 'zod'],
+  ['vue', 'Vue'],
+]
+
+/**
+ * Which preseeded library a refused URL was reaching for, if any.
+ *
+ * Matched on the **whole URL**, lower-cased. Not the filename alone: cards
+ * reach for `.../npm/vue@3/dist/vue.global.prod.js` and for `.../vue/3.5.13/vue.min.js`,
+ * and the identifying word is in the path in one and the file in the other.
+ * @param url - the refused URL, or any string standing in for it.
+ * @returns the library's name as a reader would recognise it.
+ */
+function preseededIn(url: string): string | undefined {
+  const haystack = url.toLowerCase()
+  for (const [needle, name] of PRESEEDED) {
+    if (haystack.includes(needle)) return name
+  }
+  return undefined
+}
+
 /** What the frame says about one refused request. */
 export interface BlockedReport {
   /** The host, which is what identifies a foreign origin. */
@@ -38,6 +87,22 @@ export interface BlockedReport {
    * verbatim, and an empty string would put a stray space in every line.
    */
   detail?: string
+  /**
+   * The preseeded library this request was reaching for, when it was one.
+   *
+   * Present means **nothing is missing**: the card's guard did not find the
+   * evidence it looks for, took its fallback path, and the fallback was refused
+   * — while the library itself was in the frame the whole time. A reader needs
+   * that graded differently from a refusal that cost the card a capability,
+   * because the two want opposite responses: fix nothing, versus fix something.
+   *
+   * Decided here rather than in the shell because it **cannot** be decided
+   * there. A foreign-origin refusal reports the host alone — `detail` is
+   * deliberately absent for those — so by the time the shell sees it, the path
+   * that names the library is gone. The frame is the only party that ever holds
+   * the whole URL.
+   */
+  covered?: string
 }
 
 /** The parts of a `SecurityPolicyViolationEvent` this decision reads. */
@@ -86,7 +151,10 @@ export function describeBlocked(event: BlockedViolation, selfOrigin: string): Bl
   }
 
   const host = url.host === '' ? event.blockedURI : url.host
-  if (url.origin !== selfOrigin) return { host }
+  const covered = preseededIn(event.blockedURI)
+  if (url.origin !== selfOrigin) {
+    return { host, ...(covered === undefined ? {} : { covered }) }
+  }
 
   /*
    * Our own origin. The path is the identity, and the source location is who
@@ -97,5 +165,15 @@ export function describeBlocked(event: BlockedViolation, selfOrigin: string): Bl
     || event.sourceFile === ''
     ? ''
     : ` from ${tailOf(event.sourceFile)}:${String(event.lineNumber ?? 0)}`
-  return { host, detail: `${url.pathname}${url.search}${where}` }
+  return {
+    host,
+    detail: `${url.pathname}${url.search}${where}`,
+    /*
+     * Our own origin can be the covered case too, and one path reaches it: a
+     * card fetching a library by an unqualified URL. A srcdoc frame resolves
+     * relative URLs against the parent's base, so `fetch('/lib/jquery.min.js')`
+     * is refused as *us* rather than as a CDN.
+     */
+    ...(covered === undefined ? {} : { covered }),
+  }
 }

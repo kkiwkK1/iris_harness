@@ -102,7 +102,14 @@ export type FromFrame =
    * installed? open your console!" as a fallback for exactly this situation, so a
    * silent refusal is delivered to the user as the card's misdiagnosis of Iris.
    */
-  | { iris: string, type: 'blocked', host: string, directive: string, detail?: string }
+  | {
+    iris: string
+    type: 'blocked'
+    host: string
+    directive: string
+    detail?: string
+    covered?: string
+  }
   /**
    * Which parts of a full-viewport card frame may catch a click.
    *
@@ -390,6 +397,7 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
       const host = message['host']
       const directive = message['directive']
       const detail = message['detail']
+      const covered = message['covered']
       return typeof host === 'string' && typeof directive === 'string'
         ? {
             iris: token,
@@ -397,6 +405,16 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
             // Card-influenced strings, so bounded before they reach the UI.
             host: host.slice(0, 253),
             directive: directive.slice(0, 40),
+            /*
+             * The library name, which downgrades this report from a failure to
+             * a note. **Not card-influenced** — the frame picks it from a fixed
+             * list — but bounded anyway, because the frame is untrusted and a
+             * field that decides how a report is *graded* is exactly the one
+             * worth not taking on trust.
+             */
+            ...(typeof covered === 'string' && covered !== ''
+              ? { covered: covered.slice(0, 40) }
+              : {}),
             /*
              * Present only when the host alone does not identify the request —
              * see `reportBlocked`. Bounded harder than the host because it

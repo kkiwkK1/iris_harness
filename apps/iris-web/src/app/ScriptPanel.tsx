@@ -108,7 +108,18 @@ export function ScriptPanel(): ReactElement | null {
       {cardReports.length === 0 ? null : (
         <div className="iris-field__note">
           {cardReports.map(report => (
-            <p className="iris-script__failed" key={report.text}>
+            /*
+             * Graded, and until now it could not be: every report in this list
+             * carried `iris-script__failed` — a class with no rule anywhere in
+             * the stylesheets, so a failure and a harmless note rendered as the
+             * same plain paragraph. Wording a report as a note while it renders
+             * identically to a failure is not a grade; it is a sentence hoping
+             * to be read carefully.
+             */
+            <p
+              className={report.grade === 'note' ? 'iris-script__note' : 'iris-script__failed'}
+              key={report.text}
+            >
               {report.text}
               {/*
                 Marked, not hidden, and not dropped.

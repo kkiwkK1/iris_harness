@@ -298,6 +298,51 @@ function reportRegions(
     // build-and-remove cases, which is every measured card's first need.
   }
   /*
+   * Scrolling is the third way, and neither observer sees it.
+   *
+   * `getBoundingClientRect` is viewport-relative, so a scroll moves every
+   * statically-positioned node in the card without changing the DOM and without
+   * changing any node's size. The clip on file then describes where things
+   * *were*, and a **stale clip is worse than no clip**: it is a hole in the
+   * wrong place, so the card's button is not clickable and the shell underneath
+   * is clicked instead — through a hole cut for something that has moved away.
+   *
+   * `capture: true` because scroll does not bubble. A card's inner scroller —
+   * a chat log, a settings list — fires on that element, and the capture phase
+   * is the only way one listener at the document sees all of them. `passive`
+   * because this never calls `preventDefault`, so it must not make the reader's
+   * scrolling wait on us.
+   *
+   * The frame's own viewport is usually `overflow:hidden` (the injected reset),
+   * so the case this covers in practice is that inner scroller rather than the
+   * document scrolling as a whole.
+   */
+  document.addEventListener('scroll', schedule, { capture: true, passive: true })
+
+  /*
+   * A finished transition or animation is the fourth way, and it was measured
+   * rather than reasoned: the very first `regions` from one card read
+   * `M -57 -23 H -12 V 23` — a button mid-slide, partly off the top-left corner
+   * — and the clip only became right because that card happened to touch the
+   * DOM again afterwards.
+   *
+   * A card whose button arrives with one transform transition and then sits
+   * still has no such rescue: `transform` moves the rendered box without
+   * changing layout, so no mutation and no resize follows it, and the clip
+   * keeps a hole where the button *started*.
+   *
+   * **The end events only, deliberately.** They put the clip right for the
+   * state that persists, which is the state someone clicks. Tracking the
+   * in-between would mean measuring every animation frame for as long as any
+   * card animates anything — and the recorded limitation of not doing it is
+   * that a node still moving is clipped where it last settled, plus a node
+   * animating *forever* (a pulsing badge) whose clip stays at its resting box.
+   */
+  for (const kind of ['transitionend', 'animationend'] as const) {
+    document.addEventListener(kind, schedule, { capture: true, passive: true })
+  }
+
+  /*
    * And once more when the tab comes forward.
    *
    * Not only because the hidden path is throttled: a hidden tab may have

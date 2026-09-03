@@ -27,6 +27,14 @@ import { REMOTE_ALLOWLIST } from './policy.ts'
  * instead of asking.
  * @returns the policy value.
  */
+/**
+ * The FontAwesome sentinel's path, served from Iris's own origin.
+ *
+ * A literal rather than a manifest lookup, because the **filename** is what a
+ * card's guard reads — see the file at this path for why it cannot be hashed.
+ */
+export const FA_SENTINEL = '/sandbox/fontawesome.min.css'
+
 export function framePolicy(networkGranted: boolean, selfOrigin: string): string {
   const remotes = REMOTE_ALLOWLIST.map(host => `https://${host}`).join(' ')
 
@@ -53,9 +61,19 @@ export function framePolicy(networkGranted: boolean, selfOrigin: string): string
    */
   const imgSrc = networkGranted ? 'https: data: blob:' : 'data: blob:'
   const connectSrc = networkGranted ? 'https:' : "'none'"
+  /*
+   * Iris's own origin is admitted for stylesheets, and for one file: the
+   * FontAwesome sentinel the head links (`FA_SENTINEL`). Named exactly, the
+   * same way and for the same reason as in `script-src` — and strictly weaker
+   * than that entry, which already admits *executing* code from this origin.
+   *
+   * Both branches list it. Under a network grant `https:` would cover a
+   * deployed origin but not a dev one, and a policy that only works in
+   * production is a policy nobody tests.
+   */
   const styleSrc = networkGranted
-    ? `'unsafe-inline' https: data:`
-    : `'unsafe-inline' ${fontCss} data:`
+    ? `'unsafe-inline' https: data: ${selfOrigin}`
+    : `'unsafe-inline' ${fontCss} data: ${selfOrigin}`
 
   return [
     "default-src 'none'",
@@ -216,6 +234,26 @@ export function buildSrcdoc(
     // How the bootstrap learns its token. An attribute rather than a global,
     // because the bootstrap runs before any card code and reads it once.
     `<meta name="iris-token" content="${attribute(token)}">`,
+    /*
+     * The FontAwesome sentinel, and **its filename participates in behaviour**.
+     *
+     * The icon rules are already in this frame as inlined `<style>` elements
+     * before any card runs. But a card cannot cheaply ask "are the icon rules
+     * present", so upstream's cards ask a different question — has a stylesheet
+     * whose href contains `fontawesome` / `font-awesome` been loaded — and
+     * inject a CDN `<link>` when the answer is no. This frame's policy refuses
+     * that injection, so a card that was never missing anything would spend its
+     * recovery path on a wall and report a failure for a library it already has.
+     *
+     * Linking this file makes the guard's substring findable. It is deliberately
+     * **not** hashed and **not** in the manifest, unlike every other asset here:
+     * the name is read by code that is not ours, so it is a fixed literal on
+     * both sides. See the file's own comment.
+     *
+     * Both frame kinds get it. The guard runs wherever the card's code does, and
+     * upstream's message frames link a real FontAwesome sheet too.
+     */
+    `<link rel="stylesheet" href="${attribute(`${selfOrigin}${FA_SENTINEL}`)}">`,
     // The card's container is this document's own body: `parent.document.body`
     // resolves here, which is what makes the two measured mount sites work
     // without the card ever reaching the host page.

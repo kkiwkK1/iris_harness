@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { buildSrcdoc, framePolicy } from '../src/sandbox/srcdoc.ts'
+import { readFileSync } from 'node:fs'
+
+import { FA_SENTINEL, buildSrcdoc, framePolicy } from '../src/sandbox/srcdoc.ts'
 
 /** Iris's own origin, as the runner supplies it. */
 const SELF = 'http://127.0.0.1:5173'
@@ -129,11 +131,23 @@ test('the only cleartext origin permitted is Iris own', () => {
    * accepting that their conversation crosses a network they do not control in
    * clear text. Iris's own origin is not such a network — it is where the page
    * already is, so admitting it adds nothing the card did not already have.
+   *
+   * **Restated a second time, and the same way it went wrong before.** This read
+   * `deepEqual(cleartext, [SELF])`, which asserts our origin appears exactly
+   * *once* — never the rule, just how many directives happened to need it. The
+   * moment `style-src` needed it too, for the FontAwesome sentinel, a correct
+   * change failed a passing test. What matters is that every cleartext origin in
+   * the policy is ours, however many times it is named.
    */
   for (const granted of [false, true]) {
     const policy = framePolicy(granted, SELF)
     const cleartext = [...policy.matchAll(/http:\/\/[^\s;]*/g)].map(match => match[0])
-    assert.deepEqual(cleartext, [SELF], 'a cleartext origin other than Iris own reached the policy')
+    assert.ok(cleartext.length > 0, 'our own origin should be in there somewhere')
+    assert.deepEqual(
+      [...new Set(cleartext)],
+      [SELF],
+      'a cleartext origin other than Iris own reached the policy',
+    )
   }
 })
 
@@ -365,4 +379,83 @@ test('no member URL emits no tag at all, rather than an empty one', () => {
   const doc = buildSrcdoc('tok', 'x', { networkGranted: false, libraries: [], selfOrigin: SELF })
   assert.doesNotMatch(doc, /data-iris-members/)
   assert.doesNotMatch(doc, /<script src=""/)
+})
+test('the head links a stylesheet whose filename a card can recognise', () => {
+  /*
+   * **The substring is the assertion, because the substring is the mechanism.**
+   *
+   * A card cannot cheaply ask whether the icon rules are present, so upstream's
+   * cards ask whether a stylesheet whose href contains `fontawesome` or
+   * `font-awesome` has loaded, and inject a CDN link when none has. That
+   * injection is refused here, so the card spends its recovery path on a wall
+   * while the rules have been inlined since before it ran.
+   *
+   * Asserted on the href rather than on the constant so a rename that keeps the
+   * path valid but drops the word — `sentinel.css`, say — fails here. The
+   * filename participates in behaviour, and nothing else in the tree says so.
+   */
+  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const link = /<link rel="stylesheet" href="([^"]+)">/.exec(doc)
+  assert.ok(link, `no sentinel stylesheet in the head: ${doc.slice(0, 400)}`)
+  assert.match(link[1] ?? '', /fontawesome|font-awesome/)
+  assert.ok((link[1] ?? '').startsWith(SELF), 'the sentinel must come from our own origin')
+})
+
+test('a message frame gets the sentinel too, since its cards run the same guard', () => {
+  const doc = buildSrcdoc('tok', '', {
+    networkGranted: false,
+    libraries: [],
+    selfOrigin: SELF,
+    body: '<body><i class="fa-solid fa-gear"></i></body>',
+  })
+  assert.match(doc, /<link rel="stylesheet" href="[^"]*fontawesome[^"]*">/)
+})
+
+test('the policy admits the sentinel, or linking it would be theatre', () => {
+  /*
+   * The pair that has to hold together: a `<link>` in the head and a
+   * `style-src` that refuses it would produce the refusal report this whole
+   * mechanism exists to prevent — and it would name *us* as the blocked host,
+   * which reads as a bug in Iris rather than as a missing directive.
+   */
+  const policy = framePolicy(false, SELF)
+  const styleSrc = policy.split('; ').find(part => part.startsWith('style-src '))
+  assert.ok(styleSrc, policy)
+  assert.ok(styleSrc.includes(SELF), `style-src must admit ${SELF}: ${styleSrc}`)
+
+  // And under a network grant, where `https:` would cover a deployed origin but
+  // not a dev one on http.
+  const granted = framePolicy(true, SELF).split('; ').find(part => part.startsWith('style-src '))
+  assert.ok(granted?.includes(SELF), granted)
+})
+test('the sentinel the head links is the one the build writes', () => {
+  /*
+   * **A cross-file pin, because the pair can only break silently.**
+   *
+   * `srcdoc.ts` links a literal path and `hash-sandbox-assets.mjs` writes a
+   * literal filename; nothing in the type system connects them. Rename either
+   * and every test here still passes — the head has a `<link>`, its href still
+   * contains `fontawesome` — while the request 404s. A 404 is invisible to the
+   * half of card guards that use `querySelector('link[href*=…]')` (the element
+   * is there) and fatal to the half that read `document.styleSheets` (a sheet
+   * that never loaded is not in there), so the symptom would be *some* cards
+   * recovering onto a blocked CDN and others not, which is the hardest possible
+   * shape to trace back to a filename.
+   *
+   * Read from source rather than from `public/sandbox/`: that directory is a
+   * build output and git-ignored, so asserting on the file there would pass or
+   * fail depending on whether someone had run the build, which is exactly the
+   * kind of test that gets deleted for flapping.
+   */
+  const written = /const SENTINEL = '([^']+)'/.exec(
+    readFileSync(new URL('../tools/hash-sandbox-assets.mjs', import.meta.url), 'utf8'),
+  )
+  assert.ok(written, 'the build no longer writes a named sentinel')
+  assert.ok(
+    FA_SENTINEL.endsWith(`/${written[1] ?? ''}`),
+    `srcdoc links ${FA_SENTINEL} but the build writes ${String(written[1])}`,
+  )
+  // And the name still carries what a card's guard looks for. Both halves have
+  // to hold: agreeing on a name with no `fontawesome` in it agrees on nothing.
+  assert.match(FA_SENTINEL, /fontawesome|font-awesome/)
 })

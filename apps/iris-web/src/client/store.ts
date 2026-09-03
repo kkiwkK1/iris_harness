@@ -12,6 +12,7 @@
  * @module iris-web/client/store
  */
 
+import type { ReportGrade } from '../app/blocked-line.ts'
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import type {
@@ -75,6 +76,12 @@ export interface Notice {
 export interface CardReport {
   text: string
   generation: number
+  /**
+   * How it should be read. Absent means a failure, which is what a report was
+   * before grades existed — so an ungraded caller keeps the louder rendering,
+   * and a new quiet grade has to be asked for.
+   */
+  grade?: ReportGrade
   /** Which script it was about, so a corrected verdict can be found again. */
   scriptId?: string
   /**
@@ -198,7 +205,14 @@ export interface IrisActions {
   answerScriptsAllowed(allowed: boolean): Promise<void>
   /** Record a frame-level report for this card, once. */
   beginCardRun(): void
-  addCardReport(text: string, scriptId?: string): void
+  /**
+   * Add or re-date one durable report.
+   *
+   * `grade` is third and positional rather than an options bag because six
+   * existing call sites pass `scriptId` and one passes a grade; an options
+   * object would have rewritten all seven to serve the one.
+   */
+  addCardReport(text: string, scriptId?: string, grade?: ReportGrade): void
   withdrawReportsFor(scriptId: string): void
   /** Replace what the running scripts are reported to be doing. */
   setRunStates(states: readonly ScriptRunState[]): void
@@ -600,7 +614,7 @@ export function createIrisStore(
         set({ cardRunGeneration: get().cardRunGeneration + 1 })
       },
 
-      addCardReport(text: string, scriptId?: string): void {
+      addCardReport(text: string, scriptId?: string, grade?: ReportGrade): void {
         const generation = get().cardRunGeneration
         const seen = get().cardReports
 
@@ -619,7 +633,14 @@ export function createIrisStore(
          */
         const at = seen.findIndex(report => report.text === text)
         if (at === -1) {
-          set({ cardReports: [...seen, { text, generation, ...(scriptId === undefined ? {} : { scriptId }) }] })
+          set({
+            cardReports: [...seen, {
+              text,
+              generation,
+              ...(scriptId === undefined ? {} : { scriptId }),
+              ...(grade === undefined ? {} : { grade }),
+            }],
+          })
           return
         }
         if (seen[at]?.generation === generation) return
