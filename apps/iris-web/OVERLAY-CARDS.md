@@ -945,6 +945,138 @@ if (window.parent !== window) { … window.parent.innerWidth … }
 
 ---
 
+## 六之五、两张卡的挂靶与出生时机（谁 append 到哪、什么时候可见）
+
+§六之三 列的是**宿主要提供什么**。这一节列的是**卡实际怎么伸手去拿**——
+因为两张卡拿的方式不一样，虚拟化要挡的东西也就不一样。
+
+### 一 · 银麒赎世 / 手机UI：`$("body")`，落点由 `$` 的 realm 决定
+
+```js
+$("head").append(phoneStyles);                    // 样式
+const triggerBtn = $("<button>", {
+  id: "mobile-trigger-btn",
+  html: '📱<span id="phone-float-badge" style="display:none;position:absolute;…">',
+});
+…
+$("body").append(triggerBtn);                     // 浮动按钮
+$("body").append(phoneOverlay);                   // 手机面板
+setTimeout(() => { bindPhoneEvents(); }, 0);
+```
+
+**全脚本计数**：`$("body")` 22、`.append(` 37、`appendTo(` 1、`document.body` 9；
+**`_pd.body` / `_pw.document` / `$p('body')` 全为 0**——
+它**不**走 银麒系统面板 那套 `var _pw = window.parent || window` 的显式取父路径（§六之二）。
+`#send_form` / `#sheld` 在全脚本 **0 命中**，`#chat` 也不是它的挂靶。
+
+> **同一张卡的两个脚本用了两种取父方式**：
+> 「银麒系统面板」显式 `_pw = window.parent || window` + `$p()`（§六之二），
+> 「手机UI」只写 `$("body")`。
+> **上游两者等价**（`parent_jquery.js` 让 `$` 就是父页面那份，见 UPSTREAM-FRAME-ORIGIN.md），
+> **我们这里不等价**：frame 用自己那份 jQuery 时 `$("body")` 落到 frame 自己的 body。
+
+### 二 · ⚠ 但同一脚本里有一处**显式**父路径，还带了理由
+
+```js
+// body（而不是 iframe 内），这样即使手机关闭弹窗仍可见
+const targetBody = window.parent !== window ? $(window.parent.document.body) : $("body");
+$confirm.appendTo(targetBody);          // ← 全脚本唯一一处 appendTo
+```
+
+这是「自定义确认弹窗」。**作者知道 frame 内和 frame 外是两个地方**，
+但**只为这一个元素写了显式路径**，浮动按钮和手机面板留给了 `$` 的 realm 绑定。
+
+**对我们的意思**：虚拟化如果只处理 `window.parent.document`，
+会把这个弹窗接住、却漏掉按钮和面板（或者反过来）——
+**两条路径要在同一个替身 document 上汇合**，否则同一张卡的三个元素会散在两层。
+
+### 三 · 手机UI 的出生时机：三道门，两道是软的
+
+```js
+$(() => {
+  (async () => {
+    const MAX_WAIT_TIME = 30000, CHECK_INTERVAL = 100;
+    while (typeof waitGlobalInitialized !== "function") {         // ① 轮询等函数出现
+      if (Date.now() - startTime > MAX_WAIT_TIME) {
+        console.error("[手机界面] 等待 waitGlobalInitialized 超时，尝试直接初始化");
+        initializeMobilePhone(); return;                          // ← 超时也照建
+      }
+      await new Promise(r => setTimeout(r, CHECK_INTERVAL));
+    }
+    await waitGlobalInitialized("Mvu");                           // ② 再等 Mvu
+    initializeMobilePhone();
+  })().catch(e => { console.error("[手机界面] 初始化失败:", e); /* 即使出错也尝试 */ });
+});
+```
+
+- **①（函数不存在）软**：30 秒后照建。
+- **②（`await waitGlobalInitialized("Mvu")`）硬**：这个 promise 不 resolve，**界面永远不出现**，
+  而且**不打日志**——和「卡坏了」在屏幕上长一个样。
+  MVU 自禁用的那几条路（UPSTREAM-MVU-INIT-PATH.md §三之四/三之五/三之六）会**从这里**变成一块空白。
+- **③（抛异常）软**：catch 里仍尝试。
+
+> 所以「手机按钮没出来」这个现象，**只有一个成因是沉默的**，就是 Mvu 没 ready。
+> 验收时要能把这一条和「挂错 body」分开——两者都表现为按钮不在屏幕上。
+
+### 四 · V1.5.4 / 论坛覆盖层：**没有 wrapper div**，且**一挂上就可见**
+
+```
+$('<div>') / $("<div>")  = 0        $('<iframe>')  = 1        appendTo(  = 1
+```
+
+iframe **直接 append 到 body**，中间没有包装元素。创建时的内联样式：
+
+```js
+$('<iframe>').attr({ frameborder: '0', srcdoc: '…' })
+  .css({ position:'fixed', top:'0', left:'0', width:'100%', height:'100%',
+         'z-index':'9999', border:'none' })          // ← 没有 display / visibility
+  .on('load', …)
+  .appendTo('body');
+```
+
+挂上之后**立刻**再钉一遍，七条全部 `!important`：
+
+```js
+const i = o[0];
+window.__forumOverlayIframe = i;
+i.style.setProperty('display','block','important');
+i.style.setProperty('position','fixed','important');
+i.style.setProperty('top','0','important');
+i.style.setProperty('left','0','important');
+i.style.setProperty('width','100vw','important');    // ← 不是 .css() 里那个 100%
+i.style.setProperty('height','100vh','important');
+i.style.setProperty('z-index','9999','important');
+```
+
+**结论：它不等任何按钮或事件，`_A()` 一跑完就是全屏可见。**
+`GA()` / `WA()` / `jA()` 是**之后**的开关（`jA()` 设 `display:none !important`，
+`WA()` 移除 `display`/`visibility` 再由 `OA()` 校正）。
+
+**尺寸被设了两遍、单位不同**：`.css()` 里 `100%`，`setProperty` 里 `100vw`/`100vh` 且 `!important`
+——**生效的是后者**。这就是 §六之三 说它对「frame 几何要对」敏感的地方：
+`100vw`/`100vh` 量的是**它所在文档的视口**，虚拟化后那是卡 frame 的视口，不是屏幕。
+
+### 五 · 两张卡的差别，一句话
+
+| | 挂靶 | 显式取父？ | 出生门 | 默认可见 |
+|---|---|---|---|---|
+| 手机UI | `$("body")` / `$("head")` | 否（弹窗除外） | `await waitGlobalInitialized("Mvu")` | 是 |
+| 论坛覆盖层 | `'body'`（`appendTo`） | 否 | `await waitGlobalInitialized('Mvu')` | 是，且 `!important` 钉死 |
+
+**两张卡都卡在同一个 `waitGlobalInitialized('Mvu')` 上**，
+**都不写 wrapper**，**都默认可见**——
+所以「界面没出来」这个报障，第一个要排的永远是 MVU 有没有 ready，不是 CSS。
+
+### 口径
+
+- 语料：`E:/sillyTavern/SillyTavern/data/default-user/characters` 下 `银麒赎世`，
+  与 `测试用卡/新增-20260902/V1.5.4_.png`，经 `decodeCardPng` + `extractScripts` 取脚本正文。
+- 计数用 `s.split(n).length - 1`（子串计数，不过正则，见 METHODS 的反斜杠条）。
+- **只读**：没有打开 ST，没有运行这两张卡，以上全部是静态读出来的。
+  §七 那条「静态预测不是观测」同样适用于本节。
+
+---
+
 ## 七、未查 / 只是预测
 
 1. **§三那条 realm 不一致是静态读出来的预测，不是观测。**
