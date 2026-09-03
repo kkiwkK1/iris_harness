@@ -223,12 +223,25 @@ export function importChat(chat: SillyTavernChat, id: string): Session {
   return session
 }
 
-/** Look up the carried-through fields for one event. */
-function fieldsFor(session: Session, seq: number): Record<string, unknown> {
+/**
+ * The carried-through fields for one message line.
+ *
+ * **The newest record wins.** Import appends one of these per line, and for a
+ * long time that was the only writer, so first-or-last never came up. It does
+ * now: a field that has to change after import — `ignore_cleanup` on a user
+ * row, which upstream keeps at `chat[1].variables[0]` — is recorded by
+ * appending a fresh set rather than editing history, and an append that the
+ * reader ignores is not a record of anything.
+ * @param session - the chat log.
+ * @param seq - the message event whose line to read.
+ * @returns the fields, empty for a line this log never imported.
+ */
+export function rowFields(session: Session, seq: number): Record<string, unknown> {
+  let found: Record<string, unknown> = {}
   for (const event of session.events) {
-    if (event.type === 'iris/st-meta' && event.data.seq === seq) return event.data.fields
+    if (event.type === 'iris/st-meta' && event.data.seq === seq) found = event.data.fields
   }
-  return {}
+  return found
 }
 
 /**
@@ -313,7 +326,7 @@ export function exportMessages(session: Session, header: SillyTavernChatHeader):
         name: header.user_name,
         is_user: true,
         mes: textOf(event.data),
-        ...fieldsFor(session, event.seq),
+        ...rowFields(session, event.seq),
       }))
       continue
     }
@@ -345,7 +358,7 @@ export function exportMessages(session: Session, header: SillyTavernChatHeader):
           mes: swipes[swipeId] ?? '',
           swipes,
           swipe_id: swipeId,
-          ...fieldsFor(session, first.seq),
+          ...rowFields(session, first.seq),
         }))
   }
 

@@ -39,10 +39,32 @@ const CARD = JSON.stringify({
   },
 })
 
-/** A chat long enough to qualify, with a table on every reply. */
-function longChatFile(lines: number): string {
+/**
+ * A chat long enough to qualify.
+ *
+ * **`userRowTable` is the gate itself.** On a chat SillyTavern grew, message 1 —
+ * a user row — carries a table of its own: measured on the corpus, 16 of 17
+ * chats with three or more messages have one there, and 1217 of 1219 user rows
+ * have one overall. A chat *this* host grew has none, because we never write
+ * tables to user rows. Upstream reads that literal position, so both shapes have
+ * to be constructible here — an implementation that reads the card-facing
+ * projection instead answers yes to both, and then offers a whole-history sweep
+ * on chats upstream would never offer one for.
+ */
+function longChatFile(lines: number, userRowTable = true): string {
   const messages: SillyTavernMessage[] = Array.from({ length: lines }, (_unused, index) => index % 2 === 1
-    ? { name: 'Traveller', is_user: true, mes: `line ${String(index)}` }
+    ? {
+        name: 'Traveller', is_user: true, mes: `line ${String(index)}`,
+        // The corpus shape: a full six-key table on the user row.
+        ...userRowTable
+          ? {
+              variables: [{
+                stat_data: { n: index }, schema: {}, display_data: {},
+                delta_data: {}, initialized_lorebooks: {}, event_chain: ['x'],
+              }],
+            }
+          : {},
+      }
     : {
         name: 'Aria', is_user: false, mes: `line ${String(index)}`,
         swipes: [`line ${String(index)}`], swipe_id: 0,
@@ -65,13 +87,13 @@ interface Fixture {
   dir: string
 }
 
-async function fixture(t: TestContext): Promise<Fixture> {
+async function fixture(t: TestContext, userRowTable = true): Promise<Fixture> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-legacy-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'chats'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
-  await writeFile(join(dir, 'chats', 'long.jsonl'), longChatFile(673), 'utf8')
+  await writeFile(join(dir, 'chats', 'long.jsonl'), longChatFile(673, userRowTable), 'utf8')
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const chats = new ChatStore(join(dir, 'chats'), library)
@@ -114,17 +136,23 @@ test('answering "never" records the refusal and sweeps nothing', async (t) => {
   assert.equal(done.recorded, true)
   assert.equal(await intactLayers(fixed.chats), before, 'a refusal changed the stored tables')
 
-  // Under upstream's own key, on the chat itself, so a chat moved between the
-  // two hosts carries the answer its owner gave.
-  const entry = await fixed.chats.open('long')
-  const first = entry.readFloorVariables(1).variables ?? {}
-  assert.equal(first[IGNORE_CLEANUP_KEY], true, 'the refusal was not written where upstream writes it')
+  // **The literal `chat[1].variables[0]`, which is the position upstream reads.**
+  // Asserted through the file rather than through `readFloorVariables`, because
+  // that projection answers a user row with its *turn's* table — a different
+  // object at the same address. Checking it there would pass while the key sat
+  // somewhere neither host looks.
+  const onRowOne = async (store: ChatStore): Promise<unknown> => {
+    const opened = await store.open('long')
+    const tables = opened.toFile().messages[1]?.['variables']
+    return Array.isArray(tables) ? (tables[0] as Record<string, unknown>)[IGNORE_CLEANUP_KEY] : undefined
+  }
+  assert.equal(await onRowOne(fixed.chats), true, 'the refusal was not written where upstream writes it')
 
   // And it survives the round trip to disk, which is the only thing that makes
   // it a refusal rather than a mood.
   const reloaded = new ChatStore(join(fixed.dir, 'chats'), new CharacterLibrary(join(fixed.dir, 'characters'), '/a'))
+  assert.equal(await onRowOne(reloaded), true, 'the refusal did not survive the round trip')
   const after = await reloaded.open('long')
-  assert.equal((after.readFloorVariables(1).variables ?? {})[IGNORE_CLEANUP_KEY], true)
   assert.equal(after.legacyCleanupOffer(DEFAULT_PRUNE), undefined, 'the offer came back after a refusal')
 })
 
@@ -212,4 +240,82 @@ test('a swept chat stops offering, with nothing recorded to remember it', async 
   const first = entry.readFloorVariables(1).variables ?? {}
   assert.equal('stat_data' in first, false)
   assert.equal(first[IGNORE_CLEANUP_KEY], undefined, 'a sweep recorded a refusal it was not given')
+})
+
+test('a chat with no table on message 1 is never offered a sweep', async (t) => {
+  // **The discriminating shape.** This is what a chat *this* host grew looks
+  // like: no table on the user row. Upstream would not offer here, and an
+  // implementation that reads message 1 through the card-facing projection —
+  // which answers with the reply's table — says yes to both shapes and cannot
+  // tell them apart.
+  const fixed = await fixture(t, false)
+
+  await fixed.handlers['chat.open']({ chatId: 'long' })
+
+  assert.equal(
+    fixed.events.filter(event => event.type === 'cleanup.offer').length,
+    0,
+    'a chat grown by this host was offered a whole-history sweep',
+  )
+})
+
+test('a refusal already in the file is read, without this host having written it', async (t) => {
+  // **Reads the position, tested without writing it.** On this host `never`
+  // writes and the gate reads, so a pair that is wrong in the same way stays
+  // green. Here the key arrives from outside — as it would on a chat carried in
+  // from SillyTavern — and only the read is under test.
+  const dir = await mkdtemp(join(tmpdir(), 'iris-legacy-read-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await mkdir(join(dir, 'chats'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+
+  const withKey = longChatFile(673).split('\n').map((line, index) => {
+    if (index !== 2 || line.trim().length === 0) return line
+    const row = JSON.parse(line) as { is_user?: boolean, variables?: Record<string, unknown>[] }
+    // Line 2 of the file is message index 1 — the header is line 0.
+    if (row.is_user !== true || row.variables?.[0] === undefined) throw new Error('the fixture moved')
+    row.variables[0][IGNORE_CLEANUP_KEY] = true
+    return JSON.stringify(row)
+  }).join('\n')
+  await writeFile(join(dir, 'chats', 'long.jsonl'), withKey, 'utf8')
+
+  const chats = new ChatStore(join(dir, 'chats'), new CharacterLibrary(join(dir, 'characters'), '/a'))
+  const entry = await chats.open('long')
+  assert.equal(
+    entry.legacyCleanupOffer(DEFAULT_PRUNE),
+    undefined,
+    'a refusal written by SillyTavern was not honoured',
+  )
+})
+
+test('a user row on the interval is kept and marked, exactly as a reply is', async (t) => {
+  // Upstream's interval test is `(start + index) % interval === 0` and never asks
+  // `is_user`, so a user row on the interval is kept whole and marked.
+  //
+  // **Parity decides which rows can show this, and the default cannot.** This
+  // fixture opens with a greeting, so replies sit on even indices and user rows on
+  // odd ones — and no odd number is a multiple of fifty. In the corpus it is the
+  // other way round: that chat opens with a user message, so its retained
+  // snapshots at 0, 50, 100 … are *user* rows. An interval of 25 reproduces that
+  // alignment here without rebuilding the fixture.
+  const fixed = await fixture(t)
+  const entry = await fixed.chats.open('long')
+  entry.sweepLegacy({ snapshotInterval: 25, keepRecent: 20 })
+  await fixed.chats.save(entry)
+
+  const messages = (await fixed.chats.open('long')).toFile().messages
+  const at = (index: number): Record<string, unknown> => {
+    const tables = messages[index]?.['variables']
+    return Array.isArray(tables) ? tables[0] as Record<string, unknown> : {}
+  }
+
+  assert.equal(messages[25]?.is_user, true, 'the fixture no longer has a user row at 25')
+  assert.equal('stat_data' in at(25), true, 'a user row on the interval was swept')
+  assert.equal(at(25)['snapshot'], true, 'the kept user row was not marked')
+
+  // One off the interval goes — and keeps the card's own key, as replies do.
+  assert.equal(messages[27]?.is_user, true)
+  assert.equal('stat_data' in at(27), false, 'a user row off the interval survived')
+  assert.deepEqual(Object.keys(at(27)), ['event_chain'], 'a foreign key was taken from a user row')
 })

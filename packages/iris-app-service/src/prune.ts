@@ -63,6 +63,7 @@
  * 0, an assertion that floor 0 survives passes against an implementation that
  * special-cases it and against one that does not. It discriminates nothing here.
  * The assertions with teeth are on the interval snapshots themselves.
+ *
  * **Nothing is restored.** Upstream replays `updateVariables` forward from the
  * nearest snapshot; our MVU commands are already folded into candidate state by
  * the time they are stored, so there is nothing to replay. A pruned floor is
@@ -100,6 +101,29 @@ declare module '@deepseek-ai/dsh-session' {
       /** The rule that allowed it, in words, for whoever asks later. */
       reason: string
       /** When, so a prune can be placed against the conversation's history. */
+      at: number
+    }
+    /**
+     * Row-level tables trimmed, as **one record for the whole pass**.
+     *
+     * A sibling of `iris/variables-pruned`, and separate from it because the
+     * tables it describes live somewhere else. An assistant reply’s table is a
+     * candidate in this log; a **user row’s** table is a field carried verbatim
+     * through `iris/st-meta`, and upstream trims both — `cleanupMessageVariables`
+     * walks every row in range and never asks `is_user`.
+     *
+     * **One summary rather than a record per row.** The alternative was appending
+     * a fresh `iris/st-meta` for each trimmed row, and a single sweep over a long
+     * chat touches hundreds of rows — each append carrying that row’s entire set
+     * of carried fields. The log would grow by more than the trim saves, which
+     * inverts the reason the trim exists.
+     */
+    'iris/rows-pruned': {
+      /** Message indices whose row-level table was trimmed, and what went. */
+      rows: { index: number, removed: string[] }[]
+      /** Message indices marked as snapshots, which are kept whole. */
+      marked: number[]
+      /** When, so a trim can be placed against the history. */
       at: number
     }
   }
@@ -380,6 +404,53 @@ export function applyPrune(
  * @param session - the chat log.
  * @returns removed keys by candidate seq.
  */
+/**
+ * Every row-level trim this log has recorded, accumulated.
+ *
+ * The read side of `iris/rows-pruned`. Two passes over the same chat both
+ * append, so a row can appear in more than one record and the keys union.
+ * @param session - the chat log.
+ * @returns keys taken per message index, and which indices are marked.
+ */
+export function prunedRowsOf(session: Session): {
+  removed: Map<number, Set<string>>
+  marked: Set<number>
+} {
+  const removed = new Map<number, Set<string>>()
+  const marked = new Set<number>()
+  for (const event of session.events) {
+    if (event.type !== 'iris/rows-pruned') continue
+    for (const row of event.data.rows) {
+      const keys = removed.get(row.index) ?? new Set<string>()
+      for (const key of row.removed) keys.add(key)
+      removed.set(row.index, keys)
+    }
+    for (const index of event.data.marked) marked.add(index)
+  }
+  return { removed, marked }
+}
+
+/**
+ * One row-level table as it reads after the trims this log recorded.
+ *
+ * **Applied on read as well as on export**, because the legacy gate asks what
+ * shape the file is and would otherwise see a table the trim has already taken.
+ * @param table - the row’s table as carried through `iris/st-meta`.
+ * @param removed - keys taken from it, if any.
+ * @param marked - whether this row was kept as a snapshot.
+ * @returns the table as it now reads.
+ */
+export function applyRowPrune(
+  table: Record<string, unknown>,
+  removed: ReadonlySet<string> | undefined,
+  marked: boolean,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = marked ? { ...table, [SNAPSHOT_KEY]: true } : { ...table }
+  if (removed === undefined || removed.size === 0) return next
+  for (const key of removed) delete next[key]
+  return next
+}
+
 export function prunedKeysOf(session: Session): Map<number, Set<string>> {
   const pruned = new Map<number, Set<string>>()
   for (const event of session.events) {

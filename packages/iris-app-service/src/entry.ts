@@ -25,7 +25,7 @@ import { applyCommands, formatYamlBlock, loadInitVars, scanDialects, type MvuDat
 import { extractScripts } from '@iris/script'
 
 import type { ResolvedWorldbook } from './worldbooks.ts'
-import {
+import { rowFields,
   exportMessages,
   importChat,
   withOriginalKeyOrder,
@@ -39,7 +39,7 @@ import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore
 import { scriptIdOf } from './script-variables.ts'
 
 import { busy } from './errors.ts'
-import { applyPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
+import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
 import { scriptsOf, substituteFor } from './regex.ts'
 import { textOf, toChatView, type Names, type PendingTurn } from './views.ts'
 
@@ -776,6 +776,27 @@ export class ChatEntry {
       }
       line['variables'] = Array.from({ length: width }, (_unused, swipe) => tables[swipe] ?? {})
     }
+    // **Row-level trims, applied on the way out.** A user row’s table is not a
+    // candidate in this log, so nothing above has touched it; the record says
+    // which keys a sweep took from it. Applied here rather than at import
+    // because the log must keep saying what the file originally held.
+    const trimmedRows = prunedRowsOf(this.session)
+    if (trimmedRows.removed.size > 0 || trimmedRows.marked.size > 0) {
+      for (const [index, line] of messages.entries()) {
+        if (line === undefined || line.is_user !== true) continue
+        const tables = line['variables']
+        if (!Array.isArray(tables) || tables.length === 0) continue
+        const first = tables[0]
+        if (typeof first !== 'object' || first === null) continue
+        const next = applyRowPrune(
+          first as Record<string, unknown>,
+          trimmedRows.removed.get(index),
+          trimmedRows.marked.has(index),
+        )
+        line['variables'] = [next, ...tables.slice(1)]
+      }
+    }
+
     // Put every line's keys back where the file had them.
     //
     // **This step used to be unnecessary, and that was the problem.** The
@@ -1105,9 +1126,7 @@ export class ChatEntry {
     lines: number, from: number, to: number, layers: number,
   } | undefined {
     const lines = chatLines(this.session).length
-    let firstFloor: Variables | undefined
-    try { firstFloor = this.readFloorVariables(1).variables } catch { return undefined }
-    if (!looksNeverCleaned(firstFloor, lines, options)) return undefined
+    if (!looksNeverCleaned(this.#firstRowTable(), lines, options)) return undefined
     const { from, to } = legacyWindow(lines, options)
     const layers = this.#legacyLayers(options).length
     return { lines, from, to, layers }
@@ -1143,6 +1162,7 @@ export class ChatEntry {
     const lines = chatLines(this.session)
     const layers = this.#pruneLayers()
     const plan = planPrune(layers, lines.length - 1, options, legacyWindow(lines.length, options))
+    const rowsTrimmed = this.#pruneRows(legacyWindow(lines.length, options), options)
     const taken = plan.filter(decision => decision.removed !== undefined)
     if (taken.length > 0) {
       const at = taken.map(decision => layers.find(one => one.candidateSeq === decision.candidateSeq)?.index)
@@ -1154,7 +1174,7 @@ export class ChatEntry {
         + " This is not reversible.",
       )
     }
-    return applyPrune(this.session, plan, layers)
+    return applyPrune(this.session, plan, layers) + rowsTrimmed
   }
 
   /**
@@ -1167,16 +1187,96 @@ export class ChatEntry {
    * @returns whether the refusal was recorded.
    */
   recordCleanupRefusal(): boolean {
-    const turn = lineTurns(this.session)[1]
-    if (turn === undefined) return false
-    let current: Variables
-    try { current = this.variables.getVariables({ type: 'message', message_id: turn }) } catch { return false }
-    this.variables.replaceVariables(
-      { ...current, [IGNORE_CLEANUP_KEY]: true },
-      { type: 'message', message_id: turn },
-    )
+    const line = chatLines(this.session)[1]
+    if (line === undefined) return false
+    const fields = rowFields(this.session, line.seq)
+    const tables = Array.isArray(fields['variables']) ? [...fields['variables'] as unknown[]] : []
+    const first = typeof tables[0] === 'object' && tables[0] !== null ? tables[0] as Record<string, unknown> : {}
+    tables[0] = { ...first, [IGNORE_CLEANUP_KEY]: true }
+    // **Appended, not edited.** The log never rewrites what it already said;
+    // `rowFields` reads the newest record for a line, so a fresh set of carried
+    // fields is how a row-level value changes after import.
+    this.session.append('iris/st-meta', { seq: line.seq, fields: { ...fields, variables: tables }, order: 1 })
     return true
   }
+
+  /**
+   * The table on message 1 **as the file holds it**, not as a card would read it.
+   *
+   * Two different objects share one address here, and using the wrong one
+   * widens a deletion feature. A card asking for message 1 gets its *turn’s*
+   * table, because this host has no per-user-row variable store — the residual
+   * recorded in DEVIATIONS 14. But upstream’s legacy gate is not asking what a
+   * card would read; it is asking **what shape this file is**, and it reads the
+   * literal `chat[1].variables[0]`.
+   *
+   * On a chat SillyTavern grew, that row has a table: measured on the corpus,
+   * 16 of 17 chats with three or more messages carry one on `chat[1]`, and
+   * 1217 of 1219 user rows carry one overall. On a chat this host grew it does
+   * not, because we do not write tables to user rows. **That difference is the
+   * gate**, and reading it through the card-facing projection erases it — every
+   * long chat then answers yes, and a whole-history sweep gets offered where
+   * upstream would never offer one.
+   * @returns the row’s own first table, or undefined when it has none.
+   */
+  #firstRowTable(): Record<string, unknown> | undefined {
+    return this.#rowTable(1)
+  }
+
+  /**
+   * Trim the row-level tables in a range, and record it as one event.
+   *
+   * **User rows only.** An assistant row’s table is rebuilt from its candidate
+   * on export, so trimming it here would be doing the same work twice against a
+   * value that is about to be overwritten. A user row has no candidate — its
+   * table rides through `iris/st-meta` — and upstream trims it all the same,
+   * because `cleanupMessageVariables` walks the range without asking `is_user`.
+   * @param range - the inclusive message-index range to examine.
+   * @param options - the interval, for the snapshot rule.
+   * @returns how many rows were trimmed.
+   */
+  #pruneRows(range: { from: number, to: number }, options: PruneOptions): number {
+    const already = prunedRowsOf(this.session)
+    const rows: { index: number, removed: string[] }[] = []
+    const marked: number[] = []
+
+    for (const [index, line] of chatLines(this.session).entries()) {
+      if (!line.isUser || index < range.from || index > range.to) continue
+      const table = this.#rowTable(index)
+      if (table === undefined) continue
+      if (table[SNAPSHOT_KEY] === true) continue
+      // The interval rule does not ask `is_user` either: a user row on the
+      // interval is kept and marked, exactly as a reply would be.
+      if (options.snapshotInterval > 0 && index % options.snapshotInterval === 0) {
+        if (!already.marked.has(index)) marked.push(index)
+        continue
+      }
+      const removed = PRUNED_KEYS.filter(key => key in table)
+      if (removed.length === 0) continue
+      rows.push({ index, removed: [...removed] })
+    }
+
+    if (rows.length === 0 && marked.length === 0) return 0
+    this.session.append('iris/rows-pruned', { rows, marked, at: Date.now() })
+    return rows.length
+  }
+
+  /**
+   * One row’s own table, as it reads after every trim recorded here.
+   * @param index - the message index.
+   * @returns the table, or undefined when the row carries none.
+   */
+  #rowTable(index: number): Record<string, unknown> | undefined {
+    const line = chatLines(this.session)[index]
+    if (line === undefined) return undefined
+    const tables = rowFields(this.session, line.seq)['variables']
+    if (!Array.isArray(tables)) return undefined
+    const first = tables[0]
+    if (typeof first !== 'object' || first === null) return undefined
+    const { removed, marked } = prunedRowsOf(this.session)
+    return applyRowPrune(first as Record<string, unknown>, removed.get(index), marked.has(index))
+  }
+
 
   /** Whether {@link legacyCleanupNote} has already spoken for this chat. */
   #saidNeverCleaned = false
@@ -1222,7 +1322,11 @@ export class ChatEntry {
 
   prune(options: PruneOptions = DEFAULT_PRUNE, onReport?: (message: string) => void): number {
     const layers = this.#pruneLayers()
-    const plan = planPrune(layers, chatLines(this.session).length - 1, options)
+    const newestIndex = chatLines(this.session).length - 1
+    const plan = planPrune(layers, newestIndex, options)
+    // Row-level tables in the same window, by the same rules. Upstream trims
+    // both in one walk; we hold them in two places, so it is two calls.
+    const rowsTrimmed = this.#pruneRows(periodicWindow(newestIndex, options), options)
 
     // **One line per run, not one per layer.** A run trims a whole window, and
     // twenty identical sentences are how a log stops being read — but the run
@@ -1250,7 +1354,7 @@ export class ChatEntry {
         + " This is not reversible.",
       )
     }
-    return applyPrune(this.session, plan, layers)
+    return applyPrune(this.session, plan, layers) + rowsTrimmed
   }
 
   /** Per-candidate variables, keyed by the chat-file line they belong to. */
