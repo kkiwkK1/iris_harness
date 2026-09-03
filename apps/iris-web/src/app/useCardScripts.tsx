@@ -352,6 +352,22 @@ export function CardScriptFrames(): ReactElement {
           style.setProperty('height', '100%')
           style.setProperty('border', '0')
           style.setProperty('background', 'transparent')
+          /*
+           * **`pointer-events` is inherited**, and the surface sets `none`.
+           *
+           * Without this line the frame inherits `none` from its container, so
+           * the clip catches nothing and the whole mechanism is inert — the
+           * measurement it rests on has the frame at `auto`, and shipping the
+           * container's `none` without restating it on the frame quietly broke
+           * that premise. The symptom is exactly what a missing clip looks like
+           * from outside: the card's own button is not clickable, and it is
+           * indistinguishable from "regions never arrived" without reading the
+           * computed style.
+           *
+           * The container stays `none` so that the gaps *between* frames pass
+           * through; each frame re-enables itself and its clip decides where.
+           */
+          style.setProperty('pointer-events', 'auto')
           style.setProperty('clip-path', 'path("M0 0Z")')
           host.append(card.element)
         },
