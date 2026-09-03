@@ -309,6 +309,15 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
     // `'BackCompat'` would be a lie: the srcdoc carries a doctype.
     compatMode: 'CSS1Compat',
     /*
+     * `9` is `Node.DOCUMENT_NODE`, and a document is always a document. Measured
+     * on the 开场白2.0.1 component (哈人冰恋世界 and 绿茵好莱坞 carry the same
+     * script): it duck-types with `document.nodeType`, and the refusal graded a
+     * pure read as a script failure — the same shape 银麒赎世's `readyState` read
+     * was, and the reason the reads-answer policy exists. A constant a frame
+     * cannot get wrong is not a capability this sandbox needs to withhold.
+     */
+    nodeType: 9,
+    /*
      * `''` rather than the shell's referrer, on the same reasoning as `URL`:
      * this frame was not navigated to from anywhere, and naming the shell would
      * hand a card a fact about the page it is isolated from.

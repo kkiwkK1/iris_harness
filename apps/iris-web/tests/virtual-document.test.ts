@@ -262,6 +262,7 @@ test('membership probes answer instead of throwing', () => {
     'getElementsByTagName',
     'head',
     'hidden',
+    'nodeType',
     'querySelector',
     'querySelectorAll',
     'readyState',
@@ -293,6 +294,10 @@ test('a status read answers rather than killing the script that asked', () => {
   assert.equal(bag['readyState'], 'complete')
   assert.equal(bag['characterSet'], 'UTF-8')
   assert.equal(bag['compatMode'], 'CSS1Compat')
+  // `9` is DOCUMENT_NODE, and duck-typing with it is how the 开场白2.0.1
+  // component (哈人冰恋世界 / 绿茵好莱坞) recognises a document. The refusal
+  // graded that pure read as a script failure; a constant answers instead.
+  assert.equal(bag['nodeType'], 9)
   // The frame's own URL, deliberately not the shell's: a card deciding which
   // host it is on must not be told it is the shell.
   assert.equal(bag['URL'], 'about:srcdoc')
