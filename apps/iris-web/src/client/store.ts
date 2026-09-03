@@ -20,6 +20,7 @@ import type {
   ChatSummary,
   ChatView,
   ConnectionProfile,
+  DebugReport,
   GenerationSettings,
   IrisClient,
   IrisEvent,
@@ -153,6 +154,27 @@ export interface IrisState {
    */
   cardReports: CardReport[]
   /**
+   * The host's own diagnostics, as last fetched.
+   *
+   * Separate from `cardReports` and deliberately so: those come from a card's
+   * frame and are about a card, and **this list has to be readable in a chat
+   * with no scripts at all.** The host trims variables, materialises books and
+   * evaluates templates whether or not any card is running, and until now the
+   * buffer holding those records had no exit to the screen — `debug.reports`
+   * existed and nothing in this app called it.
+   *
+   * `undefined` until asked for, which the view shows as "not fetched" rather
+   * than as "nothing happened". The two look identical in an empty array and
+   * they are opposite answers.
+   */
+  hostReports: DebugReport[] | undefined
+  /** How many records the host dropped before the oldest one held. */
+  hostReportsDropped: number
+  /** Every kind the host's buffer holds, for the filter to offer. */
+  hostReportKinds: readonly string[]
+  /** True while a fetch is out, so the view can say so rather than look empty. */
+  hostReportsLoading: boolean
+  /**
    * Which run the panel is currently showing.
    *
    * Reports outlive the run that produced them on purpose — a diagnostic nobody
@@ -213,6 +235,16 @@ export interface IrisActions {
    * object would have rewritten all seven to serve the one.
    */
   addCardReport(text: string, scriptId?: string, grade?: ReportGrade): void
+  /**
+   * Fetch the host's diagnostics.
+   *
+   * On demand rather than on a timer. A debug read that polls is a debug read
+   * that costs something while nobody is looking at it, and the charter is
+   * explicit that this is a debug page and not an observability platform. The
+   * one thing that cannot wait to be asked for — an irreversible deletion —
+   * arrives as a pushed event instead.
+   */
+  loadHostReports(): Promise<void>
   withdrawReportsFor(scriptId: string): void
   /** Replace what the running scripts are reported to be doing. */
   setRunStates(states: readonly ScriptRunState[]): void
@@ -356,6 +388,17 @@ export function createIrisStore(
       scriptsFor: undefined,
       scriptsAllowed: 'unknown',
       cardReports: [],
+      /*
+       * Host reports are **not** reset beside the card ones below. Those belong
+       * to a card's run and go stale the moment the chat changes; these belong
+       * to the host, which trims and materialises regardless of which
+       * conversation is open — clearing them on a chat switch would delete the
+       * only record of a deletion.
+       */
+      hostReports: undefined,
+      hostReportsDropped: 0,
+      hostReportKinds: [],
+      hostReportsLoading: false,
       cardRunGeneration: 0,
       runStates: [],
       documentGranted: false,
@@ -612,6 +655,42 @@ export function createIrisStore(
         // number, and a card's reports are cleared on switch anyway. A counter
         // that restarted could make a stale entry look current again.
         set({ cardRunGeneration: get().cardRunGeneration + 1 })
+      },
+
+      async loadHostReports(): Promise<void> {
+        set({ hostReportsLoading: true })
+        try {
+          /*
+           * No `since`, so the whole held buffer comes back. Paging exists in
+           * the contract (`since`/`limit`) and is deliberately not used here:
+           * the buffer is bounded by the host, the page shows all of it, and a
+           * cursor would be a second thing to be wrong about which records the
+           * reader is looking at.
+           *
+           * **There is no `kinds` filter in the request** — the contract takes
+           * `since` and `limit` only, and returns the kinds it holds. So the
+           * filtering is the view's, over everything fetched.
+           */
+          const answer = await client.call('debug.reports', {})
+          set({
+            hostReports: answer.reports,
+            hostReportsDropped: answer.dropped,
+            hostReportKinds: answer.kinds,
+          })
+        } catch (error: unknown) {
+          /*
+           * Reported, not swallowed. A diagnostics view that fails silently is
+           * worse than none: a reader takes an empty list for "the host had
+           * nothing to say", which is the one reading that cannot be corrected
+           * by looking harder.
+           */
+          get().notify(
+            'error',
+            `could not read the host's reports: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        } finally {
+          set({ hostReportsLoading: false })
+        }
       },
 
       addCardReport(text: string, scriptId?: string, grade?: ReportGrade): void {
@@ -981,15 +1060,22 @@ export function applyEvent(store: IrisStore, event: IrisEvent): void {
    * knows we trimmed it" are two different claims.
    */
   if (event.type === 'report') {
-    const where = event.report.scriptId
-    actionsOf(store).addCardReport(
-      `${event.report.kind}: ${event.report.message}`,
-      where,
-      'fault',
-    )
-    // The notice bar too, and only for these: this is the one report class that
-    // describes something already lost, so it is worth interrupting for.
-    actionsOf(store).notify('error', `${event.report.kind}: ${event.report.message}`)
+    const line = `${event.report.kind}: ${event.report.message}`
+    /*
+     * The **reporter's** grade, not this frame's. It used to hardcode `fault`
+     * on the reasoning that only irreversible deletions are pushed — true
+     * today and not a property of the channel, and a grade the reader can see
+     * should come from the site that knows rather than from what the shell
+     * assumes about which sites use the channel.
+     */
+    actionsOf(store).addCardReport(line, event.report.scriptId, event.report.grade)
+    /*
+     * The notice bar as well, and keyed on `irreversible` rather than on the
+     * grade: what makes this worth interrupting for is that the data is already
+     * gone, which no amount of severity conveys. A note about something
+     * unrecoverable still has to be seen while the user is there to see it.
+     */
+    actionsOf(store).notify(event.report.grade === 'fault' ? 'error' : 'info', line)
     return
   }
 

@@ -966,3 +966,109 @@
     transition: none;
   }
 }
+
+/*
+ * The host report list.
+ *
+ * Typeset by `StatePanel`'s rules rather than a debugger's: the area is set in
+ * the annotation sans, the time is tabular so a column of them lines up, a long
+ * message **wraps** instead of opening a horizontal scrollbar, and no colour
+ * carries meaning except the one fault mark — which is the presence of a caught
+ * stack, the only severity the record actually holds.
+ */
+.iris-reports {
+  display: grid;
+  gap: 8px;
+}
+
+.iris-reports__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* The kind filter's chips. Same treatment as the card-script buttons and
+   declared separately, because the two are not the same thing: one is a control
+   this app owns, the other is a label a card published. The read control itself
+   is the drawer's shared `Button` and needs nothing here. */
+.iris-reports__filter {
+  font-family: var(--iris-font-ui);
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  line-height: 1.4;
+  padding: 3px 9px;
+  color: var(--iris-ink-secondary);
+  background: transparent;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+  max-width: 100%;
+}
+
+.iris-reports__filter:hover {
+  color: var(--iris-ink);
+  border-color: var(--iris-rule-strong);
+}
+
+
+.iris-reports__kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* A filtered-out kind is dimmed, not hidden: the button has to stay findable to
+   be turned back on, and a reader needs to see that a filter is in force at all
+   — a short list with no visible reason why is how someone concludes the host
+   said nothing. */
+.iris-reports__filter--off {
+  color: var(--iris-ink-faint);
+  text-decoration: line-through;
+}
+
+.iris-reports__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.iris-reports__area {
+  font-family: var(--iris-font-ui);
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  color: var(--iris-ink-tertiary);
+  margin-right: 6px;
+}
+
+.iris-reports__at {
+  font-variant-numeric: tabular-nums;
+  color: var(--iris-ink-faint);
+  margin-right: 6px;
+}
+
+.iris-reports__message {
+  /* Wraps, and breaks inside a long unbroken token: a report can carry a path
+     or a serialised value with no spaces in it, and the panel must not widen. */
+  overflow-wrap: anywhere;
+}
+
+.iris-reports__stack summary {
+  font-family: var(--iris-font-ui);
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-tertiary);
+  cursor: pointer;
+}
+
+/* The one place a horizontal scrollbar is right: a stack's lines are addresses,
+   and wrapping them makes them unreadable in a different way. Confined to the
+   stack's own box so the panel itself still never scrolls sideways. */
+.iris-reports__stack pre {
+  margin: 4px 0 0;
+  overflow-x: auto;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--iris-ink-tertiary);
+}

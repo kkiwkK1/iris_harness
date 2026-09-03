@@ -21,6 +21,7 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
 import { ChoiceField, NumberField, Section, TextField } from './fields.tsx'
 import { ConnectionPanel } from './ConnectionPanel.tsx'
+import { HostReports } from './HostReports.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
@@ -246,6 +247,20 @@ export function SettingsDrawer({
         </Section>
 
         <ScriptPanel />
+
+        {/*
+          The host's own reports, **outside** the `settings === undefined`
+          branch above and after the card panel.
+
+          Outside, because a failed settings load makes these *more* worth
+          reading, not less — a drawer that hides its diagnostics exactly when
+          something is wrong is the shape this whole view exists to end. After
+          the card panel, because it answers a different question: `ScriptPanel`
+          is about the card in front of you and is empty in a chat with no
+          scripts, while the host trims variables and materialises books
+          regardless of whether any card is running.
+        */}
+        <HostReports />
 
         {/*
           Dev only, and written so the branch is statically dead in a production
