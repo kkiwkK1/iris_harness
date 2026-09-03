@@ -102,6 +102,13 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    加 `kind`（storage 独立栏）排在覆盖层裁点前。AST：165 引用里 4 个裸启动点承担全部"启动即死"，
    按组件验收；「论坛覆盖层」预测静默降级、实测启动即死，44 复核判据。**indexedDB**：1 卡 blob 级
    图片库，本轮报告+降级，容量清理另议；枚举源内数据库读邻居扩展结构上不适用。
+7b. **嵌套 iframe 族**（2026-09-03 新增，V1.5.4 死因）——卡在自己的 frame 里自建 `<iframe srcdoc>` 并从父侧读
+   `this.contentDocument`（Vue mount 进去、style-loader 读 `.head`）；ST 同源可读，我们的 sandbox 下嵌套文档另起
+   不透明源，**三种写法（无 sandbox / allow-scripts / +allow-same-origin）父侧 contentDocument 必然 null**
+   （7b 实测带对照），`contentWindow` 在、`load` 正常触发——像加载失败其实是加载后读失败。修法只剩「虚拟化
+   嵌套 iframe」：bootstrap 拦 `contentDocument`（保留 `contentWindow.postMessage`），srcdoc 渲染进同 realm
+   Shadow DOM 容器；样式（style-loader 那处有 try、静默不同步）要一起解。44 普查族面（两个 population），
+   7b 出设计输入，排 bootstrap 拆分之后。
 8. **卡自带 ESM 依赖的代理**（族级基建）——13 卡 binding 导入 + 15 卡 MVU bundle；去重 11 个地址、
    6 个无版本（TEST-CARDS 副轴：名单会自己过期）；`script-bundles/` 是实际加载的卡尺。待测冷取。
 9. ~~导入体积 C~~ ✅（st-meta 记每文件键序表不记值：27.58 → 11.74 MiB，2454/2454 行键序保持；不变式
