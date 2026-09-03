@@ -211,6 +211,9 @@
   --iris-code-bg: #e4e8eb;
   --iris-code-inline: #dfe4e8;
   --iris-shadow: 0 1px 2px rgb(20 26 32 / 6%), 0 8px 24px rgb(20 26 32 / 10%);
+  /* Behind a modal question. Lighter here than in the dark theme: the same
+     alpha over a pale page reads as fog rather than as depth. */
+  --iris-scrim: rgb(20 26 32 / 28%);
   color-scheme: light;
 }
 
@@ -250,5 +253,6 @@
   --iris-code-bg: #0b0f13;
   --iris-code-inline: #1e262e;
   --iris-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 10px 30px rgb(0 0 0 / 46%);
+  --iris-scrim: rgb(0 0 0 / 52%);
   color-scheme: dark;
 }

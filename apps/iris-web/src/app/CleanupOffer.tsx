@@ -1,0 +1,177 @@
+/**
+ * The one-time offer to clean a chat's old variables.
+ *
+ * Upstream (MagVarUpdate `cleanup/legacy_chat.ts:16-25`) asks before this sweep
+ * and only before this one, because it is far wider than the periodic window —
+ * `[1, len - 1 - keep]` against the whole file — and it deletes a user's
+ * message data. Doing it without the question would turn a deletion its own
+ * author requires consent for into a silent one, so the question is reproduced
+ * rather than improved away.
+ *
+ * **What is copied, and it is copied deliberately rather than redesigned:** the
+ * body text, the three button labels, and the render order — upstream passes
+ * plain strings as `customButtons`, and ST's popup *prepends* those
+ * (`popup.js:312-315`), so "back up and clean" comes **before** "clean only".
+ * A reader who has used the extension should recognise this dialog.
+ *
+ * **What diverges, once, and it is recorded in `DEVIATIONS.md`:** dismissing.
+ * Upstream routes `CANCELLED` into the same branch as `NEGATIVE`
+ * (`legacy_chat.ts:27-33`), so one press of Esc writes `ignore_cleanup`
+ * permanently — the user believes they deferred and the extension believes they
+ * declined forever, and nothing on screen says which happened. Iris sends
+ * nothing at all, which the protocol already defines as a complete outcome:
+ * nothing cleaned, nothing recorded, asked again next time.
+ *
+ * **What is added:** the counts. Upstream's text says only that old variables
+ * can be removed; the offer carries the range and how many layers inside it
+ * still hold something, and a question about deleting data should say how much.
+ * That is an improvement in the upgrade ledger, not a fix.
+ *
+ * @module iris-web/app/CleanupOffer
+ */
+
+import { useEffect, useRef, type ReactElement } from 'react'
+
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+
+import { useIris, useIrisStore } from '../client/provider.tsx'
+import { actionsOf } from '../client/store.ts'
+
+/**
+ * Upstream's own strings, `runtime.cleanup.*`.
+ *
+ * The English variants, because every other string in this interface is
+ * English; upstream ships both and `UPSTREAM-MVU-INIT-PATH.md` holds the zh-CN
+ * originals verbatim beside them.
+ */
+const TEXT = {
+  title: '[MVU] Automatic cleanup',
+  prompt: 'Old variables can be removed from this chat to reduce its file size. Clean them now?'
+    + ' (Creating a backup uses considerable memory; on mobile, close other background apps'
+    + ' first or create the backup on a computer.)',
+  backupAndClean: 'Back up and clean',
+  cleanOnly: 'Clean only',
+  doNotRemind: 'Do not remind me again',
+} as const
+
+/**
+ * The offer, when there is one for the conversation on screen.
+ *
+ * @returns the dialog, or nothing.
+ */
+export function CleanupOffer(): ReactElement | null {
+  const store = useIrisStore()
+  const offer = useIris(state => state.cleanupOffer)
+  const chatId = useIris(state => state.chatId)
+  const dialog = useRef<HTMLDivElement>(null)
+
+  /*
+   * Focus moves into the dialog when it appears. A modal question about
+   * deleting data that a keyboard user has to hunt for is a question they will
+   * answer by accident.
+   */
+  useEffect(() => {
+    if (offer === undefined) return
+    dialog.current?.focus()
+  }, [offer])
+
+  // The offer carries its own chat, because it can arrive a beat before the
+  // store learns which chat is open — see the store's `cleanup.offer` handler.
+  if (offer === undefined || offer.chatId !== chatId) return null
+
+  const actions = actionsOf(store)
+
+  return (
+    <div className="iris-cleanup" role="presentation">
+      <div
+        className="iris-cleanup__panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="iris-cleanup-title"
+        tabIndex={-1}
+        ref={dialog}
+        onKeyDown={event => {
+          /*
+           * **Esc defers, it does not decline.** The whole divergence, in one
+           * branch: `dismissCleanupOffer` sends nothing, so the host records
+           * nothing and asks again. Mapping this to `'never'` — which is what
+           * upstream does — is invisible when it is wrong, because the user
+           * sees a closed dialog either way.
+           */
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+            actions.dismissCleanupOffer()
+          }
+        }}
+      >
+        <h2 className="iris-label" id="iris-cleanup-title">{TEXT.title}</h2>
+        <p className="iris-cleanup__body">{TEXT.prompt}</p>
+
+        {/*
+          The counts, which upstream does not show. A question about deleting
+          data should say how much: the range it would sweep, and how many
+          layers in that range still hold something to remove — the second
+          number is the one that can be zero while the first is large.
+        */}
+        <p className="iris-field__note">
+          {offer.layers} of messages {offer.from}–{offer.to} still hold old variables
+          {' '}({offer.lines} lines in the file).
+        </p>
+
+        <div className="iris-cleanup__buttons">
+          {/*
+            Upstream's order: its custom button is prepended before the ok
+            button (`popup.js:312-315`), so backup-and-clean leads. The
+            decline's position relative to them comes from ST's popup template,
+            which was not read — it is last here, and that placement is ours
+            rather than copied.
+          */}
+          {/*
+            `outline` rather than `primary` for the leading button: upstream's
+            prepended custom button leads the row but is not its default
+            action — `primary` is the ok button, which is "clean only". The
+            available variants are `primary | ghost | outline | toolbar`, so
+            this is the closest of the four to "prominent, not the default".
+          */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              void actions.answerCleanup('backup-and-clean')
+            }}
+          >
+            {TEXT.backupAndClean}
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              void actions.answerCleanup('clean')
+            }}
+          >
+            {TEXT.cleanOnly}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              void actions.answerCleanup('never')
+            }}
+          >
+            {TEXT.doNotRemind}
+          </Button>
+        </div>
+
+        {/*
+          Said out loud, because the difference between this and upstream is
+          exactly the thing a user cannot see: that closing the dialog is not an
+          answer. Without this line the divergence only helps people who already
+          know it exists.
+        */}
+        <p className="iris-field__note">
+          Closing this without choosing asks again next time — it does not decline.
+        </p>
+      </div>
+    </div>
+  )
+}

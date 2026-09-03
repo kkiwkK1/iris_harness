@@ -1072,3 +1072,52 @@
   line-height: 1.45;
   color: var(--iris-ink-tertiary);
 }
+
+/*
+ * The cleaning offer.
+ *
+ * **Above everything, including the card overlay surface** (`z-index: 40`) and
+ * the settings drawer (30). It asks whether to delete the open chat's data, and
+ * a card's own full-screen panel must not be able to sit on top of the one
+ * question in this interface that destroys something.
+ *
+ * No dimming animation and no entrance transition: it appears in response to
+ * opening a chat, and a question that slides in is a question someone answers
+ * while it is still moving.
+ */
+.iris-cleanup {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--iris-scrim);
+}
+
+.iris-cleanup__panel {
+  display: grid;
+  gap: 10px;
+  width: min(440px, 100%);
+  padding: 18px 20px;
+  background: var(--iris-bg-page);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  box-shadow: var(--iris-shadow);
+}
+
+/* The reading face, not the annotation sans: this is a sentence to be read
+   carefully, not a label to be scanned. */
+.iris-cleanup__body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--iris-ink);
+}
+
+.iris-cleanup__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}

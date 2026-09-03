@@ -762,3 +762,76 @@ with a test pinning that they never disagree, so the paths are same-source and
 unifying them would only add an async fetch the bar has no other reason to make.
 The bar also needs `enabled`, `buttonsEnabled` and `name` from `ScriptView`
 regardless, so the unification would have been partial by nature.
+## 17. Dismissing the cleaning offer defers; upstream's declines forever
+
+**Kind:** deliberate improvement — and specifically a **bug we do not
+reproduce**, which is the rarer sort of entry.
+
+**Upstream.** MagVarUpdate offers, once per chat, to sweep old variables out of
+the whole file (`cleanup/legacy_chat.ts:16-25`). The dialog has three buttons —
+"back up and clean", "clean only", "do not remind me again" — and the branch
+that handles the answer treats **`POPUP_RESULT.CANCELLED` and
+`POPUP_RESULT.NEGATIVE` identically** (`:27-33`): both write
+`chat[1].variables[0].ignore_cleanup = true` and return.
+
+So pressing **Esc**, or clicking outside the dialog, permanently declines. The
+user believes they postponed a question; the extension has recorded that they
+never want to be asked again. Nothing on screen distinguishes the two, and the
+next chat load says nothing because there is nothing left to say.
+
+**Iris.** A dismissal sends **nothing**. The protocol already defines silence as
+a complete outcome — no answer means nothing is cleaned, nothing is recorded,
+and the offer returns next time (`rpc.ts`, `chat.answerCleanup`) — so deferring
+needs no new state anywhere. The three buttons keep upstream's labels and
+upstream's order (its custom button is prepended before the ok button,
+`popup.js:312-315`, so "back up and clean" leads), and only the dismissal
+differs.
+
+**What it costs.** A user who *wants* never to be asked again, and who expects
+Esc to mean that because they learned it from the extension, has to press the
+third button instead. That is the whole cost, and it is paid by the reader who
+already understood the old behaviour rather than by the one who did not.
+
+The dialog also says so in a line beneath the buttons: *"Closing this without
+choosing asks again next time — it does not decline."* Without that sentence the
+divergence only helps people who already know it exists.
+
+**What would overturn it.** Evidence that upstream's folding is deliberate
+rather than incidental — a comment, an issue, a changelog line saying a
+dismissal is meant to decline. `legacy_chat.ts:27-33` has none: `CANCELLED` is
+simply not distinguished from `NEGATIVE` in the condition.
+
+## 18. The periodic trim is announced; upstream's is silent
+
+**Kind:** deliberate improvement.
+
+**Upstream.** Two cleanup paths, and they report differently. The **periodic**
+one prints and nothing more — `console.log(tr('runtime.cleanup.cleanedFloorsLog',
+{ count: counter }))` (`cleanup/index.ts:43`), unconditionally, whether or not
+anything was removed, with **no toast at all**. The **legacy** path does toast,
+`toastr.info(…, { timeOut: 1000 })`, and only when `counter > 0`
+(`cleanup/legacy_chat.ts:98-106`).
+
+**Iris.** The periodic trim reaches the screen: the host pushes a `report` event
+carrying `irreversible: true`, and the shell shows a notice and keeps a durable
+line in the report list. Cleaning is on by default and it deletes a user's
+message data — "we trimmed it correctly" and "the user knows we trimmed it" are
+two different claims, and only the second one needs a channel. A `console.log`
+in a page nobody has open is not that channel.
+
+**Wording.** Upstream's own two strings disagree about the unit: the periodic
+one says `{count} 层` (layers) and the legacy one says `{count} 条消息`
+(messages), while **both come from the same `cleanupMessageVariables` return
+value** — one counter, indexed by chat position. The legacy phrasing is the
+accurate one, so it is the one used; "层" is upstream's older name for the same
+thing.
+
+**What it costs.** A notice on a routine housekeeping action, on chats where the
+count may be zero. Mitigated rather than solved: only the *irreversible* records
+are pushed, so an ordinary trim of nothing is a line in the report list and not
+an interruption.
+
+**What would overturn it.** A reading that the periodic window never removes
+anything a user would miss — it is bounded by `keep`, so this is arguable — or a
+user saying the notice is noise. Both are about the *notice*, not about the
+record: the durable line stays either way.

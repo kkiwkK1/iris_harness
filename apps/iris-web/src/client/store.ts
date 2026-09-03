@@ -59,6 +59,27 @@ export interface StreamBuffer {
   key?: string
 }
 
+/** The host's standing offer to clean one chat, as it raised it. */
+export interface CleanupOffer {
+  chatId: string
+  /** Lines in the chat file, which is what upstream gates on. */
+  lines: number
+  /** The range a sweep would cover, inclusive, in message indices. */
+  from: number
+  to: number
+  /** How many layers inside that range still hold something to remove. */
+  layers: number
+}
+
+/**
+ * What a reader can answer.
+ *
+ * Three values, and **no fourth for a dismissal**: dismissing sends nothing at
+ * all. Upstream folds `CANCELLED` into `NEGATIVE`, which is the bug this
+ * deliberately does not reproduce.
+ */
+export type CleanupAnswer = 'clean' | 'never' | 'backup-and-clean'
+
 /** A transient message shown to the reader. */
 export interface Notice {
   kind: 'error' | 'info'
@@ -78,9 +99,13 @@ export interface CardReport {
   text: string
   generation: number
   /**
-   * How it should be read. Absent means a failure, which is what a report was
-   * before grades existed — so an ungraded caller keeps the louder rendering,
-   * and a new quiet grade has to be asked for.
+   * How it should be read, when the reporter said.
+   *
+   * **Absent means neutral**, not failure. The first version defaulted to
+   * failure and the panel painted every entry red, because most of this list is
+   * not failures at all — what a frame paid for its libraries, a card's own
+   * `toastr.info`, the overlay's visibility summary. A caller with nothing to
+   * say about severity says nothing.
    */
   grade?: ReportGrade
   /** Which script it was about, so a corrected verdict can be found again. */
@@ -175,6 +200,18 @@ export interface IrisState {
   /** True while a fetch is out, so the view can say so rather than look empty. */
   hostReportsLoading: boolean
   /**
+   * The host's standing offer to clean this chat, when it has made one.
+   *
+   * **Held rather than gated on the open chat**, and that is a race rather than
+   * a preference: the host raises the offer while a chat is being opened, and
+   * `chatId` here is set by the `chat.open` reply. Dropping an offer that
+   * arrived a beat early would lose it until the next open — a silent outcome
+   * the protocol permits and the reader would experience as "the dialog never
+   * appeared". So it is kept with its own `chatId` and the dialog renders only
+   * when the two agree.
+   */
+  cleanupOffer: CleanupOffer | undefined
+  /**
    * Which run the panel is currently showing.
    *
    * Reports outlive the run that produced them on purpose — a diagnostic nobody
@@ -245,6 +282,27 @@ export interface IrisActions {
    * arrives as a pushed event instead.
    */
   loadHostReports(): Promise<void>
+  /**
+   * Answer the host's cleaning offer.
+   *
+   * @param answer - what the reader chose. There is no value for "dismissed":
+   *   see `dismissCleanupOffer`.
+   */
+  answerCleanup(answer: CleanupAnswer): Promise<void>
+  /**
+   * Put the offer away **without answering it**.
+   *
+   * A deliberate divergence from upstream, and the reason is that upstream's
+   * behaviour here is a bug we are not reproducing: its dialog treats
+   * `CANCELLED` and `NEGATIVE` as one branch (`legacy_chat.ts:27-33`), so one
+   * press of Esc writes `ignore_cleanup` permanently — the user believes they
+   * deferred and the extension believes they declined forever.
+   *
+   * Iris sends **nothing**, which the protocol already defines as a complete
+   * outcome: nothing is cleaned, nothing is recorded, and the offer comes back
+   * next time. Recorded in `DEVIATIONS.md`.
+   */
+  dismissCleanupOffer(): void
   withdrawReportsFor(scriptId: string): void
   /** Replace what the running scripts are reported to be doing. */
   setRunStates(states: readonly ScriptRunState[]): void
@@ -399,6 +457,7 @@ export function createIrisStore(
       hostReportsDropped: 0,
       hostReportKinds: [],
       hostReportsLoading: false,
+      cleanupOffer: undefined,
       cardRunGeneration: 0,
       runStates: [],
       documentGranted: false,
@@ -655,6 +714,50 @@ export function createIrisStore(
         // number, and a card's reports are cleared on switch anyway. A counter
         // that restarted could make a stale entry look current again.
         set({ cardRunGeneration: get().cardRunGeneration + 1 })
+      },
+
+      async answerCleanup(answer: CleanupAnswer): Promise<void> {
+        const offer = get().cleanupOffer
+        if (offer === undefined) return
+        /*
+         * Cleared before the call, not after. The reader has answered; leaving
+         * the dialog up while the host works invites a second press, and a
+         * second `clean` on a chat whose sweep is already running is a request
+         * nobody can mean.
+         */
+        set({ cleanupOffer: undefined })
+        await guard(async () => {
+          const result = await client.call('chat.answerCleanup', { chatId: offer.chatId, answer })
+          if (answer === 'never') return
+          /*
+           * What actually happened, said in one notice.
+           *
+           * **The backup path is the part that has to be shown.** Upstream
+           * toasts it (`runtime.cleanup.exportSucceeded`, `legacy_chat.ts:60-73`)
+           * and the reason survives translation: a user who asked for a backup
+           * before letting something be deleted needs to know where it went, and
+           * an export that succeeded silently is indistinguishable from one that
+           * was skipped.
+           *
+           * `cleaned` is reported even when it is zero, because zero is the
+           * answer to a question the user just asked — "was there anything to
+           * clean?" — and hiding it would leave them wondering whether the
+           * button worked.
+           */
+          const swept = `cleaned ${result.cleaned} ${result.cleaned === 1 ? 'message' : 'messages'}`
+          get().notify(
+            'info',
+            result.backup === undefined
+              ? swept
+              : `${swept}; the chat was backed up to ${result.backup}`,
+          )
+        })
+      },
+
+      dismissCleanupOffer(): void {
+        // No call. Silence is the outcome — see the declaration for why this is
+        // deliberately not `'never'`.
+        set({ cleanupOffer: undefined })
       },
 
       async loadHostReports(): Promise<void> {
@@ -1036,93 +1139,171 @@ export function tapHostEvents(store: IrisStore, listener: (event: IrisEvent) => 
   }
 }
 
-export function applyEvent(store: IrisStore, event: IrisEvent): void {
-  const state = store.getState()
+/** One variant of the event union, selected by its tag. */
+type EventOf<T extends IrisEvent['type']> = Extract<IrisEvent, { type: T }>
 
-  if (event.type === 'chats.updated') {
-    store.setState({ chats: event.chats })
-    return
+/**
+ * Apply an event only when it belongs to the conversation on screen.
+ *
+ * Frames for chats this page is not looking at are dropped rather than
+ * buffered: the settled view fetched on the next open is authoritative anyway,
+ * so a buffer would only add a way to be stale.
+ *
+ * A wrapper rather than a line at the top of `applyEvent`, because **not every
+ * event names a chat** and the version that assumed so stopped compiling the
+ * day one did not (`report`, which is about the host). Written this way the
+ * gate is visible per event, and an event without a `chatId` cannot be wrapped
+ * in it — the type will not allow it.
+ * @param apply - what to do when the event is for the open chat.
+ * @returns the gated handler.
+ */
+function forOpenChat<E extends { chatId: string }>(
+  apply: (event: E, store: IrisStore) => void,
+): (event: E, store: IrisStore) => void {
+  return (event, store) => {
+    if (event.chatId !== store.getState().chatId) return
+    apply(event, store)
   }
+}
+
+/**
+ * What to do with each kind of event.
+ *
+ * **Keyed by every member of the union, so a new variant is a compile error.**
+ * This was a chain of `if (event.type === …)` and the cost of that showed up
+ * once: a `report` event was added to the protocol, the chain had no branch for
+ * it, and nothing would have complained — it happened to break the build only
+ * because the code *above* the chain read `event.chatId`, which that variant
+ * does not have. An accident caught it. A map keyed on the union does not need
+ * one: leaving a decision unmade does not type-check.
+ */
+const HANDLERS: { [T in IrisEvent['type']]: (event: EventOf<T>, store: IrisStore) => void } = {
+  'chats.updated': (event, store) => {
+    store.setState({ chats: event.chats })
+  },
 
   /*
-   * A pushed diagnostic, handled **before** the chat gate below.
+   * The host's one-time offer to clean a chat that has never been cleaned.
    *
-   * It carries no `chatId` of its own — the report inside may name one, but the
-   * event is about the host rather than about a conversation — so gating it on
-   * the open chat would drop every one of them. That gate's comment used to say
-   * "every other frame names a chat", and this is the frame that made it false;
-   * the type stopped compiling, which is the only reason it was not simply
-   * silently dropped.
+   * **Not wrapped in `forOpenChat`,** and the reason is a race rather than a
+   * preference: the host raises this while a chat is being opened, and the
+   * store's `chatId` is set by the `chat.open` reply. Gating here would drop an
+   * offer that arrived a beat early, which the protocol treats as a complete
+   * outcome (nothing cleaned, nothing recorded, offer returns next time) and a
+   * reader would experience as "the dialog never appeared". The offer carries
+   * its own `chatId`, so the dialog can decide when the two agree.
+   *
+   * Held rather than acted on: this is the one event that asks a question. The
+   * host does nothing after raising it — deliberately, because the sweep it
+   * describes is much wider than the periodic window and upstream only performs
+   * it after asking.
+   */
+  'cleanup.offer': (event, store) => {
+    store.setState({
+      cleanupOffer: {
+        chatId: event.chatId,
+        lines: event.lines,
+        from: event.from,
+        to: event.to,
+        layers: event.layers,
+      },
+    })
+  },
+
+  /*
+   * A pushed diagnostic, and the one event that is **not** about a chat.
    *
    * Pushed rather than polled because of what it is for: an irreversible
-   * deletion. A report that has to be *fetched* to be seen is a report the user
+   * deletion. A report that has to be fetched to be seen is a report the user
    * reads after the data is gone, and "we trimmed it correctly" and "the user
    * knows we trimmed it" are two different claims.
    */
-  if (event.type === 'report') {
+  report: (event, store) => {
     const line = `${event.report.kind}: ${event.report.message}`
     /*
      * The **reporter's** grade, not this frame's. It used to hardcode `fault`
      * on the reasoning that only irreversible deletions are pushed — true
-     * today and not a property of the channel, and a grade the reader can see
+     * today and not a property of the channel, and a grade a reader can see
      * should come from the site that knows rather than from what the shell
      * assumes about which sites use the channel.
      */
     actionsOf(store).addCardReport(line, event.report.scriptId, event.report.grade)
     /*
-     * The notice bar as well, and keyed on `irreversible` rather than on the
-     * grade: what makes this worth interrupting for is that the data is already
-     * gone, which no amount of severity conveys. A note about something
-     * unrecoverable still has to be seen while the user is there to see it.
+     * The notice bar as well: what makes this worth interrupting for is that
+     * the data is already gone, which no amount of severity conveys. A note
+     * about something unrecoverable still has to be seen while the user is
+     * there to see it.
      */
     actionsOf(store).notify(event.report.grade === 'fault' ? 'error' : 'info', line)
-    return
-  }
+  },
 
-  // Every other frame names a chat. Frames for chats this page is not looking at
-  // are dropped rather than buffered: the settled view on the next open is
-  // authoritative anyway, so a buffer would only add a way to be stale.
-  if (event.chatId !== state.chatId) return
-
-  if (event.type === 'stream.start') {
+  'stream.start': forOpenChat((event, store) => {
     store.setState({ stream: { turn: event.turn, text: '', reasoning: '', key: event.key } })
-    return
-  }
+  }),
 
-  if (event.type === 'stream.text' || event.type === 'stream.reasoning') {
-    const current = state.stream
-    // A delta for a turn whose opening we never saw (a reconnect mid-generation)
-    // starts the buffer rather than being discarded.
-    const base: StreamBuffer =
-      current !== undefined && current.turn === event.turn
-        ? current
-        : { turn: event.turn, text: '', reasoning: '' }
+  'stream.text': forOpenChat((event, store) => {
+    store.setState({ stream: appendDelta(store.getState().stream, event.turn, 'text', event.delta) })
+  }),
+
+  'stream.reasoning': forOpenChat((event, store) => {
     store.setState({
-      stream: event.type === 'stream.text'
-        ? { ...base, text: base.text + event.delta }
-        : { ...base, reasoning: base.reasoning + event.delta },
+      stream: appendDelta(store.getState().stream, event.turn, 'reasoning', event.delta),
     })
-    return
-  }
+  }),
 
-  if (event.type === 'stream.end') {
+  'stream.end': forOpenChat((event, store) => {
     // The whole reason the protocol sends a view here: drop the optimistic
     // buffer and take the host's truth in one step.
     store.setState({ view: event.view, stream: undefined })
-    return
-  }
+  }),
 
-  if (event.type === 'stream.error') {
+  'stream.error': forOpenChat((event, store) => {
     store.setState({ stream: undefined })
-    state.notify('error', event.message)
-    return
-  }
+    store.getState().notify('error', event.message)
+  }),
 
-  if (event.type === 'chat.updated') {
+  'chat.updated': forOpenChat((event, store) => {
     // Deliberately does NOT clear `stream`: an edit or a swipe landing while a
     // later turn generates must not blank the text arriving for it.
     store.setState({ view: event.view })
-  }
+  }),
+}
+
+/**
+ * Add a delta to the buffer for a turn.
+ *
+ * A delta for a turn whose opening frame was never seen — a reconnect
+ * mid-generation — **starts** the buffer rather than being discarded.
+ * @param current - the buffer as it stands.
+ * @param turn - the turn the delta belongs to.
+ * @param field - which half of the buffer it extends.
+ * @param delta - the text.
+ * @returns the new buffer.
+ */
+function appendDelta(
+  current: StreamBuffer | undefined,
+  turn: number,
+  field: 'text' | 'reasoning',
+  delta: string,
+): StreamBuffer {
+  const base: StreamBuffer = current !== undefined && current.turn === turn
+    ? current
+    : { turn, text: '', reasoning: '' }
+  return field === 'text'
+    ? { ...base, text: base.text + delta }
+    : { ...base, reasoning: base.reasoning + delta }
+}
+
+export function applyEvent(store: IrisStore, event: IrisEvent): void {
+  /*
+   * The cast is the one thing this shape cannot express: TypeScript will not
+   * correlate `HANDLERS[event.type]` with `event` even though the map's type
+   * guarantees they match. It is confined to this line, and the guarantee that
+   * matters — that every variant has a handler — is checked where the map is
+   * declared.
+   */
+  const handle = HANDLERS[event.type] as (frame: IrisEvent, store: IrisStore) => void
+  handle(event, store)
 }
 
 /** Stable action facades, one per store. */

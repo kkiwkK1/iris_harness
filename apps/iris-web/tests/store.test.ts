@@ -798,4 +798,162 @@ test('withdrawing when there is nothing to withdraw changes nothing', () => {
   assert.equal(store.getState().cardReports, before, 'no needless re-render')
   dispose()
 })
+/** The offer as the host raises it. */
+const OFFER = {
+  type: 'cleanup.offer' as const,
+  chatId: 'c1',
+  lines: 812,
+  from: 1,
+  to: 780,
+  layers: 6,
+}
 
+/** A store whose client records every call, for the answer round trip. */
+function recordingStore(answer: {
+  cleaned: number
+  recorded: boolean
+  backup?: string
+} = { cleaned: 0, recorded: true }): {
+  store: IrisStore
+  push: (event: IrisEvent) => void
+  calls: { method: string, params: unknown }[]
+  dispose: () => void
+} {
+  const calls: { method: string, params: unknown }[] = []
+  const listeners = new Set<(event: IrisEvent) => void>()
+  const empty: ChatView = { chatId: 'c1', title: 'A scene', messages: [] }
+  const client: IrisClient = {
+    connected: true,
+    onConnectionChange: () => () => undefined,
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    async call(method, params) {
+      calls.push({ method, params })
+      if (method === 'chat.list') return { chats: [] } as never
+      if (method === 'character.list') return { characters: [] } as never
+      if (method === 'settings.get') return { settings: { provider: 'p', model: 'm' } } as never
+      // The real shape, so what the shell shows is driven by what the host
+      // actually returns rather than by a placeholder.
+      if (method === 'chat.answerCleanup') return answer as never
+      return { view: empty } as never
+    },
+  }
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  store.setState({ chatId: 'c1', view: empty })
+  return { store, push: event => listeners.forEach(l => l(event)), calls, dispose }
+}
+
+test('a cleaning offer is held, with the chat it is about', () => {
+  const scope = recordingStore()
+  scope.push(OFFER)
+  const held = scope.store.getState().cleanupOffer
+  assert.deepEqual(held, { chatId: 'c1', lines: 812, from: 1, to: 780, layers: 6 })
+  scope.dispose()
+})
+
+test('an offer that arrives before the chat is open is not dropped', () => {
+  /*
+   * **A race, not a preference.** The host raises the offer while a chat is
+   * being opened, and this store's `chatId` is set by the `chat.open` reply. A
+   * handler gated on the open chat would discard an offer that arrived a beat
+   * early — which the protocol treats as a complete outcome (nothing cleaned,
+   * nothing recorded, asked again next time) and a reader would experience as
+   * "the dialog never appeared", with nothing anywhere saying why.
+   */
+  const scope = recordingStore()
+  scope.store.setState({ chatId: undefined })
+  scope.push(OFFER)
+  assert.equal(scope.store.getState().cleanupOffer?.chatId, 'c1')
+  scope.dispose()
+})
+
+test('answering sends the chat and the answer, and puts the offer away', async () => {
+  const scope = recordingStore()
+  scope.push(OFFER)
+  await actionsOf(scope.store).answerCleanup('backup-and-clean')
+
+  const call = scope.calls.find(it => it.method === 'chat.answerCleanup')
+  assert.deepEqual(call?.params, { chatId: 'c1', answer: 'backup-and-clean' })
+  assert.equal(scope.store.getState().cleanupOffer, undefined, 'the dialog stayed up')
+  scope.dispose()
+})
+
+test('dismissing sends nothing at all, which is the divergence', async () => {
+  /*
+   * **The one deliberate difference from upstream, and the reason it needs a
+   * test rather than a comment.** Upstream folds `CANCELLED` into `NEGATIVE`
+   * (`legacy_chat.ts:27-33`), so one press of Esc writes `ignore_cleanup`
+   * permanently: the user believes they deferred and the extension believes
+   * they declined forever. Nothing on screen distinguishes the two.
+   *
+   * So the assertion is about **absence** — no call — which is exactly the
+   * shape that a wrong implementation still passes if you only assert the
+   * state. The count is checked too, because "the offer is gone" is true of
+   * both the right behaviour and of silently sending `never`.
+   */
+  const scope = recordingStore()
+  scope.push(OFFER)
+  const before = scope.calls.length
+
+  actionsOf(scope.store).dismissCleanupOffer()
+
+  assert.equal(scope.store.getState().cleanupOffer, undefined)
+  assert.equal(scope.calls.length, before, 'dismissing called the host')
+  assert.equal(
+    scope.calls.some(it => it.method === 'chat.answerCleanup'),
+    false,
+    'dismissing was reported as an answer',
+  )
+  scope.dispose()
+})
+
+test('answering with nothing offered is a no-op, not a call with no chat', async () => {
+  // The dialog cannot be on screen without an offer, but the action is reachable
+  // and a call carrying `chatId: undefined` would be refused by the schema —
+  // which surfaces as an error notice about a question nobody asked.
+  const scope = recordingStore()
+  const before = scope.calls.length
+  await actionsOf(scope.store).answerCleanup('clean')
+  assert.equal(scope.calls.length, before)
+  scope.dispose()
+})
+test('a backup path comes back to the reader, and a decline says nothing', async () => {
+  /*
+   * The one part of the outcome that has to reach the screen. A user who asked
+   * for a backup *before* letting something be deleted needs to know where it
+   * went — upstream toasts it for the same reason
+   * (`runtime.cleanup.exportSucceeded`, `legacy_chat.ts:60-73`) — and an export
+   * that succeeded silently is indistinguishable from one that was skipped.
+   *
+   * `never` says nothing: nothing was cleaned and nothing was backed up, so a
+   * notice would be announcing an absence.
+   */
+  const scope = recordingStore({ cleaned: 12, recorded: true, backup: 'chats/backup-1.jsonl' })
+  scope.push(OFFER)
+  await actionsOf(scope.store).answerCleanup('backup-and-clean')
+  const notice = scope.store.getState().notice
+  assert.match(String(notice?.text), /cleaned 12 messages/)
+  assert.match(String(notice?.text), /backup-1\.jsonl/)
+
+  const declining = recordingStore({ cleaned: 0, recorded: true })
+  declining.push(OFFER)
+  await actionsOf(declining.store).answerCleanup('never')
+  assert.equal(declining.store.getState().notice, undefined, 'declining announced something')
+  scope.dispose()
+  declining.dispose()
+})
+
+test('cleaning nothing is still reported, because zero answers the question', async () => {
+  // The user pressed a button and is entitled to the outcome. Hiding a zero
+  // leaves them unable to tell "there was nothing to clean" from "the button
+  // did not work".
+  const scope = recordingStore({ cleaned: 0, recorded: true })
+  scope.push(OFFER)
+  await actionsOf(scope.store).answerCleanup('clean')
+  assert.match(String(scope.store.getState().notice?.text), /cleaned 0 messages/)
+  scope.dispose()
+})

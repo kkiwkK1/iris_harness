@@ -28,6 +28,7 @@ import { Masthead } from './Masthead.tsx'
 import { Sidebar } from './Sidebar.tsx'
 import { CardScriptFrames } from './useCardScripts.tsx'
 import { ConsentAsk } from './ConsentAsk.tsx'
+import { CleanupOffer } from './CleanupOffer.tsx'
 import { StatePanel } from './StatePanel.tsx'
 import { toBase64 } from './format.ts'
 
@@ -163,6 +164,14 @@ export function App(): ReactElement {
         `ChatPane` so a re-render of the conversation cannot restart a card.
       */}
       <CardScriptFrames />
+
+      {/*
+        The host's cleaning offer, at the top level rather than inside the
+        drawer or the sheet: it is a modal question about deleting the open
+        chat's data, and it must not be reachable only by opening a panel first.
+        Renders nothing until the host actually asks.
+      */}
+      <CleanupOffer />
 
       <SettingsDrawer
         open={settingsOpen}
