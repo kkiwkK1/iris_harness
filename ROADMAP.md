@@ -56,8 +56,10 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    映射/no-op 语义（变化才存表）三样被证实正常。49 离线装配：三条 `[mvu_update]` constant 全长入 depth 0，当前值同段 → 缺的不是料。
    **重试（硬消息「一觉睡到第二天早上七点」）命中事前预测**：msg 12 带 1 个 UpdateVariable 块，表 → 7月2日 07:00 /
    星期二。聊天级链路（卡声明树成基线 → 块被处理 → 楼层表更新）**在真模型上通过**；写路径归属与块方言 49 判读中。
-   3c：MVU 请求期只做减法（filterEntries 在 `更新方式` 未加载时会删 `[mvu_update]` 条目）——我们是否向 frame 发
-   `worldinfo_entries_loaded` 待 7b 答，决定这条潜在故障是否存在。
+   **已知缺口**：我们刻意不发 `CHAT_COMPLETION_SETTINGS_READY` / `worldinfo_entries_loaded`（`host-events.ts:19-27`：
+   它们是往返请求不是通知，单向 post 会让卡的修改看似成功然后被丢），MVU 请求期五个 filter/override 回调在 Iris
+   全不跑——默认 `随AI输出` 模式无影响，「额外模型解析」与工具覆盖不可用；修法是往返协议，等真实消费者（DEVIATIONS 记）。
+   第一次失败因此排除「条目被删」。
 4. **消息内联 HTML 消毒渲染**——设计 INLINE-HTML.md；CSS 作用域器 ✅、区域切分 ✅（真语料：
    命定之诗 677 楼 334 有区域）、消毒 seam 在建。爱衣 6/8 楼即此。
 5. **覆盖层界面宿主**（OVERLAY-CARDS.md + OVERLAY-HOST.md，b82ac8f）——五组件（手机UI 两分叉、外置状态栏两分叉、
