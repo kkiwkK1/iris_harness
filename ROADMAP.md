@@ -72,8 +72,9 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    `regions` 新报告类型 + clip-path 多子路径命中测试，空集=零面积路径）、虚拟 parent/top 暴露本 frame jQuery
    （2a95f8e）。复读（413aa87）：regions 到达（后台 timer 兜底 4861a4e）、clip 圈出手机UI 浮动按钮 61×61、按钮中心命中
    IFRAME、远处穿透到 shell——命中分层成立；「点开面板后 clip 变大」待前台点击验（后台标签页 CDP 点击不可靠）。
-   V1.5.4 死于自建嵌套 srcdoc iframe 的 `contentDocument` 为 null → 见 7b 项。bootstrap 拆分（策略核内联 +
-   成员表按哈希 URL 取，`/sandbox` 路由现成、须进 manifest.json 才 immutable）批准，7b 在做。方案 A（阅读区进
+   V1.5.4 死于自建嵌套 srcdoc iframe 的 `contentDocument` 为 null → 见 7b 项。**bootstrap 拆分 ✅**（95f04d6：策略核内联 40 KB + 成员表 27.6 KB 按内容哈希整页一次，同步阻塞
+   `<script src crossorigin>` 排在 bootstrap 与卡 markup 之前，缺标记按 bootstrap 失败报；`FRAME_OVERHEAD` 65→41 KiB，
+   闸回 20，退化点 50；`curl -I` 证 immutable 一年 + ACAO *；新成员不再按帧计价）。方案 A（阅读区进
    realm，补「同一 parent」前提，解 `parent.Mvu`/`__X_loaded__` 握手）与 B（投影）并排算账，3c 核对照、
    44 出验收单后定；按名异步代理彻底出局（`Mvu.events.*` 同步当事件名）。
 6. ~~世界书单通道 + 内嵌书物化~~ ✅（957eaca：装配层只读绑定名；`bookFor` 挂导入与打开两路，
