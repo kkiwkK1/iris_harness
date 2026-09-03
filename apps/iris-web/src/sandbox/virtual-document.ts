@@ -83,6 +83,16 @@ export interface VirtualDocumentSource {
   /** Say something about a lookup. */
   report?: (message: string, failed: boolean) => void
   /**
+   * This frame's own window, for the element that stands in for this frame.
+   *
+   * Read live rather than captured for consistency with everything else here,
+   * and it is the **real** window rather than the shadowed one on purpose: a
+   * card publishes its interface with `window.phoneAPI = …`, and a module body
+   * cannot be handed a shadowed `window` (the name is not redefinable), so the
+   * write lands on the real one. Handing back the shadow would find nothing.
+   */
+  frameWindow?: () => unknown
+  /**
    * Read-only page state, read on every access for the same reason `viewport`
    * is: a card polling `document.hidden` on an interval is asking a question
    * whose answer changes, and a captured value would answer the first one
@@ -92,6 +102,24 @@ export interface VirtualDocumentSource {
    * to the value that is true of a frame nobody has told anything about.
    */
   state?: DocumentState
+}
+
+/**
+ * Whether a selector's last step asks for an iframe.
+ *
+ * Deliberately narrow: the exact `iframe`, and a descendant or child form whose
+ * final simple selector is `iframe` (`#chat iframe`, `.wrap > iframe`). A
+ * general answer needs a selector parser, and the corpus asks one question —
+ * 银麒赎世's system panel does `parent.document.querySelectorAll('iframe')`.
+ *
+ * Over-matching here would be the expensive direction: it would inject a
+ * stand-in into a card's own lookup for its own nodes.
+ * @param selector - what the card asked for.
+ * @returns true when a frame element belongs in the answer.
+ */
+function asksForFrames(selector: string): boolean {
+  const last = selector.trim().split(/[\s>+~]+/u).filter(part => part !== '').at(-1)
+  return last === 'iframe'
 }
 
 /**
@@ -150,6 +178,55 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
   const element = documentElement(source.viewport)
 
   /*
+   * An element standing for **this frame**, in the parent document's frame list.
+   *
+   * Upstream's cards find each other through the page: 银麒赎世's system panel
+   * does `parent.document.querySelectorAll('iframe')` and, for each, checks
+   * `contentWindow.phoneAPI` — where the phone UI published its interface. It
+   * **never reads `window.phoneAPI` directly** [44], so frame discovery is the
+   * only path it has, and its guard is `if (fw && fw.phoneAPI)`: either half
+   * missing is silent.
+   *
+   * On this side the two scripts share one frame, so "the frame that published
+   * the API" and "this frame" are the same thing, and `contentWindow` is simply
+   * this window. **That grants nothing new** — the card already has its own
+   * window; what it gains is that the path it uses to look leads somewhere.
+   *
+   * Built lazily and once, so the identity is stable: a card that stores the
+   * element and compares it later gets the same object.
+   */
+  let selfFrame: object | undefined
+  const frameStandIn = (): object => {
+    selfFrame ??= {
+      tagName: 'IFRAME',
+      nodeName: 'IFRAME',
+      nodeType: 1,
+      id: '',
+      /*
+       * The frame's own window. Read on each access rather than captured
+       * because a card may publish its interface at any point after this
+       * element is first handed out.
+       */
+      get contentWindow(): unknown {
+        return source.frameWindow?.()
+      },
+      /*
+       * The virtual document, which is what a card reading
+       * `contentWindow.document` or `contentDocument` on **this** frame should
+       * see — the same object it gets as `parent.document`. Not `null`: null is
+       * the answer for a frame we cannot reach into, and this is the one frame
+       * we are inside of.
+       */
+      get contentDocument(): unknown {
+        return virtual
+      },
+      getAttribute: (): string | null => null,
+      setAttribute: (): void => {},
+    }
+    return selfFrame
+  }
+
+  /*
    * Say which kind of nothing a lookup found, once per id.
    *
    * Only for ids Iris **knows** are SillyTavern's: a card looking up its own
@@ -200,7 +277,23 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
       if (found === null && id !== undefined) reportKnown(id)
       return found
     },
-    querySelectorAll: (selector: string): unknown => source.container.querySelectorAll(selector),
+    querySelectorAll: (selector: string): unknown => {
+      const found = Array.from(source.container.querySelectorAll(selector) as ArrayLike<unknown>)
+      /*
+       * The stand-in goes **last**, after whatever the card built itself.
+       *
+       * The order is not upstream-faithful and cannot be: upstream lists the
+       * host page's frames in its DOM order, and this frame's position among
+       * them is a fact this side does not have. Last was chosen so a card
+       * indexing `[0]` still reaches a node it created — the measured consumer
+       * iterates with a guard, so it finds the stand-in either way.
+       */
+      return asksForFrames(selector) ? [...found, frameStandIn()] : found
+    },
+    getElementsByTagName: (name: string): unknown =>
+      (String(name).toLowerCase() === 'iframe'
+        ? [...Array.from(source.container.querySelectorAll('iframe') as ArrayLike<unknown>), frameStandIn()]
+        : Array.from(source.container.querySelectorAll(String(name)) as ArrayLike<unknown>)),
 
     createElement: (tagName: string): unknown => source.factory.createElement(tagName),
     createTextNode: (data: string): unknown => source.factory.createTextNode(data),
@@ -276,7 +369,7 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
     referrer: '',
   }
 
-  return new Proxy(Object.create(null) as object, {
+  const virtual: object = new Proxy(Object.create(null) as object, {
     get(_target, property): unknown {
       // Symbols are never a card asking for a DOM capability — they are the
       // language or a library introspecting (`Symbol.toStringTag` when something
@@ -307,6 +400,8 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
       return { value: members[property], writable: false, enumerable: true, configurable: true }
     },
   })
+
+  return virtual
 }
 
 /** Every member the virtual document answers, for the settings panel to report. */

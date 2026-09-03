@@ -288,6 +288,14 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     factory: env.factory,
     anchors,
     knownIds: env.members.KNOWN_ST_IDS,
+    /*
+     * The **real** window, not the shadow. A card publishes its interface with
+     * `window.phoneAPI = ...` from a module body, and a module cannot be handed
+     * a shadowed `window` (the name is not redefinable), so the write lands on
+     * the real one. Handing back the shadow would find nothing — and the card's
+     * guard is `if (fw && fw.phoneAPI)`, so finding nothing is silent.
+     */
+    frameWindow: () => env.realWindow,
     report: (message, failed) => {
       if (failed) reportFault(message)
       else reportGap(message)
