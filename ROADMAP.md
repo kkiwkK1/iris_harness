@@ -70,8 +70,9 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    `#mes_stop`/`is_send_press`）+ 切/关聊天归零（上游残留无人负责，我们多一个清理点）。**已落**：锚点接线
    （4df5458，`composerSend` 走 CARD_METHODS 门；闸 16→12）、表面（0331320：脚本 frame 全视口 fixed +
    `regions` 新报告类型 + clip-path 多子路径命中测试，空集=零面积路径）、虚拟 parent/top 暴露本 frame jQuery
-   （2a95f8e）。复读：表面/穿透正确（三点 elementFromPoint 全到 shell）；regions 未到达——后台标签页 rAF 不跑
-   （待非 rAF 兜底）；V1.5.4 在建节点前死于 `null.querySelector`（44 定位 X）。bootstrap 拆分（策略核内联 +
+   （2a95f8e）。复读（413aa87）：regions 到达（后台 timer 兜底 4861a4e）、clip 圈出手机UI 浮动按钮 61×61、按钮中心命中
+   IFRAME、远处穿透到 shell——命中分层成立；「点开面板后 clip 变大」待前台点击验（后台标签页 CDP 点击不可靠）。
+   V1.5.4 死于自建嵌套 srcdoc iframe 的 `contentDocument` 为 null → 见 7b 项。bootstrap 拆分（策略核内联 +
    成员表按哈希 URL 取，`/sandbox` 路由现成、须进 manifest.json 才 immutable）批准，7b 在做。方案 A（阅读区进
    realm，补「同一 parent」前提，解 `parent.Mvu`/`__X_loaded__` 握手）与 B（投影）并排算账，3c 核对照、
    44 出验收单后定；按名异步代理彻底出局（`Mvu.events.*` 同步当事件名）。
@@ -108,7 +109,10 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    （7b 实测带对照），`contentWindow` 在、`load` 正常触发——像加载失败其实是加载后读失败。修法只剩「虚拟化
    嵌套 iframe」：bootstrap 拦 `contentDocument`（保留 `contentWindow.postMessage`），srcdoc 渲染进同 realm
    Shadow DOM 容器；样式（style-loader 那处有 try、静默不同步）要一起解。44 普查族面（两个 population），
-   7b 出设计输入，排 bootstrap 拆分之后。
+   7b 出设计输入，排 bootstrap 拆分之后。族面（44 §七之八）：30 处自建里 27 处无需求，需同源可达的 3 张
+   （V1.5.4 `contentDocument`；萧谴写卡助手版遍历页面 iframe；银麒系统面板遍历后读 `contentWindow.phoneAPI`
+   ——虚拟 document 的 iframe 枚举要含卡自己的 frame 且其 contentWindow 可读）。srcdoc 内无代码（3c §六之四）
+   → 只需 document 替身不需 realm；样式同步经 `ownerDocument.createElement`；srcdoc 的 `<style>` 在 Shadow DOM 要重指 host。
 8. **卡自带 ESM 依赖的代理**（族级基建）——13 卡 binding 导入 + 15 卡 MVU bundle；去重 11 个地址、
    6 个无版本（TEST-CARDS 副轴：名单会自己过期）；`script-bundles/` 是实际加载的卡尺。待测冷取。
 9. ~~导入体积 C~~ ✅（st-meta 记每文件键序表不记值：27.58 → 11.74 MiB，2454/2454 行键序保持；不变式
