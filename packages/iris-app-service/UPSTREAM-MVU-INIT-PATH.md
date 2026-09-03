@@ -854,6 +854,122 @@ for (let i = snapshot_message_id + 1; i <= last_not_has_variable_message_id; i++
 **它从快照往前重放，全量 `findLastIndex` 只为定位起点，不做任何删除。**
 **那条路径不参与追赶。**
 
+### 两条路径执行后在屏幕上说什么
+
+**只记事实与代码位置。**文案取自 `.reference/MagVarUpdate/src/i18n/messages/runtime.ts:254-300`。
+
+#### 周期清理：**只有 `console.log`，没有 toast**
+
+```js
+// [MVU] cleanup/index.ts:43
+console.log(tr('runtime.cleanup.cleanedFloorsLog', { count: counter }));
+```
+
+| 键 | zh-CN | en |
+| --- | --- | --- |
+| `runtime.cleanup.cleanedFloorsLog` | `[MVU]已清理 {count} 层的消息` | `[MVU] Cleaned messages on {count} floors` |
+
+**无条件打印**（不看 `counter` 是否为 0），**屏幕上没有任何提示**。
+
+#### legacy 全量清理：**`toastr.info`，且仅在 `counter > 0` 时**
+
+```js
+// [MVU] cleanup/legacy_chat.ts:98-106
+if (counter > 0) {
+  toastr.info(
+    tr('runtime.cleanup.cleanedMessages', { count: counter }),
+    tr('runtime.cleanup.title'),
+    { timeOut: 1000 }                                   // ← 1 秒
+  );
+}
+```
+
+| 键 | zh-CN | en |
+| --- | --- | --- |
+| `runtime.cleanup.cleanedMessages` | `已清理旧聊天记录中的 {count} 条消息` | `Cleaned {count} messages from the old chat history` |
+| `runtime.cleanup.title`（标题） | `[MVU]自动清理` | `[MVU] Automatic cleanup` |
+
+**注意两条路径的计数单位在文案上不一致**：周期那条说「{count} **层**」，
+legacy 那条说「{count} **条消息**」，**而两者都来自同一个 `cleanupMessageVariables` 的返回值**
+（同一个 `counter`，按 chat 下标计数）。**legacy 的措辞是准的，周期那条的"层"是沿用旧称。**
+
+#### 开始清理前的提示（legacy 路径）
+
+```js
+// [MVU] legacy_chat.ts:34-40   —— 无 options，走 toastr 默认时长
+toastr.info(
+  tr(result === POPUP_RESULT.CUSTOM1 ? 'runtime.cleanup.startingWithBackup'
+                                     : 'runtime.cleanup.starting'),
+  tr('runtime.cleanup.title'));
+```
+
+| 键 | zh-CN |
+| --- | --- |
+| `runtime.cleanup.starting` | `即将开始清理旧聊天记录中的变量…` |
+| `runtime.cleanup.startingWithBackup` | `即将开始清理旧聊天记录中的变量，并自动生成备份…` |
+
+#### 备份的两个结果（legacy + CUSTOM1 路径）
+
+```js
+// [MVU] legacy_chat.ts:60-73   —— 两者都无 options
+toastr.error(  tr('runtime.cleanup.exportFailed',    { cause:   _.escape(String(data.message)) }), tr('runtime.cleanup.title'));
+toastr.success(tr('runtime.cleanup.exportSucceeded', { message: _.escape(String(data.message)) }), tr('runtime.cleanup.title'));
+```
+
+| 键 | 级别 | zh-CN |
+| --- | --- | --- |
+| `runtime.cleanup.exportFailed` | **error** | `聊天记录导出失败，放弃清理：{cause}` |
+| `runtime.cleanup.exportSucceeded` | **success** | `聊天记录导出成功：{message}` |
+
+**导出失败即 `return`，不清理。**
+
+#### 三按钮弹窗：原文、返回值、渲染顺序
+
+```js
+// [MVU] legacy_chat.ts:16-25
+const result = await SillyTavern.callGenericPopup(
+  tr('runtime.cleanup.legacyPrompt'),
+  SillyTavern.POPUP_TYPE.CONFIRM,
+  '',
+  {
+    okButton:      tr('runtime.cleanup.cleanOnlyButton'),        // 仅清理
+    cancelButton:  tr('runtime.cleanup.doNotRemindButton'),      // 不再提醒
+    customButtons: [tr('runtime.cleanup.backupAndCleanButton')], // 备份并清理
+  });
+```
+
+**正文（`runtime.cleanup.legacyPrompt`）**：
+
+> **zh-CN**：`检测到可以清理本聊天文件中的旧变量以减小文件体积，是否清理？（备份会消耗较多内存，手机上建议关闭其他后台应用后进行，或在计算机上备份）`
+>
+> **en**：`Old variables can be removed from this chat to reduce its file size. Clean them now? (Creating a backup uses considerable memory; on mobile, close other background apps first or create the backup on a computer.)`
+
+| 按钮 | 键 | zh-CN | en | 返回值 |
+| --- | --- | --- | --- | --- |
+| ok | `cleanOnlyButton` | `仅清理` | `Clean only` | `POPUP_RESULT.AFFIRMATIVE` |
+| cancel | `doNotRemindButton` | `不再提醒` | `Do not remind me again` | `POPUP_RESULT.NEGATIVE` |
+| custom[0] | `backupAndCleanButton` | `备份并清理` | `Back up and clean` | **`2`（= `CUSTOM1`）** |
+
+**返回值来源**：[ST] `scripts/popup.js:55` 的 JSDoc——
+「If only strings are provided, the buttons will be added with default options,
+**and their result will be in order from `2` onward**」。
+MVU 的判据写成 `result === POPUP_RESULT.CUSTOM1 || result === 2`，**两个是同一个值**。
+
+**渲染顺序**：[ST] `scripts/popup.js:73` 的 JSDoc——
+「by default it will be **prepended**」；实现在 `:312-315`：
+
+```js
+if (button.appendAtEnd) { this.buttonControls.appendChild(buttonElement); }
+else { this.buttonControls.insertBefore(buttonElement, this.okButton); }   // ← 默认插在 ok 之前
+```
+
+MVU 传的是纯字符串（无 `appendAtEnd`），**所以「备份并清理」被插在「仅清理」之前**。
+*（ok 与 cancel 两者的相对顺序来自 popup 模板，我没有读，未在此断言。）*
+
+**`CANCELLED` 与 `NEGATIVE` 走同一分支**（`legacy_chat.ts:27-33`）：
+写 `chat[1].variables[0].ignore_cleanup = true` 后 `return`——
+**即"按 Esc 关掉"与"点不再提醒"效果相同。**
+
 ### 已裁（总指挥，2026-09-03）
 
 1. **周期窗口照做。**
