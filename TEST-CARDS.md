@@ -1359,7 +1359,7 @@ V8 (new vm.Script): SyntaxError: Invalid regular expression: missing /
 
 | 卡 | 怎么找 | 读什么 | 守卫 |
 |---|---|---|---|
-| 萧谴写卡助手版_V4.5.1(iface) | `iframes.each(...)` 遍历页面上全部 iframe | `iframe.contentDocument \|\| iframe.contentWindow.document` | 有 try |
+| 萧谴写卡助手版_V4.5.1(iface) | **不是全页扫描**:`$(parent.document).find('#chat')` → `.children('.mes')` → 每条消息内 `find('iframe')` | `iframe.contentDocument \|\| iframe.contentWindow.document`,找 `fixedUuidInput` | 有 try |
 | **银麒赎世 / 银麒系统面板**(script) | `_pd = _pw.document` → `_pd.querySelectorAll("iframe")` | `contentWindow.phoneAPI`、`contentWindow.postMessage` | `if (fw && fw.phoneA…)` |
 
 #### 银麒赎世 这条对「虚拟 parent」提了一个没人列过的要求
@@ -1387,6 +1387,13 @@ V8 (new vm.Script): SyntaxError: Invalid regular expression: missing /
 | `contentDocument` | V1.5.4_、萧谴写卡助手版 | 不能 |
 | `contentWindow.document` | 萧谴写卡助手版 | 不能 |
 | `contentWindow.<自定义名>` | 银麒赎世(`phoneAPI`) | 不能 |
+
+> **更正:上面那行原写作「遍历页面上全部 iframe」,不准确,而这处不准确会指错修法。**
+> 它遍历的是 **`#chat` 下每条 `.mes` 里的 iframe** —— 也就是**消息 frame**(我们渲染的
+> 每层界面),不是它自己建的、也不是任意页面 frame。**它的需求因此是:
+> ① `#chat` / `.mes` 的 DOM 结构存在(它已在 §七之五 的 `#chat` 三张卡里);
+> ② _消息 frame_ 的 `contentDocument` 从界面 frame 可读。**
+> 与 V1.5.4 那条(自建 srcdoc frame)**是两个不同的表面**,不要合并成一件事。
 
 **净结论:需要"同源可达嵌套/兄弟 frame"的是 3 张卡** —— V1.5.4_(自建 srcdoc)、
 萧谴写卡助手版(遍历)、银麒赎世(遍历 + 自定义名)。**创世回廊只用 postMessage、
@@ -1588,6 +1595,41 @@ function $p(sel) {
 
 **方案 A/B 落地后才增加的判据**(现在不测):`parent.Mvu` 转发 getter + `global_Mvu_initialized`
 事件(§七之四);创世回廊那三个红点**只应剩 `phone` 一个**(§七之四末)。
+
+### 4 之二. 嵌套 iframe 族(3 张卡,三个不同表面)
+
+对 §七之八 与 3c `§六之四`。**三张卡要的不是同一件事**,分开验收:
+
+| 卡 | 它要的表面 | **虚拟化后该看到什么** |
+|---|---|---|
+| **V1.5.4_ / 论坛覆盖层** | **自建 srcdoc frame** 的 `contentDocument` | 论坛覆盖层出现,**且有样式**(深底 `#0e1028`、浅字),不是白底裸 DOM |
+| **萧谴写卡助手版_V4.5.1** | **消息 frame** 的 `contentDocument`(经 `#chat` → `.mes` → `iframe`) | 它能在某条消息的界面里找到 `fixedUuidInput` 并接着走;找不到时它 `return`,**屏幕上没有任何区别** |
+| **银麒赎世 / 银麒系统面板** | **父文档的 iframe 列表** + 自己 frame 的 `contentWindow.phoneAPI` | **系统面板亮起** = 既枚举到了自己的 frame,又读到了 `phoneAPI` |
+
+#### 也会绿(四条,全部是"看着对但没做对")
+
+- **只给 `contentDocument` 替身、不给 `ownerDocument.createElement`** → Vue **mount 成功**、
+  DOM 齐全,**但样式加载器插不进 `<style>`** → 覆盖层出现、**样子不对**。
+  **而且不会报错**:那处 style-loader 是 `try { t.contentDocument.head } catch { t=null }`
+  (§七之八),**失败即静默**。所以判据必须含**外观**,不能只含"出现了"。
+- **替身的 `head` 不接受 `<style>`** → 同上,同样无声。
+- **iframe 枚举返回空数组** → 银麒的 `if (fw && fw.phoneAPI)` **静默跳过**,
+  面板不亮、**console 干净**。「没报错」在这一格**不是好消息**。
+- **srcdoc 内的 `html,body{height:100%}` 在 Shadow DOM 里没有重指 host** →
+  **高度塌成 0**,DOM 全在、样式也加载了,**但什么都看不见**。
+  语料实据:srcdoc 原文是 `<!DOCTYPE html><html style="height:100%"…`,
+  内含 `html,body{margin:0;height:100%;background:#0e1028;…}` ——
+  **这条高度链是真的,不是假想的风险**(脚本内另有 `height:100%` ×25、`100vh` ×23)。
+
+#### 一条会造成假红的复测陷阱
+
+`论坛覆盖层` 有**重入守卫**:`window.__forumOverlayMounted` 一旦为真就直接 `return`,
+另有一条「DOM 扫描复用旧 iframe」分支(靠 `srcdoc.includes('viewport-fit=cover')` 认旧帧)。
+
+> **所以同一会话里第二次触发会"什么都不做"。** 复测必须**重新加载 frame**,
+> 否则会把重入守卫读成"覆盖层没出来"。
+
+- **状态**:未建(等虚拟化落地)。
 
 ### 5. 流式状态栏
 - **实测:全语料 `STREAM_TOKEN_RECEIVED` / `stream_token` 命中 0**(属性访问与字符串字面量两种写法都查了)。
