@@ -1948,6 +1948,68 @@ function $p(sel) {
 (替身仍然合成 `load`,并且监听器与 `onload` 属性两条都答 —— 那是按 V1.5.4_ 的实际写法做的,
 不是按这张表。这一格的「0」只说明**这个子集**里没有第二张卡依赖它。)
 
+#### 全语料重扫(44,走产品读取器)—— 三处数变了,两处归因错了
+
+**先更正口径:「47 张全语料」是_文件数_,不是卡数。**
+`characters/` 里 47 个文件 = **19 张卡 + 28 张 `Seraphina/` 立绘**。按 `decodeCardPng`
+接受与否来数才是卡。而且**有 `.json` 卡**(`圣座之音VoxImperialis.json`、`战锤群星闪耀.json`),
+`*.png` 过滤器**一张都读不到** —— 我此前每一份普查都漏了它们,这次用
+`JSON.parse` + `normalizeCard` 补上。
+
+| | 数 |
+|---|---|
+| 解得开的卡文件(corpus + 测试用卡 + dev) | **39**(png 36 / json 3) |
+| **按内容去重后的不同卡** | **26** |
+| 按名字去重 | 25 |
+
+| 机制 | 7b(20 张子集) | **全语料(26 份不同内容)** |
+|---|---|---|
+| **`querySelectorAll('…iframe')`** | 1 / 1 | **3 卡 / 12 处** ← 最大 |
+| `.contentWindow` | 3 / 14 | **3 卡 / 14 处**(一致) |
+| `.contentDocument` | 1 / 1 | **2 卡 / 3 处** |
+| `srcdoc`(**真用**) | 0 / 0 | **1 卡 / 2 处** |
+| 帧 `onload` | 0(已从 24 更正) | **1 卡 / 1 处** |
+| `<iframe width/height>` | 1 / 28 | **1 卡 / 28 处**(全是静态标记,不需要替身) |
+| `iframe { … }` CSS 规则 | 0 / 0 | **0 / 0 —— 全语料确认** |
+| `document.write` / `.open` | 0 / 0 | **0 / 0 —— 全语料确认** |
+| **`createElement('iframe')`** | 0 / 0(归因:子集) | **0 / 0 —— 归因错了,见下** |
+
+**两处归因更正:**
+
+1. **`createElement('iframe')` 的 0 不是子集造成的。** V1.5.4_ 已在本次范围内,
+   它用的是 **`$('<iframe>')`**,不是 `createElement`。**全语料 `createElement('iframe')` 真的是 0** ——
+   **只拦 `createElement` 在这批语料上抓不到任何一张卡**;要拦的是 jQuery 的构造路径。
+2. `srcdoc` 的 0 确实是子集造成的(V1.5.4_ 不在那个目录),但补齐后**只有 1 卡 / 2 处**,
+   不是一个大项。
+
+**排序结论(按样本面):**
+**`querySelectorAll('…iframe')`(3/12)> `.contentWindow`(3/14,但集中在 1 张卡)>
+`.contentDocument`(2/3)> `srcdoc`(1/2)= 帧 `onload`(1/1)**;
+`iframe{}` CSS、`document.write/open`、`createElement` **三项全语料为 0,不建**。
+
+> **`querySelectorAll('…iframe')` 是替身唯一的真风险面**,和 §七之八 D 那张表一致:
+> **卡不检查 iframe 的_类型_,只检查它_找得到_** —— 替身的 `tagName` 说什么都行,
+> 但它必须能被 `querySelectorAll('iframe')` 选中。7b 那张表把这一项记成 1/1,
+> **差了 12 倍**,原因是模式只认单引号,而 银麒赎世 那 10 处写的是 `querySelectorAll("iframe")`。
+
+#### 同一课在我这儿又发作了一次:`srcdoc` 13 → 2
+
+我第一版按词计数得 **`srcdoc` 3 卡 / 13 处**。逐条看上下文之后:
+
+```
+银麒赎世 ×6 / 魔法少女的扣扣审判1.0 ×5   全部是注释与 CSS 文本:
+  /* CSS类控制:移动端右边垂直居中(srcdoc iframe兼容) */
+  // 在srcdoc iframe中,所有window尺寸都是0,必须使用父窗口尺寸
+不要被神隐挑战 V1.5.4 ×2               真用:
+  $('<iframe>').attr({frameborder:'0', srcdoc:'<!DOCTYPE html>…'})
+  if ((t.srcdoc||'').includes('viewport-fit=cover'))
+```
+
+**11 处是散文,2 处是真用。** —— **和 7b 的 24→0 是同一课,只是发生在我的探针里**:
+`srcdoc` 这个词在**讲 srcdoc 的注释**里出现得比在代码里更多,而那些注释恰好属于
+**最依赖 srcdoc 行为的两张卡**,所以命中分布看起来非常合理。
+**判据:凡"某机制有 N 处",在拿去排序前把那 N 处的上下文打出来读一遍**(§十九 机械动作)。
+
 ### 5. 流式状态栏
 - **实测:全语料 `STREAM_TOKEN_RECEIVED` / `stream_token` 命中 0**(属性访问与字符串字面量两种写法都查了)。
   **没有一张卡按 token 流驱动状态栏。**
