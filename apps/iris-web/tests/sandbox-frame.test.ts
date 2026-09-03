@@ -28,6 +28,8 @@ function realm(options?: { interfaceFrame?: boolean }): {
   listed: () => string[]
   /** What a forwarding global currently reads. */
   forwarded: (name: string) => unknown
+  /** Nodes the sandbox appended to the container itself. */
+  appended: () => unknown[]
   /** The reporter the toastr substitute was handed, if it was handed one. */
   reportFromToastr: () => ((message: string, channel: 'note' | 'error') => void) | undefined
   /** The `localStorage` the frame asked to have installed, if it asked. */
@@ -70,7 +72,22 @@ function realm(options?: { interfaceFrame?: boolean }): {
   const listed: string[] = []
   let body: (globals: Record<string, unknown>) => void = () => undefined
   let asyncBody: (() => Promise<void>) | undefined
-  const container = { id: 'card-root', querySelector: () => null, querySelectorAll: () => [] }
+  /*
+   * The container answers queries with what the sandbox has actually appended.
+   *
+   * A stub that always returned `[]` would let the frame's own frame-element go
+   * missing without a test noticing — and "a card enumerates frames and finds
+   * none" is exactly the silent failure this element exists to fix.
+   */
+  const appended: unknown[] = []
+  const container = {
+    id: 'card-root',
+    querySelector: () => null,
+    querySelectorAll: (selector: string) =>
+      appended.filter(
+        node => (node as { tagName?: string }).tagName?.toLowerCase() === selector.toLowerCase(),
+      ),
+  }
 
   let toastrReport: ((message: string, channel: 'note' | 'error') => void) | undefined
   let installedStorage: Record<string, unknown> | undefined
@@ -88,8 +105,17 @@ function realm(options?: { interfaceFrame?: boolean }): {
     provideStorage: value => {
       installedStorage = value as Record<string, unknown>
     },
+    appendToContainer: node => {
+      appended.push(node)
+    },
     factory: {
-      createElement: tagName => ({ tagName }),
+      createElement: tagName => ({
+        // Upper-cased like a real element's, because the container's query and
+        // a card's own `tagName` check both read it.
+        tagName: String(tagName).toUpperCase(),
+        style: {} as Record<string, string>,
+        setAttribute: () => undefined,
+      }),
       createTextNode: data => ({ data }),
       createDocumentFragment: () => ({ fragment: true }),
     },
@@ -127,6 +153,8 @@ function realm(options?: { interfaceFrame?: boolean }): {
     forwarded: (name: string) => forwarded.get(name)?.(),
     listed: () => listed,
     realWindow: env.realWindow as unknown as Record<string, unknown>,
+    /** What the sandbox put into the container, in order. */
+    appended: () => appended,
     reportFromToastr: () => toastrReport,
     storage: () => installedStorage,
     run: next => {
@@ -3233,4 +3261,92 @@ test('a SillyTavern id Iris does not provide is named, not silently null', () =>
     0,
     'a card looking up its own not-yet-built node is ordinary and must stay quiet',
   )
+})
+test('the card\u2019s own frame is a real node in its container', () => {
+  /*
+   * **How upstream's cards find each other.** 銀麒赎世's system panel does
+   * `parent.document.querySelectorAll('iframe')` and checks each one's
+   * `contentWindow.phoneAPI`, where the phone UI published its interface. It
+   * **never reads `window.phoneAPI` directly** [44], so frame discovery is its
+   * only path and its guard is `if (fw && fw.phoneAPI)` — either half missing
+   * is silent.
+   *
+   * A **real** node rather than one synthesised into `parent.document`'s
+   * answers, because of a path no synthesis could reach: a card's bare
+   * `$('iframe')` searches the *frame's own* document. Upstream's `$` is the
+   * page's, so upstream's bare query finds the card's frame; a stand-in visible
+   * only through `parent.document` would have left that difference in place.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const frames = scope.appended().filter(
+    node => (node as { tagName?: string }).tagName === 'IFRAME',
+  )
+  assert.equal(frames.length, 1, `expected exactly one: ${JSON.stringify(scope.appended())}`)
+
+  // Hidden: it exists to be *found*, never to render — and zero-sized so the
+  // overlay-region walk drops it rather than clipping to it.
+  assert.equal((frames[0] as { style: Record<string, string> }).style['display'], 'none')
+})
+
+test('its contentWindow is this frame\u2019s real window, so a published API is found', () => {
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  // Published the way a card publishes: onto the frame's own window, which is
+  // where a module body's `window.x = …` lands.
+  scope.realWindow['phoneAPI'] = { open: () => 'opened' }
+
+  const doc = (scope.globals()['parent'] as Record<string, unknown>)['document'] as
+    Record<string, unknown>
+  const found = (doc['querySelectorAll'] as (s: string) => unknown[])('iframe')
+  assert.equal(found.length, 1, 'the frame was not reachable through parent.document')
+
+  // The card's own guard, written the way the card writes it.
+  const fw = (found[0] as { contentWindow: Record<string, unknown> }).contentWindow
+  assert.equal(typeof (fw['phoneAPI'] as { open: () => string } | undefined)?.open, 'function')
+})
+
+test('a property published after the lookup is still visible through it', () => {
+  /*
+   * The panel may enumerate frames before the phone UI has run, so what it
+   * holds has to stay useful afterwards.
+   *
+   * **This does not distinguish a getter from a stored reference**, and saying
+   * so is the point: a mutation swapping the implementation's getter for
+   * `value:` left every assertion green, because `realWindow` is one stable
+   * object and a late publish mutates it rather than replacing it. The property
+   * below is real and worth pinning; the mechanism behind it is not what this
+   * test can speak about, and the implementation was simplified to match.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const node = scope.appended().find(
+    n => (n as { tagName?: string }).tagName === 'IFRAME',
+  ) as { contentWindow: Record<string, unknown> }
+  assert.equal(node.contentWindow['late'], undefined)
+  scope.realWindow['late'] = 'here now'
+  assert.equal(node.contentWindow['late'], 'here now', 'the window was captured')
+})
+
+test('its contentDocument is the virtual document, not null', () => {
+  /*
+   * `null` is the answer for a frame we cannot reach into — measured: a nested
+   * srcdoc frame's `contentDocument` is null from inside an opaque origin, three
+   * ways. This is the one frame we are *inside* of, so it answers with the same
+   * object the card holds as `parent.document`.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const parentDoc = (scope.globals()['parent'] as Record<string, unknown>)['document']
+  const node = scope.appended().find(
+    n => (n as { tagName?: string }).tagName === 'IFRAME',
+  ) as { contentDocument: unknown }
+  assert.equal(node.contentDocument, parentDoc)
 })

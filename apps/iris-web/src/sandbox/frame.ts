@@ -124,6 +124,20 @@ export interface FrameEnv {
    */
   members: MemberTable
   /**
+   * Put a node the sandbox built into the card's container.
+   *
+   * Exists for exactly one node: the element that stands for **this frame** in
+   * the parent document's frame list. Injected rather than done through the
+   * container type because `ScopedRoot` is deliberately query-only — the
+   * container is a card's to write to, and this is the one thing the sandbox
+   * puts there itself.
+   *
+   * Optional so a host without a DOM still installs; the element is then simply
+   * absent, and a card looking for frames finds none rather than finding a
+   * broken one.
+   */
+  appendToContainer?: (node: unknown) => void
+  /**
    * The realm's own page state, read on each access.
    *
    * Injected because this module touches no document, and read live rather than
@@ -282,20 +296,88 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     },
   })
 
+  /*
+   * An element standing for **this frame**, real and in the card's container.
+   *
+   * Upstream's cards find each other through the page: 銀麒赎世's system panel
+   * does `parent.document.querySelectorAll('iframe')` and checks each one's
+   * `contentWindow.phoneAPI`, where the phone UI published its interface. It
+   * **never reads `window.phoneAPI` directly** [44], so frame discovery is its
+   * only path, and its guard is `if (fw && fw.phoneAPI)`: either half missing is
+   * silent.
+   *
+   * **A real node rather than one synthesised into `parent.document`'s answers**,
+   * and the reason is a path no synthesis could reach: a card's bare
+   * `$('iframe')` searches the *frame's own* document. Upstream's `$` is the
+   * page's, so upstream's bare query finds the card's frame — a stand-in
+   * visible only through `parent.document` would have left that difference in
+   * place, and the standing discipline is to close a mechanism difference rather
+   * than to match the corpus's current hit count.
+   *
+   * `contentWindow` is the **real** window, not the shadow: a card publishes
+   * with `window.phoneAPI = …` from a module body, and a module cannot be handed
+   * a shadowed `window` (the name is not redefinable), so the write lands on the
+   * real one. Handing back the shadow would find nothing.
+   *
+   * The cost, recorded rather than hidden: one empty nested browsing context per
+   * card, and the element appears in the card's own DOM walks. The second half
+   * is **more** faithful, not less — upstream's page contains the card's frame
+   * too.
+   */
+  const installSelfFrame = (): void => {
+    if (env.appendToContainer === undefined) return
+    const node = env.factory.createElement('iframe')
+    if (node === null || typeof node !== 'object') return
+    try {
+      // Hidden and inert: it exists to be *found*, never to render. Zero-sized
+      // so the overlay-region walk drops it rather than clipping to it.
+      const styled = node as { style?: Record<string, string>, setAttribute?: (n: string, v: string) => void }
+      styled.setAttribute?.('aria-hidden', 'true')
+      styled.setAttribute?.('title', 'this card\u2019s own frame')
+      if (styled.style !== undefined) {
+        styled.style['display'] = 'none'
+      }
+      /*
+       * Instance properties shadowing the prototype's accessors. The native
+       * `contentWindow` of this empty element would be its own blank nested
+       * frame — correct for what the element is, and useless for what a card is
+       * asking, which is "the frame the API was published in".
+       */
+      Object.defineProperty(node, 'contentWindow', {
+        /*
+         * A stored reference, not a getter, and a mutation test is what settled
+         * it: replacing the getter with `value:` changed **nothing** any test
+         * could see, because `env.realWindow` is one stable object and a later
+         * `window.phoneAPI = …` mutates that object rather than replacing it.
+         * A getter would have looked more careful while buying nothing.
+         */
+        value: env.realWindow,
+        configurable: true,
+      })
+      Object.defineProperty(node, 'contentDocument', {
+        // The virtual document: the same object the card gets as
+        // `parent.document`. Not `null` — null is the answer for a frame we
+        // cannot reach into, and this is the one frame we are inside of.
+        get: () => virtualDocument,
+        configurable: true,
+      })
+      env.appendToContainer(node)
+    } catch {
+      /*
+       * A realm where the accessors cannot be shadowed. Reported by absence
+       * rather than by a throw: a frame that failed to install this is a frame
+       * where one card's panel will not find its phone, which is worse than a
+       * frame that did not come up at all only if it pretends otherwise.
+       */
+    }
+  }
+
   const virtualDocument = createVirtualDocument({
     container: env.container,
     viewport: readViewport,
     factory: env.factory,
     anchors,
     knownIds: env.members.KNOWN_ST_IDS,
-    /*
-     * The **real** window, not the shadow. A card publishes its interface with
-     * `window.phoneAPI = ...` from a module body, and a module cannot be handed
-     * a shadowed `window` (the name is not redefinable), so the write lands on
-     * the real one. Handing back the shadow would find nothing — and the card's
-     * guard is `if (fw && fw.phoneAPI)`, so finding nothing is silent.
-     */
-    frameWindow: () => env.realWindow,
     report: (message, failed) => {
       if (failed) reportFault(message)
       else reportGap(message)
@@ -321,6 +403,13 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       },
     },
   })
+
+  /*
+   * After the virtual document exists, because the element's `contentDocument`
+   * answers with it — and before any card code runs, so a card that enumerates
+   * frames on its first line finds it.
+   */
+  installSelfFrame()
 
   const unbridged = new Map(UNBRIDGED_GLOBALS.map(row => [row.name, row]))
 
