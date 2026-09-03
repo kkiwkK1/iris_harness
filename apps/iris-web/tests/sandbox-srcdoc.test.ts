@@ -459,3 +459,33 @@ test('the sentinel the head links is the one the build writes', () => {
   // to hold: agreeing on a name with no `fontawesome` in it agrees on nothing.
   assert.match(FA_SENTINEL, /fontawesome|font-awesome/)
 })
+test('both frame kinds give a nested-frame stand-in an iframe’s default size', () => {
+  /*
+   * A `<div>` stand-in has no intrinsic size where an `<iframe>` has 300×150.
+   * Measured in a laid-out page: the stand-in came out **600×0** — full
+   * container width, zero height — so a card that sizes its frame only from a
+   * stylesheet, or not at all, had nothing to look at.
+   *
+   * **A rule, not inline styles**, because inline would beat the card's own
+   * sheet and break every card that does size its frame. Also measured: with
+   * this rule first and a card's sheet after, a card's `#id` rule wins outright
+   * and its `.class` rule wins on order.
+   *
+   * Both frame kinds, because a card can build a nested frame from either an
+   * interface body or a script — and the two resets are separate strings, which
+   * is exactly how one of them would come to lack it.
+   */
+  for (const body of [undefined, '<body>an interface</body>']) {
+    const doc = buildSrcdoc('tok', '', {
+      networkGranted: false,
+      libraries: [],
+      selfOrigin: SELF,
+      ...(body === undefined ? {} : { body }),
+    })
+    assert.match(
+      doc,
+      /\[data-iris-nested-frame\]\{display:block;width:300px;height:150px\}/,
+      `the ${body === undefined ? 'script' : 'interface'} frame's reset has no stand-in size`,
+    )
+  }
+})

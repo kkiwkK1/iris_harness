@@ -33,6 +33,40 @@ import { REMOTE_ALLOWLIST } from './policy.ts'
  * A literal rather than a manifest lookup, because the **filename** is what a
  * card's guard reads — see the file at this path for why it cannot be hashed.
  */
+/**
+ * An iframe's own default size, given to the elements that stand in for one.
+ *
+ * A nested iframe cannot be reached into from an opaque origin, so a card that
+ * builds one is handed a `<div>` stand-in (`nested-frame.ts`). A `<div>` has no
+ * intrinsic size: an `<iframe>` is a replaced element and is **300×150** with
+ * no styling at all, while the stand-in fills its container's width and
+ * collapses to **zero height** — measured in a laid-out page: `600×0` against
+ * an iframe's `300×150`. A card that sizes its frame only from a stylesheet, or
+ * not at all, therefore gets nothing to look at.
+ *
+ * **A rule rather than inline styles, and that is the whole design.** Inline
+ * would beat the card's own stylesheet and break every card that *does* size
+ * its frame. Measured against jQuery-era card CSS in a laid-out page, with this
+ * rule first and the card's sheet after:
+ *
+ * | the card writes | result |
+ * | --- | --- |
+ * | nothing | 300×150 — an iframe's default |
+ * | `#its-id { width:100%; height:400px }` | 600×400 — the card wins |
+ * | `.its-class { width:100%; height:420px }` | 600×420 — the card wins |
+ * | `iframe { … }` | 300×150 — **does not match a div**, a recorded gap |
+ *
+ * The attribute selector is specificity 0-1-0, the same as a class, so a card's
+ * id rule wins outright and its class rule wins on order — this rule is in the
+ * frame's reset and the card's sheet comes later.
+ *
+ * The last row is the gap this does not close: page-level `iframe { … }` in a
+ * card selects by element type. The full-corpus census found zero of those, so
+ * it is recorded rather than chased.
+ */
+const NESTED_FRAME_RESET =
+  '[data-iris-nested-frame]{display:block;width:300px;height:150px}'
+
 export const FA_SENTINEL = '/sandbox/fontawesome.min.css'
 
 export function framePolicy(networkGranted: boolean, selfOrigin: string): string {
@@ -287,10 +321,10 @@ export function buildSrcdoc(
      * gets through the document grant.
      */
     body === undefined
-      ? '<style>html,body{margin:0;padding:0;background:transparent;color-scheme:inherit}</style>'
+      ? `<style>html,body{margin:0;padding:0;background:transparent;color-scheme:inherit}${NESTED_FRAME_RESET}</style>`
       : '<style>*,*::before,*::after{box-sizing:border-box}' +
         'html,body{margin:0!important;padding:0;overflow:hidden!important;max-width:100%!important;' +
-        'background:transparent;color-scheme:inherit}</style>',
+        `background:transparent;color-scheme:inherit}${NESTED_FRAME_RESET}</style>`,
     /*
      * A marker on the body when this frame holds a card **interface**.
      *
