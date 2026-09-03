@@ -716,6 +716,108 @@ window.addEventListener('message', function (event) {
 
 ---
 
+## 六之四、嵌套 iframe 里面是什么：**一个没有代码的文档**
+
+**给「嵌套 iframe 虚拟化」当上游对照。**结论一句：
+**那个 srcdoc 里没有 `<script>`，所以嵌套 frame 里不执行任何代码——它是纯 DOM。**
+**没有 realm 要模拟，只有一个 document 要替身。**
+
+### ① srcdoc 原文（全文，V1.5.4 论坛覆盖层）
+
+```html
+<!DOCTYPE html><html style="height:100%">
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <style>html,body{margin:0;height:100%;background:#0e1028;color:#e8e2d6;font-family:sans-serif}
+         html,body,#app{width:100%}body{overflow-y:auto}#app{min-height:100%}</style>
+</head>
+<body><div id="app"></div></body>
+</html>
+```
+
+| | |
+| --- | --- |
+| `<script>` | **无** |
+| `<link>` | **无** |
+| `<style>` | **有一个**，5 条规则，全是布局与配色 |
+| `<meta viewport>` | **有**，`viewport-fit=cover` ——**这正是恢复扫描用的标记**（§二） |
+| 挂载点 | `<div id="app">` |
+
+### ② 谁往里挂东西，代码在哪个 realm
+
+```js
+.on('load', function () {
+  const e = this.contentDocument;
+  t.mount(e.querySelector('#app') || e.body);          // ← Vue 应用挂进嵌套文档
+  nextTick(() => { a = new RA(e.head); a.start(); });  // ← 样式同步器写进嵌套 <head>
+  $(e).on('keydown', e => { 'Escape' === e.key && GA() });   // ← keydown 挂在嵌套 document 上
+})
+```
+
+**但 Vue 应用是在卡 frame 里创建的**（`createApp(xA).use(e())`，`xA` 是卡 bundle 里的模块级组件）。
+**srcdoc 无 `<script>` ⇒ 嵌套 frame 里没有任何代码执行 ⇒
+组件闭包里的 `window` / `document` 全是卡 frame 的，不是嵌套文档的。**
+
+**`RA` 样式同步器**（`class RA`）：
+
+```js
+sync() {
+  const e = [];
+  for (const n of document.styleSheets) try { for (const t of n.cssRules) e.push(t.cssText) } catch {}
+  const n = this.targetHead.ownerDocument;
+  this.targetHead.querySelectorAll('style[data-style-sync]').forEach(x => x.remove());
+  const t = n.createElement('style');                 // ← 用嵌套文档的 createElement
+  t.setAttribute('data-style-sync', 'true'); t.textContent = e.join('\n');
+  this.targetHead.appendChild(t);
+}
+start() { this.sync(); this.observer = new MutationObserver(…); this.observer.observe(document.head, { childList: true }) }
+```
+
+**读的是卡 frame 的 `document.styleSheets`，写的是嵌套文档的 `head`，观察的是卡 frame 的 `document.head`。**
+**一个跨文档的单向镜像。**它用 `targetHead.ownerDocument.createElement` —— **虚拟化时
+替身文档必须提供可用的 `createElement` 与 `ownerDocument`。**
+
+### ③ 事件监听挂在哪
+
+| 监听 | 挂在 | 出处 |
+| --- | --- | --- |
+| `keydown`（Escape 关闭） | **嵌套 document**（`$(e).on('keydown', …)`） | 上面那段 `load` 回调 |
+| `resize` | **卡 frame 的 window**（组件 `onMounted` 里 `window.addEventListener('resize', …)`） | 组件闭包 |
+| `message` / `pagehide` / `resize.forum-overlay` | **卡 frame 的 window**（`$(window).on(…)`） | 脚本主体 |
+
+**全部四类里只有 `keydown` 挂在嵌套文档上，其余都在卡 frame 的 window 上。**
+
+### ④ `contentWindow`：**零次**
+
+`contentDocument` 出现 2 次（一次是上面的 `load` 回调，一次在 webpack **style-loader 的通用
+helper** 里——那条分支因为卡把 `insert` 配成了 `'head'` 而不走）。
+**`contentWindow` 全脚本 0 次，没有任何 postMessage 打进嵌套 frame。**
+
+**所以虚拟化只需要替身一个 `document`，不需要替身 `window`。**
+
+### ⚠ 一处更正：§三 那条 realm 不一致的**机制**是错的，结论不变
+
+§三 我写的是：「overlay iframe 挂在宿主页面 → 它内部的 `window.parent` 是宿主 window；
+而监听在脚本 frame 的 window 上，**两端不在同一个 window**。」
+
+**「它内部」这个说法不成立——嵌套 frame 里没有"内部代码"。**
+`window.parent.postMessage('toggle-forum-overlay','*')` 位于**组件的 setup 闭包**里，
+而组件是卡 frame 的代码，**所以那个 `window` 是卡 frame 的 window**。
+
+**正确的形状是**：**发送方与监听方在同一个 realm（卡 frame），
+但一个 post 给 `parent`、另一个听 `self`。**
+
+**结论（消息到不了）不变，机制换了一个。**
+
+> **这条值得单记的是它怎么躲过复核的。**44 独立核过这一条并确认，
+> 但他走的路径是「读 append 目标与 listener 的绑定对象」——
+> **和我共享了同一个前提：「overlay iframe 里有代码在跑」。**
+> **两条静态路径在那个前提上没有分叉，所以一致没有鉴别力**
+> （`METHODS.md` §十九）。**拆穿它的不是第三次复核，是问了一个别的问题：
+> "那个 srcdoc 里到底有什么"。**
+
+---
+
 ## 七、未查 / 只是预测
 
 1. **§三那条 realm 不一致是静态读出来的预测，不是观测。**
