@@ -14,9 +14,14 @@ import assert from 'node:assert/strict'
 import {
   type Measured,
   type Region,
+  type Visibility,
   clipPathFor,
   collectRegions,
+  describeEmptySurface,
+  describeFrameViewport,
+  describeVisibility,
   mergeRegions,
+  regionsKey,
 } from '../src/sandbox/overlay-regions.ts'
 
 const at = (x: number, y: number, width: number, height: number): Region =>
@@ -196,4 +201,144 @@ test('the reporter survives a frame Chrome refuses to paint', () => {
     'the rescue timer is gone — a zero-area clip then seals its own silence forever',
   )
   assert.match(schedule, /, 500\)/u, 'the rescue interval no longer matches the height fallback')
+/*
+ * ── The zero-area instrument ────────────────────────────────────────────────
+ *
+ * All of the following exist because of one live reading: a card's overlay came
+ * back `clip-path: path("M 0 0 Z")` — zero area, a blank screen — beside a
+ * report that said only "this card built 2 element(s)". Four different repairs
+ * fit that sentence (hidden, detached, sized zero, measured before layout) and
+ * nothing in the report chose between them. Each test below pins the one fact
+ * that eliminates one of those repairs.
+ */
+
+/** A measured element with the fields the tests under study care about. */
+const shown = (over: Partial<Visibility>): Visibility => ({
+  label: 'div',
+  rect: { x: 0, y: 0, width: 100, height: 50 },
+  display: 'block',
+  connected: true,
+  // `text` and `paints` are required, and spreading a `Partial` over them would
+  // reintroduce `undefined` under `exactOptionalPropertyTypes`.
+  text: over.text ?? true,
+  paints: over.paints ?? true,
+  ...over,
+})
+
+test('a zero box is reported even though nothing about it is unusual', () => {
+  /*
+   * The rest of this description lists deviations — an opacity that is not 1, a
+   * display that is not block. A zero box is not a deviation from anything; it
+   * is the finding, so it is unconditional, and it is marked so a reader
+   * scanning a row of numbers cannot slide past it.
+   */
+  const line = describeVisibility(shown({ rect: { x: 12, y: 34, width: 0, height: 0 } }))
+  assert.ok(line !== undefined, 'a zero-area element must produce a line')
+  assert.match(line, /ZERO BOX 0x0 at 12,34/)
+})
+
+test('a healthy box still reports its size, so a reader can compare', () => {
+  const line = describeVisibility(shown({}))
+  assert.ok(line !== undefined && line.includes('100x50'), `no box in: ${String(line)}`)
+  assert.ok(!line.includes('ZERO BOX'), `a 100x50 box was called zero: ${line}`)
+})
+
+test('display:none and being detached are told apart, because the fixes differ', () => {
+  const hidden = describeVisibility(
+    shown({ display: 'none', rect: { x: 0, y: 0, width: 0, height: 0 } }),
+  )
+  const detached = describeVisibility(
+    shown({ connected: false, rect: { x: 0, y: 0, width: 0, height: 0 } }),
+  )
+  assert.match(hidden ?? '', /display none/)
+  assert.ok(!(hidden ?? '').includes('NOT IN THE DOCUMENT'), 'a hidden node is in the document')
+  assert.match(detached ?? '', /NOT IN THE DOCUMENT/)
+})
+
+test('the inline style rides along on a zero box, and only there', () => {
+  /*
+   * **This is the field that decides the card under investigation.** It sets
+   * seven properties on its overlay frame with `!important` after appending it
+   * (`display:block`, `width:100vw`, `height:100vh`), and hides itself later
+   * with `display:none !important`. The computed `display` cannot say which of
+   * those happened; the attribute text can, because `!important` survives in it
+   * verbatim.
+   *
+   * And only on a zero box: it is long, and a healthy element does not need it.
+   */
+  const style = 'display: none !important; width: 100vw !important'
+  const empty = describeVisibility(
+    shown({ inline: style, rect: { x: 0, y: 0, width: 0, height: 0 } }),
+  )
+  assert.ok((empty ?? '').includes(style), `the attribute text was dropped: ${String(empty)}`)
+  const healthy = describeVisibility(shown({ inline: style }))
+  assert.ok(
+    !(healthy ?? '').includes('style="'),
+    `a healthy element carried its inline style: ${String(healthy)}`,
+  )
+})
+
+test('our stand-in is named as ours, so the owner of the bug is not guessed', () => {
+  const ours = describeVisibility(shown({ standIn: true }))
+  assert.match(ours ?? '', /our nested-frame stand-in/)
+  const theirs = describeVisibility(shown({}))
+  assert.ok(
+    !(theirs ?? '').includes('stand-in'),
+    `a card's own element was claimed as ours: ${String(theirs)}`,
+  )
+})
+
+test('the empty-surface sentence fires only when every element is empty', () => {
+  /*
+   * `zero < total` and not `zero > 0`: one empty element among four is normal
+   * (a spacer, a collapsed panel), and saying "the clip is empty" then would be
+   * false — the clip has the other three in it.
+   */
+  assert.match(
+    describeEmptySurface(2, 2) ?? '',
+    /all 2 element\(s\).*measured zero area.*clip is empty/,
+  )
+  assert.equal(describeEmptySurface(1, 4), undefined)
+  assert.equal(describeEmptySurface(0, 0), undefined, 'a card that built nothing is not this')
+})
+
+test('a frame with no layout says so, because vh explains the zeros', () => {
+  /*
+   * The reading that made this necessary: the same card in the same chat was
+   * empty once and full-screen once. A frame that has never been laid out
+   * reports `clientHeight === 0`, and an element sized `height:100vh` inside it
+   * measures zero **with entirely correct CSS**. Without this clause the report
+   * blames the card's styles for something the frame never gave it.
+   */
+  assert.match(describeFrameViewport({ width: 2498, height: 1353 }), /viewport is 2498x1353/)
+  const unlaid = describeFrameViewport({ width: 2498, height: 0 })
+  assert.match(unlaid, /NO LAYOUT/)
+  assert.match(unlaid, /vw\/vh/)
+})
+
+test('the dedup key changes when the viewport does, so recovery is reported', () => {
+  /*
+   * The failure this prevents is subtle and was real: keyed on the clip alone,
+   * the empty diagnosis is sent once and then suppressed forever, because an
+   * all-zero card produces the identical empty clip on every pass. The states
+   * that must re-report are exactly the ones that keep the clip the same.
+   */
+  const box = { width: 2498, height: 1297 }
+  const same = regionsKey('path("M0 0Z")', 2, 2, box)
+  assert.equal(same, regionsKey('path("M0 0Z")', 2, 2, box), 'a still card must stay quiet')
+  assert.notEqual(
+    same,
+    regionsKey('path("M0 0Z")', 2, 2, { width: 2498, height: 1353 }),
+    'the frame was laid out at a new size and the report was suppressed',
+  )
+  assert.notEqual(
+    same,
+    regionsKey('path("M0 0Z")', 3, 2, box),
+    'a third element appeared and the report was suppressed',
+  )
+  assert.notEqual(
+    same,
+    regionsKey('path("M0 0Z")', 2, 1, box),
+    'one element gained area and the report was suppressed',
+  )
 })

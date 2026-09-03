@@ -178,6 +178,54 @@ export interface Visibility {
    * resolved stack is the only thing that says so from inside.
    */
   font?: string
+  /**
+   * The measured box, verbatim.
+   *
+   * **Added because a live reading needed it and could not get it.** The clip
+   * came back `path("M 0 0 Z")` — zero area, so a blank screen — and the report
+   * beside it said only that the card had built two elements. Nobody could tell
+   * whether the elements were `display:none`, detached, sized zero by the
+   * card's own CSS, or measured before layout: four different repairs behind
+   * one sentence. The rect is the fact that separates them.
+   */
+  rect?: { x: number, y: number, width: number, height: number }
+  /** `display`, always — `none` is the commonest reason a box measures zero. */
+  display?: string
+  /**
+   * Whether the element is in the document at all.
+   *
+   * A node built and never appended measures zero exactly like one that is
+   * appended and hidden, and the two are not the same bug.
+   */
+  connected?: boolean
+  /**
+   * The element's own `style` attribute, verbatim.
+   *
+   * **This is the field that decides V1.5.4.** That card appends its overlay
+   * frame and then sets seven properties on it with `!important`
+   * (`display:block`, `width:100vw`, `height:100vh`, ...), so it is full-screen
+   * by default; later it may hide itself with `display:none !important`. When
+   * the box measures zero, two very different repairs are in play, and the
+   * inline text tells them apart in one reading:
+   *
+   * - it holds `display: none !important` -> **the card hid its own frame**, and
+   *   the bug, if any, is in whatever made the card decide that. Not ours.
+   * - it is missing the card's `!important` block -> the properties never
+   *   landed, which is **ours**: the stand-in did not take the writes.
+   *
+   * Reported only for a zero box, because that is the only place it earns its
+   * length, and it is the raw attribute rather than a computed value so
+   * `!important` survives into the report at all.
+   */
+  inline?: string
+  /**
+   * Whether this element is one of our nested-frame stand-ins
+   * (`data-iris-nested-frame`) rather than something the card built directly.
+   *
+   * Without it a reader cannot tell a card's own `<div>` from the `<div>` we
+   * substitute for its `<iframe>`, and those two have different owners.
+   */
+  standIn?: boolean
 }
 
 /**
@@ -187,6 +235,27 @@ export interface Visibility {
  */
 export function describeVisibility(it: Visibility): string | undefined {
   const notes: string[] = []
+  /*
+   * The box first, and **unconditionally when it is empty**.
+   *
+   * Everything else here is reported only when it deviates, which is right for
+   * a list of oddities and wrong for the one number a reader of a blank screen
+   * needs. A zero box is the finding, not a deviation from one.
+   */
+  if (it.rect !== undefined) {
+    const { width, height, x, y } = it.rect
+    const box = `${String(round(width))}x${String(round(height))}`
+      + ` at ${String(round(x))},${String(round(y))}`
+    if (width <= 0 || height <= 0) notes.push(`ZERO BOX ${box}`)
+    else notes.push(box)
+  }
+  if (it.display !== undefined && it.display !== 'block') notes.push(`display ${it.display}`)
+  if (it.connected === false) notes.push('NOT IN THE DOCUMENT')
+  if (it.standIn === true) notes.push('our nested-frame stand-in')
+  // Only for an empty box: see `inline`. Long, and decisive exactly there.
+  if (it.inline !== undefined && it.inline !== '' && isEmpty(it)) {
+    notes.push(`style="${it.inline}"`)
+  }
   if (it.opacity !== undefined && it.opacity !== '1') notes.push(`opacity ${it.opacity}`)
   if (it.visibility !== undefined && it.visibility !== 'visible') {
     notes.push(`visibility ${it.visibility}`)
@@ -200,6 +269,87 @@ export function describeVisibility(it: Visibility): string | undefined {
   if (!it.text && !it.paints) notes.push('no text, no background, no border')
   if (it.font !== undefined) notes.push(`font ${it.font}`)
   return notes.length === 0 ? undefined : `${it.label}: ${notes.join(', ')}`
+}
+
+/**
+ * Say that every element measured zero, which is why the clip is empty.
+ *
+ * A separate sentence rather than something a reader infers from a list of
+ * boxes: the clip being empty and the elements being empty are two facts, and
+ * the causal link between them is the thing that turns "my screen is blank"
+ * into "my elements have no size". It leads the report, because the channel and
+ * the conclusion belong in the first sentence.
+ * @param zero - how many measured elements had no area.
+ * @param total - how many were measured.
+ * @returns the sentence, or undefined when at least one element has area.
+ */
+/**
+ * Whether this element's measured box has no area.
+ * @param it - one measured element.
+ * @returns true when a rect was measured and it is empty.
+ */
+function isEmpty(it: Visibility): boolean {
+  return it.rect !== undefined && (it.rect.width <= 0 || it.rect.height <= 0)
+}
+
+/** The frame's own viewport, which every `vw`/`vh` length resolves against. */
+export interface FrameViewport {
+  width: number
+  height: number
+}
+
+/**
+ * Say how big the frame's viewport is, and shout when it does not have one.
+ *
+ * Lives here, next to the element descriptions, because it is the same kind of
+ * sentence and because `reportRegions` — where it is used — runs only inside a
+ * real frame and cannot be reached by `node --test`. Keeping the decision in a
+ * tested module is the difference between this behaviour having teeth and
+ * merely having a comment.
+ * @param viewport - the frame's `documentElement` client box.
+ * @returns one clause for the regions detail.
+ */
+export function describeFrameViewport(viewport: FrameViewport): string {
+  const size = `${String(viewport.width)}x${String(viewport.height)}`
+  if (viewport.width > 0 && viewport.height > 0) return `the frame's own viewport is ${size}`
+  return `the frame's own viewport is ${size}`
+    + ' — THE FRAME HAS NO LAYOUT, so every vw/vh length inside it is 0'
+}
+
+/**
+ * The deduplication key for a `regions` report.
+ *
+ * **What is in the key is a policy, not a detail.** Keyed on the clip alone, a
+ * card whose elements all measure zero produces one identical empty clip
+ * forever: the diagnosis is sent once, before the card has finished building,
+ * and the state that most needs re-reporting is the one state that cannot be.
+ * The element count and the zero count catch "the DOM changed and the answer
+ * did not"; the viewport catches "the frame was finally laid out", which is the
+ * transition one card recovered on — empty at first open, full screen after the
+ * window height changed.
+ *
+ * It deliberately does **not** include the per-element boxes, so a card that is
+ * merely animating does not post on every frame.
+ * @param clip - the computed clip path.
+ * @param roots - how many top-level elements were measured.
+ * @param zero - how many measured elements had no area.
+ * @param viewport - the frame's viewport at measurement time.
+ * @returns a string that differs exactly when the report should be re-sent.
+ */
+export function regionsKey(
+  clip: string,
+  roots: number,
+  zero: number,
+  viewport: FrameViewport,
+): string {
+  return `${clip}|${String(roots)}|${String(zero)}`
+    + `|${String(viewport.width)}x${String(viewport.height)}`
+}
+
+export function describeEmptySurface(zero: number, total: number): string | undefined {
+  if (total === 0 || zero < total) return undefined
+  return `all ${String(total)} element(s) on this card's overlay surface measured zero area, so`
+    + ' the clip is empty and nothing on it can be seen or clicked'
 }
 
 /** What the collector needs to know about one element. */
