@@ -8,6 +8,9 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
+import type { SillyTavernChatHeader, SillyTavernMessage } from '@iris/persistence'
+import { importChat } from '@iris/persistence'
+import { ChatEntry, chatLines } from '../src/entry.ts'
 import { ChatStore } from '../src/chats.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
 import { CharacterLibrary } from '../src/library.ts'
@@ -99,21 +102,30 @@ function variableBytes(file: { messages: { variables?: unknown }[] }): number {
 }
 
 test('the plan keeps snapshots, keeps the recent window, and prunes between', () => {
+  // Indices, not turns: a reply sits on every other line, so turn N is at
+  // index 2N + 1. Building the fixture the other way is how a turn-counted
+  // implementation passes a test that means to catch it.
   const layers = Array.from({ length: 30 }, (_unused, turn) => ({
     turn,
+    index: turn * 2 + 1,
     candidateSeq: turn * 10,
     variables: { stat_data: { count: turn }, schema: {}, event_chain: ['a'] },
   }))
 
-  const plan = planPrune(layers, 29, { snapshotInterval: 10, keepRecent: 5 })
+  const plan = planPrune(layers, 59, { snapshotInterval: 10, keepRecent: 5 })
   const prunedTurns = plan.filter(decision => decision.removed !== undefined).map(decision => decision.turn)
 
-  // On the interval: kept. Inside the recent window: kept. Everything else goes.
-  assert.equal(prunedTurns.includes(0), false, 'turn 0 is on the interval')
-  assert.equal(prunedTurns.includes(10), false, 'turn 10 is on the interval')
-  assert.equal(prunedTurns.includes(20), false, 'turn 20 is on the interval')
-  assert.equal(prunedTurns.includes(29), false, 'turn 29 is inside the recent window')
-  assert.equal(prunedTurns.includes(25), false, 'turn 25 is inside the recent window')
+  // Every reply sits at an odd index, and no odd number is a multiple of ten,
+  // so on this fixture the interval keeps nothing at all. What keeps a layer
+  // here is the recent window: index > 59 - 5, which is indices 55, 57 and 59,
+  // i.e. turns 27, 28 and 29.
+  //
+  // That is what makes the fixture discriminating. A turn-counted rule keeps
+  // turns 0, 10 and 20 — and an index-counted one prunes them. Asserting that
+  // turn 0 survives would have passed against both.
+  assert.equal(prunedTurns.includes(29), false, 'turn 29 (index 59) is inside the recent window')
+  assert.equal(prunedTurns.includes(28), false, 'turn 28 (index 57) is inside the recent window')
+  assert.ok(prunedTurns.includes(0), 'turn 0 sits at index 1, which is not on the interval')
   assert.ok(prunedTurns.includes(7) && prunedTurns.includes(13))
 
   // Five named keys, never the layer. A card's own key survives, because
@@ -129,8 +141,8 @@ test('the plan keeps snapshots, keeps the recent window, and prunes between', ()
 
 test('a layer already marked as a snapshot is never pruned again', () => {
   const layers = [
-    { turn: 3, candidateSeq: 1, variables: { stat_data: {}, [SNAPSHOT_KEY]: true } },
-    { turn: 4, candidateSeq: 2, variables: { stat_data: {} } },
+    { turn: 3, index: 7, candidateSeq: 1, variables: { stat_data: {}, [SNAPSHOT_KEY]: true } },
+    { turn: 4, index: 9, candidateSeq: 2, variables: { stat_data: {} } },
   ]
   const plan = planPrune(layers, 100, { snapshotInterval: 50, keepRecent: 5 })
 
@@ -292,4 +304,62 @@ test('a turn does not prune unless the host was told to', async (t) => {
     0,
     'a host that was never configured to prune pruned anyway',
   )
+})
+
+test('a 677-message chat keeps exactly the snapshots SillyTavern kept', () => {
+  // The shape of the corpus's longest chat: a reply on every even index, a user
+  // row on every odd one, 677 lines. Synthetic rather than the file itself,
+  // because the file has already been cleaned and cannot answer this — but the
+  // set it must reproduce is the one measured on that file.
+  const messages: SillyTavernMessage[] = Array.from({ length: 677 }, (_unused, index) => index % 2 === 1
+    ? { name: 'Traveller', is_user: true, mes: 'u' }
+    : {
+        name: 'Aria',
+        is_user: false,
+        mes: 'a',
+        swipes: ['a'],
+        swipe_id: 0,
+        // No `snapshot` mark: a marked layer is kept whatever the unit counts,
+        // so seeding one would make this test agree with the implementation it
+        // is supposed to discriminate against.
+        variables: [{ stat_data: { n: index }, schema: {}, event_chain: ['x'] }],
+      })
+  const header: SillyTavernChatHeader = {
+    user_name: 'Traveller',
+    character_name: 'Aria',
+    create_date: '2026-01-22 @04h13m05s',
+    chat_metadata: {},
+  }
+
+  const session = importChat({ header, messages }, 'long')
+  const entry = new ChatEntry({ chatId: 'long', header, session, card: undefined })
+  const dropped: string[] = []
+  entry.hydrateVariables(messages, message => dropped.push(message))
+  assert.deepEqual(dropped, [], 'the fixture lost tables before the rule ever ran')
+
+  entry.prune(DEFAULT_PRUNE)
+
+  const survivors: number[] = []
+  for (const [index, line] of chatLines(session).entries()) {
+    if (line.isUser) continue
+    if ('stat_data' in (entry.readFloorVariables(index).variables ?? {})) survivors.push(index)
+  }
+
+  // **The two-way discriminator.** Counting turns instead of messages puts a
+  // snapshot every 100 messages, so this equality fails in both directions: a
+  // turn-counted rule keeps too few here, and a rule with the window in the
+  // wrong unit keeps too many at the end.
+  assert.deepEqual(
+    survivors.filter(index => index % 50 === 0),
+    Array.from({ length: 14 }, (_unused, k) => k * 50),
+    'the interval survivors are not the set SillyTavern left on the same chat',
+  )
+
+  // The tail is not compared by length: upstream's own trigger (`chat.length % 5`)
+  // means the file's recent window is whatever it was when cleanup last ran, so
+  // only the shape is pinned.
+  const tail = survivors.filter(index => index % 50 !== 0)
+  assert.ok(tail.length > 0, 'the recent window kept nothing')
+  assert.equal(tail[tail.length - 1], 676, 'the recent window does not reach the newest reply')
+  assert.ok(tail.every((index, k) => k === 0 || index - (tail[k - 1] ?? 0) === 2), 'the recent window has a hole')
 })

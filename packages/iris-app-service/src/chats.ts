@@ -375,10 +375,10 @@ export class ChatStore {
    * Write a conversation to disk.
    * @param entry - the live conversation.
    */
-  async save(entry: ChatEntry): Promise<void> {
+  async save(entry: ChatEntry, onReport?: (message: string) => void): Promise<void> {
     await this.ensure()
     const path = fileFor(this.#dir, entry.chatId, '.jsonl')
-    await writeFile(path, formatChatFile(entry.toFile()), 'utf8')
+    await writeFile(path, formatChatFile(entry.toFile(onReport)), 'utf8')
   }
 
   /**

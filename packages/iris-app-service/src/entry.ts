@@ -140,26 +140,44 @@ export function metadataBackend(header: SillyTavernChatHeader): ScopeBackend {
  * @param session - the chat log.
  * @returns one turn number per line, in line order.
  */
-export function lineTurns(session: Session): number[] {
-  const turns: number[] = []
+/**
+ * Each chat line, in file order, with the turn it belongs to and who sent it.
+ *
+ * The single walk behind {@link lineTurns}. Roles are needed because the prune
+ * rules count message indices — user rows included — and a second walk kept in
+ * step by hand is a drift waiting to happen.
+ * @param session - the chat log.
+ * @returns one entry per line.
+ */
+export function chatLines(session: Session): { turn: number, isUser: boolean }[] {
+  const lines: { turn: number, isUser: boolean }[] = []
   const seen = new Set<number>()
   let turn = 0
 
   for (const event of session.events) {
-    if (event.type === 'turn/start') {
+    if (event.type === "turn/start") {
       turn = event.data.turn
       continue
     }
-    if (event.type === 'user/message') {
-      turns.push(turn)
+    if (event.type === "user/message") {
+      lines.push({ turn, isUser: true })
       continue
     }
-    if (event.type !== 'assistant/message') continue
+    if (event.type !== "assistant/message") continue
     if (seen.has(event.data.turn)) continue
     seen.add(event.data.turn)
-    turns.push(event.data.turn)
+    lines.push({ turn: event.data.turn, isUser: false })
   }
-  return turns
+  return lines
+}
+
+/**
+ * The turn each chat line belongs to, in file order.
+ * @param session - the chat log.
+ * @returns one turn number per line.
+ */
+export function lineTurns(session: Session): number[] {
+  return chatLines(session).map(line => line.turn)
 }
 
 /**
@@ -740,7 +758,7 @@ export class ChatEntry {
    * SillyTavern install.
    * @returns header and message lines.
    */
-  toFile(): { header: SillyTavernChatHeader, messages: SillyTavernMessage[] } {
+  toFile(onReport?: (message: string) => void): { header: SillyTavernChatHeader, messages: SillyTavernMessage[] } {
     const messages = exportMessages(this.session, this.header)
     for (const [index, saved] of this.#snapshotVariables()) {
       const line = messages[index]
@@ -749,7 +767,26 @@ export class ChatEntry {
       // state on the user's message — and would clobber whatever the imported
       // file had there, which `iris/st-meta` has already restored verbatim.
       if (line === undefined || line.is_user) continue
-      line['variables'] = saved.map(variables => variables ?? {})
+      // One table per swipe, which is the width upstream rebuilds to:
+      // `_.range(0, swipes?.length ?? 1)`. Missing entries become `{}`; extra
+      // ones are dropped, because a table with no swipe to belong to cannot be
+      // addressed and would be read back onto the wrong reply.
+      //
+      // **The floor of one is ours.** Upstream's `?? 1` catches a missing
+      // `swipes`, but an empty array is not nullish, so a line carrying
+      // `swipes: []` would rebuild to zero tables and silently discard the
+      // state of a reply that exists. Upstream cannot receive that shape; we
+      // can, so it is refused here rather than written out.
+      const swipes = line['swipes']
+      const width = Math.max(1, Array.isArray(swipes) ? swipes.length : 1)
+      const tables = saved.map(variables => variables ?? {})
+      if (tables.length > width) {
+        onReport?.(
+          `variables: line ${String(index)} holds ${String(tables.length)} table(s) but the`
+          + ` line has ${String(width)} swipe(s); ${String(tables.length - width)} dropped on export`,
+        )
+      }
+      line['variables'] = Array.from({ length: width }, (_unused, swipe) => tables[swipe] ?? {})
     }
     // Put every line's keys back where the file had them.
     //
@@ -1044,15 +1081,19 @@ export class ChatEntry {
    */
   prune(options: PruneOptions = DEFAULT_PRUNE, onReport?: (message: string) => void): number {
     const removed = prunedKeysOf(this.session)
-    const layers: { turn: number, candidateSeq: number, variables: Variables }[] = []
+    const layers: { turn: number, index: number, candidateSeq: number, variables: Variables }[] = []
     const written = new Map<number, Variables>()
     for (const event of this.session.events) {
       if (event.type === 'iris/variables') written.set(event.data.candidateSeq, event.data.variables as Variables)
     }
 
-    const turns = lineTurns(this.session)
-    let newest = -1
-    for (const turn of turns) if (turn !== undefined) newest = Math.max(newest, turn)
+    // The rules count chat lines, user rows included, so every layer travels
+    // with the index of the line its reply occupies rather than its turn.
+    const lines = chatLines(this.session)
+    const newestIndex = lines.length - 1
+    const replyIndex = new Map<number, number>()
+    for (const [index, line] of lines.entries()) if (!line.isUser) replyIndex.set(line.turn, index)
+    const turns = lines.map(line => line.turn)
 
     for (const turn of new Set(turns.filter((value): value is number => value !== undefined))) {
       for (const candidate of listCandidates(this.session, turn)) {
@@ -1062,11 +1103,15 @@ export class ChatEntry {
         // them would append a second record saying the same thing, and the count
         // this returns would report work that did not happen.
         if ((removed.get(candidate.seq)?.size ?? 0) > 0) continue
-        layers.push({ turn, candidateSeq: candidate.seq, variables: table })
+        const index = replyIndex.get(turn)
+        // No line means no address the rules can read. Keeping it is the safe
+        // direction, because the alternative deletes data on a guess.
+        if (index === undefined) continue
+        layers.push({ turn, index, candidateSeq: candidate.seq, variables: table })
       }
     }
 
-    const plan = planPrune(layers, newest, options)
+    const plan = planPrune(layers, newestIndex, options)
     for (const decision of plan) {
       if (decision.removed === undefined) continue
       onReport?.(

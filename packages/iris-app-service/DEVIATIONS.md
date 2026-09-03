@@ -457,10 +457,26 @@ schema whose values are `{启用: true, 快照保留间隔: 50, 要保留变量�
 触发恢复变量的最近楼层数: 10}`), so **an imported long chat has been rolling
 under cleanup since its first floor** — that is the ordinary state of every MVU
 installation, not a property of one corpus. Iris matches the rule: keep the
-newest `keepRecent`, keep and mark every floor on the absolute-numbered
-interval, strip the five named keys in between. `prune.ts` extends rather than
-replaces, and the interval is taken modulo the **absolute floor number** because
-a user arrives carrying upstream's mental model of where their snapshots are.
+newest `keepRecent`, keep and mark every layer on the interval, strip the five
+named keys in between. `prune.ts` extends rather than replaces.
+
+**Corrected: all three parameters count messages, not turns.** An earlier
+version counted turns — interval, protection window and trigger alike — on the
+reasoning that a turn is the meaningful unit and that upstream's reach-back
+compensated for an event it does not receive. Measurement said otherwise: on the
+corpus's 677-message chat SillyTavern retained 14 snapshots, one per 50 message
+indices, where a turn-counted interval of 50 retained 7. That is not a different
+trade-off, it is the same rule in the wrong unit, and since nothing here is
+replayed back it simply halved how far a long chat could be reasoned back
+through. Now fixed, and pinned by a test that reproduces the exact survivor set
+upstream left on that file (`{0, 50, … 650}`).
+
+**What the fix cannot undo.** A profile already pruned under the turn-counted
+rule lost layers that the corrected rule would have kept, and **those do not
+come back** — the tables are gone, and this host does not replay. The chats
+affected are the ones long enough to have been pruned at all; from the next
+cleanup on they follow upstream's spacing. A pruned floor still names the
+nearest intact one, which is the only thing that makes the loss legible.
 
 Two things diverge, both on the read side.
 

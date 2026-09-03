@@ -38,11 +38,12 @@ import { ScriptButtonStore } from './script-buttons.ts'
 import { charWorldbookNames, WorldbookStore } from './worldbooks.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
-import { lineSystemFlags, lineTurns } from './entry.ts'
+import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
 import type { PruneOptions } from './prune.ts'
+import { pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
 import { evaluatePrompt, promptHasTemplate } from './templates.ts'
 import { applyOps, buildSnapshot } from './template.ts'
@@ -1181,10 +1182,16 @@ export class IrisAppService {
       // state that cannot be recovered, and a user learning about it from a
       // shrinking file would learn too late.
       const prune = this.#options.pruneVariables
-      if (prune !== undefined) {
+      // Gated on the chat's length, because upstream gates on `chat.length % 5`
+      // rather than running every turn. The cadence is not cosmetic: the
+      // interval rule marks the layers it keeps, and marks persist, so a
+      // cleanup running at a different rhythm pins a different set of them.
+      if (prune !== undefined && pruneDue(chatLines(entry.session).length)) {
         entry.prune(prune, message => { this.#report(message, { kind: 'variables', chatId: entry.chatId }) })
       }
-      await this.#options.chats.save(entry)
+      await this.#options.chats.save(entry, message => {
+        this.#report(message, { kind: 'variables', chatId: entry.chatId })
+      })
       this.#options.broadcast({
         type: 'stream.end', chatId: entry.chatId, turn, view: entry.toView(), reason,
       })

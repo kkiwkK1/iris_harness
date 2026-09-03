@@ -27,13 +27,25 @@
  *   snapshot.
  * - Recent floors are protected.
  *
- * **What is deliberately not copied.** Upstream computes its range as
- * `[max(1, old - 2 - keep * 2), old]`, and its comment says the `* 2` is because
- * it does not listen for `MESSAGE_SENT` and so has to reach further back through
- * interleaved user floors. That is a compensation for a missed event, not a
- * rule. This host prunes by turn, where a turn is an exchange, so the same
- * protection is expressed as "the newest `keep` turns" with no magic number.
+ * **Every parameter counts messages, not turns.** All three of upstream’s are
+ * chat indices including user rows: the interval tests `(start + msg_index) % 50`
+ * against the chat index, the protection window is `message_id - 20`, and the
+ * cleanup is triggered on `chat.length % 5`.
  *
+ * An earlier version of this module counted turns, reasoning that a turn is an
+ * exchange and that upstream’s reach-back compensates for a missed
+ * `MESSAGE_SENT`. **That was the same rule in the wrong unit, and measurement
+ * made it a loss rather than a trade.** On the corpus’s 677-message chat
+ * SillyTavern retained 14 snapshots — one per 50 message indices, which is one
+ * per 25 turns — where a turn-counted interval of 50 retains 7. Nothing here is
+ * replayed back, so half the snapshot density is simply a longer reach backwards
+ * for anyone asking why a floor reads the way it does.
+ *
+ * **Floor 0 is not a rule.** It survives as two side effects — `0 % 50 === 0`,
+ * and upstream’s `Math.max(1, …)` lower bound. Worth knowing when writing a
+ * test: an assertion that floor 0 survives passes against an implementation that
+ * special-cases it *and* one that does not, so it discriminates nothing. The
+ * assertions with teeth are on the interval snapshots themselves.
  * **Nothing is restored.** Upstream replays `updateVariables` forward from the
  * nearest snapshot; our MVU commands are already folded into candidate state by
  * the time they are stored, so there is nothing to replay. A pruned floor is
@@ -98,18 +110,41 @@ export const SNAPSHOT_KEY = 'snapshot'
 /** How pruning is configured. */
 export interface PruneOptions {
   /**
-   * Keep every layer on a turn that is a multiple of this.
+  /**
+   * Keep every layer whose **message index** is a multiple of this.
    *
-   * Upstream's `快照保留间隔`, default 50 and the value in the measured
-   * installation.
+   * Upstream’s `快照保留间隔`, default 50 and the value in the measured
+   * installation. The index counts every chat line, user rows included — see the
+   * module note on why this is not a turn count.
    */
   snapshotInterval: number
   /**
-   * Never touch the newest this many turns.
+   * Never touch layers within this many **messages** of the newest.
    *
-   * Upstream's `要保留变量的最近楼层数`, default 20 and the measured value.
+   * Upstream’s `要保留变量的最近楼层数`, default 20 and the measured value,
+   * applied as `message_id - 20`. Counted in turns it protects roughly twice the
+   * history it should.
    */
   keepRecent: number
+}
+
+/**
+ * How often upstream runs the cleanup at all.
+ *
+ * `chat.length % 5` — the third parameter that counts messages rather than
+ * turns. Running on every turn instead is not a harmless difference in
+ * frequency: the interval rule marks what it keeps, so a cleanup that runs at a
+ * different cadence marks a different set of layers, and the marks persist.
+ */
+export const PRUNE_EVERY_MESSAGES = 5
+
+/**
+ * Whether a chat of this length is due for a cleanup.
+ * @param lineCount - how many chat lines the log holds, user rows included.
+ * @returns true when upstream would run its cleanup now.
+ */
+export function pruneDue(lineCount: number): boolean {
+  return lineCount % PRUNE_EVERY_MESSAGES === 0
 }
 
 /** Upstream's defaults, which are also the values in the measured install. */
@@ -131,14 +166,15 @@ export interface PruneDecision {
  * a caller can log it, test it, or show it before anything is removed. Deleting
  * user data is the one place where "what would happen" deserves to be a value
  * you can hold.
- * @param layers - each candidate's table, by turn, newest turn last.
- * @param newestTurn - the highest turn the log has, for the recency window.
+ * @param layers - each candidate's table, carrying the **message index** of the
+ *   line it belongs to; newest last.
+ * @param newestIndex - the highest message index the log has, for the window.
  * @param options - the interval and the protection window.
  * @returns one decision per layer, in the order given.
  */
 export function planPrune(
-  layers: readonly { turn: number, candidateSeq: number, variables: Record<string, unknown> }[],
-  newestTurn: number,
+  layers: readonly { turn: number, index: number, candidateSeq: number, variables: Record<string, unknown> }[],
+  newestIndex: number,
   options: PruneOptions = DEFAULT_PRUNE,
 ): PruneDecision[] {
   const plan: PruneDecision[] = []
@@ -150,16 +186,16 @@ export function planPrune(
       plan.push({ ...base, reason: 'kept: already marked as a snapshot' })
       continue
     }
-    if (layer.turn > newestTurn - options.keepRecent) {
-      plan.push({ ...base, reason: `kept: within the newest ${String(options.keepRecent)} turns` })
+    if (layer.index > newestIndex - options.keepRecent) {
+      plan.push({ ...base, reason: `kept: within the newest ${String(options.keepRecent)} messages` })
       continue
     }
-    if (options.snapshotInterval > 0 && layer.turn % options.snapshotInterval === 0) {
+    if (options.snapshotInterval > 0 && layer.index % options.snapshotInterval === 0) {
       // Marked as well as kept. Upstream's reason, verbatim in effect: raising
       // the interval later would otherwise make the effective spacing their
       // least common multiple, retroactively orphaning snapshots taken under the
       // old setting.
-      plan.push({ ...base, reason: `kept: on the ${String(options.snapshotInterval)}-turn snapshot interval, and marked` })
+      plan.push({ ...base, reason: `kept: on the ${String(options.snapshotInterval)}-message snapshot interval, and marked` })
       continue
     }
 
@@ -171,8 +207,8 @@ export function planPrune(
     plan.push({
       ...base,
       removed: [...removed],
-      reason: `pruned: turn ${String(layer.turn)} is older than the newest ${String(options.keepRecent)}`
-        + ` and not on the ${String(options.snapshotInterval)}-turn interval`,
+      reason: `pruned: message ${String(layer.index)} (turn ${String(layer.turn)}) is older than the newest ${String(options.keepRecent)}`
+        + ` and not on the ${String(options.snapshotInterval)}-message interval`,
     })
   }
 
