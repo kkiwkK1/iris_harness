@@ -301,7 +301,11 @@ async function serveAvatar(
   }
 
   res.writeHead(200, {
-    'content-type': file.extension === '.png' ? 'image/png' : 'application/json; charset=utf-8',
+    'content-type': file.extension === '.png'
+      ? 'image/png'
+      : file.extension === '.jpg' || file.extension === '.jpeg'
+        ? 'image/jpeg'
+        : 'application/json; charset=utf-8',
     'content-length': file.data.byteLength,
     // Re-importing a card reuses its id, so a cached avatar can go stale;
     // revalidation costs one conditional request and never shows the old face.

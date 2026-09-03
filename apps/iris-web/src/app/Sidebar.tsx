@@ -104,7 +104,7 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
         <input
           ref={picker}
           type="file"
-          accept=".png,.json,.charx"
+          accept=".png,.jpg,.jpeg,.json,.charx"
           multiple
           hidden
           onChange={async event => {

@@ -1040,6 +1040,74 @@ someone wants that mode, and not before.
 
 ---
 
+## 18. An image with no card inside imports as an empty character
+
+**The rule:** a PNG that parses but carries no `chara`/`ccv3` chunk (the corpus
+shape: an SD generation whose only text chunk is `parameters`) and any JPEG
+with a valid SOI marker import as **empty characters** — every field blank, the
+picture itself the avatar, the id and display name minted from the filename.
+`packages/iris-app-service/src/library.ts` (`decode`) is the single place the
+rule lives; the avatar route gained `image/jpeg` and the web picker gained
+`.jpg,.jpeg` in its `accept` list, both consequences of the same row.
+
+**Upstream does not do this on the import path — both shapes are refused
+there, and that was verified against the install, not remembered.** Live probe
+of `E:/sillyTavern/SillyTavern` (1.18.0, `51ad27fb8`, no plugins installed),
+driving `/api/characters/import` exactly as the client does:
+
+| corpus file | upstream's answer |
+| --- | --- |
+| `00004-4209168235_1.png` | `200 {"error":true}` — the client toastr reads *"The file is likely invalid or corrupted. / Could not import character"* |
+| `00043-409781020.png` | `200 {"error":true}` — same |
+| `liwy.jpg` | never reaches the server: `importCharacter`'s extension gate (`json, png, yaml, yml, charx, byaf`) drops it **silently**; forced through anyway, the server answers `{"error":true}` (`Unsupported format`) |
+| the six real cards | imported, named from the card — the listing matches Iris's field for field |
+
+The PNG half comes from `src/character-card-parser.js`: `read()` throws
+`'No PNG metadata.'` once `textChunks` holds no `ccv3`/`chara` keyword — a
+`parameters` chunk keeps it off the *first* throw but not the second. The JPEG
+half is the client gate at `public/script.js` (`importCharacter`), mirrored by
+the server's `formatImportFunctions` map, which has no `jpg` arm.
+
+**So why accept? The one upstream surface that does take these files.** ST's
+character creator uploads any image as the avatar (multer takes whatever the
+browser posts; Jimp re-encodes it to a 400x600 PNG), producing exactly what this
+row produces: a character with empty fields whose picture is the image. The
+user's acceptance claim — *all nine corpus files open as characters in my
+SillyTavern* — is that surface seen from the front; the task set the bar as the
+user's observed behaviour, and this row implements it on the import path rather
+than asking the user to learn a second door.
+
+**What the divergence costs, measured:**
+
+- **Interop with ST's own folder.** Neither shape survives a round trip through
+  ST's characters directory: `/api/characters/all` reads only `*.png` (the
+  `.jpg` is invisible) and its `processCharacter` throws on the card-less PNG
+  (filtered out of the listing). The bytes are stored as they arrived and can be
+  copied back out, but an ST install will not *list* them. A user who needs ST
+  to see the character re-saves it from either side's editor, which stamps a
+  card into the image.
+- **A nameless `.json` is accepted where upstream refuses.** Upstream's
+  `importFromJson` returns nothing for a JSON without `name`/`spec`/`char_name`;
+  `normalizeCard` lifts it to the same empty body the images get. Left as is:
+  it is the same empty-character rule one door earlier, and refusing it would
+  split one rule into two extensions. Revisit only with a corpus file that
+  makes the laxness cost something.
+
+**What stays a named rejection — the floor did not move for anything upstream
+also refuses:** non-image, non-JSON extensions (`.webp`, `.gif`, `.txt`…),
+a PNG that fails to parse (bad signature, truncated chunk, CRC mismatch), a
+card chunk that is not base64 JSON, `.charx` (still `unsupported`), and bytes
+that are not a JPEG at all despite the name. `import-images.test.ts` pins each
+arm; the two accepting arms were mutation-tested (remove the empty-card rule or
+the extension, watch them go red) so the green is not self-confirming.
+
+**What would overturn this row:** an upstream release that accepts these files
+at the import endpoint with a *different* presentation (say, a name from
+elsewhere than the filename, or a refusal for SOI-less JPEGs) — then the row
+should be re-read against that release, not defended against it.
+
+---
+
 # Upstream bugs, deliberately not reproduced
 
 A third column, and the reasoning in it differs from both neighbours. The
