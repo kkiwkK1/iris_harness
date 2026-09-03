@@ -104,6 +104,20 @@ export type FromFrame =
    */
   | { iris: string, type: 'blocked', host: string, directive: string, detail?: string }
   /**
+   * Which parts of a full-viewport card frame may catch a click.
+   *
+   * Its own type rather than a field on `height`, which already carries three
+   * meanings — a measured height, a sizing mode, and silence. A fourth would
+   * make "what did the frame say?" unanswerable without reading the sender.
+   *
+   * The `clip` is a ready `clip-path` value rather than a list of rectangles:
+   * the decisions that turn rectangles into a path (dropping empties, dropping
+   * contained ones, rounding outward) belong beside the measurement, and the
+   * shell comparing one string against the one already set is what lets it skip
+   * the write.
+   */
+  | { iris: string, type: 'regions', clip: string }
+  /**
    * The card assigned something into its extension settings.
    *
    * Reported rather than silently kept: the corpus contains the
@@ -343,6 +357,19 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
         Array.isArray(value) ? value.filter((row): row is string => typeof row === 'string').slice(0, 32) : []
       return Array.isArray(published) && Array.isArray(refused)
         ? { iris: token, type: 'globals', published: names(published), refused: names(refused) }
+        : undefined
+    }
+    case 'regions': {
+      const clip = message['clip']
+      /*
+       * Bounded, because the card's own DOM decides how long it is. The
+       * pruning in `overlay-regions.ts` keeps a real card's path under a
+       * hundred characters, so this ceiling is only reached by something
+       * pathological — and a `clip-path` that long would be a performance
+       * problem in the shell rather than a useful clip.
+       */
+      return typeof clip === 'string' && clip.length <= 8_000
+        ? { iris: token, type: 'regions', clip }
         : undefined
     }
     case 'blocked': {

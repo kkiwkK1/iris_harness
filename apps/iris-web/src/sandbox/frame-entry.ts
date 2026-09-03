@@ -23,6 +23,7 @@ import { describeTransferCost, type TransferTiming } from './transfer-cost.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import { describeBlocked } from './blocked-report.ts'
+import { type Measured, clipPathFor, collectRegions } from './overlay-regions.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
@@ -145,6 +146,96 @@ function token(): string {
  * each posting a message across a frame boundary, is a real cost inside every
  * card on the page.
  */
+/**
+ * Tell the shell which parts of this frame may catch a click.
+ *
+ * A script frame is the card's overlay surface and covers the viewport, so
+ * without this it would swallow every click meant for the shell. Measured in a
+ * real opaque-origin frame: `pointer-events:none` lets clicks through but the
+ * card's own nodes **cannot** re-enable themselves, so a clip is the only
+ * mechanism that gives per-node hit-testing across a frame boundary.
+ *
+ * Batched into an animation frame and **deduplicated by the generated string**.
+ * Both matter for the same reason: a card animating a panel fires mutations and
+ * resizes continuously, and this crosses a message boundary. The dedup is what
+ * makes a still card cost nothing at all, and `mergeRegions` keeps the string
+ * stable across changes that do not alter what is hit-testable.
+ * @param run - the run token.
+ * @param post - the channel to the shell.
+ */
+function reportRegions(run: string, post: (message: FromFrame) => void): void {
+  let scheduled = false
+  let last = ''
+
+  const measure = (node: Element): { measured: Measured, children: readonly Element[] } => {
+    const rect = node.getBoundingClientRect()
+    let interactive = true
+    try {
+      // A card's decorative layer declares this for itself, and taking it would
+      // make Iris block clicks upstream lets through.
+      interactive = getComputedStyle(node).pointerEvents !== 'none'
+    } catch {
+      // A detached node has no computed style. Treated as interactive: the
+      // rectangle is what decides, and a detached node's is empty anyway.
+    }
+    return {
+      measured: { rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, interactive },
+      children: [...node.children],
+    }
+  }
+
+  const send = (): void => {
+    scheduled = false
+    const body = document.body
+    if (body === null) return
+    /*
+     * The card's own top-level nodes, minus the machinery. A `<script>` or
+     * `<style>` measures empty anyway, so excluding them is about the walk
+     * rather than the result — and `#tavern_helper`, which the frame itself
+     * builds for the script list, is ours rather than the card's.
+     */
+    const roots = [...body.children].filter(
+      child => child.tagName !== 'SCRIPT' && child.tagName !== 'STYLE'
+        && child.id !== 'tavern_helper',
+    )
+    const clip = clipPathFor(collectRegions(roots, measure))
+    if (clip === last) return
+    last = clip
+    post({ iris: run, type: 'regions', clip })
+  }
+
+  const schedule = (): void => {
+    if (scheduled) return
+    scheduled = true
+    requestAnimationFrame(send)
+  }
+
+  /*
+   * Both observers, for the two ways a card's occupied area changes: it builds
+   * or removes nodes (mutation), or a node it already built changes size
+   * (resize). The height reporter needed exactly this pair for the same reason,
+   * and a single observer misses half the cases silently — a card that grows a
+   * panel without touching the DOM would keep the old clip.
+   */
+  new MutationObserver(schedule).observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['style', 'class', 'hidden'],
+  })
+  try {
+    const sizes = new ResizeObserver(schedule)
+    sizes.observe(document.documentElement)
+    if (document.body !== null) sizes.observe(document.body)
+  } catch {
+    // No `ResizeObserver` in this realm: the mutation observer still covers the
+    // build-and-remove cases, which is every measured card's first need.
+  }
+  // Once up front, so a card that builds everything before the first frame and
+  // never touches the DOM again is still clipped correctly.
+  schedule()
+}
+
 function reportHeight(run: string, post: (message: FromFrame) => void): void {
   let scheduled = false
   /*
@@ -1398,6 +1489,12 @@ try {
   })
 
   reportAsyncFailures(run, post, () => bodyStarted)
+  /*
+   * Only where there is a surface to clip. An interface frame is laid out inside
+   * the reading column and catches clicks over its own box, which is already
+   * right; a script frame covers the viewport and would swallow the shell.
+   */
+  if (document.body?.hasAttribute('data-iris-interface') !== true) reportRegions(run, post)
   reportBlocked(run, post)
   reportStorage(run, post)
   reportBodySummary(run, post)

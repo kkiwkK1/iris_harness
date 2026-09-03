@@ -1,5 +1,5 @@
 /**
- * What to say when a card builds a user interface where nobody can see it.
+ * What a card built on its overlay surface, when that is worth saying.
  *
  * [OVERLAY-CARDS.md (3c)] A third class of interface card exists: it never
  * touches `parent.*` at all. Upstream's `parent_jquery.js` makes the `$` inside
@@ -98,11 +98,25 @@ export function describeOverlayAttempt(attempt: OverlayAttempt): string | undefi
   const size = `${String(Math.round(attempt.viewportWidth))}x${String(Math.round(attempt.viewportHeight))}`
   const zero = attempt.viewportWidth <= 0 || attempt.viewportHeight <= 0
 
+  /*
+   * **The sentence this used to open with is now false.** It said "Iris has no
+   * overlay surface yet, so they are in a frame nobody can see" — true when
+   * written, and the exact opposite of the truth the moment the script frame
+   * became the overlay surface. A report whose premise the code has since
+   * fixed is worse than no report: it sends a reader to build the thing that
+   * already exists.
+   *
+   * What is still worth saying is **what the card built**, because that is the
+   * one fact nobody else has: the shell cannot see into the frame, so a card
+   * whose interface is empty, or is one stray `div`, looks identical from
+   * outside to one that drew a phone. The zero-viewport line below is likewise
+   * still worth saying — it is upstream of everything else the card will get
+   * wrong.
+   */
   return (
-    `this card built ${String(attempt.built)} element(s) in a **script** frame`
+    `this card built ${String(attempt.built)} element(s) on its overlay surface`
     + `${named === '' ? '' : ` (${named})`}`
-    + ' — Iris has no overlay surface yet, so they are in a frame nobody can see.'
-    + ` The frame's viewport is ${size}`
+    + ` — the frame's viewport is ${size}`
     + (zero
       /*
        * Said explicitly, because it is upstream of everything else the card is

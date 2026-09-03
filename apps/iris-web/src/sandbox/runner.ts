@@ -103,6 +103,15 @@ export interface RunnerHost {
    */
   onBlocked: (host: string, directive: string, detail?: string) => void
   /**
+   * The clip describing which parts of this frame may catch a click.
+   *
+   * Only the card-scripts host implements it: its frame is the overlay surface
+   * and covers the viewport, so without a clip it would swallow every click
+   * meant for the shell. A message frame is laid out inside the reading column
+   * and catches clicks over its own box, which is correct already.
+   */
+  onRegions?: (clip: string) => void
+  /**
    * Something the frame observed that is not a failure.
    *
    * Optional because most hosts have nothing to do with it; the shell passes it
@@ -460,6 +469,16 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         return
       case 'error':
         host.onError(message.message, message.member, message.scriptId)
+        return
+      case 'regions':
+        /*
+         * Optional, because a message frame has no overlay surface to clip and
+         * a host that does not implement this should not have to say so. The
+         * frame posts it either way — it does not know which kind of host it is
+         * attached to, and a frame that decided would be a frame with a second
+         * copy of that fact.
+         */
+        host.onRegions?.(message.clip)
         return
       case 'blocked':
         host.onBlocked(message.host, message.directive, message.detail)

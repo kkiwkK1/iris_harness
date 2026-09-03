@@ -43,7 +43,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * frame on an opaque origin has to be given instead of having, then 0.7 KiB for
  * the lazy restore of floor tables the text transport made necessary, then the
  * read-only document state and the gap-note retraction, and 5 KiB for the three
- * SillyTavern anchor stand-ins.
+ * SillyTavern anchor stand-ins, then 1.7 KiB for the overlay-region reporter.
  *
  * **That last jump is the one worth arguing about rather than absorbing.** Five
  * kilobytes of stand-in is paid *per live frame*, and the thing it buys is
@@ -67,7 +67,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 64 * 1024
+export const FRAME_OVERHEAD_BYTES = 65 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -83,7 +83,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 32 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 31 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
@@ -104,6 +104,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * | 53 KiB | 38.6 | 19.3 | 20 | **false** → gate 16 |
  * | 57 KiB | 35.9 | 18.0 | 16 | held |
  * | 64 KiB | 32.0 | 16.0 | 16 | **false** → gate 12 |
+ * | 65 KiB | 31.5 | 15.8 | 12 | held |
  *
  * Both times the reasonable-looking response was to raise the constant above and
  * treat the ratio as incidental; both times the invariant said otherwise, and

@@ -35,6 +35,7 @@ import {
   type SandboxAssets,
 } from '../sandbox/asset-manifest.ts'
 import { runCard } from '../sandbox/runner.ts'
+import type { RunningCard } from '../sandbox/runner.ts'
 import { STARTED_EVENTS, settledEvents } from '../sandbox/tavern-helper.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
@@ -159,8 +160,19 @@ export function CardScriptFrames(): ReactElement {
           if (unusable !== undefined) throw new Error(`bootstrap: ${unusable}`)
           return source
         },
-        start: input =>
-          runCard(
+        start: input => {
+          /*
+           * The frame the call below returns, so `onRegions` can reach it.
+           *
+           * The clip belongs on the frame element, and the callback that
+           * receives it is built *before* the element exists — they are made by
+           * the same call. A box assigned on the way out is the smallest honest
+           * shape for that; the alternative is holding the clip in React state,
+           * which re-renders this hook's whole tree at animation rate for a
+           * value exactly one element reads.
+           */
+          let frame: RunningCard | undefined
+          frame = runCard(
             {
               bootstrap: input.bootstrap,
               // One frame for the card's whole set. Each script still evaluates
@@ -188,6 +200,25 @@ export function CardScriptFrames(): ReactElement {
               // Reported, not swallowed: a blocked subresource is the policy
               // doing its job, and the card author needs the host and directive
               // to know what they reached for.
+              /*
+               * The card's overlay surface is this frame, so the clip decides
+               * which parts of the viewport it may catch a click on.
+               *
+               * Measured in a real opaque-origin frame: with no clip the frame
+               * catches every click everywhere (the shell becomes unusable),
+               * and with `pointer-events:none` the card's own nodes **cannot**
+               * re-enable themselves. A clip is the only mechanism that gives
+               * per-node hit-testing across a frame boundary.
+               *
+               * Written to the frame element rather than held in state: it
+               * changes at animation rate while a card animates, and a state
+               * write would re-render the whole hook's tree for a value only
+               * one element reads. The frame already deduplicates by string, so
+               * this runs only when the clip really changed.
+               */
+              onRegions: clip => {
+                frame?.element.style.setProperty('clip-path', clip)
+              },
               onBlocked: (blocked, directive, detail) => {
                 const text = detail === undefined
                   ? `blocked ${blocked} (${directive})`
@@ -288,7 +319,9 @@ export function CardScriptFrames(): ReactElement {
               },
             },
             host.ownerDocument,
-          ),
+          )
+          return frame
+        },
         /*
          * Into the document, which is what makes it run at all.
          *
@@ -299,7 +332,29 @@ export function CardScriptFrames(): ReactElement {
          * no console errors, no notices — nothing had failed, because nothing had
          * begun.
          */
-        attach: card => host.append(card.element),
+        attach: card => {
+          /*
+           * **Explicit `width`/`height`, because `inset:0` does not size an
+           * iframe.** It is a replaced element, so `width:auto` resolves to its
+           * intrinsic 300x150 no matter what the insets say — measured, after a
+           * probe whose frame was silently 300x150 and which therefore looked
+           * like it disproved this whole approach.
+           *
+           * The frame fills the surface and `clip-path` decides what it catches.
+           * `pointer-events` is left `auto` here and the clip starts as nothing:
+           * the frame sends its first `regions` before any card code paints, so
+           * there is no window in which an unclipped frame swallows the shell.
+           */
+          const style = card.element.style
+          style.setProperty('position', 'absolute')
+          style.setProperty('inset', '0')
+          style.setProperty('width', '100%')
+          style.setProperty('height', '100%')
+          style.setProperty('border', '0')
+          style.setProperty('background', 'transparent')
+          style.setProperty('clip-path', 'path("M0 0Z")')
+          host.append(card.element)
+        },
         onState: states => actionsOf(store).setRunStates(states),
         onFailure: state => {
           /*
@@ -408,6 +463,27 @@ export function CardScriptFrames(): ReactElement {
       untap()
       running.dispose()
       actionsOf(store).setRunStates([])
+      /*
+       * Empty the surface, and this is **one more cleanup point than upstream
+       * has**.
+       *
+       * `clearChat()` upstream touches only `#chat`'s children and the zoomed
+       * avatar — it does not go near the body layer [3c, `script.js:1584-1603`]
+       * — and none of the five measured overlay components uninstalls itself.
+       * So switching chats upstream leaves the previous card's panel on screen
+       * until the page goes.
+       *
+       * Iris zeroes it, which is a deliberate divergence in the upgrade
+       * direction: cards do not clean up, and a reader should not be shown the
+       * last conversation's phone UI over this one. Recorded in the ledger as
+       * "upstream leaves it, Iris clears it" rather than as a fix.
+       *
+       * `dispose()` removes the frame it owns; this removes anything else that
+       * ended up on the surface, so the invariant is the surface's rather than
+       * the frame's.
+       */
+      const surface = mount.current
+      if (surface !== null) surface.replaceChildren()
     }
   }, [chatId, characterId, consent, store, actions])
 
@@ -421,11 +497,45 @@ export function CardScriptFrames(): ReactElement {
    * matter yet" is how a frame ends up behaving differently here than in the
    * message pipeline that will reuse this shape.
    */
+  /*
+   * The card's overlay surface: the viewport, above the shell.
+   *
+   * This used to be a 0×0 box parked off-screen, on the premise that a card's
+   * scripts render nothing. [OVERLAY-CARDS.md] found the third class of card
+   * that does: it builds its whole interface with `.appendTo('body')`, and
+   * upstream's `parent_jquery.js` makes that the host page's body. Here `$` is
+   * the frame's own, so the interface was built in a frame nobody could see —
+   * "3 of 3 loaded and listening" over a blank screen.
+   *
+   * **Full viewport, and the frame element needs explicit `width`/`height`.**
+   * An iframe is a replaced element, so `position:fixed; inset:0` alone leaves
+   * it at its intrinsic 300×150 — measured, after a probe that looked like it
+   * disproved this whole approach.
+   *
+   * `pointer-events` stays `auto` and the **clip** decides what catches
+   * clicks (`onRegions` above). The two alternatives were measured and both
+   * fail: `auto` with no clip swallows the shell, and `none` makes the card's
+   * own interface unclickable because content inside a frame cannot re-enable
+   * hit-testing the frame element switched off.
+   *
+   * `aria-hidden` is gone with the invisibility: this is now real interface, and
+   * hiding it from assistive technology would be hiding the card's UI.
+   */
   return (
     <div
       ref={mount}
-      aria-hidden="true"
-      style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden', left: '-9999px' }}
+      className="iris-overlay-surface"
+      style={{
+        position: 'fixed',
+        left: 0,
+        top: 0,
+        width: '100%',
+        height: '100%',
+        // Above the shell's own layers, whose highest is 30.
+        zIndex: 'var(--iris-overlay-z, 40)' as unknown as number,
+        // The container never catches anything; each frame's clip decides.
+        pointerEvents: 'none',
+      }}
     />
   )
 }

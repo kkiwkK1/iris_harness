@@ -33,8 +33,23 @@ test('a card that built elements is reported, with what it built', () => {
   assert.ok(line !== undefined)
   assert.match(line, /built 3 element/)
   assert.match(line, /div, button, canvas/, 'the report names something concrete')
-  assert.match(line, /script\*\* frame/, 'and says which kind of frame')
-  assert.match(line, /no overlay surface/)
+  assert.match(line, /overlay surface/, 'and says where they went')
+
+  /*
+   * **The claim this used to make is now false and must not come back.** It
+   * said "Iris has no overlay surface yet, so they are in a frame nobody can
+   * see" — true when written, and the exact opposite of the truth once the
+   * script frame became the surface. A report whose premise the code has since
+   * fixed is worse than none: it sends a reader to build what already exists.
+   *
+   * Asserted as the absence of the *claim* rather than of a word: the honest
+   * sentence still contains "overlay surface", which is why the match above
+   * looks for it. Banning the phrase would ban the fix as well as the bug —
+   * the same distinction `failure-attribution.test.ts` records for "belongs to"
+   * versus "rather than".
+   */
+  assert.doesNotMatch(line, /no overlay surface/, line)
+  assert.doesNotMatch(line, /nobody can see/, line)
 })
 
 test('the zero viewport is named as one cause, not left to be inferred', () => {
