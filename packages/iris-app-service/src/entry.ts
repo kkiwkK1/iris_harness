@@ -1168,9 +1168,13 @@ export class ChatEntry {
       const at = taken.map(decision => layers.find(one => one.candidateSeq === decision.candidateSeq)?.index)
         .filter((index): index is number => index !== undefined)
         .sort((first, second) => first - second)
+      // The total, not one path’s share. Replies and user rows go by the same
+      // rule from different places, and counting only replies made a run that
+      // deleted forty-two tables announce twenty-one.
+      const rows = rowsTrimmed > 0 ? ` and ${String(rowsTrimmed)} user row(s)` : ""
       onReport?.(
-        `variables: a one-time cleanup trimmed ${String(taken.length)} floor(s) between message`
-        + ` ${String(at[0])} and ${String(at[at.length - 1])}, which you agreed to.`
+        `variables: a one-time cleanup trimmed ${String(taken.length)} floor(s)${rows} between`
+        + ` message ${String(at[0])} and ${String(at[at.length - 1])}, which you agreed to.`
         + " This is not reversible.",
       )
     }
@@ -1332,7 +1336,7 @@ export class ChatEntry {
     // twenty identical sentences are how a log stops being read — but the run
     // itself must speak every time, because it deletes something nothing restores.
     const taken = plan.filter(decision => decision.removed !== undefined)
-    if (taken.length > 0) {
+    if (taken.length > 0 || rowsTrimmed > 0) {
       const at = taken.map(decision => layers.find(one => one.candidateSeq === decision.candidateSeq)?.index)
         .filter((index): index is number => index !== undefined)
         .sort((first, second) => first - second)
@@ -1345,8 +1349,10 @@ export class ChatEntry {
         .map(layer => layer.index)
         .filter(index => index < (at[0] ?? 0))
       const nearest = kept.length === 0 ? undefined : Math.max(...kept)
+      // The total, for the same reason as the sweep above.
+      const rows = rowsTrimmed > 0 ? ` and ${String(rowsTrimmed)} user row(s)` : ""
       onReport?.(
-        `variables: trimmed ${String(taken.length)} floor(s) at message ${listed}${more};`
+        `variables: trimmed ${String(taken.length)} floor(s)${rows} at message ${listed}${more};`
         + ` removed ${PRUNED_KEYS.join(", ")} from each.`
         + (nearest === undefined
           ? " No intact floor remains below them."

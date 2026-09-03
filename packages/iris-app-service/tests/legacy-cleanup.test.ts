@@ -319,3 +319,27 @@ test('a user row on the interval is kept and marked, exactly as a reply is', asy
   assert.equal('stat_data' in at(27), false, 'a user row off the interval survived')
   assert.deepEqual(Object.keys(at(27)), ['event_chain'], 'a foreign key was taken from a user row')
 })
+
+test('the report states the whole deletion, not one path of it', async (t) => {
+  const fixed = await fixture(t)
+  const entry = await fixed.chats.open('long')
+  const reports: string[] = []
+  const trimmed = entry.prune(DEFAULT_PRUNE, message => reports.push(message))
+
+  // **Replies and user rows are trimmed by one rule from two places**, and the
+  // first version of this line counted only the replies — a run that deleted
+  // forty-two tables announced twenty-one. A report about something nothing
+  // restores is the last place to undercount.
+  assert.equal(reports.length, 1)
+  const line = reports[0] ?? ''
+  const floors = /trimmed (\d+) floor\(s\)/u.exec(line)?.[1]
+  const rows = /and (\d+) user row\(s\)/u.exec(line)?.[1]
+  assert.ok(floors !== undefined, `no floor count in: ${line}`)
+  assert.ok(rows !== undefined, `no user-row count in: ${line}`)
+  assert.equal(
+    Number(floors) + Number(rows),
+    trimmed,
+    'the reported counts do not add up to what was trimmed',
+  )
+  assert.ok(trimmed > 0)
+})
