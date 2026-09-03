@@ -913,6 +913,8 @@ class InMemoryClient implements FakeClient {
       // The one-time cleanup offer is answered against a real chat file; a fake
       // client has none to sweep, and pretending otherwise would let a caller
       // believe a deletion happened.
+      // A run only exists inside a real frame, so a fake client has none to end.
+      case 'script.runEnded':
       case 'chat.answerCleanup':
       case 'storage.set':
       case 'storage.remove':

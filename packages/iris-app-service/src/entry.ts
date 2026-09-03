@@ -66,6 +66,15 @@ export interface IrisChatMeta {
  */
 export interface ScriptInjection {
   value: string
+  /**
+   * Which frame run put it here, when the shell said which.
+   *
+   * Absent means no run owns it, so no run ending can clear it and it lives
+   * until the chat closes — the behaviour every injection had before runs
+   * existed. That is why the absence is reported rather than defaulted: an
+   * injection nothing can clear is a leak, and a silent one.
+   */
+  runId?: string
   position: ScriptPromptPosition
   depth: number
   /** Upstream's `{system, user, assistant}` → `0 | 1 | 2`. */
@@ -521,6 +530,28 @@ export class ChatEntry {
     // rather than stored as a contribution that renders to nothing.
     if (injection === undefined || injection.value.trim().length === 0) this.extensionPrompts.delete(key)
     else this.extensionPrompts.set(key, injection)
+  }
+
+  /**
+   * Drop every injection a finished frame run left behind.
+   *
+   * **Only that run's.** Upstream empties one global table on every chat open,
+   * which it can afford because it has exactly one active chat. This host may be
+   * serving the same conversation to a second page whose run is still live, and
+   * clearing by chat would pull that page's injected text out from under it —
+   * the reason DEVIATIONS 10 holds injections per chat instead of clearing on
+   * switch. Keyed by run, the two pages do not collide.
+   * @param runId - the run the shell has torn down.
+   * @returns how many injections went.
+   */
+  endScriptRun(runId: string): number {
+    let cleared = 0
+    for (const [key, injection] of [...this.extensionPrompts]) {
+      if (injection.runId !== runId) continue
+      this.extensionPrompts.delete(key)
+      cleared += 1
+    }
+    return cleared
   }
 
   /**

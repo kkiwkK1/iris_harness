@@ -1061,16 +1061,42 @@ export class IrisAppService {
         return {}
       },
 
-      'script.setExtensionPrompt': async ({ chatId, key, value, position, depth, role, scan }) => {
+      'script.setExtensionPrompt': async ({ chatId, key, value, position, depth, role, scan, runId }) => {
         const entry = await chats.open(chatId)
+        // An injection with no run cannot be cleared by a run ending, so it
+        // outlives the frame that made it. Said once per key rather than
+        // defaulted, because the alternative is a leak nobody is told about.
+        if (runId === undefined && value.trim().length > 0) {
+          this.#report(
+            `a script injected "${key}" without a run id, so nothing can clear it when its`
+            + ' frame goes away; it will live until this chat is closed',
+            { kind: 'script', grade: 'fault', chatId },
+          )
+        }
         entry.setExtensionPrompt(key, {
           value,
           position,
           depth,
           ...role === undefined ? {} : { role },
           ...scan === undefined ? {} : { scan },
+          ...runId === undefined ? {} : { runId },
         })
         return {}
+      },
+
+      'script.runEnded': async ({ chatId, runId }) => {
+        const entry = await chats.open(chatId)
+        const cleared = entry.endScriptRun(runId)
+        // Said only when something went: a run that injected nothing ends on
+        // every chat close, and a line per close would bury the log.
+        if (cleared > 0) {
+          this.#report(
+            `cleared ${String(cleared)} injection(s) left by run ${runId}, as SillyTavern clears`
+            + ' its own when a chat is closed',
+            { kind: 'script', grade: 'note', chatId },
+          )
+        }
+        return { cleared }
       },
 
       'script.generate': async ({ chatId, userInput, systemPrompt, maxHistory }) => {

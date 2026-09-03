@@ -597,6 +597,41 @@ export const requestSchemas = {
      * is recorded rather than silently treated as false.
      */
     scan: z.boolean().optional(),
+    /**
+     * Which frame run this injection belongs to.
+     *
+     * **The shell mints it and the host never parses it.** The readable form is
+     * `${chatId}:${generation}` so a report can name which open it came from,
+     * but it travels as an opaque key: a host that reads structure out of it
+     * acquires an opinion about how the shell counts its runs.
+     *
+     * Why it exists: the shell rebuilds a card’s script frame per chat, and the
+     * new frame re-injects. Without a run to attribute an injection to, the old
+     * one has no moment at which it can be cleared, and the two accumulate —
+     * while clearing everything on a chat open would break a *second* page that
+     * still has that conversation open (the reason DEVIATIONS 10 keeps
+     * injections per chat rather than clearing on switch).
+     *
+     * **Optional, and its absence is reported rather than assumed.** A required
+     * field would reject every injection from a frame that has not shipped this
+     * yet, taking the feature down between two deploys; a silent default would
+     * make such an injection immortal with nothing said. So an injection with
+     * no run is stored, behaves as it always did, and produces one `script`
+     * fault naming what it gives up.
+     */
+    runId: z.string().min(1).max(200).optional(),
+  }),
+  /**
+   * A frame run has ended, so its injections can go.
+   *
+   * Sent by the shell when it tears a run down — the moment upstream’s
+   * `clearChat()` would have emptied its single global `extension_prompts`.
+   * Only that run’s injections go, which is what makes this safe with several
+   * pages open: another page’s run is a different key and is not touched.
+   */
+  'script.runEnded': z.object({
+    chatId: z.string().min(1),
+    runId: z.string().min(1).max(200),
   }),
   /**
    * One script's body, for the runner about to execute it.
@@ -1002,6 +1037,8 @@ export interface RpcResponseMap {
   'script.replaceScriptButtons': { buttons: { name: string, visible: boolean }[] }
   'script.saveChat': Record<string, never>
   'script.setExtensionPrompt': Record<string, never>
+  /** How many injections that run had left behind. */
+  'script.runEnded': { cleared: number }
   /** The settings as stored, so a card can see what survived. */
   'script.setExtensionSettings': { settings: Record<string, unknown> }
   'script.generateRaw': { text: string }

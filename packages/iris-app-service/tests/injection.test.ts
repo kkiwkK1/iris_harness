@@ -252,3 +252,75 @@ test('a chat with no live injections re-opens quietly', async (t) => {
   const page = await watched['debug.reports']({})
   assert.deepEqual(page.reports.filter(report => /still live/u.test(report.message)), [])
 })
+
+test('ending a run clears its own injections and leaves another run alone', async (t) => {
+  const fixed = await fixture(t)
+
+  // **Two runs on one chat is the case upstream cannot have.** It empties a
+  // single global table on every chat open, which is safe when exactly one chat
+  // is active; here a second page may hold the same conversation open, and
+  // clearing by chat would pull its text out from under it.
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'a', value: 'from page one', position: 'at-depth', depth: 0, runId: 'chat:1',
+  })
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'b', value: 'from page two', position: 'at-depth', depth: 0, runId: 'chat:2',
+  })
+
+  const done = await fixed.handlers['script.runEnded']({ chatId: fixed.chatId, runId: 'chat:1' })
+
+  assert.equal(done.cleared, 1)
+  const entry = await fixed.chats.open(fixed.chatId)
+  assert.deepEqual([...entry.extensionPrompts.keys()], ['b'], 'the surviving run lost its injection')
+})
+
+test('an injection with no run is kept, and the leak is reported', async (t) => {
+  const fixed = await fixture(t)
+  const reports: string[] = []
+  // The fixture's service has no diagnostics buffer, so the report is read
+  // through `onError` — the same channel, one layer earlier.
+  const chats = fixed.chats
+  const handlers = new IrisAppService({
+    stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } },
+    library: new CharacterLibrary(join(fixed.dir, 'characters'), '/a'),
+    chats,
+    settings: new SettingsStore(join(fixed.dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
+    broadcast: () => {},
+    userName: 'Traveller',
+    onError: (error: Error) => { reports.push(error.message) },
+  }).handlers()
+
+  await handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'orphan', value: 'text', position: 'at-depth', depth: 0,
+  })
+
+  // **Kept, not dropped.** This is what every injection did before runs existed,
+  // and refusing it would break a frame that has not shipped run ids yet.
+  const entry = await chats.open(fixed.chatId)
+  assert.equal(entry.extensionPrompts.get('orphan')?.value, 'text')
+
+  // But an injection nothing can clear is a leak, so it is named once.
+  assert.equal(reports.length, 1, `expected one report, got ${JSON.stringify(reports)}`)
+  assert.match(reports[0] ?? '', /without a run id/u)
+
+  // And a run ending cannot take it, which is the fact the report is about.
+  const done = await handlers['script.runEnded']({ chatId: fixed.chatId, runId: 'chat:1' })
+  assert.equal(done.cleared, 0)
+  assert.equal(entry.extensionPrompts.has('orphan'), true)
+})
+
+test('clearing an injection needs no run, because the key is the handle', async (t) => {
+  const fixed = await fixture(t)
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'a', value: 'text', position: 'at-depth', depth: 0, runId: 'chat:1',
+  })
+
+  // Upstream's `uninject` is an empty value on the same key, and that has to keep
+  // working without the caller knowing which run wrote it.
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'a', value: '', position: 'at-depth', depth: 0,
+  })
+
+  const entry = await fixed.chats.open(fixed.chatId)
+  assert.equal(entry.extensionPrompts.size, 0, 'an empty value no longer removes an injection')
+})

@@ -539,6 +539,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('script.saveMetadata', handlers['script.saveMetadata']),
       ctx.irisRpc.register('script.saveChat', handlers['script.saveChat']),
       ctx.irisRpc.register('script.setExtensionPrompt', handlers['script.setExtensionPrompt']),
+      ctx.irisRpc.register('script.runEnded', handlers['script.runEnded']),
       ctx.irisRpc.register('script.setExtensionSettings', handlers['script.setExtensionSettings']),
       ctx.irisRpc.register('script.generateRaw', handlers['script.generateRaw']),
       ctx.irisRpc.register('script.generate', handlers['script.generate']),
