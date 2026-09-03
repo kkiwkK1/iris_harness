@@ -17,6 +17,7 @@ import { useIris } from '../client/provider.tsx'
 import type { ResolvedButton } from './script-buttons.ts'
 import { Slot } from '../slots/Slot.tsx'
 import { ScriptButtons } from './ScriptButtons.tsx'
+import { registerComposer } from './composer-bus.ts'
 
 /**
  * Render the composer.
@@ -84,6 +85,38 @@ export function Composer({
     setDraft('')
     onSend(text)
   }
+
+  /*
+   * A card's way in, for the send path upstream gives it.
+   *
+   * Cards write `#send_textarea.value` and click `#send_but` — 44 measured that
+   * in nine cards, eight of them from interface code — so Iris serves it rather
+   * than refusing. What Iris adds is that the panel says it happened.
+   *
+   * **The send reads the field's DOM value, not `draft`.** In this build the
+   * card's write already went through `setDraft`, so the two agree; the DOM is
+   * the conservative source anyway, because it is what the *card* would have
+   * seen and it is one indirection closer to what actually gets sent. It also
+   * keeps this correct if anything ever writes the element directly, where
+   * React's value tracker leaves `draft` stale.
+   *
+   * Re-registered whenever `generating` changes, so a card clicking send during
+   * a generation is refused with the **current** answer rather than the one from
+   * the render where it registered.
+   */
+  useEffect(() => registerComposer({
+    setDraft: text => {
+      setDraft(text)
+    },
+    send: () => {
+      if (generating) return 'a generation is already running'
+      const text = (field.current?.value ?? draft).trim()
+      if (text === '') return 'the composer is empty, so there was nothing to send'
+      setDraft('')
+      onSend(text)
+      return undefined
+    },
+  }), [generating, draft, onSend])
 
   return (
     <div className="iris-composer">

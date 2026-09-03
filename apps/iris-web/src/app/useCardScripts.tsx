@@ -35,7 +35,7 @@ import {
   type SandboxAssets,
 } from '../sandbox/asset-manifest.ts'
 import { runCard } from '../sandbox/runner.ts'
-import { settledEvents } from '../sandbox/tavern-helper.ts'
+import { STARTED_EVENTS, settledEvents } from '../sandbox/tavern-helper.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun } from '../sandbox/script-run-state.ts'
@@ -345,6 +345,19 @@ export function CardScriptFrames(): ReactElement {
      * every pair of characters.
      */
     const untap = tapHostEvents(store, event => {
+      /*
+       * A generation starting is announced to the frames and nothing else here.
+       *
+       * It carries no view, so it is not part of the snapshot refresh above —
+       * but a card has to hear it: upstream's `#send_but` disables, `#mes_stop`
+       * appears and `is_send_press` goes true at this moment, and a card that
+       * hears only the *end* would spend the whole generation believing it was
+       * idle. Handled before the filter, since that filter is about views.
+       */
+      if (event.type === 'stream.start' && event.chatId === chatId) {
+        for (const name of STARTED_EVENTS) running.emit(name, [])
+        return
+      }
       if (event.type !== 'chat.updated' && event.type !== 'stream.end') return
       if (event.chatId !== chatId) return
       /*

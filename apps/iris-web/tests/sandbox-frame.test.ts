@@ -3102,3 +3102,130 @@ test('a card cannot replace parent.$ for its siblings', () => {
   const parent = scope.globals()['parent'] as Record<string, unknown>
   assert.throws(() => { parent['$'] = () => undefined }, /not writable|parent\.\$/)
 })
+test('a card drives the composer through document.getElementById, in both spellings', async () => {
+  /*
+   * **The path nine cards take**, eight of them from interface code [44]:
+   * write `#send_textarea.value`, then click `#send_but`. Asserted through the
+   * *virtual document*, because that is the object a card actually holds — a
+   * test against `createStAnchors` alone would pass with the lookup unwired,
+   * which is the shape the `replaceScriptButtons` gap had.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const parent = scope.globals()['parent'] as { document: Record<string, unknown> }
+  const doc = parent.document
+  const byId = doc['getElementById'] as (id: string) => Record<string, unknown> | null
+  const bySelector = doc['querySelector'] as (sel: string) => Record<string, unknown> | null
+
+  const field = byId('send_textarea')
+  assert.notEqual(field, null, 'the composer was not reachable by id')
+  // Both spellings reach the same object: a card writing `querySelector('#x')`
+  // and one writing `getElementById('x')` are asking the same question, and
+  // upstream answers both.
+  assert.equal(bySelector('#send_textarea'), field)
+
+  field!['value'] = 'written by a card'
+  assert.equal(field!['value'], 'written by a card', 'the card must read back its own write')
+
+  await Promise.resolve()
+  const draft = scope.posted.find(
+    message => message.type === 'call'
+      && (message as unknown as { method: string }).method === 'composerDraft',
+  ) as unknown as { params: Record<string, unknown> } | undefined
+  assert.notEqual(draft, undefined, `the write never reached the shell: ${JSON.stringify(scope.posted)}`)
+  assert.equal(draft?.params['text'], 'written by a card')
+
+  const button = byId('send_but')
+  assert.notEqual(button, null)
+  ;(button!['click'] as () => void)()
+
+  await Promise.resolve()
+  assert.ok(
+    scope.posted.some(
+      message => message.type === 'call'
+        && (message as unknown as { method: string }).method === 'composerSend',
+    ),
+    'the click never asked the shell to send',
+  )
+  // And it is visible: an outward action carried by a note rather than by a
+  // confirmation, because upstream gives cards this and a prompt would be a
+  // behaviour change.
+  const notes = scope.posted
+    .filter(message => message.type === 'note')
+    .map(message => (message as unknown as { message: string }).message)
+  assert.equal(notes.filter(line => line.includes('sent a message through the composer')).length, 1)
+})
+
+test('the generation flag rides the events, and three spellings agree', () => {
+  /*
+   * `#send_but.disabled`, `#mes_stop`'s visibility and `parent.is_send_press`
+   * are three spellings of one fact, so they answer from one variable. A card
+   * may read any of them — 3c found the third and the corpus uses the second —
+   * and two that disagreed would leave a panel re-injecting itself throughout a
+   * generation.
+   *
+   * Driven by the **events the shell forwards**, not by a snapshot field: the
+   * event stream already carries this, and a second copy on the context is how
+   * two sources of one fact come to disagree.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const parent = scope.globals()['parent'] as Record<string, unknown>
+  const doc = parent['document'] as Record<string, unknown>
+  const byId = doc['getElementById'] as (id: string) => Record<string, unknown> | null
+  const button = byId('send_but')!
+  const stop = byId('mes_stop')!
+
+  assert.equal(parent['is_send_press'], false)
+  assert.equal(button['disabled'], false)
+  assert.equal((stop['getClientRects'] as () => unknown[])().length, 0)
+
+  scope.send({ iris: 'tok', type: 'event', event: 'js_generation_started', args: [] })
+  assert.equal(parent['is_send_press'], true)
+  assert.equal(button['disabled'], true)
+  assert.equal((stop['getClientRects'] as () => unknown[])().length, 1)
+
+  // An **abort** clears it too. Watching only the completed names would leave
+  // the flag stuck on after a stop, and stuck-on freezes a card's panel for the
+  // rest of the chat.
+  scope.send({ iris: 'tok', type: 'event', event: 'generation_stopped', args: [] })
+  assert.equal(parent['is_send_press'], false)
+  assert.equal(button['disabled'], false)
+})
+
+test('a SillyTavern id Iris does not provide is named, not silently null', () => {
+  /*
+   * 不要被神隐's script dies on `Cannot read properties of null (reading
+   * 'querySelector')` — a bare `null` one line earlier. Naming which kind of
+   * nothing it found is the difference between a reader looking at our gap and
+   * a reader looking at the card.
+   *
+   * Only for ids Iris **knows** are SillyTavern's: a card looking up its own
+   * `#my-panel` before creating it is ordinary, and reporting that would bury
+   * the case that matters.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const doc = (scope.globals()['parent'] as Record<string, unknown>)['document'] as Record<string, unknown>
+  const byId = doc['getElementById'] as (id: string) => unknown
+
+  assert.equal(byId('send_form'), null)
+  assert.equal(byId('send_form'), null, 'reported once, not once per lookup')
+  assert.equal(byId('a-panel-this-card-has-not-built-yet'), null)
+
+  const notes = scope.posted
+    .filter(message => message.type === 'note')
+    .map(message => (message as unknown as { message: string }).message)
+  assert.equal(notes.filter(line => line.includes('send_form')).length, 1)
+  assert.equal(
+    notes.filter(line => line.includes('a-panel-this-card-has-not-built-yet')).length,
+    0,
+    'a card looking up its own not-yet-built node is ordinary and must stay quiet',
+  )
+})

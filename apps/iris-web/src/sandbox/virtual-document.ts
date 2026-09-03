@@ -63,6 +63,26 @@ export interface VirtualDocumentSource {
   viewport: () => { width: number, height: number }
   factory: NodeFactory
   /**
+   * SillyTavern's own element ids, as working stand-ins.
+   *
+   * Consulted **before** the container, so a card looking up `#send_but` gets
+   * the composer's driver rather than whatever the card happened to give that
+   * id inside its own subtree. That order is the compatible one: upstream's
+   * `#send_but` is the page's, and a card that shadowed it there would be
+   * shadowing SillyTavern's, not ours.
+   */
+  anchors?: Record<string, object>
+  /**
+   * Ids Iris knows belong to SillyTavern and does not provide.
+   *
+   * Named so a lookup can say which kind of nothing it found. A bare `null` is
+   * how 不要被神隐's script dies — `Cannot read properties of null (reading
+   * 'querySelector')`, one line after a lookup that said nothing.
+   */
+  knownIds?: readonly string[]
+  /** Say something about a lookup. */
+  report?: (message: string, failed: boolean) => void
+  /**
    * Read-only page state, read on every access for the same reason `viewport`
    * is: a card polling `document.hidden` on an interval is asking a question
    * whose answer changes, and a captured value would answer the first one
@@ -129,18 +149,57 @@ function documentElement(viewport: () => { width: number, height: number }): obj
 export function createVirtualDocument(source: VirtualDocumentSource): object {
   const element = documentElement(source.viewport)
 
+  /*
+   * Say which kind of nothing a lookup found, once per id.
+   *
+   * Only for ids Iris **knows** are SillyTavern's: a card looking up its own
+   * `#my-panel` before creating it is doing something ordinary, and reporting
+   * that would bury the one case that matters in noise.
+   */
+  const saidAbout = new Set<string>()
+  const reportKnown = (id: string): void => {
+    if (!(source.knownIds ?? []).includes(id) || saidAbout.has(id)) return
+    saidAbout.add(id)
+    source.report?.(
+      `a card looked up #${id}, which is SillyTavern's own element and Iris has no stand-in`
+      + ' for — it returned null, which a card usually reads one line before it fails on'
+      + ' something that null cannot do',
+      false,
+    )
+  }
+
   const members: Record<string, unknown> = {
     body: source.container,
     documentElement: element,
 
     getElementById: (id: string): unknown => {
+      const anchor = source.anchors?.[id]
+      if (anchor !== undefined) return anchor
       // The container itself is in scope: a card that mounts into `#app` and then
       // looks `#app` up should find it, and excluding the root would make the
       // scoping visible as a bug rather than as a boundary.
       if (source.container.id === id) return source.container
-      return source.container.querySelector(byId(id)) ?? null
+      const found = source.container.querySelector(byId(id)) ?? null
+      if (found === null) reportKnown(id)
+      return found
     },
-    querySelector: (selector: string): unknown => source.container.querySelector(selector) ?? null,
+    querySelector: (selector: string): unknown => {
+      /*
+       * `#id` selectors reach the anchors too. A card writing
+       * `document.querySelector('#send_but')` and one writing
+       * `getElementById('send_but')` are asking the same question, and upstream
+       * answers both — a stand-in that served only one spelling would work for
+       * some cards and silently not for others.
+       */
+      const id = /^#([A-Za-z][\w:-]*)$/u.exec(selector.trim())?.[1]
+      if (id !== undefined) {
+        const anchor = source.anchors?.[id]
+        if (anchor !== undefined) return anchor
+      }
+      const found = source.container.querySelector(selector) ?? null
+      if (found === null && id !== undefined) reportKnown(id)
+      return found
+    },
     querySelectorAll: (selector: string): unknown => source.container.querySelectorAll(selector),
 
     createElement: (tagName: string): unknown => source.factory.createElement(tagName),

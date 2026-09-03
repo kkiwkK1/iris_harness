@@ -22,8 +22,14 @@ import type { FromFrame, ToFrame } from './protocol.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isOnSillyTavernSurface } from './card-api.ts'
-import { createEventSource, createFrameTavernHelper } from './tavern-helper.ts'
+import {
+  SETTLED_EVENT_NAMES,
+  STARTED_EVENTS,
+  createEventSource,
+  createFrameTavernHelper,
+} from './tavern-helper.ts'
 import { createCardStorage } from './card-storage.ts'
+import { KNOWN_ST_IDS, createStAnchors } from './st-anchors.ts'
 import { restoreFloorTables } from './tavern-helper.ts'
 import { MEMBER_KINDS, SHARED_ORIGINAL, identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
@@ -204,10 +210,80 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   let viewport = { width: 0, height: 0 }
   const readViewport = (): { width: number, height: number } => viewport
 
+  /*
+   * What a card wrote into the composer, kept **here** rather than read back
+   * from the shell.
+   *
+   * The value getter is synchronous and the shell is across a message boundary,
+   * so a live read is not available. Answering from the card's own last write
+   * serves both measured variants — each writes, then either reads back or
+   * clicks — and it is deliberately **narrower than upstream**: a card cannot
+   * read what the *reader* has typed. Upstream's `#send_textarea.value` would
+   * hand it over. That divergence is in the safe direction and belongs in the
+   * ledger; the alternative is streaming every keystroke into every card frame,
+   * which costs more and exposes more.
+   */
+  let composerShadow = ''
+
+  /*
+   * Whether a generation is running, tracked from the events the shell forwards.
+   *
+   * **Not from the context snapshot**, which does not carry it — and adding a
+   * field to the protocol for something the event stream already says would put
+   * the same fact in two places, which is how they come to disagree. Upstream
+   * has the same arrangement: its `is_send_press` is set by the generation
+   * events, not carried on the context.
+   *
+   * Three card-visible things answer from this one variable —
+   * `#send_but.disabled`, `#mes_stop`'s visibility, and `parent.is_send_press` —
+   * because they are three spellings of one fact and a card may read any of
+   * them.
+   */
+  let generating = false
+
+  const anchors = createStAnchors({
+    draft: () => composerShadow,
+    setDraft: text => {
+      composerShadow = text
+      void callAction('composerDraft', { text }).then(undefined, (error: unknown) => {
+        reportFault(
+          'a card wrote to the composer and the shell did not take it: '
+          + (error instanceof Error ? error.message : String(error)),
+        )
+      })
+    },
+    send: () => {
+      void callAction('composerSend', {}).then(
+        () => {
+          // The composer clears on send, and the card's shadow has to follow or
+          // its next read would return text that is no longer anywhere.
+          composerShadow = ''
+        },
+        (error: unknown) => {
+          reportFault(
+            'a card asked to send a message and nothing was sent: '
+            + (error instanceof Error ? error.message : String(error)),
+          )
+        },
+      )
+    },
+    generating: () => generating,
+    report: (message, failed) => {
+      if (failed) reportFault(message)
+      else reportGap(message)
+    },
+  })
+
   const virtualDocument = createVirtualDocument({
     container: env.container,
     viewport: readViewport,
     factory: env.factory,
+    anchors,
+    knownIds: KNOWN_ST_IDS,
+    report: (message, failed) => {
+      if (failed) reportFault(message)
+      else reportGap(message)
+    },
     /*
      * Read-only page state, so a status read answers instead of killing a
      * script. `title` is the one value this module has rather than the realm:
@@ -727,6 +803,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * proxy is built. Absent means absent: the card's own guard is then
        * correct, and this returns undefined rather than a broken stand-in.
        */
+      /*
+       * `parent.is_send_press`, upstream's own name for "a generation is
+       * running". A card polls it to avoid re-entering while the model writes.
+       */
+      if (property === 'is_send_press') return generating
+
       if (property === '$' || property === 'jQuery') {
         return (env.realWindow as unknown as Record<string, unknown>)[property]
       }
@@ -1538,6 +1620,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       return
     }
     if (message.type === 'event') {
+      /*
+       * The frame's own `generating` flag rides the same events cards subscribe
+       * to, rather than a field on the snapshot. One source for a fact three
+       * card-visible things answer from — `#send_but.disabled`,
+       * `#mes_stop`'s visibility, `parent.is_send_press` — so they cannot
+       * disagree, and no protocol field can go stale against the event stream.
+       */
+      if (STARTED_EVENTS.includes(message.event)) generating = true
+      else if (SETTLED_EVENT_NAMES.includes(message.event)) generating = false
+
       // Not awaited and not reported: a listener that throws is the card's
       // problem with its own handler, and upstream does not tell the host either.
       void events.eventEmit(message.event, ...message.args)

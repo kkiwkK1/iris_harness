@@ -182,11 +182,49 @@ export const OFF_ST_SURFACE: readonly string[] = [
   'storageSet',
   'storageRemove',
   'storageClear',
+  /*
+   * The composer actions. Upstream has no context member for these at all — a
+   * card drives the composer through the DOM, never through `SillyTavern` — so
+   * putting them on that surface would invent two members on a surface being
+   * mirrored.
+   */
+  'composerDraft',
+  'composerSend',
 ]
 
-/** Whether a card may invoke this action. */
+/**
+ * Actions a card may ask for that never reach the host.
+ *
+ * `CARD_METHODS` maps a card-facing name to a **wire** method, because every
+ * other action is a request for something the host owns. These two are requests
+ * for something the **shell** owns: the composer. A card writes
+ * `#send_textarea.value` and clicks `#send_but`, and what has to happen is that
+ * Iris's own composer takes the text and submits it — there is no host arm for
+ * "type this for the user", and inventing one would put the shell's UI state on
+ * the wire.
+ *
+ * Kept as a separate list rather than given a plausible-looking wire method,
+ * because a table whose values are sometimes real and sometimes decorative is
+ * one nobody can read. `wireMethodFor` returns `undefined` for these, and
+ * `client/store.ts` answers them before it consults it.
+ */
+export const SHELL_ACTIONS: readonly string[] = ['composerDraft', 'composerSend']
+
+/**
+ * Whether a card may invoke this action.
+ *
+ * Both lists, because both are things a card is allowed to ask for — the split
+ * is about *who answers*, not about who may ask. The frame's own guard
+ * (`tests/card-methods.test.ts`) checks against this, so a shell action still
+ * has to be declared here to be callable at all.
+ */
 export function isCardMethod(name: string): boolean {
-  return Object.hasOwn(CARD_METHODS, name)
+  return Object.hasOwn(CARD_METHODS, name) || SHELL_ACTIONS.includes(name)
+}
+
+/** Whether this action is the shell's to answer rather than the host's. */
+export function isShellAction(name: string): boolean {
+  return SHELL_ACTIONS.includes(name)
 }
 
 /**

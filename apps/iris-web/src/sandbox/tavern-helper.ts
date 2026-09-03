@@ -37,6 +37,18 @@ import { buttonEventName } from './button-event.ts'
 import { UnsupportedApiError } from './errors.ts'
 
 /**
+ * The events a **started** generation is announced under.
+ *
+ * Upstream's pair, for the same reason the settled ones are upstream's: cards
+ * subscribe to these by name, and a card that hears a start and never a matching
+ * end (or the reverse) is left in a state no card author wrote.
+ *
+ * They also drive the frame's own `generating` flag, which is what
+ * `#send_but.disabled`, `#mes_stop`'s visibility and `parent.is_send_press` all
+ * answer from — three spellings of one fact, so it has to have exactly one
+ * source.
+ */
+/**
  * The event names a settled generation is announced under.
  *
  * **Upstream's own, and briefly they were not.** Upstream revokes a `once`
@@ -58,6 +70,26 @@ import { UnsupportedApiError } from './errors.ts'
  * answer was unknown; keeping it afterwards would have been knowing the answer
  * and not saying it** — and these names serve every card that subscribes to
  * them, not only `injectPrompts`.
+ * @param reason - how the generation ended.
+ * @returns the bus events to emit, in order.
+ */
+export const STARTED_EVENTS: readonly string[] = ['js_generation_started', 'generation_started']
+
+/**
+ * Every name a settled generation can arrive under.
+ *
+ * The union of both `settledEvents` branches, kept beside it so the two cannot
+ * drift: a name emitted by one and not watched by the other would leave the
+ * frame's `generating` flag stuck on after an abort — and stuck-on is the
+ * direction that freezes a card's panel indefinitely.
+ */
+export const SETTLED_EVENT_NAMES: readonly string[] = [
+  ...settledEvents('completed'),
+  ...settledEvents('aborted'),
+]
+
+/**
+ * The events a settled generation is announced under.
  * @param reason - how the generation ended.
  * @returns the bus events to emit, in order.
  */

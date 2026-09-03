@@ -30,7 +30,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { isCardMethod, CARD_METHODS } from '../src/sandbox/card-api.ts'
+import { isCardMethod, CARD_METHODS, SHELL_ACTIONS } from '../src/sandbox/card-api.ts'
 
 /*
  * `fileURLToPath`, not `URL.pathname`: this repository lives under a path with
@@ -105,4 +105,22 @@ test('every routable action names a namespaced wire method', () => {
   for (const [name, wire] of Object.entries(CARD_METHODS)) {
     assert.match(wire, /^[a-z]+\.[A-Za-z]+$/u, `${name} maps to "${wire}"`)
   }
+})
+
+test('a shell action is callable but has no wire method, and the two lists stay apart', () => {
+  /*
+   * The split exists so that a table of wire methods contains only wire
+   * methods. A shell action given a plausible-looking value — `composer.send`,
+   * say — would route to a host arm that does not exist, and the failure would
+   * arrive as the host refusing a method nobody wrote.
+   */
+  for (const name of SHELL_ACTIONS) {
+    assert.equal(isCardMethod(name), true, `${name} must be callable`)
+    assert.equal(
+      Object.hasOwn(CARD_METHODS, name),
+      false,
+      `${name} is the shell's to answer, so it must not name a wire method`,
+    )
+  }
+  assert.ok(SHELL_ACTIONS.length > 0, 'an empty list would make this test pass vacuously')
 })

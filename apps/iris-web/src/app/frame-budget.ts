@@ -42,7 +42,17 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * more for the prompt-injection façade, and 4.2 KiB for the `localStorage` a
  * frame on an opaque origin has to be given instead of having, then 0.7 KiB for
  * the lazy restore of floor tables the text transport made necessary, then the
- * read-only document state and the gap-note retraction.
+ * read-only document state and the gap-note retraction, and 5 KiB for the three
+ * SillyTavern anchor stand-ins.
+ *
+ * **That last jump is the one worth arguing about rather than absorbing.** Five
+ * kilobytes of stand-in is paid *per live frame*, and the thing it buys is
+ * needed by whichever frame the card's interface is in — not by all of them. The
+ * bootstrap is inlined per frame because policy must not be substitutable; but
+ * the preset is already served from this origin by content-hashed URL under the
+ * same `script-src`, so "inline or fetch" is a question with a real answer
+ * rather than a settled one. Raised with the coordinator rather than decided
+ * here.
  *
  * **No current figure is written here on purpose.** Two earlier versions of this
  * comment carried "as this line is written" numbers and both were stale within
@@ -57,7 +67,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 59 * 1024
+export const FRAME_OVERHEAD_BYTES = 64 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -73,31 +83,42 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 34 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 32 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
- * 16 leaves about 1.1 MiB for content (overhead ≈ 944 KiB, 46%), and 16 live
+ * 12 leaves about 1.25 MiB for content (overhead ≈ 768 KiB, 38%), and 12 live
  * panels on one screen is already past any reading scenario. It is a trade-off
  * point rather than a threshold — moving it means revisiting the two measured
  * values above, not just this line.
  *
- * **It was 20, and the test beside this is what moved it.** The design's own
- * invariant is that the gate stays *well* below the degradation point, written
- * down as `FRAME_COUNT_LIMIT < degradesAt / 2`. Each bootstrap increment lowers
- * `degradesAt`, and at 53 KiB it reached 38.6 — so half of it, 19.3, had fallen
- * under the gate at 20 and the invariant was false. The overhead share had gone
- * 38% → 47% → 50% → 52% across those increments, and the whole time the
- * reasonable-looking response was to raise the constant above and treat the
- * ratio as incidental.
+ * **It was 20, then 16, and the test beside this moved it both times.** The
+ * design's own invariant is that the gate stays *well* below the degradation
+ * point, written down as `FRAME_COUNT_LIMIT < degradesAt / 2`. Each bootstrap
+ * increment lowers `degradesAt`:
  *
- * 16 rather than 19, which was the largest value satisfying the invariant on
- * the day it moved: 19 would have put this back on the boundary and made the
- * next kilobyte of bootstrap relitigate it. That headroom was spent almost
- * immediately — the frame went 53 → 57 KiB in the next change — and the
- * invariant still holds, which is the whole return on picking 16. It holds to
- * about 64 KiB.
+ * | frame | degradesAt | half | gate | invariant |
+ * | --- | --- | --- | --- | --- |
+ * | 39 KiB | 53.9 | 26.9 | 20 | held |
+ * | 53 KiB | 38.6 | 19.3 | 20 | **false** → gate 16 |
+ * | 57 KiB | 35.9 | 18.0 | 16 | held |
+ * | 64 KiB | 32.0 | 16.0 | 16 | **false** → gate 12 |
+ *
+ * Both times the reasonable-looking response was to raise the constant above and
+ * treat the ratio as incidental; both times the invariant said otherwise, and
+ * both times the alternative — widening the test's own sanity band — would have
+ * been repairing the instrument to fit the reading.
+ *
+ * 12 rather than 15, which is the largest value satisfying it today: the 16
+ * chosen at 53 KiB was meant to hold "to about 64 KiB" and it did, exactly, for
+ * two changes. Picking the boundary again would buy one more change. 12 holds to
+ * about 87 KiB.
+ *
+ * **The pattern is now the finding.** Two gate moves in one day is not the frame
+ * budget being tuned; it is the per-frame bootstrap growing faster than the
+ * budget can absorb, and the honest next step is to ask whether all of it has to
+ * be inlined per frame — see the note on `FRAME_OVERHEAD_BYTES` above.
  *
  * **This is a behaviour change and it is small in the only place it shows.**
  * Frames past the sixteenth on one screen now get a named placeholder instead
@@ -112,7 +133,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * rather than any of the three numbers. Every figure in this paragraph is stale
  * the moment the bootstrap moves; the guard in `build:sandbox` is what is not.
  */
-export const FRAME_COUNT_LIMIT = 16
+export const FRAME_COUNT_LIMIT = 12
 
 /** One interface block that could become a frame. */
 export interface FrameCandidate {

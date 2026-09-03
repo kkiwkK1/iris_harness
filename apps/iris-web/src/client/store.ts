@@ -27,7 +27,8 @@ import type {
 } from '@iris/protocol'
 
 import { asRpcError, describeError, isHostError } from './errors.ts'
-import { wireMethodFor } from '../sandbox/card-api.ts'
+import { isShellAction, wireMethodFor } from '../sandbox/card-api.ts'
+import { draftThroughComposer, sendThroughComposer } from '../app/composer-bus.ts'
 import { consentState, type ConsentState } from '../sandbox/consent.ts'
 import type { ScriptRunState } from '../sandbox/script-run-state.ts'
 
@@ -777,6 +778,31 @@ export function createIrisStore(
       async runCardAction(method: string, params: unknown): Promise<unknown> {
         const chatId = get().chatId
         if (chatId === undefined) throw new Error('no chat is open')
+
+        /*
+         * The shell's own actions, answered before the host lookup.
+         *
+         * A card writes `#send_textarea.value` and clicks `#send_but`; what has
+         * to happen is that **Iris's composer** takes the text and submits it.
+         * There is no host arm for "type this for the user", and giving these a
+         * plausible wire method would route them to one that does not exist —
+         * the failure would then arrive as the host refusing a method nobody
+         * wrote, which is the misattribution this file already paid for once.
+         *
+         * Refused by throwing when nothing happened, because the caller is a
+         * card and it has to be able to say so: `#send_but.click()` returns
+         * void, so the rejection its wrapper reports is the only channel back.
+         */
+        if (isShellAction(method)) {
+          const bag = typeof params === 'object' && params !== null
+            ? (params as Record<string, unknown>)
+            : {}
+          const refused = method === 'composerDraft'
+            ? draftThroughComposer(String(bag['text'] ?? ''))
+            : sendThroughComposer()
+          if (refused !== undefined) throw new Error(refused)
+          return {}
+        }
 
         const wire = wireMethodFor(method)
         if (wire === undefined) {
