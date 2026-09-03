@@ -103,6 +103,15 @@ export interface ReportContext {
   chatId?: string
   characterId?: string
   scriptId?: string
+  /**
+   * Whether this report describes something already lost.
+   *
+   * Set by the reporting site, because only it knows: `variables` covers both a
+   * table that was trimmed and a table that could not be read, and the first is
+   * pushed to every open page while the second waits to be asked for. The kind
+   * is what the report is about; this is what it costs.
+   */
+  irreversible?: true
 }
 
 /**

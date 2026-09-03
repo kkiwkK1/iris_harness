@@ -1051,6 +1051,26 @@ Entries marked *(frame)* are the sandbox domain's findings, cited rather than
 restated: the mechanism was measured there, and paraphrasing someone else's
 measurement into this ledger is how a citation becomes a claim.
 
+## The "never cleaned" notice comes back after a restart
+
+The one-time notice that a chat has never been through a variable cleanup says
+itself **once per load**, not once per chat. Reopen the conversation, or restart
+the host, and it appears again. That reads like a bug in a "show this once"
+feature, and it is deliberate.
+
+The flag lives in memory on the open `ChatEntry` and is never serialized.
+Persisting it would mean **writing our UI bookkeeping into the user’s own chat
+file** — recording that we had already spoken, inside their data, forever. The
+thing upstream does persist there is `ignore_cleanup`, and that is a different
+kind of fact: it is the **user’s decision**, made in answer to a question, and it
+travels with the chat between hosts because the answer belongs to whoever gave
+it.
+
+So the weaker guarantee is the intended one. **Do not fix this by persisting the
+flag.** If the repetition becomes a real annoyance the answer is the feature
+upstream actually has — ask the question, and record the reply under upstream’s
+own key.
+
 ## Host
 
 **Injection order inside a group is the keys' lexicographic order.**

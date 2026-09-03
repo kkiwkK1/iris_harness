@@ -1193,7 +1193,9 @@ export class IrisAppService {
         if (note !== undefined) this.#report(note, { kind: 'variables', chatId: entry.chatId })
       }
       if (prune !== undefined && pruneDue(chatLines(entry.session).length)) {
-        entry.prune(prune, message => { this.#report(message, { kind: 'variables', chatId: entry.chatId }) })
+        entry.prune(prune, message => {
+          this.#report(message, { kind: 'variables', chatId: entry.chatId, irreversible: true })
+        })
       }
       await this.#options.chats.save(entry, message => {
         this.#report(message, { kind: 'variables', chatId: entry.chatId })
@@ -1772,7 +1774,17 @@ export class IrisAppService {
   #report(what: unknown, context: ReportContext): void {
     const caught = what instanceof Error ? what : undefined
     const message = caught?.message ?? String(what)
-    this.#options.diagnostics?.record(context, message, caught?.stack)
+    const recorded = this.#options.diagnostics?.record(context, message, caught?.stack)
+    // Pushed, not merely retained, when the report is about something already
+    // gone. **The stored record itself travels** — no fields are copied across,
+    // so a field added to a report reaches the page in the same edit.
+    //
+    // A host with no buffer pushes nothing, and that is not an oversight: the
+    // buffer is what mints `seq` and `at`, so without it there is no record to
+    // send, only a sentence.
+    if (recorded !== undefined && context.irreversible === true) {
+      this.#options.broadcast({ type: 'report', report: recorded, irreversible: true })
+    }
     // The log line keeps a prefix, because a logger has no fields to carry the
     // kind in. It is now uniformly `kind: message`, replacing the ad-hoc
     // prefixes each site used to write into its own text (`template `,

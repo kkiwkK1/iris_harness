@@ -9,7 +9,7 @@
  * @module @iris/protocol/events
  */
 
-import type { ChatSummary, ChatView } from './views.ts'
+import type { ChatSummary, ChatView, DebugReport } from './views.ts'
 
 /** One frame pushed to the browser. */
 export type IrisEvent =
@@ -56,6 +56,23 @@ export type IrisEvent =
   | { type: 'stream.error', chatId: string, turn: number, code: string, message: string }
   /** Something other than streaming changed this chat — an edit, a swipe, a delete. */
   | { type: 'chat.updated', chatId: string, view: ChatView }
+  /**
+   * A report about something that cannot be undone.
+   *
+   * **Only the irreversible ones are pushed.** Every report is retained and
+   * readable through `debug.reports`; a page that wants the rest asks for them.
+   * What cannot wait for someone to open a panel is a deletion — the variable
+   * cleanup trimming old floors is the case this exists for — because by the
+   * time anyone thinks to look, the thing the report describes is already gone
+   * and nothing here replays it back.
+   *
+   * **The whole record travels, rather than fields copied out of it.** The
+   * buffer mints it and this carries the same object, so adding a field to a
+   * report cannot leave the pushed copy behind — the failure where a producer
+   * and a consumer are both tested and the hand-written assembly between them
+   * is not.
+   */
+  | { type: 'report', report: DebugReport, irreversible: true }
   /** The conversation list changed. */
   | { type: 'chats.updated', chats: ChatSummary[] }
 
