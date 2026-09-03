@@ -158,6 +158,11 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
     V1.5.4 论坛覆盖层加载失败;自包含包体照跑所以像卡的问题)→ 1658798 宿主出口改写嵌套说明符,V1.5.4 回到 4/4。
     待收:walker 把字符串里的 `"from","` 当 import 子句,一次加载 32 条假阳性 bare 报告(7b 修);legacy 三键弹窗宿主↔壳
     协议对(49 设计 → 7b 接);注入按帧运行 runId 记账(两条理由都成立后的裁决,替代「按 chat 清」与「保留」)。
+    **以上三件今日收口**:walker 认字符串/模板/注释/正则(0d718c3);legacy 门与写改字面 `chat[1].variables[0]`、清理连 user 行一起剥、
+    一条 `iris/rows-pruned` 汇总事件(dd9a64e,真宿主 21+21 与预测一致,报告文本两数并列 b95d2ff);offer 每次 chat.open 发(9a3c4e6);
+    注入按 (chatId, runId) 记账、runId 必填、每次 run 结束都说话(5daf9ff→4296ab6,前台 12 次配对全对);嵌套 iframe 替身两个
+    「不改必空且无报错」的修法:`@scope` 根用 `:scope`、`setAttribute(srcdoc)` 走同一 applySrcdoc(33b7b2b),几何仍等前台。
+    **待用户前台**:银麒赎世 📱 按钮、V1.5.4 覆盖层(顺序:替身 body 有 #app → 高度链 300/300/300 可滚 → 内在尺寸缺口)。
 13. 受控口子二期（/api/backends/*）已归档 BRIDGE.md，等真实消费者
 14. **CI 推远端**——用户决定，仍开放
 
