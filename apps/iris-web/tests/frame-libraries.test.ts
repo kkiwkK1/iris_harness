@@ -15,6 +15,7 @@ import { strict as assert } from 'node:assert'
 import test from 'node:test'
 
 import { installSandbox, type FrameEnv } from '../src/sandbox/frame.ts'
+import { MEMBERS } from './members-table.ts'
 import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
 
 /** A frame driven far enough to reach the library hooks. */
@@ -30,6 +31,10 @@ function scope(): {
   let captured: ((message: string, channel: 'note' | 'error') => void) | undefined
 
   const env: FrameEnv = {
+    // The real table: a test has no document to load the members script
+    // into, so it hands the core the same members `members-entry.ts`
+    // publishes. The core takes it as a parameter, which is the split.
+    members: MEMBERS,
     token: 'tok',
     container: { id: 'card-root', querySelector: () => null, querySelectorAll: () => [] },
     factory: {

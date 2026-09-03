@@ -34,7 +34,15 @@ const here = dirname(fileURLToPath(import.meta.url))
 const dir = join(here, '..', 'public', 'sandbox')
 
 /** The artifacts this owns, by the name their build emits. */
-const ARTIFACTS = ['bootstrap', 'preset', 'message-preset']
+/*
+ * `members` is here for the reason the others are, and for one more: the host
+ * serves `immutable` only for names it finds in this manifest. An asset that is
+ * hashed but unlisted is still *served* — with `no-cache`, so it is refetched on
+ * every frame. That failure has no error and no wrong behaviour; its only
+ * symptom is "somehow slower", which nobody attributes. Being in this list is
+ * what makes the content hash mean anything.
+ */
+const ARTIFACTS = ['bootstrap', 'members', 'preset', 'message-preset']
 
 /**
  * Sixteen hex characters of SHA-256.

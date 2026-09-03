@@ -134,6 +134,15 @@ export function buildSrcdoc(
   options: {
     networkGranted: boolean
     libraries: readonly string[]
+    /**
+     * The card-facing member table's URL.
+     *
+     * Loaded once per page and cached by content hash, where the bootstrap is
+     * inlined per frame. Optional so a caller that has not been given one still
+     * builds a frame — it will report the absence by name rather than fail to
+     * exist, which is the more useful of the two failures.
+     */
+    members?: string
     selfOrigin: string
     /**
      * Markup to place in the frame's own body — a message frame's card
@@ -169,7 +178,7 @@ export function buildSrcdoc(
     context?: unknown
   },
 ): string {
-  const { networkGranted, libraries, selfOrigin } = options
+  const { networkGranted, libraries, selfOrigin, members } = options
   // The bootstrap is placed inside a script element, so the one sequence that
   // could break out of it is a literal `</script`. Split rather than escaped:
   // the string is JavaScript, and an HTML escape inside it would change the code.
@@ -259,6 +268,29 @@ export function buildSrcdoc(
      * The libraries are the card's dependencies, not the sandbox's, which is the
      * other half of why they come second.
      */
+    /*
+     * The member table, **before** the inlined bootstrap and blocking.
+     *
+     * A classic `<script src>` with no `async`/`defer` finishes before the next
+     * script element begins, so by the time the bootstrap's first line runs the
+     * table is either present or definitively absent — which is what lets the
+     * bootstrap check a marker instead of waiting for one.
+     *
+     * `crossorigin="anonymous"` for the same reason the libraries carry it: this
+     * frame is an opaque origin, so every script it loads is cross-origin to it,
+     * and without the attribute an exception thrown inside the table is redacted
+     * to the bare word `Script error.`. The other half of that pair — the host's
+     * `Access-Control-Allow-Origin` on the sandbox-asset route — already exists;
+     * adding the attribute without it once stopped the preset from running at
+     * all, silently.
+     *
+     * Omitted entirely when there is no URL, rather than emitted empty: a
+     * `<script src="">` re-requests the frame's own document, and the failure
+     * that produces is nothing like the one it would be standing in for.
+     */
+    ...(members === undefined
+      ? []
+      : [`<script src="${attribute(members)}" crossorigin="anonymous" data-iris-members></script>`]),
     `<script>${safe}</script>`,
     // After the bootstrap, which reads it, and before anything a card can run.
     seed,

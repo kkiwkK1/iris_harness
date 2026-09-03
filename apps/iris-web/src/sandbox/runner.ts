@@ -55,6 +55,15 @@ export interface RunnerHost {
    * Tavern Helper assumes exactly what Tavern Helper provides.
    */
   libraries: readonly string[]
+  /**
+   * The card-facing member table's URL.
+   *
+   * Both frame kinds need it: a script frame runs card bodies against it, and an
+   * interface frame's markup reaches the same members. Optional only so a caller
+   * mid-migration still builds a frame — one without it comes up and refuses to
+   * run anything, by name.
+   */
+  members?: string
   /** Whether the user granted this card the real page. */
   documentGranted: boolean
   /** Whether the user granted this card the network. */
@@ -250,6 +259,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   frame.srcdoc = buildSrcdoc(token, host.bootstrap, {
     networkGranted: host.networkGranted,
     libraries: host.libraries,
+    ...(host.members === undefined ? {} : { members: host.members }),
     selfOrigin: window.location.origin,
     ...(host.markup === undefined ? {} : { body: host.markup }),
     /*

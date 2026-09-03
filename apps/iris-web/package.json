@@ -9,7 +9,7 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "check:render": "node tools/render-check.mjs",
-    "build:sandbox": "vite build --config vite.sandbox.config.ts && vite build --config vite.preset.config.ts && vite build --config vite.message-preset.config.ts && node tools/hash-sandbox-assets.mjs && node tools/check-bootstrap.mjs && node tools/check-preset.mjs"
+    "build:sandbox": "vite build --config vite.sandbox.config.ts && vite build --config vite.members.config.ts && vite build --config vite.preset.config.ts && vite build --config vite.message-preset.config.ts && node tools/hash-sandbox-assets.mjs && node tools/check-bootstrap.mjs && node tools/check-preset.mjs"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.2",

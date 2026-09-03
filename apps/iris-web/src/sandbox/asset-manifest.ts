@@ -28,6 +28,16 @@ export const SANDBOX_MANIFEST_PATH = '/sandbox/manifest.json'
 /** The artifacts a build produces, as URLs. */
 export interface SandboxAssets {
   bootstrap: string
+  /**
+   * The card-facing member table.
+   *
+   * Split out of the bootstrap so it is fetched once per page instead of inlined
+   * into every frame — that alone took the per-frame cost from 65 KiB to 41 KiB.
+   * It is **required** rather than optional here: a build that emitted no table
+   * would produce frames that come up and refuse to run anything, and the
+   * manifest is the earliest place that can be said.
+   */
+  members: string
   preset: string
   /**
    * The message frame's library bundle.
@@ -71,7 +81,7 @@ export function parseSandboxManifest(body: string): SandboxAssets | string {
   const record = parsed as Record<string, unknown>
 
   const names: Record<string, string> = {}
-  for (const key of ['bootstrap', 'preset', 'message-preset']) {
+  for (const key of ['bootstrap', 'members', 'preset', 'message-preset']) {
     const value = record[key]
     if (typeof value !== 'string' || value === '') {
       return `the sandbox manifest does not name a ${key} artifact`
@@ -90,6 +100,7 @@ export function parseSandboxManifest(body: string): SandboxAssets | string {
 
   return {
     bootstrap: `/sandbox/${names['bootstrap'] ?? ''}`,
+    members: `/sandbox/${names['members'] ?? ''}`,
     preset: `/sandbox/${names['preset'] ?? ''}`,
     messagePreset: `/sandbox/${names['message-preset'] ?? ''}`,
   }

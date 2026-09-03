@@ -21,9 +21,9 @@ import { remoteImports, requestedImports } from './script-source.ts'
 import { describeAttempts, type TimedResource } from './import-attempts.ts'
 import { describeTransferCost, type TransferTiming } from './transfer-cost.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
-import { createReportingToastr } from './toastr-report.ts'
 import { describeBlocked } from './blocked-report.ts'
-import { type Measured, clipPathFor, collectRegions } from './overlay-regions.ts'
+import type { Measured } from './overlay-regions.ts'
+import { MEMBERS_GLOBAL, MEMBERS_MARKER, type MemberTable } from './members-contract.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
@@ -163,7 +163,11 @@ function token(): string {
  * @param run - the run token.
  * @param post - the channel to the shell.
  */
-function reportRegions(run: string, post: (message: FromFrame) => void): void {
+function reportRegions(
+  run: string,
+  post: (message: FromFrame) => void,
+  members: MemberTable,
+): void {
   let scheduled = false
   let last = ''
 
@@ -198,7 +202,7 @@ function reportRegions(run: string, post: (message: FromFrame) => void): void {
       child => child.tagName !== 'SCRIPT' && child.tagName !== 'STYLE'
         && child.id !== 'tavern_helper',
     )
-    const clip = clipPathFor(collectRegions(roots, measure))
+    const clip = members.clipPathFor(members.collectRegions(roots, measure))
     if (clip === last) return
     last = clip
     post({ iris: run, type: 'regions', clip })
@@ -842,6 +846,25 @@ const blocking = { tasks: 0, total: 0 }
  * rendering", which is the question actually being asked.
  */
 let firstFrameAt: number | undefined
+/**
+ * The card-facing member table, fetched once per page.
+ *
+ * It arrives as a **synchronous blocking** `<script src>` placed before this
+ * inlined block, so by the time any line below runs it is either present or
+ * definitively absent — that ordering is `srcdoc.ts`'s guarantee, and it is why
+ * nothing here waits.
+ *
+ * Read at module scope because the reporters below are module-level functions
+ * and need it too.
+ */
+const memberTable = (globalThis as unknown as Record<string, unknown>)[MEMBERS_GLOBAL] as
+  MemberTable | undefined
+
+/** Whether the table finished evaluating, from the marker it sets last. */
+const membersReady =
+  (globalThis as unknown as Record<string, unknown>)[MEMBERS_MARKER] === true
+  && memberTable !== undefined
+
 try {
   requestAnimationFrame(() => {
     firstFrameAt = performance.now()
@@ -1143,7 +1166,54 @@ window.addEventListener('message', event => {
 })
 
 try {
+  /*
+   * The member table, fetched once per page and read here.
+   *
+   * It arrives as a **synchronous blocking** `<script src>` placed before this
+   * inlined block, so by the time anything below runs it is either present or
+   * definitively absent. That ordering is `srcdoc.ts`'s to guarantee and it is
+   * the reason no waiting is needed here.
+   */
+  /*
+   * Without the table there is a frame and no surface, and the response is to
+   * **refuse to run card bodies** rather than run them against an empty one.
+   *
+   * Running would produce a `ReferenceError` for every member a card touches,
+   * each attributed to the card. This project has already shipped a frame that
+   * reported nine missing library names when the truth was one blocked script,
+   * and that cost a verification round; one named refusal is shorter and
+   * actionable ("check the members asset and the manifest").
+   *
+   * For an **interface** frame the card's markup has already parsed and cannot
+   * be held back, so this cannot prevent anything there — what it does is put
+   * the attribution ahead of the errors it is about to cause.
+   */
+  if (!membersReady || memberTable === undefined) {
+    /*
+     * **Thrown, not posted-and-returned**, and the channel is the point.
+     *
+     * This runs inside the entry's own `try`, whose `catch` reports a
+     * **bootstrap error** — and that is exactly what this is. The frame has not
+     * failed to do something a card asked for; it has failed to come up. The
+     * panel's phase for that reads "never started: …", which is the sentence a
+     * reader can act on, and it lands the message on the one path that already
+     * knows how to report before a run token means anything.
+     *
+     * Posting a card error and returning would put it under a heading about
+     * scripts that did not start, which is the misattribution this project has
+     * paid for twice.
+     */
+    throw new Error(
+      'the member table did not arrive, so nothing a card calls exists in this frame'
+      + ' \u2014 the script that carries it was blocked, failed to parse, or threw partway.'
+      + ' Card scripts were not run; anything a card\u2019s inline markup has already'
+      + ' reported comes from that markup, not from the card being wrong.',
+    )
+  }
+  const members: MemberTable = memberTable
+
   installSandbox({
+    members,
     /*
      * Read from the document here, because `frame.ts` is injected with
      * everything it needs and knows nothing about the document it lands in. The
@@ -1328,7 +1398,7 @@ try {
     // replace a seeded global, and a card that brought its own real toastr
     // should keep it rather than have its UI silently redirected to our panel.
     if (host['toastr'] !== undefined) return
-    host['toastr'] = createReportingToastr(report)
+    host['toastr'] = members.createReportingToastr(report)
   },
 
   reportMissingGlobals: expected => {
@@ -1528,13 +1598,29 @@ try {
   },
   })
 
+  /*
+   * Without the table there is a frame and no surface, and the response is to
+   * **refuse to run card bodies** rather than run them against an empty one.
+   *
+   * Running would produce a `ReferenceError` per member a card touches, every
+   * one of them attributed to the card — this project has already shipped a
+   * frame that reported nine missing library names when the truth was one
+   * blocked script, and that cost a verification round. One named refusal is
+   * both shorter and actionable ("check the members asset and the manifest").
+   *
+   * For an **interface** frame the card's markup has already parsed and cannot
+   * be held back, so the refusal cannot prevent anything — what it does there is
+   * put the attribution first, ahead of the errors it is about to cause.
+   */
   reportAsyncFailures(run, post, () => bodyStarted)
   /*
    * Only where there is a surface to clip. An interface frame is laid out inside
    * the reading column and catches clicks over its own box, which is already
    * right; a script frame covers the viewport and would swallow the shell.
    */
-  if (document.body?.hasAttribute('data-iris-interface') !== true) reportRegions(run, post)
+  if (document.body?.hasAttribute('data-iris-interface') !== true) {
+    reportRegions(run, post, members)
+  }
   reportBlocked(run, post)
   reportStorage(run, post)
   reportBodySummary(run, post)

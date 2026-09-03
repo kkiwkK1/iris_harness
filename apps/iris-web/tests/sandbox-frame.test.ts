@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { UnsupportedApiError } from '../src/sandbox/errors.ts'
 import { CARD_METHODS, isCardMethod, isOnSillyTavernSurface } from '../src/sandbox/card-api.ts'
 import { installSandbox, type FrameEnv } from '../src/sandbox/frame.ts'
+import { MEMBERS } from './members-table.ts'
 import { UPSTREAM_MEMBERS } from '../src/sandbox/upstream-surface.ts'
 import { SCRIPT_REGISTRY } from '../src/sandbox/preamble.ts'
 import { SHARED_ORIGINAL } from '../src/sandbox/identity.ts'
@@ -74,6 +75,10 @@ function realm(options?: { interfaceFrame?: boolean }): {
   let toastrReport: ((message: string, channel: 'note' | 'error') => void) | undefined
   let installedStorage: Record<string, unknown> | undefined
   const env: FrameEnv = {
+    // The real table: a test has no document to load the members script
+    // into, so it hands the core the same members `members-entry.ts`
+    // publishes. The core takes it as a parameter, which is the split.
+    members: MEMBERS,
     token: 'tok',
     container,
     ...(options?.interfaceFrame === true ? { interfaceFrame: true } : {}),

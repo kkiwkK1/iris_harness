@@ -43,7 +43,23 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * frame on an opaque origin has to be given instead of having, then 0.7 KiB for
  * the lazy restore of floor tables the text transport made necessary, then the
  * read-only document state and the gap-note retraction, and 5 KiB for the three
- * SillyTavern anchor stand-ins, then 1.7 KiB for the overlay-region reporter.
+ * SillyTavern anchor stand-ins, then 1.7 KiB for the overlay-region reporter —
+ * at which point it was 65 KiB and had forced the count gate down twice in one
+ * day.
+ *
+ * **Then it fell to 41 KiB, and the fall is the interesting number.** The
+ * card-facing member table — the Tavern Helper surface, the storage façade, the
+ * anchors, the overlay geometry — moved out of the inlined bootstrap into a
+ * script fetched once per page by content-hashed URL. Measured, not projected:
+ * the core builds to 40,058 bytes and the table to 27,601, against 65,512 for
+ * the old single bundle. (The 2.2 KiB the two now duplicate is shared helpers
+ * pulled into both, and is the honest price of the seam.)
+ *
+ * **What actually changed is the growth rate.** Every member added before this
+ * was paid twelve to twenty times; a member added now does not touch this
+ * constant at all. The line here is policy — the proxies, the refusals, the
+ * evaluator, the install order — and policy is a bounded list of what a card may
+ * not do, where the surface is an unbounded list of what it may.
  *
  * **That last jump is the one worth arguing about rather than absorbing.** Five
  * kilobytes of stand-in is paid *per live frame*, and the thing it buys is
@@ -67,7 +83,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 65 * 1024
+export const FRAME_OVERHEAD_BYTES = 41 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -83,12 +99,12 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 31 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 50 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
- * 12 leaves about 1.25 MiB for content (overhead ≈ 768 KiB, 38%), and 12 live
+ * 20 leaves about 1.2 MiB for content (overhead ≈ 820 KiB, 39%), and 20 live
  * panels on one screen is already past any reading scenario. It is a trade-off
  * point rather than a threshold — moving it means revisiting the two measured
  * values above, not just this line.
@@ -105,6 +121,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * | 57 KiB | 35.9 | 18.0 | 16 | held |
  * | 64 KiB | 32.0 | 16.0 | 16 | **false** → gate 12 |
  * | 65 KiB | 31.5 | 15.8 | 12 | held |
+ * | 41 KiB | 50.0 | 25.0 | **20** | held, with room |
  *
  * Both times the reasonable-looking response was to raise the constant above and
  * treat the ratio as incidental; both times the invariant said otherwise, and
@@ -116,10 +133,15 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * two changes. Picking the boundary again would buy one more change. 12 holds to
  * about 87 KiB.
  *
- * **The pattern is now the finding.** Two gate moves in one day is not the frame
- * budget being tuned; it is the per-frame bootstrap growing faster than the
- * budget can absorb, and the honest next step is to ask whether all of it has to
- * be inlined per frame — see the note on `FRAME_OVERHEAD_BYTES` above.
+ * **The pattern was the finding, and it has been acted on.** Two gate moves in
+ * one day was not the frame budget being tuned; it was the per-frame bootstrap
+ * growing faster than the budget could absorb. Splitting the member table out
+ * answered it, and the gate is back at 20 — where the design put it, and this
+ * time chosen by "how many live panels is still reading" rather than by bytes.
+ *
+ * The invariant is what carried this from a nuisance to a decision: it failed
+ * twice, was not widened either time, and the second failure is what made the
+ * structural question unavoidable.
  *
  * **This is a behaviour change and it is small in the only place it shows.**
  * Frames past the sixteenth on one screen now get a named placeholder instead
@@ -134,7 +156,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * rather than any of the three numbers. Every figure in this paragraph is stale
  * the moment the bootstrap moves; the guard in `build:sandbox` is what is not.
  */
-export const FRAME_COUNT_LIMIT = 12
+export const FRAME_COUNT_LIMIT = 20
 
 /** One interface block that could become a frame. */
 export interface FrameCandidate {

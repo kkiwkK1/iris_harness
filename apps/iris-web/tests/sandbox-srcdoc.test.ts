@@ -322,4 +322,47 @@ test('a frame with no inlined snapshot has no seed at all', () => {
   const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
   assert.ok(!doc.includes('__iris_context__'))
 })
+test('the member table loads before the bootstrap, and blocking', () => {
+  /*
+   * **The ordering is the whole contract of the split.** A classic
+   * `<script src>` with no `async`/`defer` finishes before the next script
+   * element begins, so the bootstrap can check a marker rather than wait for
+   * one — and an interface frame's inline markup, which parses after both, sees
+   * a complete surface.
+   *
+   * Asserted by **position**, not by presence: a table emitted after the
+   * bootstrap would still be in the document, still load, and still set its
+   * marker — one tick too late, in every frame, every time. That failure has no
+   * error in it; the frame simply refuses to run cards and blames a fetch.
+   */
+  const doc = buildSrcdoc('tok', 'BOOTSTRAP_MARKER', {
+    networkGranted: false,
+    libraries: ['https://example.test/preset.js'],
+    selfOrigin: SELF,
+    members: `${SELF}/sandbox/members-abc.js`,
+  })
 
+  const members = doc.indexOf('data-iris-members')
+  const bootstrap = doc.indexOf('BOOTSTRAP_MARKER')
+  const library = doc.indexOf('data-iris-lib')
+  assert.ok(members !== -1, 'the member table was not emitted')
+  assert.ok(members < bootstrap, 'the table must load before the bootstrap reads it')
+  assert.ok(bootstrap < library, 'the bootstrap still comes before the card libraries')
+
+  // Not deferred, or the ordering above is a claim about the document rather
+  // than about when anything runs.
+  const tag = doc.slice(doc.lastIndexOf('<script', members), doc.indexOf('>', members) + 1)
+  assert.doesNotMatch(tag, /\basync\b/, tag)
+  assert.doesNotMatch(tag, /\bdefer\b/, tag)
+  // And carrying the attribute that keeps its exceptions readable, like the
+  // libraries do — an opaque origin redacts a cross-origin throw without it.
+  assert.match(tag, /crossorigin="anonymous"/, tag)
+})
+
+test('no member URL emits no tag at all, rather than an empty one', () => {
+  // `<script src="">` re-requests the frame's own document, and the failure that
+  // produces is nothing like the one it would be standing in for.
+  const doc = buildSrcdoc('tok', 'x', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  assert.doesNotMatch(doc, /data-iris-members/)
+  assert.doesNotMatch(doc, /<script src=""/)
+})

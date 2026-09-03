@@ -193,6 +193,7 @@ export function MessageInterfaces({
           scripts: [],
           mode: 'module',
           libraries: [`${window.location.origin}${current.assets.messagePreset}`],
+          members: `${window.location.origin}${current.assets.members}`,
           markup: input.markup,
           documentGranted: current.documentGranted,
           /*

@@ -123,6 +123,21 @@ export function CardScriptFrames(): ReactElement {
       return `${window.location.origin}${resolvedAssets.preset}`
     }
 
+    /**
+     * The member table's absolute URL for this build.
+     *
+     * Same shape as `presetUrl`, and it throws for the same reason: a frame
+     * built before the manifest resolved would carry a wrong path, and a wrong
+     * path here means a frame that comes up and refuses to run anything.
+     * @returns the URL to put in the frame's members tag.
+     */
+    const membersUrl = (): string => {
+      if (resolvedAssets === undefined) {
+        throw new Error('the sandbox manifest was not resolved before the frame was built')
+      }
+      return `${window.location.origin}${resolvedAssets.members}`
+    }
+
     const running = startCardScripts(
       {
         /*
@@ -185,6 +200,7 @@ export function CardScriptFrames(): ReactElement {
               })),
               mode: modeFor('card-script'),
               libraries: librariesFor('card-script', presetUrl()),
+              members: membersUrl(),
               documentGranted: input.documentGranted,
               // Same origin as the page: the host serves both the interface and the proxy.
               bundleOrigin: window.location.origin,

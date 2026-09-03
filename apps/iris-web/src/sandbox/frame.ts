@@ -22,15 +22,7 @@ import type { FromFrame, ToFrame } from './protocol.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isOnSillyTavernSurface } from './card-api.ts'
-import {
-  SETTLED_EVENT_NAMES,
-  STARTED_EVENTS,
-  createEventSource,
-  createFrameTavernHelper,
-} from './tavern-helper.ts'
-import { createCardStorage } from './card-storage.ts'
-import { KNOWN_ST_IDS, createStAnchors } from './st-anchors.ts'
-import { restoreFloorTables } from './tavern-helper.ts'
+import type { MemberTable } from './members-contract.ts'
 import { MEMBER_KINDS, SHARED_ORIGINAL, identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
 import { SCRIPT_REGISTRY, withPreamble } from './preamble.ts'
@@ -115,6 +107,22 @@ export interface FrameEnv {
    * @param storage - the object to shadow `localStorage` with.
    */
   provideStorage?: (storage: unknown) => void
+  /**
+   * The card-facing member table.
+   *
+   * **Injected rather than imported, and that is the split.** Everything this
+   * module reaches through here — the Tavern Helper surface, the storage façade,
+   * the anchors, the overlay geometry — used to be `import`ed, which put it in
+   * the bootstrap and therefore inside every frame's `srcdoc`, paid per frame
+   * with no cache. At twelve live frames that was the larger part of a 2 MiB
+   * budget and had forced the count gate down twice in one day.
+   *
+   * What stays in this module is **policy**: the proxies that refuse, the
+   * unbridged list, the evaluator, and the order things are installed in. The
+   * distinction is not size, it is substitutability — nothing that decides what
+   * a card *may* reach should be answerable by a path.
+   */
+  members: MemberTable
   /**
    * The realm's own page state, read on each access.
    *
@@ -241,7 +249,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    */
   let generating = false
 
-  const anchors = createStAnchors({
+  const anchors = env.members.createStAnchors({
     draft: () => composerShadow,
     setDraft: text => {
       composerShadow = text
@@ -279,7 +287,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     viewport: readViewport,
     factory: env.factory,
     anchors,
-    knownIds: KNOWN_ST_IDS,
+    knownIds: env.members.KNOWN_ST_IDS,
     report: (message, failed) => {
       if (failed) reportFault(message)
       else reportGap(message)
@@ -1104,7 +1112,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * events something is actually waiting on.
    */
   const events = new EventBus()
-  const eventSource = createEventSource(events)
+  const eventSource = env.members.createEventSource(events)
 
   /**
    * How long a wait may run before it is worth *saying* it is still waiting.
@@ -1273,7 +1281,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * no character open cannot attribute a write and says so rather than inventing
    * an id.
    */
-  const cardStorage = createCardStorage({
+  const cardStorage = env.members.createCardStorage({
     snapshot: () => context?.storage ?? {},
     write: async (key, value) => {
       const characterId = context?.characterId
@@ -1314,7 +1322,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     },
   })
 
-  const tavernHelper = createFrameTavernHelper({
+  const tavernHelper = env.members.createFrameTavernHelper({
     context: () => context,
     scriptId: () => scriptId,
     reportGap,
@@ -1441,7 +1449,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
 
   const viewFor = (forScript: string | undefined): Record<string, unknown> => {
     begun.add(forScript)
-    const bound = createFrameTavernHelper({
+    const bound = env.members.createFrameTavernHelper({
       context: () => context,
       scriptId: () => forScript,
       reportGap,
@@ -1627,8 +1635,8 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * `#mes_stop`'s visibility, `parent.is_send_press` — so they cannot
        * disagree, and no protocol field can go stale against the event stream.
        */
-      if (STARTED_EVENTS.includes(message.event)) generating = true
-      else if (SETTLED_EVENT_NAMES.includes(message.event)) generating = false
+      if (env.members.STARTED_EVENTS.includes(message.event)) generating = true
+      else if (env.members.SETTLED_EVENT_NAMES.includes(message.event)) generating = false
 
       // Not awaited and not reported: a listener that throws is the card's
       // problem with its own handler, and upstream does not tell the host either.
@@ -1677,7 +1685,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * floor that cannot be parsed is a transport fault, and this is the only
        * place that would ever notice it.
        */
-      restoreFloorTables(context.chat, (text, failed) => {
+      env.members.restoreFloorTables(context.chat, (text, failed) => {
         if (failed) reportFault(text)
         else reportGap(text)
       })
