@@ -33,11 +33,13 @@ export const requestSchemas = {
    * walked away. Nothing is cleaned and nothing is recorded, so the offer comes
    * back next time.
    *
-   * **`'never'` is upstream's `NEGATIVE` *and* its `CANCELLED`.** Dismissing the
-   * dialog with Esc takes the same branch as pressing "do not remind me"
-   * (`legacy_chat.ts:27-33`), so a shell must map a dismissal to this and not to
-   * silence. Getting that wrong is invisible: the user believes they deferred,
-   * and upstream believes they declined forever.
+   * **`'never'` is sent only when someone presses "do not remind me".** Upstream
+   * treats a dismissal as that answer — `CANCELLED` and `NEGATIVE` take the same
+   * branch and both write `ignore_cleanup` (`legacy_chat.ts:27-33`) — and **this
+   * host deliberately does not reproduce it**. Pressing Esc there records a
+   * permanent refusal the user did not make: they believe they deferred, and the
+   * offer never returns. Here a dismissal is simply no answer, which is a
+   * complete outcome and brings the offer back next time.
    */
   'chat.answerCleanup': z.object({
     chatId: z.string().min(1),

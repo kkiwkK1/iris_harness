@@ -116,6 +116,12 @@ export function rewriteNestedSpecifiers(source: string, upstream: string): Neste
   // concatenation — `import('./locale/' + lang + '.js')` — is a *fragment*, and
   // rewriting a fragment does not merely miss a dependency, it corrupts the
   // expression that builds one. The specifier text alone cannot show that.
+  //
+  // **A real dynamic import is enough; no misjudgement is needed.** The span
+  // walker is right that a specifier begins there, and the danger was found by
+  // probing it with ordinary inputs rather than by a test failing — which is why
+  // the guard is on the shape of the code around the quotes and not on a list of
+  // patterns thought to be risky.
   let out = source
   for (const span of [...specifierSpans(source)].reverse()) {
     const specifier = out.slice(span.open + 1, span.close)

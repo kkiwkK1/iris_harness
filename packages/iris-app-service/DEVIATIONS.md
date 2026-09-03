@@ -926,23 +926,6 @@ per-character ones.
 sharing costs more than it buys — which would be an argument for a namespace,
 and a divergence to take deliberately rather than by tidying.
 
----
-
-# Upstream bugs, deliberately not reproduced
-
-A third column, and the reasoning in it differs from both neighbours. The
-numbered sections above are places Iris **chose** differently; the column below
-is behaviour reproduced **because** it is upstream's. This one is neither: the
-upstream behaviour is broken on its own terms — it defeats something upstream
-itself is trying to do — so copying it would import a defect rather than a
-compatibility.
-
-The bar is deliberately high. "Upstream is wrong" is the easiest thing in the
-world to believe about code one is reimplementing, and the compatibility floor
-exists precisely because that belief is usually the reimplementer's error. An
-entry belongs here only when the behaviour **contradicts upstream's own
-intent**, not merely our taste.
-
 ## 17. Two upstream events are never sent, and MVU loses five callbacks
 
 `CHAT_COMPLETION_SETTINGS_READY` and `worldinfo_entries_loaded` are **not
@@ -1004,6 +987,50 @@ the removal path was withdrawn.
 is the one repair that cannot work. The host would have to hand the assembled
 request across the boundary and wait for it to come back — worth building when
 someone wants that mode, and not before.
+
+---
+
+# Upstream bugs, deliberately not reproduced
+
+A third column, and the reasoning in it differs from both neighbours. The
+numbered sections above are places Iris **chose** differently; the column below
+is behaviour reproduced **because** it is upstream's. This one is neither: the
+upstream behaviour is broken on its own terms — it defeats something upstream
+itself is trying to do — so copying it would import a defect rather than a
+compatibility.
+
+The bar is deliberately high. "Upstream is wrong" is the easiest thing in the
+world to believe about code one is reimplementing, and the compatibility floor
+exists precisely because that belief is usually the reimplementer's error. An
+entry belongs here only when the behaviour **contradicts upstream's own
+intent**, not merely our taste.
+
+## Dismissing the cleanup offer does not record a permanent refusal
+
+Upstream asks once whether to clean a chat that has never been cleaned, with
+three buttons. `CANCELLED` and `NEGATIVE` take the same branch
+(`legacy_chat.ts:27-33`): **pressing Esc, or clicking outside the dialog, writes
+`ignore_cleanup` exactly as "do not remind me again" does.** The offer never
+comes back.
+
+**This contradicts what the dialog is for.** A three-button prompt exists
+because the author wanted a decision, and the third state — closing a dialog
+without choosing — is the ordinary way a person defers one. Upstream records it
+as the decision it most resembles positionally rather than the one it means, so
+a user who hits Esc has silently opted out of a feature forever, and nothing
+they can see will tell them. That is the bar this column asks for: it defeats
+the dialog’s own purpose, not merely our taste.
+
+**Here a dismissal is no answer at all**, which is a state the protocol already
+has and already handles: nothing is cleaned, no key is written, a note is
+retained, and the offer returns next time. `chat.answerCleanup` receives
+`'never'` only when someone presses that button.
+
+**The cost, stated.** A user who dismisses the dialog every time is asked every
+time, where upstream would have asked once. That is the price of not recording
+a decision nobody made, and it is visible and self-correcting — one press of
+the button ends it — where upstream’s failure is silent and permanent.
+
 ## An injection with no `id` cannot be removed
 
 **Upstream.** `injectPrompts` keys each injection with `prompt.id ?? uuidv4()`,
