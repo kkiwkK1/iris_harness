@@ -24,6 +24,25 @@ export const requestSchemas = {
   'chat.open': z.object({ chatId: z.string().min(1) }),
   'chat.delete': z.object({ chatId: z.string().min(1) }),
   'chat.rename': z.object({ chatId: z.string().min(1), title: z.string().max(200) }),
+  /**
+   * Answer the one-time offer to clean a chat that has never been cleaned.
+   *
+   * **A reply to an event, not a poll.** The host raises `cleanup.offer` and
+   * then does nothing: no answer is a complete outcome, and the ordinary one —
+   * a shell that is closed, a page that never rendered the dialog, a user who
+   * walked away. Nothing is cleaned and nothing is recorded, so the offer comes
+   * back next time.
+   *
+   * **`'never'` is upstream's `NEGATIVE` *and* its `CANCELLED`.** Dismissing the
+   * dialog with Esc takes the same branch as pressing "do not remind me"
+   * (`legacy_chat.ts:27-33`), so a shell must map a dismissal to this and not to
+   * silence. Getting that wrong is invisible: the user believes they deferred,
+   * and upstream believes they declined forever.
+   */
+  'chat.answerCleanup': z.object({
+    chatId: z.string().min(1),
+    answer: z.enum(['clean', 'never', 'backup-and-clean']),
+  }),
 
   'chat.send': z.object({
     chatId: z.string().min(1),
@@ -855,6 +874,14 @@ export interface RpcResponseMap {
   'chat.open': { view: ChatView }
   'chat.delete': Record<string, never>
   'chat.rename': { chats: ChatSummary[] }
+  /**
+   * What the answer did.
+   *
+   * `backup` is present only when one was written, and it is a path under the
+   * profile rather than a download: the export exists so the sweep is
+   * survivable, and a file the host can still find is what makes it so.
+   */
+  'chat.answerCleanup': { cleaned: number, recorded: boolean, backup?: string }
 
   /** Resolves when the turn is open, not when the reply is finished. */
   'chat.send': { turn: number }

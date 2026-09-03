@@ -428,7 +428,7 @@ test('a chat upstream would offer to clean says so, once, and honours a refusal'
 
   const first = entry.legacyCleanupNote(DEFAULT_PRUNE)
   assert.match(first ?? '', /never been cleaned/u)
-  assert.match(first ?? '', /does not do that on its own/u)
+  assert.match(first ?? '', /nothing is swept/u)
 
   // Once per loaded chat: the condition stays true while we decline to act, so a
   // line every turn would be a notice that never changes.

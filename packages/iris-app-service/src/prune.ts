@@ -216,12 +216,50 @@ export interface PruneDecision {
  *   line it belongs to; newest last.
  * @param newestIndex - the highest message index the log has, for the window.
  * @param options - the interval and the protection window.
+ * @param range - the stretch to examine; the periodic window by default.
  * @returns one decision per layer, in the order given.
  */
+/**
+ * The stretch the periodic cleanup examines.
+ *
+ * `[max(1, old - 2 - keep * 2), old]` with `old = newest - keep`, from
+ * `cleanup/index.ts:24-45`. Bounded on purpose: the window slides forward as
+ * the conversation grows, so no single pass ever sweeps a history.
+ * @param newestIndex - the highest message index.
+ * @param options - the interval and the protection window.
+ * @returns the inclusive range to examine.
+ */
+export function periodicWindow(
+  newestIndex: number,
+  options: PruneOptions = DEFAULT_PRUNE,
+): { from: number, to: number } {
+  const to = newestIndex - options.keepRecent
+  return { from: Math.max(1, to - 2 - options.keepRecent * 2), to }
+}
+
+/**
+ * The stretch upstream's one-time legacy sweep covers.
+ *
+ * `[1, len - 1 - keep]` (`cleanup/legacy_chat.ts:93-97`) — the whole history
+ * bar the protected tail, which is why upstream asks before running it and
+ * offers a backup first. **The `1` is a named rule, not an artifact**: floor 0
+ * is protected by an explicit comment at `legacy_chat.ts:94`.
+ * @param lineCount - how many chat lines the log holds.
+ * @param options - the protection window.
+ * @returns the inclusive range to examine.
+ */
+export function legacyWindow(
+  lineCount: number,
+  options: PruneOptions = DEFAULT_PRUNE,
+): { from: number, to: number } {
+  return { from: 1, to: lineCount - 1 - options.keepRecent }
+}
+
 export function planPrune(
   layers: readonly { turn: number, index: number, candidateSeq: number, variables: Record<string, unknown> }[],
   newestIndex: number,
   options: PruneOptions = DEFAULT_PRUNE,
+  range?: { from: number, to: number },
 ): PruneDecision[] {
   const plan: PruneDecision[] = []
 
@@ -235,8 +273,7 @@ export function planPrune(
   // pass; the window slides forward as the conversation grows and each layer is
   // examined once, on the way past. Scanning globally would produce the same
   // steady state and a very different first run.
-  const edge = newestIndex - options.keepRecent
-  const floor = Math.max(1, edge - 2 - options.keepRecent * 2)
+  const { from: floor, to: edge } = range ?? periodicWindow(newestIndex, options)
 
   for (const layer of layers) {
     const base = { turn: layer.turn, candidateSeq: layer.candidateSeq }
@@ -250,7 +287,7 @@ export function planPrune(
       plan.push({ ...base, reason: 'kept: already marked as a snapshot' })
       continue
     }
-    if (layer.index > newestIndex - options.keepRecent) {
+    if (layer.index > edge) {
       plan.push({ ...base, reason: `kept: within the newest ${String(options.keepRecent)} messages` })
       continue
     }

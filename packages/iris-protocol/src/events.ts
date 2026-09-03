@@ -73,6 +73,31 @@ export type IrisEvent =
    * is not.
    */
   | { type: 'report', report: DebugReport, irreversible: true }
+  /**
+   * This chat has never been cleaned, and upstream would offer to clean it.
+   *
+   * Raised at the gates in `looksNeverCleaned`, and **the host does nothing
+   * else with it**. The sweep upstream performs here is far wider than the
+   * periodic window — `[1, len - 1 - keep]` — and upstream only performs it
+   * after asking, with a backup offered first. Doing it without the question
+   * would turn a deletion its author requires consent for into a silent one.
+   *
+   * The shell answers through `chat.answerCleanup`. Upstream renders three
+   * buttons and puts **"back up and clean" before "clean only"**
+   * (`popup.js:312-315` prepends custom buttons), and treats a dismissal as
+   * "do not remind me" rather than as a deferral.
+   */
+  | {
+    type: 'cleanup.offer'
+    chatId: string
+    /** Lines in the chat file, which is what upstream gates on. */
+    lines: number
+    /** The range a sweep would cover, inclusive, in message indices. */
+    from: number
+    to: number
+    /** How many layers inside that range still hold something to remove. */
+    layers: number
+  }
   /** The conversation list changed. */
   | { type: 'chats.updated', chats: ChatSummary[] }
 

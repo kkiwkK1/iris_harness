@@ -910,6 +910,10 @@ class InMemoryClient implements FakeClient {
        * attribution a removal reports, would put a second copy of the rule in
        * the half that is not authoritative.
        */
+      // The one-time cleanup offer is answered against a real chat file; a fake
+      // client has none to sweep, and pretending otherwise would let a caller
+      // believe a deletion happened.
+      case 'chat.answerCleanup':
       case 'storage.set':
       case 'storage.remove':
       case 'storage.clear': {

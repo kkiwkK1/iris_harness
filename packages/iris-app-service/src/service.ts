@@ -43,7 +43,7 @@ import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } 
 import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
 import type { PruneOptions } from './prune.ts'
-import { pruneDue } from './prune.ts'
+import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
 import { evaluatePrompt, promptHasTemplate } from './templates.ts'
 import { applyOps, buildSnapshot } from './template.ts'
@@ -298,6 +298,38 @@ export class IrisAppService {
         await settings.forget(chatId)
         await this.#announceChats()
         return {}
+      },
+
+      'chat.answerCleanup': async ({ chatId, answer }) => {
+        const entry = await chats.open(chatId)
+        const prune = this.#options.pruneVariables ?? DEFAULT_PRUNE
+
+        // Recorded under upstream’s key, because it is the user’s decision and
+        // it has to survive a move between the two hosts.
+        if (answer === 'never') {
+          const recorded = entry.recordCleanupRefusal()
+          if (recorded) await chats.save(entry)
+          return { cleaned: 0, recorded }
+        }
+
+        let backup: string | undefined
+        if (answer === 'backup-and-clean') {
+          try {
+            backup = await chats.backup(chatId)
+          } catch (cause: unknown) {
+            // **Nothing is swept.** The backup is the whole reason this answer
+            // differs from "clean only": a user who asked for one and did not get
+            // it has not consented to the sweep that was supposed to follow it.
+            this.#report(cause, { kind: 'variables', grade: 'fault', chatId })
+            throw cause
+          }
+        }
+
+        const cleaned = entry.sweepLegacy(prune, message => {
+          this.#report(message, { kind: 'variables', grade: 'note', chatId, irreversible: true })
+        })
+        await chats.save(entry)
+        return { cleaned, recorded: false, ...backup === undefined ? {} : { backup } }
       },
 
       'chat.rename': async ({ chatId, title }) => {
@@ -1194,7 +1226,16 @@ export class IrisAppService {
       // chat’s state rather than about this run.
       if (prune !== undefined) {
         const note = entry.legacyCleanupNote(prune)
-        if (note !== undefined) this.#report(note, { kind: 'variables', grade: 'note', chatId: entry.chatId })
+        if (note !== undefined) {
+          // The offer and the note travel together: the offer is what a shell can
+          // act on, and the note is what remains when no shell does. Neither is a
+          // deletion — nothing is swept until an answer arrives.
+          const offer = entry.legacyCleanupOffer(prune)
+          if (offer !== undefined) {
+            this.#options.broadcast({ type: 'cleanup.offer', chatId: entry.chatId, ...offer })
+          }
+          this.#report(note, { kind: 'variables', grade: 'note', chatId: entry.chatId })
+        }
       }
       if (prune !== undefined && pruneDue(chatLines(entry.session).length)) {
         entry.prune(prune, message => {

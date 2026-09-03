@@ -25,7 +25,7 @@
  * @module @iris/app-service/bundle-rewrite
  */
 
-import { rewriteSpecifiers, toProxied } from '@iris/protocol'
+import { specifierSpans, toProxied } from '@iris/protocol'
 import { checkScriptFetch } from '@iris/script'
 
 /** What one rewrite pass did, for the report. */
@@ -78,18 +78,52 @@ function isResolvable(specifier: string): boolean {
  * @param upstream - the URL the bundle was fetched from, as the resolution base.
  * @returns the rewritten source and what happened to each specifier.
  */
+/**
+ * Whether a specifier is glued to something else by a `+`.
+ *
+ * One operand of a concatenated specifier is a fragment of a path, not a path.
+ * Measured: the fixed span walker reports `./locale/` for
+ * `import('./locale/' + lang + '.js')`, which is correct — that *is* where a
+ * specifier begins — and rewriting it would replace the fragment with a proxy
+ * URL that the rest of the expression then appends to.
+ * @param source - the module source.
+ * @param span - the quote span to examine.
+ * @returns true when a `+` sits against either quote.
+ */
+function joinedToNeighbour(source: string, span: { open: number, close: number }): boolean {
+  // **No regex here, deliberately.** The first version tested `/\s/u` and reached
+  // the file as `/s/u` — an escape collapsed in transit, so it matched the letter
+  // `s` and skipped nothing. It type-checked, and the guard silently did nothing.
+  const blank = (at: number): boolean => {
+    const code = source.charCodeAt(at)
+    return code === 32 || code === 9 || code === 10 || code === 13
+  }
+  let before = span.open - 1
+  while (before >= 0 && blank(before)) before -= 1
+  let after = span.close + 1
+  while (after < source.length && blank(after)) after += 1
+  return source[before] === '+' || source[after] === '+'
+}
+
 export function rewriteNestedSpecifiers(source: string, upstream: string): NestedRewrite {
   const refused: string[] = []
   const bare: string[] = []
   const dynamic: string[] = []
   let rewritten = 0
 
-  const out = rewriteSpecifiers(source, (specifier) => {
-    if (specifier.length === 0) return undefined
+  // **Spans rather than `rewriteSpecifiers`, because the decision needs the
+  // characters around the quotes.** A specifier that is one operand of a
+  // concatenation — `import('./locale/' + lang + '.js')` — is a *fragment*, and
+  // rewriting a fragment does not merely miss a dependency, it corrupts the
+  // expression that builds one. The specifier text alone cannot show that.
+  let out = source
+  for (const span of [...specifierSpans(source)].reverse()) {
+    const specifier = out.slice(span.open + 1, span.close)
+    if (specifier.length === 0) continue
 
-    if (specifier.includes('${')) {
+    if (specifier.includes('${') || joinedToNeighbour(out, span)) {
       dynamic.push(specifier)
-      return undefined
+      continue
     }
 
     if (!isResolvable(specifier)) {
@@ -98,7 +132,7 @@ export function rewriteNestedSpecifiers(source: string, upstream: string): Neste
       // preserve one — but it is worth a line, because a bundle that needs an
       // import map is a different problem from a bundle we mis-proxied.
       bare.push(specifier)
-      return undefined
+      continue
     }
 
     let resolved: string
@@ -106,13 +140,13 @@ export function rewriteNestedSpecifiers(source: string, upstream: string): Neste
       resolved = new URL(specifier, upstream).href
     } catch {
       bare.push(specifier)
-      return undefined
+      continue
     }
 
     const verdict = checkScriptFetch(resolved)
     if (!verdict.allowed) {
       refused.push(resolved)
-      return undefined
+      continue
     }
 
     rewritten += 1
@@ -120,8 +154,8 @@ export function rewriteNestedSpecifiers(source: string, upstream: string): Neste
     // root-relative route resolves against us without the body having to name
     // which address we were reached at — the cached copy would otherwise be
     // wrong for every other way in.
-    return toProxied(verdict.url, '')
-  })
+    out = out.slice(0, span.open + 1) + toProxied(verdict.url, '') + out.slice(span.close)
+  }
 
   return { source: out, rewritten, refused, bare, dynamic }
 }

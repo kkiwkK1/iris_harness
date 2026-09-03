@@ -39,7 +39,7 @@ import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore
 import { scriptIdOf } from './script-variables.ts'
 
 import { busy } from './errors.ts'
-import { applyPrune, applyPruned, DEFAULT_PRUNE, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
+import { applyPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
 import { scriptsOf, substituteFor } from './regex.ts'
 import { textOf, toChatView, type Names, type PendingTurn } from './views.ts'
 
@@ -1090,16 +1090,105 @@ export class ChatEntry {
     try { firstFloor = this.readFloorVariables(1).variables } catch { return undefined }
     if (!looksNeverCleaned(firstFloor, chatLines(this.session).length, options)) return undefined
     this.#saidNeverCleaned = true
-    return "this chat has never been cleaned: SillyTavern would offer to trim its"
-      + " older variable tables here, with a backup first. This host does not do that"
-      + " on its own — the periodic cleanup only ever touches a window near the"
-      + ` newest ${String(options.keepRecent)} messages.`
+    return "this chat has never been cleaned: SillyTavern offers to trim its older"
+      + " variable tables here, with a backup first. The same offer has been raised"
+      + " for this chat; until something answers it nothing is swept, and the"
+      + ` periodic cleanup only touches a window near the newest ${String(options.keepRecent)} messages.`
+  }
+
+  /**
+   * The offer this chat would raise, or undefined when it would raise none.
+   * @param options - the interval and the protection window.
+   * @returns the range a sweep would cover and how many layers sit in it.
+   */
+  legacyCleanupOffer(options: PruneOptions = DEFAULT_PRUNE): {
+    lines: number, from: number, to: number, layers: number,
+  } | undefined {
+    const lines = chatLines(this.session).length
+    let firstFloor: Variables | undefined
+    try { firstFloor = this.readFloorVariables(1).variables } catch { return undefined }
+    if (!looksNeverCleaned(firstFloor, lines, options)) return undefined
+    const { from, to } = legacyWindow(lines, options)
+    const layers = this.#legacyLayers(options).length
+    return { lines, from, to, layers }
+  }
+
+  /**
+   * The layers a legacy sweep would take.
+   * @param options - the interval and the protection window.
+   * @returns one entry per layer the plan marks for removal.
+   */
+  #legacyLayers(options: PruneOptions): { removed?: string[] }[] {
+    const lines = chatLines(this.session)
+    const plan = planPrune(
+      this.#pruneLayers(),
+      lines.length - 1,
+      options,
+      legacyWindow(lines.length, options),
+    )
+    return plan.filter(decision => decision.removed !== undefined)
+  }
+
+  /**
+   * Run the sweep upstream runs once a user has agreed to it.
+   *
+   * **Only ever after an answer.** The range is the whole history bar the
+   * protected tail, which is why upstream asks first and offers a backup; this
+   * method is the "yes" branch and nothing calls it on its own.
+   * @param options - the interval and the protection window.
+   * @param onReport - told what went.
+   * @returns how many layers were trimmed.
+   */
+  sweepLegacy(options: PruneOptions = DEFAULT_PRUNE, onReport?: (message: string) => void): number {
+    const lines = chatLines(this.session)
+    const layers = this.#pruneLayers()
+    const plan = planPrune(layers, lines.length - 1, options, legacyWindow(lines.length, options))
+    const taken = plan.filter(decision => decision.removed !== undefined)
+    if (taken.length > 0) {
+      const at = taken.map(decision => layers.find(one => one.candidateSeq === decision.candidateSeq)?.index)
+        .filter((index): index is number => index !== undefined)
+        .sort((first, second) => first - second)
+      onReport?.(
+        `variables: a one-time cleanup trimmed ${String(taken.length)} floor(s) between message`
+        + ` ${String(at[0])} and ${String(at[at.length - 1])}, which you agreed to.`
+        + " This is not reversible.",
+      )
+    }
+    return applyPrune(this.session, plan, layers)
+  }
+
+  /**
+   * Record that this chat declined the offer, under upstream’s own key.
+   *
+   * Written where upstream writes it — `chat[1].variables[0]` — so a chat moved
+   * between the two hosts carries the answer its owner gave. This is the one
+   * piece of state here that belongs in the user’s file, because it is the
+   * user’s decision rather than our bookkeeping.
+   * @returns whether the refusal was recorded.
+   */
+  recordCleanupRefusal(): boolean {
+    const turn = lineTurns(this.session)[1]
+    if (turn === undefined) return false
+    let current: Variables
+    try { current = this.variables.getVariables({ type: 'message', message_id: turn }) } catch { return false }
+    this.variables.replaceVariables(
+      { ...current, [IGNORE_CLEANUP_KEY]: true },
+      { type: 'message', message_id: turn },
+    )
+    return true
   }
 
   /** Whether {@link legacyCleanupNote} has already spoken for this chat. */
   #saidNeverCleaned = false
 
-  prune(options: PruneOptions = DEFAULT_PRUNE, onReport?: (message: string) => void): number {
+  /**
+   * Every layer a cleanup could consider, with the message index that addresses it.
+   *
+   * Shared by the periodic pass and the one-time sweep so the two cannot drift on
+   * what a layer *is* — they differ only in the range they examine.
+   * @returns one entry per candidate table not already pruned.
+   */
+  #pruneLayers(): { turn: number, index: number, candidateSeq: number, variables: Variables }[] {
     const removed = prunedKeysOf(this.session)
     const layers: { turn: number, index: number, candidateSeq: number, variables: Variables }[] = []
     const written = new Map<number, Variables>()
@@ -1110,12 +1199,10 @@ export class ChatEntry {
     // The rules count chat lines, user rows included, so every layer travels
     // with the index of the line its reply occupies rather than its turn.
     const lines = chatLines(this.session)
-    const newestIndex = lines.length - 1
     const replyIndex = new Map<number, number>()
     for (const [index, line] of lines.entries()) if (!line.isUser) replyIndex.set(line.turn, index)
-    const turns = lines.map(line => line.turn)
 
-    for (const turn of new Set(turns.filter((value): value is number => value !== undefined))) {
+    for (const turn of new Set(lines.map(line => line.turn))) {
       for (const candidate of listCandidates(this.session, turn)) {
         const table = written.get(candidate.seq)
         if (table === undefined) continue
@@ -1130,8 +1217,12 @@ export class ChatEntry {
         layers.push({ turn, index, candidateSeq: candidate.seq, variables: table })
       }
     }
+    return layers
+  }
 
-    const plan = planPrune(layers, newestIndex, options)
+  prune(options: PruneOptions = DEFAULT_PRUNE, onReport?: (message: string) => void): number {
+    const layers = this.#pruneLayers()
+    const plan = planPrune(layers, chatLines(this.session).length - 1, options)
 
     // **One line per run, not one per layer.** A run trims a whole window, and
     // twenty identical sentences are how a log stops being read — but the run

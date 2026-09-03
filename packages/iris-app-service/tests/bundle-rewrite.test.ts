@@ -105,16 +105,16 @@ test('a bundle with nothing to rewrite comes back identical', () => {
   assert.deepEqual(done.bare, [])
 })
 
-test('a template placeholder is not called a bare specifier', () => {
-  // Measured on the real `pinia@2.1.7` bundle. The scanner takes the quote pair
-  // in `d(`Global state imported from "${s.name}".`)` — prose inside a template
-  // literal, where `imported from "` is indistinguishable from a real import.
-  // Reporting it as bare would tell a card author their bundle needs an import
-  // map, about an English sentence.
-  const source = 'd(`Global state imported from "${s.name}".`);\nimport a from"vue";'
+test('a concatenated specifier is a fragment, and is left whole', () => {
+  // The span walker correctly reports `./locale/` here — that is where a
+  // specifier begins. But it is one operand of a concatenation, so rewriting it
+  // would put a proxy URL in front of the rest of the expression and build an
+  // address nobody meant. **This corrupts rather than misses**, which is the one
+  // failure direction this whole module has to avoid.
+  const source = 'const m = await import("./locale/" + lang + ".js");'
   const done = rewriteNestedSpecifiers(source, UPSTREAM)
 
-  assert.deepEqual(done.dynamic, ['${s.name}'])
-  assert.deepEqual(done.bare, ['vue'], 'the placeholder was counted as a bare specifier')
-  assert.equal(done.source, source, 'a placeholder span was rewritten')
+  assert.equal(done.source, source, 'a concatenated fragment was rewritten')
+  assert.equal(done.rewritten, 0)
+  assert.deepEqual(done.dynamic, ['./locale/'])
 })

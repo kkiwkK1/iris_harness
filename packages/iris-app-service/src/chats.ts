@@ -10,7 +10,7 @@
  * @module @iris/app-service/chats
  */
 
-import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import type { CharacterCard } from '@iris/character'
@@ -28,7 +28,7 @@ import type { ScopeBackend, Variables } from '@iris/variables'
 import { ChatEntry, createSession, readMeta } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
-import { fileFor, toId, uniqueId } from './paths.ts'
+import { backupsDir, fileFor, toId, uniqueId } from './paths.ts'
 import { resolveCardWorldbook, WorldbookStore } from './worldbooks.ts'
 import type { ScriptVariableStore } from './script-variables.ts'
 
@@ -379,6 +379,35 @@ export class ChatStore {
     await this.ensure()
     const path = fileFor(this.#dir, entry.chatId, '.jsonl')
     await writeFile(path, formatChatFile(entry.toFile(onReport)), 'utf8')
+  }
+
+  /**
+   * Copy a conversation aside before something irreversible happens to it.
+   *
+   * **A file under the profile, not a download.** Upstream offers its backup
+   * through `/api/chats/export`, which hands the user a file and then forgets
+   * it; the point here is that the sweep is survivable, and a copy the host can
+   * still find is what makes it so. A download that the browser refused, or that
+   * went to a folder nobody remembers, is a backup only in the moment it was
+   * offered.
+   * @param chatId - the conversation to copy.
+   * @returns the path written.
+   * @throws {AppError} `not-found` when no such chat is stored.
+   */
+  async backup(chatId: string): Promise<string> {
+    const source = fileFor(this.#dir, chatId, '.jsonl')
+    const dir = backupsDir(this.#dir)
+    await mkdir(dir, { recursive: true })
+    // The instant is in the name: a second backup must not overwrite the first,
+    // and the one being replaced is exactly the one worth keeping.
+    const stamp = new Date().toISOString().replaceAll(/[:.]/gu, '-')
+    const target = fileFor(dir, `${chatId}-${stamp}`, '.jsonl')
+    try {
+      await copyFile(source, target)
+    } catch (cause: unknown) {
+      throw notFound(`no chat "${chatId}" to back up: ${String(cause)}`)
+    }
+    return target
   }
 
   /**

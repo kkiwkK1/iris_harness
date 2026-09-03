@@ -99,6 +99,18 @@ export function uniqueId(base: string, taken: (id: string) => boolean): string {
  * @returns the absolute path.
  * @throws {AppError} `invalid-request` when the id would leave `dir`.
  */
+/**
+ * Where copies taken before an irreversible change live.
+ *
+ * Beside `chats/` under the same profile, so a backup travels with the profile
+ * it protects and a user who moves their data does not leave it behind.
+ * @param chatsDir - the profile’s chat directory.
+ * @returns the backup directory, which may not exist yet.
+ */
+export function backupsDir(chatsDir: string): string {
+  return resolve(chatsDir, '..', 'backups')
+}
+
 export function fileFor(dir: string, id: string, extension: string): string {
   if (!isSafeId(id)) throw invalid(`"${id}" is not a valid identifier`)
   const root = resolve(dir)
