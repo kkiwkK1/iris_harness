@@ -187,6 +187,28 @@ test('the same key overwrites rather than accumulating', async (t) => {
   assert.equal(contributions[0]?.text, 'third')
 })
 
+test('an injection’s macros are expanded at assembly, not sent as braces', async (t) => {
+  const fixed = await fixture(t)
+
+  // 不要被神隐挑战's engine injects a prompt carrying `{{user}}`; the raw
+  // braces reached the provider and the host's own residual-macro pass graded
+  // that a fault — "Iris implements these, so the expansion did not reach that
+  // text". Assembly is where the other contributions are expanded, so it is
+  // where this one is expanded too: against the chat's expander, which knows
+  // the speaker names, and at call time, so a rename or a variable write is
+  // honoured by the next generation without the stored value changing.
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'engine', value: '{{char}} addresses {{user}} directly.',
+    position: 'at-depth', depth: 0, runId: RUN,
+  })
+
+  const entry = await fixed.chats.open(fixed.chatId)
+  const [contribution] = injectedContributions(entry)
+  assert.equal(contribution?.text, 'Aria addresses Traveller directly.')
+  assert.equal(entry.extensionPrompts.get('engine')?.value, '{{char}} addresses {{user}} directly.',
+    'assembly expanded the stored value instead of leaving it raw')
+})
+
 test('should_scan is kept rather than flattened to false', async (t) => {
   const fixed = await fixture(t)
 

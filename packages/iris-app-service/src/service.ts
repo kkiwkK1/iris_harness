@@ -1953,7 +1953,15 @@ export function injectedContributions(entry: ChatEntry): Contribution[] {
       id: `script.${key}`,
       label: `Script injection (${key})`,
       placement,
-      text: injection.value,
+      // Expanded here, at assembly, against the chat's own expander — the same
+      // projection every other contribution gets from `buildPrompt`. Measured on
+      // the 不要被神隐挑战 card: its engine injects a prompt carrying `{{user}}`,
+      // and the raw braces reached the provider — the host's own residual-macro
+      // report names exactly this as a fault ("Iris implements these, so the
+      // expansion did not reach that text"). The stored value stays raw on
+      // purpose: speaker names and variables are read at assembly time, so an
+      // injection keeps meaning what its author wrote across turns and renames.
+      text: entry.substitute(injection.value),
     })
   }
   return contributions

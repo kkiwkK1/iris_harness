@@ -3,6 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- An empty icon, on purpose: without a declared one every load requests
+         /favicon.ico, the host 404s it, and the failure lands in the console
+         beside the reports that matter. Measured during the six-card QA run:
+         one 404 per page load, on every card. -->
+    <link rel="icon" href="data:," />
     <title>Iris</title>
     <meta name="color-scheme" content="dark light" />
     <script>
