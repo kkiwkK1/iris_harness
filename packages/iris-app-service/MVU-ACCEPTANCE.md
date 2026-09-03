@@ -102,3 +102,22 @@ That first row is worth stating plainly, because it is the row the run is most
 likely to land on and the one that used to be unreadable: **silence now
 distinguishes "the model did not ask" from "we could not hear it"** — until this
 was written, the legacy dialect produced the same silence for both.
+
+## What the accepted run actually exercised
+
+The reply wrapped **RFC 6902 patch operations inside `<UpdateVariable>`** —
+nine `op: "replace"` entries in a `<JSONPatch>` block, with the model’s prose
+reasoning above it and not one `_.verb()` call. Replaying the scan and fold
+from the host’s own `baselineFor` reproduces the stored table byte for byte,
+which is what attributes the write to `recordVariables`. The script’s own
+`updateVariablesWith` cannot be excluded from the stored artifact — it would
+no-op against an already-equal table — but the host path alone accounts for the
+result.
+
+**One credit withdrawn.** It was tempting to record this as the `<json_?patch>`
+spelling fix paying off. `git log -p` says otherwise: the previous regex was
+`/<JSONPatch>([\s\S]*?)<\/JSONPatch>/gi`, already case-insensitive, so this
+camel-case block would have been read before that commit too. What the fix
+added was the underscore spelling and code-fence tolerance — neither of which
+this run touched. A passing acceptance is the easiest place to award a fix
+credit it did not earn.

@@ -867,6 +867,67 @@ exists precisely because that belief is usually the reimplementer's error. An
 entry belongs here only when the behaviour **contradicts upstream's own
 intent**, not merely our taste.
 
+## 17. Two upstream events are never sent, and MVU loses five callbacks
+
+`CHAT_COMPLETION_SETTINGS_READY` and `worldinfo_entries_loaded` are **not
+forwarded into the script frame, deliberately**. They are not notifications:
+the listeners mutate the outgoing request *in place* and expect the host to
+send what they leave behind. Our bridge is a one-way post, so a card told the
+request was ready would edit a copy, see every edit succeed, and have all of
+them discarded. **Not sending is the smaller lie**, and the frame says so at
+`apps/iris-web/src/sandbox/host-events.ts`.
+
+The five MVU callbacks that therefore never run: `filterEntries` on the world
+info event; `filterPrompts`, `applyExtraModelRequestOverrides` and
+`overrideToolRequest` on the settings event; and `registerFunction`. (The
+first three of the settings group are named in the frame source; the rest
+comes from the sessions that read MVU itself.)
+
+### What this costs in the default mode: one placeholder, measured
+
+In MVU’s default `随AI输出` mode, `filterEntries` returns early anyway, so the
+only reachable loss is the one strip `filterPrompts` would have done.
+Measured on the 爱衣 chat, through the host’s own prompt projection:
+
+```
+<UpdateVariable>    raw  3  ->  to-model 0
+<JSONPatch>         raw  3  ->  to-model 0
+"op": "replace"     raw 12  ->  to-model 0
+StatusPlaceHolder   raw  1  ->  to-model 1     <- the whole cost
+chars 9445 -> 7113 (2332 removed)
+```
+
+**A relayed description of this deviation said the command blocks go unstripped
+and accumulate into the context turn by turn. On this card they do not.** The
+card ships six regex scripts, the prompt direction runs in `#history`, and every
+block is gone before the model sees it — that stripping was never MVU’s to do
+here. What survives is a single `<StatusPlaceHolderImpl/>`. The claim is worth
+recording as refuted rather than dropped, because it is the plausible one: it is
+true of a card that leans on `filterPrompts` instead of shipping the scripts,
+and the measurement above is what tells the two apart.
+
+### What it costs in `额外模型解析` mode
+
+Visible failure. The extra-model request overrides and the tool override never
+apply, and `filterEntries` never removes the `[mvu_update]` entries, so the main
+model is still asked for a block the mode means to obtain elsewhere.
+
+### Nothing reaches that mode by accident
+
+This is what keeps the row a **missing feature rather than a lurking risk**, and
+it was measured rather than assumed (by the corpus and upstream sessions): no
+card in the corpus sets `更新方式`; per-card override travels in a
+`[config_override]` world book entry, of which there are none; and MVU parses its
+settings as `z.union([Old, New]).catch(() => New.parse({}))`, three layers of
+fallback that leave `更新方式` never `undefined`. **Only a person choosing
+`额外模型解析` explicitly gets there** — no default, and no load failure, arrives
+there on its own. An earlier reading that unloaded settings could fall through to
+the removal path was withdrawn.
+
+**The fix is a round trip, not a louder notification.** Sending these as events
+is the one repair that cannot work. The host would have to hand the assembled
+request across the boundary and wait for it to come back — worth building when
+someone wants that mode, and not before.
 ## An injection with no `id` cannot be removed
 
 **Upstream.** `injectPrompts` keys each injection with `prompt.id ?? uuidv4()`,
