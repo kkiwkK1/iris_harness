@@ -114,6 +114,11 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    （V1.5.4 `contentDocument`；萧谴写卡助手版遍历页面 iframe；银麒系统面板遍历后读 `contentWindow.phoneAPI`
    ——虚拟 document 的 iframe 枚举要含卡自己的 frame 且其 contentWindow 可读）。srcdoc 内无代码（3c §六之四）
    → 只需 document 替身不需 realm；样式同步经 `ownerDocument.createElement`；srcdoc 的 `<style>` 在 Shadow DOM 要重指 host。
+   **已裁**（7b 设计输入）：拦截点必须是 `HTMLIFrameElement.prototype`（jQuery `$('<iframe …>')` 走 innerHTML，
+   拦 createElement 只接一部分）；做法 (A)+原型补丁——`createElement('iframe')` 返回带 shadow root 的 div 替身
+   （`srcdoc` → document 替身；**`src` → 内置真 iframe，postMessage 路径不变**），漏网真 iframe 的 contentDocument
+   返回具名报告+null；样式重指复用 card-css 管线。三卡三表面：V1.5.4 本设计覆盖；银麒系统面板（枚举含本 frame
+   替身、contentWindow=本 window）便宜先做；萧谴要消息 frame 的 document（方案 C 下跨源，不可观察验收，待仪器）。
 8. **卡自带 ESM 依赖的代理**（族级基建）——13 卡 binding 导入 + 15 卡 MVU bundle；去重 11 个地址、
    6 个无版本（TEST-CARDS 副轴：名单会自己过期）；`script-bundles/` 是实际加载的卡尺。待测冷取。
 9. ~~导入体积 C~~ ✅（st-meta 记每文件键序表不记值：27.58 → 11.74 MiB，2454/2454 行键序保持；不变式
