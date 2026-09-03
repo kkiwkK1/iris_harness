@@ -51,7 +51,10 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    **发布链闭合**（b82ac8f 复读：银麒赎世面板注销 note「parent.Mvu has since been published by this frame」，
    此前 unpublished 全是轮询首读早于发布的时序）；虚拟 document 只读状态成员按「读=答」重分（readyState 等），
    银麒赎世 4/4 活。剩界面 frame 读不到（拓扑，OVERLAY-HOST.md 方案 A 第 5–7 步）。
-   验收 = 爱衣 `<UpdateVariable>` 真被 `initResponse` 处理（待一次真模型生成）。
+   验收 = 爱衣 `<UpdateVariable>` 真被 `initResponse` 处理。**第一次真模型生成（MVU-ACCEPTANCE.md）**：回复落地、
+   turn 5 表 = 基线原样、`debug.reports` 全空、mes 无 UpdateVariable 块 → 判读表第一行「模型没写」；管线/下标→楼层
+   映射/no-op 语义（变化才存表）三样被证实正常。未达成：两条 `[mvu_update]` constant 条目是否进了最终提示词，
+   49 离线装配查；分清前不再花调用。
 4. **消息内联 HTML 消毒渲染**——设计 INLINE-HTML.md；CSS 作用域器 ✅、区域切分 ✅（真语料：
    命定之诗 677 楼 334 有区域）、消毒 seam 在建。爱衣 6/8 楼即此。
 5. **覆盖层界面宿主**（OVERLAY-CARDS.md + OVERLAY-HOST.md，b82ac8f）——五组件（手机UI 两分叉、外置状态栏两分叉、
