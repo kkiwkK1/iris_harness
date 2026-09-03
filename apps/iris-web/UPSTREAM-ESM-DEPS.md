@@ -353,6 +353,112 @@ result.value();
 
 ---
 
+## 三之三、脚本 frame 作为表面的预置基线
+
+**背景**：方案 C 下脚本 frame 成为覆盖层表面，卡的节点从"ST 页面的 body"搬到了
+"脚本 frame 自己的 body"。**所以预置基线 = ST 页面本体对 body 上节点提供的那一套**——
+不是 §三 A-2 那份界面 frame 的清单（那是另一套，见 §三）。
+
+### ST 页面本体加载了什么（`[ST] public/index.html`）
+
+| 类别 | 具体 | 行 |
+| --- | --- | --- |
+| **Font Awesome** | **6.5.2 Free，三文件子集**：`css/fontawesome.min.css`(80,896 B) + `css/solid.min.css`(577 B) + `css/brands.min.css`(19,587 B) | `:24-26` |
+| **jQuery UI CSS** | `css/jquery-ui.min.css` | `:27` |
+| **网页字体** | `webfonts/NotoSans/stylesheet.css`、`webfonts/NotoSansMono/stylesheet.css` | `:22-23` |
+| **第三方 UI CSS** | `bright.min.css`（highlight 主题）、`cropper.min.css`、`toastr.min.css`、`select2.min.css` | `:28-31` |
+| **ST 自己的样式** | `style.css` + 九个功能表（`rm-groups` `group-avatars` `toggle-dependent` `world-info` `extensions-panel` `select2-overrides` `mobile-styles` `macros` `user`） | `:36, :38-46` |
+| **工具类表** | `css/st-tailwind.css`（7,879 B）——**不是 Tailwind，见下** | `:37` |
+
+### ⚠ 两处会被印象带偏的
+
+**① FA 是子集，没有 `regular`。**
+
+```
+css/fontawesome.min.css   80,896 B   核心 + 全部图元定义
+css/solid.min.css            577 B   只是 @font-face + .fas/.fa-solid{font-weight:900}
+css/brands.min.css        19,587 B
+css/regular.min.css       ← 不存在
+```
+
+**`far` / `fa-regular` 的图标在 ST 里也是空盒子。**预置照抄这三份即可，
+**不要上 `all.min.css`**——上了是比上游多给。
+
+**② `st-tailwind.css` 不是 Tailwind，是 ST 自己手写的工具类。**
+
+约 130 个选择器，全是 ST 的命名法：
+
+```
+.flexFlowColumn .alignItemsCenter .justifySpaceBetween .wide100p .widthNatural
+.m-t-1 .margin-bot-10px .overflowYAuto .fontsize80p .textAlignCenter .monospace …
+```
+
+**与真 Tailwind 重叠的只有 `.flex` / `.inline-flex` / `.inline-block` 三个名字。**
+`flex-col` / `items-center` / `w-full` / `px-4` / `bg-*` **一个都没有。**
+
+> **「ST 页面本体没有 Tailwind」这个判断对，但理由不是"没有那个文件"，
+> 是"那个文件名字像而内容不是"。按文件名判断会得出相反结论。**
+
+### `body` 上会被继承下去的（`[ST] style.css:150-164`）
+
+```css
+body {
+  margin: 0; padding: 0; width: 100%;
+  height: 100vh; height: 100dvh;                  /* ← 和卡用的是同一条降级阶梯 */
+  background-color: var(--SmartThemeBlurTintColor);
+  background-repeat: no-repeat; background-attachment: fixed; background-size: cover;
+  font-family: var(--mainFontFamily);
+  font-size: var(--mainFontSize);
+}
+```
+
+**卡挂在 body 上的节点继承 `font-family` / `font-size` / `color`，
+而这些值来自 ST 的 CSS 自定义属性（主题令牌）。
+预置这一项要连令牌一起给，不能只给字面值。**
+
+### 结论：要 / 不要
+
+| 要 | 不要 | 理由 |
+| --- | --- | --- |
+| **FA 6.5.2 三文件子集**（core + solid + brands） | `regular` | 上游也没有 |
+| **jQuery UI CSS** | | `index.html:27` |
+| **Noto Sans / Noto Sans Mono** | | 字体族的实际来源 |
+| **`body` 的字体/字号/背景 + 对应主题令牌** | | 卡节点靠继承 |
+| **toastr CSS** | | 卡调 `toastr` 时要 |
+| | **Tailwind** | **ST 页面本体就没有——不给不是回归** |
+| | `st-tailwind.css` 那 130 个类 | ST 面板自用 |
+| | select2 / cropper / highlight 主题 | ST 面板自用 |
+
+### ⚠ 一条"文件名参与行为"的约束
+
+银麒赎世/手机UI 自带一个 FA 加载器：
+
+```js
+function loadFontAwesome() {
+  if ($('link[href*="font-awesome"]').length > 0 || $('link[href*="fontawesome"]').length > 0) return;
+  … link.href = "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css";
+}
+```
+
+**在上游它从不发出请求**——ST 自己的 `css/fontawesome.min.css` 的 href 含 `fontawesome`，
+守卫命中即 return。**那条 cdnjs 外链在上游是死代码。**
+
+**所以我们预置时，那个 `<link>` 的 href 必须含 `fontawesome` 或 `font-awesome` 字样。**
+若打包成 `preset.css` 之类的名字、或改成 `<style>` 内联，
+**卡的守卫看不到它，就会照常去取 cdnjs**——**比上游多一次跨源取数，且多给了 `regular` 那一族。**
+
+**这条很容易在打包优化时被无意破坏，而破坏后的症状是"多了一次外链请求"，不报错。**
+
+### 一条给「谁依赖谁」普查的分栏提示
+
+**「用了 Tailwind」和「需要宿主给 Tailwind」是两件事。**
+V1.5.4 的覆盖层用 Tailwind（§六之三 量到 16 处），**但它自带**：
+CSS 由 webpack style-loader 注进卡 frame 的 `<head>`（`IA.insert = wA().bind(null,'head')`），
+再由 `RA` 同步器镜像进嵌套文档（`OVERLAY-CARDS.md` §六之四）。
+**两栏不分开，会把自带的算成缺口。**
+
+---
+
 ## 四、④ ST 确实有一个代理端点，但它不为这件事而设，且默认关
 
 ```js
