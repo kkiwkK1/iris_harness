@@ -128,6 +128,21 @@ export function ScriptPanel(): ReactElement | null {
               }
               key={report.text}
             >
+              {/*
+                The channel as a **label**, the same element the pulled host
+                view uses. Two sites used to concatenate it into the sentence
+                (`interface: …`, `overlay: …`), which is the shape that produced
+                `variables: variables: trimmed …` on the pushed path — and a
+                channel inside the text cannot be styled or filtered, and
+                doubles up the moment anything else adds a prefix.
+
+                Absent for most reports, and that is correct rather than a gap:
+                a frame's own whole sentence has no channel to name, and
+                inventing one would be a label with nothing behind it.
+              */}
+              {report.channel === undefined
+                ? null
+                : <span className="iris-reports__area">{report.channel}</span>}
               {report.text}
               {/*
                 Marked, not hidden, and not dropped.

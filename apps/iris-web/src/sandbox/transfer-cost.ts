@@ -103,7 +103,15 @@ export function describeTransferCost(
     return `${label} reported no timings, so its cost is unknown here`
   })
 
-  return `library cost: ${parts.join('; ')}`
+  /*
+   * A whole sentence, like every other note this frame sends. It read
+   * `library cost: …` — a channel name concatenated into the text, which is the
+   * shape the shell's reports were just corrected for: it cannot be styled,
+   * cannot be filtered, and doubles up the moment anything else adds a prefix.
+   * The other eight notes from this frame are plain sentences, so this is the
+   * odd one out rather than the pattern.
+   */
+  return `this frame's libraries cost: ${parts.join('; ')}`
 }
 
 /**

@@ -75,6 +75,33 @@ export function CleanupOffer(): ReactElement | null {
     dialog.current?.focus()
   }, [offer])
 
+  /*
+   * **Escape is listened for on the document, not on the panel.**
+   *
+   * It was an `onKeyDown` on the panel, which only fires when focus is already
+   * inside it — so the first press did nothing and the second worked, exactly
+   * as observed on 8789. The window is small (one effect, after the focus call)
+   * and it is not the real problem: a modal whose dismissal depends on where
+   * focus happens to be is broken for anyone whose focus is in the composer,
+   * which is where it is while they are reading.
+   *
+   * Capture phase, so the composer's own Escape handling does not consume it
+   * first, and `stopPropagation` so nothing downstream treats one press as two
+   * separate dismissals.
+   */
+  useEffect(() => {
+    if (offer === undefined) return undefined
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      actionsOf(store).dismissCleanupOffer()
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('keydown', onKey, true)
+    }
+  }, [offer, store])
+
   // The offer carries its own chat, because it can arrive a beat before the
   // store learns which chat is open — see the store's `cleanup.offer` handler.
   if (offer === undefined || offer.chatId !== chatId) return null

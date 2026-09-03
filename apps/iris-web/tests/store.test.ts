@@ -760,8 +760,8 @@ test('a report is withdrawn when the script it condemned turns out to have worke
   const actions = actionsOf(store)
 
   actions.beginCardRun()
-  actions.addCardReport('MVU: failed: import timed out after 15s', 'provider')
-  actions.addCardReport('another script: failed: something else', 'other')
+  actions.addCardReport('MVU: failed: import timed out after 15s', { scriptId: 'provider' })
+  actions.addCardReport('another script: failed: something else', { scriptId: 'other' })
 
   actions.withdrawReportsFor('provider')
 
@@ -784,7 +784,7 @@ test('withdrawal keeps the record, because the delay was real even though it res
   const actions = actionsOf(store)
 
   actions.beginCardRun()
-  actions.addCardReport('MVU: failed: import timed out after 15s', 'provider')
+  actions.addCardReport('MVU: failed: import timed out after 15s', { scriptId: 'provider' })
   actions.withdrawReportsFor('provider')
 
   assert.match(reportText(store.getState().cardReports), /timed out after 15s/)
@@ -797,7 +797,7 @@ test('withdrawing when there is nothing to withdraw changes nothing', () => {
   const actions = actionsOf(store)
 
   actions.beginCardRun()
-  actions.addCardReport('a note', 'a')
+  actions.addCardReport('a note', { scriptId: 'a' })
   const before = store.getState().cardReports
   actions.withdrawReportsFor('nobody')
 
@@ -1057,4 +1057,53 @@ test('a pushed report is shown as the host wrote it, not with its channel twice'
   // And the durable copy says the same thing as the transient one.
   assert.equal(scope.store.getState().cardReports.at(-1)?.text, text)
   scope.dispose()
+})
+test('every answer puts the dialog away, including the one that reports nothing', async () => {
+  /*
+   * **Measured on 8789**: pressing "Do not remind me again" wrote
+   * `ignore_cleanup: true` on the host within 2.5 s — so the call plainly
+   * succeeded — and the dialog stayed on screen with all three buttons live.
+   *
+   * `never` is the answer that produces no notice, so it is the one whose
+   * "something happened" evidence is *only* the dialog closing. The other two
+   * were covered by their notice assertions and this one was not: a test that
+   * checks the loud path and skips the quiet one leaves exactly this hole.
+   */
+  for (const answer of ['clean', 'never', 'backup-and-clean'] as const) {
+    const scope = recordingStore()
+    scope.push(OFFER)
+    assert.ok(scope.store.getState().cleanupOffer !== undefined, answer)
+
+    await actionsOf(scope.store).answerCleanup(answer)
+    assert.equal(scope.store.getState().cleanupOffer, undefined, `${answer} left the dialog up`)
+    scope.dispose()
+  }
+})
+
+test('a repeated offer for a chat already answered is not shown again', async () => {
+  /*
+   * A guard on the shell rather than a claim about the host. The user answered;
+   * a second offer for the same chat in the same session is not a new question,
+   * and re-raising the dialog after an answer is indistinguishable from the
+   * answer having failed.
+   *
+   * **Dismissal deliberately does not count as an answer here**: Esc means "ask
+   * again", so a later offer for that chat must still be able to appear.
+   */
+  const scope = recordingStore()
+  scope.push(OFFER)
+  await actionsOf(scope.store).answerCleanup('never')
+  scope.push(OFFER)
+  assert.equal(scope.store.getState().cleanupOffer, undefined, 'the answered offer came back')
+
+  const deferred = recordingStore()
+  deferred.push(OFFER)
+  actionsOf(deferred.store).dismissCleanupOffer()
+  deferred.push(OFFER)
+  assert.ok(
+    deferred.store.getState().cleanupOffer !== undefined,
+    'a deferred offer must be able to return',
+  )
+  scope.dispose()
+  deferred.dispose()
 })

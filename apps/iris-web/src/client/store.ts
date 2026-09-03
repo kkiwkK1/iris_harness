@@ -111,6 +111,24 @@ export interface CardReport {
   text: string
   generation: number
   /**
+   * Which channel it came from, shown **beside** the text rather than in it.
+   *
+   * Two sites used to write `interface: ${message}` and `overlay: ${detail}`
+   * into the sentence. That is the shape the host's pushed reports were just
+   * corrected for — it produced `variables: variables: trimmed …` there — and
+   * it is wrong for the same reason in both places: a channel concatenated into
+   * a message cannot be styled, cannot be filtered, and duplicates itself the
+   * moment anything else adds a prefix too.
+   *
+   * The pulled host view already had the right shape and is what this copies: a
+   * separate element (`.iris-reports__area`) next to the message.
+   *
+   * **Not required**, unlike the host's `kind`. Most reports here are a frame's
+   * own whole sentence with no channel to name, and inventing one for them
+   * would be a label with nothing behind it.
+   */
+  channel?: string
+  /**
    * How it should be read, when the reporter said.
    *
    * **Absent means neutral**, not failure. The first version defaulted to
@@ -130,6 +148,16 @@ export interface CardReport {
    * arrives — but left unmarked it makes the panel mourn a card that works.
    */
   withdrawn?: boolean
+}
+
+/** What a caller can say about a report besides its text. */
+export interface CardReportOptions {
+  /** Which script it was about, so a corrected verdict can be found again. */
+  scriptId?: string
+  /** How it should be read. Absent means neutral. */
+  grade?: ReportGrade
+  /** Which channel raised it, shown as a label beside the text. */
+  channel?: string
 }
 
 export interface IrisState {
@@ -239,6 +267,23 @@ export interface IrisState {
    */
   cleanupOffer: CleanupOffer | undefined
   /**
+   * Chats whose cleaning offer has been **answered** this session.
+   *
+   * A shell-side guard, and it is what closes a real defect: pressing "do not
+   * remind me again" wrote `ignore_cleanup` on the host and the dialog stayed
+   * on screen. The answer had landed — the clear runs before the call — and
+   * then a second `cleanup.offer` for the same chat put it straight back.
+   *
+   * The user answered. A second offer for that chat in the same session is not
+   * a new question, and a dialog that returns after an answer is
+   * indistinguishable from an answer that failed.
+   *
+   * **A dismissal is deliberately not recorded here.** Esc means "ask again",
+   * so a later offer for that chat must still be able to appear — the whole
+   * divergence from upstream rests on deferral staying possible.
+   */
+  cleanupAnswered: readonly string[]
+  /**
    * Which run the panel is currently showing.
    *
    * Reports outlive the run that produced them on purpose — a diagnostic nobody
@@ -294,11 +339,14 @@ export interface IrisActions {
   /**
    * Add or re-date one durable report.
    *
-   * `grade` is third and positional rather than an options bag because six
-   * existing call sites pass `scriptId` and one passes a grade; an options
-   * object would have rewritten all seven to serve the one.
+   * **An options bag, and it earned it.** This was positional
+   * (`text, scriptId?, grade?`) on the argument that an object would rewrite
+   * seven call sites to serve one. A fourth optional — the channel — is where
+   * that stops holding: `addCardReport(detail, undefined, undefined, 'overlay')`
+   * is a line whose meaning is carried entirely by the position of two
+   * `undefined`s.
    */
-  addCardReport(text: string, scriptId?: string, grade?: ReportGrade): void
+  addCardReport(text: string, options?: CardReportOptions): void
   /**
    * Fetch the host's diagnostics.
    *
@@ -512,6 +560,7 @@ export function createIrisStore(
       hostReportKinds: [],
       hostReportsLoading: false,
       cleanupOffer: undefined,
+      cleanupAnswered: [],
       cardRunGeneration: 0,
       runStates: [],
       documentGranted: false,
@@ -775,7 +824,16 @@ export function createIrisStore(
          * second `clean` on a chat whose sweep is already running is a request
          * nobody can mean.
          */
-        set({ cleanupOffer: undefined })
+        /*
+         * Cleared before the call, and the chat is recorded as answered in the
+         * same breath. Leaving the dialog up while the host works invites a
+         * second press, and a second `clean` on a chat whose sweep is already
+         * running is a request nobody can mean.
+         */
+        set({
+          cleanupOffer: undefined,
+          cleanupAnswered: [...get().cleanupAnswered, offer.chatId],
+        })
         await guard(async () => {
           const result = await client.call('chat.answerCleanup', { chatId: offer.chatId, answer })
           if (answer === 'never') return
@@ -846,7 +904,8 @@ export function createIrisStore(
         }
       },
 
-      addCardReport(text: string, scriptId?: string, grade?: ReportGrade): void {
+      addCardReport(text: string, options?: CardReportOptions): void {
+        const { scriptId, grade, channel } = options ?? {}
         const generation = get().cardRunGeneration
         const seen = get().cardReports
 
@@ -871,6 +930,7 @@ export function createIrisStore(
               generation,
               ...(scriptId === undefined ? {} : { scriptId }),
               ...(grade === undefined ? {} : { grade }),
+              ...(channel === undefined ? {} : { channel }),
             }],
           })
           return
@@ -1248,6 +1308,13 @@ const HANDLERS: { [T in IrisEvent['type']]: (event: EventOf<T>, store: IrisStore
    * it after asking.
    */
   'cleanup.offer': (event, store) => {
+    /*
+     * Ignored for a chat already answered this session. The host raising it
+     * again is not something the shell can prevent, and re-showing the dialog
+     * after an answer reads as the answer having failed — measured on 8789,
+     * where `ignore_cleanup` was written and the dialog stayed up.
+     */
+    if (store.getState().cleanupAnswered.includes(event.chatId)) return
     store.setState({
       cleanupOffer: {
         chatId: event.chatId,
@@ -1288,7 +1355,13 @@ const HANDLERS: { [T in IrisEvent['type']]: (event: EventOf<T>, store: IrisStore
      * should come from the site that knows rather than from what the shell
      * assumes about which sites use the channel.
      */
-    actionsOf(store).addCardReport(line, event.report.scriptId, event.report.grade)
+    actionsOf(store).addCardReport(line, {
+      ...(event.report.scriptId === undefined ? {} : { scriptId: event.report.scriptId }),
+      grade: event.report.grade,
+      // The host's own channel, as a label. The pulled view has shown it this
+      // way all along; the pushed copy was concatenating it into the sentence.
+      channel: event.report.kind,
+    })
     /*
      * The notice bar as well: what makes this worth interrupting for is that
      * the data is already gone, which no amount of severity conveys. A note

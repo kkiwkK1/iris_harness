@@ -272,7 +272,7 @@ export function CardScriptFrames(): ReactElement {
                  * the panel rather than staying a style write.
                  */
                 if (detail !== undefined) {
-                  actionsOf(store).addCardReport(`overlay: ${detail}`)
+                  actionsOf(store).addCardReport(detail, { channel: 'overlay' })
                 }
               },
               onBlocked: (blocked, directive, detail, covered) => {
@@ -288,7 +288,7 @@ export function CardScriptFrames(): ReactElement {
                  * sandbox working, and the author still needs to find out which
                  * host and which directive.
                  */
-                actionsOf(store).addCardReport(refusal.text, undefined, refusal.grade)
+                actionsOf(store).addCardReport(refusal.text, { grade: refusal.grade })
                 if (refusal.notify) actionsOf(store).notify('info', refusal.text)
               },
               /*
@@ -452,11 +452,10 @@ export function CardScriptFrames(): ReactElement {
            * this site passed no grade at all. A line that says "failed" and
            * renders like routine traffic is the failure the grade exists for.
            */
-          actionsOf(store).addCardReport(
-            text,
-            state.scriptId,
-            isFailure(state.phase) ? 'fault' : undefined,
-          )
+          actionsOf(store).addCardReport(text, {
+            ...(state.scriptId === undefined ? {} : { scriptId: state.scriptId }),
+            ...(isFailure(state.phase) ? { grade: 'fault' as const } : {}),
+          })
           actionsOf(store).notify('error', text)
         },
       },
