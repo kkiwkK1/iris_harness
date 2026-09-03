@@ -149,8 +149,8 @@ export function metadataBackend(header: SillyTavernChatHeader): ScopeBackend {
  * @param session - the chat log.
  * @returns one entry per line.
  */
-export function chatLines(session: Session): { turn: number, isUser: boolean }[] {
-  const lines: { turn: number, isUser: boolean }[] = []
+export function chatLines(session: Session): { turn: number, isUser: boolean, seq: number }[] {
+  const lines: { turn: number, isUser: boolean, seq: number }[] = []
   const seen = new Set<number>()
   let turn = 0
 
@@ -160,13 +160,13 @@ export function chatLines(session: Session): { turn: number, isUser: boolean }[]
       continue
     }
     if (event.type === "user/message") {
-      lines.push({ turn, isUser: true })
+      lines.push({ turn, isUser: true, seq: event.seq })
       continue
     }
     if (event.type !== "assistant/message") continue
     if (seen.has(event.data.turn)) continue
     seen.add(event.data.turn)
-    lines.push({ turn: event.data.turn, isUser: false })
+    lines.push({ turn: event.data.turn, isUser: false, seq: event.seq })
   }
   return lines
 }
@@ -183,8 +183,9 @@ export function lineTurns(session: Session): number[] {
 /**
  * Whether each projected line is a system message, in line order.
  *
- * Mirrors {@link lineTurns} deliberately: the two walks must agree on what a
- * line *is*, and the way they stop agreeing is by being written differently.
+ * Built on {@link chatLines} rather than repeating its walk. The two used to be
+ * separate loops that had to agree on what a line *is*, which is a shape that
+ * stops agreeing the moment one of them is edited.
  *
  * `is_system` is not a field this host models — an imported system row becomes
  * an ordinary candidate and the flag rides through `iris/st-meta` — so this
@@ -198,20 +199,7 @@ export function lineSystemFlags(session: Session): boolean[] {
     if (event.type !== 'iris/st-meta') continue
     bySeq.set(event.data.seq, event.data.fields['is_system'] === true)
   }
-
-  const flags: boolean[] = []
-  const seen = new Set<number>()
-  for (const event of session.events) {
-    if (event.type === 'user/message') {
-      flags.push(bySeq.get(event.seq) ?? false)
-      continue
-    }
-    if (event.type !== 'assistant/message') continue
-    if (seen.has(event.data.turn)) continue
-    seen.add(event.data.turn)
-    flags.push(bySeq.get(event.seq) ?? false)
-  }
-  return flags
+  return chatLines(session).map(line => bySeq.get(line.seq) ?? false)
 }
 
 /** One live conversation and everything bound to it. */

@@ -7,6 +7,9 @@ import { test, type TestContext } from 'node:test'
 import { requestSchemas } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
+import type { SillyTavernChatHeader, SillyTavernMessage } from '@iris/persistence'
+import { importChat } from '@iris/persistence'
+import { chatLines, lineSystemFlags } from '../src/entry.ts'
 import { ChatStore } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
@@ -192,4 +195,30 @@ test('latest reads and writes the same floor', async (t) => {
   })
 
   assert.equal((read.variables as { marker?: string }).marker, 'written via latest')
+})
+
+test('latest skips a trailing system row, which is the whole reason the flags exist', () => {
+  // `lineSystemFlags` had no test at all: replacing its body with `() => false`
+  // left all 974 green. It feeds one decision — where `'latest'` points — and
+  // upstream's bug there is that a chat ending in a system row reads one floor
+  // and writes another. A rule with no test is a rule that can be deleted by
+  // accident, so the flag is pinned here at the level it actually decides.
+  const header: SillyTavernChatHeader = {
+    user_name: 'Traveller',
+    character_name: 'Aria',
+    create_date: '2026-01-22 @04h13m05s',
+    chat_metadata: {},
+  }
+  const messages: SillyTavernMessage[] = [
+    { name: 'Aria', is_user: false, mes: 'greeting', swipes: ['greeting'], swipe_id: 0 },
+    { name: 'Traveller', is_user: true, mes: 'hello' },
+    { name: 'Aria', is_user: false, mes: 'reply', swipes: ['reply'], swipe_id: 0 },
+    // A system row last: upstream reads past it and writes onto it.
+    { name: 'System', is_user: false, is_system: true, mes: 'note', swipes: ['note'], swipe_id: 0 },
+  ]
+
+  const session = importChat({ header, messages }, 'sys')
+  const flags = lineSystemFlags(session)
+  assert.equal(flags.length, chatLines(session).length, 'a flag per line, in line order')
+  assert.deepEqual(flags, [false, false, false, true], 'the trailing system row is not flagged')
 })
