@@ -352,12 +352,26 @@ export function createNestedFrame(env: NestedFrameEnv): NestedFrame {
    *    size it; the honest fix is a rule in the frame's reset that card CSS can
    *    override, which needs the geometry to verify.
    * 2. **A card's own `iframe { … }` rule does not match this.** Page-level CSS
-   *    in the script frame — `iframe{width:100%;height:100%;border:0}` is a
-   *    common idiom — selects by element type and a stand-in is a `div`.
+   *    in the script frame selects by element type and a stand-in is a `div`.
    *    `nested-css.ts` re-points selectors in the CSS a card installs *into*
    *    the stand-in, which is a different sheet; catching the card's own
    *    document styles would need intercepting them too, a much larger
    *    mechanism than this one.
+   *
+   *    **Measured before ranking it, and the measurement contradicted the
+   *    guess.** This was first written as "more likely to bite than the height
+   *    chain, because `iframe{width:100%;height:100%;border:0}` is a common
+   *    idiom" — from the impression that it is common, not from counting. A
+   *    scan of the 20 cards in the corpus's character directory found **zero**
+   *    `iframe { }` rules (and zero `contentDocument.write`, which was the
+   *    other thing this module nearly grew support for). What is actually used
+   *    there is `contentWindow` (3 cards, 14 sites) and `contentDocument`
+   *    (1 site) — both answered here.
+   *
+   *    Caliper: that directory is a subset. `srcdoc` and `createElement
+   *    ('iframe')` also read zero there, and the one card known to use both is
+   *    held outside it — so treat the table as a lower bound on a subset, not
+   *    as a corpus count.
    */
   const element = env.createElement('div')
   element.setAttribute?.('data-iris-nested-frame', seq)

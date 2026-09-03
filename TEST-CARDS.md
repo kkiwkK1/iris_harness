@@ -1899,6 +1899,55 @@ function $p(sel) {
 
 - **状态**:未建(等虚拟化落地)。
 
+#### 机制普查:哪些是想象的、哪些是真用的
+
+**口径,每个数字都受它约束**:扫的是 `E:/sillyTavern/SillyTavern/data/default-user/characters`
+里的 **20 张卡**(60 MB),逐张解 `chara`/`ccv3` 后**扫全文**而不是只扫
+`tavern_helper.scripts`(只扫脚本键在本项目已经产出过三个漂亮的错零)。计的是**站点数**,
+不是运行时次数;**卡数**另列,因为一张卡里四十处用法只是一张卡的需求。
+**这是子集上的下界,不是全语料计数** —— `data/_cache/characters` 没扫,`测试用卡/` 没扫,
+而 **V1.5.4_(唯一同时用 `srcdoc` 与 `createElement('iframe')` 的那张)不在这个目录里**,
+所以下表里那两行的 0 明显是子集造成的。全语料 47 张那一遍交 44 走产品读取器重扫。
+
+| 机制 | 卡数 / 站点数 | 替身现状 |
+|---|---|---|
+| `.contentWindow` | **3 / 14** | 答(document + postMessage) |
+| `.contentDocument` | **1 / 1** | 答(虚拟文档,不是 null) |
+| `querySelectorAll('…iframe')` | **1 / 1** | 答(查询路径追加替身) |
+| `<iframe width/height=…>` 属性 | 1 / **28** | 全在 `【Sgw】又看一集` 的**界面正文**里,不是脚本建的帧 |
+| `iframe { … }` CSS 规则 | **0 / 0** | 选不中替身(div)—— 真缺口,但**优先级降级**,见下 |
+| `contentDocument.write` / `.open` | **0 / 0** | **不建**(为想象中的用法建机制) |
+| `createElement('iframe')` | 0 / 0 | 子集造成(V1.5.4_ 不在此目录) |
+| `srcdoc` 属性 / `getAttribute('srcdoc')` | 0 / 0 | 同上 |
+| `sandbox` 属性赋值 | 0 / 0 | —— |
+
+**两条被这张表推翻的断言**(原本是我写下的):
+
+1. 「卡自己的 `iframe {}` 规则选不中替身 —— **比高度链更可能咬人**,因为只要写一条
+   `iframe{width:100%;height:100%;border:0}`」。**语料 0 处。** 那句话来自「这写法很常见」
+   的印象,而不是数过。**验收顺序回到高度链优先。**
+2. 「该给替身的文档加 `write`/`open`」。**语料 0 处**,不建。
+
+#### 「解析器发明了结论」的一个实例:24 → 0
+
+第一版扫描给出 **`onload on a frame`:4 卡 / 24 站点**,是这批里最大的一项,看着足够权威到
+可以直接拿去排优先级。模式是 `\.onload\s*=` —— 什么对象都算。逐张看上下文之后:
+
+```
+创世回廊1.3        const img = new Image(); img.onload = …   /  new FileReader(); reader.onload = …
+银麒赎世            var reader = new FileReader(); …          /  var img = new Image(); …
+魔法少女的扣扣审判    const reader = new FileReader(); …
+魔法少女是不会败北恶堕  const reader = new FileReader(); …
+```
+
+**四张带 hit 的卡逐张看完,24 个里没有一个在 iframe 上。帧 `onload` 的真实计数是 0。**
+
+> 一个宽模式给了 24,真值是 0,而 24 足够大到可以让人跳过验证直接排序。
+> **凡是要拿去排优先级的计数,先问「这个模式还会命中什么」。**
+
+(替身仍然合成 `load`,并且监听器与 `onload` 属性两条都答 —— 那是按 V1.5.4_ 的实际写法做的,
+不是按这张表。这一格的「0」只说明**这个子集**里没有第二张卡依赖它。)
+
 ### 5. 流式状态栏
 - **实测:全语料 `STREAM_TOKEN_RECEIVED` / `stream_token` 命中 0**(属性访问与字符串字面量两种写法都查了)。
   **没有一张卡按 token 流驱动状态栏。**
