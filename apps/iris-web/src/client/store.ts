@@ -86,7 +86,19 @@ export interface Notice {
   text: string
   /** Bumped per notice, so a repeat of the same text still re-announces. */
   seq: number
+  /** When it was raised, so the log can date it. Epoch milliseconds. */
+  at: number
 }
+
+/**
+ * How many notices the log keeps.
+ *
+ * Bounded because it is a diagnostic and not a journal: fifty is more than a
+ * session's worth of real events and small enough that the panel stays
+ * readable. Older ones fall off the front, and the panel says so — a list that
+ * quietly forgets is a list someone will read as complete.
+ */
+export const NOTICE_LOG_LIMIT = 50
 
 /** Everything the interface renders from. */
 /**
@@ -132,6 +144,21 @@ export interface IrisState {
   /** Sampling in force for the open chat, or the global defaults. */
   settings: GenerationSettings | undefined
   notice: Notice | undefined
+  /**
+   * Every notice raised this session, newest last.
+   *
+   * **The notice bar is not a record.** It shows one at a time and clears
+   * itself after 3.2 seconds (8 for an error), which is correct for
+   * interrupting someone and useless for anyone who was not looking — and that
+   * includes anyone verifying from outside the browser. Two acceptance rounds
+   * were spent on notices that had certainly fired and had already gone: the
+   * evidence existed for three seconds and nothing kept it.
+   *
+   * So the transient channel keeps its behaviour and gains a durable shadow.
+   * This is the same argument the card report list was built on, applied to the
+   * one channel that still had no memory.
+   */
+  noticeLog: readonly Notice[]
   /** True during the first load, so the shell can hold its layout still. */
   booting: boolean
   /**
@@ -407,6 +434,34 @@ export function createIrisStore(
 
   const store: IrisStore = createStore<IrisState & IrisActions>((set, get) => {
     /**
+     * The state patch that raises one notice.
+     *
+     * **One constructor, because there were three.** `notify` was not the only
+     * place a notice was built — the guard's catch and the card-import path each
+     * assembled their own — so a durable log added to `notify` alone would have
+     * been silently incomplete for exactly the errors most worth keeping. A
+     * patch rather than a setter so a caller that is also writing other fields
+     * (the import writes `characters` too) can spread it into one `set`.
+     * @param kind - how loud it is.
+     * @param text - what it says.
+     * @returns the fields to set.
+     */
+    const raise = (kind: Notice['kind'], text: string): {
+      notice: Notice
+      noticeLog: readonly Notice[]
+    } => {
+      noticeSeq += 1
+      const notice: Notice = { kind, text, seq: noticeSeq, at: Date.now() }
+      /*
+       * The log is **not** deduplicated, unlike the bar, which deduplicates by
+       * replacing. The same sentence arriving twice is two events, and
+       * collapsing them loses the fact that something recurred — usually the
+       * finding itself.
+       */
+      return { notice, noticeLog: [...get().noticeLog, notice].slice(-NOTICE_LOG_LIMIT) }
+    }
+
+    /**
      * Run a host call, turning a refusal into a notice rather than a crash.
      *
      * The sentence above describes one of the two things this catches. The other
@@ -422,11 +477,9 @@ export function createIrisStore(
       try {
         await work()
       } catch (error: unknown) {
-        noticeSeq += 1
-        const text = isHostError(error)
+        set(raise('error', isHostError(error)
           ? describeError(error)
-          : `Iris hit a problem of its own: ${describeError(error)}`
-        set({ notice: { kind: 'error', text, seq: noticeSeq } })
+          : `Iris hit a problem of its own: ${describeError(error)}`))
       }
     }
 
@@ -439,6 +492,7 @@ export function createIrisStore(
       stream: undefined,
       settings: undefined,
       notice: undefined,
+      noticeLog: [],
       booting: true,
       transport: source.transport,
       dataOrigin: source.origin,
@@ -585,11 +639,7 @@ export function createIrisStore(
         await guard(async () => {
           const { character } = await client.call('character.import', { filename, content: base64 })
           const { characters } = await client.call('character.list', {})
-          noticeSeq += 1
-          set({
-            characters,
-            notice: { kind: 'info', text: `Imported ${character.name}.`, seq: noticeSeq },
-          })
+          set({ characters, ...raise('info', `Imported ${character.name}.`) })
         })
       },
 
@@ -1065,8 +1115,7 @@ export function createIrisStore(
       },
 
       notify(kind: Notice['kind'], text: string): void {
-        noticeSeq += 1
-        set({ notice: { kind, text, seq: noticeSeq } })
+        set(raise(kind, text))
       },
 
       dismissNotice(): void {

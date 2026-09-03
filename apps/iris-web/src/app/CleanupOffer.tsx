@@ -114,8 +114,8 @@ export function CleanupOffer(): ReactElement | null {
           number is the one that can be zero while the first is large.
         */}
         <p className="iris-field__note">
-          {offer.layers} of messages {offer.from}–{offer.to} still hold old variables
-          {' '}({offer.lines} lines in the file).
+          {offer.layers} of the messages between {offer.from} and {offer.to} still hold old
+          {' '}variables ({offer.lines} lines in the file).
         </p>
 
         <div className="iris-cleanup__buttons">

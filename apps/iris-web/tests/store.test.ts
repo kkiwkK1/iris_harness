@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { actionsOf, applyEvent, createIrisStore, type IrisStore } from '../src/client/store.ts'
+import {
+  actionsOf,
+  applyEvent,
+  createIrisStore,
+  NOTICE_LOG_LIMIT,
+  type IrisStore,
+} from '../src/client/store.ts'
 import type { ChatView, IrisClient, IrisEvent } from '@iris/protocol'
 import { createFakeClient } from '@iris/client-fake'
 
@@ -813,7 +819,7 @@ function recordingStore(answer: {
   cleaned: number
   recorded: boolean
   backup?: string
-} = { cleaned: 0, recorded: true }): {
+} = { cleaned: 0, recorded: true }, failOn?: string): {
   store: IrisStore
   push: (event: IrisEvent) => void
   calls: { method: string, params: unknown }[]
@@ -833,6 +839,9 @@ function recordingStore(answer: {
     },
     async call(method, params) {
       calls.push({ method, params })
+      // Drivable failure, so a test can exercise the notice an action's guard
+      // raises rather than only the ones it calls `notify` for directly.
+      if (method === failOn) throw new Error('the host refused')
       if (method === 'chat.list') return { chats: [] } as never
       if (method === 'character.list') return { characters: [] } as never
       if (method === 'settings.get') return { settings: { provider: 'p', model: 'm' } } as never
@@ -955,5 +964,66 @@ test('cleaning nothing is still reported, because zero answers the question', as
   scope.push(OFFER)
   await actionsOf(scope.store).answerCleanup('clean')
   assert.match(String(scope.store.getState().notice?.text), /cleaned 0 messages/)
+  scope.dispose()
+})
+test('every notice is kept after the bar has forgotten it', () => {
+  /*
+   * The bar shows one message for 3.2 seconds (8 for an error). That is right
+   * for interrupting someone and useless for anyone who was not watching —
+   * including every verification pass, two of which were spent scanning a DOM
+   * for notices that had certainly fired and had already gone.
+   */
+  const scope = recordingStore()
+  actionsOf(scope.store).notify('info', 'first thing')
+  actionsOf(scope.store).notify('error', 'second thing')
+
+  assert.deepEqual(
+    scope.store.getState().noticeLog.map(it => `${it.kind}:${it.text}`),
+    ['info:first thing', 'error:second thing'],
+  )
+  // Dated, so the log can be read against a clock rather than only in order.
+  assert.ok((scope.store.getState().noticeLog[0]?.at ?? 0) > 0)
+  scope.dispose()
+})
+
+test('the log is not deduplicated, because a repeat is two events', async () => {
+  // The bar deduplicates by replacing — it can only show one thing. A record
+  // must not: that something recurred is usually the finding.
+  const scope = recordingStore()
+  actionsOf(scope.store).notify('info', 'the same sentence')
+  actionsOf(scope.store).notify('info', 'the same sentence')
+  assert.equal(scope.store.getState().noticeLog.length, 2)
+  scope.dispose()
+})
+
+test('a notice raised by a failed action is logged too, not just ones from notify', async () => {
+  /*
+   * **The bypass that would have made this feature quietly incomplete.**
+   * `notify` was not the only place a notice was built: the action guard's catch
+   * and the card-import path each assembled their own `{ kind, text, seq }`. A
+   * log added to `notify` alone would have missed exactly the notices most worth
+   * keeping — the errors — and looked like it worked, because the ones a test
+   * would naturally raise go through `notify`.
+   *
+   * So this drives a **failing action** rather than calling `notify`.
+   */
+  const scope = recordingStore({ cleaned: 0, recorded: true }, 'chat.rename')
+  await actionsOf(scope.store).renameChat('c1', 'a new title')
+  const logged = scope.store.getState().noticeLog
+  assert.ok(logged.length > 0, 'a failed action raised a notice that was not logged')
+  assert.equal(logged.at(-1)?.kind, 'error')
+  scope.dispose()
+})
+
+test('the log is bounded, and says so once it is', () => {
+  const scope = recordingStore()
+  for (let i = 0; i < NOTICE_LOG_LIMIT + 5; i += 1) {
+    actionsOf(scope.store).notify('info', `notice ${i}`)
+  }
+  const logged = scope.store.getState().noticeLog
+  assert.equal(logged.length, NOTICE_LOG_LIMIT)
+  // The oldest fell off the front, so the newest is the last one raised.
+  assert.equal(logged.at(-1)?.text, `notice ${NOTICE_LOG_LIMIT + 4}`)
+  assert.equal(logged[0]?.text, 'notice 5')
   scope.dispose()
 })

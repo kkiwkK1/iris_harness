@@ -22,6 +22,7 @@ import { Slot } from '../slots/Slot.tsx'
 import { ChoiceField, NumberField, Section, TextField } from './fields.tsx'
 import { ConnectionPanel } from './ConnectionPanel.tsx'
 import { HostReports } from './HostReports.tsx'
+import { NoticeLog } from './NoticeLog.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
@@ -261,6 +262,13 @@ export function SettingsDrawer({
           regardless of whether any card is running.
         */}
         <HostReports />
+
+        {/*
+          The notice history, beside the host's reports because they answer the
+          same question from two sides: what did this session say, and is it
+          still sayable. The bar itself is gone in three seconds.
+        */}
+        <NoticeLog />
 
         {/*
           Dev only, and written so the branch is statically dead in a production

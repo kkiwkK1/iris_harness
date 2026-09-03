@@ -435,6 +435,78 @@ before; rewriting it to a same-origin path would turn a request that never left
 the browser into one the host must field, which is capability the card did not
 have. Diagnostics unwrap the routing and name the bundle the card asked for.
 
+## The bootstrap split does not add a trust boundary
+
+The frame's code arrives in two pieces now. The **policy core** is inlined into
+the srcdoc — every decision about what a card may touch, refuse or read. The
+**member table** is a separate classic script fetched from `/sandbox`, carrying
+the implementations those decisions call: the storage façade, the ST anchors,
+the overlay-region walk, the TavernHelper surface, the nested-frame stand-in.
+
+The split exists for cost, not for design purity: a member added to the inlined
+core is paid for **once per frame**, and there are up to 20 frames. It moved the
+per-member cost from `20 ×` to `1 ×` and took ~24 KiB off every frame. The
+question this section answers is the one that matters more than the saving:
+**does fetching half the frame's code weaken the sandbox?**
+
+**No, and the reason is that the fetch is not a new capability.** Four things
+have to hold, and all four already did before the split:
+
+1. **Same origin, hashed name, immutable.** The table is served from Iris's own
+   origin as `members-<content hash>.js` and listed in `manifest.json`. The
+   host serves `immutable` only for names it finds in that manifest, so the
+   bytes behind a name never change — a name whose bytes changed would need a
+   different name. A stale copy in a cache is therefore *correct*, and a request
+   for a superseded name is a 404 rather than silently-old code.
+
+2. **`script-src` already admitted this origin.** The frame's policy has listed
+   `${selfOrigin}` since the card-library preset existed, because that bundle is
+   served from it. The table adds a second file from an origin already trusted
+   for execution; it does not widen the directive.
+
+3. **The table carries no user content and no card content.** It is built from
+   `src/sandbox/*.ts` by `vite build`, and its input is this repository. Nothing
+   a card wrote, nothing a user typed, and nothing fetched from a CDN reaches
+   it. So there is no injection surface *in* the table — only the question of
+   whether the file itself could be swapped.
+
+4. **Swapping it is exactly as bad as swapping the bootstrap, and no worse.**
+   That is the whole argument. Someone who can write to `dist/sandbox/` can
+   equally rewrite `bootstrap-<hash>.js`, which is inlined into every frame and
+   *is* the policy core. An attacker with that access does not need the table;
+   they already own the decisions. The split therefore changes the **size** of
+   the attack surface, not its **shape**: one more file in a directory where a
+   write was already game over.
+
+### What the split *did* add, and how it is covered
+
+A frame can now start without its implementations — a 404, a network fault, a
+half-deployed `dist`. Before the split that state did not exist.
+
+Handled by refusing to run rather than by degrading: the core **throws** before
+`installSandbox` when the table's marker global is absent, and the throw goes to
+the bootstrap-error channel, so the panel says **"never started: …"** rather
+than showing a card that runs with a hole in its surface. That sentence is the
+one a reader can act on; a card missing `localStorage` for no stated reason is
+not.
+
+The alternative — carry on with whatever members did arrive — was rejected for
+the reason the whole sandbox is built on: **a card that half-works produces
+findings nobody can attribute.** A missing façade would surface as the card's
+bug, in the card's own error, three layers from the deployment that caused it.
+
+### What would overturn this
+
+- The table gaining an input that is not this repository. If it ever ingested a
+  card's text, a user's settings or a remote fetch, point 3 fails and the
+  argument has to be rebuilt around sanitising that input.
+- The host serving `/sandbox` from somewhere the bootstrap is not served from.
+  Point 4 rests on both files sharing one write boundary; two boundaries means
+  the weaker one decides.
+- `manifest.json` ceasing to gate `immutable`. Point 1's "a stale copy is
+  correct" depends on the name/bytes coupling, and an unhashed name with a long
+  TTL is the failure that coupling exists to prevent.
+
 ## Work split
 
 | Stream | Owner |

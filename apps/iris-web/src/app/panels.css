@@ -1121,3 +1121,19 @@
   gap: 8px;
   margin-top: 4px;
 }
+
+/* The notice history. Same row treatment as the report list — they are the same
+   kind of thing read at the same moment — with its own list container so the
+   two can be told apart in the DOM by anyone verifying from outside. */
+.iris-notices {
+  display: grid;
+  gap: 8px;
+}
+
+.iris-notices__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
