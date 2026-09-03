@@ -809,6 +809,68 @@ if (typeof toastr !== "undefined") toastr.success("已设为壁纸");   // ← �
 | 创世回廊1.3 / 外置状态栏 | 6 | 0 | realm 绑定(`head`/`body`) | 是 | `showPanelConfirm` | **无** |
 | **V1.5.4_ / 论坛覆盖层**(≡ 不要被神隐挑战-V1.5) | 0 | 0 | realm 绑定(`.appendTo('body')` ×1) | 是 | `toggleOverlay` | **无** |
 
+### 补列:每个组件依赖哪个预置库(对 A9 的 realm 裁定)
+
+方案 C 下这些组件跑在**脚本 frame**(只有 script preset,**无 FA / 无 Tailwind**),
+而 A9 裁的是表面 realm 用 **message preset**。所以「谁需要哪个库」直接决定谁必须落在哪。
+逐**组件**量(不是逐卡 —— 其中两个是同源分叉,分居不同卡),
+`scratchpad/overlay-preset-deps.mjs`:
+
+| 组件 / 卡 | FA class token | TW class token | 自带样式 | 自带 FA 加载器 | **需要** |
+|---|---|---|---|---|---|
+| **手机UI / 银麒赎世** | **65** | 0 | 108 | 是 | **Font Awesome** |
+| **外置状态栏 / 魔法少女的扣扣审判1.0** | **40** | 0 | 59 | 是 | **Font Awesome** |
+| 银麒系统面板 / 银麒赎世 | 2 | 0 | 3 | — | FA(仅 2 个,边缘) |
+| **论坛覆盖层 / V1.5.4_** | 0 | 0 | 64 | — | **Tailwind**(字面 CDN 脚本) |
+| 外置状态栏 / 创世回廊1.3 | 0 | 0 | 13 | — | **无** |
+| 状态栏(`2` ≡ 绿茵好莱坞) | 0 | 0 | 4 | — | **无** |
+| 气泡面板(`2.1.0` ≡ 灭仇家) | 0 | 0 | 0 | — | **无** |
+| 正文美化 / 可攻略女主 | 0 | 0 | 6 | — | **无** |
+
+> **三个组件需要 script preset 没有的库**(两个要 FA、一个要 Tailwind);**其余五个什么都不需要**,
+> 自带 `<style>` 就够。所以「表面 realm 用 message preset」这条**对这三个是必需的,对另外五个是免费的**。
+
+**FA 那两个还有一层**:它们**自带 `loadFontAwesome()`**(注入 cdnjs `<link>`),
+但 **cdnjs 不在 `REMOTE_ALLOWLIST` 里且 `font-src` 不随授网放宽**(§一之二 副轴之二),
+所以**自带那条取不到** —— 它们的图标只能来自预置。
+
+### 那个"看不见的浮动按钮":它不需要任何库,它需要一个能看见的 frame
+
+`银麒赎世 / 手机UI` 的 `#mobile-trigger-btn`,源码逐字:
+
+```js
+$("head").append(phoneStyles);                       // 卡自己的 <style>
+const triggerBtn = $("<button>", {
+  id: "mobile-trigger-btn",
+  html: '📱<span id="phone-float-badge" style="display:none;…">…'   // ← 内容是 emoji
+});
+```
+
+```css
+#mobile-trigger-btn {
+  position: fixed; top: 50%; right: 33.33%; transform: translateY(-50%);
+  width: 60px; height: 60px; border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none;
+}
+```
+
+| 问 | 答 |
+|---|---|
+| 元素 | `<button>` |
+| 内容 | **emoji `📱`**(外加一个默认 `display:none` 的角标 `<span>`) |
+| FA 类 | **无** |
+| Tailwind 类 | **无** |
+| 内联 `background` / data URL | **无背景图**;背景是**卡自己 CSS 里的 `linear-gradient`** |
+| 样式由谁给 | **卡自己**(`$("head").append(phoneStyles)`) |
+
+> **regions 报 61×61 本身就证明那份 CSS 生效了** —— 一个无样式的空 `<button>` 不会是 60×60 圆形。
+> **所以它不是没画出来,是画在了看不见的地方**:`position:fixed` 相对的是**脚本 frame 的视口**,
+> 而那个 frame 今天是 `left:-9999px` 的 0×0 挂点。
+>
+> **这一条的修法就是方案 C 本身(给脚本 frame 一个全视口表面),与预置库无关。**
+> 反过来说:**方案 C 落地后它应当立刻可见,不需要等 FA/Tailwind** —— 这给了 C 一个
+> **不受库缺失干扰的干净判据**。
+
 目标容器:`银麒赎世`/`魔法少女` 挂在宿主 `body` 上并操作自建的 `#phone-app-*`;
 `状态栏` 建 `#fm-phone-container` 并往 `head` 注 `#fm-phone-css`;`创世回廊1.3` 往 `head`
 注字体 `link` 与 `#rpg-remixicon`;`V1.5.4_` 是 `$('<iframe>')…appendTo('body')`。
