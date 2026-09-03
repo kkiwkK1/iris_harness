@@ -1107,3 +1107,90 @@ test('a repeated offer for a chat already answered is not shown again', async ()
   scope.dispose()
   deferred.dispose()
 })
+test('an injection carries the run it belongs to, and only that call does', async () => {
+  /*
+   * The id is minted by the shell and never by the frame: a card has no idea
+   * what a run is, and the id is what decides whose injections the host will
+   * later delete. Only `setExtensionPrompt` takes one, because it is the only
+   * card action that leaves something behind for a run to own.
+   */
+  const scope = recordingStore()
+  actionsOf(scope.store).beginCardRun()
+  const runId = scope.store.getState().cardRunId
+  assert.equal(runId, 'c1:1', 'the readable form is ${chatId}:${generation}')
+
+  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' })
+  await actionsOf(scope.store).runCardAction('saveChat', {})
+
+  const injection = scope.calls.find(it => it.method === 'script.setExtensionPrompt')
+  assert.equal((injection?.params as Record<string, unknown>)['runId'], runId)
+  const other = scope.calls.find(it => it.method === 'script.saveChat')
+  assert.equal((other?.params as Record<string, unknown>)['runId'], undefined)
+  scope.dispose()
+})
+
+test('ending a run reports it once, with the id the injection carried', async () => {
+  /*
+   * **Exactly once**, and that is the whole assertion. The frame's teardown and
+   * `pagehide` can both reach this — a tab closing during a chat switch — and
+   * the host answers with how many injections it cleared, so a second call
+   * reports a second sweep of nothing.
+   */
+  const scope = recordingStore()
+  actionsOf(scope.store).beginCardRun()
+  const runId = scope.store.getState().cardRunId
+  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' })
+
+  await actionsOf(scope.store).endCardRun()
+  await actionsOf(scope.store).endCardRun()
+
+  const ended = scope.calls.filter(it => it.method === 'script.runEnded')
+  assert.equal(ended.length, 1, 'runEnded was sent twice for one run')
+  assert.deepEqual(ended[0]?.params, { chatId: 'c1', runId })
+  assert.equal(scope.store.getState().cardRunId, undefined)
+  scope.dispose()
+})
+
+test('a new run gets a new id, so the old run’s injections are not adopted', async () => {
+  // The generation is monotonic and the chat is part of the id, so two opens of
+  // the same chat are two runs. If they shared an id, ending the second would
+  // clear injections the first still owns — on another page, possibly.
+  const scope = recordingStore()
+  actionsOf(scope.store).beginCardRun()
+  const first = scope.store.getState().cardRunId
+  actionsOf(scope.store).beginCardRun()
+  const second = scope.store.getState().cardRunId
+
+  assert.notEqual(first, second)
+  await actionsOf(scope.store).endCardRun()
+  const ended = scope.calls.filter(it => it.method === 'script.runEnded')
+  assert.equal((ended[0]?.params as Record<string, unknown>)['runId'], second,
+    'ending the current run reported the previous one')
+  scope.dispose()
+})
+
+test('a run that never started is not reported as ended', async () => {
+  // Nothing was injected, so there is nothing for the host to clear, and a
+  // `runEnded` for a run it never saw would be answered with a zero it has to
+  // explain.
+  const scope = recordingStore()
+  await actionsOf(scope.store).endCardRun()
+  assert.equal(scope.calls.some(it => it.method === 'script.runEnded'), false)
+  scope.dispose()
+})
+
+test('a failed runEnded is silent here, because the host reports the orphan', async () => {
+  /*
+   * Teardown is the wrong moment for a notice: it would arrive over whatever
+   * the reader is looking at next, about a run that has already gone. The host
+   * keeps injections it was not told about and reports them itself — that
+   * orphan report is why this can afford to be quiet.
+   */
+  const scope = recordingStore({ cleaned: 0, recorded: true }, 'script.runEnded')
+  actionsOf(scope.store).beginCardRun()
+  await actionsOf(scope.store).endCardRun()
+
+  assert.equal(scope.store.getState().notice, undefined, 'teardown raised a notice')
+  assert.equal(scope.store.getState().cardRunId, undefined, 'the id survived a failed end')
+  scope.dispose()
+})

@@ -569,8 +569,49 @@ export function CardScriptFrames(): ReactElement {
        */
       const surface = mount.current
       if (surface !== null) surface.replaceChildren()
+
+      /*
+       * And tell the host the run is over, so the injections it is holding for
+       * this run go with the frame.
+       *
+       * **The frame cannot do this itself.** Its teardown is the removal of the
+       * frame, so by the time anything would notice, the channel to it is gone
+       * — which is exactly how "6 script injections are still live on this chat
+       * from an earlier session" came to be a standing report rather than an
+       * event.
+       *
+       * Not awaited: this is a React cleanup and cannot be async, and the host
+       * needs no answer from us. If the call never lands, the host keeps the
+       * injections and reports them as an orphan run — which is the case it
+       * chose to report rather than guess about, since it cannot tell an orphan
+       * from another page's live run.
+       */
+      void actionsOf(store).endCardRun()
     }
   }, [chatId, characterId, consent, store, actions])
+
+  /*
+   * A best-effort `runEnded` when the page itself goes.
+   *
+   * `pagehide` rather than `beforeunload` or `unload`: it is the one that fires
+   * on mobile and on a back-forward-cache navigation, where the other two are
+   * unreliable or skipped entirely. Nothing is awaited — a handler cannot hold
+   * the page open, and the whole value here is the *chance* that the call
+   * leaves before the tab does.
+   *
+   * A failure is not a defect: the host keeps injections it was not told about
+   * and reports them, which is why the orphan report exists at all. This
+   * listener only reduces how often a reader sees one.
+   */
+  useEffect(() => {
+    const onHide = (): void => {
+      void actionsOf(store).endCardRun()
+    }
+    window.addEventListener('pagehide', onHide)
+    return () => {
+      window.removeEventListener('pagehide', onHide)
+    }
+  }, [store])
 
   /*
    * Off-screen, not `hidden`.

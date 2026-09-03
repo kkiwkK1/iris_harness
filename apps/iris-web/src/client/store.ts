@@ -299,6 +299,20 @@ export interface IrisState {
    * the common case during verification.
    */
   cardRunGeneration: number
+  /**
+   * The open card run's identity, as the host will see it.
+   *
+   * `${chatId}:${generation}` — readable so a host report can name which open
+   * an injection came from, and **opaque on the wire**: the host stores it and
+   * never parses it. The generation alone was not enough because it is not
+   * unique across chats, and the host has to be able to tell one page's run
+   * from another's.
+   *
+   * `undefined` between runs. An injection arriving without one is stored by
+   * the host and reported as a fault — a transitional state while both halves
+   * land, not a mode anything should rely on.
+   */
+  cardRunId: string | undefined
   /** What each of this card's scripts is doing, once they start on their own. */
   runStates: ScriptRunState[]
 
@@ -336,6 +350,14 @@ export interface IrisActions {
   answerScriptsAllowed(allowed: boolean): Promise<void>
   /** Record a frame-level report for this card, once. */
   beginCardRun(): void
+  /**
+   * Tell the host the open card run is over, so its injections go.
+   *
+   * Idempotent by clearing the id first: the frame's teardown and `pagehide`
+   * can both reach this, and the host reports how many injections it cleared —
+   * a second call would report a second sweep of nothing.
+   */
+  endCardRun(): Promise<void>
   /**
    * Add or re-date one durable report.
    *
@@ -562,6 +584,7 @@ export function createIrisStore(
       cleanupOffer: undefined,
       cleanupAnswered: [],
       cardRunGeneration: 0,
+      cardRunId: undefined,
       runStates: [],
       documentGranted: false,
       connections: [],
@@ -812,7 +835,43 @@ export function createIrisStore(
         // Monotonic rather than reset per card: two runs must never share a
         // number, and a card's reports are cleared on switch anyway. A counter
         // that restarted could make a stale entry look current again.
-        set({ cardRunGeneration: get().cardRunGeneration + 1 })
+        const generation = get().cardRunGeneration + 1
+        const chatId = get().chatId
+        /*
+         * The id is minted **here**, at the one point that already means "a new
+         * run starts now" — the same call the report generation hangs off. A
+         * second place deciding when a run begins is a second answer to which
+         * run an injection belongs to.
+         */
+        set({
+          cardRunGeneration: generation,
+          cardRunId: chatId === undefined ? undefined : `${chatId}:${String(generation)}`,
+        })
+      },
+
+      async endCardRun(): Promise<void> {
+        const runId = get().cardRunId
+        const chatId = get().chatId
+        /*
+         * Cleared first, so a second call cannot send a second `runEnded` for
+         * the same run. The teardown path and `pagehide` can both fire — a tab
+         * closing during a chat switch — and the host counts what it cleared,
+         * so a duplicate would report a second sweep of nothing.
+         */
+        set({ cardRunId: undefined })
+        if (runId === undefined || chatId === undefined) return
+        /*
+         * Not wrapped in `guard`: this runs during teardown, and a notice about
+         * a run that has already ended would arrive over whatever the reader is
+         * looking at next. A failure here leaves the host's injections in place
+         * and it reports them itself — the orphan path, which is the case the
+         * host keeps rather than guesses about.
+         */
+        try {
+          await client.call('script.runEnded', { chatId, runId })
+        } catch {
+          // Reported by the host as an orphan run rather than here as a notice.
+        }
       },
 
       async answerCleanup(answer: CleanupAnswer): Promise<void> {
@@ -1153,9 +1212,22 @@ export function createIrisStore(
         // Not wrapped in `guard`: a card is awaiting this, and turning a refusal
         // into a notice would resolve its promise as though the action had run.
         const params_ = (typeof params === 'object' && params !== null ? params : {}) as Record<string, unknown>
+        /*
+         * An injection carries the run it belongs to.
+         *
+         * Added here rather than in the frame: a card has no idea what a run is,
+         * and a frame could not be trusted with the id anyway — it is what
+         * decides whose injections the host will later delete. Only
+         * `setExtensionPrompt` takes it, because it is the only call that leaves
+         * something behind for a run to own.
+         */
+        const runId = get().cardRunId
+        const scoped = wire === 'script.setExtensionPrompt' && runId !== undefined
+          ? { runId }
+          : {}
         // The method is typed now; only the params still need the cast, because
         // their shape depends on which method this turned out to be.
-        return client.call(wire, { chatId, ...params_ } as never)
+        return client.call(wire, { chatId, ...scoped, ...params_ } as never)
       },
 
       async itemize(turn?: number): Promise<ItemizationResult> {
