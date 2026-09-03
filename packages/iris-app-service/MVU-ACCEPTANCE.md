@@ -121,3 +121,77 @@ camel-case block would have been read before that commit too. What the fix
 added was the underscore spelling and code-fence tolerance — neither of which
 this run touched. A passing acceptance is the easiest place to award a fix
 credit it did not earn.
+
+## The cleanup rules, on a 677-message chat
+
+Interval 50, keep the newest 20, floor 0 never cleaned. A short conversation
+cannot test any of it — every floor is inside the protection window, so every
+implementation is green. The subject is the corpus's longest chat,
+`命定之诗与黄昏之歌v3.0.4 / 333 - 2026-01-22` (677 messages, 338 turns; a second
+file in that directory has the same message count and near-identical size, so the
+one used is named here rather than described).
+
+### First result: that file cannot test the trimming half
+
+Read through the product's own floor reader, the corpus file is **already
+cleaned** — by SillyTavern, before we ever saw it:
+
+```
+344 variable layers; 31 still hold any of the five keys; median layer 39 bytes
+prune() on it: 0 trimmed, 0 reports
+```
+
+That zero is correct — there is nothing left to remove — and it is worth nothing
+as evidence. **A file that has already been through the operation cannot be the
+positive control for the operation.** What it can show is the retention pattern
+upstream actually produced, and that turns out to be informative on its own:
+
+```
+floors still intact, by message index: 0, 50, 100, 150, ... 650, then 655..676
+                       gaps: exactly 50 in index, 25 in turn
+```
+
+**Upstream's interval of 50 counts messages; ours counts turns.** On this
+conversation ST kept 14 snapshots where our rule keeps 7 — the same rule name,
+half the recovery points. Nothing is restored from a pruned floor here, so that
+is a real difference in how far back a long chat can be reasoned, and it belongs
+in the ledger rather than in a passing test.
+
+### The trimming half, on the same shape with tables restored
+
+Every floor given a real 93,086-byte table (one per swipe — a line carrying
+fewer tables than the turn has candidates leaves the *selected* swipe empty, and
+the floor then reads blank for reasons that have nothing to do with pruning):
+
+```
+338 floors, hydration drops 0
+trimmed 311, kept 27:  0, 50, 100, 150, 200, 250, 300  +  318..337
+floor 0:               kept, 6 keys -> 7 after the run (the added `snapshot` mark)
+newest 20 turns:       all kept
+live table bytes:      30.01 MiB -> 2.40 MiB      (O(N) -> O(N/interval))
+iris/variables log:    grows, because the trim is an appended event, not a rewrite
+```
+
+A trimmed floor, read back:
+
+```
+turn 159 -> keys ["event_chain"]
+            "turn 159 was pruned (delta_data, display_data, initialized_lorebooks,
+             schema, stat_data); the nearest intact turn is 150"
+```
+
+**Not `{}`.** The five named keys go; `event_chain` — a key this card's author
+put there and nothing here recognises — stays. Any acceptance written as "a
+pruned floor reads empty" would fail against the correct implementation, for the
+same reason "the file gets smaller" would.
+
+### What a nearly-right implementation would also produce
+
+| Wrong version | What it does on this chat |
+| --- | --- |
+| `keepRecent` counted in message indices | protects **10** turns instead of 20 — **10 floors wrongly trimmed**, all of them recent |
+| interval counted in message indices | keeps **14** snapshots instead of 7 (this is what ST does — see above) |
+| floor 0 as an explicit special case | **identical here.** `0 % 50 === 0` already keeps it, so a floor-0 assertion has no teeth; the assertion with teeth is that turns 50, 100, 150, 200, 250, 300 are kept |
+
+The last row is the one to carry forward: floor 0 was the headline rule and is
+the one condition this chat cannot discriminate on.
