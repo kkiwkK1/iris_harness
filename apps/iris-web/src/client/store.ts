@@ -187,6 +187,17 @@ export interface IrisState {
    * one channel that still had no memory.
    */
   noticeLog: readonly Notice[]
+  /**
+   * How many notices fell off the front of the log.
+   *
+   * Counted rather than inferred from the length, because the two differ by one
+   * at exactly the moment the panel starts talking about it: at
+   * `length === LIMIT` **nothing has been dropped yet** — the next push is what
+   * drops the first. A panel that says "older ones have been dropped" while the
+   * log is merely full states something false, and it is the kind of false that
+   * makes a reader distrust the rest of the instrument.
+   */
+  noticesDropped: number
   /** True during the first load, so the shell can hold its layout still. */
   booting: boolean
   /**
@@ -535,6 +546,7 @@ export function createIrisStore(
     const raise = (kind: Notice['kind'], text: string): {
       notice: Notice
       noticeLog: readonly Notice[]
+      noticesDropped: number
     } => {
       noticeSeq += 1
       const notice: Notice = { kind, text, seq: noticeSeq, at: Date.now() }
@@ -544,7 +556,12 @@ export function createIrisStore(
        * collapsing them loses the fact that something recurred — usually the
        * finding itself.
        */
-      return { notice, noticeLog: [...get().noticeLog, notice].slice(-NOTICE_LOG_LIMIT) }
+      const kept = [...get().noticeLog, notice]
+      return {
+        notice,
+        noticeLog: kept.slice(-NOTICE_LOG_LIMIT),
+        noticesDropped: get().noticesDropped + Math.max(0, kept.length - NOTICE_LOG_LIMIT),
+      }
     }
 
     /**
@@ -579,6 +596,7 @@ export function createIrisStore(
       settings: undefined,
       notice: undefined,
       noticeLog: [],
+      noticesDropped: 0,
       booting: true,
       transport: source.transport,
       dataOrigin: source.origin,

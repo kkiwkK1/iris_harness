@@ -787,6 +787,16 @@ upstream's order (its custom button is prepended before the ok button,
 `popup.js:312-315`, so "back up and clean" leads), and only the dismissal
 differs.
 
+**Both dismissal gestures**, and this took a correction. Escape was wired first
+and clicking the dim area was not, so half of what upstream calls a dismissal
+did nothing at all — a reader who clicked outside would reasonably read the
+dialog as stuck. Escape is listened for on the **document** rather than on the
+panel (a modal whose keyboard dismissal depends on where focus happens to be is
+broken for anyone whose focus is in the composer, which is where it is while
+they read), and the outside click is taken on `mousedown` **only when the target
+is the scrim itself** — a drag that starts on the body text and releases past
+the edge is a selection, not a dismissal.
+
 **What it costs.** A user who *wants* never to be asked again, and who expects
 Esc to mean that because they learned it from the extension, has to press the
 third button instead. That is the whole cost, and it is paid by the reader who

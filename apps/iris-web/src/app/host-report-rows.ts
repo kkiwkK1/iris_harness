@@ -99,7 +99,24 @@ export function collapseRuns(reports: readonly DebugReport[]): ReportRun[] {
  * @returns the row's class list.
  */
 export function classForReport(report: { grade: ReportGrade }): string {
-  return report.grade === 'fault'
+  return reportRowClass(report.grade === 'fault')
+}
+
+/**
+ * The class list for one report-style row.
+ *
+ * **One place that knows the class names**, because there are now three lists
+ * drawing this row — the card panel, the host reports, and the notice log — and
+ * they decide "is this a fault" from three different fields (`grade`, the same
+ * `grade` off the wire, and a notice's `kind`). The *decision* differs per list
+ * and that is fine; the **names** must not, or renaming the modifier silently
+ * leaves one list uncoloured, which is the class-with-no-rule failure this app
+ * has already paid for once.
+ * @param fault - whether the row describes something broken.
+ * @returns the class list.
+ */
+export function reportRowClass(fault: boolean): string {
+  return fault
     ? 'iris-script__report iris-script__report--fault'
     : 'iris-script__report'
 }

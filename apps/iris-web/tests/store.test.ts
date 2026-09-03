@@ -1025,6 +1025,15 @@ test('the log is bounded, and says so once it is', () => {
   // The oldest fell off the front, so the newest is the last one raised.
   assert.equal(logged.at(-1)?.text, `notice ${NOTICE_LOG_LIMIT + 4}`)
   assert.equal(logged[0]?.text, 'notice 5')
+  /*
+   * **The count, and it is off by one from the length.** At exactly the limit
+   * nothing has been dropped yet — the next push drops the first — so a panel
+   * keyed on `length >= LIMIT` announces a loss that has not happened. That was
+   * the first version of the line, and a sentence that is false the moment it
+   * first appears is worse than no sentence: it is the instrument talking about
+   * itself.
+   */
+  assert.equal(scope.store.getState().noticesDropped, 5)
   scope.dispose()
 })
 test('a pushed report is shown as the host wrote it, not with its channel twice', () => {
@@ -1250,5 +1259,19 @@ test('an injection uses the run’s id even after the open chat has moved on', a
 
   const injection = scope.calls.find(it => it.method === 'script.setExtensionPrompt')
   assert.equal((injection?.params as Record<string, unknown>)['runId'], 'c1:1')
+  scope.dispose()
+})
+test('nothing is reported as dropped until something actually is', () => {
+  // Exactly at the limit the log is full and complete. The push after it is the
+  // first loss, and only then may the panel say so.
+  const scope = recordingStore()
+  for (let i = 0; i < NOTICE_LOG_LIMIT; i += 1) {
+    actionsOf(scope.store).notify('info', `n${i}`)
+  }
+  assert.equal(scope.store.getState().noticeLog.length, NOTICE_LOG_LIMIT)
+  assert.equal(scope.store.getState().noticesDropped, 0, 'a full log is not a lossy one')
+
+  actionsOf(scope.store).notify('info', 'one more')
+  assert.equal(scope.store.getState().noticesDropped, 1)
   scope.dispose()
 })

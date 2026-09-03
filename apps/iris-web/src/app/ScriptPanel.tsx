@@ -26,6 +26,7 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { describeBytes } from './format.ts'
 import { Section } from './fields.tsx'
 import { consentFigures, describeConsentAsk } from '../sandbox/consent.ts'
+import { reportRowClass } from './host-report-rows.ts'
 import {
   describeRun,
   isFailure,
@@ -121,11 +122,7 @@ export function ScriptPanel(): ReactElement | null {
              * cannot mean both "an item in this list" and "something is broken".
              */
             <p
-              className={
-                report.grade === 'fault'
-                  ? 'iris-script__report iris-script__report--fault'
-                  : 'iris-script__report'
-              }
+              className={reportRowClass(report.grade === 'fault')}
               key={report.text}
             >
               {/*

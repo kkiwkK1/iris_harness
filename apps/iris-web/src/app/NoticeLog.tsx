@@ -21,6 +21,7 @@
 import type { ReactElement } from 'react'
 
 import { NOTICE_LOG_LIMIT } from '../client/store.ts'
+import { reportRowClass } from './host-report-rows.ts'
 import { useIris } from '../client/provider.tsx'
 
 /** A local time, to the second. */
@@ -39,6 +40,7 @@ function timeOf(at: number): string {
  */
 export function NoticeLog(): ReactElement {
   const log = useIris(state => state.noticeLog)
+  const dropped = useIris(state => state.noticesDropped)
 
   return (
     <section className="iris-notices">
@@ -56,11 +58,9 @@ export function NoticeLog(): ReactElement {
           {[...log].reverse().map(notice => (
             <li
               key={notice.seq}
-              className={
-                notice.kind === 'error'
-                  ? 'iris-script__report iris-script__report--fault'
-                  : 'iris-script__report'
-              }
+              // The class names come from one place; which field decides is
+              // this list's own business — here it is the notice's kind.
+              className={reportRowClass(notice.kind === 'error')}
             >
               <span className="iris-reports__at">{timeOf(notice.at)}</span>
               <span className="iris-reports__message">{notice.text}</span>
@@ -71,12 +71,19 @@ export function NoticeLog(): ReactElement {
 
       {/*
         Said when it becomes true, because a bounded list that quietly forgets is
-        a list someone will read as complete. At the limit the oldest notices
-        have gone, and that is a fact about the instrument.
+        a list someone will read as complete — and said with the **count**,
+        which is why the store keeps one.
+
+        `log.length >= LIMIT` was the first condition here and it is off by one:
+        at exactly the limit nothing has been dropped yet, so the panel claimed
+        a loss that had not happened. A sentence that is false at the moment it
+        first appears is worse than no sentence, because it is the instrument
+        talking about itself.
       */}
-      {log.length >= NOTICE_LOG_LIMIT && (
+      {dropped > 0 && (
         <p className="iris-field__note">
-          Only the last {NOTICE_LOG_LIMIT} are kept; older ones have been dropped.
+          {dropped} older {dropped === 1 ? 'notice has' : 'notices have'} been dropped; the last
+          {' '}{NOTICE_LOG_LIMIT} are kept.
         </p>
       )}
     </section>

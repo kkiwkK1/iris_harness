@@ -109,7 +109,28 @@ export function CleanupOffer(): ReactElement | null {
   const actions = actionsOf(store)
 
   return (
-    <div className="iris-cleanup" role="presentation">
+    <div
+      className="iris-cleanup"
+      role="presentation"
+      onMouseDown={event => {
+        /*
+         * **Clicking outside defers, exactly like Esc.** The spec names both as
+         * dismissals, and only Esc was wired — so a reader who clicked the dim
+         * area got nothing and would reasonably conclude the dialog was stuck.
+         *
+         * `onMouseDown` on the scrim, guarded by `event.target === event
+         * .currentTarget`: a click that *starts* inside the panel and drifts
+         * out — selecting the body text and releasing past the edge — must not
+         * count as a dismissal, and a `click` handler would treat it as one.
+         *
+         * It is a deferral, not a decline: nothing is sent, so the host records
+         * nothing and asks again. Same divergence from upstream as Esc, same
+         * reason, and the line under the buttons says so.
+         */
+        if (event.target !== event.currentTarget) return
+        actions.dismissCleanupOffer()
+      }}
+    >
       <div
         className="iris-cleanup__panel"
         role="dialog"
