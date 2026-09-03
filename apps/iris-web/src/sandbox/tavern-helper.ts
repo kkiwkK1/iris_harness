@@ -34,7 +34,7 @@ import type {
 } from '@iris/protocol'
 
 import { buttonEventName } from './button-event.ts'
-import { UnsupportedApiError } from './errors.ts'
+import { UnsupportedApiError } from './errors.ts'
 
 /**
  * The events a **started** generation is announced under.
@@ -74,6 +74,23 @@ import { UnsupportedApiError } from './errors.ts'
  * @returns the bus events to emit, in order.
  */
 export const STARTED_EVENTS: readonly string[] = ['js_generation_started', 'generation_started']
+
+/**
+ * The one MVU event the shell speaks into **message** frames.
+ *
+ * An interface is a status panel that redraws when the variables it draws
+ * change, and every measured status bar subscribes to this name
+ * (`eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, …)`). Upstream the name arrives
+ * because the MVU bundle emits it on the page's shared event source and every
+ * iframe's subscription is bridged to that source. Here the bundle runs in the
+ * script frame and each message frame has its own bus, so the shell emits the
+ * name itself on the same host events that refresh the frames' snapshots.
+ *
+ * Only into message frames. A script frame runs the bundle, which emits the
+ * event itself — a shell copy there would deliver every update twice, which is
+ * the same ground DEVIATIONS §3 already covers for the host side.
+ */
+export const MVU_UPDATE_ENDED_EVENT: string = MVU_EVENTS.VARIABLE_UPDATE_ENDED
 
 /**
  * Every name a settled generation can arrive under.

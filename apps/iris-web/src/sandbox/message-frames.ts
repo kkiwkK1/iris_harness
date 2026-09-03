@@ -120,6 +120,17 @@ export interface StartedInterface {
    * the protocol, and it never looks inside a snapshot — it only forwards one.
    */
   refreshContext: (context: unknown) => void
+  /**
+   * Deliver one host event into the frame's bus.
+   *
+   * An interface is a status panel that redraws when the variables it draws
+   * change, and the corpus's panels redraw on `eventOn(Mvu.events.
+   * VARIABLE_UPDATE_ENDED, …)` — a name the shell must speak into this frame,
+   * because the MVU bundle that would emit it upstream sits in the *script*
+   * frame and its bus is this frame's neither. Typed loosely for the same
+   * reason `refreshContext` is: this controller forwards, it does not interpret.
+   */
+  emit: (event: string, args: readonly unknown[]) => void
   dispose: () => void
 }
 
@@ -183,6 +194,15 @@ export interface RunningInterfaces {
    * panel’s own drawn state with it.
    */
   refresh: (context: unknown) => void
+  /**
+   * Deliver one host event into every frame of this message.
+   *
+   * The counterpart of `refresh`: the snapshot keeps the panel's *data* current,
+   * and the event tells the panel that now is the time to re-read it. Upstream's
+   * message frames hear card-ecosystem events through the page's shared event
+   * source; here each frame has its own bus, so the shell is the speaker.
+   */
+  emit: (event: string, args: readonly unknown[]) => void
   dispose: () => void
 }
 
@@ -281,6 +301,11 @@ export function runMessageInterfaces(
     refresh: context => {
       if (disposed) return
       for (const card of running) card.refreshContext(context)
+    },
+
+    emit: (event, args) => {
+      if (disposed) return
+      for (const card of running) card.emit(event, args)
     },
 
     dispose: () => {

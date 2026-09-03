@@ -50,6 +50,8 @@ function harness(options?: {
   becomeReady: (instance: number) => void
   /** Snapshots pushed into each frame after it was built, by instance. */
   refreshed: () => { instance: number, context: unknown }[]
+  /** Events delivered into each frame after it was built, by instance. */
+  emitted: () => { instance: number, event: string, args: readonly unknown[] }[]
   /**
    * What each `start` was actually handed.
    *
@@ -63,6 +65,7 @@ function harness(options?: {
   let latest: InterfaceState[] = []
   let attachedCount = 0
   const pushed: { instance: number, context: unknown }[] = []
+  const delivered: { instance: number, event: string, args: readonly unknown[] }[] = []
   const startedWith: { instance: number, markup: string }[] = []
   const readies = new Map<number, () => void>()
 
@@ -73,6 +76,8 @@ function harness(options?: {
       return {
         element: { isConnected: options?.attachWorks !== false },
         refreshContext: context => pushed.push({ instance: input.instance, context }),
+        emit: (event, args) =>
+          delivered.push({ instance: input.instance, event, args: [...args] }),
         dispose: () => undefined,
       }
     },
@@ -92,6 +97,7 @@ function harness(options?: {
     attached: () => attachedCount,
     becomeReady: instance => readies.get(instance)?.(),
     refreshed: () => pushed,
+    emitted: () => delivered,
     started: () => startedWith,
   }
 }
@@ -353,6 +359,36 @@ test('a refresh after teardown reaches nothing', () => {
   running.refresh({ chat: ['fresh'] })
 
   assert.equal(scope.refreshed().length, 0, 'a disposed message still pushed a snapshot')
+})
+
+test('an event reaches every frame of the message, and nothing after teardown', () => {
+  /*
+   * The measured status bars redraw inside `eventOn(Mvu.events.
+   * VARIABLE_UPDATE_ENDED, …)`. Upstream that name arrives through the page's
+   * shared event source; here the shell has to speak it into each frame's own
+   * bus, so the controller is the delivery path and it needs the same two
+   * properties the refresh has: every frame of the message hears it, and a
+   * disposed set delivers nothing.
+   */
+  const blocks = claimFrontendBlocks([oneInterface('<body>one'), '', oneInterface('<body>two')].join(NL))
+  const scope = harness()
+  const running = runMessageInterfaces(blocks, 3, scope.env)
+
+  running.emit('mag_variable_update_ended', [])
+
+  assert.deepEqual(
+    scope.emitted().map(entry => entry.instance),
+    [0, 1],
+    'every frame of the message redraws, so every frame hears the trigger',
+  )
+  assert.deepEqual(
+    scope.emitted().map(entry => entry.event),
+    ['mag_variable_update_ended', 'mag_variable_update_ended'],
+  )
+
+  running.dispose()
+  running.emit('mag_variable_update_ended', [])
+  assert.equal(scope.emitted().length, 2, 'a disposed message still delivered an event')
 })
 
 test('a refused instance builds no frame and says so as a decision', () => {

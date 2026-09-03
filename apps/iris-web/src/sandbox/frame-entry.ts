@@ -456,6 +456,28 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
   let lastReported = ''
   /** Whether this frame has already said it cannot be measured. */
   let sizingReported = false
+  /**
+   * The height we most recently asked the shell to apply.
+   *
+   * The loop-closer. Once the shell applies our reported height, the *next*
+   * measurement legitimately reads it back — content that was 900px tall is
+   * 900px tall in the 900px viewport we asked for — and a measurement equal to
+   * the viewport used to fall through to the `sizing` announcement. The shell
+   * answered `sizing` by removing the applied height, the content overflowed
+   * again, the report re-armed, and the whole cycle ran every animation frame:
+   * the right and bottom edges of four real cards flickered without end. What
+   * breaks the loop is telling the decision apart: a measurement that matches
+   * the viewport **and** matches what we asked for is our own echo, and echoes
+   * are silence. `heightSignal` holds the rule; this frame only has to
+   * remember the number and hand it over.
+   *
+   * `undefined` while nothing of ours is applied — before the first report, and
+   * after a `sizing` announcement, whose shell-side answer removes the inline
+   * height. Only our own reports go here: the shell's CSS starting height is
+   * not ours, and mistaking it for an echo would strand a card that genuinely
+   * cannot be measured before it ever said so.
+   */
+  let appliedHeight: number | undefined
   /** A cap, so a busy card cannot turn the panel into a log. */
   let reportsLeft = 8
   const send = (): void => {
@@ -505,10 +527,20 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
      * for a content height has no answer. Once — a card cannot un-clip itself,
      * and repeating it would be a log.
      */
-    const signal = heightSignal(pixels, document.documentElement.clientHeight, sizingReported)
+    const signal = heightSignal(
+      pixels,
+      document.documentElement.clientHeight,
+      sizingReported,
+      appliedHeight,
+    )
     if (signal.kind === 'silent') return
     if (signal.kind === 'sizing') {
       sizingReported = true
+      // The shell answers by removing the inline height, so nothing of ours is
+      // applied any more — recorded, or the post-removal measurement would be
+      // mistaken for an echo and a genuinely unmeasurable card would never
+      // reach the announcement at all.
+      appliedHeight = undefined
       post({ iris: run, type: 'sizing', mode: 'viewport' })
       return
     }
@@ -516,9 +548,12 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
     /*
      * Re-armed on every real height, so a card whose next screen clips itself
      * can say so again. The decision lives in `heightSignal`; this only carries
-     * the flag it reads.
+     * the flag it reads — and the number, which is what turns the *next*
+     * measurement's agreement with the viewport into a recognised echo rather
+     * than a second announcement.
      */
     sizingReported = false
+    appliedHeight = signal.pixels
     post({ iris: run, type: 'height', pixels: signal.pixels })
 
     /*

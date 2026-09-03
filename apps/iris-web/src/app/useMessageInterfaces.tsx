@@ -76,8 +76,17 @@ export interface MessageInterfacesInput {
    * Passed in for the same reason `start` is: this file must not know about
    * the store, the host, or the event names. It knows only that something out
    * there produces newer snapshots and that a running interface wants them.
+   *
+   * The second argument is how the caller speaks **events** into the same
+   * frames the snapshots go to — one subscription, two delivery paths, so a
+   * caller that wants both cannot observe them drifting apart (an event
+   * arriving into a snapshot the caller never refreshed is exactly the
+   * inconsistency a second subscription would eventually produce).
    */
-  watchContext: (push: (context: unknown) => void) => () => void
+  watchContext: (
+    push: (context: unknown) => void,
+    emit: (event: string, args: readonly unknown[]) => void,
+  ) => () => void
 }
 
 /**
@@ -141,9 +150,14 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
      * the block — 360 KiB on the sample card — plus whatever the panel had
      * already drawn.
      */
-    const unwatch = callbacks.current.watchContext(context => {
-      running.refresh(context)
-    })
+    const unwatch = callbacks.current.watchContext(
+      context => {
+        running.refresh(context)
+      },
+      (event, args) => {
+        running.emit(event, args)
+      },
+    )
 
     return () => {
       unwatch()

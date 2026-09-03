@@ -28,6 +28,7 @@ import {
   type SandboxAssets,
 } from '../sandbox/asset-manifest.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
+import { MVU_UPDATE_ENDED_EVENT } from '../sandbox/tavern-helper.ts'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { claimFrontendBlocks, splitAroundInterfaces } from '../sandbox/frontend-blocks.ts'
@@ -236,16 +237,25 @@ export function MessageInterfaces({
        * `refreshContext` is forwarded rather than dropped. An interface is a
        * status panel: it draws the variables, so a write from a later floor
        * leaves it showing a turn-old number while looking perfectly healthy.
+       *
+       * `emit` rides along: the panel's own redraw trigger is
+       * `eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, …)`, a subscription on the
+       * frame's own bus, and without a speaker on this side it would never fire
+       * — the panel would keep its first frame's numbers for as long as it
+       * lived. See the `watchContext` note below for when the shell speaks.
        */
       return {
         element: card.element,
         refreshContext: next => {
           card.refreshContext(next as ScriptContext)
         },
+        emit: (event, args) => {
+          card.emit(event, [...args])
+        },
         dispose: card.dispose,
       }
     },
-    watchContext: push =>
+    watchContext: (push, emit) =>
       tapHostEvents(store, event => {
         /*
          * Two events, not one. A reply that just finished generating settles
@@ -270,6 +280,19 @@ export function MessageInterfaces({
            */
           if (next !== undefined) push(next)
         })
+        /*
+         * And the redraw trigger, so the pushed snapshot is actually *read*.
+         * The measured status bars draw once after `waitGlobalInitialized` and
+         * then only inside an `eventOn(Mvu.events.VARIABLE_UPDATE_ENDED)`
+         * listener; upstream that event is the MVU bundle's, heard through the
+         * page's shared event source. Iris's bundle lives in the script frame,
+         * so the shell says the name into the message frames on exactly the
+         * events that carry a new view — the same rule the refresh above
+         * follows, for the same reason. Script frames are deliberately not
+         * spoken to: their bundle emits the event itself, and a shell copy
+         * would deliver every update twice.
+         */
+        emit(MVU_UPDATE_ENDED_EVENT, [])
       }),
 
     attach: frame => {
