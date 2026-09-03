@@ -868,6 +868,71 @@ body{overflow-y:auto}
 > **否则第 1、3、4 条一起静默退化**——高度塌成内容高、不能滚动、`min-height` 失效，
 > **而这三样都不报错。**
 
+#### `load` 事件：**替身必须合成它，否则 V1.5.4 一行都不跑**
+
+##### 谁真的建嵌套 srcdoc iframe：**只有一张卡**
+
+22 卡里 `srcdoc` 或 `contentDocument` 命中的**只有三个脚本**，逐个读完之后：
+
+| 脚本 | `srcdoc` | `contentDocument` | 实际在做什么 |
+| --- | --- | --- | --- |
+| **V1.5.4 / 论坛覆盖层** | 2 | 2 | **真的建嵌套 iframe**（§六之四） |
+| 银麒赎世 / 手机UI | 6 | **0** | **全在注释里**——它自己跑在 srcdoc iframe 里，注释在说这件事 |
+| 魔法少女 / 外置状态栏 | 5 | **0** | 同上（它是手机UI 的分叉） |
+
+后两张的 `srcdoc` 出现处是这类注释：
+
+```js
+/* CSS类控制：移动端右边垂直居中（srcdoc iframe兼容） */
+// 获取真实的视口宽度（支持DevTools设备模拟和srcdoc iframe）
+// 在srcdoc iframe中，所有window尺寸都是0，必须使用父窗口尺寸
+if (window.parent !== window) { … window.parent.innerWidth … }
+```
+
+**它们的 `onload` 也与 iframe 无关**——是 `FileReader.onload` / `Image.onload` /
+`<img onload="this.style.opacity='1'">`。
+
+> **所以「三张需同源 frame 的卡」这个说法要收窄成一张。**
+> 另两张只是**运行在** srcdoc iframe 里，不建嵌套的。
+> **（顺带：那条注释「在 srcdoc iframe 中所有 window 尺寸都是 0」是卡作者实测的环境事实，
+> 也是它们读 `window.parent.innerWidth` 的理由——和 `--TH-viewport-height` 是同一个问题的两种自救。）**
+
+##### V1.5.4 读 `contentDocument` 的时机：**只在 `load` 回调里**
+
+```js
+.on('load', function () {
+  const e = this.contentDocument;                        // ← 唯一一次真正的读
+  t.mount(e.querySelector('#app') || e.body);            // Vue 挂载
+  nextTick(() => { a = new RA(e.head); a.start(); });    // 样式同步器
+  $(e).on('keydown', e => { 'Escape' === e.key && GA() });
+})
+```
+
+**赋 `srcdoc` 之后没有任何同步读。**
+另一处 `contentDocument` 在 webpack style-loader 的通用 helper 里，那条分支不走（§六之四 ④）。
+
+##### 所以「合成 `load`」不是可选项
+
+**那一个回调里装着三件事的全部**：Vue 应用挂载、样式同步器启动、Escape 键绑定。
+
+> **替身若不触发 `load`，这三件一件都不发生**——
+> **不是"降级"，是覆盖层完全不存在，且没有任何报错**：
+> iframe 替身建出来了、`srcdoc` 也设了、卡的代码跑完了，**只是那个回调从没被调用。**
+
+##### ⚠ 关于「`load` 之前 `contentDocument` 是什么」——**我不当测量给出**
+
+那是**浏览器语义，不是仓库行为**，这台机器上的源码里没有任何东西能证实或证伪它。
+
+**能从代码读出的只有一条间接证据**：卡**从不同步读**，只在 `load` 里读。
+这与「`load` 之前拿不到 srcdoc 文档」相容，**但它是作者规避出来的写法，不是观测**——
+作者也可能只是照着习惯写。
+
+**对替身的实际含义反而不依赖这个答案**：既然唯一的读点在 `load` 回调里，
+**替身只要保证"`load` 触发时 `contentDocument` 已经可用"即可**，
+**`load` 之前它是什么，没有消费者。**
+
+*（若仍要确认，那是 7b 在我们自己实例上一分钟的事，不必去用户的 ST 上看。）*
+
 #### 两条顺带的好消息，与一处未查
 
 - **`dvh`/`svh`**（卡里 22+17 处，§六之三）：真 iframe 里解析嵌套 frame 的视口；
