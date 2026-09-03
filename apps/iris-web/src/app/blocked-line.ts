@@ -15,8 +15,17 @@
  * @module iris-web/app/blocked-line
  */
 
-/** How a report should be read. */
-export type ReportGrade = 'failure' | 'note'
+/**
+ * How a report should be read.
+ *
+ * **There is no `'failure'` default, and that was a real mistake worth naming.**
+ * The first version of this graded an ungraded report as a failure, and the
+ * panel painted every entry in the report list red — because most entries are
+ * not failures at all: what a frame paid for its libraries, a card's own
+ * `toastr.info`, the overlay's visibility summary. Absent means **neutral**, and
+ * only a channel that knows it is describing something broken says so.
+ */
+export type ReportGrade = 'fault' | 'note'
 
 /** One refusal, ready for the panel. */
 export interface Refusal {
@@ -56,7 +65,7 @@ export function describeRefusal(
 ): Refusal {
   const where = detail === undefined ? '' : detail
   const line = `blocked ${host}${where} (${directive})`
-  if (covered === undefined) return { text: line, grade: 'failure', notify: true }
+  if (covered === undefined) return { text: line, grade: 'fault', notify: true }
   /*
    * **The sentence says what to do about it, because the answer is "nothing".**
    *

@@ -107,6 +107,8 @@ export interface BlockedReport {
 
 /** The parts of a `SecurityPolicyViolationEvent` this decision reads. */
 export interface BlockedViolation {
+  /** Which directive did the refusing. */
+  effectiveDirective?: string
   /** The URI the policy refused. Not always a URL: `inline`, `eval`, `data`. */
   blockedURI: string
   /** The document the request came from, when the browser knows one. */
@@ -123,6 +125,53 @@ export interface BlockedViolation {
 function tailOf(url: string): string {
   const at = url.lastIndexOf('/')
   return at === -1 ? url : url.slice(at + 1)
+}
+
+/**
+ * The whole message the frame sends about one refusal.
+ *
+ * **Assembled here rather than in the listener, and that is the repair of a real
+ * failure.** `covered` was added to this module and to the protocol and to the
+ * shell, with tests either side — one proving this module returns it, one
+ * proving the panel renders it — and the listener that copies fields from here
+ * into the message was never updated. So the field was computed and dropped on
+ * the floor, both tests stayed green, and the grade never once reached a reader.
+ *
+ * The listener is in `frame-entry.ts`, an entry module `node --test` cannot
+ * load, so nothing there can be covered. Moving the assembly into the tested
+ * module is the only version of this fix that cannot silently happen again: a
+ * field added to the report is now added to the message in the same file, and
+ * one test sees both.
+ *
+ * @param run - the frame's token, which stamps every message.
+ * @param event - the violation.
+ * @param shellOrigin - the origin Iris serves from. **Not `location.origin`**:
+ *   this frame's origin is opaque, so that reads the string `"null"` and the
+ *   self-origin comparison below can never succeed.
+ * @returns the `blocked` message, with the optional fields present only when
+ *   they carry something.
+ */
+export function blockedMessageFor(
+  run: string,
+  event: BlockedViolation,
+  shellOrigin: string,
+): {
+  iris: string
+  type: 'blocked'
+  host: string
+  directive: string
+  detail?: string
+  covered?: string
+} {
+  const { host, detail, covered } = describeBlocked(event, shellOrigin)
+  return {
+    iris: run,
+    type: 'blocked',
+    host,
+    directive: event.effectiveDirective ?? 'unknown',
+    ...(detail === undefined ? {} : { detail }),
+    ...(covered === undefined ? {} : { covered }),
+  }
 }
 
 /**

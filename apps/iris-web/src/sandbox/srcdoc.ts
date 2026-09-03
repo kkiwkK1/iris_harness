@@ -235,6 +235,14 @@ export function buildSrcdoc(
     // because the bootstrap runs before any card code and reads it once.
     `<meta name="iris-token" content="${attribute(token)}">`,
     /*
+     * The shell's origin, stamped in because the frame **cannot work it out**.
+     * A sandboxed srcdoc frame's `location.origin` is the string `"null"`, so a
+     * frame comparing a URL against its own origin compares against nothing —
+     * see `shellOrigin` in `frame-entry.ts` for the report this had been
+     * quietly flattening.
+     */
+    `<meta name="iris-origin" content="${attribute(selfOrigin)}">`,
+    /*
      * The FontAwesome sentinel, and **its filename participates in behaviour**.
      *
      * The icon rules are already in this frame as inlined `<style>` elements

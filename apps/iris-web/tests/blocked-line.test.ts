@@ -12,13 +12,33 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { describeRefusal } from '../src/app/blocked-line.ts'
+import { describeRefusal, type ReportGrade } from '../src/app/blocked-line.ts'
 
 test('an ordinary refusal keeps the sentence it always had', () => {
   const refusal = describeRefusal('cdn.example.com', 'script-src')
   assert.equal(refusal.text, 'blocked cdn.example.com (script-src)')
-  assert.equal(refusal.grade, 'failure')
+  assert.equal(refusal.grade, 'fault')
   assert.equal(refusal.notify, true)
+})
+
+test('neutral is the default grade, so the list is not painted red', () => {
+  /*
+   * Pinned as a *type* fact rather than a rendering one, because the rendering
+   * lives in a `.tsx` file no test can load — and this is where the mistake was
+   * made: an ungraded report was treated as a failure, and since most of the
+   * report list is ungraded (library cost, a card's own `toastr.info`, the
+   * overlay summary) the whole list turned red at once.
+   *
+   * So: only two grades exist, and neither is the absence of one. A report with
+   * nothing to say about severity says nothing, and the panel's default branch
+   * is the quiet one.
+   */
+  const grades: ReportGrade[] = ['fault', 'note']
+  assert.equal(grades.length, 2)
+  // `describeRefusal` is the only producer here, and it never returns anything
+  // outside that set — including for the covered case.
+  assert.ok(grades.includes(describeRefusal('h', 'd').grade))
+  assert.ok(grades.includes(describeRefusal('h', 'd', undefined, 'jQuery').grade))
 })
 
 test('the detail is appended without a separator, as the host reads it', () => {

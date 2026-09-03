@@ -361,13 +361,15 @@
 }
 
 /*
- * A report that describes something broken.
+ * A failed run phase. Danger is right here: this class marks a script that did
+ * not run, and nothing else selects it.
  *
- * **This class had no rule at all until now.** It was applied to every entry in
- * the card report list and to failed run phases, and resolved to nothing — so a
- * refusal that cost a card a capability and a note saying nothing was wrong
- * rendered as the same plain paragraph. The grade existed in the sentence and
- * nowhere a reader's eye could reach.
+ * **It had no rule at all until recently**, and the first attempt to give it one
+ * made things visibly worse, because the card report list was using the same
+ * class for every entry. Painting it red painted the whole list red — library
+ * cost, a card's own `toastr.info`, the overlay's visibility summary, all of it
+ * — since one class cannot mean both "an item in this list" and "something is
+ * broken". The list has its own base class below.
  */
 .iris-script__failed {
   color: var(--iris-danger);
@@ -376,18 +378,29 @@
 }
 
 /*
- * A report that describes something already handled.
+ * One entry in the card report list, in its default reading: **neutral**.
  *
- * The card reached for a library it already had and the policy refused the
- * request: worth keeping, because it explains a network error in a devtools
- * log, and not worth alarm. Deliberately quieter than the failure above rather
- * than louder — it earns its place by being findable when someone is already
- * looking, not by catching an eye that was somewhere else.
+ * Most of what lands here is not a failure, and the colour has to say so — the
+ * list is the durable channel for everything a frame reports, most of which is
+ * a card working. Deliberately no `color`, so an entry inherits the container's,
+ * which is exactly how the list read before it was graded at all: the grade adds
+ * a louder case rather than re-styling the ordinary one.
  */
-.iris-script__note {
-  color: var(--iris-ink-tertiary);
+.iris-script__report {
   font-size: 11.5px;
   line-height: 1.5;
+}
+
+/*
+ * An entry that describes something broken, and the only loud one.
+ *
+ * A refusal that cost the card a capability, or an interface frame's error. A
+ * refused request for a library the frame already has does **not** get this: it
+ * stays neutral and says so in words, because a reader who is told that nothing
+ * is wrong in red has been told two things at once.
+ */
+.iris-script__report--fault {
+  color: var(--iris-danger);
 }
 
 /*

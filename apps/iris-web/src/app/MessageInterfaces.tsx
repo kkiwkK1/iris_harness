@@ -213,7 +213,9 @@ export function MessageInterfaces({
           onSettings: () => undefined,
           onSlash: async command => actionsOf(store).runSlash(command),
           onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
-          onError: message => actionsOf(store).addCardReport(`interface: ${message}`),
+          // A fault: an interface frame reporting an error is the one channel here
+          // that always describes something broken.
+          onError: message => actionsOf(store).addCardReport(`interface: ${message}`, undefined, 'fault'),
           onBlocked: (host, directive, detail, covered) => {
             const refusal = describeRefusal(host, directive, detail, covered)
             actionsOf(store).addCardReport(refusal.text, undefined, refusal.grade)

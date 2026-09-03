@@ -21,7 +21,7 @@ import { remoteImports, requestedImports } from './script-source.ts'
 import { describeAttempts, type TimedResource } from './import-attempts.ts'
 import { describeTransferCost, type TransferTiming } from './transfer-cost.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
-import { describeBlocked } from './blocked-report.ts'
+import { blockedMessageFor } from './blocked-report.ts'
 import type { Measured, Visibility } from './overlay-regions.ts'
 import { MEMBERS_GLOBAL, MEMBERS_MARKER, type MemberTable } from './members-contract.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
@@ -114,6 +114,29 @@ function timedResources(): readonly TimedResource[] | undefined {
   }
 }
 
+
+/**
+ * The shell's origin, as the host stamped it into this frame's markup.
+ *
+ * Not `location.origin`: this frame's origin is opaque, so that reads the string
+ * `"null"` — measured in a sandboxed srcdoc frame — and every comparison against
+ * it fails. One had been failing since it was written: the refusal reporter used
+ * it to decide whether a blocked request was aimed at **us**, so that branch was
+ * unreachable and every such refusal reported `blocked 127.0.0.1:8787
+ * (connect-src)` with no path and no requester — precisely the string
+ * `blocked-report.ts` was written to stop producing. The mechanism was right and
+ * the input was `"null"`.
+ *
+ * Falls back to `location.origin` rather than throwing: the only consumer is a
+ * diagnostic, and refusing to start a card because a *report* would be less
+ * precise trades a working card for a better error message.
+ * @returns the origin Iris serves from.
+ */
+function shellOrigin(): string {
+  const element = document.querySelector('meta[name="iris-origin"]')
+  const value = element?.getAttribute('content')
+  return value === null || value === undefined || value === '' ? location.origin : value
+}
 
 /** The token the host stamped into this frame's markup. */
 function token(): string {
@@ -1203,16 +1226,14 @@ function reportBodySummary(run: string, post: (message: FromFrame) => void): voi
 
 function reportBlocked(run: string, post: (message: FromFrame) => void): void {
   document.addEventListener('securitypolicyviolation', event => {
-    // The decision lives in `blocked-report.ts`, which needs neither a document
-    // nor a policy to fire — and the decision is the part that was wrong.
-    const { host, detail } = describeBlocked(event, location.origin)
-    post({
-      iris: run,
-      type: 'blocked',
-      host,
-      directive: event.effectiveDirective,
-      ...(detail === undefined ? {} : { detail }),
-    })
+    /*
+     * Everything about this message is decided in `blocked-report.ts`, which
+     * needs neither a document nor a policy to fire — and which is therefore the
+     * only part of it that can be tested. This line used to copy fields across
+     * by hand and dropped one silently; now the only two things it contributes
+     * are the ones it alone knows: the event, and where we are.
+     */
+    post(blockedMessageFor(run, event, shellOrigin()))
   })
 }
 

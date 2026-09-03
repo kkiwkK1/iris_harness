@@ -7,7 +7,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { describeBlocked } from '../src/sandbox/blocked-report.ts'
+import { blockedMessageFor, describeBlocked } from '../src/sandbox/blocked-report.ts'
 
 const SELF = 'http://127.0.0.1:8787'
 
@@ -181,4 +181,68 @@ test('an unparseable URI is never graded as covered', () => {
   for (const uri of ['inline', 'eval', 'data', 'blob']) {
     assert.equal(describeBlocked({ blockedURI: uri }, SELF).covered, undefined, uri)
   }
+})
+test('the message the frame sends carries every field the report decided', () => {
+  /*
+   * **The test that was missing, and its absence cost the whole feature.**
+   *
+   * `covered` was added to `describeBlocked`, to the protocol, and to the panel,
+   * with a test either side: one proved this module returns it, one proved the
+   * panel renders it. The listener that copied fields from the first into the
+   * message was never updated, so the field was computed and dropped, both
+   * tests stayed green, and no reader ever saw a grade. Two tests facing each
+   * other across an untested seam prove less than one test that crosses it.
+   *
+   * So this asserts the *message*, not the decision — and it is deliberately
+   * written as "every optional field survives" rather than as three field
+   * checks, because the failure mode is a field being forgotten, and a test
+   * that lists fields by hand is the same hand that forgot one.
+   */
+  const message = blockedMessageFor(
+    'tok',
+    {
+      blockedURI: `${SELF}/lib/jquery.min.js`,
+      effectiveDirective: 'connect-src',
+      sourceFile: `${SELF}/card.js`,
+      lineNumber: 9,
+    },
+    SELF,
+  )
+  const decided = describeBlocked(
+    { blockedURI: `${SELF}/lib/jquery.min.js`, sourceFile: `${SELF}/card.js`, lineNumber: 9 },
+    SELF,
+  )
+  for (const [key, value] of Object.entries(decided)) {
+    assert.equal(
+      (message as Record<string, unknown>)[key],
+      value,
+      `the message dropped ${key}, which the report had decided`,
+    )
+  }
+  assert.equal(message.iris, 'tok')
+  assert.equal(message.directive, 'connect-src')
+  assert.equal(message.type, 'blocked')
+})
+
+test('a directive the browser did not name does not become undefined in the message', () => {
+  // The protocol requires a string, and a message that fails to parse is a
+  // refusal nobody hears about — the loudest possible way to lose a diagnostic.
+  const message = blockedMessageFor('tok', { blockedURI: 'inline' }, SELF)
+  assert.equal(typeof message.directive, 'string')
+  assert.equal(message.directive, 'unknown')
+})
+
+test('the shell origin decides the self-origin branch, and "null" cannot', () => {
+  /*
+   * What a sandboxed srcdoc frame's `location.origin` actually is. Passing it —
+   * which the listener did — makes the self-origin branch unreachable, so every
+   * refusal aimed at us reported a bare host with no path: the one string this
+   * module exists to stop producing.
+   */
+  const url = `${SELF}/lib/jquery.min.js`
+  const withNull = blockedMessageFor('tok', { blockedURI: url, effectiveDirective: 'connect-src' }, 'null')
+  assert.equal(withNull.detail, undefined, 'a bogus origin should not match, and did')
+
+  const withReal = blockedMessageFor('tok', { blockedURI: url, effectiveDirective: 'connect-src' }, SELF)
+  assert.equal(withReal.detail, '/lib/jquery.min.js')
 })

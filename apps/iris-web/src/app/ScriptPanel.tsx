@@ -109,15 +109,23 @@ export function ScriptPanel(): ReactElement | null {
         <div className="iris-field__note">
           {cardReports.map(report => (
             /*
-             * Graded, and until now it could not be: every report in this list
-             * carried `iris-script__failed` — a class with no rule anywhere in
-             * the stylesheets, so a failure and a harmless note rendered as the
-             * same plain paragraph. Wording a report as a note while it renders
-             * identically to a failure is not a grade; it is a sentence hoping
-             * to be read carefully.
+             * Graded by channel, with **neutral as the default**.
+             *
+             * Until recently every entry here carried `iris-script__failed`, a
+             * class with no rule anywhere in the stylesheets — so a failure and
+             * a harmless note rendered as the same plain paragraph, and no
+             * wording could fix that. Giving *that* class the danger colour was
+             * the wrong repair and made it visibly worse: the list is mostly not
+             * failures — library cost, a card's own `toastr.info`, the overlay's
+             * visibility summary — and all of it turned red at once. One class
+             * cannot mean both "an item in this list" and "something is broken".
              */
             <p
-              className={report.grade === 'note' ? 'iris-script__note' : 'iris-script__failed'}
+              className={
+                report.grade === 'fault'
+                  ? 'iris-script__report iris-script__report--fault'
+                  : 'iris-script__report'
+              }
               key={report.text}
             >
               {report.text}
