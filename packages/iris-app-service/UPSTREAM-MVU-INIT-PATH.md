@@ -730,7 +730,7 @@ SillyTavern.chat.slice(start_message_id, end_message_id + 1).forEach((chat_messa
 | --- | --- | --- |
 | **快照保留间隔 50** | **消息下标**（含 user 行） | `(start_message_id + msg_index) % 50 === 0`，`msg_index` 来自 `chat.slice()` |
 | **要保留变量的最近楼层数 20** | **消息下标**，往回数 20 条**消息** | `message_id - 20`，而 `message_id` 是 chat 下标 |
-| **「楼层 0 永不清」** | **不是一条规则，是两个副作用** | ① `0 % 50 === 0` ⇒ 被当成快照；② 扫描下界是 `Math.max(1, …)` ⇒ **下标 0 根本不会被访问** |
+| **「楼层 0 永不清」** | **是一条有名字的规则，用 `start = 1` 表达** | 作者明文注释在 `legacy_chat.ts:94`：**「0 层永不清理，以保证始终有快照能力」**。两条路径各自实现它：周期路径用 `Math.max(1, …)`、legacy 路径直接传 `1`。**另有 `0 % 50 === 0` 也让它算快照，但那是巧合不是理由** |
 | **触发频率** | `chat.length % 5` | 也是消息计数 |
 
 > **作者自己知道单位是消息**：两处注释专门说「排除对应楼层为 user 楼层的场合」、
@@ -775,3 +775,87 @@ if ((start + msg_index) % snap_interval === 0) {
 
 **若只按 `% 50` 现算而不写标记，用户改过间隔之后快照会被稀释到最小公倍数那么稀——
 而这个后果要等到改间隔之后才显现。**
+
+### 清理有**两条**路径，只有一条是有界窗口
+
+#### 路径一 · 周期清理：**有界**
+
+```js
+// [MVU] cleanup/index.ts:32-45   挂在 MESSAGE_RECEIVED 上
+if (SillyTavern.chat.length % 5 !== 0) return;
+const old_message_id = message_id - keep;
+if (old_message_id > 0) {
+  cleanupMessageVariables(Math.max(1, old_message_id - 2 - keep * 2), old_message_id, interval);
+}
+```
+
+**窗口宽度 `keep*2 + 2`（默认 42 条），随 `message_id` 前移。
+比上界更早的楼层此后不再被这条路径触及。**
+
+#### 路径二 · `checkAndCleanupLegacyChat`：**全量，而且带同意与备份**
+
+在 `initCleanup()` 开头**无条件调用**（`cleanup/index.ts:12-13`，仅 `should_enable` 门控）。
+
+**清理范围是整局：**
+
+```js
+// [MVU] cleanup/legacy_chat.ts:93-97
+const counter = cleanupMessageVariables(
+  1,                                              // 0 层永不清理，以保证始终有快照能力。
+  SillyTavern.chat.length - 1 - keep,             // 到 (末尾 − 20)
+  interval);
+```
+
+**四道门**（`legacy_chat.ts:7-14`）：
+
+```js
+if (!启用
+ || SillyTavern.chat.length <= keep + 5                                // ≤25 条不管
+ || !_.has(SillyTavern.chat, [1, 'variables', 0, 'stat_data'])         // ← 下标 1 还有表 = 这局从没被清过
+ || _.has(SillyTavern.chat, [1, 'variables', 0, 'ignore_cleanup'])     // ← 用户说过"不再提醒"
+) return;
+```
+
+**第三道门就是「追赶态」的判据**：**下标 1 仍带 `stat_data` ⇒ 这局从未被清理过。**
+
+**三按钮弹窗与备份**（`legacy_chat.ts:16-91`）：
+
+```js
+const result = await SillyTavern.callGenericPopup(tr('runtime.cleanup.legacyPrompt'),
+  POPUP_TYPE.CONFIRM, '', { okButton: 只清理, cancelButton: 不再提醒, customButtons: [备份并清理] });
+
+if (CANCELLED || NEGATIVE) {
+  _.set(SillyTavern.chat, [1, 'variables', 0, 'ignore_cleanup'], true);   // ← 持久化的拒绝标记
+  return;
+}
+if (CUSTOM1) {                                                            // 备份并清理
+  await fetch('/api/chats/export', { method:'POST', body: JSON.stringify({
+    is_group:false, avatar_url:…, file:`${chatId}.jsonl`, exportfilename:`${chatId}.jsonl`, format:'jsonl' })});
+  … 下载 blob …
+}
+```
+
+> **上游知道"第一次开启会是一次大删"，并没有回避它——
+> 它把这件事做成了一次带同意与备份的仪式。**
+> **只做周期窗口而不做这条，就是把一次上游要征得同意的大删变成静默的。**
+
+**`ignore_cleanup` 的键位是 `chat[1].variables[0].ignore_cleanup`**——
+**照抄键名与位置，不要另起**（同 §二之六 那条"照抄键名，类型也照抄"）。
+
+#### `restoreVariables` 不参与清理
+
+```js
+// [MVU] cleanup/restore_variables.ts:9 / :15 / :50
+const last_message_id = SillyTavern.chat.length - 1;
+const last_not_has_variable_message_id = SillyTavern.chat.findLastIndex(…);
+for (let i = snapshot_message_id + 1; i <= last_not_has_variable_message_id; i++) { … }
+```
+
+**它从快照往前重放，全量 `findLastIndex` 只为定位起点，不做任何删除。**
+**那条路径不参与追赶。**
+
+### 已裁（总指挥，2026-09-03）
+
+1. **周期窗口照做。**
+2. **legacy 全量路径本批不自动做**——**只报告 + 照抄 `ignore_cleanup` 键**。
+3. **三按钮弹窗与导出备份归后续**（记 ROADMAP）。
