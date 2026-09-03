@@ -1147,16 +1147,16 @@ export class ChatEntry {
    * @returns how many turns were pruned.
    */
   /**
-   * Say so, once, when this chat is one upstream would offer to clean.
+   * The line that records, for the diagnostics view, that this chat qualifies.
    *
-   * Detection only. Upstream sweeps `[1, len - 1 - keep]` here — far more than
-   * the periodic window — but only after asking, with an option to export the
-   * chat first. **Doing the sweep without the question is the one version of
-   * this that must not exist**, so this host reports and stops.
+   * **Not the dialog.** The three-button prompt is raised by `cleanup.offer` on
+   * every `chat.open`, which is when upstream asks; this is only the written
+   * record of the same fact, and it is the half that is rationed.
    *
-   * Once per loaded chat: the condition stays true for as long as we decline to
-   * act on it, so repeating it every turn would bury the log in a notice that
-   * never changes.
+   * Once per loaded chat, because the condition holds until someone answers and
+   * a line per turn would bury the log in a notice that never changes. The
+   * weaker guarantee is deliberate — see the faithful-reproduction column, which
+   * also says why the flag is not persisted into the user's own chat file.
    * @param options - the protection window, for the length gate.
    * @returns the line to report, or undefined when there is nothing to say.
    */

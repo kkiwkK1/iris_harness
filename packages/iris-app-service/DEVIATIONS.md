@@ -509,7 +509,7 @@ is gone, and what remains is a report naming the nearest intact floor below it.
 Copying the default is right; copying it while implying the consequences match
 would not be.
 
-### The legacy path: detected, reported, not performed
+### The legacy path: offered, and performed only on an answer
 
 Upstream has a second cleanup that the periodic one does not cover.
 `checkAndCleanupLegacyChat` runs unconditionally at init and, behind four gates —
@@ -518,17 +518,33 @@ present, and no recorded `ignore_cleanup` — **asks the user**: clean, never as
 again, or export a backup through `/api/chats/export` and then clean. Its action
 is a full sweep of `[1, len - 1 - keep]`, far wider than the periodic window.
 
-This host evaluates the same four gates and **reports**, once per loaded chat.
-It does not sweep. The dialog and the backup are what make that deletion
-legitimate upstream, and performing the sweep without them would convert a
-deletion its author requires consent for into a silent one — the largest single
-thing this feature could do, done quietly. The three-button prompt and the export
-belong to the shell and are on the roadmap.
+This host evaluates the same four gates and **asks**, raising a `cleanup.offer`
+on every `chat.open` while they hold. It sweeps only on an answer.
 
-**`ignore_cleanup` is upstream's key, kept verbatim.** A refusal is persisted on
-the chat itself, so a chat moved between the two hosts carries the answer its
-owner already gave. Inventing a name here would mean asking again someone who
-had said no.
+For one batch it did no more than report, because the dialog and the backup are
+what make this deletion legitimate upstream: performing the sweep without them
+would convert a deletion its author requires consent for into a silent one — the
+largest single thing this feature can do, done quietly. Both now exist, so the
+sequence is upstream’s: ask, back up if asked, then sweep. **A backup that
+cannot be written stops the sweep**, because a user who asked for one and did
+not get it has not agreed to what was to follow.
+
+**Asked on every open, with no memory of having asked.** Upstream hangs its
+check on the chat load itself. Gating the dialog behind a once-per-loaded-entry
+note — which is what this did first — turned "we will ask again next time" into
+"next time the host loads this entry", so dismissing the dialog and reopening the
+chat was indistinguishable from having declined for good. The four gates are the
+only memory needed: a swept chat no longer has `stat_data` on its first floor,
+and a declined one carries `ignore_cleanup`.
+
+**`ignore_cleanup` is upstream's key *at upstream's position*.** A refusal is
+written to the literal `chat[1].variables[0]` — the row's own table, not the
+card-facing projection of it — so a chat moved between the two hosts carries the
+answer its owner gave. **For one batch this was written to message 2 instead**,
+through the §14 mapping, and the claim above was therefore false in both
+directions: upstream reads `chat[1]` and would have asked again, and a chat
+arriving from SillyTavern would have been asked again here. Copying the key’s
+name buys nothing without copying its address.
 
 **Floor 0 is protected by name, not by arithmetic.** `legacy_chat.ts:94` carries
 an explicit comment and expresses it as `start = 1`; the periodic path then also
@@ -620,16 +636,21 @@ user data.
 or a card whose arrays are all undeclared and which therefore stops being able
 to append at all — the report would read "my inventory stopped growing".
 
-## 10. Script injections are held per chat, where upstream holds one global set
+## 10. Script injections are held per frame run, where upstream holds one global set
 
 Upstream keeps `extension_prompts` in a single module-level object
 (`script.js:625`) and `clearChat()` empties it — 14 call sites covering opening,
 switching and deleting a chat. Nothing serialises it, so a reload loses it too.
-This host keeps injections **on the conversation**, which agrees with upstream on
-the part that matters most — they are memory-only and never persisted, because an
-injection belongs to a running script — and differs on one axis: switching away
-from a chat and back finds that chat's injections still there, where SillyTavern
-would have cleared them.
+This host keeps injections **on the frame run that made them**, which agrees with
+upstream on the part that matters most — they are memory-only and never
+persisted, because an injection belongs to a running script — and reaches the
+same outcome by attribution rather than by emptying a table: the shell says when
+a run ends, and that run's injections go with it.
+
+**For most of this feature's life they were held per *chat***, and switching away
+and back found them still there. The paragraphs below are the argument that led
+to that, and they are kept because the argument was right about the thing it was
+about — see the consequences section for what measurement then settled.
 
 **Kept rather than matched, because "clear on switch" has no meaning here.**
 Upstream has exactly one active chat; this host serves several pages that may
@@ -1107,9 +1128,15 @@ Entries marked *(frame)* are the sandbox domain's findings, cited rather than
 restated: the mechanism was measured there, and paraphrasing someone else's
 measurement into this ledger is how a citation becomes a claim.
 
-## The "never cleaned" notice comes back after a restart
+## The "never cleaned" report line comes back after a restart
 
-The one-time notice that a chat has never been through a variable cleanup says
+**This is about the report line, not the dialog** — they are two different
+things at the same moment and only one of them is rationed. The `cleanup.offer`
+that raises the three-button prompt fires on **every** `chat.open` while the
+gates hold, which is when upstream asks; that is not a bug either, and the
+reasoning is in section 8.
+
+The **report line** that records the same fact for the diagnostics view says
 itself **once per load**, not once per chat. Reopen the conversation, or restart
 the host, and it appears again. That reads like a bug in a "show this once"
 feature, and it is deliberate.

@@ -196,11 +196,12 @@ export const IGNORE_CLEANUP_KEY = 'ignore_cleanup'
  * cleanup has ever run here" looks like — and nobody has recorded a refusal.
  *
  * **Upstream acts on this by asking**: clean, never ask again, or export a backup
- * and then clean; and its action is a full sweep of `[1, len - 1 - keep]` rather
- * than the bounded window. This host does none of that. The gates are still worth
- * evaluating, because doing the sweep without the question would turn a deletion
- * upstream requires consent for into a silent one — and saying nothing at all
- * would leave a user unaware the offer exists.
+ * and then clean; and its action is a sweep of `[1, len - 1 - keep]` rather than
+ * the bounded periodic window. This host does the same — the dialog, the backup
+ * and the sweep all exist — and these gates are what decide whether to ask at
+ * all. Doing the sweep *without* the question would turn a deletion upstream
+ * requires consent for into a silent one, which is why the answer arrives
+ * through `chat.answerCleanup` and nothing here acts on its own.
  * @param firstFloor - the table on message 1, if any.
  * @param lineCount - how many chat lines the log holds.
  * @param options - the protection window, for the length gate.
