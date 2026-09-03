@@ -471,12 +471,23 @@ replayed back it simply halved how far a long chat could be reasoned back
 through. Now fixed, and pinned by a test that reproduces the exact survivor set
 upstream left on that file (`{0, 50, … 650}`).
 
-**What the fix cannot undo.** A profile already pruned under the turn-counted
-rule lost layers that the corrected rule would have kept, and **those do not
-come back** — the tables are gone, and this host does not replay. The chats
-affected are the ones long enough to have been pruned at all; from the next
-cleanup on they follow upstream's spacing. A pruned floor still names the
-nearest intact one, which is the only thing that makes the loss legible.
+**Nobody lost anything to the old unit, and the reason is worse than the bug.**
+The correction was first written here with a warning that profiles pruned under
+the turn-counted rule had lost layers permanently. They had not: `pruneVariables`
+and its two settings were declared on the plugin config and **read by nothing**,
+from the commit that introduced the feature. The service supported cleanup, the
+schema advertised it, and the pass-through between them was never written — so
+the cleanup has never run on a real host, at any setting, and the wrong unit
+could not reach a user's data.
+
+The wiring is now in place, still defaulting to off. **This is the more serious
+of the two findings**: a unit error is visible to anyone who reads the rule, and
+a feature that is fully implemented, fully tested and never called is visible to
+nobody — every test passes, because tests construct the service directly and
+pass the option the plugin never passed.
+
+When it is switched on, a pruned floor still names the nearest intact one, which
+is what makes the deletion legible; nothing is replayed back.
 
 Two things diverge, both on the read side.
 

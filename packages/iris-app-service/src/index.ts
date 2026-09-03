@@ -36,6 +36,7 @@ import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
 import { WorldbookStore } from './worldbooks.ts'
 import { openGlobalScope } from './context.ts'
+import { DEFAULT_PRUNE } from './prune.ts'
 import { serveSandboxAsset } from './sandbox-assets.ts'
 import { ScriptCache } from './script-cache.ts'
 import { ScriptPolicyStore } from './scripts.ts'
@@ -471,6 +472,20 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ...config.templates !== true
       ? {}
       : { templates: config.templateDeadlineMs === undefined ? {} : { deadlineMs: config.templateDeadlineMs } },
+    // Same rule as `templates` above: presence is the switch, so `false` must
+    // produce no key. **This pass-through was missing from the commit that added
+    // the feature** — the three settings were declared on the config and read by
+    // nothing, so the cleanup could not run however it was configured. Declaring
+    // an option and consuming an option are two edits, and the schema being right
+    // is what makes the omission invisible.
+    ...config.pruneVariables !== true
+      ? {}
+      : {
+          pruneVariables: {
+            snapshotInterval: config.pruneSnapshotInterval ?? DEFAULT_PRUNE.snapshotInterval,
+            keepRecent: config.pruneKeepRecent ?? DEFAULT_PRUNE.keepRecent,
+          },
+        },
     // The message, not the Error, so the log line carries the text a reader
     // needs regardless of how any exporter renders objects.
     onError: error => { ctx.logger.warn(error instanceof Error ? error.message : String(error)) },
