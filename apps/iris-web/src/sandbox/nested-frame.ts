@@ -337,6 +337,27 @@ export function createNestedFrame(env: NestedFrameEnv): NestedFrame {
    * The element the card holds. A real `<div>`, because the card styles it,
    * appends it, and reads its `style` — all of which a real element does
    * correctly and a synthesised object does not.
+   *
+   * **Two known gaps, both geometric, both unverified.** They are written here
+   * rather than fixed because neither can be checked yet: in-frame geometry is
+   * unreadable while the tab is hidden (`METHODS.md` §二十三), and a fix built
+   * against a reading of `0` is a fix built against nothing.
+   *
+   * 1. **No intrinsic size.** An `<iframe>` is a replaced element and is
+   *    300×150 with no styling at all; a `<div>` is `auto`, which collapses to
+   *    zero height. So a card that appends its frame and styles it only from a
+   *    stylesheet — or not at all — gets a box upstream would have given a
+   *    default size. Not fixed with an inline `width`/`height`, because inline
+   *    beats the card's own stylesheet and would break the cards that *do*
+   *    size it; the honest fix is a rule in the frame's reset that card CSS can
+   *    override, which needs the geometry to verify.
+   * 2. **A card's own `iframe { … }` rule does not match this.** Page-level CSS
+   *    in the script frame — `iframe{width:100%;height:100%;border:0}` is a
+   *    common idiom — selects by element type and a stand-in is a `div`.
+   *    `nested-css.ts` re-points selectors in the CSS a card installs *into*
+   *    the stand-in, which is a different sheet; catching the card's own
+   *    document styles would need intercepting them too, a much larger
+   *    mechanism than this one.
    */
   const element = env.createElement('div')
   element.setAttribute?.('data-iris-nested-frame', seq)
