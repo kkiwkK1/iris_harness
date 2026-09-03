@@ -685,3 +685,93 @@ if (_.has(window.parent, 'Mvu')) {
 
 *（「加中继」和「让两种 frame 共享同一个 parent 命名空间」是两种修法：
 前者补通道，后者补上游依赖的那个前提。）*
+
+---
+
+## 附录三：自动清理的计数单位
+
+**结论：三个参数的名字全叫「楼层」，算术全在消息下标上。**
+
+### 单位的确证，两层
+
+```js
+// [ST] script.js:6631-6632 与 :6656-6657
+const chat_id = (chat.length - 1);
+!fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+```
+
+**`MESSAGE_RECEIVED` 的第一个参数就是 chat 数组下标**（含 user 行）。
+
+```js
+// [MVU] src/function/cleanup/index.ts:24-45
+controlledStoppableEventOn(tavern_events.MESSAGE_RECEIVED, message_id => {
+  if (!store.settings.自动清理变量.启用) return;
+  if (SillyTavern.chat.length % 5 !== 0) return;                     // 每 5 条「消息」跑一次
+  const old_message_id = message_id - store.settings.自动清理变量.要保留变量的最近楼层数;
+  //排除对应楼层为user楼层的场合                                      ← 作者原注释
+  if (old_message_id > 0) {
+    cleanupMessageVariables(
+      Math.max(1, old_message_id - 2 - 要保留变量的最近楼层数 * 2),   // 「考虑到部分情况下消息楼层会是 user，所以需要 * 2，寻找更远范围的」
+      old_message_id, 快照保留间隔);
+  }
+})
+```
+
+```js
+// [MVU] cleanup/cleanup_variables.ts:10-25
+SillyTavern.chat.slice(start_message_id, end_message_id + 1).forEach((chat_message, msg_index) => {
+  …
+  if ((start_message_id + msg_index) % snap_interval === 0) { … }    // 判据是 chat 数组下标 % 50
+```
+
+### 逐条
+
+| 参数 | 单位 | 依据 |
+| --- | --- | --- |
+| **快照保留间隔 50** | **消息下标**（含 user 行） | `(start_message_id + msg_index) % 50 === 0`，`msg_index` 来自 `chat.slice()` |
+| **要保留变量的最近楼层数 20** | **消息下标**，往回数 20 条**消息** | `message_id - 20`，而 `message_id` 是 chat 下标 |
+| **「楼层 0 永不清」** | **不是一条规则，是两个副作用** | ① `0 % 50 === 0` ⇒ 被当成快照；② 扫描下界是 `Math.max(1, …)` ⇒ **下标 0 根本不会被访问** |
+| **触发频率** | `chat.length % 5` | 也是消息计数 |
+
+> **作者自己知道单位是消息**：两处注释专门说「排除对应楼层为 user 楼层的场合」、
+> 「考虑到部分情况下消息楼层会是 user，所以需要 `* 2`」。
+> **那个 `* 2` 就是为混入的 user 行留的余量——它本身就是"单位是消息下标"的证据。**
+
+**所以按「楼层」（assistant 回合）计数会让恢复点少一半。
+这是同一个语义用错了单位，不是另一种权衡**——恢复点少一半的代价是回溯更长。
+
+### 删法：只删五个具名键，其余全留
+
+```js
+return _.omit(chat_message.variables[i],
+  'initialized_lorebooks', 'stat_data', 'display_data', 'delta_data', 'schema');
+```
+
+**上游同样保留 `event_chain` 等外来键。**
+
+### 两条容易漏的机制
+
+**① 逐 swipe 重建，且会截断。**
+
+```js
+chat_message.variables = _.range(0, chat_message.swipes?.length ?? 1).map(i => { … })
+```
+
+**整个 `variables` 数组被重建成 `swipes.length` 长**，缺失位填 `{}`。
+**条目数多于 swipes 时，多出来的被丢掉，上游静默。**
+
+**② `snapshot: true` 是持久化标记，不是每次现算。**
+
+```js
+if (_.get(variables[i], 'snapshot') === true) return variables[i];     // 已标记的一律保留
+if ((start + msg_index) % snap_interval === 0) {
+  _.set(chat_message, ['variables', i, 'snapshot'], true);             // ← 命中间隔就打标记
+  return chat_message.variables[i];
+}
+```
+
+作者注释写明理由：**「考虑到用户会修改楼层间隔，比如从 50→70，因为最小公倍数的原因，
+会导致之前的楼层实质上 350 层一个快照，有较大风险」。**
+
+**若只按 `% 50` 现算而不写标记，用户改过间隔之后快照会被稀释到最小公倍数那么稀——
+而这个后果要等到改间隔之后才显现。**
