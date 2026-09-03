@@ -71,7 +71,11 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    （4df5458，`composerSend` 走 CARD_METHODS 门；闸 16→12）、表面（0331320：脚本 frame 全视口 fixed +
    `regions` 新报告类型 + clip-path 多子路径命中测试，空集=零面积路径）、虚拟 parent/top 暴露本 frame jQuery
    （2a95f8e）。复读（413aa87）：regions 到达（后台 timer 兜底 4861a4e）、clip 圈出手机UI 浮动按钮 61×61、按钮中心命中
-   IFRAME、远处穿透到 shell——命中分层成立；「点开面板后 clip 变大」待前台点击验（后台标签页 CDP 点击不可靠）。
+   IFRAME、远处穿透到 shell——命中分层成立；「点开面板后 clip 变大」待验。**用户目视 + 前台截图：浮动按钮不可见**——按钮是 emoji `📱` + 卡自 CSS
+   （FA 0/TW 0，61×61 证 CSS 生效），rect x 1938 与 `right:33.33%` 不符（应≈1606）→ 疑 frame 文档布局视口与 shell
+   坐标不同源，7b 在实例上量。方案 C 落地时漏带 A9（表面 realm 用 message preset）→ 脚本 frame 已改加载
+   message preset（72efe72；有界面的页面反而少取一份）。FA 外链：卡的 `loadFontAwesome` 有守卫（已存在 href 含
+   fontawesome 的 link 即跳过，上游那条 cdnjs 从未真发）→ 白名单不加，预置 FA 的 `<link href>` 须含 fontawesome。
    V1.5.4 死于自建嵌套 srcdoc iframe 的 `contentDocument` 为 null → 见 7b 项。**bootstrap 拆分 ✅**（95f04d6：策略核内联 40 KB + 成员表 27.6 KB 按内容哈希整页一次，同步阻塞
    `<script src crossorigin>` 排在 bootstrap 与卡 markup 之前，缺标记按 bootstrap 失败报；`FRAME_OVERHEAD` 65→41 KiB，
    闸回 20，退化点 50；`curl -I` 证 immutable 一年 + ACAO *；新成员不再按帧计价）。方案 A（阅读区进
