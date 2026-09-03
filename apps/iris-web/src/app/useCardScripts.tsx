@@ -95,7 +95,34 @@ export function CardScriptFrames(): ReactElement {
 
   useEffect(() => {
     if (chatId === undefined || characterId === undefined) return
-    if (consent !== 'allowed') return
+
+    /*
+     * **Read the consent fresh, and check it belongs to this card.**
+     *
+     * `consent` here is the render's snapshot, and by the time this effect body
+     * runs another effect in this same component has already called
+     * `loadScripts` — which sets `scriptsAllowed: 'unknown'` before its round
+     * trip and `consentState(listed)` after. So on every card change the value
+     * goes `allowed → unknown → allowed`, and the snapshot still says
+     * `allowed` at the first of those three.
+     *
+     * Measured on 8787: that started **a whole extra run per chat open** — a
+     * sandbox frame built, its bootstrap and member table fetched, its scripts
+     * begun, and the lot disposed a moment later when consent settled. Six
+     * opens produced seven runs, and the host recorded five ends with "no
+     * injection on this chat ever named it".
+     *
+     * `scriptsFor` is what makes the check possible: `loadScripts` sets it
+     * synchronously, before awaiting, so a consent value can be tested against
+     * the card it describes rather than trusted because it is the right string.
+     *
+     * The host's note is deliberately **not** suppressed for empty runs. It is
+     * the instrument that caught this, and a shell that stopped reporting runs
+     * which injected nothing would have hidden it.
+     */
+    const settled = store.getState()
+    if (settled.scriptsFor !== characterId) return
+    if (settled.scriptsAllowed !== 'allowed') return
 
     const host = mount.current
     if (host === null) return
@@ -648,6 +675,16 @@ export function CardScriptFrames(): ReactElement {
    * hiding it from assistive technology would be hiding the card's UI.
    */
   return (
+    /*
+     * `iris-overlay-surface` is a **marker class with no stylesheet rule, and
+     * deliberately so.** Every geometric decision about this element is inline
+     * below, because its size and layering are load-bearing and a stylesheet
+     * rule could be overridden by a card's own CSS. The class exists so a
+     * reader — or a CDP probe — can find the element by name.
+     *
+     * Said here because an audit of applied-versus-defined classes flags it,
+     * and a finding with no answer beside it gets rediscovered every time.
+     */
     <div
       ref={mount}
       className="iris-overlay-surface"

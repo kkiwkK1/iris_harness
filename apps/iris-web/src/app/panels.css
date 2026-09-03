@@ -1146,3 +1146,20 @@
   font-variant-numeric: tabular-nums;
   color: var(--iris-ink-faint);
 }
+
+/*
+ * The two answers to the run-scripts question.
+ *
+ * **This class was applied and had no rule at all** — found by auditing every
+ * `iris-` class the app applies against every one the stylesheets define. The
+ * buttons sat with no gap between them, which reads as one control until you
+ * look twice, on the one question in this panel the user actually has to answer.
+ * Third instance of the same family (`.iris-script__failed` had no rule;
+ * `.iris-reports__read` was a rule with no user), which is why the audit exists.
+ */
+.iris-grant__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
