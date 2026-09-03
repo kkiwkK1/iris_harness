@@ -64,8 +64,23 @@ export type ToFrame =
    * internal chatter on the wire for no one to read.
    */
   | { iris: string, type: 'event', event: string, args: unknown[] }
-  /** Answer to a `fetch` request, resolved or refused. */
-  | { iris: string, type: 'fetch:ok', id: string, content: string }
+  /**
+   * Answer to a `fetch` request, resolved or refused.
+   *
+   * `status` and `contentType` are carried when the shell fetched the resource
+   * itself — the same-origin bridge — so the frame can hand back a `Response`
+   * that answers `res.ok` and `res.status` the way the native one would. The
+   * allowlisted remote path predates them and sends neither; the frame then
+   * answers 200 with no content type, which is what that path always meant.
+   */
+  | {
+      iris: string
+      type: 'fetch:ok'
+      id: string
+      content: string
+      status?: number
+      contentType?: string
+    }
   | { iris: string, type: 'fetch:error', id: string, message: string }
   /**
    * Answer to a slash command.
@@ -270,10 +285,22 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
       return typeof message['width'] === 'number' && typeof message['height'] === 'number'
         ? { iris: token, type: 'viewport', width: message['width'], height: message['height'] }
         : undefined
-    case 'fetch:ok':
-      return typeof message['id'] === 'string' && typeof message['content'] === 'string'
-        ? { iris: token, type: 'fetch:ok', id: message['id'], content: message['content'] }
-        : undefined
+    case 'fetch:ok': {
+      if (typeof message['id'] !== 'string' || typeof message['content'] !== 'string') return undefined
+      const status = message['status']
+      const contentType = message['contentType']
+      return {
+        iris: token,
+        type: 'fetch:ok',
+        id: message['id'],
+        content: message['content'],
+        // Bounded to what a `Response` can be built with: a status outside the
+        // range would make the frame's constructor throw, which would turn a
+        // refused request into a frame fault.
+        ...(typeof status === 'number' && status >= 200 && status <= 599 ? { status } : {}),
+        ...(typeof contentType === 'string' && contentType !== '' ? { contentType } : {}),
+      }
+    }
     case 'call:ok':
       return typeof message['id'] === 'string'
         ? { iris: token, type: 'call:ok', id: message['id'], result: message['result'] }

@@ -19,6 +19,7 @@ import type { ScriptContext } from '@iris/protocol'
 
 import { frameSandbox } from './policy.ts'
 import { mintToken, parseFromFrame, type FromFrame, type ToFrame } from './protocol.ts'
+import { sameOriginTarget } from './same-origin.ts'
 import { buildSrcdoc } from './srcdoc.ts'
 import { rewriteViewportUnits } from './viewport-units.ts'
 import { rewriteBundleImports } from './bundle-proxy.ts'
@@ -386,6 +387,38 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     handle(message)
   }
 
+  /**
+   * Answer a frame's `fetch` request.
+   *
+   * Two routes, split by who is being asked. A request aimed at Iris's own
+   * origin — which any relative path resolves to, since a srcdoc frame inherits
+   * the shell page's base — is fetched by this page with its own credentials:
+   * the same-origin bridge (`SANDBOX.md`), which lets an upstream-frequent
+   * `fetch('/version')` answer without widening `connect-src` by a character.
+   * The origin check runs **here**, not only in the frame, because the frame is
+   * the untrusted side and the shell is what actually holds the credentials;
+   * `host.fetch` stays the enforcement for everything else, allowlisted remote
+   * dependencies included.
+   * @param message - the frame's request, carrying the URL it resolved.
+   * @returns the body and the response facts worth carrying back.
+   */
+  const ride = (
+    message: Extract<FromFrame, { type: 'fetch' }>,
+  ): Promise<{ content: string, status?: number, contentType?: string }> => {
+    const target = sameOriginTarget(message.url, view.location.href, view.location.origin)
+    if (target === undefined) {
+      return host.fetch(message.url).then(content => ({ content }))
+    }
+    return view.fetch(target).then(async response => {
+      const contentType = response.headers.get('content-type')
+      return {
+        content: await response.text(),
+        status: response.status,
+        ...(contentType === null || contentType === '' ? {} : { contentType }),
+      }
+    })
+  }
+
   const handle = (message: FromFrame): void => {
     switch (message.type) {
       case 'bootstrap-error':
@@ -542,10 +575,16 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         host.onNote?.(message.message)
         return
       case 'fetch':
-        void host
-          .fetch(message.url)
-          .then(content => {
-            post({ iris: token, type: 'fetch:ok', id: message.id, content })
+        void ride(message)
+          .then(result => {
+            post({
+              iris: token,
+              type: 'fetch:ok',
+              id: message.id,
+              content: result.content,
+              ...(result.status === undefined ? {} : { status: result.status }),
+              ...(result.contentType === undefined ? {} : { contentType: result.contentType }),
+            })
           })
           .catch((error: unknown) => {
             post({

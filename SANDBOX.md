@@ -138,6 +138,7 @@ corrected.
 |---|---|
 | `documentElement.clientWidth` / `clientHeight` | The real viewport size |
 | `body` | The card's **own container element**, not the host body |
+| `head` | The frame's **own** `<head>`, a real element — a `<style>` or `<link>` appended there styles the card's page and nothing else |
 | `getElementById`, `querySelector`, `querySelectorAll` | Scoped to that container |
 | `createElement`, `createTextNode`, `createDocumentFragment` | Real, unattached — a node has no authority until it is inserted |
 | everything else | Absent. Reading it throws `UnsupportedApiError` naming the member |
@@ -145,6 +146,14 @@ corrected.
 A refusal throws rather than returning `undefined`. `undefined` from a DOM
 lookup is indistinguishable from "not found", so a card would take a policy
 decision for a missing element and fail somewhere later with no trace of why.
+
+`head` was added (2026-09-03) after a measured card — 灭仇家满门之后 — scheduled
+code past its mount that reads `document.head`, and the refusal killed the whole
+script. It is `body`'s mirror, not an escalation: the frame document **is** the
+card's own page, so injecting into its head is the same class of write appending
+markup to the container is. What a card cannot do is what it could never do
+cross-origin — restyle the shell page; upstream's cards could, and that
+difference is in the deviations ledger.
 
 ### The container
 
@@ -279,6 +288,48 @@ stylesheets and fonts (`fonts.googleapis.com` — six cards), images and texture
   shell, which displays the refusal beside the frame, naming the host and the
   grant that would allow it. A refusal the user cannot see is indistinguishable
   from a bug in whatever the card does next.
+
+### Same-origin fetches ride a bridge, not a widened `connect-src`
+
+(Added 2026-09-03.) Upstream's card scripts share SillyTavern's origin, so
+`fetch('/version')` inside a bundle is an ordinary call the page's own server
+answers. Here the same relative path resolves to Iris's origin and
+`connect-src` refuses it — and the measured casualty was not exotic: **every
+MVU card** imports MagVarUpdate's bundle, which opens with `fetch('/version')`.
+
+The policy stays closed and the request is bridged instead. The frame's `fetch`
+is one that resolves the request against the frame's base URL — for a srcdoc
+frame, the shell page's URL, the same resolution the browser would have made —
+and when the target is the shell's own origin, carries it to the shell on the
+`fetch` message that already existed for remote dependencies. The shell fetches
+it **with its own credentials** and carries the body, status and content type
+back; the frame answers the card with a real `Response`. The directive is
+untouched: a bridged request never leaves the frame, so the closure of
+`connect-src` costs nothing it used to cost.
+
+What keeps the bridge from becoming the open channel the directive refuses to
+be:
+
+- **The decision runs twice.** The frame decides what to bridge; the runner
+  re-checks the resolved origin before honouring, because the frame is the
+  untrusted side and the shell is what holds the credentials. Anything not
+  aimed at the shell's own origin goes to the native fetch, where CSP refuses
+  it and the refusal is reported as before. (`same-origin.ts` is the one
+  decision both consult.)
+- **Retrieval only.** GET and HEAD ride the bridge; a request with a body, with
+  request headers, or with any other method does not. A POST to Iris's own
+  origin with the user's credentials attached is exactly the capability the
+  closed directive exists to withhold — Iris's own routes live on that origin.
+  Measured cards POST to ST's export and backend-status endpoints; those take
+  the native path, are refused, and the bundle's own `catch` degrades as it
+  does upstream on a server error.
+- **`XMLHttpRequest` is not bridged.** The corpus's XHR sites are file-saver
+  helpers in the MVU bundle that degrade through their own error paths, and an
+  honest XHR shim is the whole XHR state machine. Revisit on a measured card
+  dying on a same-origin XHR.
+- **The response is buffered text.** No streaming, no `arrayBuffer`, no request
+  body, and an abort signal does not reach the shell's fetch. Recorded with its
+  cost in the deviations ledger.
 
 Cards that solicit credentials (three measured carry settings panels asking the
 user for an API endpoint and key) get no special channel: there is no "card

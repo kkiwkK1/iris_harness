@@ -845,3 +845,63 @@ an interruption.
 anything a user would miss — it is bounded by `keep`, so this is arguable — or a
 user saying the notice is noise. Both are about the *notice*, not about the
 record: the durable line stays either way.
+
+## 19. Same-origin fetches answer through a bridge with a narrower shape
+
+**Kind:** deliberate improvement — it closes a compatibility gap (`fetch('/version')`
+died under `connect-src 'none'` with a banner naming Iris's own host) at a
+deliberately reduced fidelity.
+
+**Upstream.** `fetch` is the page's own. Card scripts run same-origin with
+SillyTavern, so any method works, request headers ride along, bodies go out,
+responses stream, and the user's cookies are attached because the browser
+attaches them — there is no policy between a bundle and its server.
+
+**Iris.** Same-origin **GET and HEAD** requests are carried to the shell on the
+`fetch` message and fetched by the shell page with its own credentials; the
+frame hands the card a real `Response` carrying the body, status and content
+type. Everything else — any other method, any request with a body or headers,
+any foreign origin — takes the native path, where CSP refuses it and the
+refusal is reported as it always was. `XMLHttpRequest` is not bridged at all.
+
+**What it costs.** Measured against the corpus: MVU's bundle POSTs to
+`/api/backends/chat-completions/status` and `/api/chats/export` — upstream
+server endpoints — and those still arrive at a refusal instead of a response.
+The bundle wraps them in its own `catch`, so the cost is the degraded answer,
+not a dead card; a banner shows when the path is exercised, which is honest
+(the endpoint does not exist here) rather than a bridge pretending otherwise.
+Responses are buffered text, so there is no streaming and no `arrayBuffer`, and
+an `AbortSignal` passed to the bridged call does not reach the shell's fetch —
+a card that aborts a same-origin request sees it complete anyway.
+
+**What would overturn it.** A measured card that cannot render without a
+same-origin POST answering, or that awaits a same-origin response as a stream.
+That reopens the question the GET-only rule exists to defer — what a bridged
+POST to Iris's own routes may do with the user's credentials — and it is a
+design decision to make, not a shim to widen.
+
+## 20. `document.head` is the card frame's head, not the page's
+
+**Kind:** deliberate improvement — closes the gap where 灭仇家满门之后's
+script read `document.head` after mounting and died on the refusal.
+
+**Upstream.** A card script's `document` *is* the page's document, so
+`document.head` is the app's `<head>` and a `<style>` appended there restyles
+the whole SillyTavern UI — cards do this to re-theme the page around
+themselves.
+
+**Iris** answers with the head of the card's **own frame document**, a real
+element like the container `body` is. Injections land, render, and style every
+pixel the card owns — and nothing else, because the card's page is the frame.
+
+**What it costs.** A card that injected page-level styles upstream now styles
+only itself; a theme that used to leak past the card's boundary stops leaking.
+That leak was never reproducible here — a cross-origin frame cannot restyle the
+shell — so the cost is a difference in *what the card believes it changed*, not
+a lost visual effect. Writes to the member itself (`document.head = …`) stay
+refused like every other write.
+
+**What would overturn it.** A measured card whose interface visibly depends on
+styling something outside its own frame — that would be a request for the
+document grant, which exists for exactly this and is decided per card by the
+user.

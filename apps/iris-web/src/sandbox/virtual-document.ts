@@ -57,6 +57,18 @@ export interface VirtualDocumentSource {
   /** The card's own container element. */
   container: ScopedRoot
   /**
+   * The frame's own `<head>`, as a real element.
+   *
+   * The same kind of thing `body` is: this frame's document is the card's own
+   * page, and a `<style>` or `<link>` appended here styles that page and
+   * nothing else. Cards reaching for it are the mirror of the two measured
+   * `body` mount sites — a script that finishes mounting its markup and then
+   * injects its own stylesheet through `document.head`. Optional so a realm
+   * without a head refuses the member by name, as it does for any other member
+   * it does not carry.
+   */
+  head?: unknown
+  /**
    * The real viewport size, read on every access rather than captured, so a card
    * that lays itself out on resize sees the new number.
    */
@@ -172,6 +184,15 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
 
   const members: Record<string, unknown> = {
     body: source.container,
+    /*
+     * Present alongside `body` when the realm has one. It sits here rather than
+     * in the fixed table below because a missing head must refuse by name —
+     * the same treatment every other member the realm did not hand over gets —
+     * rather than answer with `undefined`, which a card reading
+     * `document.head.appendChild` would take for "no head yet" and fail on a
+     * line later with nothing pointing here.
+     */
+    ...(source.head === undefined ? {} : { head: source.head }),
     documentElement: element,
 
     getElementById: (id: string): unknown => {
@@ -306,7 +327,7 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
       if (Object.hasOwn(members, property)) return members[property]
       throw new UnsupportedApiError(
         `document.${property}`,
-        'The sandbox provides body, documentElement, the three scoped lookups and the three node factories.',
+        'The sandbox provides body, head, documentElement, the three scoped lookups and the three node factories.',
       )
     },
     set(_target, property): boolean {
@@ -333,6 +354,7 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
 /** Every member the virtual document answers, for the settings panel to report. */
 export const VIRTUAL_DOCUMENT_MEMBERS = [
   'body',
+  'head',
   'documentElement.clientWidth',
   'documentElement.clientHeight',
   'getElementById',

@@ -65,6 +65,66 @@ test('body is the card container itself, not the host body', () => {
   assert.equal(doc['body'], container)
 })
 
+test('head is the frame document head itself', () => {
+  /*
+   * The card that asked: 灭仇家满门之后 schedules code that reads
+   * `document.head` after mounting, and the refusal killed the whole script
+   * for a member this frame genuinely has. Like `body`, it is answered by
+   * identity: the head of the card's **own** frame document, handed over as a
+   * real element because appending a `<style>` to it styles that document and
+   * nothing else.
+   */
+  const head = { tagName: 'HEAD' }
+  const { doc } = source({ head })
+  assert.equal(doc['head'], head)
+})
+
+test('a style appended to head lands in the frame document', () => {
+  /*
+   * The measured use is injection: `document.head.append(style)`. The stub
+   * records rather than lays out — "the browser applies it" is a property of
+   * the real element this member hands over, which is the same guarantee
+   * `body`'s real container already makes for markup.
+   */
+  const inserted: unknown[] = []
+  const head = { tagName: 'HEAD', append: (node: unknown) => inserted.push(node) }
+  const { doc } = source({ head })
+
+  const create = doc['createElement'] as (tag: string) => unknown
+  const style = create('style')
+  ;(doc['head'] as { append: (node: unknown) => void }).append(style)
+
+  assert.deepEqual(inserted, [style], 'the injection never reached the head')
+})
+
+test('a frame without a head refuses the member by name', () => {
+  // Absent is not `undefined`: a card reading `document.head.appendChild`
+  // against a missing member must be told the member is refused, not be left
+  // to fail on "cannot read properties of undefined" a line later.
+  const { doc } = source()
+
+  assert.equal('head' in doc, false)
+  assert.throws(() => doc['head'], (error: unknown) => {
+    assert.ok(error instanceof UnsupportedApiError)
+    assert.equal(error.member, 'document.head')
+    return true
+  })
+})
+
+test('adding head widens nothing else', () => {
+  // The refusal surface is the policy; a member added to the answer side must
+  // not quietly move any name off the refusal side, and assigning `head`
+  // itself stays a refusal like every other write.
+  const head = { tagName: 'HEAD' }
+  const { doc } = source({ head })
+
+  assert.throws(() => doc['cookie'], UnsupportedApiError)
+  assert.throws(() => doc['write'], UnsupportedApiError)
+  assert.throws(() => {
+    doc['head'] = { tagName: 'HEAD' }
+  }, ReadOnlyApiError)
+})
+
 test('lookups are scoped to the container', () => {
   const { doc, selectors } = source()
   const query = doc['querySelector'] as (selector: string) => unknown
@@ -170,9 +230,12 @@ test('symbol reads are absent rather than refused', () => {
 
 test('membership probes answer instead of throwing', () => {
   // `'body' in doc` is a question about the policy, not a request for access.
-  const { doc } = source()
+  // The realm hands over a head, as a real frame's does, so the enumeration is
+  // the surface a card actually sees.
+  const { doc } = source({ head: { tagName: 'HEAD' } })
 
   assert.equal('body' in doc, true)
+  assert.equal('head' in doc, true)
   assert.equal('cookie' in doc, false)
   /*
    * The read-only status members are here too, and they are the second half of
@@ -197,6 +260,7 @@ test('membership probes answer instead of throwing', () => {
     'documentURI',
     'getElementById',
     'getElementsByTagName',
+    'head',
     'hidden',
     'querySelector',
     'querySelectorAll',

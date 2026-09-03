@@ -1470,6 +1470,14 @@ try {
 
   token: run,
   container: document.body,
+  // The frame's own head, handed over for the same reason the body is: it is
+  // this card's own document, and `parent.document.head` is where a script
+  // that finished mounting injects its stylesheet.
+  ...(document.head === null ? {} : { head: document.head }),
+  // What relative fetches resolve against. For a srcdoc frame `baseURI` is the
+  // shell page's URL, so the bridge resolves a card's `fetch('/x')` the same
+  // way the browser would have.
+  baseUrl: document.baseURI,
   factory: {
     createElement: tagName => document.createElement(tagName),
     createTextNode: data => document.createTextNode(data),

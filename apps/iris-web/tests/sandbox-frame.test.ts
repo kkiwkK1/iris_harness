@@ -30,6 +30,8 @@ function realm(options?: { interfaceFrame?: boolean }): {
   forwarded: (name: string) => unknown
   /** Nodes the sandbox appended to the container itself. */
   appended: () => unknown[]
+  /** Requests the frame handed to the native fetch, exactly as passed. */
+  nativeFetches: () => { input: unknown, init: unknown }[]
   /** The reporter the toastr substitute was handed, if it was handed one. */
   reportFromToastr: () => ((message: string, channel: 'note' | 'error') => void) | undefined
   /** The `localStorage` the frame asked to have installed, if it asked. */
@@ -91,6 +93,7 @@ function realm(options?: { interfaceFrame?: boolean }): {
 
   let toastrReport: ((message: string, channel: 'note' | 'error') => void) | undefined
   let installedStorage: Record<string, unknown> | undefined
+  const nativeCalls: { input: unknown, init: unknown }[] = []
   const env: FrameEnv = {
     // The real table: a test has no document to load the members script
     // into, so it hands the core the same members `members-entry.ts`
@@ -126,7 +129,16 @@ function realm(options?: { interfaceFrame?: boolean }): {
       setTimeout(): string {
         return this === undefined ? 'unbound' : 'bound'
       },
+      // The native fetch of the realm, defined before install: the frame
+      // captures it at install time, so a fetch seeded later would never be
+      // seen — which is exactly the property the bridge relies on.
+      fetch: (input: unknown, init?: unknown) => {
+        nativeCalls.push({ input, init })
+        return Promise.resolve(new Response('native body'))
+      },
     },
+    // The srcdoc's inherited base: the shell page's URL.
+    baseUrl: 'http://127.0.0.1:8791/chats/current',
     post: message => posted.push(message),
     defineForwarding: (name, read) => forwarded.set(name, read),
     listScript: id => { if (id !== undefined) listed.push(id) },
@@ -155,6 +167,7 @@ function realm(options?: { interfaceFrame?: boolean }): {
     realWindow: env.realWindow as unknown as Record<string, unknown>,
     /** What the sandbox put into the container, in order. */
     appended: () => appended,
+    nativeFetches: () => nativeCalls,
     reportFromToastr: () => toastrReport,
     storage: () => installedStorage,
     run: next => {
@@ -237,6 +250,8 @@ test('exactly the outward-reaching names are shadowed', () => {
     'triggerSlash',
     'getScriptId',
     'EjsTemplate',
+    // The same-origin fetch bridge, which replaces the name outright.
+    'fetch',
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
@@ -689,6 +704,8 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'triggerSlash',
     'getScriptId',
     'EjsTemplate',
+    // The same-origin fetch bridge, published so imported bundles find it.
+    'fetch',
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
@@ -825,6 +842,180 @@ test('triggerSlash returns something awaitable', () => {
   })
 
   assert.ok(returned instanceof Promise)
+})
+
+/*
+ * The same-origin fetch bridge. The measured casualty it exists for:
+ * MagVarUpdate's bundle — imported by every MVU card — opens with
+ * `fetch('/version')`, which under `connect-src 'none'` was refused with a
+ * banner naming Iris's own host.
+ */
+
+/** Let the bridge's promise callbacks run. */
+const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
+
+test('a same-origin relative fetch rides the bridge and returns the content', async () => {
+  const scope = realm()
+  let response: Response | undefined
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/version').then(
+      answered => {
+        response = answered
+      },
+    )
+  })
+
+  const sent = scope.posted.find(message => message.type === 'fetch')
+  assert.ok(sent?.type === 'fetch', 'the request never went to the shell')
+  assert.equal(sent.url, 'http://127.0.0.1:8791/version', 'the card must not be asked to resolve it')
+  assert.deepEqual(scope.nativeFetches(), [], 'the native fetch would be refused by CSP again')
+
+  scope.send({
+    iris: 'tok',
+    type: 'fetch:ok',
+    id: sent.id,
+    content: '{"pkgVersion":"1.12.2"}',
+    status: 200,
+    contentType: 'application/json',
+  })
+  await settle()
+
+  assert.ok(response instanceof Response, 'the promise never resolved')
+  assert.equal(response.status, 200)
+  assert.equal(response.ok, true)
+  assert.equal(response.headers.get('content-type'), 'application/json')
+  assert.equal(await response.text(), '{"pkgVersion":"1.12.2"}', 'a real Response, so .json() works')
+})
+
+test('a fetch answer without status or type still reads as a plain 200', () => {
+  // The remote-dependency path predates the two fields and sends neither.
+  const scope = realm()
+  let response: Response | undefined
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/anything').then(
+      answered => {
+        response = answered
+      },
+    )
+  })
+  const sent = scope.posted.find(message => message.type === 'fetch')
+  assert.ok(sent?.type === 'fetch')
+  scope.send({ iris: 'tok', type: 'fetch:ok', id: sent.id, content: 'body' })
+  return Promise.resolve().then(async () => {
+    assert.equal(response?.status, 200)
+    assert.equal(await response?.text(), 'body')
+  })
+})
+
+test('a cross-origin fetch is left native, where CSP refuses and reports it', () => {
+  // Not bridging is the policy: the shell must not become a proxy for whatever
+  // host a card names. The native request is what trips `securitypolicyviolation`
+  // and produces the blocked report the shell displays.
+  const scope = realm()
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)(
+      'https://cdn.jsdelivr.net/npm/vue',
+    )
+  })
+
+  assert.equal(scope.posted.some(message => message.type === 'fetch'), false)
+  assert.equal(scope.nativeFetches().length, 1)
+  assert.equal(scope.nativeFetches()[0]?.input, 'https://cdn.jsdelivr.net/npm/vue')
+})
+
+test('a POST to our own origin is not bridged', () => {
+  /*
+   * GET is retrieval; a POST with the user's credentials attached could be a
+   * state-changing call to Iris itself. Upstream cards fetch their own server's
+   * endpoints that way, and here the refusal is honest: the endpoint does not
+   * exist, and the banner says so, instead of the shell executing the call.
+   */
+  const scope = realm()
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (i: string, init?: unknown) => Promise<Response>)(
+      '/api/chats/export',
+      { method: 'POST', body: '{"format":"jsonl"}' },
+    )
+  })
+
+  assert.equal(scope.posted.some(message => message.type === 'fetch'), false)
+  assert.equal(scope.nativeFetches().length, 1)
+})
+
+test('a request with headers is not bridged, because the wire carries none', () => {
+  // A bridge that quietly dropped a card's headers would answer a different
+  // request than the one it made; going native keeps the refusal truthful.
+  const scope = realm()
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (i: string, init?: unknown) => Promise<Response>)('/version', {
+      headers: { accept: 'application/json' },
+    })
+  })
+
+  assert.equal(scope.posted.some(message => message.type === 'fetch'), false)
+  assert.equal(scope.nativeFetches().length, 1)
+})
+
+test('an absolute URL on the shell origin rides the bridge too', () => {
+  const scope = realm()
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)(
+      'http://127.0.0.1:8791/api/thing',
+    )
+  })
+
+  const sent = scope.posted.find(message => message.type === 'fetch')
+  assert.ok(sent?.type === 'fetch')
+  assert.equal(sent.url, 'http://127.0.0.1:8791/api/thing')
+})
+
+test('a refused ride rejects the way a network failure would', async () => {
+  const scope = realm()
+  let failure: unknown
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/gone').catch(
+      error => {
+        failure = error
+      },
+    )
+  })
+
+  const sent = scope.posted.find(message => message.type === 'fetch')
+  assert.ok(sent?.type === 'fetch')
+  scope.send({ iris: 'tok', type: 'fetch:error', id: sent.id, message: 'HTTP 404' })
+  await settle()
+
+  assert.ok(failure instanceof Error)
+  assert.match((failure as Error).message, /404/)
+})
+
+test('a bodyless empty-status answer is still a Response', async () => {
+  // 204 forbids a body; building one would make the Response constructor throw
+  // inside the frame instead of answering the card.
+  const scope = realm()
+  let response: Response | undefined
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/done').then(
+      answered => {
+        response = answered
+      },
+    )
+  })
+
+  const sent = scope.posted.find(message => message.type === 'fetch')
+  assert.ok(sent?.type === 'fetch')
+  scope.send({ iris: 'tok', type: 'fetch:ok', id: sent.id, content: '', status: 204 })
+  await settle()
+
+  assert.equal(response?.status, 204)
+  assert.equal(await response?.text(), '')
+})
+
+test('the fetch bridge is published for module code as well', () => {
+  // Imported bundles read the window, not a parameter — the bridge only exists
+  // for them if publishing puts it there.
+  const scope = realm({ interfaceFrame: true })
+  assert.equal(typeof scope.publishedValue('fetch'), 'function')
 })
 
 test('the actions are reachable both directly and through getContext', () => {

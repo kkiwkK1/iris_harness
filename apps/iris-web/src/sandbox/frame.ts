@@ -19,6 +19,7 @@ import { UnsupportedApiError } from './errors.ts'
 import { topFrame } from './failure-attribution.ts'
 import { UNBRIDGED_GLOBALS } from './policy.ts'
 import type { FromFrame, ToFrame } from './protocol.ts'
+import { sameOriginTarget } from './same-origin.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isOnSillyTavernSurface } from './card-api.ts'
@@ -35,6 +36,16 @@ export interface FrameEnv {
   token: string
   /** The frame's own body — which is the card's container, and what `parent.document.body` yields. */
   container: ScopedRoot
+  /**
+   * The frame's own `<head>` — what `parent.document.head` answers.
+   *
+   * A real element, like `body` is a real element: this is the card's own
+   * document, and appending a `<style>` or a `<link>` to its head is the same
+   * class of write appending markup to the container is. Optional because every
+   * realm here is injected; a frame without one simply refuses the member by
+   * name, as it does for every other member it does not carry.
+   */
+  head?: unknown
   /** The frame's own document, for node construction. */
   factory: NodeFactory
   /** The real window of this frame, proxied through for everything not overridden. */
@@ -204,6 +215,20 @@ export interface FrameEnv {
    * Optional so a test can install without a DOM.
    */
   applyViewport?: (size: { width: number, height: number }) => void
+  /**
+   * The URL relative paths in this frame resolve against: `document.baseURI`.
+   *
+   * For a srcdoc frame that is the shell page's URL — the same base the browser
+   * resolves a card's `fetch('/x')` against, which is why the fetch bridge
+   * resolves with it rather than with an origin alone: a root-relative path and
+   * a page-relative one both land where the card meant them to. Its origin is
+   * what counts as "ours".
+   *
+   * Optional so a test can install without one; the bridge then treats every
+   * request as not-ours and passes it through untouched, which is the safe
+   * direction for a bridge that is missing its premise.
+   */
+  baseUrl?: string
 }
 
 /** A running frame's handle. */
@@ -374,6 +399,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
 
   const virtualDocument = createVirtualDocument({
     container: env.container,
+    ...(env.head === undefined ? {} : { head: env.head }),
     viewport: readViewport,
     factory: env.factory,
     anchors,
@@ -1172,6 +1198,107 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     })
   }
 
+  /*
+   * The frame-side half of the same-origin fetch bridge.
+   *
+   * Upstream's card scripts run same-origin with SillyTavern, so a bundle's
+   * `fetch('/version')` is an ordinary request to the page's own server. Here
+   * the same path resolves to Iris's origin and `connect-src` refuses it — the
+   * refusal is what produced the standing banner on every MVU card. The bridge
+   * carries such a request to the shell on the `fetch` message that already
+   * exists for remote dependencies, and the shell fetches it with its own
+   * credentials. CSP is untouched: the bridged request never leaves from here,
+   * and anything not same-origin goes to the native fetch below, where CSP
+   * refuses exactly what it refused before.
+   *
+   * Only retrieval is bridged. GET and HEAD without a body or request headers
+   * ride the message; a POST — which on Iris's own origin could be a state-
+   * changing call to Iris itself, with the user's credentials attached — goes
+   * native and is refused and reported like any other closed-directive request.
+   */
+  let nextFetch = 0
+  const pendingFetch = new Map<string, { resolve: (response: Response) => void, reject: (why: Error) => void }>()
+
+  /*
+   * The native fetch, captured at install.
+   *
+   * `fetch` is among the published globals, so after publishing a read off the
+   * window finds the bridge — and a bridge that reached its own published name
+   * for the passthrough path would recurse into itself for every request it
+   * declines. Capturing before any publish is the only way the non-same-origin
+   * path stays native.
+   */
+  const nativeFetchValue = (env.realWindow as unknown as Record<string, unknown>)['fetch']
+  const nativeFetch = typeof nativeFetchValue === 'function'
+    ? (nativeFetchValue as (input: unknown, init?: unknown) => Promise<Response>).bind(env.realWindow)
+    : undefined
+
+  /**
+   * The `Response` a card sees for a bridged request.
+   *
+   * A real `Response`, so `res.ok`, `res.status`, `res.json()` and
+   * `res.headers.get('content-type')` all answer as the native object would —
+   * a bundle's `.then(e => e.json())` must not learn the bridge's shape instead
+   * of the fetch shape it was written against.
+   * @param message - the shell's answer.
+   * @returns the response.
+   */
+  const bridgedResponse = (message: Extract<ToFrame, { type: 'fetch:ok' }>): Response => {
+    const status = message.status ?? 200
+    // A body on these statuses makes the Response constructor throw; the shell
+    // cannot have carried content for one anyway.
+    const body = status === 204 || status === 205 || status === 304 ? null : message.content
+    return new Response(body, {
+      status,
+      ...(message.contentType === undefined
+        ? {}
+        : { headers: { 'content-type': message.contentType } }),
+    })
+  }
+
+  /**
+   * Bridge a request when it is a same-origin retrieval, else leave it native.
+   * @param input - what the card passed as the fetch input.
+   * @param init - what the card passed as the fetch init.
+   * @returns the bridged promise, or undefined when this request is not the
+   *   bridge's business and the caller must go native.
+   */
+  const rideFor = (input: unknown, init: unknown): Promise<Response> | undefined => {
+    const specifier = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.href
+        : // A `Request` carries its own method, headers and body; unwrapping
+          // all of that duplicates the object it wraps, so it stays native.
+          undefined
+    if (specifier === undefined || env.baseUrl === undefined) return undefined
+    const options = (init ?? {}) as Record<string, unknown>
+    if (options['body'] !== undefined || options['headers'] !== undefined) return undefined
+    const method = (typeof options['method'] === 'string' ? options['method'] : 'GET').toUpperCase()
+    if (method !== 'GET' && method !== 'HEAD') return undefined
+    const origin = new URL(env.baseUrl).origin
+    const target = sameOriginTarget(specifier, env.baseUrl, origin)
+    if (target === undefined) return undefined
+    const id = `f${(nextFetch += 1)}`
+    return new Promise<Response>((resolve, reject) => {
+      pendingFetch.set(id, { resolve, reject })
+      // The resolved absolute URL travels, not the specifier: the shell
+      // re-checks origin before honouring, and resolving twice against two
+      // bases could disagree about a page-relative path.
+      env.post({ iris: env.token, type: 'fetch', id, url: target })
+    })
+  }
+
+  /** The `fetch` a card sees: bridge where it applies, native everywhere else. */
+  const fetchBridge = (input: unknown, init?: unknown): Promise<Response> => {
+    const bridged = rideFor(input, init)
+    if (bridged !== undefined) return bridged
+    if (nativeFetch === undefined) {
+      return Promise.reject(new Error(`fetch(${String(input)}): this frame has no native fetch`))
+    }
+    return nativeFetch(input, init)
+  }
+
   /**
    * Which entry of `script.list` is running, carried in on the `run` message.
    *
@@ -1607,6 +1734,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * finished at both the names upstream offers it under.
      */
     'EjsTemplate',
+    /*
+     * The same-origin fetch bridge, on the same two routes every bridged
+     * global takes: a parameter in classic mode and a published property of
+     * the window in module mode — the second is the one imported bundles read,
+     * since a bundle's bare `fetch` resolves against the window it runs in.
+     * Replacing the name is the point: a bridged request is one CSP would
+     * refuse, so no card can observe the difference except by seeing a refused
+     * request answer instead.
+     */
+    'fetch',
   ] as const
 
   /**
@@ -1698,6 +1835,11 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * `EjsTemplate` above without this line did exactly that.
      */
     ejsTemplate,
+    /*
+     * The bridge goes last, appended together with its `core` entry, so no
+     * index above had to move for it.
+     */
+    fetchBridge,
     ...helperNames.map(name => sharedCopy(name, tavernHelper[name])),
   ]
 
@@ -1721,6 +1863,14 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       pendingSlash.delete(message.id)
       if (message.type === 'slash:ok') waiting.resolve(message.result)
       // Rejected with a real Error so a card's `.catch` sees what upstream's would.
+      else waiting.reject(new Error(message.message))
+      return
+    }
+    if (message.type === 'fetch:ok' || message.type === 'fetch:error') {
+      const waiting = pendingFetch.get(message.id)
+      if (waiting === undefined) return
+      pendingFetch.delete(message.id)
+      if (message.type === 'fetch:ok') waiting.resolve(bridgedResponse(message))
       else waiting.reject(new Error(message.message))
       return
     }

@@ -45,7 +45,8 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * read-only document state and the gap-note retraction, and 5 KiB for the three
  * SillyTavern anchor stand-ins, then 1.7 KiB for the overlay-region reporter —
  * at which point it was 65 KiB and had forced the count gate down twice in one
- * day.
+ * day — and about a kilobyte for the same-origin fetch bridge the MVU bundles
+ * needed.
  *
  * **Then it fell to 41 KiB, and the fall is the interesting number.** The
  * card-facing member table — the Tavern Helper surface, the storage façade, the
@@ -83,7 +84,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 43 * 1024
+export const FRAME_OVERHEAD_BYTES = 44 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -124,6 +125,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * | 41 KiB | 50.0 | 25.0 | **20** | held, with room |
  * | 42 KiB | 48.8 | 24.4 | 20 | held |
  * | 43 KiB | 47.6 | 23.8 | 20 | held |
+ * | 44 KiB | 46.5 | 23.3 | 20 | held |
  *
  * Both times the reasonable-looking response was to raise the constant above and
  * treat the ratio as incidental; both times the invariant said otherwise, and
