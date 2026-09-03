@@ -155,15 +155,15 @@ export function chatLines(session: Session): { turn: number, isUser: boolean, se
   let turn = 0
 
   for (const event of session.events) {
-    if (event.type === "turn/start") {
+    if (event.type === 'turn/start') {
       turn = event.data.turn
       continue
     }
-    if (event.type === "user/message") {
+    if (event.type === 'user/message') {
       lines.push({ turn, isUser: true, seq: event.seq })
       continue
     }
-    if (event.type !== "assistant/message") continue
+    if (event.type !== 'assistant/message') continue
     if (seen.has(event.data.turn)) continue
     seen.add(event.data.turn)
     lines.push({ turn: event.data.turn, isUser: false, seq: event.seq })
