@@ -3350,3 +3350,64 @@ test('its contentDocument is the virtual document, not null', () => {
   ) as { contentDocument: unknown }
   assert.equal(node.contentDocument, parentDoc)
 })
+
+test('an interface frame holds an Mvu surface, so the measured wait resolves', async () => {
+  /*
+   * The failure this closes, measured on 哈人冰恋世界: its status bar opens with
+   * `await waitGlobalInitialized('Mvu')` and draws its three panels only after.
+   * Upstream that wait ends because the MVU bundle publishes onto the shared
+   * host page and the interface iframe reads it through `predefine.js`'s live
+   * getter (`window.Mvu`, "只是为了兼容性") and hears `global_Mvu_initialized`
+   * on the page's event source. Across an opaque origin neither road exists —
+   * the bundle publishes into the *script* frame's bag — so the wait never
+   * resolved and the frame rendered its frame and never a single number.
+   *
+   * Iris cannot hand over the bundle's live object, but the bundle itself is a
+   * thin delegation: measured in the published artifact,
+   * `getMvuData` is `function(e){return getVariables(e)}` and `replaceMvuData`
+   * is `function(e,t){return replaceVariables(e,t)}` — the members this frame
+   * already has, with this frame's own floor semantics — and `events` is a
+   * constant table. So the surface is provided from those, and the wait
+   * resolves against it.
+   */
+  const scope = realm({ interfaceFrame: true })
+
+  const mvu = scope.publishedValue('Mvu') as Record<string, unknown>
+  assert.notEqual(mvu, undefined, 'no Mvu was published to the markup')
+  assert.equal(
+    (mvu['events'] as Record<string, string>)['VARIABLE_UPDATE_ENDED'],
+    'mag_variable_update_ended',
+    'the event constants drifted from the names the cards subscribe to',
+  )
+  assert.equal(typeof mvu['getMvuData'], 'function')
+  assert.equal(typeof mvu['replaceMvuData'], 'function')
+
+  // The measured shape of every status bar: wait first, then read.
+  const wait = scope.publishedValue('waitGlobalInitialized') as (name: string) => Promise<void>
+  await wait('Mvu')
+  assert.ok(true, 'the wait resolved — pre-fix this promise never settles')
+
+  // "并使之在当前 iframe 中可用": the wait also makes the name readable, and it
+  // reads the same surface the markup sees.
+  assert.equal(scope.forwarded('Mvu'), mvu)
+})
+
+test('a script frame is left alone: no stand-in where the real bundle runs', () => {
+  /*
+   * The stand-in exists for frames that can never see the bundle. A *script*
+   * frame is where the bundle itself runs and publishes the real `Mvu` via
+   * `_.set(window.parent, 'Mvu', …)`; pre-seeding the name there would hand the
+   * bundle's siblings a facade where they expect the live provider, and the
+   * cohabitation tests above pin that path. So the surface is
+   * interface-frames-only.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  assert.equal(
+    scope.publishedNames().includes('Mvu'),
+    false,
+    'a script frame was given a stand-in for a global its own bundle provides',
+  )
+})

@@ -845,3 +845,122 @@ an interruption.
 anything a user would miss — it is bounded by `keep`, so this is arguable — or a
 user saying the notice is noise. Both are about the *notice*, not about the
 record: the durable line stays either way.
+
+---
+
+## 19. Interface frames are handed an `Mvu` surface built on their own facade
+
+**Kind:** deliberate improvement (closing a measured compatibility gap).
+
+**Upstream.** A card's MVU bundle runs in a *script* iframe and publishes itself
+onto the shared host page: `_.set(window.parent, 'Mvu', …)` — and a script
+iframe's parent **is** the page. An interface iframe reaches the same live
+object two ways, both in upstream's own injection: `predefine.js` defines
+`window.Mvu` as a getter to `_.get(window.parent, 'Mvu')` (its own comment:
+"只是为了兼容性"), and `waitGlobalInitialized('Mvu')` resolves through the page's
+event source when the bundle emits `global_Mvu_initialized`.
+
+**Iris.** Each frame is an opaque origin with its own virtual parent and its own
+event bus, so the bundle's publication stays in the script frame and no message
+frame can ever see it. Measured consequence (哈人冰恋世界 v2.0.1, and the same
+shape in 尸变纪元 and 绿茵好莱坞): every one of their status bars opens with
+`await waitGlobalInitialized('Mvu')` and draws its panels only afterwards — the
+wait never resolved, and the frame rendered its chassis with no number in it.
+
+A live object cannot cross the wall, so Iris provides the surface the bundle
+itself delegates to, built on the interface frame's **own** Tavern Helper:
+`Mvu.events` is the constant table Iris already carries, and `Mvu.getMvuData` /
+`Mvu.replaceMvuData` are the frame's own `getVariables` / `replaceVariables`.
+That is not a guess about the bundle's semantics — the published artifact reads
+`getMvuData:function(e){return getVariables(e)}`,
+`replaceMvuData:function(e,t){return replaceVariables(e,t)}`. A display panel
+therefore works fully, with its own floor's variables; the bundle's schema-driven
+update machinery stays where it runs, in the script frame. Published
+interface-frames-only, into both the window globals and the virtual parent bag
+the wait polls; a later real publication replaces the entry, and script frames —
+where the real bundle runs — get nothing.
+
+**What it costs.** A status bar's *edit* path that round-trips through the bundle
+(`Mvu.replaceMvuData`) now writes through the frame's facade instead of the
+bundle's schema pipeline: the write lands, but the bundle's zod validation and
+its `*_for_zod` event pair do not run. The display path — what a reader sees —
+is unaffected.
+
+**What would overturn it.** A cross-frame published-global bridge (the shell
+brokering calls into the script frame's live objects) would make the stand-in
+redundant; or a status bar observed to depend on bundle-only members beyond the
+two measured delegations.
+
+---
+
+## 20. The shell speaks `mag_variable_update_ended` into message frames
+
+**Kind:** deliberate improvement, and the twin of §3.
+
+**Upstream.** The MVU bundle emits `mag_variable_update_ended` on the page's
+shared event source, and every iframe's `eventOn` subscription is bridged to
+that source — so a status bar redraws when the variables it draws change, no
+matter which frame the bundle ran in.
+
+**Iris.** The bundle runs in the script frame, whose bus is private. A message
+frame that subscribes (all three measured status bars do) would wait forever, so
+the shell emits the name into **message frames** on exactly the host events that
+assign a view — `chat.updated` and `stream.end`, the same two that already
+refresh the frames' snapshots. Script frames are deliberately **not** spoken to:
+their bundle emits the event itself, and a shell copy would deliver every update
+twice — the same ground §3 covers for the host side.
+
+**What it costs.** A card whose interface listens for that name redraws on every
+view-assigning event even when its variables did not change; the redraw is a
+read of an in-memory snapshot, not a round trip.
+
+**What would overturn it.** Evidence that a message frame hosts its own MVU
+emitter (then the shell copy would double-fire there too), or a frame-side
+bridge of the script frame's event bus (§19's overturn condition).
+
+---
+
+## 21. The height reporter treats its own applied height as silence, not as a
+sizing event
+
+**Kind:** deliberate improvement (fixing a self-inflicted loop), with one named
+narrowing.
+
+**Upstream.** `adjust_iframe_height.js` measures and writes
+`frameElement.style.height` synchronously, same-origin. A measurement that comes
+back equal to the frame's height is written back again; writing the same value
+is a no-op, no observer fires, and the loop is a fixed point by construction.
+
+**Iris.** The height crosses an origin as a message, and Iris added a second
+message — `sizing`, "asking me how tall my content is has no answer" — which
+upstream does not have. The first rule set announced `sizing` whenever a
+measurement equalled the viewport, and the shell answered by *removing* the
+applied height; the content then overflowed again, a real height was reported
+(which re-armed the announcement), the shell applied it, the next measurement
+equalled the viewport again — a closed message loop flipping the frame between
+its content height and the CSS fallback on every animation frame. Measured
+against four real cards' shapes (content 900 in a 60vh slot with a 100vh
+fallback; content 1450 likewise): the pre-fix write-back series never
+terminates — `height 900 / sizing / height 900 / sizing / …` past 40 steps, the
+box alternating 900 → 1000 → 900 — which is the "右侧和下侧疯狂闪烁" report.
+Post-fix the same series is one write-back and silence.
+
+**The rule now:** a measurement equal to the viewport **and** equal to the
+height this frame itself asked for is the echo of the frame's own write; it is
+silence, and it flips no state. The single `sizing` announcement is preserved
+for every state the frame did not create — unmeasurable from the start, or a
+viewport that is not what we asked for.
+
+**What it costs — stated, not hidden.** A card that becomes unmeasurable
+*after* having reported a real height (a measurable screen followed by one that
+clips its own overflow in a descendant) measures exactly its applied viewport,
+which no ruler can distinguish from the echo (`informsShell`'s original
+finding). That frame now keeps its last real height instead of escalating to a
+full screen. The alternative — escalating on echoes — is the flicker loop, and
+it hits every card whose height was ever successfully applied; the trade narrows
+a rare transition rather than breaking the common case.
+
+**What would overturn it.** A discriminator between "content fits what we
+applied" and "content is now clipped and pinned" that is not gameable by a
+continuously-mutating card — e.g. the shell reporting which of its writes
+landed, or a frame-side overflow probe that survives descendant clipping.

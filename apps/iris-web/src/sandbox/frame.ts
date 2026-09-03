@@ -26,7 +26,7 @@ import type { MemberTable } from './members-contract.ts'
 import { MEMBER_KINDS, SHARED_ORIGINAL, identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
 import { SCRIPT_REGISTRY, withPreamble } from './preamble.ts'
-import { EventBus, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
+import { EventBus, MVU_EVENTS, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
 import type { ScriptContext } from '@iris/protocol'
 
 /** What the frame-side code needs from its realm. */
@@ -1985,6 +1985,15 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   if (env.interfaceFrame === true) {
     try {
       const values = resolveValues()
+      /*
+       * Built once and published twice — see the entry below for why it exists
+       * and what it is.
+       */
+      const mvu = {
+        events: MVU_EVENTS,
+        getMvuData: tavernHelper['getVariables'],
+        replaceMvuData: tavernHelper['replaceVariables'],
+      }
       env.publishGlobals?.([
         ...shadowed
           .map((name, at) => [name, values[at]] as [string, unknown])
@@ -2012,7 +2021,58 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
          * genuinely is nobody.
          */
         ...Object.entries(coordination(undefined)),
+        /*
+         * `Mvu`, as an interface frame can actually have it.
+         *
+         * Upstream, a card's MVU bundle runs in a *script* iframe and publishes
+         * itself onto the **shared host page** (`_.set(window.parent, 'Mvu', …)`
+         * — and the script iframe's parent is the page). An interface iframe
+         * reaches the same object two ways, both measured in upstream's own
+         * injection: `predefine.js` defines `window.Mvu` as a live getter to
+         * `_.get(window.parent, 'Mvu')` ("只是为了兼容性"), and
+         * `waitGlobalInitialized('Mvu')` hears the bundle's
+         * `global_Mvu_initialized` through the page's event source. Either way
+         * the interface frame ends up holding the bundle's methods and constants.
+         *
+         * None of that crosses an opaque origin. Each Iris frame has its own
+         * virtual parent and its own event bus, so the bundle's publication stays
+         * in the script frame and an interface frame's
+         * `await waitGlobalInitialized('Mvu')` waited forever — three measured
+         * status-bar interfaces (尸变纪元, 绿茵好莱坞, 哈人冰恋世界) draw their
+         * panels only after that await, so they rendered their frames and never
+         * populated a single number.
+         *
+         * A live object cannot cross the wall at all, so this is not the bundle —
+         * it is the surface the bundle itself delegates to, built on **this
+         * frame's own** Tavern Helper. Measured in the published bundle:
+         * `getMvuData` is `function(e){return getVariables(e)}` and
+         * `replaceMvuData` is `function(e,t){return replaceVariables(e,t)}` —
+         * thin renames of the very members this frame already has, with this
+         * frame's floor-anchored semantics, which is exactly what an interface
+         * reading its own floor wants. `events` is the same constant table
+         * (`mag_variable_update_ended` and friends) Iris already carries for the
+         * event guard. A status bar that *displays* therefore works fully; the
+         * bundle's schema-driven update machinery stays where it runs, in the
+         * script frame.
+         *
+         * Published into **both** bags: `publishGlobals` for the bare name the
+         * markup reads, `publishName` for the virtual parent whose
+         * `waitGlobalInitialized` polls it — the wait resolves the moment the
+         * frame comes up, which is upstream's shape too, since the page-side
+         * getter exists whether or not the bundle got there first.
+         *
+         * A card (or a future Iris change) publishing a real `Mvu` over this
+         * simply replaces the bag entry; nothing here is privileged.
+         */
+        [
+          'Mvu',
+          mvu,
+        ],
       ])
+      // The virtual-parent half, so `waitGlobalInitialized('Mvu')` — which polls
+      // that bag, not the window — resolves instead of waiting on a publication
+      // that, in this frame, has no other route to happen.
+      publishName('Mvu', mvu)
       env.provideStorage?.(cardStorage)
       env.provideToastr?.(say)
       env.reportMissingGlobals?.(EXPECTED_GLOBALS)
