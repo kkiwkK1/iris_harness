@@ -580,6 +580,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const bundles = new ScriptCache({
     dir: paths.scriptBundles,
     onError: error => { ctx.logger.warn(error.message) },
+    // Into the buffer as well as the log, because this is the channel a card
+    // author reads when an overlay does not appear. Graded a fault: the bundle
+    // was served, but the import inside it was not, and the page is missing a
+    // module it asked for.
+    onReport: message => {
+      diagnostics.record({ kind: 'script', grade: 'fault' }, message)
+      ctx.logger.warn(`script: ${message}`)
+    },
     ...config.scriptBundleTtlSeconds === undefined ? {} : { ttlSeconds: config.scriptBundleTtlSeconds },
   })
   ctx.effect(

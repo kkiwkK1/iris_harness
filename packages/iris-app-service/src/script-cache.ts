@@ -26,6 +26,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { rewriteNestedSpecifiers } from './bundle-rewrite.ts'
 import { checkScriptFetch } from '@iris/script'
 
 /** How a fetch through this route can fail, in the words the browser is given. */
@@ -90,6 +91,14 @@ export interface ScriptCacheOptions {
   maxBytes?: number
   /** Reports a fetch that failed, for the host's log. */
   onError?: (error: Error) => void
+  /**
+   * Told what a bundle asked for that this route would not proxy.
+   *
+   * Separate from {@link onError}: nothing failed here. The bundle was fetched
+   * and served; these are the specifiers inside it that were left as written,
+   * and the import that follows one of them is the thing that will fail.
+   */
+  onReport?: (message: string) => void
 }
 
 /**
@@ -242,6 +251,7 @@ export class ScriptCache {
   readonly #maxBytes: number
   readonly #maxCacheBytes: number
   readonly #onError: (error: Error) => void
+  readonly #onReport: (message: string) => void
   /** In-flight fetches, so ten frames opening at once cause one request. */
   readonly #inflight = new Map<string, Promise<Buffer | CacheFailure>>()
   /** Recent failures, so asking why costs less than failing did. */
@@ -257,6 +267,7 @@ export class ScriptCache {
     this.#maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
     this.#maxCacheBytes = options.maxCacheBytes ?? DEFAULT_MAX_CACHE_BYTES
     this.#onError = options.onError ?? (() => {})
+    this.#onReport = options.onReport ?? (() => {})
   }
 
   /**
@@ -283,13 +294,33 @@ export class ScriptCache {
       return
     }
 
+    // **Rewritten on the way out, not before the disk cache.** The cache holds
+    // exactly what upstream sent, so a copy stored before this route learned to
+    // rewrite still serves correctly, and a change to the rewriting rules does
+    // not have to invalidate anything. The cost is a scan per serve rather than
+    // per fetch, against a path that already spends ~46 ms reading from disk.
+    const rewrite = rewriteNestedSpecifiers(body.toString("utf8"), requested)
+    for (const specifier of rewrite.refused) {
+      this.#onReport(
+        `${requested} imports ${specifier}, which is not on the remote allowlist;`
+        + " it was left as written rather than proxied, so that import will fail",
+      )
+    }
+    for (const specifier of rewrite.bare) {
+      this.#onReport(
+        `${requested} imports the bare specifier "${specifier}", which needs an import`
+        + " map this host does not provide; it was left as written",
+      )
+    }
+    const served = Buffer.from(rewrite.source, "utf8")
+
     res.writeHead(200, {
       ...CORS_HEADER,
       // Always JavaScript. The far side's own content-type is not echoed: this
       // route exists to be imported as a module, and letting upstream choose the
       // type would let it choose what the browser does with the bytes.
       'content-type': 'application/javascript; charset=utf-8',
-      'content-length': body.byteLength,
+      'content-length': served.byteLength,
       // **The browser holds nothing; the host's disk still holds it for the TTL.**
       //
       // The 9–12 s cold CDN fetch this route exists to avoid is already paid by
@@ -305,7 +336,7 @@ export class ScriptCache {
       // expiring on their own schedule.
       'cache-control': 'no-cache',
     })
-    res.end(req.method === 'HEAD' ? undefined : body)
+    res.end(req.method === 'HEAD' ? undefined : served)
   }
 
   /**
