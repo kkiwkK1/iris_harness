@@ -33,6 +33,8 @@ export function ConnectionPanel(): ReactElement {
   const activeId = useIris(state => state.activeConnectionId)
   const settings = useIris(state => state.settings)
   const chatId = useIris(state => state.chatId)
+  const origin = useIris(state => state.dataOrigin)
+  const transport = useIris(state => state.transport)
   const actions = useIrisActions()
 
   const [naming, setNaming] = useState(false)
@@ -44,6 +46,27 @@ export function ConnectionPanel(): ReactElement {
 
   return (
     <Section title="Connection">
+      {/*
+        **Which host this page is actually talking to**, said before anything
+        about providers.
+        
+        "Connection" already meant the provider profile — the model behind the
+        conversation — and left the other connection unstated: the host serving
+        this app and holding its chats. With more than one host in play (a dev
+        instance and a probe instance), "is this page on 8787 or 8789?" is a
+        question that has to be re-derived from the address bar every time, and
+        an answer derived from somewhere else is an answer that can disagree.
+        
+        `dataOrigin` is where the store already keeps it, and it was written and
+        **never read** until now — the field's own doc says it exists "because
+        the interface has to be able to say it", and only its sibling
+        (`transport`) had ever been rendered. No new protocol: the value is what
+        the page was built against.
+      */}
+      <p className="iris-field__note">
+        Host: <code>{origin}</code>
+        {transport === 'fake' ? ' — seeded, not a real host' : null}
+      </p>
       {profiles.length === 0 ? (
         <p className="iris-list__empty">No saved connections.</p>
       ) : (
