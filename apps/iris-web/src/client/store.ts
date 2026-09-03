@@ -12,7 +12,7 @@
  * @module iris-web/client/store
  */
 
-import type { ReportGrade } from '../app/blocked-line.ts'
+import type { ReportGrade } from '../app/blocked-line.ts'
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import type {
@@ -962,6 +962,34 @@ export function applyEvent(store: IrisStore, event: IrisEvent): void {
 
   if (event.type === 'chats.updated') {
     store.setState({ chats: event.chats })
+    return
+  }
+
+  /*
+   * A pushed diagnostic, handled **before** the chat gate below.
+   *
+   * It carries no `chatId` of its own — the report inside may name one, but the
+   * event is about the host rather than about a conversation — so gating it on
+   * the open chat would drop every one of them. That gate's comment used to say
+   * "every other frame names a chat", and this is the frame that made it false;
+   * the type stopped compiling, which is the only reason it was not simply
+   * silently dropped.
+   *
+   * Pushed rather than polled because of what it is for: an irreversible
+   * deletion. A report that has to be *fetched* to be seen is a report the user
+   * reads after the data is gone, and "we trimmed it correctly" and "the user
+   * knows we trimmed it" are two different claims.
+   */
+  if (event.type === 'report') {
+    const where = event.report.scriptId
+    actionsOf(store).addCardReport(
+      `${event.report.kind}: ${event.report.message}`,
+      where,
+      'fault',
+    )
+    // The notice bar too, and only for these: this is the one report class that
+    // describes something already lost, so it is worth interrupting for.
+    actionsOf(store).notify('error', `${event.report.kind}: ${event.report.message}`)
     return
   }
 

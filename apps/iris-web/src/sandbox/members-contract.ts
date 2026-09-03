@@ -53,5 +53,7 @@ export interface MemberTable {
   clipPathFor: typeof import('./overlay-regions.ts').clipPathFor
   collectRegions: typeof import('./overlay-regions.ts').collectRegions
   describeVisibility: typeof import('./overlay-regions.ts').describeVisibility
+  createNestedFrame: typeof import('./nested-frame.ts').createNestedFrame
+  virtualiseNestedFrames: typeof import('./nested-frame.ts').virtualiseNestedFrames
   createReportingToastr: typeof import('./toastr-report.ts').createReportingToastr
 }

@@ -239,10 +239,25 @@ function stripReserved(block: string, refused: Set<string>): string {
  * after one deletion.
  * @returns the confined CSS and what was refused.
  */
-export function scopeCardCss(css: string, candidateSeq: string): ScopedCss {
+export function scopeCardCss(
+  css: string,
+  candidateSeq: string,
+  scopeSelector?: string,
+): ScopedCss {
   const refused = new Set<string>()
   const prefix = `iris-c${candidateSeq}`
-  const scopeRoot = `#iris-msg-${candidateSeq}`
+  /*
+   * The scope root, which defaults to the message this CSS came in.
+   *
+   * Overridable for the **second** place a card's CSS has to be confined: a
+   * nested frame's stand-in, where the card copies the frame's own stylesheets
+   * into what it believes is a separate document. That confinement wants
+   * everything this function does — brace-accurate scanning, the refused
+   * at-rules, keyframe renaming — and differs only in which subtree it points
+   * at, so it is a parameter rather than a second implementation. A second
+   * implementation is how the two would come to disagree about `@font-face`.
+   */
+  const scopeRoot = scopeSelector ?? `#iris-msg-${candidateSeq}`
 
   /** Keyframe names defined in this sheet, and their new names. */
   const renamed = new Map<string, string>()

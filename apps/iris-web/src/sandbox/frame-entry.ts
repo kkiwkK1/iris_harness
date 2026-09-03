@@ -17,6 +17,15 @@
 
 import type { ScriptContext } from '@iris/protocol'
 import { installSandbox } from './frame.ts'
+/*
+ * **Types only.** The stand-in's code comes off the member table
+ * (`members.js`), which is fetched once per frame rather than inlined into
+ * every frame's bootstrap — importing it here for real cost 8.2 KiB per frame
+ * and pulled `card-css.ts`'s whole scanner in behind it, which is the exact
+ * growth the table exists to stop. A type import is erased, so this line is
+ * free.
+ */
+import type { NestedNode, NestedQueryHost } from './nested-frame.ts'
 import { remoteImports, requestedImports } from './script-source.ts'
 import { describeAttempts, type TimedResource } from './import-attempts.ts'
 import { describeTransferCost, type TransferTiming } from './transfer-cost.ts'
@@ -381,6 +390,54 @@ function reportRegions(
   // Once up front, so a card that builds everything before the first frame and
   // never touches the DOM again is still clipped correctly.
   schedule()
+}
+
+
+/**
+ * Hand cards a stand-in whenever they build a nested iframe.
+ *
+ * A thin adapter on purpose. Everything that *decides* anything lives in
+ * `nested-frame.ts` and arrives on the member table — fetched once per frame
+ * rather than inlined into every frame's bootstrap. Importing it for real cost
+ * **8.2 KiB per frame** and pulled `card-css.ts`'s whole scanner in behind it,
+ * which is precisely the growth the table was split out to stop. What is left
+ * here is the two things only this file has: the real `document`, and the
+ * channel to the shell.
+ * @param run - the frame's token, for reports.
+ * @param post - the channel to the shell.
+ * @param members - the fetched member table, which carries the stand-in.
+ */
+function virtualiseNestedFrames(
+  run: string,
+  post: (message: FromFrame) => void,
+  members: MemberTable,
+): void {
+  members.virtualiseNestedFrames(document as unknown as NestedQueryHost, {
+    createElement: tagName => document.createElement(tagName) as unknown as NestedNode,
+    parseHtml: html => {
+      /*
+       * A `<template>` parses without running scripts and without adopting the
+       * nodes into the live document. Its parser drops `<html>`, `<head>` and
+       * `<body>` and keeps their children as siblings, so the split between
+       * head and body is decided by tag name in `nested-frame.ts` rather than
+       * by where a node came from — there is no longer any "where".
+       */
+      const template = document.createElement('template')
+      template.innerHTML = html
+      return [...template.content.children] as unknown as NestedNode[]
+    },
+    note: message => {
+      post({ iris: run, type: 'note', scriptId: undefined, message })
+    },
+    refuse: (host, detail) => {
+      // On the channel a real refusal takes, so a reader sees one kind of line
+      // for one kind of event.
+      post({ iris: run, type: 'blocked', host, directive: 'frame-src', detail })
+    },
+    soon: fn => {
+      setTimeout(fn, 0)
+    },
+  })
 }
 
 function reportHeight(run: string, post: (message: FromFrame) => void): void {
@@ -1765,6 +1822,12 @@ try {
   if (document.body?.hasAttribute('data-iris-interface') !== true) {
     reportRegions(run, post, members)
   }
+  /*
+   * After `installSandbox` and before any card body: the sandbox's own frame
+   * element is already built by now, so it stays a real `<iframe>`, and every
+   * iframe a *card* builds from here on is a stand-in.
+   */
+  virtualiseNestedFrames(run, post, members)
   reportBlocked(run, post)
   reportStorage(run, post)
   reportBodySummary(run, post)

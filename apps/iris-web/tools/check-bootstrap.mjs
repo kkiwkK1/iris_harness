@@ -71,11 +71,26 @@ if (why !== undefined) {
  * A second occurrence means someone reintroduced a late read, and the failure it
  * causes is invisible from outside the frame. Counting is crude and survives
  * minification, which a name would not.
+ *
+ * **Counting member reads, not every occurrence.** The first version counted the
+ * bare word, and a legitimate change broke it: the nested-frame stand-in has to
+ * *define* a `postMessage` method, because a card broadcasting to every iframe
+ * it can find would otherwise throw on the stand-in instead of being ignored.
+ * Defining a key is not re-deriving the channel, so the bare count was measuring
+ * the wrong thing — and the ways to make it pass again were to obfuscate the
+ * key, which would blind the check to real late reads, or to say what the rule
+ * actually is.
+ *
+ * The rule is: **the channel is read exactly once.** So both member forms are
+ * counted — `x.postMessage` and `x["postMessage"]` — which also makes this
+ * stricter than before against a late read written in bracket form, while a
+ * property *key* no longer trips it.
  */
-const sends = source.match(/postMessage/g)?.length ?? 0
-if (sends !== 1) {
+const reads = source.match(/\.postMessage|\[\s*["']postMessage["']\s*\]/g)?.length ?? 0
+const mentions = source.match(/postMessage/g)?.length ?? 0
+if (reads !== 1) {
   console.error(
-    `bootstrap check failed: expected exactly one postMessage reference (the capture at boot), found ${sends}`,
+    `bootstrap check failed: expected exactly one postMessage read (the capture at boot), found ${reads} reads in ${mentions} mentions`,
   )
   console.error('  a late `window.parent.postMessage` read is severed the moment the bridge is published')
   process.exit(1)

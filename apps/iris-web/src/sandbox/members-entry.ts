@@ -33,6 +33,7 @@ import { MEMBERS_GLOBAL, MEMBERS_MARKER } from './members-contract.ts'
 import { createCardStorage } from './card-storage.ts'
 import { KNOWN_ST_IDS, createStAnchors } from './st-anchors.ts'
 import { clipPathFor, collectRegions, describeVisibility } from './overlay-regions.ts'
+import { createNestedFrame, virtualiseNestedFrames } from './nested-frame.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import {
   SETTLED_EVENT_NAMES,
@@ -58,6 +59,8 @@ host[MEMBERS_GLOBAL] = {
   clipPathFor,
   collectRegions,
   describeVisibility,
+  createNestedFrame,
+  virtualiseNestedFrames,
   createReportingToastr,
 }
 

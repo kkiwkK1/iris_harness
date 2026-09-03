@@ -20,6 +20,7 @@ import type { MemberTable } from '../src/sandbox/members-contract.ts'
 import { createCardStorage } from '../src/sandbox/card-storage.ts'
 import { KNOWN_ST_IDS, createStAnchors } from '../src/sandbox/st-anchors.ts'
 import { clipPathFor, collectRegions, describeVisibility } from '../src/sandbox/overlay-regions.ts'
+import { createNestedFrame, virtualiseNestedFrames } from '../src/sandbox/nested-frame.ts'
 import { createReportingToastr } from '../src/sandbox/toastr-report.ts'
 import {
   SETTLED_EVENT_NAMES,
@@ -44,5 +45,7 @@ export const MEMBERS: MemberTable = {
   clipPathFor,
   collectRegions,
   describeVisibility,
+  createNestedFrame,
+  virtualiseNestedFrames,
   createReportingToastr,
 }
