@@ -39,7 +39,7 @@ import type { RunningCard } from '../sandbox/runner.ts'
 import { STARTED_EVENTS, settledEvents } from '../sandbox/tavern-helper.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
-import { describeRun } from '../sandbox/script-run-state.ts'
+import { describeRun, isFailure } from '../sandbox/script-run-state.ts'
 import { describeRefusal } from './blocked-line.ts'
 
 /**
@@ -440,7 +440,23 @@ export function CardScriptFrames(): ReactElement {
            * destroys itself — which once read, from outside, as the reports never
            * having been sent.
            */
-          actionsOf(store).addCardReport(text, state.scriptId)
+          /*
+           * Graded by the phase, not by the channel. This callback fires for
+           * every phase change, and only some of them describe something
+           * broken — `isFailure` is the same predicate the panel uses to colour
+           * a run, so the report list and the run list cannot disagree about
+           * whether a script failed.
+           *
+           * Measured: the storage probe's over-quota write produced
+           * `failed: probe.big … was not written` as a **neutral** row, because
+           * this site passed no grade at all. A line that says "failed" and
+           * renders like routine traffic is the failure the grade exists for.
+           */
+          actionsOf(store).addCardReport(
+            text,
+            state.scriptId,
+            isFailure(state.phase) ? 'fault' : undefined,
+          )
           actionsOf(store).notify('error', text)
         },
       },

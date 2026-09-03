@@ -1268,7 +1268,19 @@ const HANDLERS: { [T in IrisEvent['type']]: (event: EventOf<T>, store: IrisStore
    * knows we trimmed it" are two different claims.
    */
   report: (event, store) => {
-    const line = `${event.report.kind}: ${event.report.message}`
+    /*
+     * **The host's message, verbatim.** This used to prefix `${kind}: ` and the
+     * result on screen was `variables: variables: trimmed 21 floor(s)…`: a host
+     * report already opens with its own channel, by the same rule this project
+     * applies to every report ("the channel is the report's first sentence"), so
+     * the shell prefixing it again says it twice.
+     *
+     * The pulled view does not have this problem and shows why: there the kind
+     * is a separate element beside the message, not concatenated into it. If
+     * this line ever needs to be filterable, that is the shape to copy — a
+     * label, not a prefix.
+     */
+    const line = event.report.message
     /*
      * The **reporter's** grade, not this frame's. It used to hardcode `fault`
      * on the reasoning that only irreversible deletions are pushed — true

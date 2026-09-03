@@ -1615,6 +1615,25 @@ class RA {
 > **注意③和②是互补的,不是对立的:**②认出「两种结局都无声」的格子,
 > ③说「至少有一边有声时,优先押在_出声的那一边_,而那一边常常是失败」。
 
+**③之二:「留痕」这条对_正确_行为同样适用 —— 短命的对,和没发生,长得一样。**
+
+实例:trim 的 toast **确实发了**,但 `.iris-notice--info` **只活 3.2 秒**(error 8 秒),
+而我在 settle 之后 **25 秒**才读 DOM。**读到零不是因为没发,是因为它已经过期了。**
+
+> **一个只活 3.2 秒的正确行为,和一个从未发生的行为,在 25 秒后的 DOM 里取同一个值。**
+> 所以 ③ 的要求是双向的:**不只"错了要留痕",也是"对了要留痕"** ——
+> 判据要落在**持久记录**上,不能落在**瞬时状态**上。
+> 这一条的解法就是 7b 加的**设置抽屉里的 Notices 历史(最近 50 条带时刻)**:
+> 把一个 3.2 秒的现象变成一条可以事后读的记录。
+
+**副产品,而且这次真的救了场:报否定结果时,把_观察窗口_一起写下来。**
+我当时写的是「DOM 里都没读到(**settle 后 25 s**、点击后 3 s)」——**正因为那个 25 s 在纸上**,
+才有人能把它和 3.2 秒的寿命对上,一句话定位。**若只写"DOM 里没读到",这就成了一条
+无法诊断的否定句**,而且很可能被当成实现缺陷记进账。
+
+> **所以否定结果的最小完整形态是「没看到 X」+「在什么时候看的」+「看了多久」。**
+> 少了后两项,那句话对下一个人是不可复核的。
+
 ### 1. FRAME-FENCED(见 18)
 - **代表**:创世回廊1.3。**变体**:OVERLORD(4 界面正则 + 内嵌书 EJS)、爱衣(与 FRAGMENT 混合)。
 - **该看到**:消息体内是**渲染后的面板**,看不到反引号、看不到 HTML 源码。语料里 179 个楼层的
@@ -1932,7 +1951,44 @@ function $p(sel) {
     `localStorage`),所以「能写能读」本身不证明写到了磁盘 —— 只有磁盘那条算。
 - **读数在哪取**:磁盘与面板都是非几何事实,**后台标签页可读**(见 METHODS §二十三:
   帧内几何才作废)。
-- **状态**:卡已造、未跑。
+- **状态**:**已跑,七步全部命中(2026-09-03,8787 dev profile,后台标签)。**
+
+#### 读数
+
+导入方式:把 PNG 复制进 `apps/iris/data/default-user/characters/`,`character.list` 立刻列出
+(宿主每次读目录);`chat.create` 建聊天;浏览器里点开、点 **Run them** 授权后脚本运行。
+
+| 步 | 读到的 |
+|---|---|
+| 1 setItem/getItem | `setItem probe.alpha -> getItem=alpha-value` |
+| 2 不存在的键 | `missing key reads null` ✓(不是 `undefined`、不抛) |
+| 3 配额 | `QUOTA: QuotaExceededError — probe.big (22.0 MB) was not written: the cards' shared storage is full (22.0 MB of 10.0 MB). It is shared across every card in this profile, so the card that ran out may not be the one that filled it.` |
+| 4 removeItem | `after removeItem probe.beta -> null` ✓ |
+| 5 枚举 | `length=3 keys=["moshen-phone-wallpaper","probe.alpha","probe.gamma"]` |
+| 6 clear() | `a card called localStorage.clear(), emptying the 3 keys this frame could see: moshen-phone-wallpaper, probe.alpha, probe.gamma` + 另一行 `that clear() removed 3 keys, **1 of which another card had written**` |
+| 7 磁盘 | `card-storage.json` = `{"probe.survivor":{"value":"kept-after-clear","characterId":"存储探针","at":1788423341648}}` |
+
+**磁盘写穿与归属都对**:只有 `clear()` 之后写的 survivor 在,`characterId` 是这张卡。
+
+**「clear() 不跨卡」那条本来预告要另开一张卡才有判别力 —— 结果不用**:profile 里
+已经躺着 `moshen-phone-wallpaper`(不要被神隐挑战那张卡先前写的),所以第 5、6 步天然
+是跨卡的,而且报告**把它点名并计数**了。这正是那条「也会绿」的反面示范:判别力这次来自
+**历史残留**而不是我们的安排,下次 profile 一重置就没有了 —— 所以它要写下来,不能靠运气。
+
+#### 三件读数带出来的事
+
+1. **`11 MiB` 的写报成 `22.0 MB`,这是对的。** `'x'.repeat(11*1024*1024)` 是 1100 万个
+   **字符**,而 JS 字符串是 UTF-16,门面按**字节**记账 → 22 MB。所以想精确撞线的探针要按
+   字符数的**两倍**算。
+2. **`失败` 那行当时没被染红。** 第 3 步的报告是 `card scripts: failed: probe.big … was not
+   written`,却以中性渲染 —— `useCardScripts` 的阶段回调**一个 grade 都没传**。一行写着
+   "failed" 而看起来像日常流量,正是分级存在的理由。已修:按 `isFailure(state.phase)` 给
+   `fault`,与面板给运行阶段上色**用的是同一个谓词**,两张列表不会再对「这个脚本失败了没」
+   各说各话。
+3. **帧里没有 `toastr`**,所以卡的 `toastr.info` 变成报告行,并且面板自己先说了这件事
+   (`this frame has no toastr, so a card's toasts are shown here as report lines instead — the
+   text is the card's own, not Iris's`)。探针同时写 console 与 toastr 是对的,但**在 Iris 里
+   两者落在同一处**;真正分开的是 console 与**面板**。
 
 #### 怎么再造一张
 
@@ -2144,8 +2200,12 @@ legacy 通知,以及
 **验收动作(可执行版,总指挥定;弹窗要 settle 才出,所以必须发消息驱动):**
 
 ```
-发一句  →  弹窗出现  →  关掉它(不选任何键)  →  再发一句  →  弹窗应当再来
+发一句  →  弹窗出现  →  关掉它(不选任何键)  →  重新打开这个聊天(切走再切回)  →  弹窗应当再来
 ```
+
+> **末段原写「再发一句」,已更正(第三轮实测)。** 「发一句」触发的是 **settle**,
+> 不是**询问** —— **上游是每次打开聊天问**。把两者当成一回事,会让一个正确实现在
+> "再发一句"之后什么也不弹,而那看起来像缺陷。
 
 **同时查磁盘:`chat[1]` 上不应有 `ignore_cleanup`。**
 
@@ -2173,8 +2233,43 @@ legacy 通知,以及
 - trim 的 `report` 事件 **toast**
 - 「cleaned N… backed up to」**notice**
 
-**DOM 里都没读到**(settle 后 25 s、点击后 3 s)。已让 7b 给通知留痕后再验。
-**这两格记「待留痕」,既不记 ✓ 也不记 ✗。**
+~~DOM 里都没读到(settle 后 25 s、点击后 3 s),记「待留痕」。~~
+
+**⟶ 原因是过期,不是缺席:`.iris-notice--info` 只活 3.2 秒**(error 8 秒),
+**25 秒后读 DOM 必然读到零**。7b 加了**设置抽屉里的 Notices 历史(最近 50 条带时刻)**,
+那就是这两格要的痕。**这两个零能被定位,是因为当时把观察窗口写进去了**(「settle 后 25 s」)
+—— 见通则③之二。
+
+#### 第三轮复验(重建 profile,8789)
+
+| # | 判据 | 结果 |
+|---|---|---|
+| ① | trim toast | **✓** settle 时抓到 `.iris-notice` **活体**;Notices 节 1 条 `16:15:06 variables: … trimmed 21 floor(s)…` |
+| ② | legacy 通知**不**进 Notices(只在报告视图) | **✓ 判别点通过** —— 两条通道确实是分开的:一条持久 note、一条瞬时 toast |
+| ③ | offer 弹窗 | **✓** |
+| ④ | **Esc 关闭**:无 notice、`ignore_cleanup` 未写、`chat[1].variables` 空对象 | **✓** |
+| ⑤ | 关闭后**再问** | **✗ 没来**(677 行,offer 未再发)—— **但不是写了键,是时机;见下** |
+
+#### ⑤ 的诊断:我那条验收步骤本身错了
+
+**offer 目前与 legacy note 同门、每宿主加载一次;上游是_每次打开聊天_问。**
+已裁 49 改为每次 `chat.open` 发。
+
+> **所以步骤要改:关掉 → _重新打开这个聊天_(切走再切回)→ 弹窗再来。**
+> ~~关掉 → 再发一句 → 弹窗再来~~ —— **"发一句"不是上游询问的时机**,
+> 我把"触发 settle"当成了"触发询问",**那是我在步骤里塞进了一个没验过的假设**。
+
+**而这次没被误诊成最坏情况,靠的正是通则③那条排序。** 如果只看到"弹窗没再来",
+最自然的读法是**「关闭被当成了拒绝」——也就是那次静默的权限升级**。
+**先读盘、看到 `ignore_cleanup` 没写,当场排除了它**,只剩时机一种解释。
+
+> **两条判据指向同一个现象、强度不同时,先读便宜那条**;这一格里它把一个
+> **看起来像安全缺陷**的现象,一步降级成了一个**排期问题**。
+
+**顺带一条文案 bug(已交 7b)**:toast 文本 `variables: variables: trimmed…` ——
+**通道前缀重复**。不影响判据,但会出现在用户看得见的地方。
+
+**本格状态:盘 ✓ / toast ✓ / 关闭不写键 ✓ / 关闭后再问 待修后验。**
 
 > **为什么不能记 ✗:这一格正是通则③的反面** —— **"没弹 toast"不留痕**,
 > 所以"实现没发"和"发了但已消失/不该发"在 DOM 里**取同一个值**。

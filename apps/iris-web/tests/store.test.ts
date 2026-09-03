@@ -1027,3 +1027,34 @@ test('the log is bounded, and says so once it is', () => {
   assert.equal(logged[0]?.text, 'notice 5')
   scope.dispose()
 })
+test('a pushed report is shown as the host wrote it, not with its channel twice', () => {
+  /*
+   * **Measured on screen**: the notice read `variables: variables: trimmed 21
+   * floor(s)…`. A host report already opens with its own channel — the same
+   * rule this project applies everywhere, that the channel is a report's first
+   * sentence — so a shell that prefixes `${kind}: ` says it twice.
+   *
+   * Asserted as a *count* rather than as an exact string, because the failure
+   * is duplication and an equality check on the fixed text would also pass if
+   * the prefix moved somewhere else in the sentence.
+   */
+  const scope = recordingStore()
+  scope.push({
+    type: 'report',
+    irreversible: true,
+    report: {
+      grade: 'note',
+      seq: 4,
+      at: Date.now(),
+      kind: 'variables',
+      message: 'variables: trimmed 21 floor(s) in this chat',
+    },
+  })
+
+  const text = String(scope.store.getState().notice?.text)
+  assert.equal(text, 'variables: trimmed 21 floor(s) in this chat')
+  assert.equal(text.match(/variables:/g)?.length, 1, `the channel was named twice: ${text}`)
+  // And the durable copy says the same thing as the transient one.
+  assert.equal(scope.store.getState().cardReports.at(-1)?.text, text)
+  scope.dispose()
+})
