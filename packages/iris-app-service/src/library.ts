@@ -12,14 +12,22 @@
 import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { extname } from 'node:path'
 
-import { CharacterCardError, decodeCardPng, normalizeCard, type CharacterCard } from '@iris/character'
+import { CharacterCardError, decodeCardPng, normalizeCard, readCardChunks, type CharacterCard } from '@iris/character'
 import type { CharacterSummary } from '@iris/protocol'
 
 import { AppError, invalid, notFound } from './errors.ts'
 import { fileFor, toId, uniqueId } from './paths.ts'
 
 /** Card file extensions the library stores. */
-const EXTENSIONS = ['.png', '.json'] as const
+const EXTENSIONS = ['.png', '.jpg', '.jpeg', '.json'] as const
+
+/**
+ * The extensions that carry a picture the avatar route can serve.
+ *
+ * A `.json` card has no image of its own; everything else in {@link EXTENSIONS}
+ * does. See DEVIATIONS §18 for where the JPEG half comes from.
+ */
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg'] as const
 
 /** One card file. */
 export interface CardFileRef {
@@ -142,8 +150,10 @@ export class CharacterLibrary {
     return {
       characterId: ref.characterId,
       name: card.data.name.length > 0 ? card.data.name : ref.characterId,
-      // Only a PNG carries a picture; a `.json` card has none to serve.
-      ...ref.extension === '.png' ? { avatarUrl: `${this.#avatarBase}/${encodeURIComponent(ref.characterId)}` } : {},
+      // Only an image carries a picture; a `.json` card has none to serve.
+      ...(IMAGE_EXTENSIONS as readonly string[]).includes(ref.extension)
+        ? { avatarUrl: `${this.#avatarBase}/${encodeURIComponent(ref.characterId)}` }
+        : {},
       tags: card.data.tags,
       ...creator.length > 0 ? { creator } : {},
     }
@@ -152,12 +162,14 @@ export class CharacterLibrary {
   /**
    * Store an uploaded card.
    *
-   * The bytes are parsed before anything is written: a file that is not a card
-   * should be refused, not left in the folder to fail every later listing.
+   * The bytes are parsed before anything is written: a file that is neither a
+   * card nor a card-less image should be refused, not left in the folder to
+   * fail every later listing. A card-less image imports as an empty character
+   * whose id — and therefore whose display name — comes from the filename.
    * @param filename - the name the browser uploaded it under.
    * @param base64 - the file's contents.
    * @returns the stored card's summary.
-   * @throws {AppError} `invalid-request` for an unreadable card, `unsupported`
+   * @throws {AppError} `invalid-request` for an unreadable file, `unsupported`
    *   for a format this build cannot open.
    */
   async import(filename: string, base64: string): Promise<CharacterSummary> {
@@ -167,7 +179,7 @@ export class CharacterLibrary {
       throw new AppError('unsupported', '.charx cards are not supported yet')
     }
     if (!(EXTENSIONS as readonly string[]).includes(extension)) {
-      throw invalid(`"${filename}" is not a .png or .json character card`)
+      throw invalid(`"${filename}" is not a .png, .jpg or .json character card`)
     }
 
     let bytes: Buffer
@@ -200,14 +212,41 @@ export class CharacterLibrary {
 
 /**
  * Read card bytes according to the file they came in.
+ *
+ * An image that parses but carries no card — an SD generation with only a
+ * `parameters` tEXt chunk, a plain JPEG — is an **empty character**, not a
+ * rejection: the picture is the whole card, the fields start out blank, and the
+ * name comes from the file (see {@link CharacterLibrary.import}). Upstream's
+ * *import endpoint* refuses both shapes (`No PNG metadata.` / the client's
+ * extension gate drops `.jpg` before a request is even made), so this is a
+ * recorded divergence, driven by the acceptance corpus: the two card-less PNGs
+ * and the JPEG in `测试用卡/` are files the user opens as characters. DEVIATIONS
+ * §18 carries the evidence and the boundary.
+ *
  * @param bytes - the file contents.
  * @param extension - the file extension, lowercase and dot-included.
  * @returns the normalized card.
- * @throws {AppError} `invalid-request` when the bytes are not a readable card.
+ * @throws {AppError} `invalid-request` when the bytes are not the kind of file
+ *   the extension claims, or a card chunk that is not base64 JSON.
  */
 function decode(bytes: Uint8Array, extension: string): CharacterCard {
   try {
-    if (extension === '.png') return decodeCardPng(bytes)
+    if (extension === '.png') {
+      // `readCardChunks` throws on a corrupt PNG (bad signature, truncated
+      // chunk, CRC mismatch) and returns an empty bag when the file is a sound
+      // image with no card inside — exactly the split this rule needs.
+      const chunks = readCardChunks(bytes)
+      return (chunks.ccv3 ?? chunks.chara) === undefined ? emptyCard() : decodeCardPng(bytes)
+    }
+    if (extension === '.jpg' || extension === '.jpeg') {
+      // The one claim we make about a JPEG: that it is one. There is no card
+      // payload to read — upstream reads none either, and the corpus JPEG
+      // carries none (byte-verified: no COM, no EXIF, no card chunk).
+      if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
+        throw new Error('not a JPEG: missing the SOI marker')
+      }
+      return emptyCard()
+    }
     return normalizeCard(JSON.parse(Buffer.from(bytes).toString('utf8')))
   } catch (cause: unknown) {
     if (cause instanceof CharacterCardError || cause instanceof Error) {
@@ -215,4 +254,16 @@ function decode(bytes: Uint8Array, extension: string): CharacterCard {
     }
     throw invalid('could not read the character card')
   }
+}
+
+/**
+ * The character an image with no card inside becomes.
+ *
+ * `normalizeCard({})` is the V1-lift of an empty body — the same shape
+ * SillyTavern's character creator writes for a card whose fields were left
+ * blank, ST's `charaFormatData` defaults included.
+ * @returns a card with every text field empty.
+ */
+function emptyCard(): CharacterCard {
+  return normalizeCard({})
 }
