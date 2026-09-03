@@ -659,6 +659,35 @@ guarantee of the mechanism.
 a return to the same chat — it would look like text reappearing that the user
 thought was gone.
 
+### The consequence, once runs exist
+
+**Both halves of the original argument turned out to be true, and measurement
+settled which one governs where.** The premise for clearing — that the shell
+rebuilds a card’s script frame per chat, so the new frame re-injects and
+keeping the old set means two copies — is correct: the frame’s dependencies
+include the chat id. The premise for keeping — that a second page may hold the
+same conversation open, so clearing by chat pulls text out from under it — is
+also correct. Neither is wrong; they are about different units.
+
+So the unit changed. An injection now carries the **frame run** that made it,
+and the shell says when a run ends. What follows:
+
+- **One page behaves as upstream does.** Opening the chat starts a new run and
+  ends the old one, so the previous run’s injections go — which is what
+  `clearChat()` does, arrived at by attribution rather than by emptying a table.
+- **Several pages do not collide.** Ending page one’s run cannot touch page
+  two’s, because they are different keys. This is the case upstream cannot
+  have, and it is the reason the unit is a run and not a chat.
+- **Orphans are reported, not swept.** A page that closes abnormally never
+  sends its run’s end, and **the host cannot tell that run from a live one on
+  another page** — both are just a `(chatId, runId)`. Sweeping "everything but
+  this open" would be precisely the failure this section exists to prevent, so
+  the count is reported on re-open and nothing is deleted. The cost is real and
+  bounded: injections from a crashed page live until the chat is closed.
+
+Identifying an orphan needs a notion of *page identity* the host does not have.
+That is a layer, not a fix, and it is not built until something needs it.
+
 ## 11. What a card may set on an injection, and what it may not
 
 Built to upstream's whole signature rather than to any card's observed usage:
