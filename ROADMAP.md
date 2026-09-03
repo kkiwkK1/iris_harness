@@ -71,7 +71,9 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
    （4df5458，`composerSend` 走 CARD_METHODS 门；闸 16→12）、表面（0331320：脚本 frame 全视口 fixed +
    `regions` 新报告类型 + clip-path 多子路径命中测试，空集=零面积路径）、虚拟 parent/top 暴露本 frame jQuery
    （2a95f8e）。复读（413aa87）：regions 到达（后台 timer 兜底 4861a4e）、clip 圈出手机UI 浮动按钮 61×61、按钮中心命中
-   IFRAME、远处穿透到 shell——命中分层成立；「点开面板后 clip 变大」待验。**用户目视 + 前台截图：浮动按钮不可见**——按钮是 emoji `📱` + 卡自 CSS
+   IFRAME、远处穿透到 shell——命中分层成立；**根因已修**（072f97e：runner `sizing` 分支曾摘掉 overlay 帧的 `height:100%`，元素退到替换元素默认 150 高；
+   `sizedByHost` 让 shell 定尺寸的帧只报不改）：前台复读 rect 2498×1353、clip 收敛正确、按钮处命中 IFRAME、
+   按钮竖直居中可见；regions 附可见性摘要（仅进面板）。「点开面板后 clip 变大」待用户手点。此前的现场——按钮是 emoji `📱` + 卡自 CSS
    （FA 0/TW 0，61×61 证 CSS 生效），rect x 1938 与 `right:33.33%` 不符（应≈1606）→ 疑 frame 文档布局视口与 shell
    坐标不同源，7b 在实例上量。方案 C 落地时漏带 A9（表面 realm 用 message preset）→ 脚本 frame 已改加载
    message preset（72efe72；有界面的页面反而少取一份）。FA 外链：卡的 `loadFontAwesome` 有守卫（已存在 href 含
