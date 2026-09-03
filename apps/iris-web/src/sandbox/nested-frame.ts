@@ -320,18 +320,23 @@ export function createNestedFrame(env: NestedFrameEnv): NestedFrame {
    */
   if (head.style !== undefined) head.style['display'] = 'none'
   /*
-   * `height:100%` here is **load-bearing and it carries something the parse
-   * throws away.**
+   * `height:100%` here is the **substitute** for a declaration this module
+   * throws away. Not a coincidence — a debt.
    *
-   * The measured card's srcdoc opens `<html style="height:100%">` — the height
+   * The measured card's srcdoc opens `<html style="height:100%">`: its height
    * chain starts on the `html` element as an *inline attribute*, not in the
-   * stylesheet. A `<template>` parse discards `<html>` entirely along with its
-   * attributes (measured: the real srcdoc yields exactly `META`, `STYLE`,
-   * `DIV#app`, with no `HTML` node), so that declaration never reaches us.
+   * stylesheet. **We** discard it, by choosing to parse with a `<template>`
+   * (`frame-entry.ts`'s `parseHtml`), which drops `<html>` and every attribute
+   * on it — measured on the real srcdoc, which yields exactly `META`, `STYLE`,
+   * `DIV#app` and no `HTML` node at all.
    *
-   * This line happens to reproduce it. That is a coincidence worth naming:
-   * remove it as "the stylesheet sets height anyway" and the card's own inline
-   * height goes with it, silently, on a card whose panel then has no height.
+   * So the card asked for a height, our parser ate the request, and this line
+   * is what answers it. There is a responsible party and it is us.
+   *
+   * Deleting it as "the stylesheet sets height anyway" takes the card's own
+   * inline height with it, silently. A comment cannot stop that, so there is a
+   * test asserting this style is here and saying why in its failure message —
+   * `tests/nested-frame.test.ts`.
    */
   if (html.style !== undefined) {
     html.style['display'] = 'block'

@@ -480,3 +480,36 @@ test('an ordinary attribute still reaches the element', () => {
   ;(element['setAttribute'] as (n: string, v: string) => void)('data-role', 'overlay')
   assert.equal((element['attributes'] as Record<string, string>)['data-role'], 'overlay')
 })
+test('the html wrapper carries height:100%, standing in for what our parse dropped', () => {
+  /*
+   * **This assertion exists because a comment cannot go red.**
+   *
+   * The measured card's srcdoc opens `<html style="height:100%">` — its height
+   * chain starts on the `html` element as an inline attribute, not in the
+   * stylesheet. Our own `parseHtml` throws that away: parsing with a
+   * `<template>` drops `<html>` and all of its attributes, measured on the real
+   * srcdoc (which yields exactly `META`, `STYLE`, `DIV#app` and no `HTML`
+   * node). So the wrapper's inline height is not decoration and not belt-and-
+   * braces — it is the **substitute** for a declaration this module ate.
+   *
+   * Someone will eventually read it as redundant, because the card's stylesheet
+   * also sets `height:100%` on what becomes `:scope`. Deleting it then takes
+   * the card's own inline height with it and the panel loses its height with no
+   * error anywhere. The failure message below is aimed at that person.
+   */
+  resetNestedFrameCounter()
+  const frame = createNestedFrame(env())
+  const html = frame.document['documentElement'] as NestedNode
+
+  assert.equal(
+    html.style?.['height'],
+    '100%',
+    'the html wrapper lost its inline height. The card supplies this as'
+      + ' `<html style="height:100%">` inside its srcdoc, and `parseHtml` drops the `<html>`'
+      + ' element along with every attribute on it — so nothing else provides it, and the'
+      + ' height chain silently resolves against `auto`.',
+  )
+  // `display:block` belongs to the same substitution: a dropped `<html>` also
+  // takes its default block display with it.
+  assert.equal(html.style?.['display'], 'block')
+})
