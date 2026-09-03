@@ -17,6 +17,7 @@ import {
   bundleFailureReason,
   fromProxied,
   rewriteBundleImports,
+  moduleSpecifiers,
   toProxied,
 } from '../src/sandbox/bundle-proxy.ts'
 import { remoteImports, requestedImports } from '../src/sandbox/script-source.ts'
@@ -225,4 +226,62 @@ test('the frame checks timing against the requested URL, not the displayed one',
     'the stalled-import check is not using the requested URLs, so its verdict is unfalsifiable again',
   )
 })
+test('a minified module is rewritten by specifier, not by counting quotes', () => {
+  /*
+   * **The shape the previous scanner got wrong.** It took any line whose trimmed
+   * start was `import` and walked *every* quote pair on it — which is the whole
+   * program when a module is minified onto one line. A quote inside a regex
+   * literal shifts the pairing, and it stays shifted for the rest of the line,
+   * so a later specifier is never seen: it goes direct to the CDN and
+   * `script-src` blocks it. Silently, from the card's point of view.
+   *
+   * Measured before assuming the worst: the consequence is a **missed** rewrite,
+   * not a corrupted source. That is why this is a correctness test about which
+   * specifiers were found, not a test that the output still parses.
+   */
+  const source = 'import a from "https://cdn.jsdelivr.net/npm/a";'
+    + 'const re=/["]/g;'
+    + 'const b=await import("https://cdn.jsdelivr.net/npm/b");'
+  const out = rewriteBundleImports(source, 'http://host')
 
+  assert.equal(out.includes('"https://cdn.jsdelivr.net/npm/a"'), false, 'the first was missed')
+  assert.equal(out.includes('"https://cdn.jsdelivr.net/npm/b"'), false, 'the second was missed')
+  // The regex is untouched: it is not a specifier, and rewriting inside one
+  // would change the pattern the card matches with.
+  assert.ok(out.includes('/["]/g'), 'the regex literal was altered')
+})
+
+test('a URL a card merely mentions is left alone', () => {
+  // Replacing it would change text the card displays, which is not this
+  // function's business — and the anchor is what makes the distinction possible.
+  const source = 'const shown = "https://cdn.jsdelivr.net/npm/a";'
+  assert.equal(rewriteBundleImports(source, 'http://host'), source)
+})
+
+test('the keyword must be a word, not a suffix', () => {
+  // `important`, `informant`, `x.from` — three ways a naive `indexOf` finds a
+  // keyword that is not one.
+  const source = 'const important = "https://cdn.jsdelivr.net/npm/a";'
+    + 'const y = x.from("https://cdn.jsdelivr.net/npm/b");'
+  assert.equal(rewriteBundleImports(source, 'http://host'), source)
+})
+
+test('an escaped quote inside a specifier does not end it', () => {
+  // Pathological but cheap to be right about: the close quote is found by
+  // respecting backslashes rather than by taking the next quote character.
+  assert.deepEqual(
+    moduleSpecifiers('import a from "https://cdn.jsdelivr.net/npm/a\\"x"'),
+    ['https://cdn.jsdelivr.net/npm/a\\"x'],
+  )
+})
+
+test('every import spelling is found', () => {
+  const source = [
+    'import "a"',
+    "import b from 'b'",
+    'import * as c from "c"',
+    'const d = await import("d")',
+    'export { e } from "e"',
+  ].join(';')
+  assert.deepEqual(moduleSpecifiers(source), ['a', 'b', 'c', 'd', 'e'])
+})

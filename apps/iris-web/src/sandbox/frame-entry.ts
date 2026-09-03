@@ -27,7 +27,7 @@ import { type Measured, clipPathFor, collectRegions } from './overlay-regions.ts
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
-import { describeFailure } from './failure-attribution.ts'
+import { describeFailure, topFrame } from './failure-attribution.ts'
 import {
   describeHeightSources,
   heightSignal,
@@ -207,7 +207,21 @@ function reportRegions(run: string, post: (message: FromFrame) => void): void {
   const schedule = (): void => {
     if (scheduled) return
     scheduled = true
-    requestAnimationFrame(send)
+    /*
+     * **`requestAnimationFrame` does not run in a background tab**, and this is
+     * the one report where that is a user-facing defect rather than a delay: a
+     * reader who opens a chat in a background tab and comes back finds the
+     * overlay both invisible and unclickable, because the clip is still the
+     * zero-area path the frame was attached with. Nothing in the panel says so
+     * either — the frame is waiting to be asked, and nobody asks.
+     *
+     * So `rAF` while visible (it batches to the frame that will paint, which is
+     * the whole reason to use it) and a timer while hidden (it is throttled to
+     * about a second in a background tab, which is far more than enough for
+     * something nobody is looking at).
+     */
+    if (document.hidden) setTimeout(send, 0)
+    else requestAnimationFrame(send)
   }
 
   /*
@@ -231,6 +245,19 @@ function reportRegions(run: string, post: (message: FromFrame) => void): void {
     // No `ResizeObserver` in this realm: the mutation observer still covers the
     // build-and-remove cases, which is every measured card's first need.
   }
+  /*
+   * And once more when the tab comes forward.
+   *
+   * Not only because the hidden path is throttled: a hidden tab may have
+   * measured everything as zero-sized, and a card that laid itself out against
+   * a viewport it never got would report rectangles that were right for the
+   * measurement and wrong for the screen. Re-measuring on the transition is one
+   * message and removes a whole class of "it only works if I was looking".
+   */
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) schedule()
+  })
+
   // Once up front, so a card that builds everything before the first frame and
   // never touches the DOM again is still clipped correctly.
   schedule()
@@ -521,6 +548,19 @@ function reportAsyncFailures(
   bodyHasRun: () => boolean,
 ): void {
   const said = new Set<string>()
+  /**
+   * The frame a thrown value came from, for the paths that are handed the value.
+   *
+   * The `threw` path already appends this; the window-error and
+   * unhandled-rejection paths did not, and they are the ones with **no script
+   * attribution at all** — a callback's stack, no card body, nothing but the
+   * message. So they are where a location is worth the most, and they were the
+   * two that lacked it.
+   * @param value - whatever arrived.
+   * @returns ` at <frame>`, or the empty string.
+   */
+  const stackOf = (value: unknown): string => topFrame(value)
+
   const announce = (kind: string, detail: unknown): void => {
     const text =
       detail instanceof Error
@@ -551,7 +591,7 @@ function reportAsyncFailures(
        * callback, and sent a reader looking at the card.
        */
       message:
-        describeFailure(kind, text, {
+        describeFailure(kind, stackOf(detail) === '' ? text : `${text}${stackOf(detail)}`, {
           bodyRan: bodyHasRun(),
           // Read now rather than captured: the attribute is set with the markup.
           interfaceFrame: document.body?.hasAttribute('data-iris-interface') === true,

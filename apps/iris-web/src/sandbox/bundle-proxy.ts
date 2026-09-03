@@ -68,48 +68,118 @@ export function fromProxied(url: string): string | undefined {
 }
 
 /**
+ * Where each module specifier sits in a piece of source.
+ *
+ * **Anchored to the `import` and `from` tokens, not to quotes.** The version
+ * this replaced took any line whose trimmed start was `import` and then walked
+ * *every* quote pair on it — which is the whole program when the module is
+ * minified onto one line. Naive pairing then goes wrong at the first quote
+ * inside a regex literal or a string with an escaped quote, and the pairing
+ * stays shifted for the rest of the line.
+ *
+ * Measured consequence, before assuming the worst: it is a **missed** rewrite,
+ * not corruption. A quote inside a regex shifts the pairing so a later URL is
+ * not seen, the specifier goes direct to the CDN, and `script-src` blocks it —
+ * which lands in the "nested specifier goes direct" family rather than breaking
+ * the source. Corruption needs a regex literal that itself contains a quoted
+ * allowlisted URL, which is vanishingly unlikely; the missed rewrite is not.
+ *
+ * No pattern matching, for the reason this file already records: every escape
+ * it could need has been eaten in transit repeatedly in this project, and a
+ * collapsed escape still parses while matching nothing.
+ * @param source - the module source.
+ * @returns each specifier's quote span, in order.
+ */
+function specifierSpans(source: string): { open: number, close: number }[] {
+  const spans: { open: number, close: number }[] = []
+  const isWord = (char: string): boolean => /[A-Za-z0-9_$]/u.test(char)
+
+  let at = 0
+  while (at < source.length) {
+    const keyword = source.startsWith('import', at)
+      ? 'import'
+      : source.startsWith('from', at) ? 'from' : undefined
+    if (keyword === undefined) {
+      at += 1
+      continue
+    }
+    // A word boundary on both sides, so `important` and `informant` are not
+    // keywords and `x.from` is not either.
+    const before = at === 0 ? '' : source[at - 1] ?? ''
+    if (before !== '' && (isWord(before) || before === '.')) {
+      at += keyword.length
+      continue
+    }
+
+    let cursor = at + keyword.length
+    // Whitespace, and `(` for a dynamic `import(...)`.
+    while (cursor < source.length && ' \t\r\n('.includes(source[cursor] ?? '')) cursor += 1
+    const quote = source[cursor]
+    if (quote !== '"' && quote !== "'") {
+      at += keyword.length
+      continue
+    }
+
+    // The matching close, respecting backslash escapes.
+    let end = cursor + 1
+    while (end < source.length) {
+      const char = source[end]
+      if (char === '\\') {
+        end += 2
+        continue
+      }
+      if (char === quote) break
+      // A specifier cannot span a line; a newline here means this was not one.
+      if (char === '\n') break
+      end += 1
+    }
+    if (source[end] !== quote) {
+      at += keyword.length
+      continue
+    }
+
+    spans.push({ open: cursor, close: end })
+    at = end + 1
+  }
+  return spans
+}
+
+/**
+ * Every module specifier in a piece of source.
+ *
+ * Shared with `script-source.ts`, which used to do its own naive quote walk for
+ * the read-only census. That one only mis-*reported*, so it was the cheaper bug
+ * — but two scanners for one question is how they come to disagree about which
+ * imports a card has.
+ * @param source - the module source.
+ * @returns the specifiers, in order, with duplicates kept.
+ */
+export function moduleSpecifiers(source: string): string[] {
+  return specifierSpans(source).map(span => source.slice(span.open + 1, span.close))
+}
+
+/**
  * Point a card's allowed remote imports at the host.
  *
- * Scanned line by line and replaced within the import statement only. A blanket
- * replacement across the whole source would also rewrite the URL where a card
- * merely *mentions* it — in a string it displays, say — and changing text a card
- * shows is not this function's business.
- *
- * No pattern matching: every escape this file could need has been eaten in
- * transit repeatedly in this project, and a collapsed escape still parses while
- * matching nothing.
+ * Replaced **within the specifier only**. A blanket replacement across the
+ * whole source would also rewrite the URL where a card merely *mentions* it —
+ * in a string it displays, say — and changing text a card shows is not this
+ * function's business.
  * @param source - the card's module source.
  * @param origin - the host's origin.
  * @returns the source with allowed remote imports routed through the host.
  */
 export function rewriteBundleImports(source: string, origin: string): string {
-  const NEWLINE = String.fromCharCode(10)
-  return source
-    .split(NEWLINE)
-    .map(line => {
-      const trimmed = line.trim()
-      if (!trimmed.startsWith('import ') && !trimmed.startsWith('import"') && !trimmed.startsWith("import'")) {
-        return line
-      }
-      let rewritten = line
-      for (const quote of ['"', "'"]) {
-        let at = rewritten.indexOf(quote)
-        while (at !== -1) {
-          const end = rewritten.indexOf(quote, at + 1)
-          if (end === -1) break
-          const candidate = rewritten.slice(at + 1, end)
-          if (isAllowedRemote(candidate) && fromProxied(candidate) === undefined) {
-            const proxied = toProxied(candidate, origin)
-            rewritten = rewritten.slice(0, at + 1) + proxied + rewritten.slice(end)
-            at = rewritten.indexOf(quote, at + 1 + proxied.length + 1)
-            continue
-          }
-          at = rewritten.indexOf(quote, end + 1)
-        }
-      }
-      return rewritten
-    })
-    .join(NEWLINE)
+  // Back to front, so an earlier span's offsets are still valid after a later
+  // one has been replaced with a longer string.
+  const spans = specifierSpans(source).reverse()
+  let out = source
+  for (const span of spans) {
+    const candidate = out.slice(span.open + 1, span.close)
+    if (!isAllowedRemote(candidate) || fromProxied(candidate) !== undefined) continue
+    out = out.slice(0, span.open + 1) + toProxied(candidate, origin) + out.slice(span.close)
+  }
+  return out
 }
 
 /**
