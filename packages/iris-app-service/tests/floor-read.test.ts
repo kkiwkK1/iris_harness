@@ -98,8 +98,15 @@ async function pruned(t: TestContext, turns: number): Promise<{ entry: ChatEntry
   return { entry, newest: entry.lastTurn }
 }
 
-/** The first assistant line, old enough to have been pruned. */
-const PRUNED_LINE = 2
+/**
+ * An assistant line the cleanup actually reaches.
+ *
+ * Thirteen lines and keepRecent 2 put the edge at 10 and open the window at
+ * max(1, 10 - 2 - 4) = 4, so lines 4, 6, 8 and 10 are the ones scanned. Line 2 is
+ * older, and older is not the same as reachable: below the window the scan never
+ * looks, which is what keeps enabling cleanup from sweeping a long history.
+ */
+const PRUNED_LINE = 6
 
 test('an intact floor reads as stored, and says so', async (t) => {
   const { entry, newest } = await pruned(t, 6)
@@ -148,12 +155,16 @@ test('a replayed floor carries its own turn’s value, not the newest and not th
   const asked = entry.readFloorVariables(PRUNED_LINE, { replay: true })
   const stat = (asked.variables as { stat_data?: Record<string, unknown> }).stat_data ?? {}
 
-  // Floor 2 is turn 1's reply, which set count to 1. The three nearest wrong
+  // Floor 6 is turn 3's reply, which set count to 3. The three nearest wrong
   // implementations each give a different answer here: the newest state says 6,
   // the seed says 0, and no replay at all says nothing.
-  assert.equal(stat['count'], 1, `replay returned ${JSON.stringify(stat['count'])} instead of turn 1's value`)
-  assert.equal(asked.replayedFrom, 0, 'the replay did not start from the surviving floor')
-  assert.equal(asked.replayedFloors, 1)
+  assert.equal(stat['count'], 3, `replay returned ${JSON.stringify(stat['count'])} instead of turn 3's value`)
+
+  // The replay starts at the newest floor the cleanup left intact below this one.
+  // With the window opening at message 4, that is floor 2 — the last one the scan
+  // never reached — and three turns are folded forward from it.
+  assert.equal(asked.replayedFrom, 1, 'the replay did not start from the surviving floor')
+  assert.equal(asked.replayedFloors, 2)
 })
 
 test('a replayed answer never claims to be the stored one', async (t) => {

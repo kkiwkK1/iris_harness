@@ -14,7 +14,7 @@ import { ChatEntry, chatLines } from '../src/entry.ts'
 import { ChatStore } from '../src/chats.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
 import { CharacterLibrary } from '../src/library.ts'
-import { DEFAULT_PRUNE, PRUNED_KEYS, planPrune, prunedKeysOf, SNAPSHOT_KEY } from '../src/prune.ts'
+import { DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, looksNeverCleaned, PRUNED_KEYS, planPrune, pruneDue, prunedKeysOf, SNAPSHOT_KEY } from '../src/prune.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 
@@ -102,35 +102,39 @@ function variableBytes(file: { messages: { variables?: unknown }[] }): number {
 }
 
 test('the plan keeps snapshots, keeps the recent window, and prunes between', () => {
-  // Indices, not turns: a reply sits on every other line, so turn N is at
-  // index 2N + 1. Building the fixture the other way is how a turn-counted
+  // Indices, not turns, and a reply on every even line — the shape the corpus
+  // actually has. Building the fixture around turns is how a turn-counted
   // implementation passes a test that means to catch it.
   const layers = Array.from({ length: 30 }, (_unused, turn) => ({
     turn,
-    index: turn * 2 + 1,
+    index: turn * 2,
     candidateSeq: turn * 10,
     variables: { stat_data: { count: turn }, schema: {}, event_chain: ['a'] },
   }))
 
   const plan = planPrune(layers, 59, { snapshotInterval: 10, keepRecent: 5 })
-  const prunedTurns = plan.filter(decision => decision.removed !== undefined).map(decision => decision.turn)
+  const prunedIndices = plan.filter(decision => decision.removed !== undefined).map(decision => decision.turn * 2)
 
-  // Every reply sits at an odd index, and no odd number is a multiple of ten,
-  // so on this fixture the interval keeps nothing at all. What keeps a layer
-  // here is the recent window: index > 59 - 5, which is indices 55, 57 and 59,
-  // i.e. turns 27, 28 and 29.
+  // Three rules, and the fixture is built so each one owns a different stretch.
+  // newestIndex 59, keepRecent 5: the edge is 54 and the window opens at
+  // max(1, 54 - 2 - 10) = 42. So only replies 42..54 are examined at all.
   //
-  // That is what makes the fixture discriminating. A turn-counted rule keeps
-  // turns 0, 10 and 20 — and an index-counted one prunes them. Asserting that
-  // turn 0 survives would have passed against both.
-  assert.equal(prunedTurns.includes(29), false, 'turn 29 (index 59) is inside the recent window')
-  assert.equal(prunedTurns.includes(28), false, 'turn 28 (index 57) is inside the recent window')
-  assert.ok(prunedTurns.includes(0), 'turn 0 sits at index 1, which is not on the interval')
-  assert.ok(prunedTurns.includes(7) && prunedTurns.includes(13))
+  // Below the window nothing is touched — **not protected, just never reached**,
+  // which is what stops enabling cleanup from sweeping a long history.
+  // Inside it, index 50 is on the ten-interval and is kept and marked; the rest go.
+  // Above the edge the recent window keeps 56 and 58.
+  assert.deepEqual(prunedIndices, [42, 44, 46, 48, 52, 54])
+
+  // A turn-counted rule would keep turns 0, 10, 20 and 50 lands nowhere near its
+  // interval, so this list fails in both directions.
+  const reason = (index: number): string => plan.find(one => one.turn * 2 === index)?.reason ?? ''
+  assert.match(reason(50), /snapshot interval, and marked/u, 'the interval snapshot inside the window was not kept')
+  assert.match(reason(0), /below the cleanup window/u, 'the opening floor was reached by the scan')
+  assert.match(reason(58), /within the newest 5 messages/u, 'the newest replies are not in the recent window')
 
   // Five named keys, never the layer. A card's own key survives, because
   // deciding an unrecognised key is disposable decides for its author.
-  const one = plan.find(decision => decision.turn === 7)
+  const one = plan.find(decision => decision.turn * 2 === 44)
   assert.deepEqual(one?.removed, ['stat_data', 'schema'])
   assert.equal(
     (one?.removed ?? []).some(key => key === 'event_chain'),
@@ -141,8 +145,11 @@ test('the plan keeps snapshots, keeps the recent window, and prunes between', ()
 
 test('a layer already marked as a snapshot is never pruned again', () => {
   const layers = [
-    { turn: 3, index: 7, candidateSeq: 1, variables: { stat_data: {}, [SNAPSHOT_KEY]: true } },
-    { turn: 4, index: 9, candidateSeq: 2, variables: { stat_data: {} } },
+    // Inside the scan window for newestIndex 100 / keepRecent 5, which opens at
+    // max(1, 95 - 2 - 10) = 83. Below it the scan never looks, and a layer kept
+    // for that reason would say nothing about the mark.
+    { turn: 42, index: 84, candidateSeq: 1, variables: { stat_data: {}, [SNAPSHOT_KEY]: true } },
+    { turn: 43, index: 86, candidateSeq: 2, variables: { stat_data: {} } },
   ]
   const plan = planPrune(layers, 100, { snapshotInterval: 50, keepRecent: 5 })
 
@@ -204,8 +211,10 @@ test('a pruned floor reads as empty rather than as an error', async (t) => {
   const entry = await chats.open(chatId)
   entry.prune({ snapshotInterval: 50, keepRecent: 2 })
 
-  // Floor 2 is the first assistant reply, old enough to have been pruned.
-  const { context } = await handlers['script.context']({ chatId, characterId: 'aria', messageId: 2 })
+  // Thirteen lines, keepRecent 2: the edge is 10 and the window opens at
+  // max(1, 10 - 2 - 4) = 4. Floor 6 is inside it. Floor 2 is not — and asking
+  // about a floor the scan never reaches would test the bound, not the read.
+  const { context } = await handlers['script.context']({ chatId, characterId: 'aria', messageId: 6 })
   const floor = context.floor?.variables ?? {}
   // Empty of the pruned keys, and not an error: a pruned floor and one that
   // never wrote anything are the same thing to a reader, which is the precedent
@@ -229,9 +238,16 @@ test('pruning turns linear growth into interval growth', async (t) => {
     for (let index = 0; index < turns; index += 1) {
       await handlers['chat.send']({ chatId, text: `Message ${String(index)}.` })
       await settled()
+      // **As the chat grows, not once at the end.** The scan is a bounded window
+      // near the recent edge, so a single pass over a finished chat cleans one
+      // stretch and leaves the rest — the growth curve is what the window
+      // sliding forward produces, and running it any other way measures a shape
+      // the host never has.
+      if (!prune) continue
+      const live = await chats.open(chatId)
+      if (pruneDue(chatLines(live.session).length)) live.prune({ snapshotInterval: 5, keepRecent: 2 })
     }
     const entry = await chats.open(chatId)
-    if (prune) entry.prune({ snapshotInterval: 5, keepRecent: 2 })
     return variableBytes(entry.toFile() as { messages: { variables?: unknown }[] })
   }
 
@@ -306,12 +322,9 @@ test('a turn does not prune unless the host was told to', async (t) => {
   )
 })
 
-test('a 677-message chat keeps exactly the snapshots SillyTavern kept', () => {
-  // The shape of the corpus's longest chat: a reply on every even index, a user
-  // row on every odd one, 677 lines. Synthetic rather than the file itself,
-  // because the file has already been cleaned and cannot answer this — but the
-  // set it must reproduce is the one measured on that file.
-  const messages: SillyTavernMessage[] = Array.from({ length: 677 }, (_unused, index) => index % 2 === 1
+/** The corpus's longest chat, by shape: a reply on every even index, 677 lines. */
+function longChat(): SillyTavernMessage[] {
+  return Array.from({ length: 677 }, (_unused, index) => index % 2 === 1
     ? { name: 'Traveller', is_user: true, mes: 'u' }
     : {
         name: 'Aria',
@@ -319,47 +332,127 @@ test('a 677-message chat keeps exactly the snapshots SillyTavern kept', () => {
         mes: 'a',
         swipes: ['a'],
         swipe_id: 0,
-        // No `snapshot` mark: a marked layer is kept whatever the unit counts,
-        // so seeding one would make this test agree with the implementation it
-        // is supposed to discriminate against.
+        // No `snapshot` mark: a marked layer is kept whatever the rule counts,
+        // so seeding one would make these tests agree with the implementations
+        // they exist to discriminate against.
         variables: [{ stat_data: { n: index }, schema: {}, event_chain: ['x'] }],
       })
-  const header: SillyTavernChatHeader = {
-    user_name: 'Traveller',
-    character_name: 'Aria',
-    create_date: '2026-01-22 @04h13m05s',
-    chat_metadata: {},
+}
+
+const LONG_HEADER: SillyTavernChatHeader = {
+  user_name: 'Traveller',
+  character_name: 'Aria',
+  create_date: '2026-01-22 @04h13m05s',
+  chat_metadata: {},
+}
+
+test('the window, slid over a whole chat, lands where SillyTavern left its snapshots', () => {
+  // **Not one global pass.** Upstream cleans a bounded window near the recent
+  // edge and runs on `chat.length % 5`, so the disk state of a long chat is the
+  // accumulated result of that window sliding forward as the conversation grew.
+  // Simulating the growth is the only way to compare against a real file: a
+  // single pass over a restored chat is a shape upstream never produces.
+  const layers = []
+  for (let index = 0; index < 677; index += 2) {
+    layers.push({
+      turn: index / 2,
+      index,
+      candidateSeq: index,
+      variables: { stat_data: { n: index }, schema: {}, event_chain: ['x'] } as Record<string, unknown>,
+    })
+  }
+  const pruned = new Set<number>()
+
+  for (let length = 1; length <= 677; length += 1) {
+    if (!pruneDue(length)) continue
+    const newestIndex = length - 1
+    const live = layers.filter(layer => layer.index <= newestIndex && !pruned.has(layer.candidateSeq))
+    for (const decision of planPrune(live, newestIndex, DEFAULT_PRUNE)) {
+      if (decision.removed !== undefined) { pruned.add(decision.candidateSeq); continue }
+      // A kept-and-marked layer carries its mark forward, as upstream’s does —
+      // without this the simulation re-decides each pass and the marks mean nothing.
+      if (decision.reason.includes('and marked')) {
+        const layer = layers.find(one => one.candidateSeq === decision.candidateSeq)
+        if (layer !== undefined) layer.variables[SNAPSHOT_KEY] = true
+      }
+    }
   }
 
-  const session = importChat({ header, messages }, 'long')
-  const entry = new ChatEntry({ chatId: 'long', header, session, card: undefined })
-  const dropped: string[] = []
-  entry.hydrateVariables(messages, message => dropped.push(message))
-  assert.deepEqual(dropped, [], 'the fixture lost tables before the rule ever ran')
-
-  entry.prune(DEFAULT_PRUNE)
-
-  const survivors: number[] = []
-  for (const [index, line] of chatLines(session).entries()) {
-    if (line.isUser) continue
-    if ('stat_data' in (entry.readFloorVariables(index).variables ?? {})) survivors.push(index)
-  }
-
-  // **The two-way discriminator.** Counting turns instead of messages puts a
-  // snapshot every 100 messages, so this equality fails in both directions: a
-  // turn-counted rule keeps too few here, and a rule with the window in the
-  // wrong unit keeps too many at the end.
+  const survivors = layers.filter(layer => !pruned.has(layer.candidateSeq)).map(layer => layer.index)
   assert.deepEqual(
     survivors.filter(index => index % 50 === 0),
     Array.from({ length: 14 }, (_unused, k) => k * 50),
     'the interval survivors are not the set SillyTavern left on the same chat',
   )
-
-  // The tail is not compared by length: upstream's own trigger (`chat.length % 5`)
-  // means the file's recent window is whatever it was when cleanup last ran, so
-  // only the shape is pinned.
   const tail = survivors.filter(index => index % 50 !== 0)
-  assert.ok(tail.length > 0, 'the recent window kept nothing')
   assert.equal(tail[tail.length - 1], 676, 'the recent window does not reach the newest reply')
   assert.ok(tail.every((index, k) => k === 0 || index - (tail[k - 1] ?? 0) === 2), 'the recent window has a hole')
+})
+
+test('switching cleanup on does not catch up on a chat that was never cleaned', () => {
+  // The reason the window is bounded, stated as a test. Upstream never sweeps a
+  // long history in one pass, so enabling this must not either: the first run
+  // touches the window and nothing below it.
+  const messages = longChat()
+  const session = importChat({ header: LONG_HEADER, messages }, 'never-cleaned')
+  const entry = new ChatEntry({ chatId: 'never-cleaned', header: LONG_HEADER, session, card: undefined })
+  const dropped: string[] = []
+  entry.hydrateVariables(messages, message => dropped.push(message))
+  assert.deepEqual(dropped, [], 'the fixture lost tables before the rule ever ran')
+
+  const removed = entry.prune(DEFAULT_PRUNE)
+
+  // newestIndex 676, keepRecent 20: the edge is 656 and the window opens at
+  // max(1, 656 - 2 - 40) = 614. Twenty-two replies sit in [614, 656]; 650 is on
+  // the interval and is kept, so twenty-one go.
+  assert.equal(removed, 21, 'the first run did not touch exactly the window')
+  const intact = (index: number): boolean =>
+    'stat_data' in (entry.readFloorVariables(index).variables ?? {})
+  assert.ok(intact(0), 'the opening floor was swept')
+  assert.ok(intact(300), 'a floor far below the window was swept')
+  assert.ok(intact(612), 'a floor just below the window was swept')
+  assert.equal(intact(614), false, 'the window opened later than upstream would')
+  assert.ok(intact(650), 'the interval snapshot inside the window was not kept')
+  assert.ok(intact(676), 'the newest reply was swept')
+})
+
+test('a chat upstream would offer to clean says so, once, and honours a refusal', () => {
+  // Detection only. Upstream sweeps `[1, len - 1 - keep]` here — far more than the
+  // periodic window — but only after asking, with a backup offered first. Doing
+  // that sweep without the question is the one version that must not exist, so
+  // what is pinned here is that we notice and say so rather than act.
+  const messages = longChat()
+  const session = importChat({ header: LONG_HEADER, messages }, 'legacy')
+  const entry = new ChatEntry({ chatId: 'legacy', header: LONG_HEADER, session, card: undefined })
+  entry.hydrateVariables(messages)
+
+  const first = entry.legacyCleanupNote(DEFAULT_PRUNE)
+  assert.match(first ?? '', /never been cleaned/u)
+  assert.match(first ?? '', /does not do that on its own/u)
+
+  // Once per loaded chat: the condition stays true while we decline to act, so a
+  // line every turn would be a notice that never changes.
+  assert.equal(entry.legacyCleanupNote(DEFAULT_PRUNE), undefined, 'the notice repeated itself')
+})
+
+test('the gates upstream uses, each one load-bearing', () => {
+  const table = (): Record<string, unknown> => ({ stat_data: { n: 1 }, schema: {} })
+
+  assert.equal(looksNeverCleaned(table(), 677, DEFAULT_PRUNE), true)
+
+  // Too short: upstream requires more than `keepRecent + 5` lines before it asks.
+  assert.equal(looksNeverCleaned(table(), DEFAULT_PRUNE.keepRecent + 5, DEFAULT_PRUNE), false)
+
+  // Already swept: no `stat_data` on the first floor is what a cleaned chat looks
+  // like, and it is the gate that stops the offer being made twice.
+  assert.equal(looksNeverCleaned({ event_chain: [] }, 677, DEFAULT_PRUNE), false)
+
+  // Refused before. **Upstream's key name, not one of ours** — a chat carried
+  // between the two hosts has to keep the answer its owner already gave.
+  assert.equal(
+    looksNeverCleaned({ ...table(), [IGNORE_CLEANUP_KEY]: true }, 677, DEFAULT_PRUNE),
+    false,
+    'a recorded refusal was ignored',
+  )
+  assert.equal(IGNORE_CLEANUP_KEY, 'ignore_cleanup')
 })

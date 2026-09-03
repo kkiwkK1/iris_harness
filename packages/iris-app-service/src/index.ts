@@ -231,7 +231,7 @@ export const Config: z<Config> = z.object({
   webDistIndex: z.string(),
   sandboxPath: z.string().default('/sandbox'),
   templates: z.boolean().default(false),
-  pruneVariables: z.boolean().default(false),
+  pruneVariables: z.boolean().default(true),
   pruneSnapshotInterval: z.natural().default(50),
   pruneKeepRecent: z.natural().default(20),
   templateDeadlineMs: z.natural().default(2000),

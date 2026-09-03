@@ -480,14 +480,63 @@ schema advertised it, and the pass-through between them was never written — so
 the cleanup has never run on a real host, at any setting, and the wrong unit
 could not reach a user's data.
 
-The wiring is now in place, still defaulting to off. **This is the more serious
-of the two findings**: a unit error is visible to anyone who reads the rule, and
-a feature that is fully implemented, fully tested and never called is visible to
-nobody — every test passes, because tests construct the service directly and
-pass the option the plugin never passed.
+The wiring is now in place. **This is the more serious of the two findings**: a
+unit error is visible to anyone who reads the rule, and a feature that is fully
+implemented, fully tested and never called is visible to nobody — every test
+passes, because tests construct the service directly and pass the option the
+plugin never passed.
 
-When it is switched on, a pruned floor still names the nearest intact one, which
-is what makes the deletion legible; nothing is replayed back.
+### The default is on, and the cost of that is not symmetric with upstream
+
+It defaults **on**, matching upstream, whose `启用: true` reaches every install
+through a `.prefault({})`. That is not only a reading of a schema: on the corpus,
+every chat long enough to qualify has already been cleaned — the 677-message file
+keeps 31 of 344 layers with a median layer of 39 bytes — and nobody turned that
+on by hand.
+
+**Defaulting off had a cost that no rule of ours would have produced.** An
+imported chat arrives already cleaned by SillyTavern, with snapshots at message
+0, 50, 100 and so on. If this host then never cleaned, the same profile would
+carry chats whose early history is upstream-trimmed and whose later history is
+kept whole — a shape that is the arithmetic of two defaults meeting, not the
+output of either one, and the divergence grows with the length of the chat.
+
+**But the same default does not cost the same on both sides, and that asymmetry
+is the part worth reading twice.** Upstream can afford to delete because
+`restoreVariables` folds `updateVariables` forward from the nearest snapshot: its
+cleanup discards a cache. **This host does not replay**, so a trimmed floor here
+is gone, and what remains is a report naming the nearest intact floor below it.
+Copying the default is right; copying it while implying the consequences match
+would not be.
+
+### The legacy path: detected, reported, not performed
+
+Upstream has a second cleanup that the periodic one does not cover.
+`checkAndCleanupLegacyChat` runs unconditionally at init and, behind four gates —
+enabled, longer than `keepRecent + 5`, `chat[1].variables[0].stat_data` still
+present, and no recorded `ignore_cleanup` — **asks the user**: clean, never ask
+again, or export a backup through `/api/chats/export` and then clean. Its action
+is a full sweep of `[1, len - 1 - keep]`, far wider than the periodic window.
+
+This host evaluates the same four gates and **reports**, once per loaded chat.
+It does not sweep. The dialog and the backup are what make that deletion
+legitimate upstream, and performing the sweep without them would convert a
+deletion its author requires consent for into a silent one — the largest single
+thing this feature could do, done quietly. The three-button prompt and the export
+belong to the shell and are on the roadmap.
+
+**`ignore_cleanup` is upstream's key, kept verbatim.** A refusal is persisted on
+the chat itself, so a chat moved between the two hosts carries the answer its
+owner already gave. Inventing a name here would mean asking again someone who
+had said no.
+
+**Floor 0 is protected by name, not by arithmetic.** `legacy_chat.ts:94` carries
+an explicit comment and expresses it as `start = 1`; the periodic path then also
+keeps it through `0 % interval === 0`. An earlier note here called it a side
+effect of the modulo, which was wrong about upstream’s intent — though the
+testing consequence it drew still holds: because both paths keep floor 0, an
+assertion that it survives cannot tell a correct implementation from one that
+special-cases it.
 
 Two things diverge, both on the read side.
 

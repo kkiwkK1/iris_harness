@@ -41,11 +41,17 @@
  * replayed back, so half the snapshot density is simply a longer reach backwards
  * for anyone asking why a floor reads the way it does.
  *
- * **Floor 0 is not a rule.** It survives as two side effects — `0 % 50 === 0`,
- * and upstream’s `Math.max(1, …)` lower bound. Worth knowing when writing a
- * test: an assertion that floor 0 survives passes against an implementation that
- * special-cases it *and* one that does not, so it discriminates nothing. The
- * assertions with teeth are on the interval snapshots themselves.
+ * **Floor 0 is a named rule upstream**, and an earlier version of this note said
+ * the opposite. `legacy_chat.ts:94` carries an explicit comment for it and
+ * expresses it as `start = 1`; the periodic path then also happens to keep it
+ * through `0 % interval === 0`. Two mechanisms, one intent — it is protected on
+ * purpose, not by arithmetic accident.
+ *
+ * What remains true is the *testing* consequence, which is why the correction
+ * matters less to the code than to the tests: because both mechanisms keep floor
+ * 0, an assertion that floor 0 survives passes against an implementation that
+ * special-cases it and against one that does not. It discriminates nothing here.
+ * The assertions with teeth are on the interval snapshots themselves.
  * **Nothing is restored.** Upstream replays `updateVariables` forward from the
  * nearest snapshot; our MVU commands are already folded into candidate state by
  * the time they are stored, so there is nothing to replay. A pruned floor is
@@ -136,6 +142,46 @@ export interface PruneOptions {
  * frequency: the interval rule marks what it keeps, so a cleanup that runs at a
  * different cadence marks a different set of layers, and the marks persist.
  */
+/**
+ * The key upstream writes when someone declines its one-time cleanup offer.
+ *
+ * Copied rather than invented. Upstream persists the refusal on the chat itself
+ * (`chat[1].variables[0].ignore_cleanup = true`), so a chat carried between the
+ * two hosts keeps its answer; a name of our own would silently ask again someone
+ * who had already said no.
+ */
+export const IGNORE_CLEANUP_KEY = 'ignore_cleanup'
+
+/**
+ * Whether this chat has never been through a cleanup, by upstream’s own test.
+ *
+ * The gates are `cleanup/legacy_chat.ts:7-14, 93-97`, minus the one asking whether
+ * the feature is enabled (the caller answers that): the chat is longer than
+ * `keepRecent + 5`, its first floor still holds `stat_data` — which is what "no
+ * cleanup has ever run here" looks like — and nobody has recorded a refusal.
+ *
+ * **Upstream acts on this by asking**: clean, never ask again, or export a backup
+ * and then clean; and its action is a full sweep of `[1, len - 1 - keep]` rather
+ * than the bounded window. This host does none of that. The gates are still worth
+ * evaluating, because doing the sweep without the question would turn a deletion
+ * upstream requires consent for into a silent one — and saying nothing at all
+ * would leave a user unaware the offer exists.
+ * @param firstFloor - the table on message 1, if any.
+ * @param lineCount - how many chat lines the log holds.
+ * @param options - the protection window, for the length gate.
+ * @returns true when upstream would raise its one-time offer.
+ */
+export function looksNeverCleaned(
+  firstFloor: Record<string, unknown> | undefined,
+  lineCount: number,
+  options: PruneOptions = DEFAULT_PRUNE,
+): boolean {
+  if (firstFloor === undefined) return false
+  if (lineCount <= options.keepRecent + 5) return false
+  if (Object.prototype.hasOwnProperty.call(firstFloor, IGNORE_CLEANUP_KEY)) return false
+  return Object.prototype.hasOwnProperty.call(firstFloor, 'stat_data')
+}
+
 export const PRUNE_EVERY_MESSAGES = 5
 
 /**
@@ -179,8 +225,26 @@ export function planPrune(
 ): PruneDecision[] {
   const plan: PruneDecision[] = []
 
+  // **Upstream cleans a bounded window near the recent edge, not the whole
+  // chat**: `cleanupMessageVariables(max(1, old - 2 - keep * 2), old, interval)`
+  // with `old = message_id - keep`. Everything below that window is left
+  // alone — not because it is protected, but because the scan never reaches it.
+  //
+  // Reproducing the bound is what keeps switching this on from being a mass
+  // deletion. A chat that has never been cleaned does not get caught up in one
+  // pass; the window slides forward as the conversation grows and each layer is
+  // examined once, on the way past. Scanning globally would produce the same
+  // steady state and a very different first run.
+  const edge = newestIndex - options.keepRecent
+  const floor = Math.max(1, edge - 2 - options.keepRecent * 2)
+
   for (const layer of layers) {
     const base = { turn: layer.turn, candidateSeq: layer.candidateSeq }
+
+    if (layer.index < floor) {
+      plan.push({ ...base, reason: `kept: below the cleanup window, which starts at message ${String(floor)}` })
+      continue
+    }
 
     if (layer.variables[SNAPSHOT_KEY] === true) {
       plan.push({ ...base, reason: 'kept: already marked as a snapshot' })

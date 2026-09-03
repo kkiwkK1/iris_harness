@@ -1186,6 +1186,12 @@ export class IrisAppService {
       // rather than running every turn. The cadence is not cosmetic: the
       // interval rule marks the layers it keeps, and marks persist, so a
       // cleanup running at a different rhythm pins a different set of them.
+      // Said whether or not this turn is a cleanup turn, because it is about the
+      // chat’s state rather than about this run.
+      if (prune !== undefined) {
+        const note = entry.legacyCleanupNote(prune)
+        if (note !== undefined) this.#report(note, { kind: 'variables', chatId: entry.chatId })
+      }
       if (prune !== undefined && pruneDue(chatLines(entry.session).length)) {
         entry.prune(prune, message => { this.#report(message, { kind: 'variables', chatId: entry.chatId }) })
       }

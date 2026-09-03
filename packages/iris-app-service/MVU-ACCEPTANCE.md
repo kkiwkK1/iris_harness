@@ -157,20 +157,45 @@ half the recovery points. Nothing is restored from a pruned floor here, so that
 is a real difference in how far back a long chat can be reasoned, and it belongs
 in the ledger rather than in a passing test.
 
-### The trimming half, on the same shape with tables restored
+### The trimming half — and why one pass is the wrong experiment
 
 Every floor given a real 93,086-byte table (one per swipe — a line carrying
 fewer tables than the turn has candidates leaves the *selected* swipe empty, and
-the floor then reads blank for reasons that have nothing to do with pruning):
+the floor then reads blank for reasons that have nothing to do with pruning).
+
+**The first version of this measurement pruned once over the restored chat and
+reported 311 floors trimmed. That number described a shape upstream never
+produces.** The cleanup scans a bounded window near the recent edge —
+`[max(1, old - 2 - keep * 2), old]` with `old = newest - keep` — and runs on
+`chat.length % 5`. A long chat is clean because that window slid over it, not
+because anything ever swept it.
+
+So there are two measurements, and they answer different questions.
+
+**One run on a chat that was never cleaned** — what switching the feature on
+actually does:
 
 ```
 338 floors, hydration drops 0
-trimmed 311, kept 27:  0, 50, 100, 150, 200, 250, 300  +  318..337
-floor 0:               kept, 6 keys -> 7 after the run (the added `snapshot` mark)
-newest 20 turns:       all kept
-live table bytes:      30.01 MiB -> 2.40 MiB      (O(N) -> O(N/interval))
-iris/variables log:    grows, because the trim is an appended event, not a rewrite
+window:      newest 676, keepRecent 20 -> edge 656, opens at max(1, 656-2-40) = 614
+trimmed 21:  the replies in [614, 656], except 650, which is on the interval
+untouched:   messages 0, 300, 612 — below the window, never examined
+floor 0:     kept
 ```
+
+Twenty-one floors, not three hundred and eleven. **Enabling the cleanup is not a
+catch-up sweep**, which is the property that makes defaulting it on defensible.
+
+**The window slid over the whole chat** — what a long conversation converges on:
+
+```
+survivors:   25
+interval:    0, 50, 100, ... 650      deepEqual against SillyTavern’s own set: true
+tail:        656..676
+```
+
+That equality is the acceptance: our rule, run the way the host runs it, lands
+exactly where SillyTavern left its snapshots on the same conversation.
 
 A trimmed floor, read back:
 
@@ -180,7 +205,7 @@ turn 159 -> keys ["event_chain"]
              schema, stat_data); the nearest intact turn is 150"
 ```
 
-**Not `{}`.** The five named keys go; `event_chain` — a key this card's author
+**Not `{}`.** The five named keys go; `event_chain` — a key this card’s author
 put there and nothing here recognises — stays. Any acceptance written as "a
 pruned floor reads empty" would fail against the correct implementation, for the
 same reason "the file gets smaller" would.
@@ -189,9 +214,13 @@ same reason "the file gets smaller" would.
 
 | Wrong version | What it does on this chat |
 | --- | --- |
-| `keepRecent` counted in message indices | protects **10** turns instead of 20 — **10 floors wrongly trimmed**, all of them recent |
-| interval counted in message indices | keeps **14** snapshots instead of 7 (this is what ST does — see above) |
-| floor 0 as an explicit special case | **identical here.** `0 % 50 === 0` already keeps it, so a floor-0 assertion has no teeth; the assertion with teeth is that turns 50, 100, 150, 200, 250, 300 are kept |
+| `keepRecent` counted in turns | protects **10** replies instead of 20 |
+| interval counted in turns | keeps **7** snapshots instead of 14, so the survivor set fails `deepEqual` in both directions |
+| no window bound (one global scan) | trims **311** floors on first enable instead of 21 — the same steady state, a catastrophic first run |
+| floor 0 as an explicit special case | **identical here.** Both paths keep it, so a floor-0 assertion cannot tell the two apart; the assertion with teeth is on the interval snapshots |
 
-The last row is the one to carry forward: floor 0 was the headline rule and is
-the one condition this chat cannot discriminate on.
+The last row is worth carrying forward, with a correction attached: floor 0 *is*
+a named rule upstream (`legacy_chat.ts:94`, expressed as `start = 1`), so calling
+it an accident of the modulo — as an earlier draft here did — was wrong about
+intent. What survives is the narrower claim, which is about tests rather than
+about upstream: this chat cannot discriminate on it.

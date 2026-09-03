@@ -39,7 +39,7 @@ import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore
 import { scriptIdOf } from './script-variables.ts'
 
 import { busy } from './errors.ts'
-import { applyPrune, applyPruned, DEFAULT_PRUNE, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
+import { applyPrune, applyPruned, DEFAULT_PRUNE, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
 import { scriptsOf, substituteFor } from './regex.ts'
 import { textOf, toChatView, type Names, type PendingTurn } from './views.ts'
 
@@ -1067,6 +1067,38 @@ export class ChatEntry {
    * @param onReport - told what was decided, per pruned turn.
    * @returns how many turns were pruned.
    */
+  /**
+   * Say so, once, when this chat is one upstream would offer to clean.
+   *
+   * Detection only. Upstream sweeps `[1, len - 1 - keep]` here — far more than
+   * the periodic window — but only after asking, with an option to export the
+   * chat first. **Doing the sweep without the question is the one version of
+   * this that must not exist**, so this host reports and stops.
+   *
+   * Once per loaded chat: the condition stays true for as long as we decline to
+   * act on it, so repeating it every turn would bury the log in a notice that
+   * never changes.
+   * @param options - the protection window, for the length gate.
+   * @returns the line to report, or undefined when there is nothing to say.
+   */
+  legacyCleanupNote(options: PruneOptions = DEFAULT_PRUNE): string | undefined {
+    if (this.#saidNeverCleaned) return undefined
+    let firstFloor: Variables | undefined
+    // Message 1, as upstream reads it. On this host a user row answers with its
+    // reply’s table, which is the residual recorded in DEVIATIONS 14 — the
+    // floor being asked about is the same one either way.
+    try { firstFloor = this.readFloorVariables(1).variables } catch { return undefined }
+    if (!looksNeverCleaned(firstFloor, chatLines(this.session).length, options)) return undefined
+    this.#saidNeverCleaned = true
+    return "this chat has never been cleaned: SillyTavern would offer to trim its"
+      + " older variable tables here, with a backup first. This host does not do that"
+      + " on its own — the periodic cleanup only ever touches a window near the"
+      + ` newest ${String(options.keepRecent)} messages.`
+  }
+
+  /** Whether {@link legacyCleanupNote} has already spoken for this chat. */
+  #saidNeverCleaned = false
+
   prune(options: PruneOptions = DEFAULT_PRUNE, onReport?: (message: string) => void): number {
     const removed = prunedKeysOf(this.session)
     const layers: { turn: number, index: number, candidateSeq: number, variables: Variables }[] = []
@@ -1100,12 +1132,31 @@ export class ChatEntry {
     }
 
     const plan = planPrune(layers, newestIndex, options)
-    for (const decision of plan) {
-      if (decision.removed === undefined) continue
+
+    // **One line per run, not one per layer.** A run trims a whole window, and
+    // twenty identical sentences are how a log stops being read — but the run
+    // itself must speak every time, because it deletes something nothing restores.
+    const taken = plan.filter(decision => decision.removed !== undefined)
+    if (taken.length > 0) {
+      const at = taken.map(decision => layers.find(one => one.candidateSeq === decision.candidateSeq)?.index)
+        .filter((index): index is number => index !== undefined)
+        .sort((first, second) => first - second)
+      const listed = at.slice(0, 8).map(String).join(", ")
+      const more = at.length > 8 ? ` and ${String(at.length - 8)} more` : ""
+      // The newest floor below the trimmed range that still holds its table: the
+      // point a reader has to fall back to, which is the only thing that makes the
+      // loss navigable rather than merely announced.
+      const kept = layers.filter(layer => !taken.some(decision => decision.candidateSeq === layer.candidateSeq))
+        .map(layer => layer.index)
+        .filter(index => index < (at[0] ?? 0))
+      const nearest = kept.length === 0 ? undefined : Math.max(...kept)
       onReport?.(
-        `pruned turn ${String(decision.turn)}: removed ${decision.removed.join(', ')}`
-        + ` — ${decision.reason}. This is not reversible; the kept snapshots are the only points`
-        + ' this conversation can be reasoned back to.',
+        `variables: trimmed ${String(taken.length)} floor(s) at message ${listed}${more};`
+        + ` removed ${PRUNED_KEYS.join(", ")} from each.`
+        + (nearest === undefined
+          ? " No intact floor remains below them."
+          : ` The nearest intact floor below them is message ${String(nearest)}.`)
+        + " This is not reversible.",
       )
     }
     return applyPrune(this.session, plan, layers)
