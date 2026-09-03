@@ -113,14 +113,37 @@ export function CardScriptFrames(): ReactElement {
     let resolvedAssets: SandboxAssets | undefined
 
     /**
-     * The preset's absolute URL for this build.
+     * The preset a card's script frame loads — the **message** preset.
+     *
+     * **Not the script preset, and the reason is that this frame is now the
+     * overlay surface.** Upstream injects two libraries into a script frame and
+     * eight into a message frame, and the message preset is a strict superset of
+     * the script one [44] — it carries Font Awesome and Tailwind, which the
+     * script preset does not. A card that draws its interface here (the third
+     * class of card, the one option C exists for) styles it with exactly those.
+     *
+     * The symptom of getting this wrong is the one that cost a round: 银麒赎世's
+     * floating button reported a **61×61 box** through `regions`, the clip was
+     * correct, hit-testing was correct, and **nothing was drawn** — a box with
+     * no icon font and no utility classes behind it. "Box present, screen empty"
+     * has several possible causes and this was the cheapest to check, because
+     * the ruling that the surface's realm needs the superset had already been
+     * made; it simply was not carried through when option C moved the surface
+     * onto this frame.
+     *
+     * **It costs nothing on any page that renders an interface, and saves.** The
+     * message preset is content-hashed and cached, and interface frames already
+     * load it — so a chat with any rendered panel now fetches **one** preset
+     * where it used to fetch two, 1.66 MB instead of 1.66 + 0.83. Only a chat
+     * with scripts and no interfaces pays more, and it pays once per page.
+     * `FRAME_OVERHEAD_BYTES` is untouched either way: presets are not inlined.
      * @returns the URL to put in the frame's library tag.
      */
     const presetUrl = (): string => {
       if (resolvedAssets === undefined) {
         throw new Error('the sandbox manifest was not resolved before the frame was built')
       }
-      return `${window.location.origin}${resolvedAssets.preset}`
+      return `${window.location.origin}${resolvedAssets.messagePreset}`
     }
 
     /**
