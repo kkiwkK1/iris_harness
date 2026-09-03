@@ -116,7 +116,7 @@ export type FromFrame =
    * shell comparing one string against the one already set is what lets it skip
    * the write.
    */
-  | { iris: string, type: 'regions', clip: string }
+  | { iris: string, type: 'regions', clip: string, detail?: string }
   /**
    * The card assigned something into its extension settings.
    *
@@ -368,8 +368,22 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
        * pathological — and a `clip-path` that long would be a performance
        * problem in the shell rather than a useful clip.
        */
+      const detail = message['detail']
       return typeof clip === 'string' && clip.length <= 8_000
-        ? { iris: token, type: 'regions', clip }
+        ? {
+            iris: token,
+            type: 'regions',
+            clip,
+            /*
+             * The visibility summary, for the panel only. Bounded because the
+             * card's own DOM decides how many regions there are, and this is a
+             * diagnostic — a thousand lines of it would push everything else
+             * out of the list it exists to sit in.
+             */
+            ...(typeof detail === 'string' && detail !== ''
+              ? { detail: detail.slice(0, 1_000) }
+              : {}),
+          }
         : undefined
     }
     case 'blocked': {

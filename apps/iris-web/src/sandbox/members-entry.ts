@@ -32,7 +32,7 @@
 import { MEMBERS_GLOBAL, MEMBERS_MARKER } from './members-contract.ts'
 import { createCardStorage } from './card-storage.ts'
 import { KNOWN_ST_IDS, createStAnchors } from './st-anchors.ts'
-import { clipPathFor, collectRegions } from './overlay-regions.ts'
+import { clipPathFor, collectRegions, describeVisibility } from './overlay-regions.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import {
   SETTLED_EVENT_NAMES,
@@ -57,6 +57,7 @@ host[MEMBERS_GLOBAL] = {
   KNOWN_ST_IDS,
   clipPathFor,
   collectRegions,
+  describeVisibility,
   createReportingToastr,
 }
 

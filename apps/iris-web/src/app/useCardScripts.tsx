@@ -232,6 +232,13 @@ export function CardScriptFrames(): ReactElement {
               networkGranted: false,
               context: input.context,
               viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+              /*
+               * This frame's box is `attach`'s below, not a measurement's: it is
+               * the card's overlay surface, so it is always the whole viewport
+               * and the clip decides what it catches. Without this the frame's
+               * own `sizing` report stripped that height back off again.
+               */
+              sizedByHost: true,
               fetch: async url => actionsOf(store).fetchScriptDependency(url),
               onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
               onSlash: async command => actionsOf(store).runSlash(command),
@@ -255,8 +262,17 @@ export function CardScriptFrames(): ReactElement {
                * one element reads. The frame already deduplicates by string, so
                * this runs only when the clip really changed.
                */
-              onRegions: clip => {
+              onRegions: (clip, detail) => {
                 frame?.element.style.setProperty('clip-path', clip)
+                /*
+                 * Reported, not only applied. "The clip is right and the screen
+                 * is empty" is a failure class the shell cannot see into, and
+                 * this line is the only thing that can say why — so it goes to
+                 * the panel rather than staying a style write.
+                 */
+                if (detail !== undefined) {
+                  actionsOf(store).addCardReport(`overlay: ${detail}`)
+                }
               },
               onBlocked: (blocked, directive, detail) => {
                 const text = detail === undefined

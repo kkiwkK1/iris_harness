@@ -52,5 +52,6 @@ export interface MemberTable {
   KNOWN_ST_IDS: readonly string[]
   clipPathFor: typeof import('./overlay-regions.ts').clipPathFor
   collectRegions: typeof import('./overlay-regions.ts').collectRegions
+  describeVisibility: typeof import('./overlay-regions.ts').describeVisibility
   createReportingToastr: typeof import('./toastr-report.ts').createReportingToastr
 }

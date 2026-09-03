@@ -144,6 +144,64 @@ function round(value: number): number {
   return Math.round(value * 10) / 10
 }
 
+/**
+ * Why a region might be occupying space and drawing nothing.
+ *
+ * **"Box present, screen empty" is its own failure class**, and it cost a round:
+ * 银麒赎世's trigger button reported a 61x61 rectangle, the clip was right, hit
+ * testing was right — `elementFromPoint` returned the frame — and the screen
+ * showed nothing there. Every remaining candidate (an opacity, a colour, a
+ * missing glyph, a transform) is a computed-style question **inside** the frame,
+ * which is the one place the shell cannot look.
+ *
+ * So the frame answers it. Reported beside the clip and **never** folded into
+ * it: the clip is decided by geometry alone, because a node that is invisible
+ * and still meant to catch clicks is a real thing (a transparent hit area), and
+ * mixing visibility into the clip would silently make those unclickable.
+ */
+export interface Visibility {
+  /** The element, as a card author would recognise it. */
+  label: string
+  /** `opacity`, when it is not 1 — the commonest way a box draws nothing. */
+  opacity?: string
+  /** `visibility`, when it is not `visible`. */
+  visibility?: string
+  /** Whether the node has any non-whitespace text of its own. */
+  text: boolean
+  /** Whether it paints a background or a border. */
+  paints: boolean
+  /**
+   * The first family in the resolved `font-family`.
+   *
+   * Here because of the specific failure above: a button whose content is the
+   * emoji `📱` draws nothing if no font in the stack has that glyph, and the
+   * resolved stack is the only thing that says so from inside.
+   */
+  font?: string
+}
+
+/**
+ * Summarise one region for the panel.
+ * @param it - what the element looks like.
+ * @returns one line, or undefined when there is nothing worth saying.
+ */
+export function describeVisibility(it: Visibility): string | undefined {
+  const notes: string[] = []
+  if (it.opacity !== undefined && it.opacity !== '1') notes.push(`opacity ${it.opacity}`)
+  if (it.visibility !== undefined && it.visibility !== 'visible') {
+    notes.push(`visibility ${it.visibility}`)
+  }
+  /*
+   * A box with no text, no background and no border is the shape that looks
+   * present and draws nothing. Said explicitly rather than left to be inferred
+   * from three absent fields, because the reader of this line is looking at an
+   * empty screen and needs the sentence, not the evidence.
+   */
+  if (!it.text && !it.paints) notes.push('no text, no background, no border')
+  if (it.font !== undefined) notes.push(`font ${it.font}`)
+  return notes.length === 0 ? undefined : `${it.label}: ${notes.join(', ')}`
+}
+
 /** What the collector needs to know about one element. */
 export interface Measured {
   rect: Region
@@ -155,6 +213,13 @@ export interface Measured {
    * direction where a mistake here is worse than the bug it fixes.
    */
   interactive: boolean
+  /**
+   * How it looks, for the panel only.
+   *
+   * Optional so the pure collector stays testable without a style engine, and
+   * so nothing about the clip can come to depend on it.
+   */
+  visibility?: Visibility
 }
 
 /**
@@ -177,6 +242,7 @@ export interface Measured {
 export function collectRegions<T>(
   roots: readonly T[],
   measure: (node: T) => { measured: Measured, children: readonly T[] },
+  seen: Visibility[] = [],
 ): Region[] {
   const found: Region[] = []
   const queue = [...roots]
@@ -196,6 +262,7 @@ export function collectRegions<T>(
     const { measured, children } = measure(node)
     if (measured.interactive && measured.rect.width > 0 && measured.rect.height > 0) {
       found.push(measured.rect)
+      if (measured.visibility !== undefined) seen.push(measured.visibility)
       continue
     }
     queue.push(...children)

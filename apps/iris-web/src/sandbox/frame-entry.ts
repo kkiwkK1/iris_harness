@@ -22,7 +22,7 @@ import { describeAttempts, type TimedResource } from './import-attempts.ts'
 import { describeTransferCost, type TransferTiming } from './transfer-cost.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { describeBlocked } from './blocked-report.ts'
-import type { Measured } from './overlay-regions.ts'
+import type { Measured, Visibility } from './overlay-regions.ts'
 import { MEMBERS_GLOBAL, MEMBERS_MARKER, type MemberTable } from './members-contract.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
@@ -174,16 +174,47 @@ function reportRegions(
   const measure = (node: Element): { measured: Measured, children: readonly Element[] } => {
     const rect = node.getBoundingClientRect()
     let interactive = true
+    let visibility: Visibility | undefined
     try {
+      const style = getComputedStyle(node)
       // A card's decorative layer declares this for itself, and taking it would
       // make Iris block clicks upstream lets through.
-      interactive = getComputedStyle(node).pointerEvents !== 'none'
+      interactive = style.pointerEvents !== 'none'
+      /*
+       * How it looks, **for the report only**. The clip above is decided by
+       * geometry alone: a node that is invisible and still meant to catch
+       * clicks is a real thing, and folding visibility into the clip would make
+       * those silently unclickable.
+       */
+      visibility = {
+        label: `${node.tagName.toLowerCase()}${node.id === '' ? '' : `#${node.id}`}`,
+        opacity: style.opacity,
+        visibility: style.visibility,
+        text: (node.textContent ?? '').trim() !== '',
+        paints:
+          (style.backgroundColor !== '' && !style.backgroundColor.startsWith('rgba(0, 0, 0, 0)'))
+          || style.backgroundImage !== 'none'
+          || (style.borderTopWidth !== '0px' && style.borderTopStyle !== 'none'),
+        // The resolved stack's first family: a button whose content is an emoji
+        // draws nothing if nothing in the stack carries the glyph, and this is
+        // the only place that can say what the stack resolved to.
+        // `exactOptionalPropertyTypes`: the key is omitted rather than set to
+        // undefined, so "no resolved family" and "we did not look" stay apart.
+        ...(() => {
+          const first = style.fontFamily.split(',')[0]?.trim()
+          return first === undefined || first === '' ? {} : { font: first }
+        })(),
+      }
     } catch {
       // A detached node has no computed style. Treated as interactive: the
       // rectangle is what decides, and a detached node's is empty anyway.
     }
     return {
-      measured: { rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, interactive },
+      measured: {
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        interactive,
+        ...(visibility === undefined ? {} : { visibility }),
+      },
       children: [...node.children],
     }
   }
@@ -202,10 +233,27 @@ function reportRegions(
       child => child.tagName !== 'SCRIPT' && child.tagName !== 'STYLE'
         && child.id !== 'tavern_helper',
     )
-    const clip = members.clipPathFor(members.collectRegions(roots, measure))
+    const seen: Visibility[] = []
+    const clip = members.clipPathFor(members.collectRegions(roots, measure, seen))
     if (clip === last) return
     last = clip
-    post({ iris: run, type: 'regions', clip })
+    /*
+     * The summary rides the same message and the same deduplication: it changes
+     * only when the clip does, so a still card sends nothing at all. That does
+     * mean a node that turns transparent without moving is not re-reported —
+     * accepted, because the alternative is a diagnostic that posts on every
+     * animation frame of every card.
+     */
+    const detail = seen
+      .map(it => members.describeVisibility(it))
+      .filter((line): line is string => line !== undefined)
+      .join('; ')
+    post({
+      iris: run,
+      type: 'regions',
+      clip,
+      ...(detail === '' ? {} : { detail }),
+    })
   }
 
   const schedule = (): void => {
@@ -474,16 +522,46 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
   send()
 }
 
+/** The last viewport applied, so a re-push that changes nothing stays silent. */
+let appliedViewport: { width: number, height: number } | undefined
+
 /**
  * Publish the viewport height as the custom property card CSS reads.
  *
  * `--TH-viewport-height` is upstream's name and is kept verbatim: card stylesheets
  * reference it by that spelling, and a compatibility layer that renames what it
  * is compatible with is not one.
+ *
+ * **A changed viewport also dispatches `resize` in here.** Upstream's cards run
+ * in the page, so a window resize reaches them as an event on their own
+ * `window`; here the size arrives as a message, and a card listening for
+ * `resize` — which is how a card that positions things itself finds out — would
+ * never hear one. The custom property alone only reaches cards whose layout is
+ * CSS.
+ *
+ * **Recorded limitation:** this moves the cards that *listen*. A card that read
+ * the viewport once, computed pixel positions from it and stored them stays
+ * where it was; nothing short of re-running it would move those, and re-running
+ * a card because the window changed shape is not a trade this makes.
+ *
+ * Silent unless the size actually changed, which also skips the first push: it
+ * arrives before any card body has evaluated, so there is nothing listening yet
+ * and a `resize` before load would only be noise in a card's own log.
  * @param size - the host viewport as the shell reported it.
  */
 function applyViewport(size: { width: number, height: number }): void {
   document.documentElement.style.setProperty('--TH-viewport-height', `${size.height}px`)
+  const changed =
+    appliedViewport !== undefined
+    && (appliedViewport.width !== size.width || appliedViewport.height !== size.height)
+  appliedViewport = { width: size.width, height: size.height }
+  if (!changed) return
+  try {
+    window.dispatchEvent(new Event('resize'))
+  } catch {
+    // A realm without `Event`. The property above is already set, so a
+    // CSS-driven card is unaffected — this only costs the listeners.
+  }
 }
 
 /**

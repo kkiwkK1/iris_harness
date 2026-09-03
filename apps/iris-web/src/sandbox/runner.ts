@@ -119,7 +119,7 @@ export interface RunnerHost {
    * meant for the shell. A message frame is laid out inside the reading column
    * and catches clicks over its own box, which is correct already.
    */
-  onRegions?: (clip: string) => void
+  onRegions?: (clip: string, detail?: string) => void
   /**
    * Something the frame observed that is not a failure.
    *
@@ -180,11 +180,37 @@ export interface RunnerHost {
   /**
    * The frame reported its content height, already bounded by the protocol.
    *
-   * The runner applies it either way; this is for a caller that needs to know it
-   * happened — which so far is the dev harness, whose whole job is observing
-   * that the mechanism works.
+   * Applied to the element unless `sizedByHost` says the box is not the
+   * runner's; reported here either way, for a caller that needs to know it
+   * happened — the dev harness, whose whole job is observing the mechanism, and
+   * an overlay host, for which this is the only remaining trace of it.
    */
   onHeight?: (pixels: number) => void
+  /**
+   * The host owns this frame's box, so height reports are diagnostics only.
+   *
+   * A message frame sits in document flow and its height is genuinely a
+   * *measurement* of its content, so the runner applies what the frame reports.
+   * An overlay frame is the opposite: the shell gives it the whole viewport and
+   * decides what it catches with a clip, so its box is a decision that was
+   * already made outside.
+   *
+   * **This flag exists because of a measured failure, not a tidiness argument.**
+   * Without it, an overlay frame's `sizing` message removed the inline
+   * `height:100%` the shell had set — and nothing re-supplied it, because the
+   * stylesheet rule that `sizing` hands off to selects message-frame slots. The
+   * element fell to an iframe's intrinsic **150px**. Everything after that was
+   * downstream of one number: the card laid out against the 150px viewport it
+   * now had, while the clip on file had been computed against the full 1353px
+   * one, so the single button on screen sat ~570px from the only hole it could
+   * be clicked through, and reading either number alone looked self-consistent.
+   *
+   * The two frame kinds are told apart by an explicit flag rather than by
+   * "`onRegions` is present": which callbacks a host supplies is a fact about
+   * what it wants to observe, and making geometry depend on it would mean a
+   * host that stopped listening silently changed how its frame is sized.
+   */
+  sizedByHost?: boolean
 }
 
 /** A running card. */
@@ -227,6 +253,18 @@ export interface RunningCard {
  */
 export function runCard(host: RunnerHost, document: Document): RunningCard {
   const token = mintToken()
+  /*
+   * The window comes from the injected document, not from the global.
+   *
+   * The document is a parameter so this function is not implicitly global — and
+   * four uses of the ambient `window` were quietly undoing that, which is why
+   * the height and clip handlers below had never been under test: there was no
+   * way to deliver a message to them without a browser. They are now.
+   */
+  const view = document.defaultView
+  if (view === null) {
+    throw new Error('runCard needs a document that belongs to a window')
+  }
   const frame = document.createElement('iframe')
 
   // Set before `srcdoc`: the sandbox attribute has to be in place when the
@@ -260,7 +298,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     networkGranted: host.networkGranted,
     libraries: host.libraries,
     ...(host.members === undefined ? {} : { members: host.members }),
-    selfOrigin: window.location.origin,
+    selfOrigin: view.location.origin,
     ...(host.markup === undefined ? {} : { body: host.markup }),
     /*
      * A message frame gets its snapshot **inlined**, a script frame does not.
@@ -411,7 +449,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
          * floor, so the frame cannot be seen again — which is how one card went
          * from visible-but-clipped to invisible.
          */
-        if (Number.isFinite(message.pixels) && message.pixels > 0) {
+        if (Number.isFinite(message.pixels) && message.pixels > 0 && host.sizedByHost !== true) {
           frame.style.height = `${message.pixels}px`
           /*
            * The frame is being sized by a measurement again, so the mark that
@@ -441,8 +479,15 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
          * height the loop would have frozen at — and leaving it would beat the
          * stylesheet rule that is now meant to decide.
          */
-        frame.dataset['irisSizing'] = message.mode
-        frame.style.removeProperty('height')
+        /*
+         * Not for a frame whose box the host owns. Removing the height there
+         * hands sizing to a stylesheet rule that does not select this element,
+         * so the frame collapses to its intrinsic 150px — see `sizedByHost`.
+         */
+        if (host.sizedByHost !== true) {
+          frame.dataset['irisSizing'] = message.mode
+          frame.style.removeProperty('height')
+        }
         return
       case 'settings':
         host.onSettings(message.settings)
@@ -488,7 +533,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
          * attached to, and a frame that decided would be a frame with a second
          * copy of that fact.
          */
-        host.onRegions?.(message.clip)
+        host.onRegions?.(message.clip, message.detail)
         return
       case 'blocked':
         host.onBlocked(message.host, message.directive, message.detail)
@@ -527,8 +572,27 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     post({ iris: token, type: 'viewport', width: size.width, height: size.height })
   }
 
-  window.addEventListener('message', onMessage)
-  window.addEventListener('resize', onResize)
+  /*
+   * A tab returning to the foreground is re-told its viewport.
+   *
+   * **Why a `resize` listener is not enough.** A backgrounded tab is throttled:
+   * the window can be resized — or the OS can change the display — while no
+   * frame is being produced, and what the frame is holding then is a viewport
+   * that stopped being true at a moment nothing observed. It is also the moment
+   * a reader is looking: they came back to this tab.
+   *
+   * Only on the way *in*. Going hidden changes nothing about the geometry, and
+   * pushing then would spend a message to tell a throttled frame something it
+   * cannot act on.
+   */
+  const onVisible = (): void => {
+    if (disposed || document.hidden) return
+    onResize()
+  }
+
+  view.addEventListener('message', onMessage)
+  view.addEventListener('resize', onResize)
+  document.addEventListener('visibilitychange', onVisible)
 
   return {
     element: frame,
@@ -550,8 +614,9 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     dispose: () => {
       if (disposed) return
       disposed = true
-      window.removeEventListener('message', onMessage)
-      window.removeEventListener('resize', onResize)
+      view.removeEventListener('message', onMessage)
+      view.removeEventListener('resize', onResize)
+      document.removeEventListener('visibilitychange', onVisible)
       // The frame goes last: removing it tears down the card's realm, and doing
       // that while still listening would leave a window for a final message from
       // a card that is already gone.
