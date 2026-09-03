@@ -8,6 +8,25 @@
  * @module @iris/protocol
  */
 
+/*
+ * The bundle route and the specifier walker.
+ *
+ * In the contract because **both** halves rewrite specifiers and they have to
+ * agree on the route: the browser rewrites a card's remote imports onto it, and
+ * the host rewrites the specifiers inside the bodies it serves — a jsDelivr
+ * `+esm` bundle's dependencies are root-relative and would otherwise resolve
+ * against us. Two implementations of that would eventually disagree about the
+ * encoding, and the symptom of disagreeing is a 404 that `import()` reports
+ * without naming anything.
+ */
+export {
+  BUNDLE_PROXY_PATH,
+  fromProxied,
+  rewriteSpecifiers,
+  specifierSpans,
+  toProxied,
+} from './bundle-specifiers.ts'
+
 export {
   isEvent,
   type IrisEvent,
@@ -33,6 +52,7 @@ export type {
   CharacterSummary,
   ConnectionProfile,
   DebugReport,
+  ReportGrade,
   GenerationSettings,
   InsertionStrategy,
   LorebookSettings,

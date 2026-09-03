@@ -10,6 +10,8 @@
  * @module @iris/app-service/diagnostics
  */
 
+import type { ReportGrade } from '@iris/protocol'
+
 /**
  * What a report is about.
  *
@@ -73,6 +75,8 @@ export const WIRED_KINDS: readonly ReportKind[] = Object.entries(KIND_WIRED)
 
 /** One survived failure, as the debug page reads it. */
 export interface DebugReport {
+  /** Whether a call went unserved, or was served with something to say. */
+  grade: ReportGrade
   /** Monotonic, and the cursor a page pages with. */
   seq: number
   /** Unix epoch milliseconds. */
@@ -99,6 +103,16 @@ export interface DebugReport {
 
 /** Attribution a report site supplies alongside its message. */
 export interface ReportContext {
+  /**
+   * Whether the call was served.
+   *
+   * **Required, and decided here rather than defaulted**, because a default
+   * would be a guess made by the one place that cannot know: `variables` covers
+   * a table trimmed on purpose and a table that could not be read, and those are
+   * a note and a fault. Making it mandatory is what forces the judgement at each
+   * site — a new report site does not compile until someone has made it.
+   */
+  grade: ReportGrade
   kind: ReportKind
   chatId?: string
   characterId?: string
@@ -193,6 +207,7 @@ export class DiagnosticBuffer {
       seq: this.#next,
       at: Date.now(),
       kind: context.kind,
+      grade: context.grade,
       message,
       ...context.chatId === undefined ? {} : { chatId: context.chatId },
       ...context.characterId === undefined ? {} : { characterId: context.characterId },

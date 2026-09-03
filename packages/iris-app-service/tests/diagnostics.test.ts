@@ -142,8 +142,8 @@ test('a caught error keeps its stack', () => {
   // written sentence as a string, so a site cannot get it wrong by accident.
   const buffer = new DiagnosticBuffer()
   const caught = new Error('the provider hung up')
-  buffer.record({ kind: 'host' }, caught.message, caught.stack)
-  buffer.record({ kind: 'mvu' }, 'a path did not exist')
+  buffer.record({ kind: 'host', grade: 'fault' }, caught.message, caught.stack)
+  buffer.record({ kind: 'mvu', grade: 'fault' }, 'a path did not exist')
 
   const page = buffer.read()
   assert.match(page.reports[0]?.stack ?? '', /Error: the provider hung up/u)
@@ -152,7 +152,7 @@ test('a caught error keeps its stack', () => {
 
 test('the cursor pages forward and never repeats a record', () => {
   const buffer = new DiagnosticBuffer()
-  for (let index = 0; index < 5; index += 1) buffer.record({ kind: 'mvu' }, `report ${String(index)}`)
+  for (let index = 0; index < 5; index += 1) buffer.record({ kind: 'mvu', grade: 'fault' }, `report ${String(index)}`)
 
   const first = buffer.read(undefined, 2)
   assert.deepEqual(first.reports.map(report => report.seq), [1, 2])
@@ -166,7 +166,7 @@ test('the cursor pages forward and never repeats a record', () => {
 
 test('the count cap evicts the oldest and says how many it dropped', () => {
   const buffer = new DiagnosticBuffer({ maxRecords: 3, maxBytes: 1_000_000 })
-  for (let index = 0; index < 6; index += 1) buffer.record({ kind: 'mvu' }, `report ${String(index)}`)
+  for (let index = 0; index < 6; index += 1) buffer.record({ kind: 'mvu', grade: 'fault' }, `report ${String(index)}`)
 
   const page = buffer.read()
   assert.equal(page.reports.length, 3)
@@ -183,7 +183,7 @@ test('the byte cap binds independently of the count', () => {
   // path, while a template failure can carry a whole rendered output. The cap
   // exists for that tail, not for the mean.
   const buffer = new DiagnosticBuffer({ maxRecords: 1000, maxBytes: 500 })
-  for (let index = 0; index < 10; index += 1) buffer.record({ kind: 'template' }, 'x'.repeat(200))
+  for (let index = 0; index < 10; index += 1) buffer.record({ kind: 'template', grade: 'fault' }, 'x'.repeat(200))
 
   const page = buffer.read()
   assert.ok(page.reports.length < 10, 'the byte cap never bound')
@@ -191,7 +191,7 @@ test('the byte cap binds independently of the count', () => {
   // A single oversized record still lands rather than being censored: it is
   // the one most likely to matter, and the cap bounds the buffer, not entries.
   const single = new DiagnosticBuffer({ maxRecords: 1000, maxBytes: 10 })
-  single.record({ kind: 'template' }, 'y'.repeat(5000))
+  single.record({ kind: 'template', grade: 'fault' }, 'y'.repeat(5000))
   assert.equal(single.read().reports.length, 1)
 })
 

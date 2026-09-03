@@ -283,6 +283,7 @@ export class IrisAppService {
             + ' earlier session; SillyTavern would have cleared them when the chat was opened',
             {
               kind: 'script',
+              grade: 'note',
               chatId,
               ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
             },
@@ -441,14 +442,14 @@ export class IrisAppService {
 
             this.#report(
               `a card's template performed ${performed.op}${scope}${key}${detail}`,
-              { kind: 'template', chatId, ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId } },
+              { kind: 'template', grade: 'note', chatId, ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId } },
             )
           }
           try {
             applyOps(entry, outcome.ops, turn,
-              reason => { this.#report(reason, { kind: 'template', chatId }) })
+              reason => { this.#report(reason, { kind: 'template', grade: 'fault', chatId }) })
           } catch (error: unknown) {
-            this.#report(error, { kind: 'template', chatId })
+            this.#report(error, { kind: 'template', grade: 'fault', chatId })
           }
         }
 
@@ -558,7 +559,7 @@ export class IrisAppService {
           // dropped for want of a candidate is the one way this call can
           // half-succeed, and the card would otherwise read its own write back
           // as an inherited value with nothing anywhere saying why.
-          entry.hydrateVariables(lines, message => { this.#report(message, { kind: 'variables', chatId }) })
+          entry.hydrateVariables(lines, message => { this.#report(message, { kind: 'variables', grade: 'fault', chatId }) })
         }
         entry.touch()
 
@@ -915,7 +916,7 @@ export class IrisAppService {
             ...cardStorage === undefined ? {} : { storage: await cardStorage.snapshot() },
             characters: await library.list(),
             ...messageId === undefined ? {} : { messageId },
-            onReport: message => { this.#report(message, { kind: 'script', chatId, characterId }) },
+            onReport: message => { this.#report(message, { kind: 'script', grade: 'note', chatId, characterId }) },
           }),
         }
       },
@@ -950,7 +951,7 @@ export class IrisAppService {
             .join(', ')
           this.#report(
             `card storage is full (${String(Math.round(error.size / 1024))} KiB); by writer: ${shares}`,
-            { kind: 'storage', characterId, ...scriptId === undefined ? {} : { scriptId } },
+            { kind: 'storage', grade: 'fault', characterId, ...scriptId === undefined ? {} : { scriptId } },
           )
           throw new AppError('quota-exceeded', error.message)
         }
@@ -967,6 +968,7 @@ export class IrisAppService {
           if (note !== undefined) {
             this.#report(note, {
               kind: 'storage',
+              grade: 'note',
               characterId,
               ...scriptId === undefined ? {} : { scriptId },
             })
@@ -988,6 +990,7 @@ export class IrisAppService {
           if (note !== undefined) {
             this.#report(note, {
               kind: 'storage',
+              grade: 'note',
               characterId,
               ...scriptId === undefined ? {} : { scriptId },
             })
@@ -1170,6 +1173,7 @@ export class IrisAppService {
       entry.recordVariables(turn, text, message => {
         this.#report(message, {
           kind: 'mvu',
+          grade: 'fault',
           chatId: entry.chatId,
           ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
         })
@@ -1190,15 +1194,15 @@ export class IrisAppService {
       // chat’s state rather than about this run.
       if (prune !== undefined) {
         const note = entry.legacyCleanupNote(prune)
-        if (note !== undefined) this.#report(note, { kind: 'variables', chatId: entry.chatId })
+        if (note !== undefined) this.#report(note, { kind: 'variables', grade: 'note', chatId: entry.chatId })
       }
       if (prune !== undefined && pruneDue(chatLines(entry.session).length)) {
         entry.prune(prune, message => {
-          this.#report(message, { kind: 'variables', chatId: entry.chatId, irreversible: true })
+          this.#report(message, { kind: 'variables', grade: 'note', chatId: entry.chatId, irreversible: true })
         })
       }
       await this.#options.chats.save(entry, message => {
-        this.#report(message, { kind: 'variables', chatId: entry.chatId })
+        this.#report(message, { kind: 'variables', grade: 'fault', chatId: entry.chatId })
       })
       this.#options.broadcast({
         type: 'stream.end', chatId: entry.chatId, turn, view: entry.toView(), reason,
@@ -1206,7 +1210,7 @@ export class IrisAppService {
       await this.#announceChats()
     } catch (cause: unknown) {
       entry.finish()
-      this.#report(cause, { kind: 'host', chatId: entry.chatId })
+      this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
     }
   }
 
@@ -1237,7 +1241,7 @@ export class IrisAppService {
         await this.#settle(entry, turn, partial, 'aborted')
         return
       } catch (cause: unknown) {
-        this.#report(cause, { kind: 'host', chatId: entry.chatId })
+        this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
       }
     }
 
@@ -1246,7 +1250,7 @@ export class IrisAppService {
       // The user's message stays on the log, so retrying is meaningful.
       await this.#options.chats.save(entry)
     } catch (cause: unknown) {
-      this.#report(cause, { kind: 'host', chatId: entry.chatId })
+      this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
     }
 
     this.#options.broadcast({
@@ -1601,7 +1605,7 @@ export class IrisAppService {
       this.#report(
         `a macro read the ${scopes} variable scope, which Iris has no store for — it rendered as null, `
         + 'which is not a statement that the value is unset',
-        { kind: 'prompt', chatId: entry.chatId },
+        { kind: 'prompt', grade: 'fault', chatId: entry.chatId },
       )
     }
 
@@ -1619,13 +1623,13 @@ export class IrisAppService {
       if (ours.length > 0) {
         this.#report(
           `${ours.join(', ')} reached the provider unexpanded — Iris implements these, so the expansion did not reach that text`,
-          { kind: 'prompt', ...entry === undefined ? {} : { chatId: entry.chatId } },
+          { kind: 'prompt', grade: 'fault', ...entry === undefined ? {} : { chatId: entry.chatId } },
         )
       }
       if (theirs.length > 0) {
         this.#report(
           `${theirs.join(', ')} reached the provider unexpanded — nothing here implements these, so they are the card's own (a typo, or a macro one of its scripts registers)`,
-          { kind: 'prompt', ...entry === undefined ? {} : { chatId: entry.chatId } },
+          { kind: 'prompt', grade: 'note', ...entry === undefined ? {} : { chatId: entry.chatId } },
         )
       }
     }
@@ -1675,16 +1679,16 @@ export class IrisAppService {
         templates.deadlineMs,
       )
       for (const failure of evaluated.failures) {
-        this.#report(`${failure.origin} failed: ${failure.message}`, { kind: 'template', chatId: entry.chatId })
+        this.#report(`${failure.origin} failed: ${failure.message}`, { kind: 'template', grade: 'fault', chatId: entry.chatId })
       }
       if (evaluated.ops.length > 0) {
         // Applied separately so a single refused write does not throw away the
         // text every other template produced.
         try {
           applyOps(entry, evaluated.ops, turn,
-            reason => { this.#report(reason, { kind: 'template', chatId: entry.chatId }) })
+            reason => { this.#report(reason, { kind: 'template', grade: 'fault', chatId: entry.chatId }) })
         } catch (error: unknown) {
-          this.#report(error, { kind: 'template', chatId: entry.chatId })
+          this.#report(error, { kind: 'template', grade: 'fault', chatId: entry.chatId })
         }
       }
       return evaluated.options
@@ -1693,7 +1697,7 @@ export class IrisAppService {
       // arriving here is the host's own failure — a child that could not be
       // forked, a snapshot that could not be built. The generation still goes
       // out, with `<%` in it, which is visible rather than silent.
-      this.#report(error, { kind: 'host', chatId: entry.chatId })
+      this.#report(error, { kind: 'host', grade: 'fault', chatId: entry.chatId })
       return options
     }
   }

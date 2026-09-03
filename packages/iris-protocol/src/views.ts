@@ -627,7 +627,24 @@ export interface WorldbookEntry {
  * rather than imported from the host so the page half compiles against the
  * protocol alone.
  */
+/**
+ * What a report is claiming.
+ *
+ * **`fault` means a call was not served**: something asked for did not happen,
+ * and whoever asked is now working from an answer they did not get. **`note`
+ * means it was served and there is still something to say** — a deletion that
+ * succeeded, a value that survived in a different shape, a state worth knowing.
+ *
+ * The two levels match the frame’s own `reportFault` / `reportGap`, so a reader
+ * moving between the two halves is not re-learning a vocabulary. It is separate
+ * from {@link DebugReport.kind}: the kind says what the report is about, the
+ * grade says whether anything is broken.
+ */
+export type ReportGrade = 'fault' | 'note'
+
 export interface DebugReport {
+  /** Whether a call went unserved, or was served with something to say. */
+  grade: ReportGrade
   /** Monotonic, and the cursor a page pages with. */
   seq: number
   /** Unix epoch milliseconds. */

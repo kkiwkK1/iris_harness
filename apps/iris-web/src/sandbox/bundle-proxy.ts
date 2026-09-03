@@ -9,7 +9,7 @@
  *
  * The host can, so the host fetches and caches it, and the frame asks the host.
  *
- * Three properties this must not lose:
+ * Four properties this must not lose:
  *
  * - **Rewriting must not widen what a card can reach.** Only URLs that would
  *   already have been allowed are rewritten. Anything else is left exactly as
@@ -47,125 +47,42 @@
  *
  * @module iris-web/sandbox/bundle-proxy
  */
+/*
+ * **A relative path, not `@iris/protocol`, and the reason is a constraint.**
+ *
+ * Every other reference to the contract in this app is `import type`, which is
+ * erased — so the package has never needed to resolve at *runtime*, and it does
+ * not: `apps/iris-web/node_modules/@iris/` links `client-fake` and
+ * `compat-tavernhelper-core` and nothing else. `tsc` resolves the bare name
+ * through `tsconfig`'s `paths`; `node --test` does not, and the suite fails to
+ * load with `ERR_MODULE_NOT_FOUND` the moment a value is imported from there.
+ *
+ * The fix is not a link in shared `node_modules`: adding to a dependency tree
+ * three sessions share is the class of change that has already cost this
+ * project a peer's package once. This path costs one ugly line in one file.
+ *
+ * It also reaches the module **directly** rather than through the package
+ * index, which matters beyond tidiness: the index pulls in `rpc.ts` and its
+ * `zod` dependency, and this module has none.
+ */
+import {
+  BUNDLE_PROXY_PATH,
+  fromProxied,
+  rewriteSpecifiers,
+  specifierSpans,
+  toProxied,
+} from '../../../../packages/iris-protocol/src/bundle-specifiers.ts'
+
 import { isAllowedRemote } from './policy.ts'
 
-/**
- * The host's route.
+/*
+ * Re-exported so this module stays the app's one door to the bundle route.
  *
- * A query parameter rather than a path segment, and not a free choice: a URL
- * inside a path needs double encoding and is still rewritten by path
- * normalisation. A mismatch here surfaces as a 404, which `import()` reports as
- * "failed to fetch dynamically imported module" — a sentence that names nothing.
+ * Every call site in the app already imports from here, and the point of moving
+ * the implementation was to have **one** implementation — not to send half the
+ * app to a second import path for the same three names.
  */
-export const BUNDLE_PROXY_PATH = '/iris/script-bundle'
-
-/**
- * Wrap an upstream URL in the host's route.
- * @param url - the URL the card asked for.
- * @param origin - the host's origin.
- * @returns the URL to import instead.
- */
-export function toProxied(url: string, origin: string): string {
-  return `${origin}${BUNDLE_PROXY_PATH}?url=${encodeURIComponent(url)}`
-}
-
-/**
- * Recover the upstream URL from a proxied one.
- *
- * Used wherever a URL is shown or reported, so our routing never appears in
- * something a card author reads.
- * @param url - a possibly-proxied URL.
- * @returns the original, or undefined when this was not proxied.
- */
-export function fromProxied(url: string): string | undefined {
-  const at = url.indexOf(`${BUNDLE_PROXY_PATH}?url=`)
-  if (at === -1) return undefined
-  const encoded = url.slice(at + BUNDLE_PROXY_PATH.length + '?url='.length)
-  try {
-    return decodeURIComponent(encoded)
-  } catch {
-    // A malformed tail is not an upstream URL, and guessing at one would put a
-    // fabricated address in a diagnostic.
-    return undefined
-  }
-}
-
-/**
- * Where each module specifier sits in a piece of source.
- *
- * **Anchored to the `import` and `from` tokens, not to quotes.** The version
- * this replaced took any line whose trimmed start was `import` and then walked
- * *every* quote pair on it — which is the whole program when the module is
- * minified onto one line. Naive pairing then goes wrong at the first quote
- * inside a regex literal or a string with an escaped quote, and the pairing
- * stays shifted for the rest of the line.
- *
- * Measured consequence, before assuming the worst: it is a **missed** rewrite,
- * not corruption. A quote inside a regex shifts the pairing so a later URL is
- * not seen, the specifier goes direct to the CDN, and `script-src` blocks it —
- * which lands in the "nested specifier goes direct" family rather than breaking
- * the source. Corruption needs a regex literal that itself contains a quoted
- * allowlisted URL, which is vanishingly unlikely; the missed rewrite is not.
- *
- * No pattern matching, for the reason this file already records: every escape
- * it could need has been eaten in transit repeatedly in this project, and a
- * collapsed escape still parses while matching nothing.
- * @param source - the module source.
- * @returns each specifier's quote span, in order.
- */
-function specifierSpans(source: string): { open: number, close: number }[] {
-  const spans: { open: number, close: number }[] = []
-  const isWord = (char: string): boolean => /[A-Za-z0-9_$]/u.test(char)
-
-  let at = 0
-  while (at < source.length) {
-    const keyword = source.startsWith('import', at)
-      ? 'import'
-      : source.startsWith('from', at) ? 'from' : undefined
-    if (keyword === undefined) {
-      at += 1
-      continue
-    }
-    // A word boundary on both sides, so `important` and `informant` are not
-    // keywords and `x.from` is not either.
-    const before = at === 0 ? '' : source[at - 1] ?? ''
-    if (before !== '' && (isWord(before) || before === '.')) {
-      at += keyword.length
-      continue
-    }
-
-    let cursor = at + keyword.length
-    // Whitespace, and `(` for a dynamic `import(...)`.
-    while (cursor < source.length && ' \t\r\n('.includes(source[cursor] ?? '')) cursor += 1
-    const quote = source[cursor]
-    if (quote !== '"' && quote !== "'") {
-      at += keyword.length
-      continue
-    }
-
-    // The matching close, respecting backslash escapes.
-    let end = cursor + 1
-    while (end < source.length) {
-      const char = source[end]
-      if (char === '\\') {
-        end += 2
-        continue
-      }
-      if (char === quote) break
-      // A specifier cannot span a line; a newline here means this was not one.
-      if (char === '\n') break
-      end += 1
-    }
-    if (source[end] !== quote) {
-      at += keyword.length
-      continue
-    }
-
-    spans.push({ open: cursor, close: end })
-    at = end + 1
-  }
-  return spans
-}
+export { BUNDLE_PROXY_PATH, fromProxied, toProxied }
 
 /**
  * Every module specifier in a piece of source.
@@ -193,16 +110,21 @@ export function moduleSpecifiers(source: string): string[] {
  * @returns the source with allowed remote imports routed through the host.
  */
 export function rewriteBundleImports(source: string, origin: string): string {
-  // Back to front, so an earlier span's offsets are still valid after a later
-  // one has been replaced with a longer string.
-  const spans = specifierSpans(source).reverse()
-  let out = source
-  for (const span of spans) {
-    const candidate = out.slice(span.open + 1, span.close)
-    if (!isAllowedRemote(candidate) || fromProxied(candidate) !== undefined) continue
-    out = out.slice(0, span.open + 1) + toProxied(candidate, origin) + out.slice(span.close)
-  }
-  return out
+  return rewriteSpecifiers(source, specifier => (
+    /*
+     * The **policy** stays here and the walk does not. Which specifiers may be
+     * rewritten is this app's decision — only URLs that would already have been
+     * allowed, so a refusal never becomes a request — while *finding* them is a
+     * parser both halves need to agree on, and it now lives in the contract.
+     *
+     * A specifier that is already proxied is left alone: rewriting it again
+     * would nest one route inside another and the upstream URL would be
+     * recoverable only by unwrapping twice.
+     */
+    isAllowedRemote(specifier) && fromProxied(specifier) === undefined
+      ? toProxied(specifier, origin)
+      : undefined
+  ))
 }
 
 /**
