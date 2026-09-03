@@ -137,8 +137,9 @@ message-preset 字体去重 ✅（2.29→1.89 MB，双牙守卫）。
 11. **调试页页面半**——宿主半 ✅（DEBUG-SURFACE.md）。
 12. **MVU 长局变量清理**——单位修正已落（a57e12f；两 677 文件间隔幸存 deepEqual {0,50,…,650}）。**49 随后发现
     `pruneVariables` 三键从功能首次提交起未接线、真宿主上从未跑过**（测试必然绿：单元测试自己递选项）；已接上
-    （410abc9）+ `config-wiring` 测试钉「声明即必读」。**裁默认 on**（上游 `启用:true`+`.prefault({})`、用户实配 on、
-    五条长语料全被清过），配三件：清理范围照上游有界窗口 `[old−2−2·keep, old]`（首次开不会追赶式一次剪光，
+    （410abc9）+ `config-wiring` 测试钉「声明即必读」。**默认 on 已落**（7700f05：`cordis.yml` `IRIS_PRUNE_VARIABLES!=="false"`；上游 `启用:true`+`.prefault({})`、
+    用户实配 on、五条长语料全被清过；开启那一刻对从未清过的 677 局只剪窗口内 21 层，不是 311——那是上游造不出的
+    全局扫；窗口滑过整局仍 deepEqual ST 幸存集合），配三件：清理范围照上游有界窗口 `[old−2−2·keep, old]`（首次开不会追赶式一次剪光，
     3c 已核：周期路径确为有界窗口）、每次真剪出 `variables` 报告、§8 记「上游可重放我们不可」的不对称。
     **另有上游 legacy 全量路径**（`checkAndCleanupLegacyChat`：`chat[1].variables[0].stat_data` 仍在 = 从未清过 →
     弹窗「只清理 / 不再提醒（写 `ignore_cleanup`）/ 备份并清理（先导出 jsonl）」→ 清 `[1, len−1−keep]`）——我们本批
