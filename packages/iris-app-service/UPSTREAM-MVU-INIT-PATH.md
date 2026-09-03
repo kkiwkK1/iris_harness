@@ -350,6 +350,68 @@ B 后注册 → set={A,B} → 广播 preferred=(DOM 靠后者)
 
 ---
 
+### 三之七 请求期：MVU **只做减法**，一个字都不往提示词里加
+
+`initRequest()` 注册五个回调（`.reference/MagVarUpdate/src/function/request/index.ts:7-31`）：
+
+```ts
+registerFunction()                                                            // :9
+controlledStoppableEventOn('worldinfo_entries_loaded', filterEntries)         // :11
+controlledStoppableEventOn(CHAT_COMPLETION_SETTINGS_READY, applyExtraModelRequestOverrides)  // :12-17
+controlledStoppableEventOn(CHAT_COMPLETION_SETTINGS_READY, overrideToolRequest)              // :18-23
+controlledStoppableEventOn(CHAT_COMPLETION_SETTINGS_READY, filterPrompts)                    // :24-26
+```
+
+**名字全是 filter / override，没有一个是 inject。**
+**没有 `injectPrompts`、没有 `setExtensionPrompt`、不写世界书、不拦 `generate`。**
+
+两个减法的内容：
+
+- **`filterEntries`**（`filter_entries.ts:43-45`）——**移除 `[mvu_update]` 世界书条目**，
+  除非 `更新方式 === '随AI输出'`（默认值）时在 `:44` 提前返回。
+- **`filterPrompts`**（`filter_prompts.ts:11-30`）——`'额外模型解析'` 模式下从**历史消息**里
+  剥掉 `<UpdateVariable>` 块；**总是**剥掉 `\n<StatusPlaceHolderImpl/>`。
+
+**变量快照也不是 MVU 送的**：MVU 全仓唯一的 `registerMacro` 是
+`invoke_extra_model.ts:501` 的 `lastUserMessage`，只在额外模型路径上；
+而 TH 的宏只有两个头像路径（`macro.ts:4-7`）。
+**「变量当前值」与「更新格式指令」都来自卡自己的世界书条目**，模板求值走
+**第三个扩展 ST-Prompt-Template（EjsTemplate）**。
+
+> **责任面因此是划清的**：模型没输出 `<UpdateVariable>` 时，
+> **MVU 只可能是"减料的那个"，不可能是"供料的那个"。**
+
+> **⚠ 一处撤回（2026-09-03）。**我据此提过一个机制假设：
+> 「设置未加载 → `effective_settings.更新方式` 是 `undefined` →
+> `undefined !== '随AI输出'` → `filterEntries` 走移除路径」。**那条不成立。**
+>
+> ```ts
+> // [MVU] src/store.ts:249
+> const Settings = z.union([OldSettings, NewSettings]).catch(() => NewSettings.parse({}));
+> // :306  Settings.parse(_.get(SillyTavern.extensionSettings, 'mvu_settings', {}))
+> ```
+>
+> **三层兜底**：`_.get` 取不到键给 `{}`；`NewSettings`（`:134`）给
+> `更新方式` 带 `.default('随AI输出')`；外面还有 `.catch` 再 parse 一次空对象。
+> **它永远不会是 `undefined`。**
+>
+> **我漏的是两层默认**——`_.get` 的第三参和 zod 的 `.default()`，
+> 两者都在我读过的那几行里，我只读了消费点没读构造点。
+>
+> **所以移除路径的唯一触发条件是有人显式设成 `'额外模型解析'`**，
+> 而实测：22 卡零命中、两个 profile 的世界书里零个 `[config_override]` 条目、
+> ST 的 `mvu_settings.更新方式` 显式是 `"随AI输出"`。
+> **这条从"待观察的风险"降成"待支持的功能"。**
+
+**存放位置**（给实现者）：
+
+| | 在哪 |
+| --- | --- |
+| 每卡覆盖 | **世界书里 `comment` 含 `[config_override]` 且 `disable === true` 的条目**（`character_override/schema.ts:7`，筛选在 `character_override/index.ts:57`）——**不在卡的 extensions 里** |
+| 全局设置 | `SillyTavern.extensionSettings['mvu_settings']`（`store.ts:306` 读 / `:310` 写 / `:316` 重载） |
+
+---
+
 ## 四、一个更大的发现：上游的角色书「择一」不在装配层，在**导入期**
 
 这条不在任务单里，是查 ② 时撞见的，**但它直接影响 49 的 `resolveCardWorldbook`。**
