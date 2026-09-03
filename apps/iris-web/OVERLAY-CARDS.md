@@ -739,7 +739,7 @@ window.addEventListener('message', function (event) {
 | --- | --- |
 | `<script>` | **无** |
 | `<link>` | **无** |
-| `<style>` | **有一个**，5 条规则，全是布局与配色 |
+| `<style>` | **有一个**，**4 条规则**（155 字符），全是布局与配色 |
 | `<meta viewport>` | **有**，`viewport-fit=cover` ——**这正是恢复扫描用的标记**（§二） |
 | 挂载点 | `<div id="app">` |
 
@@ -815,6 +815,68 @@ helper** 里——那条分支因为卡把 `insert` 配成了 `'head'` 而不走
 > **两条静态路径在那个前提上没有分叉，所以一致没有鉴别力**
 > （`METHODS.md` §十九）。**拆穿它的不是第三次复核，是问了一个别的问题：
 > "那个 srcdoc 里到底有什么"。**
+
+---
+
+### 六之四之二 虚拟化（替身 div + shadow root）要对齐的两件
+
+**裁定**：卡 frame 内 `createElement('iframe')` 返回**带 shadow root 的 div 替身**。
+下面两张表是它的上游对照。
+
+#### 上游不感知：**替身 div 打断不了任何上游行为**
+
+**ST 侧零命中**——`querySelectorAll('iframe')` / `getElementsByTagName('iframe')` /
+`$('iframe')` / `HTMLIFrameElement` 在 `public/script.js` 与 `public/scripts/`
+（排除 third-party 与 `lib/`）**全无**。
+
+**TH 侧全仓只有两个观察者跑在卡 frame 内部，都不针对 iframe 元素：**
+
+| 出处 | 观察什么 | 会不会碰到替身 div |
+| --- | --- | --- |
+| `iframe/adjust_iframe_height.js:47-50` | `ResizeObserver` 观察 **`document.body`** | **不会**——量 `body.scrollHeight` 写 `frameElement.style.height`，全程不看子 iframe。**且只注入界面/消息 frame，脚本 frame 没有** |
+| `iframe/cleanup_protector.js:207-222` | `MutationObserver` 观察 **`window.document`**（`childList`+`subtree`），给新增元素打 `data-th-iframe-id` | **会打到，但只是加个属性**；且 **`use_cleanup_protector` 默认 `false`、用户实配也是 `false`**，这段根本不注入 |
+
+其余七处观察者（`Dialog.vue:621`、`StreamingOne.vue:68/78`、
+`use_collapse_code_block.ts:101`、`use_button_destination_element.ts:50`、
+`PromptViewer.vue:196`、`MessageItem.vue:92`）**全在面板侧（ST 页面）**，够不到卡 frame 内部。
+
+**上游对「卡 frame 内部有没有 iframe」这件事完全不感知。**
+
+#### 四条规则的 host 映射
+
+```css
+html,body{margin:0;height:100%;background:#0e1028;color:#e8e2d6;font-family:sans-serif}
+html,body,#app{width:100%}
+body{overflow-y:auto}
+#app{min-height:100%}
+```
+
+| # | Shadow DOM 里 host 指谁 | 注意 |
+| --- | --- | --- |
+| 1 | **`:host`**——`background` 画宿主盒；**`color`/`font-family` 会正常继承进影子树**；`margin:0` 挂 `:host` 有效（宿主外边距在外层文档） | **`height:100%` 不能只挂 `:host`**，见下 |
+| 2 | `#app` **原样有效**（影子树内作用域）；`html,body` → **`:host`** | 无坑 |
+| 3 | **没有对应物**——要给合成的 body 级包装，或 `:host{overflow-y:auto}` | **静默失效的那条**：缺了它覆盖层不能滚动，**无任何报错** |
+| 4 | `#app` 原样有效 | **`min-height:100%` 要父元素有确定高度**；包装若是 `height:auto`，百分比按 `auto` 处理 ⇒ **没有最小高度** |
+
+#### 四条压在同一条高度链上
+
+真 iframe 里是 **`html(100%) → body(100%) → #app(min-height:100%)`——三级，每级都有确定高度**。
+**Shadow DOM 默认没有这条链**：`:host` 之下直接就是影子树内容。
+
+> **虚拟化要合成两级包装**（`:host` 当 `html`、一个内层元素当 `body`）**并把高度链接上**
+> （`:host{height:100%}` + 内层 `{height:100%;overflow-y:auto}`），
+> **否则第 1、3、4 条一起静默退化**——高度塌成内容高、不能滚动、`min-height` 失效，
+> **而这三样都不报错。**
+
+#### 两条顺带的好消息，与一处未查
+
+- **`dvh`/`svh`**（卡里 22+17 处，§六之三）：真 iframe 里解析嵌套 frame 的视口；
+  虚拟化后没有嵌套视口，解析**卡 frame 的视口**——**方案 C 下那就是全视口，值相同。**
+- **`env(safe-area-inset-*)`**（`calc(100dvh - 40px - env(…))`）：
+  虚拟化后取的是卡 frame 的安全区，**比嵌套 frame 的更接近真实屏幕**。
+- **未查**：srcdoc 的 `<meta name="viewport" … viewport-fit=cover>` 虚拟化后**没有对应物**，
+  而 `viewport-fit=cover` 正是让 `env(safe-area-inset-*)` 返回非零的开关。
+  **卡 frame 自己的 meta viewport 带不带它，我没验**——不带的话上面那条"更对"要打折。
 
 ---
 
