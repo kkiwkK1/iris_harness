@@ -319,6 +319,20 @@ export function createNestedFrame(env: NestedFrameEnv): NestedFrame {
    * would otherwise be a blank box above the content.
    */
   if (head.style !== undefined) head.style['display'] = 'none'
+  /*
+   * `height:100%` here is **load-bearing and it carries something the parse
+   * throws away.**
+   *
+   * The measured card's srcdoc opens `<html style="height:100%">` — the height
+   * chain starts on the `html` element as an *inline attribute*, not in the
+   * stylesheet. A `<template>` parse discards `<html>` entirely along with its
+   * attributes (measured: the real srcdoc yields exactly `META`, `STYLE`,
+   * `DIV#app`, with no `HTML` node), so that declaration never reaches us.
+   *
+   * This line happens to reproduce it. That is a coincidence worth naming:
+   * remove it as "the stylesheet sets height anyway" and the card's own inline
+   * height goes with it, silently, on a card whose panel then has no height.
+   */
   if (html.style !== undefined) {
     html.style['display'] = 'block'
     html.style['height'] = '100%'
