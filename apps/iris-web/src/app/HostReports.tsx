@@ -32,43 +32,10 @@ import { useMemo, useState, type ReactElement } from 'react'
 
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
-import type { ReportGrade } from '@iris/protocol'
 
+import { classForReport, collapseRuns } from './host-report-rows.ts'
 import { useIris, useIrisStore } from '../client/provider.tsx'
 import { actionsOf } from '../client/store.ts'
-
-/**
- * How one row should be read.
- *
- * **`grade` and nothing else.** The two rejected alternatives are worth naming,
- * because both were plausible and both invent a severity the reporter never
- * stated:
- *
- * - *by `kind`* — `kind` is the **area** (`mvu | template | prompt | script |
- *   variables | storage | host`), and every area reports ordinary traffic as
- *   well as failures. A list of "error-ish kinds" is wrong in both directions
- *   at once: a failure in a quiet area reads as routine, a routine record in a
- *   noisy one reads as broken.
- * - *by `stack`* — closer, since the protocol says a stack is present only when
- *   an error was caught, but most report sites write their own sentence without
- *   catching anything. That makes "no stack" mean two different things.
- *
- * So the **report site** decides, the same way it decides `irreversible`, and
- * the field is required — a new site that says nothing about severity does not
- * compile. There is deliberately **no fallback to `stack`**: a fallback is how
- * an unset grade would keep working while meaning nothing, and the reason to
- * make the field required was to stop exactly that.
- *
- * Painting the whole list red is a mistake this app has already made once: a
- * class applied to every row cannot also mean "broken".
- * @param report - one record.
- * @returns the row's class list.
- */
-function classFor(report: { grade: ReportGrade }): string {
-  return report.grade === 'fault'
-    ? 'iris-script__report iris-script__report--fault'
-    : 'iris-script__report'
-}
 
 /** A local time, to the second. Reports arrive as epoch milliseconds. */
 function timeOf(at: number): string {
@@ -107,7 +74,10 @@ export function HostReports(): ReactElement {
     return [...seen].sort()
   }, [kinds, reports])
 
-  const shown = (reports ?? []).filter(report => !hidden.includes(report.kind))
+  const shown = useMemo(
+    () => collapseRuns((reports ?? []).filter(report => !hidden.includes(report.kind))),
+    [reports, hidden],
+  )
 
   return (
     <section className="iris-reports">
@@ -167,14 +137,22 @@ export function HostReports(): ReactElement {
         </p>
       ) : (
         <ol className="iris-reports__list">
-          {shown.map(report => (
+          {shown.map(({ report, count, firstAt }) => (
             <li
               key={report.seq}
-              className={classFor(report)}
+              className={classForReport(report)}
             >
               <span className="iris-reports__area">{report.kind}</span>
-              <span className="iris-reports__at">{timeOf(report.at)}</span>
+              {/*
+                One time for a single report, a span for a run — and the span is
+                the point: "this has been true since 15:13, most recently at
+                15:36" is a different fact from either timestamp alone.
+              */}
+              <span className="iris-reports__at">
+                {count === 1 ? timeOf(report.at) : `${timeOf(firstAt)}–${timeOf(report.at)}`}
+              </span>
               <span className="iris-reports__message">{report.message}</span>
+              {count > 1 && <span className="iris-reports__count">×{count}</span>}
               {/*
                 The stack only when there is one. An empty `<details>` beside
                 every ordinary record would train a reader to ignore the

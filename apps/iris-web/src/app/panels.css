@@ -1137,3 +1137,12 @@
   display: grid;
   gap: 6px;
 }
+
+/* How many identical reports a row stands for. Tabular so a column of them
+   lines up, and quiet: the count is metadata about the row rather than part of
+   what the host said. */
+.iris-reports__count {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  color: var(--iris-ink-faint);
+}
