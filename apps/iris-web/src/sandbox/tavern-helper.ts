@@ -2264,6 +2264,135 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       return (answer as { text?: unknown } | undefined)?.text
     },
 
+    /**
+     * Upstream's **caller-ordered** generate — and until now a name that was
+     * documented here and never implemented, which is the one failure shape
+     * this surface cannot carry: a card's bare `generateRaw(...)` threw
+     * `ReferenceError` on the first call, inside a handler that catches and
+     * reports "questionnaire failed", and the card told its player the host
+     * lacked the plugin. Measured in 神隐挑战's 游戏引擎 at 13 call sites, every
+     * one the object form:
+     *
+     *   generateRaw({ user_input, should_silence, overrides, ordered_prompts })
+     *
+     * `ordered_prompts` is the member's whole point — the caller, not the
+     * preset, decides what the model sees. Upstream resolves each entry in
+     * order; entries are environment names or literal `{role, content}`. The
+     * same composition, over Iris's two-field raw method (`prompt` +
+     * `systemPrompt`):
+     *
+     * - `user_input` — a string, or a role-message list, placed where the
+     *   `user_input` name appears in the order.
+     * - `persona_description`, `char_description`, `char_personality`,
+     *   `scenario_description` — the override from `overrides` when the caller
+     *   supplies one (神隐挑战 overrides the persona on every site); the
+     *   snapshot carries no persona text of its own, so without an override the
+     *   name is skipped and **said**.
+     * - `world_info_before`, `world_info_after` — world-info assembly is the
+     *   *assembling* generate's job upstream too; the raw method sends only
+     *   what it is handed. Skipped and said, once per call.
+     * - `{role, content}` — `system` rides the host's system field; `user` and
+     *   `assistant` ride the prompt in order.
+     * - any other name — skipped and said. An unknown environment name silently
+     *   dropped would read as "the model ignored that part", which is the
+     *   quietest kind of wrong.
+     *
+     * `should_silence` needs no carrying: upstream's flag keeps a raw
+     * generation out of the chat log, and Iris's raw method never writes a
+     * floor in the first place. `max_response_token` and `header_version` are
+     * accepted and unused, as no corpus call passes them.
+     * @param config - upstream's `GenerateRawArgs` object.
+     * @returns the generated text.
+     */
+    generateRaw: async (config: Record<string, unknown>): Promise<unknown> => {
+      const chatId = snapshot('generateRaw').chatId
+      if (chatId === undefined) {
+        throw new UnsupportedApiError(
+          'generateRaw()',
+          'This frame has no chat to generate into; its snapshot carries no chat id.',
+        )
+      }
+
+      const userInput = config['user_input']
+      const overrides =
+        typeof config['overrides'] === 'object' && config['overrides'] !== null
+          ? (config['overrides'] as Record<string, unknown>)
+          : {}
+      const ordered = Array.isArray(config['ordered_prompts']) ? config['ordered_prompts'] : undefined
+
+      /** The prompt side, in the order the caller wrote it. */
+      const promptParts: string[] = []
+      const systemParts: string[] = []
+      const skipped: string[] = []
+      const contentOf = (entry: unknown): string | undefined =>
+        typeof entry === 'object' && entry !== null && typeof (entry as Record<string, unknown>)['content'] === 'string'
+          ? ((entry as Record<string, unknown>)['content'] as string)
+          : undefined
+      const pushUserInput = (value: unknown): void => {
+        if (typeof value === 'string') {
+          promptParts.push(value)
+          return
+        }
+        // Upstream also accepts role messages here; fold them in order.
+        if (Array.isArray(value)) for (const entry of value) promptParts.push(contentOf(entry) ?? '')
+      }
+      const envOf = (name: string): string | undefined => {
+        const override = overrides[name]
+        if (typeof override === 'string') return override
+        skipped.push(name)
+        return undefined
+      }
+
+      if (ordered !== undefined) {
+        for (const entry of ordered) {
+          if (typeof entry === 'string') {
+            if (entry === 'user_input') pushUserInput(userInput)
+            else {
+              const env = envOf(entry)
+              if (env !== undefined) promptParts.push(env)
+            }
+            continue
+          }
+          const role = typeof entry === 'object' && entry !== null ? (entry as Record<string, unknown>)['role'] : undefined
+          const content = contentOf(entry)
+          if (content === undefined) continue
+          if (role === 'system') systemParts.push(content)
+          else promptParts.push(content)
+        }
+      } else {
+        // No order given: upstream sends the user input alone.
+        pushUserInput(userInput)
+      }
+
+      if (skipped.length > 0) {
+        host.reportGap(
+          'a card ordered generateRaw with environment prompt(s) this frame does not carry '
+          + `(${[...new Set(skipped)].join(', ')}), so those parts were left out of what the model saw`,
+        )
+      }
+      if (Array.isArray(config['injects']) && config['injects'].length > 0) {
+        host.reportGap(
+          'a card passed injects to generateRaw — in-chat injection depth/order is not carried, '
+          + 'so those parts were left out of what the model saw',
+        )
+      }
+
+      const prompt = promptParts.filter(part => part !== '').join('\n\n')
+      if (prompt === '') {
+        throw new UnsupportedApiError(
+          'generateRaw({...})',
+          'The composed prompt is empty; there is nothing to send the model.',
+        )
+      }
+      const systemPrompt = systemParts.join('\n\n')
+      const answer = await host.call('generateRaw', {
+        chatId,
+        prompt,
+        ...(systemPrompt === '' ? {} : { systemPrompt }),
+      })
+      return (answer as { text?: unknown } | undefined)?.text
+    },
+
     triggerSlash: async (command: string): Promise<string> => host.triggerSlash(command),
     /**
      * Upstream's spelling, kept wrong on purpose — cards call it.

@@ -177,6 +177,12 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   replaceWorldbook: 'shared',
   updateWorldbookWith: 'shared',
   generate: 'shared',
+  /**
+   * The caller-ordered generate. `shared` for the same reason `generate` is:
+   * every input is the caller's argument and the answer is the model's text —
+   * nothing about which script asks changes what it does.
+   */
+  generateRaw: 'shared',
   triggerSlash: 'shared',
   substitudeMacros: 'shared',
   iframe_events: 'shared',

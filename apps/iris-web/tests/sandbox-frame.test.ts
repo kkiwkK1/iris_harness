@@ -288,6 +288,7 @@ test('exactly the outward-reaching names are shadowed', () => {
     'updateWorldbookWith',
     'swipeTo',
     'generate',
+    'generateRaw',
     'substitudeMacros',
     'eventOn',
     'eventOnce',
@@ -742,6 +743,11 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'updateWorldbookWith',
     'swipeTo',
     'generate',
+    // The caller-ordered generate, now on the bare surface where a card's
+    // script reads it. It was documented in this file's mapping table and never
+    // published — a bare `generateRaw(...)` was a ReferenceError inside the
+    // card's own catch, which reads to its player as "the plugin is missing".
+    'generateRaw',
     'substitudeMacros',
     'eventOn',
     'eventOnce',
@@ -760,7 +766,53 @@ test('the bridged globals are published, and the window aliases are not', () => 
     // it is reported like anything else — rather than leaving co-located scripts
     // to fail on a preamble whose lookup does not exist.
     '__iris_script__',
+    // The coordination pair, bare. A card's scripts reach these through the
+    // preamble, but the interface markup a script frame carries (神隐挑战's
+    // overlay renders into this very body) reads them as bare globals, and it
+    // opens with `typeof waitGlobalInitialized === 'undefined'` — upstream's
+    // predefine.js answers that in every iframe, so this surface does too.
+    'initializeGlobal',
+    'waitGlobalInitialized',
   ])
+})
+
+test('an interface frame’s bare SillyTavern answers once the context lands, not never', () => {
+  /*
+   * The interface install publishes the surface **before** any context can have
+   * arrived, and `resolveValues()` answered `undefined` for the two
+   * context-dependent names at that moment — an answer `defineProperty` then
+   * froze onto the window. Bare `SillyTavern` in interface markup therefore
+   * read absent forever, which is the exact answer "this host is not SillyTavern"
+   * that a plugin self-check fails on; the parent spelling was never wrong,
+   * because `parent.SillyTavern` answers live. So the context handler
+   * re-publishes the two names when they first have an answer, and the bare
+   * spelling agrees with the parent spelling from then on — checked here
+   * against the parent proxy, which is a source this list does not share.
+   */
+  const scope = realm({ interfaceFrame: true })
+  assert.equal(scope.publishedValue('SillyTavern'), undefined, 'published before the context arrived')
+  // The install-time parent proxy, captured before the re-publish narrows this
+  // test's recording of the published bag: the real frame defines properties
+  // additively, but the recorded snapshot here is whole-list.
+  const parent = scope.publishedValue('parent') as Record<string, unknown>
+
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  const bare = scope.publishedValue('SillyTavern')
+  assert.notEqual(bare, undefined, 'still undefined after the context landed')
+  assert.equal(bare, parent['SillyTavern'], 'bare and parent spellings disagree')
+
+  // `extension_settings` under the same rule, and re-published per snapshot:
+  // the settings proxy is rebuilt for every context message, and a stale one
+  // under the bare name would take a card's write to a dead object.
+  const first = scope.publishedValue('extension_settings')
+  assert.notEqual(first, undefined, 'extension_settings stayed absent after the context landed')
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'next' }) })
+  assert.notEqual(
+    scope.publishedValue('extension_settings'),
+    first,
+    'extension_settings was not re-published on the next snapshot',
+  )
 })
 
 test('a module body reports ran only after it has loaded', async () => {

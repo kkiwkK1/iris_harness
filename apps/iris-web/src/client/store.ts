@@ -457,6 +457,17 @@ export interface IrisActions {
    */
   scriptContext(chatId: string, characterId: string): Promise<ScriptContext | undefined>
   /**
+   * Persist one card's extension settings partition, as a frame reported it.
+   *
+   * The frame posts its whole partition on every proxied write and on
+   * `SillyTavern.saveSettings[Debounced]`; this is where that report lands.
+   * The host keeps one partition per card, so a key a card writes — the
+   * install-detection shape `extensionSettings.someKey = …` included — reads
+   * back the same way it does upstream, rather than evaporating with the
+   * snapshot.
+   */
+  saveCardExtensionSettings(settings: Record<string, unknown>): Promise<void>
+  /**
    * One script's body, or undefined when the host will not give one.
    *
    * Returned rather than stored for the same reason as the context, and more
@@ -1132,6 +1143,21 @@ export function createIrisStore(
           // about something the caller may be handling fine.
           return undefined
         }
+      },
+
+      async saveCardExtensionSettings(settings: Record<string, unknown>): Promise<void> {
+        // The partition belongs to the card of the open chat. A report arriving
+        // with no chat open has no owner to write under, so it is dropped the
+        // way a frame event is dropped after disposal: late, not lost.
+        const characterId = get().view?.characterId
+        if (characterId === undefined) return
+        // `guard`, not throw: the sender is a frame's fire-and-forget report
+        // (and upstream's own save is an unawaited debounced call), so a
+        // rejection would surface nowhere — a notice is the only channel that
+        // can say the write did not stick.
+        await guard(async () => {
+          await client.call('script.setExtensionSettings', { characterId, settings })
+        })
       },
 
       async scriptBody(characterId: string, scriptId: string): Promise<ScriptBodyResult> {

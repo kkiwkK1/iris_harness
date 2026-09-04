@@ -483,6 +483,31 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
 
   let extensionSettings: Record<string, unknown> | undefined
 
+  /*
+   * The save side of the settings report, one channel with the proxied write.
+   *
+   * Built once per frame so a card holding the function across reads — and
+   * MVU's store does exactly that, capturing it in a Vue watch — always holds
+   * the same object. The debounce length is upstream's
+   * `debounce_timeout.relaxed` (`public/scripts/constants.js:14`), which is
+   * the constant `DEFAULT_SAVE_EDIT_TIMEOUT` is defined from.
+   */
+  const postSettingsForSave = (): void => {
+    env.post({ iris: env.token, type: 'settings', settings: { ...(extensionSettings ?? {}) } })
+  }
+  const saveSettingsNow = (): void => {
+    postSettingsForSave()
+  }
+  const SAVE_SETTINGS_DEBOUNCE_MS = 1_000
+  let saveSettingsTimer: ReturnType<typeof setTimeout> | undefined
+  const saveSettingsDebouncedFn = (): void => {
+    if (saveSettingsTimer !== undefined) clearTimeout(saveSettingsTimer)
+    saveSettingsTimer = setTimeout(() => {
+      saveSettingsTimer = undefined
+      postSettingsForSave()
+    }, SAVE_SETTINGS_DEBOUNCE_MS)
+  }
+
   /**
    * `SillyTavern`, as a card sees it.
    *
@@ -503,6 +528,33 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       }
       if (property === 'getContext') return () => sillyTavern
       if (property === 'extensionSettings') return extensionSettings
+
+      /*
+       * The settings saves, upstream's own pair (`public/script.js:469`):
+       *
+       *   saveSettingsDebounced = debounce(saveSettings, debounce_timeout.relaxed)
+       *
+       * What they must answer is "the settings this card just wrote will be
+       * persisted", and the persisted thing a frame owns here is its
+       * **extension settings partition** — the object `extensionSettings`
+       * hands out, whose proxied writes already report themselves. So a save
+       * rides that same report: the shell hears it exactly as it hears a
+       * proxied write, and one store action carries both to the host. Nothing
+       * else this frame could reach is upstream's `settings.json`, and
+       * inventing a wider save would claim a persistence Iris cannot do.
+       *
+       * Measured in every MVU-bearing card of the corpus: the bundle's
+       * settings store calls `SillyTavern.saveSettingsDebounced()` on each
+       * mutation, and an absent member threw `TypeError` inside its watch
+       * callback once per frame boot. `saveSettings` is carried for the same
+       * class of caller — upstream declares both, and a bundle that wants its
+       * write on disk *now* calls the immediate one.
+       *
+       * Both ignore their arguments: upstream's `loopCounter` is recursion
+       * bookkeeping for its own retry, not a caller's option.
+       */
+      if (property === 'saveSettings') return saveSettingsNow
+      if (property === 'saveSettingsDebounced') return saveSettingsDebouncedFn
 
       /*
        * The bus, reachable through `getContext()` as well as through `parent`.
@@ -826,6 +878,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         property === 'extensionSettings' ||
         property === 'eventSource' ||
         property === 'event_types' ||
+        // The save pair answers `get` above; `in` has to agree with it, which is
+        // the same get/has consistency the rest of this trap exists to keep.
+        property === 'saveSettings' ||
+        property === 'saveSettingsDebounced' ||
         // Built here rather than routed to the host, so `isCardMethod` does not
         // know about it and a card feature-testing with `in` would be told no.
         property === 'updateChatMetadata' ||
@@ -1937,6 +1993,27 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         else reportGap(text)
       })
       extensionSettings = settingsProxy({ ...message.context.extensionSettings })
+      /*
+       * An interface frame published its surface at install, when neither of
+       * these had an answer — the install-time `resolveValues()` handed
+       * `undefined` for both, and `defineProperty` froze that answer onto the
+       * window. Every card idiom of the shape
+       * `if (window.parent.SillyTavern) …` has a bare-spelling twin, and the
+       * bare spelling in interface markup read **absent forever** — the answer
+       * "the host is not SillyTavern", which is the plugin-detection failure
+       * this frame exists not to cause. So the two names are published again
+       * now that they have one, on the same channel and with the same
+       * per-snapshot semantics the run path already has: `resolveValues()` is
+       * re-read per evaluation there, and this is the interface frame's
+       * evaluation. `parent.SillyTavern` answers live (line ~942); from this
+       * moment the bare spelling and it agree.
+       */
+      if (env.interfaceFrame === true) {
+        env.publishGlobals?.([
+          ['SillyTavern', sillyTavern],
+          ['extension_settings', extensionSettings],
+        ])
+      }
       return
     }
     if (message.type !== 'run') return
@@ -2051,6 +2128,23 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
          * has not already given away.
          */
         [SCRIPT_REGISTRY, (id: unknown) => viewFor(typeof id === 'string' ? id : undefined)],
+        /*
+         * The coordination pair, published **bare** alongside everything else.
+         *
+         * A card's scripts reach these through the preamble's per-script
+         * bindings, so they were the one member group a script frame's window
+         * lacked — and the corpus puts interface markup *inside script frames*:
+         * 神隐挑战's overlay renders its own Vue app into this frame's body,
+         * and that app's inline code opens with
+         * `typeof waitGlobalInitialized === 'undefined'` before it will connect.
+         * Upstream has no such hole: `predefine.js` carries the same member set
+         * into every iframe, so any `<script>` anywhere in a frame reads the
+         * pair as a bare global. Bound to no script, for the same reason the
+         * interface install below binds its copy to none — the id only says who
+         * is waiting, and inline markup genuinely is nobody; a card script that
+         * wants its own id on the report keeps using the preamble binding.
+         */
+        ...Object.entries(coordination(undefined)),
       ])
 
       /*

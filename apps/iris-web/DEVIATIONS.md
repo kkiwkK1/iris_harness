@@ -1193,3 +1193,72 @@ computed.
 window again, or a measured card that is genuinely unusable at column width
 and cannot be operated collapsed — that would argue for widening the stage,
 not for removing the toggle.
+
+---
+
+## 27. The bare `SillyTavern` / `extension_settings` spellings answer from the
+context snapshot, and say nothing until it lands
+
+**Kind:** deliberate improvement over a frozen absence; still narrower than
+upstream.
+
+**Upstream.** The `SillyTavern` global exists on the host page before any iframe
+is created, so every spelling — `SillyTavern`, `window.parent.SillyTavern` —
+answers truthfully from the first line a card runs.
+
+**Iris.** An interface frame publishes its surface at install, which is before
+the context message can arrive, so the install-time `resolveValues()` answers
+`undefined` for both names and `defineProperty` freezes that onto the window.
+Since the plugin-detection round this was a **failure shape**, not a nuance: the
+bare spelling in interface markup read absent forever, and the corpus's
+self-checks (`if (window.parent.SillyTavern)` has a bare-spelling twin in the
+same scripts) took it for "the host is not SillyTavern". The context handler now
+re-publishes the two names into interface frames on every snapshot, so the bare
+spelling agrees with the live parent spelling from the moment an answer exists.
+
+**What it costs.** Between install and the first context message the bare names
+answer `undefined` where upstream would answer an object — a card probing
+during that window takes its own fallback path, which is what upstream cards do
+on any page where the host has not finished booting. Per snapshot the answer is
+a fresh settings proxy, matching the run path's per-evaluation semantics rather
+than upstream's one-live-object model; the trade is recorded in the
+snapshot-sharing deviation and is the same one `generate()` already accepted.
+
+**What would overturn it.** Publishing context-dependent members as live
+getters from install would close the boot-window gap entirely; it needs a
+second publish channel (getter descriptors alongside value descriptors) and was
+judged not worth it while every measured card reads these names after the
+context has settled.
+
+---
+
+## 28. `generateRaw` leaves world-info environment names out of the prompt
+
+**Kind:** compatibility gap.
+
+**Upstream.** `generateRaw({ordered_prompts})` resolves every environment name
+against the generation context — `world_info_before` / `world_info_after`
+expand to the activated world info, `persona_description` to the user persona,
+`char_description` to the card's — and sends the composed prompt.
+
+**Iris.** The member exists (it was documented in the surface's mapping table
+and never implemented, which made a bare `generateRaw(...)` a `ReferenceError`
+inside the card's own catch — 神隐挑战's engine reported "questionnaire failed"
+and its player read that as a missing plugin). The composition carries what the
+caller literally hands over: literal `{role, content}` messages, `user_input`
+at its marker, and environment names from `overrides`. Names the frame cannot
+resolve — `world_info_before` / `world_info_after` without an override, and any
+unknown environment name — are skipped and reported by name through the gap
+channel.
+
+**What it costs.** A raw generation ordered with world-info names produces text
+with no world info in it, where upstream would have activated entries inlined.
+Measured callers in the corpus (神隐挑战's 游戏引擎, 13 sites) override the
+persona and carry their own scene context in system messages, so the measured
+cost is nil; an unmeasured card relying on world-info activation would see
+thinner generations and at least a report naming why.
+
+**What would overturn it.** A host-side raw-generation contract that accepts
+resolved world-info text (the assembling `generate` already assembles world
+info inside the host), at which point the frame can resolve the two names the
+way upstream does instead of skipping them.
