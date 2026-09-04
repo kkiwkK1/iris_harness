@@ -1059,3 +1059,72 @@ question was built to judge.
 cards whose messages carry interfaces (then the widening folds back into
 `mayRun`), or evidence that a card ships an empty script pack as a marker with
 meaning beyond "nothing to run".
+
+---
+
+## 25. A card's overlay surface is confined to the reading column
+
+**Kind:** deliberate improvement, on an explicit product ruling — and the
+sharpest divergence from upstream in this file, because it takes a capability
+cards have upstream and does not give it back.
+
+**Upstream.** A card's script frame *is* the host page: its `$` is the page's,
+its `.appendTo('body')` lands on SillyTavern's body, and a card that wants the
+whole window takes the whole window — navigation, sidebar, send box and all.
+`clearChat()` does not touch the body layer, so the takeover also outlives the
+conversation. Nothing upstream bounds a card's interface, because nothing
+upstream needs to.
+
+**Iris.** The reader ruled that a card must never be able to take the
+interface hostage: **Iris's navigation is always reachable.** The overlay
+surface (`.iris-overlay-surface`) is therefore no longer `position:fixed;
+inset:0` over the viewport; it is `position:absolute; inset:0` inside
+`.iris-card-stage`, the reading column's own container in `App.tsx` — the
+region below the masthead and right of the sidebar. The rectangle is the
+layout's, not a measurement's: nothing is computed, cached or re-measured, so
+it cannot fall out of sync with the real column at any window size.
+
+The mechanism follows the box, because the box *is* the card's viewport:
+
+- the frame fills the surface with `width/height:100%`, so the card's
+  `100dvh` / `100svh` / `position:fixed` ladder (the full-screen forum class,
+  `OVERLAY-HOST.md` §一) resolves against the column, not the window;
+- the viewport metrics published to the card — the `viewport` message at
+  `ready` and on resizes, which `--TH-viewport-height` is built from — are
+  read off that same element (`overlay-surface.ts`), ending the two-sources
+  regime where a frame could lay out at 1449px against a window the shell
+  believed was 1218px;
+- a `ResizeObserver` on the surface re-publishes them whenever the box changes
+  for any reason, because the runner's window-`resize` listener cannot see a
+  notice appearing or a pane toggling — layout changes with no window event
+  that still reshape the frame.
+
+And because geometry alone is not a guarantee a reader can bet on, Iris adds
+its own way back: a small collapse control above the surface
+(`.iris-overlay-toggle`, `z` = the surface's layer + 5), shown exactly while a
+frame is attached, toggling the surface's `visibility`. `visibility`, never
+`display:none` — a display change is observable from inside the frame (zeros
+from every measurement, a `--TH-viewport-height` that describes nothing),
+while a visibility change keeps the box laid out and the numbers true. The
+control binds no key: a card's own ESC (V1.5.4's page declares it exits its
+fullscreen) and Iris's escape must not fight over the keyboard, so the
+guaranteed exit is a click.
+
+**What it costs.** A card designed against the whole window now lays out
+against the reading column, which is narrower — a full-screen forum gets a
+column, and a card that positions floating chrome near the window's edges
+finds the edges closer. That is the product ruling, accepted. Second, the
+layering facts that were true of the old full-viewport surface stay true of
+the smaller one: the settings drawer (z 30) and the small-screen sidebar
+(z 20) sit below the overlay (40), so while a card's interface is up the way
+back is the collapse control, the masthead, or switching chats in the sidebar
+— which is outside the surface on every screen size. Third, the recorded
+upstream limitation survives unchanged: a card that reads the viewport once
+and stores pixel positions keeps them; Iris re-tells it on every box change
+and fires `resize` in-frame, but nothing can move pixels a card already
+computed.
+
+**What would overturn it.** A product decision that cards may own the whole
+window again, or a measured card that is genuinely unusable at column width
+and cannot be operated collapsed — that would argue for widening the stage,
+not for removing the toggle.

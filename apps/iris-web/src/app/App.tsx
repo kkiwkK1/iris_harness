@@ -152,19 +152,31 @@ export function App(): ReactElement {
               onOpenSettings={() => setSettingsOpen(true)}
               onToggleNav={() => setNavOpen(!navOpen)}
             />
-            <ChatPane />
+            {/*
+              The reading column's card stage.
+
+              This wrapper is the rectangle a card's overlay interface is
+              confined to: `CardScriptFrames`'s surface is `position:absolute;
+              inset:0` inside it, so the browser derives the box from the
+              layout — masthead and sidebar stay outside it and stay reachable,
+              and there is no measured copy of the geometry to fall out of sync
+              with the real one. ChatPane lives in the same wrapper so the two
+              fill the sheet exactly as they did when they were its direct
+              children; the wrapper is a plain flex column with `position` set,
+              nothing more.
+
+              The foreground chat's card scripts still render outside `ChatPane`
+              itself, as they always have: a re-render of the conversation must
+              not be able to restart a card.
+            */}
+            <div className="iris-card-stage">
+              <ChatPane />
+              <CardScriptFrames />
+            </div>
           </div>
           <StatePanel />
         </div>
       </main>
-
-      {/*
-        The foreground chat's card scripts. Renders nothing — card UI inside a
-        message is a separate piece — but it lives here rather than inside
-        `ChatPane` so a re-render of the conversation cannot restart a card.
-      */}
-      <CardScriptFrames />
-
       {/*
         The host's cleaning offer, at the top level rather than inside the
         drawer or the sheet: it is a modal question about deleting the open

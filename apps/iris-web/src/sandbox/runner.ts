@@ -241,6 +241,20 @@ export interface RunningCard {
    * text that was already stale.
    */
   refreshContext: (context: ScriptContext) => void
+  /**
+   * Re-read the host viewport and push it, exactly as a window resize would.
+   *
+   * The frame's viewport is the box the shell put the frame in, and a window
+   * `resize` is not the only thing that changes that box: the overlay surface
+   * is laid out inside the reading column, so a layout change above it — a
+   * notice appearing, a panel opening — reshapes the frame with no window event
+   * at all. The shell watches the surface element and calls this when the
+   * element's box moves; the dedup on the far side (`applyViewport`'s
+   * changed-check) makes a no-op push cost one message and nothing more.
+   *
+   * A no-op once disposed, like every other door into the frame.
+   */
+  resize: () => void
   /** Remove the frame and every listener it needed. Idempotent. */
   dispose: () => void
 }
@@ -649,6 +663,10 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
       current = next
       if (!ready) return
       post({ iris: token, type: 'context', context: current })
+    },
+    resize: () => {
+      if (disposed) return
+      onResize()
     },
     dispose: () => {
       if (disposed) return

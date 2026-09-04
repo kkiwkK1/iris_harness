@@ -1095,6 +1095,49 @@
   background: var(--iris-scrim);
 }
 
+/*
+ * Iris's collapse toggle for a card's overlay interface.
+ *
+ * The one guaranteed way back from a card that has taken the reading column:
+ * a click on a control above the overlay surface's layer. Its `z` is the
+ * surface's own variable plus five, so the two can never be reordered by
+ * tuning one of them and forgetting the other — and both stay under the
+ * cleaning offer (60), which must top everything.
+ *
+ * `position:absolute` inside `.iris-card-stage`: the control hugs the reading
+ * column's top-right corner wherever the layout puts it, and never strays over
+ * the sidebar or the masthead — the navigation it exists to keep reachable.
+ * It is a real button, so keyboard focus and Enter/Space reach it the way a
+ * pointer does; no key is bound, because the card's own ESC (its fullscreen
+ * exit) and Iris's escape must not fight over the keyboard.
+ */
+.iris-overlay-toggle {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: calc(var(--iris-overlay-z, 40) + 5);
+  padding: 4px 11px 5px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: 999px;
+  background: var(--iris-bg-page);
+  color: var(--iris-ink-tertiary);
+  font: inherit;
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: var(--iris-shadow);
+}
+
+.iris-overlay-toggle:hover {
+  color: var(--iris-ink);
+}
+
+.iris-overlay-toggle[aria-pressed='true'] {
+  color: var(--iris-ink-secondary);
+  border-color: var(--iris-accent-quiet);
+}
+
 .iris-cleanup__panel {
   display: grid;
   gap: 10px;

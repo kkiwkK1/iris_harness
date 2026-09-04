@@ -229,6 +229,50 @@ test('a tab returning to the foreground is re-told its viewport', () => {
   )
 })
 
+test('an explicit resize re-reads the viewport the frame is actually in', () => {
+  /*
+   * **Why a window `resize` is not enough either.** The overlay frame's box is
+   * the surface it was attached to, and the surface is laid out inside the
+   * reading column — so a notice appearing or a pane toggling reshapes the
+   * frame with no window event at all. The shell watches the surface element
+   * and calls `resize()`; the numbers it pushes must be read *at that moment*,
+   * which is why the harness's viewport is mutable here: the second push has
+   * to carry the box as it is now, not as it was when the frame was built.
+   */
+  let size = { width: 800, height: 600 }
+  const scope = harness({ viewport: () => size })
+  const count = () => scope.posted().filter(it => it['type'] === 'viewport').length
+
+  scope.card.resize()
+  assert.equal(count(), 1)
+  assert.deepEqual(
+    { width: scope.posted().at(-1)?.['width'], height: scope.posted().at(-1)?.['height'] },
+    { width: 800, height: 600 },
+  )
+
+  // The reading column changed shape without any window event.
+  size = { width: 1038, height: 612 }
+  scope.card.resize()
+  assert.equal(count(), 2)
+  assert.deepEqual(
+    { width: scope.posted().at(-1)?.['width'], height: scope.posted().at(-1)?.['height'] },
+    { width: 1038, height: 612 },
+    'the push carried the viewport the frame used to have',
+  )
+})
+
+test('a resize after disposal is silence, not a post into a dead frame', () => {
+  /*
+   * Every door into the frame is a no-op once disposed, and this one is a
+   * late observer callback's to trip over: a `ResizeObserver` disconnect is
+   * asynchronous to the teardown it races.
+   */
+  const scope = harness()
+  scope.card.dispose()
+  scope.card.resize()
+  assert.equal(scope.posted().filter(it => it['type'] === 'viewport').length, 0)
+})
+
 test('the listeners live on the injected document, not the global', () => {
   /*
    * The reason the three tests above can exist. `runCard` took a document as a

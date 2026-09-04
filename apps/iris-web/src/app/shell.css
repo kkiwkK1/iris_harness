@@ -228,6 +228,30 @@
   border-inline: var(--iris-hairline) solid var(--iris-rule);
 }
 
+/*
+ * The box a card's overlay interface is confined to.
+ *
+ * The overlay surface (`useCardScripts.tsx`) is `position:absolute; inset:0`
+ * inside this wrapper, so **the layout, not a measurement, is the source of
+ * truth** for where a card's interface may appear: below the masthead, right
+ * of the sidebar, inside the sheet. A window resize, a notice appearing, a
+ * pane toggling — the rectangle follows all of them with no code, which is
+ * the property a measured fixed-position copy could never have.
+ *
+ * Positioned, because `inset:0` needs a containing block that is this wrapper
+ * and not the shell. A flex column with `min-height:0` because it takes the
+ * sheet's remaining height and hands it to ChatPane exactly as the sheet's own
+ * flex layout did when ChatPane was a direct child.
+ */
+.iris-card-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
 @media (min-width: 1360px) {
   .iris-stage {
     grid-template-columns: minmax(0, var(--iris-sheet)) var(--iris-aside);
