@@ -553,6 +553,62 @@ test('the browser half of delete → reimport → open: nothing is inherited', a
   dispose()
 })
 
+test('a card with no scripts is not held at unasked, or its interface never renders', async () => {
+  /*
+   * The dead state this pins, measured live on 人偶演出Lights ON: a card whose
+   * only surface is a message interface and which carries **no** scripts.
+   * `ConsentAsk` suppresses the question for an empty list ("a card with no
+   * scripts is not a decision"), and the host — honestly — reports
+   * `scriptsAllowed` as absent, which read straight is `unasked`. But the
+   * **interface** pipeline gates on the same field, so the card sat at
+   * `unasked` forever: no question could ever be put, and no interface ever
+   * rendered — no iframe, no caption, no reason anywhere. The merge-acceptance
+   * round hit exactly this: three cards with scripts were fine, the one
+   * script-less card's greeting lost its frame.
+   *
+   * So the derivation lives where the empty list is known: nothing to run is
+   * nothing to ask about, and the state becomes `allowed` — for the script
+   * surface a vacuous answer (there is nothing to run), for the interface
+   * surface the difference between a rendering card and a silently blank one.
+   * Never written back to the host: the host's absent key stays the truth about
+   * what was asked, and a reused id later carrying scripts is asked like anyone
+   * else.
+   *
+   * The stub returns the host's exact unanswered shape: no `scriptsAllowed` key
+   * at all, not `false`.
+   */
+  const client: IrisClient = {
+    connected: true,
+    onConnectionChange: () => () => undefined,
+    subscribe: () => () => undefined,
+    async call(method) {
+      if (method === 'script.list') {
+        return { scripts: [], documentGranted: false } as never
+      }
+      if (method === 'character.list') return { characters: [] } as never
+      if (method === 'chat.list') return { chats: [] } as never
+      if (method === 'settings.get') return { settings: { provider: 'p', model: 'm' } } as never
+      return {} as never
+    },
+  }
+
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  const actions = actionsOf(store)
+
+  await actions.loadScripts('scriptless')
+  assert.equal(
+    store.getState().scriptsAllowed,
+    'allowed',
+    'a card that can never be asked must not be stuck at unasked',
+  )
+  assert.equal(store.getState().scripts.length, 0)
+
+  // Not written back: the next card re-derives from its own list, so a stub
+  // that starts answering (a card with scripts, still unanswered) is read as
+  // `unasked` — the question goes out, exactly as the gate test below pins.
+  dispose()
+})
+
 test('consent is read through the gate, so an unanswered card is not a declined one', async () => {
   /*
    * The store is where `?? false` would most naturally be written, because the

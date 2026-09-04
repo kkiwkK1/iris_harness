@@ -2056,3 +2056,47 @@ measured on the 政经博弈 reply chat):
   height — the height path refuses zero by design (the self-reinforcing zero),
   and upstream would render a 0px frame where Iris shows a blank band. A
   collapse policy after the 6s blank diagnostic is the recorded shape of a fix.
+
+---
+
+## 52. A card with no scripts is never held at `unasked`
+
+**Kind:** deliberate improvement (closing a dead state the acceptance round
+walked into).
+
+**Upstream.** Message interfaces render under a global switch
+(`render.enabled`); nothing per-card is asked before a status bar draws. A
+card's scripts and its interfaces are two features with two switches, and only
+one of them is a question.
+
+**Iris.** Both features gate on one per-card answer — deliberate: a message
+frame is another frame of the same card, not a new trust domain. The gate
+itself is fine; the dead state was in the derivation. `ConsentAsk` suppresses
+the question for an empty script list ("a card with no scripts is not a
+decision" — its own comment), and the host reports `scriptsAllowed` as absent
+until answered, which `consentState` reads as `unasked`. A card with **no
+scripts** therefore sat at `unasked` forever: nothing could ever put the
+question, and the interface pipeline — reading the same field — never built a
+frame. Measured live (人偶演出Lights ON, the one script-less card among the
+four under acceptance): the greeting's slot stood empty — no iframe, no
+caption, no question, no reason anywhere — while the identical card with the
+answer pre-set rendered fully. Three cards with scripts passed acceptance; the
+script-less one was the casualty.
+
+**The fix** is where the empty list is known: `loadScripts` derives
+`allowed` when the host's answer is absent **and** the list is empty. For the
+script surface that answer is vacuous (there is nothing to run); for the
+interface surface it is the difference between rendering and a silently blank
+slot. It is derived per load and never written back — the host's absent key
+stays the truth about what was asked, and a reused character id later carrying
+scripts falls back to `consentState` and is asked like anyone else.
+
+**What it costs.** A script-less card's interfaces render without any
+consent interaction. That is upstream's behaviour exactly, and the reader is
+already looking at the markup these frames render — the wall (opaque origin,
+CSP, per-frame grants) is the isolation, not the question.
+
+**What would overturn it.** A ruling that message interfaces must require the
+same explicit yes as scripts for *every* card — then the question has to be
+put for empty lists too, and `ConsentAsk`'s suppression (not this derivation)
+is what must change.
