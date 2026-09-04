@@ -1217,6 +1217,79 @@ test('upstream’s max_chat_history is mapped, and "all" is spelled as absent', 
   assert.equal('maxHistory' in (all.calls[0]?.params ?? {}), false)
 })
 
+test('generateRaw composes the caller’s order, and says what it had to leave out', async () => {
+  /*
+   * This member was documented in the surface's own mapping table and never
+   * implemented — a bare `generateRaw(...)` in a card script was a
+   * `ReferenceError` inside the script's own catch, and the card reported the
+   * questionnaire as failed, which its player reads as "the plugin is not
+   * installed". Measured shape is 神隐挑战's: the object form with
+   * `ordered_prompts` mixing environment names and literal system messages.
+   */
+  const { api, calls, gaps } = surface({
+    answers: { generateRaw: { text: 'raw reply' } },
+  })
+  const generateRaw = api['generateRaw'] as (config: unknown) => Promise<unknown>
+
+  const answer = await generateRaw({
+    user_input: '开帖',
+    should_silence: true,
+    overrides: { persona_description: '扮演测试者' },
+    ordered_prompts: [
+      'world_info_before',
+      { role: 'system', content: '你是论坛引擎' },
+      'persona_description',
+      'world_info_after',
+      { role: 'user', content: '前置语境' },
+      'user_input',
+    ],
+  })
+
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.method, 'generateRaw', 'the raw member rides the raw host method')
+  assert.equal(answer, 'raw reply')
+  // System messages ride the system field; everything else lands in the prompt
+  // in the order the caller wrote, with `user_input` placed at its marker.
+  assert.equal(calls[0]?.params['systemPrompt'], '你是论坛引擎')
+  assert.equal(calls[0]?.params['prompt'], '扮演测试者\n\n前置语境\n\n开帖')
+
+  // The environment names this frame cannot resolve are skipped and named —
+  // silently dropping one would read as "the model ignored that part".
+  assert.equal(gaps.length, 1)
+  assert.match(gaps[0] ?? '', /world_info_before, world_info_after/)
+})
+
+test('generateRaw uses an override before the snapshot, and the bare string form', async () => {
+  const { api, calls, gaps } = surface({ answers: { generateRaw: { text: 'x' } } })
+  const generateRaw = api['generateRaw'] as (config: unknown) => Promise<unknown>
+
+  // `persona_description` resolves from overrides — 神隐挑战 overrides it on
+  // every site; the snapshot carries no persona text of its own.
+  await generateRaw({
+    user_input: 'hi',
+    overrides: { persona_description: '扮演你' },
+    ordered_prompts: ['persona_description', 'user_input'],
+  })
+  assert.equal(calls[0]?.params['prompt'], '扮演你\n\nhi')
+  assert.deepEqual(gaps, [], 'an overridden name is not a gap')
+
+  // No order given: upstream sends the user input alone.
+  await generateRaw({ user_input: 'just this' })
+  assert.equal(calls[1]?.params['prompt'], 'just this')
+  assert.equal('systemPrompt' in (calls[1]?.params ?? {}), false)
+})
+
+test('generateRaw refuses an empty composition by name, not with a host contract error', async () => {
+  const { api } = surface({ answers: { generateRaw: { text: 'x' } } })
+  const generateRaw = api['generateRaw'] as (config: unknown) => Promise<unknown>
+
+  // A caller ordering only names this frame skips would send nothing.
+  await assert.rejects(
+    () => generateRaw({ user_input: 'hi', ordered_prompts: ['world_info_before'] }),
+    /composed prompt is empty/,
+  )
+})
+
 test('a streaming request is answered whole, and says so', async () => {
   /*
    * Measured on the sample card: the stream only drives a character-count

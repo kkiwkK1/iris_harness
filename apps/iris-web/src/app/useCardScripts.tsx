@@ -313,7 +313,19 @@ export function CardScriptFrames(): ReactElement {
               fetch: async url => actionsOf(store).fetchScriptDependency(url),
               onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
               onSlash: async command => actionsOf(store).runSlash(command),
-              onSettings: () => undefined,
+              /*
+               * A settings report is the card's extension settings partition —
+               * the whole object, posted on every proxied write and on
+               * `SillyTavern.saveSettings[Debounced]`. Dropped here, every
+               * write-after-read loop a card runs (`if
+               * (!extensionSettings.key) { …; extensionSettings.key = … }`)
+               * recomputes forever and a settings key it probes for never
+               * reads back — upstream's `saveSettingsDebounced` persists, and
+               * this is the one road to that same answer.
+               */
+              onSettings: settings => {
+                void actionsOf(store).saveCardExtensionSettings(settings)
+              },
               // Reported, not swallowed: a blocked subresource is the policy
               // doing its job, and the card author needs the host and directive
               // to know what they reached for.
