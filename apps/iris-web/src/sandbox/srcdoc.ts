@@ -256,9 +256,9 @@ export function buildSrcdoc(
   const seed =
     context === undefined
       ? ''
-      : `<script>globalThis.__iris_context__=JSON.parse(${escapeClose(
+      : `<script>try{globalThis.__iris_context__=JSON.parse(${escapeClose(
           JSON.stringify(JSON.stringify(context)),
-        )})</script>`
+        )})}catch(e){}</script>`
 
   return [
     '<!doctype html>',
@@ -371,9 +371,29 @@ export function buildSrcdoc(
     ...(members === undefined
       ? []
       : [`<script src="${attribute(members)}" crossorigin="anonymous" data-iris-members></script>`]),
-    `<script>${safe}</script>`,
-    // After the bootstrap, which reads it, and before anything a card can run.
+    /*
+     * The seed runs **before** the bootstrap, and the order is the whole point.
+     *
+     * The bootstrap's install reads the seed synchronously
+     * (`installSandbox` initialises its snapshot from `env.seededContext()`),
+     * so a seed emitted after the bootstrap script is a seed nobody will ever
+     * read — the document goes on parsing past it while `installSandbox` has
+     * already answered "no snapshot". That ordering shipped once, and the
+     * failure it produced was the one this frame exists not to cause: a message
+     * frame's inline card script calls `getAllVariables()` at parse time, the
+     * member was present but the snapshot was not, and the refusal that named
+     * itself arrived as the card's failure. Position, not presence, is what
+     * closes the window — asserted positionally in `sandbox-srcdoc.test.ts`.
+     *
+     * The seed is self-contained data (`JSON.parse` of a string literal), so it
+     * needs nothing from the bootstrap — and it is wrapped so that a corrupt
+     * payload degrades to "no seed" rather than to an uncaught parse error ahead
+     * of the bootstrap's error reporting; the frame then refuses by name on
+     * each member call, which is the honest answer for a snapshot it does not
+     * have.
+     */
     seed,
+    `<script>${safe}</script>`,
     /*
      * `crossorigin="anonymous"`, and it only works as **one half of a pair**.
      *
