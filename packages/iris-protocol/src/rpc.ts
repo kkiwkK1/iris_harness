@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, DebugReport, GenerationSettings, PresetManagerView, PresetSummary, PromptItemization, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
+import type { ChatSearchHit, ChatSummary, ChatView, CharacterSummary, ConnectionProfile, DebugReport, GenerationSettings, PresetManagerView, PresetSummary, PromptItemization, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -24,6 +24,25 @@ export const requestSchemas = {
   'chat.open': z.object({ chatId: z.string().min(1) }),
   'chat.delete': z.object({ chatId: z.string().min(1) }),
   'chat.rename': z.object({ chatId: z.string().min(1), title: z.string().max(200) }),
+  /**
+   * Find conversations by a fragment of floor text.
+   *
+   * Upstream's `POST /api/chats/search` (`chats.js:874`) plus the "Previous
+   * Chats" filter that calls it. The scan is linear over the profile's chat
+   * files — no index — because the corpus's largest conversation (677 floors,
+   * 19 MiB) reads and searches in a fraction of the one-second line, and an
+   * index would add invalidation on every write to answer the same question
+   * the files already answer. Hits name the chat and the floor, so a caller
+   * can open one and know where inside it the text lives.
+   */
+  'chat.search': z.object({
+    /** The fragment to find, matched against each floor's stored text (`mes`). */
+    query: z.string().min(1).max(200),
+    /** Default false, like upstream's filter: a name is typed as it is remembered. */
+    caseSensitive: z.boolean().optional(),
+    /** Matches reported per chat, when a caller wants fewer than the default. */
+    limit: z.number().int().positive().max(20).optional(),
+  }),
   /**
    * Answer the one-time offer to clean a chat that has never been cleaned.
    *
@@ -967,6 +986,14 @@ export interface RpcResponseMap {
   'chat.open': { view: ChatView }
   'chat.delete': Record<string, never>
   'chat.rename': { chats: ChatSummary[] }
+  /**
+   * Chats with at least one matching floor, newest activity first.
+   *
+   * **No hit is never padded.** An empty array is the answer for "nothing in
+   * this profile says that", and a caller that keeps showing a previous list
+   * when it receives one is lying to its reader.
+   */
+  'chat.search': { hits: ChatSearchHit[] }
   /**
    * What the answer did.
    *

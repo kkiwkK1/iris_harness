@@ -528,6 +528,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.open', handlers['chat.open']),
       ctx.irisRpc.register('chat.delete', handlers['chat.delete']),
       ctx.irisRpc.register('chat.rename', handlers['chat.rename']),
+      ctx.irisRpc.register('chat.search', handlers['chat.search']),
       ctx.irisRpc.register('chat.answerCleanup', handlers['chat.answerCleanup']),
       ctx.irisRpc.register('chat.send', handlers['chat.send']),
       ctx.irisRpc.register('chat.regenerate', handlers['chat.regenerate']),

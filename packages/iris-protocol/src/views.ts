@@ -78,6 +78,42 @@ export interface ChatSummary {
   parentChatId?: string
 }
 
+/**
+ * One floor a search matched, and where it sits.
+ *
+ * `messageId` is the chat-file line index minus the header — the same number a
+ * card script sees and `chat.open`'s views use — so a hit names a floor the
+ * reader can act on, not a byte offset into a file.
+ */
+export interface ChatSearchMatch {
+  /** The floor whose text matched. */
+  messageId: number
+  /** The floor's speaker, so a hit can say who said it. */
+  name: string
+  /** True when the floor is the user's own line. */
+  isUser: boolean
+  /** Text clipped around the first match, for a row that shows why it hit. */
+  snippet: string
+}
+
+/**
+ * One conversation a search found, with its floors.
+ *
+ * The identity fields mirror `ChatSummary` so a list can render a hit the same
+ * way it renders a row; a hit without at least one match is never sent.
+ */
+export interface ChatSearchHit {
+  chatId: string
+  title: string
+  characterId?: string
+  /** Unix epoch milliseconds of the last activity, as `ChatSummary` carries it. */
+  updatedAt: number
+  messageCount: number
+  parentChatId?: string
+  /** The floors that matched, in file order, at most the requested limit. */
+  matches: ChatSearchMatch[]
+}
+
 /** A character in the library. */
 export interface CharacterSummary {
   characterId: string

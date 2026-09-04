@@ -9,7 +9,7 @@
  * @module iris-web/app/Sidebar
  */
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 
@@ -17,6 +17,8 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { since, toBase64 } from './format.ts'
+import type { Language } from './i18n/strings.ts'
+import type { ChatSearchHit } from '@iris/protocol'
 
 /** Which list the sidebar is showing. */
 export type SidebarTab = 'chats' | 'characters'
@@ -36,6 +38,28 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
   // Subscribed so a language switch re-renders the list's words, not just the
   // moment's rows; `lang` also drives the relative-time units in each row.
   const { lang } = useLanguage()
+
+  // The content filter. `hits` is what the last completed search answered;
+  // undefined means no search is in force and the plain list shows. A stale
+  // reply is dropped by sequence number, never by trusting arrival order.
+  const [query, setQuery] = useState('')
+  const [hits, setHits] = useState<ChatSearchHit[] | undefined>(undefined)
+  const searchSeq = useRef(0)
+  useEffect(() => {
+    const trimmed = query.trim()
+    if (trimmed === '') {
+      setHits(undefined)
+      return
+    }
+    const seq = searchSeq.current + 1
+    searchSeq.current = seq
+    const timer = setTimeout(() => {
+      void actions.searchChats(trimmed).then(found => {
+        if (searchSeq.current === seq) setHits(found)
+      })
+    }, 250)
+    return () => { clearTimeout(timer) }
+  }, [query, actions])
 
   return (
     <nav className={`iris-sidebar${open ? ' iris-sidebar--open' : ''}`} aria-label={t('sidebarAria')}>
@@ -67,21 +91,47 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
 
       <div className="iris-list" role="tabpanel">
         {tab === 'chats' ? (
-          chats.length === 0 ? (
-            <p className="iris-list__empty">{t('chatsEmpty')}</p>
-          ) : (
-            chats.map(chat => (
-              <ChatRow
-                key={chat.chatId}
-                title={chat.title}
-                meta={`${since(chat.updatedAt, Date.now(), lang)} · ${t('messageCount', { count: chat.messageCount })}`}
-                current={chat.chatId === chatId}
-                onOpen={() => void actions.openChat(chat.chatId)}
-                onDelete={() => void actions.deleteChat(chat.chatId)}
-                deleteLabel={t('deleteConversation')}
-              />
-            ))
-          )
+          <>
+            <input
+              type="search"
+              className="iris-search"
+              aria-label={t('chatSearchAria')}
+              placeholder={t('chatSearchPlaceholder')}
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+            />
+            {hits === undefined ? (
+              chats.length === 0 ? (
+                <p className="iris-list__empty">{t('chatsEmpty')}</p>
+              ) : (
+                chats.map(chat => (
+                  <ChatRow
+                    key={chat.chatId}
+                    title={chat.title}
+                    meta={`${since(chat.updatedAt, Date.now(), lang)} · ${t('messageCount', { count: chat.messageCount })}`}
+                    current={chat.chatId === chatId}
+                    onOpen={() => void actions.openChat(chat.chatId)}
+                    onDelete={() => void actions.deleteChat(chat.chatId)}
+                    deleteLabel={t('deleteConversation')}
+                  />
+                ))
+              )
+            ) : hits.length === 0 ? (
+              // The no-results row names the query: an empty state that does not
+              // say what found nothing is indistinguishable from a broken box.
+              <p className="iris-list__empty">{t('chatSearchEmpty', { query: query.trim() })}</p>
+            ) : (
+              hits.map(hit => (
+                <SearchRow
+                  key={hit.chatId}
+                  hit={hit}
+                  current={hit.chatId === chatId}
+                  lang={lang}
+                  onOpen={() => void actions.openChat(hit.chatId)}
+                />
+              ))
+            )}
+          </>
         ) : characters.length === 0 ? (
           <p className="iris-list__empty">
             {t('libraryEmpty')}
@@ -125,7 +175,9 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
   )
 }
 
-/** One list row, with an overflow menu for the one destructive action it offers. */
+/**
+ * One list row, with an overflow menu for the one destructive action it offers.
+ */
 function ChatRow({
   title,
   meta,
@@ -182,5 +234,41 @@ function ChatRow({
         onClose={() => setMenuOpen(false)}
       />
     </div>
+  )
+}
+
+/**
+ * One content hit: the conversation, and the floor that matched.
+ *
+ * The snippet is why the row is here; the floor label is where to go. Opening
+ * the chat is the whole action — jumping the reading window to the floor is
+ * the reading view's business and does not exist yet, so the row says where
+ * the hit is rather than pretending it scrolled for you.
+ */
+function SearchRow({
+  hit,
+  current,
+  lang,
+  onOpen,
+}: {
+  hit: ChatSearchHit
+  current: boolean
+  lang: Language
+  onOpen: () => void
+}): ReactElement {
+  const first = hit.matches[0]
+  return (
+    <button type="button" className="iris-row iris-row--hit" aria-current={current} onClick={onOpen}>
+      <span className="iris-row__title">{hit.title}</span>
+      {first !== undefined ? (
+        <span className="iris-row__snippet">{first.snippet}</span>
+      ) : null}
+      <span className="iris-row__meta iris-meta">
+        {first === undefined
+          ? since(hit.updatedAt, Date.now(), lang)
+          : `${t('chatSearchFloor', { floor: first.messageId })}`
+            + (hit.matches.length > 1 ? ` · ${t('chatSearchMore', { count: hit.matches.length - 1 })}` : '')}
+      </span>
+    </button>
   )
 }

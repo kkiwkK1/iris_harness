@@ -43,6 +43,14 @@ export const en = {
   byCreator: 'by {creator}',
   messageCount: '{count} messages',
 
+  /** Sidebar content filter (`chat.search`). */
+  chatSearchAria: 'Search conversations',
+  chatSearchPlaceholder: 'Search message text…',
+  chatSearchEmpty: 'No conversation contains “{query}”.',
+  /** The hit's floor, as the stored index a card script would use. */
+  chatSearchFloor: 'floor {floor}',
+  chatSearchMore: '+{count} more floors',
+
   /** Relative time (`since`) and sizes (`describeBytes`). */
   justNow: 'just now',
   minutesAgo: '{n}m ago',
@@ -364,6 +372,14 @@ export const zh: Record<StringKey, string> = {
   noCreatorListed: '未署名作者',
   byCreator: '作者：{creator}',
   messageCount: '{count} 条消息',
+
+  /** 侧栏内容搜索（`chat.search`）。 */
+  chatSearchAria: '搜索对话内容',
+  chatSearchPlaceholder: '搜索消息文本…',
+  chatSearchEmpty: '没有对话包含「{query}」。',
+  /** 命中楼层，按卡片脚本所见 0 起点的存储序号。 */
+  chatSearchFloor: '第 {floor} 楼',
+  chatSearchMore: '另有 {count} 楼命中',
 
   /** 相对时间与大小。 */
   justNow: '刚刚',

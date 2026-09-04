@@ -192,6 +192,9 @@ const PROBES: Record<string, unknown> = {
   'chat.open': { chatId: 'no-such-chat' },
   'chat.delete': { chatId: 'no-such-chat' },
   'chat.rename': { chatId: 'no-such-chat', title: 'x' },
+  // The scan reads the profile's chat directory, which the probe host has
+  // created empty: the honest answer is no hits, and it proves registration.
+  'chat.search': { query: 'x' },
   'chat.answerCleanup': { chatId: 'no-such-chat', answer: 'clean' },
   'chat.send': { chatId: 'no-such-chat', text: 'x' },
   'chat.regenerate': { chatId: 'no-such-chat' },
