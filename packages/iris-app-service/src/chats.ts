@@ -21,8 +21,9 @@ import {
   parseChatFile,
   importChat,
   type SillyTavernChatHeader,
+  type SillyTavernMessage,
 } from '@iris/persistence'
-import type { ChatSummary } from '@iris/protocol'
+import type { ChatSearchHit, ChatSearchMatch, ChatSummary } from '@iris/protocol'
 import type { ScopeBackend, Variables } from '@iris/variables'
 
 import { ChatEntry, createSession, readMeta } from './entry.ts'
@@ -179,6 +180,55 @@ export class ChatStore {
   /** A cached conversation, without touching the disk. */
   cached(chatId: string): ChatEntry | undefined {
     return this.#entries.get(chatId)
+  }
+
+  /**
+   * Search every stored conversation's floor text.
+   *
+   * **A linear scan of the chat files, no index.** The files are the truth —
+   * every write goes through `save` — so the answer they give directly is the
+   * answer an index would need invalidation on every write to maintain, and
+   * the corpus's largest conversation (677 floors, 19 MiB) reads and searches
+   * in a fraction of the one-second line this has to meet. Each line is
+   * case-folded and substring-checked **before** it is parsed; only a line the
+   * cheap check flagged pays for a `JSON.parse`, and only a hit that survives
+   * into a floor's `mes` is reported — a match against the line's other keys
+   * (a speaker's name, a date, a variable table) is not a hit.
+   *
+   * Open conversations are read from disk like the rest, not from their live
+   * entries: the two can differ only inside a card's uncommitted replay batch,
+   * and a search that sees the committed conversation is the honest answer.
+   * @param query - the fragment to find. Blank after trimming is refused.
+   * @param options - case sensitivity (default false) and the per-chat cap on
+   *   reported matches (default {@link DEFAULT_SEARCH_MATCH_LIMIT}).
+   * @returns chats with at least one matching floor, newest activity first.
+   *   A file that cannot be read or parsed is skipped, exactly as `list` does.
+   * @throws {AppError} `invalid-request` when the query is empty.
+   */
+  async search(
+    query: string,
+    options?: { caseSensitive?: boolean, limit?: number },
+  ): Promise<ChatSearchHit[]> {
+    const needle = query.trim()
+    if (needle.length === 0) throw invalid('the search query is empty')
+    const caseSensitive = options?.caseSensitive ?? false
+    const limit = options?.limit ?? DEFAULT_SEARCH_MATCH_LIMIT
+    // One fold of the needle, not one per line.
+    const folded = caseSensitive ? needle : needle.toLowerCase()
+
+    const hits: ChatSearchHit[] = []
+    for (const chatId of await this.ids()) {
+      let text: string
+      try {
+        text = await readFile(fileFor(this.#dir, chatId, '.jsonl'), 'utf8')
+      } catch {
+        continue
+      }
+      const hit = searchChatText(chatId, text, folded, { caseSensitive, limit })
+      if (hit !== undefined) hits.push(hit)
+    }
+    // The sidebar list's order, so a search reads as the list, filtered.
+    return hits.sort((left, right) => right.updatedAt - left.updatedAt)
   }
 
   /**
@@ -591,4 +641,97 @@ export function branchTitle(parentTitle: string, taken: (title: string) => boole
     const candidate = `${base} - Branch #${String(index)}`
     if (!taken(candidate)) return candidate
   }
+}
+
+/** Matches reported per chat when the caller did not ask for a cap. */
+export const DEFAULT_SEARCH_MATCH_LIMIT = 5
+
+/** Snippet: floors of context shown before the match, and after its end. */
+const SNIPPET_BEFORE = 48
+const SNIPPET_AFTER = 96
+
+/**
+ * Scan one chat file's text for floors containing the needle.
+ *
+ * The needle arrives already case-folded when the search is insensitive, and
+ * each line is folded with it, so a 19 MiB file costs one substring pass and
+ * `JSON.parse` only on the handful of lines the pass flags. A flagged line
+ * still has to prove the match lives in its floor text — `mes` — because the
+ * line is JSON and everything it carries (the speaker's name, `send_date`, a
+ * floor's variable table) otherwise counts as content, which it is not.
+ * @param chatId - the file's stem, which is the conversation's id.
+ * @param text - the whole file.
+ * @param needle - the (already folded) fragment to find.
+ * @param caseSensitive - whether the needle is literal.
+ * @param limit - the most matches to report.
+ * @returns the hit, or undefined when no floor matches.
+ */
+export function searchChatText(
+  chatId: string,
+  text: string,
+  needle: string,
+  options: { caseSensitive: boolean, limit: number },
+): ChatSearchHit | undefined {
+  const { caseSensitive, limit } = options
+  const lines = text.split('\n').filter(line => line.trim().length > 0)
+  if (lines.length < 2) return undefined
+
+  let header: SillyTavernChatHeader
+  try {
+    header = JSON.parse(lines[0] ?? '{}') as SillyTavernChatHeader
+  } catch {
+    return undefined
+  }
+  const meta = readMeta(header)
+
+  const matches: ChatSearchMatch[] = []
+  for (let index = 1; index < lines.length; index += 1) {
+    if (matches.length >= limit) break
+    const line = lines[index] ?? ''
+    const folded = caseSensitive ? line : line.toLowerCase()
+    if (folded.includes(needle) === false) continue
+
+    let floor: SillyTavernMessage
+    try {
+      floor = JSON.parse(line) as SillyTavernMessage
+    } catch {
+      continue
+    }
+    // Upstream's own search skips system floors; so does this. A hidden
+    // narrator line is storage, not something a reader is looking for.
+    if (floor.is_system === true) continue
+    const mes = typeof floor.mes === 'string' ? floor.mes : ''
+    const at = caseSensitive ? mes.indexOf(needle) : mes.toLowerCase().indexOf(needle)
+    if (at < 0) continue
+    matches.push({
+      messageId: index - 1,
+      name: floor.name,
+      isUser: floor.is_user === true,
+      snippet: clipSnippet(mes, at),
+    })
+  }
+
+  if (matches.length === 0) return undefined
+  return {
+    chatId,
+    title: meta.title,
+    ...meta.characterId === undefined ? {} : { characterId: meta.characterId },
+    updatedAt: meta.updatedAt,
+    messageCount: lines.length - 1,
+    ...meta.parentChatId === undefined ? {} : { parentChatId: meta.parentChatId },
+    matches,
+  }
+}
+
+/**
+ * Text around a match, for a row that shows why it hit.
+ * @param text - the floor's whole text.
+ * @param at - where the match starts.
+ * @returns up to {@link SNIPPET_BEFORE} characters before the match and
+ *   {@link SNIPPET_AFTER} from its start, ellipsised only where cut.
+ */
+export function clipSnippet(text: string, at: number): string {
+  const start = Math.max(0, at - SNIPPET_BEFORE)
+  const end = Math.min(text.length, at + SNIPPET_AFTER)
+  return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '')
 }

@@ -110,6 +110,31 @@
   padding: 6px 8px 16px;
 }
 
+/* The chats tab's content filter. Full width of the list, quiet until used. */
+.iris-search {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 2px 4px 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink);
+  background: var(--iris-bg-sunken);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  min-width: 0;
+}
+
+.iris-search:focus {
+  outline: none;
+  border-color: var(--iris-accent);
+}
+
+.iris-search::placeholder {
+  color: var(--iris-ink-faint);
+}
+
 .iris-row {
   display: block;
   width: 100%;
@@ -153,6 +178,19 @@
 .iris-row__meta {
   display: block;
   margin-top: 3px;
+}
+
+/* A content hit's evidence: the matched text, clamped to two lines. */
+.iris-row__snippet {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 3px;
+  font-size: var(--iris-meta-size);
+  line-height: 1.4;
+  color: var(--iris-ink-tertiary);
+  overflow-wrap: anywhere;
 }
 
 .iris-row__tags {

@@ -47,6 +47,8 @@ export {
 } from './rpc.ts'
 
 export type {
+  ChatSearchHit,
+  ChatSearchMatch,
   ChatSummary,
   ChatView,
   CharacterSummary,

@@ -17,6 +17,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import type {
   CharacterSummary,
+  ChatSearchHit,
   ChatSummary,
   ChatView,
   ConnectionProfile,
@@ -392,6 +393,15 @@ export interface IrisActions {
   createChat(characterId: string): Promise<void>
   deleteChat(chatId: string): Promise<void>
   renameChat(chatId: string, title: string): Promise<void>
+  /**
+   * Search the profile's conversations by a fragment of floor text.
+   *
+   * **Resolves `undefined` on failure instead of raising a notice.** A search
+   * box fires on a debounce, so a host without the method would turn every
+   * keystroke into a global error banner; the caller shows the unfiltered list
+   * and the reason stays in the console where it belongs.
+   */
+  searchChats(query: string): Promise<ChatSearchHit[] | undefined>
   send(text: string): Promise<void>
   regenerate(): Promise<void>
   abort(): Promise<void>
@@ -799,6 +809,16 @@ export function createIrisStore(
           const view = get().view
           if (view !== undefined && view.chatId === chatId) set({ view: { ...view, title } })
         })
+      },
+
+      async searchChats(query: string): Promise<ChatSearchHit[] | undefined> {
+        try {
+          const { hits } = await client.call('chat.search', { query })
+          return hits
+        } catch (error: unknown) {
+          console.warn('chat.search failed; showing the unfiltered list', error)
+          return undefined
+        }
       },
 
       async send(text: string): Promise<void> {

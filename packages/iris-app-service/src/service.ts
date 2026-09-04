@@ -470,6 +470,13 @@ export class IrisAppService {
         return { chats: await chats.list() }
       },
 
+      'chat.search': async ({ query, caseSensitive, limit }) => ({
+        hits: await chats.search(query, {
+          ...caseSensitive === undefined ? {} : { caseSensitive },
+          ...limit === undefined ? {} : { limit },
+        }),
+      }),
+
       'chat.send': async ({ chatId, text }) => ({ turn: await this.#start(chatId, { kind: 'send', text }) }),
 
       'chat.regenerate': async ({ chatId }) => ({ turn: await this.#start(chatId, { kind: 'regenerate' }) }),

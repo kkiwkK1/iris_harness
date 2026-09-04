@@ -14,6 +14,8 @@
 import {
   parseRequest,
   type CharacterSummary,
+  type ChatSearchHit,
+  type ChatSearchMatch,
   type ChatSummary,
   type GenerationSettings,
   type IrisClient,
@@ -36,7 +38,7 @@ import {
 } from './connections.ts'
 import { mergeSettings } from './settings.ts'
 import { DEFAULT_SETTINGS, seedCharacters, seedChats } from './seed.ts'
-import { toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
+import { selected, toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
 
 /**
  * Scripts the fake reports for every character.
@@ -240,6 +242,39 @@ class InMemoryClient implements FakeClient {
         this.#require(chatId).title = title
         this.#emit({ type: 'chats.updated', chats: this.#summaries() })
         return { chats: this.#summaries() }
+      }
+
+      case 'chat.search': {
+        // The host's scan over the fake's log: the selected candidate's text is
+        // what a reader sees, so it is what a search answers from.
+        const { query, caseSensitive, limit } = params as RpcRequest<'chat.search'>
+        const needle = query.trim()
+        if (needle.length === 0) throw new FakeRpcError('invalid-request', 'the search query is empty')
+        const foldedNeedle = caseSensitive === true ? needle : needle.toLowerCase()
+        const cap = limit ?? 5
+        const hits = this.#chats
+          .map((chat): ChatSearchHit | undefined => {
+            const matches: ChatSearchMatch[] = []
+            for (const [id, message] of chat.messages.entries()) {
+              if (matches.length >= cap) break
+              const text = selected(message).text
+              const at = caseSensitive === true
+                ? text.indexOf(needle)
+                : text.toLowerCase().indexOf(foldedNeedle)
+              if (at < 0) continue
+              matches.push({
+                messageId: id,
+                name: message.name,
+                isUser: message.role === 'user',
+                snippet: text.slice(Math.max(0, at - 48), Math.min(text.length, at + 96)),
+              })
+            }
+            if (matches.length === 0) return undefined
+            return { ...toChatSummary(chat), matches }
+          })
+          .filter((hit): hit is ChatSearchHit => hit !== undefined)
+          .sort((left, right) => right.updatedAt - left.updatedAt)
+        return { hits }
       }
 
       case 'chat.send': {
