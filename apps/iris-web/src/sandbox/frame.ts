@@ -26,8 +26,9 @@ import { isOnSillyTavernSurface } from './card-api.ts'
 import type { MemberTable } from './members-contract.ts'
 import { MEMBER_KINDS, SHARED_ORIGINAL, identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
-import { SCRIPT_REGISTRY, withPreamble } from './preamble.ts'
+import { SCRIPT_REGISTRY, WINDOW_GLOBAL, withPreamble } from './preamble.ts'
 import { EventBus, MVU_EVENTS, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
+import type { Listener } from '@iris/compat-tavernhelper-core'
 import type { ScriptContext } from '@iris/protocol'
 
 /** What the frame-side code needs from its realm. */
@@ -928,7 +929,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     property === 'extension_settings' ||
     property === 'TavernHelper' ||
     property === 'eventSource' ||
-    property === 'event_types'
+    property === 'event_types' ||
+    // The window event-target surface: on a real parent these are native and
+    // unwritable, so the stand-in keeps the same read-only shape.
+    property === 'addEventListener' ||
+    property === 'removeEventListener' ||
+    property === 'dispatchEvent'
 
   const virtualParent = new Proxy(Object.create(null) as object, {
     get(_target, property): unknown {
@@ -951,6 +957,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (property === 'TavernHelper') return tavernHelper['TavernHelper']
       if (property === 'eventSource') return eventSource
       if (property === 'event_types') return TAVERN_EVENTS
+      /*
+       * The window event-target surface, on the same bus as `eventSource`. A
+       * `getTopWindow()` helper that returned the real top used to answer these
+       * reads with a cross-origin SecurityError; falling through to the
+       * unpublished-name path would answer `undefined` and move the same failure
+       * into a `TypeError` one line later. Both are worse than routing.
+       */
+      if (property === 'addEventListener') return parentEventTarget.addEventListener
+      if (property === 'removeEventListener') return parentEventTarget.removeEventListener
+      if (property === 'dispatchEvent') return parentEventTarget.dispatchEvent
 
       // Published by one of this card's scripts. Checked after the bridged
       /*
@@ -1083,6 +1099,9 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         property === 'TavernHelper' ||
         property === 'eventSource' ||
         property === 'event_types' ||
+        property === 'addEventListener' ||
+        property === 'removeEventListener' ||
+        property === 'dispatchEvent' ||
         ((property === 'SillyTavern' || property === 'extension_settings') && context !== undefined)
       )
     },
@@ -1393,6 +1412,61 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    */
   const events = new EventBus()
   const eventSource = env.members.createEventSource(events)
+
+  /**
+   * The parent window's native event-target surface.
+   *
+   * Upstream's `parent` is the ST page — a real window, so
+   * `window.top.addEventListener('X', fn)` and `window.top.dispatchEvent(new
+   * CustomEvent('X', {detail}))` work because same-origin windows work. A card
+   * that reaches for one of those here must not fall through to the **real**
+   * cross-origin parent, where the browser answers every read with a
+   * SecurityError; the projector card's boot died on exactly that read. These
+   * three route onto {@link events} — the same bus `eventSource` wraps — so
+   * "subscribe through the parent, emit through `eventEmit`" and its reverse
+   * stay one bus, not two.
+   *
+   * Cross-frame delivery rides the shell: a `dispatchEvent` posts a `winevent`,
+   * and the shell rebroadcasts it to every frame of the card as an ordinary
+   * `event` message, which the frame emits on this same bus. The listener
+   * receives one argument shaped like the event that was dispatched —
+   * `{type, detail}` — because that is what the DOM contract hands a
+   * `CustomEvent` reader; the projector reads exactly `ev.detail`.
+   */
+  const parentEventTarget = {
+    /**
+     * No TH name guard here, on purpose: TH events come from a fixed table, and
+     * a DOM event name is whatever the card dispatched — the projector's
+     * `MvuFloatingBgRequest` is in no table and must still be heard.
+     */
+    addEventListener: (event: string, listener: Listener): void => {
+      events.eventOn(String(event), listener)
+    },
+    removeEventListener: (event: string, listener: Listener): void => {
+      events.eventRemoveListener(String(event), listener)
+    },
+    /**
+     * `true` unconditionally, unlike the DOM's "was preventDefault called":
+     * nothing here can answer that, and the measured callers ignore the answer.
+     */
+    dispatchEvent: (event: unknown): boolean => {
+      const type = (event as { type?: unknown } | null | undefined)?.type
+      if (typeof type !== 'string' || type.length === 0) {
+        throw new UnsupportedApiError(
+          'parent.dispatchEvent',
+          'The event needs a string `type`.',
+        )
+      }
+      const detail = (event as { detail?: unknown }).detail
+      env.post({
+        iris: env.token,
+        type: 'winevent',
+        event: type,
+        ...(detail === undefined ? {} : { detail }),
+      })
+      return true
+    },
+  }
 
   /**
    * How long a wait may run before it is worth *saying* it is still waiting.
@@ -2128,6 +2202,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
          * has not already given away.
          */
         [SCRIPT_REGISTRY, (id: unknown) => viewFor(typeof id === 'string' ? id : undefined)],
+        /*
+         * The shadowed window, for the preamble's `const window`.
+         *
+         * A module cannot be handed the shadow as a parameter and `top` cannot
+         * be published onto the real window (see the filter above — the browser
+         * refuses it), so the shadow rides its own published name and the
+         * preamble's one lexical line binds it. Published before evaluation, as
+         * everything else here is, so the binding is never `undefined`.
+         */
+        [WINDOW_GLOBAL, windowShadow],
         /*
          * The coordination pair, published **bare** alongside everything else.
          *

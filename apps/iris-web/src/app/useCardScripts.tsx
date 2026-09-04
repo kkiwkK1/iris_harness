@@ -27,6 +27,7 @@ import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
 import { actionsOf, tapHostEvents } from '../client/store.ts'
 import { startCardScripts } from '../sandbox/card-scripts.ts'
 import { registerCardEmitter } from './card-bus.ts'
+import { broadcastWindowEvent, registerWindowEventSink } from './window-events.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import { librariesFor } from '../sandbox/libraries.ts'
 import {
@@ -359,6 +360,15 @@ export function CardScriptFrames(): ReactElement {
                   actionsOf(store).addCardReport(detail, { channel: 'overlay' })
                 }
               },
+              /*
+               * A dispatch on the page window this frame sees. Handed to the
+               * fan-out rather than emitted straight back into this frame, so a
+               * listener in the message frames hears a dispatch made here — the
+               * page-wide reach `parent.dispatchEvent` promises upstream.
+               */
+              onWindowEvent: (event, detail) => {
+                broadcastWindowEvent(event, detail)
+              },
               onBlocked: (blocked, directive, detail, covered) => {
                 const refusal = describeRefusal(blocked, directive, detail, covered)
                 /*
@@ -630,6 +640,17 @@ export function CardScriptFrames(): ReactElement {
     })
 
     /*
+     * This card's frames are one half of the page window's audience. A window
+     * event dispatched anywhere — here or in a message frame — comes back
+     * through the fan-out and is emitted into the script frames exactly as a
+     * host event would be, so a listener registered through
+     * `parent.addEventListener` and one through `eventOn` hear the same bus.
+     */
+    const unregisterWindowEvents = registerWindowEventSink((event, args) => {
+      running.emit(event, args)
+    })
+
+    /*
      * The surface's own box, watched directly.
      *
      * A window `resize` is one way the box changes, and the runner already
@@ -652,6 +673,7 @@ export function CardScriptFrames(): ReactElement {
 
     return () => {
       unregister()
+      unregisterWindowEvents()
       surfaceWatcher?.disconnect()
       untap()
       running.dispose()

@@ -1262,3 +1262,54 @@ thinner generations and at least a report naming why.
 resolved world-info text (the assembling `generate` already assembles world
 info inside the host), at which point the frame can resolve the two names the
 way upstream does instead of skipping them.
+
+## 29. The virtual document answers unknown names instead of refusing them
+
+**Kind:** policy change, in the direction the surface had already moved.
+
+**What it was.** An unprovided `parent.document.<name>` read threw
+`UnsupportedApiError` naming the member, and every write was refused. The throw
+cost the 开场白2.0.1 component (哈人冰恋世界 / 绿茵好莱坞 carry the same script)
+its initialisation one step past the world-book assertion this task fixed:
+`$(parent.document)` hands jQuery the stand-in, and jQuery's first act is
+reading its private expando slot off the document
+(`document['jQuery3510…']`, read-with-default), then writing the cache back.
+The read threw, `init` died inside `errorCatched`, and the panel showed a
+script failure for a library idiom.
+
+**What it is now.** The parent proxy's unpublished-name policy, applied here:
+an unknown read yields `undefined` and is reported once by name ("it returned
+undefined, which is not a statement that a real document has no such member");
+an unknown write lands in a per-frame data bag and is reported once
+("the slot is the card's own, and dies with the frame"); writes to **provided**
+members (`body`, `head`, …) keep the read-only refusal. `nodeType` staying `9`
+is what makes `acceptData` take the stand-in, so the existing constant was
+already half of this.
+
+**What it costs.** A card probing a capability by reading it
+(`document.cookie`) now gets `undefined` plus a deduplicated report where it
+used to get a throw; the report still names the member, but the failure moves
+from the read to wherever the card consumes the `undefined`. No corpus card is
+known to read an unprovided document member for its value — the measured
+unknown-name traffic is library data, which is the case this exists to serve.
+
+## 30. Interface frames' inline scripts still see the real `top`
+
+**Kind:** known remaining gap, unchanged by this task.
+
+**Upstream.** Every frame of a card is same-origin with the page, so
+`window.top.addEventListener` / `window.top.dispatchEvent` /
+`window.top.mvuCurrentFloatingBg = …` work natively from markup as well as from
+scripts.
+
+**Iris.** `top` is `[LegacyUnforgeable]` — an own, non-configurable accessor —
+so `publishGlobals` cannot put the virtual parent there (the frame's `globals`
+report answers `refused: [top]`; `parent` is `[Replaceable]` and takes the
+publish). Card **modules** now receive the shadow as a lexical `const window`
+(preamble), which is what fixed the projector's boot; interface frames run
+**inline** markup, which has no preamble, so a message frame's
+`window.top.…` still reaches the real cross-origin top and throws. Measured
+use: 状态栏v2.0's `broadcastFloatingBg` — click-driven ("设为悬浮背景"
+buttons), so it produces no chat-opening notice, and its behaviour is exactly
+what it was before this task. A fix means rewriting inline card scripts in
+srcdoc, which is a mechanism this task deliberately did not build.

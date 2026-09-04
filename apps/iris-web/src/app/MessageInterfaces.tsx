@@ -36,6 +36,7 @@ import { claimMessageSurfaces, splitAroundInterfaces } from '../sandbox/frontend
 import { describeInterface, type InterfaceState } from '../sandbox/message-frames.ts'
 import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
+import { broadcastWindowEvent } from './window-events.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { getLanguage } from './i18n/language.ts'
@@ -247,6 +248,15 @@ export function MessageInterfaces({
             if (refusal.notify) actionsOf(store).notify('info', refusal.text)
           },
           onNote: note => actionsOf(store).addCardReport(note),
+          /*
+           * A dispatch on the page window this interface sees, fanned out to the
+           * card's other frames — a status bar that broadcasts on the page and a
+           * projector that listens on it live in different frames, and only the
+           * shell can stand between them.
+           */
+          onWindowEvent: (event, detail) => {
+            broadcastWindowEvent(event, detail)
+          },
           onReady: input.onReady,
         },
         document,

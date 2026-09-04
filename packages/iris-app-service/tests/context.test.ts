@@ -480,3 +480,26 @@ test('what a card is handed is a copy of its buttons, not the declaration', () =
 
   assert.deepEqual(contextOf(built).scriptButtons?.['panel'], [{ name: 'one', visible: true }])
 })
+
+test('the host’s world book names ride the snapshot for getWorldbookNames', () => {
+  /*
+   * Upstream's `getWorldbookNames()` is synchronous — `klona(world_names)` — so
+   * the frame's answer has to be already in hand, the way `charWorldbooks` and
+   * `lorebookSettings` are. The list is the caller's to fetch (this function is
+   * synchronous, the store is not), and a book the host seeded from a card's
+   * embedded copy must be named here: a card that asserts its own book exists
+   * checks this very list.
+   */
+  const names = ['哈人冰恋世界v2.0', '另一本书']
+  const chat = entry()
+  const built = buildCardContext(chat, {
+    extensionSettings: {},
+    characters: [],
+    worldbookNames: names,
+  })
+  assert.deepEqual(built.worldbookNames, names)
+
+  // Absent means "no store", which is the same answer an empty list gives a
+  // card — rather than an absent field a frame would have to branch on.
+  assert.deepEqual(contextOf(entry()).worldbookNames, [])
+})

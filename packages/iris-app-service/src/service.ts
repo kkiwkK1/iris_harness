@@ -957,6 +957,10 @@ export class IrisAppService {
             // partition read whole would hand one card another's panel state.
             scriptButtons: await this.#options.scriptButtons?.all(characterId) ?? {},
             globalSelect: settings.globalSelect(),
+            // The same source `worldbook.names` answers from, so a book the host
+            // seeded from a card's embedded copy is a name here too — the one
+            // fact an existence assertion in a card hangs on.
+            worldbookNames: await worldbooks?.names() ?? [],
             ...cardStorage === undefined ? {} : { storage: await cardStorage.snapshot() },
             characters: await library.list(),
             ...messageId === undefined ? {} : { messageId },

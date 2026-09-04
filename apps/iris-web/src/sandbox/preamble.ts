@@ -35,7 +35,28 @@ import { identityMembers } from './identity.ts'
 export const SCRIPT_REGISTRY = '__iris_script__'
 
 /**
+ * The global a module script reads the shadowed `window` from.
+ *
+ * A module cannot be handed shadowed globals as parameters the way a classic
+ * body can, and two of the names it must not see raw cannot be published onto
+ * the window either: `top` and `document` are `[LegacyUnforgeable]` — own,
+ * non-configurable accessors the browser refuses to redefine (`parent` is
+ * `[Replaceable]` and takes the publish; `top` answers `refused` in the frame's
+ * own `globals` report). Unshadowed, `window.top` resolves to the **real**
+ * cross-origin top, and the first property read off it is a SecurityError —
+ * measured, as the projector card's boot. A lexical `const window` shadows the
+ * global for this module alone, which is the same shadow a classic body already
+ * receives as a parameter.
+ */
+export const WINDOW_GLOBAL = '__iris_window__'
+
+/**
  * Build the preamble that binds one script's identity-bearing members.
+ *
+ * Two declarators, one statement: the identity bindings come from the script's
+ * own registry, and `window` comes from the shadow published beside it. Both
+ * read `globalThis` because the publish happens on the real window before the
+ * body is evaluated.
  *
  * @param scriptId - the script this module belongs to, or undefined for a body
  *   with no entry in the host's list.
@@ -47,7 +68,9 @@ export function preambleFor(scriptId: string | undefined): string {
   // literal and start being code. Ids come from the host, but a value that
   // reaches an eval boundary is escaped on principle, not on provenance.
   const argument = scriptId === undefined ? 'undefined' : JSON.stringify(scriptId)
-  return `const {${names}} = globalThis.${SCRIPT_REGISTRY}(${argument});\n`
+  return (
+    `const window=globalThis.${WINDOW_GLOBAL},{${names}}=globalThis.${SCRIPT_REGISTRY}(${argument});\n`
+  )
 }
 
 /**

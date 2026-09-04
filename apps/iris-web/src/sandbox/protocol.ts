@@ -224,6 +224,18 @@ export type FromFrame =
   /** The card's content changed height; the shell sizes the frame to it. */
   | { iris: string, type: 'height', pixels: number }
   /**
+   * A card dispatched an event on the page window it sees.
+   *
+   * `parent.dispatchEvent(new CustomEvent(name, {detail}))` upstream hands the
+   * event to the page — every frame of the card can be listening. The frame
+   * cannot deliver it itself: the listener may live in another frame, and no
+   * opaque origin can reach one. So the dispatch travels to the shell, which
+   * rebroadcasts it to every frame as an ordinary `event` message; the
+   * synthetic argument is assembled shell-side, once, where every sender's
+   * shape can be made to agree.
+   */
+  | { iris: string, type: 'winevent', event: string, detail?: unknown }
+  /**
    * The card sizes itself to whatever viewport it is given, so its content
    * height cannot be measured from outside.
    *
@@ -513,6 +525,20 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
       // page cannot scroll past, which is a denial of the interface by a card
       // that may only have a bug.
       return { iris: token, type: 'height', pixels: Math.min(Math.round(pixels), 20_000) }
+    }
+    case 'winevent': {
+      const event = message['event']
+      if (typeof event !== 'string' || event.length === 0) return undefined
+      // `detail` is the card's payload, carried as-is the way `call`'s params
+      // are: structured clone already refused whatever cannot cross the boundary,
+      // at the sender, before this saw it.
+      const detail = message['detail']
+      return {
+        iris: token,
+        type: 'winevent',
+        event: event.slice(0, 200),
+        ...(detail === undefined ? {} : { detail }),
+      }
     }
     case 'sizing': {
       // One value today, and validated rather than passed through: a frame is

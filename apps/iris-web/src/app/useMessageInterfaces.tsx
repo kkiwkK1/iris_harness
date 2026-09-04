@@ -28,6 +28,7 @@ import {
   type InterfaceState,
   type MessageFramesEnv,
 } from '../sandbox/message-frames.ts'
+import { registerWindowEventSink } from './window-events.ts'
 
 /** What the hook needs to build frames for one message. */
 export interface MessageInterfacesInput {
@@ -165,8 +166,19 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
       },
     )
 
+    /*
+     * The message frames are the other half of the page window's audience. A
+     * window event dispatched in the card's script frame arrives here the same
+     * way a host event does, so a status bar listening through
+     * `parent.addEventListener` hears what the rest of the card dispatches.
+     */
+    const unregisterWindowEvents = registerWindowEventSink((event, args) => {
+      running.emit(event, args)
+    })
+
     return () => {
       unwatch()
+      unregisterWindowEvents()
       running.dispose()
       /*
        * Cleared here as well as in the controller, because this is the half a

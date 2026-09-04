@@ -244,6 +244,15 @@ export function buildCardContext(
     scriptButtons?: Record<string, { name: string, visible: boolean }[]>
     /** Globally selected book names, for the lorebook settings snapshot. */
     globalSelect?: readonly string[]
+    /**
+     * Every book name the host knows, for `getWorldbookNames`.
+     *
+     * Read by the caller rather than here: this function is synchronous and the
+     * store is not. Absent means the host has no world-info store, which is the
+     * same "no books" an empty list answers — the frame cannot tell the two
+     * apart and upstream's `world_names` would not let it, either.
+     */
+    worldbookNames?: readonly string[]
     /** The profile's shared card storage, key to value. */
     storage?: Record<string, string>
     /** Reports a growth alarm; see {@link variableLayersOf}. */
@@ -275,6 +284,9 @@ export function buildCardContext(
     // time, because a card may rebind its book mid-chat and the frame answers
     // `getCharWorldbookNames('current')` from this field.
     charWorldbooks: charWorldbookNames(entry.card),
+    // Beside `charWorldbooks` for the same freshness reason, and copied because
+    // the array travels into a frame a card can sort in place.
+    worldbookNames: [...(extras.worldbookNames ?? [])],
     scriptButtons: scriptButtonsOf(entry, extras.scriptButtons),
     // In the snapshot rather than behind a call, because `getLorebookSettings()`
     // is synchronous upstream — MVU invokes it both with and without `await`,
