@@ -13,7 +13,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 
-import { claimFrontendBlocks } from '../sandbox/frontend-blocks.ts'
+import { claimMessageSurfaces } from '../sandbox/frontend-blocks.ts'
 import {
   frameKey,
   instancesOf,
@@ -91,11 +91,16 @@ export function FrameBudgetProvider({
    * alternative is for rows to report their weight upward as they mount, which
    * would make the plan depend on mount order — and mount order is exactly what
    * "spend from the newest floor backwards" must not depend on.
+   *
+   * The claim is the combined one — fenced blocks and bare HTML regions —
+   * because a budget that saw only fences would ration one population while the
+   * view rendered two. Both kinds pay the same per-frame overhead and are spent
+   * from the same pool; there is no second, quieter accounting for bare HTML.
    */
   const candidates = useMemo<FrameCandidate[]>(() => {
     const found: FrameCandidate[] = []
     for (const floor of floors) {
-      claimFrontendBlocks(floor.text).forEach((block, instance) => {
+      claimMessageSurfaces(floor.text).blocks.forEach((block, instance) => {
         found.push({
           floor: floor.id,
           instance,

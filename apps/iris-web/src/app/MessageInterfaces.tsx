@@ -32,7 +32,7 @@ import { interfacesMayBuild } from '../sandbox/consent.ts'
 import { MVU_UPDATE_ENDED_EVENT } from '../sandbox/tavern-helper.ts'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 
-import { claimFrontendBlocks, splitAroundInterfaces } from '../sandbox/frontend-blocks.ts'
+import { claimMessageSurfaces, splitAroundInterfaces } from '../sandbox/frontend-blocks.ts'
 import { describeInterface, type InterfaceState } from '../sandbox/message-frames.ts'
 import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
@@ -332,7 +332,7 @@ export function MessageInterfaces({
    * Upstream replaces — it hides the `<pre>` and puts the iframe where it was. The
    * first cut of this appended frames after the whole message, and on the sample
    * card that meant scrolling past 360 KiB of source to reach the interface that
-   * source describes. There is no `<pre>` to hide here, because `MarkdownText` only
+   * replaced part of it. There is no `<pre>` to hide here, because `MarkdownText` only
    * makes one if we hand it the text — so the fix is to hand it the text without
    * the claimed spans.
    */
@@ -344,7 +344,35 @@ export function MessageInterfaces({
    * interface rebuilt per token is not a feature, and a half-arrived block shown
    * as source is honest about what has come so far.
    */
-  const blocks = streaming ? [] : claimFrontendBlocks(text)
+  const { blocks, refused } = streaming
+    ? { blocks: [], refused: [] as readonly string[] }
+    : claimMessageSurfaces(text)
+
+  /*
+   * An unclosed region is reported, not swallowed.
+   *
+   * The split's fallback treats everything after a never-closed tag as HTML,
+   * which is the rendering the card intended — but the card author whose
+   * narrative vanished below the panel needs the cause on record, and a note
+   * that exists only in a source file nobody reads is silence with extra steps.
+   * This is the same durable channel the frames report through, and the store
+   * keeps one entry per distinct fact, so a card with the flaw on many floors
+   * is one line, not one per floor.
+   *
+   * Fired from an effect rather than during render — a report is a side effect
+   * — and keyed on the joined text, so a re-render that did not re-derive the
+   * claim does not re-report it. Deliberately independent of consent and of the
+   * build assets: the note describes the message text, which is on screen either
+   * way, so a declined card still gets its markup fault named.
+   */
+  const refusedNote = refused.join('\n')
+  useEffect(() => {
+    if (refusedNote === '') return
+    for (const note of refusedNote.split('\n')) {
+      actionsOf(store).addCardReport(note, { channel: 'interface' })
+    }
+  }, [refusedNote, store])
+
   if (blocks.length === 0) return <MarkdownText text={text} streaming={streaming} />
 
   const segments = splitAroundInterfaces(text, blocks)

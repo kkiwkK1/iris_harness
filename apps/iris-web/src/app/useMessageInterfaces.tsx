@@ -22,7 +22,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 
-import { claimFrontendBlocks } from '../sandbox/frontend-blocks.ts'
+import { claimMessageSurfaces } from '../sandbox/frontend-blocks.ts'
 import {
   runMessageInterfaces,
   type InterfaceState,
@@ -122,7 +122,13 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
       return undefined
     }
 
-    const blocks = claimFrontendBlocks(input.text)
+    /*
+     * The same claim the row renders, fences and bare HTML regions both: the
+     * controller and the row must not derive two different block lists from one
+     * text, or the instance a slot is named by stops being the instance a frame
+     * was built for.
+     */
+    const { blocks } = claimMessageSurfaces(input.text)
     if (blocks.length === 0) {
       setStates([])
       return undefined
