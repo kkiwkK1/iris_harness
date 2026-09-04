@@ -273,7 +273,13 @@ function parseCall(body: string): MacroCall | undefined {
   }
 
   const name = trimmed.slice(0, separator.at).trim()
-  const rest = trimmed.slice(separator.at + separator.length)
+  let rest = trimmed.slice(separator.at + separator.length)
+  // A whitespace- or single-colon-introduced list keeps its `::` for the parts:
+  // `{{ timeDiff :: a :: b }}` is two arguments, not an empty one followed by
+  // two. The new engine's own examples are written in exactly this spelling
+  // (`{{ timeDiff :: 2023-01-01 12:00:00 :: 2023-01-01 15:00:00 }}`), so the
+  // leading `::` belongs to the introducer, not to the argument list.
+  if (separator.length === 1 && /^\s*::/.test(rest)) rest = rest.replace(/^\s*::/, '')
   const parts = splitTopLevel(rest)
   // A single-colon or whitespace introducer still yields a `::` list when the
   // remainder holds one — `{{random:a::b::c}}`. Otherwise the remainder is one

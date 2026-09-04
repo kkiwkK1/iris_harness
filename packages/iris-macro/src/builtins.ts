@@ -13,9 +13,14 @@
  *  - `{{creatorNotes}}` is not implemented. Creator notes are author-to-reader
  *    text that must never enter a prompt, and a macro is the one hole through
  *    which a card could put them there.
- *  - `{{banned}}`, `{{maxPrompt}}` and the other backend-coupled macros are not
- *    here; they belong to whichever plugin owns that backend and can register
- *    themselves.
+ *  - `{{banned}}` is not implemented: it exists to feed SillyTavern's
+ *    text-completion ban list, a backend Iris does not have. The token-budget
+ *    macros (`{{maxContext}}` family) used to sit in the same bucket, but their
+ *    values are the assembler's own budget here, so they take them from
+ *    `MacroContext.tokenBudget` and render empty when no route is configured.
+ *  - `{{isMobile}}` and `{{lastGenerationType}}` describe host surfaces Iris
+ *    has not built (a viewport; the continue/impersonate generation types).
+ *    They are vocabulary for later work, not divergences of meaning.
  *  - Card fields re-expand their own output. See `expand.ts`.
  *
  * @module @iris/macro/builtins
@@ -169,6 +174,13 @@ function lastContent(
   return index === undefined ? '' : (chat[index]?.content ?? '')
 }
 
+/** The newest message, or `undefined` when the chat has none. */
+function lastOf(chat: readonly MacroMessage[] | undefined): MacroMessage | undefined {
+  if (chat === undefined) return undefined
+  const index = lastIndexWhere(chat, () => true)
+  return index === undefined ? undefined : chat[index]
+}
+
 /** Register `{{lastMessage}}`, `{{lastUserMessage}}`, `{{lastCharMessage}}`, `{{lastMessageId}}`, `{{input}}`. */
 function registerChat(registry: MacroRegistry): (() => void)[] {
   return [
@@ -193,6 +205,40 @@ function registerChat(registry: MacroRegistry): (() => void)[] {
       return `0-${chat.length - 1}`
     }),
     registry.register('input', invocation => invocation.context.input ?? ''),
+    // The swipe pair reads the *newest* floor, exactly as upstream does — both
+    // macros answer for the message a swipe would land on, not for the message
+    // being expanded. A newest floor without candidates (a user message, or a
+    // context that carries no swipe view at all) renders empty, which is
+    // upstream's `undefined → ''` path, not a zero.
+    registry.register('lastSwipeId', invocation => {
+      const last = lastOf(invocation.context.chat)
+      return last?.swipes === undefined ? '' : String(last.swipes)
+    }),
+    registry.register('currentSwipeId', invocation => {
+      const last = lastOf(invocation.context.chat)
+      return last?.swipes === undefined || last.swipeId === undefined
+        ? ''
+        : String(last.swipeId + 1)
+    }),
+    // Upstream reads `chat_metadata.lastInContextMessageId`, which the previous
+    // generation's budget trim wrote — one generation stale by design, because
+    // the prompt being built cannot know the trim that will be applied to it.
+    // The host carries that value on the context; absent renders empty, which
+    // is also what upstream answers before the first generation.
+    registry.register('firstIncludedMessageId', invocation =>
+      invocation.context.firstIncludedMessageId === undefined
+        ? ''
+        : String(invocation.context.firstIncludedMessageId),
+    ),
+    // Upstream reads the first `.mes` element in the chat DOM, and it renders
+    // the whole log, so the first displayed floor is floor 0. Iris's shell does
+    // the same — `ChatPane` maps every message; the reading-window design
+    // (apps/iris-web/WINDOWING.md) windowed only the inner frames. When that
+    // changes, this is the macro that has to learn the viewport.
+    registry.register('firstDisplayedMessageId', invocation => {
+      const chat = invocation.context.chat
+      return chat === undefined || chat.length === 0 ? '' : '0'
+    }),
   ]
 }
 
@@ -261,7 +307,34 @@ function registerTime(registry: MacroRegistry): (() => void)[] {
         idleDuration(invocation.context.chat, invocation.context.clock.now()),
       ),
     ),
+    // Upstream hands both sides to moment and humanizes the difference with the
+    // sign intact: an earlier left argument answers "3 hours ago", a later one
+    // "in 3 hours". Fewer than two arguments is no match for upstream's regex —
+    // the macro is left standing rather than rendered empty — so the resolver
+    // declines instead.
+    registry.register('timeDiff', invocation => {
+      const left = arg(invocation, 0)
+      const right = arg(invocation, 1)
+      if (left === undefined || right === undefined) return undefined
+      return humanizeDuration(parseMomentish(left) - parseMomentish(right), true)
+    }),
   ]
+}
+
+/**
+ * Parse a timestamp the way `moment(value)` would for the formats cards write.
+ *
+ * The one shape worth normalizing is moment's documented `'YYYY-MM-DD HH:mm:ss'`
+ * — `Date.parse` reads it in some engines and rejects it in others, while the
+ * `T` spelling is ISO everywhere. Anything else goes to `Date.parse` as written,
+ * and an unparsable value becomes `NaN`, which the humanizer answers with its
+ * smallest bucket exactly as moment does.
+ * @param value - a timestamp as a card wrote it.
+ * @returns epoch milliseconds, or `NaN` when it does not parse.
+ */
+function parseMomentish(value: string): number {
+  const normalized = /^\d{4}-\d{2}-\d{2}(?:T| )/.test(value) ? value.replace(' ', 'T') : value
+  return Date.parse(normalized)
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +576,48 @@ function registerFormatting(registry: MacroRegistry): (() => void)[] {
 }
 
 // ---------------------------------------------------------------------------
+// outlets and budget
+
+/**
+ * Register `{{outlet::key}}` and the token-budget family.
+ *
+ * An outlet is a named bucket of world-info text: entries positioned `outlet`
+ * are parked under their `outletName` by the scan and only reach the prompt
+ * where a template asks for them by key. Upstream parks the activated buckets
+ * in `extension_prompts` and reads them back here; Iris hands the macro a
+ * reader over the same buckets. A key nobody produced renders empty, which is
+ * `getOutletPrompt`'s `|| ''`.
+ */
+function registerOutletAndBudget(registry: MacroRegistry): (() => void)[] {
+  const fromBudget = (read: (budget: { context: number; response: number }) => number) =>
+    (invocation: MacroInvocation): string => {
+      const budget = invocation.context.tokenBudget
+      // Empty, not "0": an unconfigured route upstream answers 0 only because
+      // its getter has a backend to ask; here absence means no answer exists.
+      return budget === undefined ? '' : String(read(budget))
+    }
+
+  return [
+    registry.register('outlet', invocation => {
+      const key = arg(invocation, 0)
+      // Bare `{{outlet}}` matches no upstream regex and stays standing.
+      if (key === undefined) return undefined
+      const reader = invocation.context.outlet
+      return reader === undefined ? '' : reader(key.trim())
+    }),
+    ...['maxPrompt', 'maxPromptTokens'].map(name =>
+      registry.register(name, fromBudget(budget => budget.context - budget.response)),
+    ),
+    ...['maxContext', 'maxContextTokens'].map(name =>
+      registry.register(name, fromBudget(budget => budget.context)),
+    ),
+    ...['maxResponse', 'maxResponseTokens'].map(name =>
+      registry.register(name, fromBudget(budget => budget.response)),
+    ),
+  ]
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Install the whole builtin vocabulary on a registry.
@@ -519,6 +634,7 @@ export function registerBuiltins(registry: MacroRegistry): () => void {
     ...registerVariableScope(registry, 'global'),
     ...registerRandom(registry),
     ...registerFormatting(registry),
+    ...registerOutletAndBudget(registry),
   ])
 }
 

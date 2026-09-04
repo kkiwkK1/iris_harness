@@ -725,6 +725,12 @@ export interface WorldbookEntry {
   groupWeight: number
   caseSensitive: boolean | null
   matchWholeWords: boolean | null
+  /**
+   * The entry's world-info outlet, when it has one: an `outlet`-positioned
+   * entry is parked under this name by the scan and rendered only where a
+   * template asks for `{{outlet::name}}`. Empty when the entry has none.
+   */
+  outletName: string
   matchPersonaDescription: boolean
   matchCharacterDescription: boolean
   matchCharacterPersonality: boolean

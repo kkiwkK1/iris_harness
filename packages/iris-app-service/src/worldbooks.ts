@@ -178,6 +178,7 @@ export interface PartialWorldbookEntry {
   groupWeight?: number | undefined
   caseSensitive?: boolean | null | undefined
   matchWholeWords?: boolean | null | undefined
+  outletName?: string | undefined
   matchPersonaDescription?: boolean | undefined
   matchCharacterDescription?: boolean | undefined
   matchCharacterPersonality?: boolean | undefined
@@ -257,6 +258,7 @@ export function toWorldbookEntry(entry: LorebookEntry): WorldbookEntry {
     groupWeight: entry.groupWeight,
     caseSensitive: entry.caseSensitive,
     matchWholeWords: entry.matchWholeWords,
+    outletName: entry.outletName,
     matchPersonaDescription: entry.matchPersonaDescription,
     matchCharacterDescription: entry.matchCharacterDescription,
     matchCharacterPersonality: entry.matchCharacterPersonality,
@@ -659,6 +661,11 @@ export function fromWorldbookEntry(
     // See asymmetry 2 above.
     useProbability: true,
     probability: entry.probability ?? 100,
+
+    // Kept in the stored row: the outlet macro answers from the scan's bucket,
+    // and an outlet name lost in a materialisation is an outlet that can never
+    // fire again.
+    outletName: entry.outletName ?? '',
 
     excludeRecursion: entry.recursion?.prevent_incoming ?? false,
     preventRecursion: entry.recursion?.prevent_outgoing ?? false,
