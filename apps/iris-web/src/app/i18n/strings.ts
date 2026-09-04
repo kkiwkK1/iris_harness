@@ -112,6 +112,7 @@ export const en = {
 
   /** Script buttons bar. */
   cardButtonsAria: 'Card script buttons',
+  cardActionsToggle: 'Card actions ({n})',
 
   /** Overlay collapse control. */
   showCardUi: 'Show card UI',
@@ -400,6 +401,7 @@ export const zh: Record<StringKey, string> = {
 
   /** 卡片按钮栏。 */
   cardButtonsAria: '卡片脚本按钮',
+  cardActionsToggle: '卡片操作（{n}）',
 
   /** 卡片界面收起钮。 */
   showCardUi: '显示卡片界面',

@@ -929,8 +929,46 @@
 .iris-buttons {
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
   gap: 6px;
   padding: 0 0 10px;
+}
+
+/*
+ * The fold control. Quieter than the card buttons it unfolds — no box at all,
+ * just the annotation voice with a chevron — because it is the one piece of
+ * the bar Iris ships rather than something a card added, and chrome that
+ * shouts would bury the controls it exists to reveal. `flex-basis: 100%`
+ * keeps the folded state to a single slim line: the buttons, when they show,
+ * wrap onto their own rows beneath it.
+ */
+.iris-buttons__toggle {
+  flex-basis: 100%;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--iris-font-ui);
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  color: var(--iris-ink-tertiary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.iris-buttons__toggle:hover {
+  color: var(--iris-ink-secondary);
+}
+
+.iris-buttons__toggle:focus-visible {
+  outline: 2px solid var(--iris-accent);
+  outline-offset: 2px;
+}
+
+.iris-buttons__chevron {
+  font-size: 0.9em;
 }
 
 .iris-buttons__button {

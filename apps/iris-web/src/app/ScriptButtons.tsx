@@ -13,6 +13,7 @@
  * @module iris-web/app/ScriptButtons
  */
 import type { ReactElement } from 'react'
+import { useState } from 'react'
 
 import type { ScriptView } from '@iris/protocol'
 
@@ -21,6 +22,13 @@ import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * The button bar.
+ *
+ * **Collapsed by default.** A heavy card can publish a dozen controls a reader
+ * uses once a session, and the bar is the composer's neighbour — every pixel it
+ * takes is an argument with the text. The toggle line names the count so the
+ * reader knows what is folded before spending the click; a card's press still
+ * works while folded only in the sense that the reader can unfold it — a
+ * control the reader cannot see is not a control they pressed.
  *
  * @param props - the scripts to read, and what to do when one is pressed.
  * @returns the bar, or nothing when no script publishes a visible button.
@@ -43,36 +51,55 @@ export function ScriptButtons({
   onPress: (button: ResolvedButton) => void
 }): ReactElement | null {
   // Subscribed so a language switch re-renders the bar's label. Above the early
-  // return: hook order must not depend on whether a card published buttons.
+  // return: hook order must not depend on whether a card published buttons —
+  // the same reason the fold state sits here too.
   useLanguage()
+  const [expanded, setExpanded] = useState(false)
   const buttons = visibleButtons(scripts)
   if (buttons.length === 0) return null
 
   return (
     <div className="iris-buttons" role="group" aria-label={t('cardButtonsAria')}>
-      {buttons.map(button => (
-        <button
-          key={`${button.scriptId}/${button.name}`}
-          type="button"
-          className="iris-buttons__button"
-          /*
-           * The script's name, not the button's, because the button's is already
-           * the label. Two scripts may publish buttons with the same text, and
-           * the only thing that separates them for a reader is who they belong
-           * to.
-           */
-          title={button.scriptName}
-          onClick={event => {
-            // Upstream's `@click.stop.prevent`: the bar sits inside the composer,
-            // and a press must not reach the form behind it.
-            event.preventDefault()
-            event.stopPropagation()
-            onPress(button)
-          }}
-        >
-          {button.name}
-        </button>
-      ))}
+      <button
+        type="button"
+        className="iris-buttons__toggle"
+        aria-expanded={expanded}
+        onClick={event => {
+          event.preventDefault()
+          event.stopPropagation()
+          setExpanded(!expanded)
+        }}
+      >
+        {t('cardActionsToggle', { n: buttons.length })}
+        <span className="iris-buttons__chevron" aria-hidden="true">
+          {expanded ? '▾' : '▸'}
+        </span>
+      </button>
+      {expanded
+        ? buttons.map(button => (
+            <button
+              key={`${button.scriptId}/${button.name}`}
+              type="button"
+              className="iris-buttons__button"
+              /*
+               * The script's name, not the button's, because the button's is already
+               * the label. Two scripts may publish buttons with the same text, and
+               * the only thing that separates them for a reader is who they belong
+               * to.
+               */
+              title={button.scriptName}
+              onClick={event => {
+                // Upstream's `@click.stop.prevent`: the bar sits inside the composer,
+                // and a press must not reach the form behind it.
+                event.preventDefault()
+                event.stopPropagation()
+                onPress(button)
+              }}
+            >
+              {button.name}
+            </button>
+          ))
+        : null}
     </div>
   )
 }
