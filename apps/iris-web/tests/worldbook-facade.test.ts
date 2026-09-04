@@ -107,6 +107,7 @@ function entry(keys: string[], secondary: string[] = []): WorldbookEntry {
     groupWeight: 100,
     caseSensitive: null,
     matchWholeWords: null,
+    outletName: '',
     matchPersonaDescription: false,
     matchCharacterDescription: false,
     matchCharacterPersonality: false,

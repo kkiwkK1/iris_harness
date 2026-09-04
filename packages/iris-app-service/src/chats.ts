@@ -736,7 +736,6 @@ export function branchTitle(parentTitle: string, taken: (title: string) => boole
   }
 }
 
-<<<<<<< HEAD
 /** Matches reported per chat when the caller did not ask for a cap. */
 export const DEFAULT_SEARCH_MATCH_LIMIT = 5
 
@@ -828,7 +827,8 @@ export function clipSnippet(text: string, at: number): string {
   const start = Math.max(0, at - SNIPPET_BEFORE)
   const end = Math.min(text.length, at + SNIPPET_AFTER)
   return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '')
-=======
+}
+
 /**
  * SillyTavern's `create_date` spelling, read back as a moment.
  *
@@ -929,5 +929,4 @@ export function parseImportedChat(filename: string, base64: string): SillyTavern
     }
   }
   return chat
->>>>>>> dev/feat-chat-transfer
 }

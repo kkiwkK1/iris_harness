@@ -248,7 +248,6 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
 }
 
 /**
-/**
  * One list row, with an overflow menu for the actions it offers. A chat row
  * carries its branch depth: rows under a parent indent and show the branch
  * mark, per the transfer feature.
@@ -256,7 +255,7 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
  * The menu's items come from the caller: a chat row exports and deletes, a
  * character row imports chats and is removed, and hard-coding either set here
  * would make this one row shape pretend to be two.
- */ */
+ */
 function ChatRow({
   title,
   meta,
