@@ -204,5 +204,8 @@ test('a failed same-origin fetch is reported as an error, not a body', async () 
   const answer = scope.posted().at(-1)
   assert.ok(answer?.type === 'fetch:error' && typeof answer.message === 'string')
   assert.equal(answer.id, 'f5')
-  assert.match(answer.message, /network down/)
+  // `posted()` records untyped bags; the message needs its type said before
+  // `assert.match` will take it.
+  assert.equal(typeof answer.message, 'string')
+  assert.match(answer.message as string, /network down/)
 })

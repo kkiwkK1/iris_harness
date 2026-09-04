@@ -1920,7 +1920,25 @@ export function createIrisStore(
             // Read through `consentState`, never `?? false`: the field is absent
             // when nobody has been asked, and folding that into a decline means
             // the question is never put and scripts never start, silently.
-            scriptsAllowed: consentState(listed),
+            //
+            // **A card with no scripts never reaches that decision through the
+            // question, so the answer is derived here.** `ConsentAsk` suppresses
+            // the question for an empty list — "a card with no scripts is not a
+            // decision" — and the host honestly reports `scriptsAllowed` as
+            // absent, which `consentState` reads as `unasked`. Left there, the
+            // card is held at `unasked` forever: nothing runs (there is nothing
+            // to run), but the **interface** pipeline reads the same field, so a
+            // card whose only surface is a message interface — 人偶演出Lights
+            // ON, the one card of the four under acceptance carrying no scripts
+            // — rendered no interface at all: no question, no caption, no
+            // iframe, and no reason on screen. Measured live on a fresh import:
+            // the slot stood empty indefinitely.
+            //
+            // Derived per load and never written back: the host's absent key
+            // stays the truth about what was asked, and a character id later
+            // reused by a card that *does* carry scripts falls back to
+            // `consentState` on that load and is asked like anyone else.
+            scriptsAllowed: listed.scripts.length === 0 ? 'allowed' : consentState(listed),
           })
         })
       },
