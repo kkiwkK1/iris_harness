@@ -914,11 +914,26 @@ class InMemoryClient implements FakeClient {
       // client has none to sweep, and pretending otherwise would let a caller
       // believe a deletion happened.
       // A run only exists inside a real frame, so a fake client has none to end.
+      // The preset library is host-side files (`OpenAI Settings`-shaped, one
+      // preset per file); a fake has no filesystem to keep them in, so a seeded
+      // page refuses rather than answering from an imaginary library — the same
+      // honesty `storage.*` is refused with.
       case 'script.runEnded':
       case 'chat.answerCleanup':
       case 'storage.set':
       case 'storage.remove':
-      case 'storage.clear': {
+      case 'storage.clear':
+      case 'preset.list':
+      case 'preset.select':
+      case 'preset.view':
+      case 'preset.setEnabled':
+      case 'preset.move':
+      case 'preset.upsertPrompt':
+      case 'preset.removePrompt':
+      case 'preset.save':
+      case 'preset.delete':
+      case 'preset.read':
+      case 'preset.import': {
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 

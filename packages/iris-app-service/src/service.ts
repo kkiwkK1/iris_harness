@@ -21,15 +21,17 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, selectCandidate, SwipeError } from '@iris/chat'
 import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
 import { evaluateBatch } from '@iris/compat-prompt-template'
-import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset } from '@iris/preset'
-import type { ChatView, GenerationSettings, IrisEvent, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
+import type { ChatView, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
 import { checkScriptFetch, extractScripts } from '@iris/script'
 import { defaultRegistry } from '@iris/macro'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
 import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } from '@iris/turn'
+import { randomUUID } from 'node:crypto'
 
+import { PresetStore } from './presets.ts'
 import { ConnectionStore } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
@@ -129,8 +131,37 @@ export interface AppServiceOptions {
   fetchRemote?: (url: string) => Promise<{ ok: boolean, status: number, text: () => Promise<string>, headers: { get: (name: string) => string | null } }>
   /** Pushes one frame to every attached page. */
   broadcast: (event: IrisEvent) => void
-  /** The preset every chat is assembled with. */
+  /**
+   * The preset every chat is assembled with, before the user picks one.
+   *
+   * The *starting* preset rather than a permanent one: once a preset is
+   * selected or the prompt manager is edited, the active state lives in the
+   * settings store and this value stops being read until the next host start.
+   */
   preset?: ChatCompletionPreset
+  /**
+   * The library name of that preset, when it is one from the store.
+   *
+   * Given by the caller that resolved a stored selection before constructing
+   * the service; absent means the preset came from the composition or is the
+   * built-in one, and the first manager mutation then decides it is the state
+   * worth persisting.
+   */
+  presetName?: string
+  /**
+   * The SillyTavern **profile** directory, when one is configured — the same
+   * value the plugin's `sillyTavernDir` carries. Read-only, and used only by
+   * `preset.import` to enumerate what the install has to offer.
+   */
+  sillyTavernDir?: string
+  /**
+   * The profile's preset library.
+   *
+   * Optional like the other stores: absent means every `preset.*` method that
+   * needs the files refuses, which is the honest answer from a host with no
+   * folder to keep them in.
+   */
+  presets?: PresetStore
   /** Name recorded for the user in new chats. */
   userName?: string
   /** Context window in tokens. */
@@ -195,7 +226,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
@@ -208,10 +239,23 @@ export class IrisAppService {
       scriptVariables?: ScriptVariableStore
       pruneVariables?: PruneOptions
       diagnostics?: DiagnosticBuffer
+      presets?: PresetStore
+      presetName?: string
+      sillyTavernDir?: string
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
   #traceId = 0
+  /**
+   * The preset the assembler reads, live.
+   *
+   * Swapped by `preset.select` and mutated in place by the manager, then
+   * persisted through the settings store — the same two layers upstream keeps
+   * between preset files and `oai_settings`.
+   */
+  #activePreset: ChatCompletionPreset
+  /** The active preset's library name, when it has one. */
+  #activePresetName: string | undefined
 
   /**
    * @param options - domain stores, the model stream, and the event sink.
@@ -240,12 +284,92 @@ export class IrisAppService {
       ...options.pruneVariables === undefined ? {} : { pruneVariables: options.pruneVariables },
       ...options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics },
       ...options.cardStorage === undefined ? {} : { cardStorage: options.cardStorage },
+      ...options.presets === undefined ? {} : { presets: options.presets },
+      ...options.sillyTavernDir === undefined ? {} : { sillyTavernDir: options.sillyTavernDir },
     }
+    // The manager's live state starts on whatever the caller assembled: a
+    // stored selection is applied by the caller (the plugin) before the
+    // handlers are ever registered, so nothing here needs to read files.
+    this.#activePreset = this.#options.preset
+    this.#activePresetName = options.presetName
   }
 
   /** How well the token estimate currently tracks the provider, for diagnostics. */
   get calibration(): { scale: number, samples: number } {
     return { scale: this.#counter.scale, samples: this.#counter.samples }
+  }
+
+  /** The prompt manager's view of the live preset. */
+  #managerView(): PresetManagerView {
+    return managerViewOf(this.#activePresetName, this.#activePreset)
+  }
+
+  /**
+   * Swap the live preset for another body and persist the choice.
+   *
+   * One path for both `preset.select` and a connection's bound preset, so the
+   * two cannot disagree about what a switch means: the body becomes the
+   * assembler's input, the scalar fields it acts on land in the global
+   * settings layer, and the state persists for the next host start.
+   * @param name - the library name, when it has one.
+   * @param body - the preset to run on.
+   */
+  async #applyPreset(name: string | undefined, body: ChatCompletionPreset): Promise<void> {
+    this.#activePreset = body
+    this.#activePresetName = name
+    await this.#options.settings.setPreset(name, body)
+    const patch = presetScalarPatch(body)
+    if (Object.keys(patch).length > 0) await this.#options.settings.set(undefined, patch)
+  }
+
+  /**
+   * Persist the live state after a manager mutation.
+   *
+   * Clone-on-write: the assembler may be mid-assembly on another turn, and it
+   * must never observe a half-edited prompt list.
+   * @param body - the mutated preset.
+   */
+  async #persistActivePreset(body: ChatCompletionPreset): Promise<PresetManagerView> {
+    this.#activePreset = body
+    await this.#options.settings.setPreset(this.#activePresetName, body)
+    return this.#managerView()
+  }
+
+  /**
+   * Apply a connection profile's bound preset, skipping an absent one.
+   * @param name - the preset name stored on the profile.
+   */
+  async #activateBoundPreset(name: string): Promise<void> {
+    const store = this.#options.presets
+    if (store === undefined) return
+    if (await store.has(name) === false) {
+      this.#report(
+        `connection names preset "${name}", which the library does not have — activate it from the preset panel after importing`,
+        { kind: 'host', grade: 'note' },
+      )
+      return
+    }
+    await this.#applyPreset(name, await store.read(name))
+  }
+
+  /**
+   * The preset names the configured SillyTavern install offers.
+   * @returns the names, or undefined when no install is configured.
+   */
+  async #installPresets(): Promise<string[] | undefined> {
+    const dir = this.#options.sillyTavernDir
+    if (dir === undefined) return undefined
+    const { readdir } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    try {
+      return (await readdir(join(dir, 'OpenAI Settings')))
+        .filter(entry => entry.endsWith('.json'))
+        .map(entry => entry.slice(0, -'.json'.length))
+        .sort((left, right) => left.localeCompare(right))
+    } catch {
+      // Not a profile directory, or no presets were ever saved there.
+      return []
+    }
   }
 
   /**
@@ -527,7 +651,7 @@ export class IrisAppService {
       },
 
       'script.getPreset': async ({ name }) => {
-        // Refused by name rather than falling back. This host loads one preset;
+        // Refused by name rather than falling back. This host runs one preset;
         // answering a request for another with the one in use would let a card
         // reason confidently about prompts that are not in the preset it asked
         // for, and nothing in its reply would say so.
@@ -535,7 +659,10 @@ export class IrisAppService {
           throw notFound(`preset "${name}" — this host only carries the one in use`)
         }
 
-        const preset = this.#options.preset
+        // Read live, not captured at construction: the preset the manager
+        // swapped in is the one a card's next generation assembles with, and a
+        // card reading the preset should see the preset that will run.
+        const preset = this.#activePreset
         const orders = preset.prompt_order ?? []
         // The same fallback chain the assembler uses, minus the enabled filter:
         // a card reads `enabled` and so needs the disabled entries too.
@@ -766,8 +893,232 @@ export class IrisAppService {
         // Applied through `settings.set`, so a profile cannot install a value
         // that setting it by hand would have been refused.
         const applied = await settings.set(chatId, ConnectionStore.patchOf(profile))
+        // The profile's bound preset comes with it — upstream's
+        // `bind_preset_to_connection`, which defaults to true there: switching
+        // a connection is switching the preset it was assembled with, and a
+        // profile whose summary names a preset while activation ignores it
+        // would advertise something it does not do. Only on the **global**
+        // layer, matching `patchOf` above; a chat-scoped switch keeps its own
+        // mind. A named preset the library does not have is skipped with a
+        // report rather than failing the activation: the connection still
+        // works, and one absent file must not take it down.
+        if (profile.preset !== undefined && chatId === undefined) {
+          await this.#activateBoundPreset(profile.preset)
+        }
         await store.markActive(id)
         return { settings: applied, activeId: id }
+      },
+
+      'preset.list': async () => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        // Awaited, not passed: an unawaited promise is truthy, so the response
+        // would always claim an install and carry something that serializes to
+        // an empty list — the picker would offer nothing with no word as to why.
+        const install = await this.#installPresets()
+        return {
+          presets: (await store.list()).map(name => ({ name })),
+          ...this.#activePresetName === undefined ? {} : { active: this.#activePresetName },
+          ...install === undefined ? {} : { install },
+        }
+      },
+
+      'preset.select': async ({ name }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        const body = await store.read(name)
+        await this.#applyPreset(name, body)
+        return {
+          presets: (await store.list()).map(preset => ({ name: preset })),
+          active: name,
+          manager: this.#managerView(),
+        }
+      },
+
+      'preset.view': async () => ({ manager: this.#managerView() }),
+
+      'preset.setEnabled': async ({ id, enabled }) => {
+        const item = this.#activePreset.prompts.find(prompt => prompt.identifier === id)
+        if (item === undefined) throw notFound(`the active preset has no prompt "${id}"`)
+        // Refused, not ignored, for the markers upstream gives no toggle: a
+        // silent no-op would read as "the toggle is broken", and the user would
+        // be right — the control would appear to do nothing.
+        if (!toggleAllowed(item)) throw invalid(`"${item.name ?? id}" is a marker the prompt manager does not allow toggling`)
+        const seeded = withSeededOrder(this.#activePreset)
+        const group = chosenOrder(seeded)
+        if (group === undefined) throw new AppError('unsupported', 'the preset carries no ordering to toggle in')
+        const orders = seeded.prompt_order ?? []
+        const next = {
+          ...seeded,
+          prompt_order: orders.map(entry => entry === group
+            ? {
+                ...group,
+                order: group.order.some(candidate => candidate.identifier === id)
+                  ? group.order.map(candidate =>
+                      candidate.identifier === id ? { ...candidate, enabled } : candidate)
+                  // A prompt the ordering omits is off; toggling it on adds it
+                  // to the end, which is where the view showed it.
+                  : [...group.order, { identifier: id, enabled }],
+              }
+            : entry),
+        }
+        return { manager: await this.#persistActivePreset(next) }
+      },
+
+      'preset.move': async ({ id, index }) => {
+        const seeded = withSeededOrder(this.#activePreset)
+        const group = chosenOrder(seeded)
+        if (group === undefined) throw new AppError('unsupported', 'the preset carries no ordering to move in')
+        // The prompt must exist in the preset; membership in the ordering is
+        // repaired rather than required, so a prompt the file's ordering
+        // omitted can still be dragged into place (it lands disabled, as the
+        // view showed it).
+        if (seeded.prompts.some(prompt => prompt.identifier === id) === false) {
+          throw notFound(`the active preset has no prompt "${id}"`)
+        }
+        const rest = group.order.filter(candidate => candidate.identifier !== id)
+        const entry = group.order.find(candidate => candidate.identifier === id)
+          ?? { identifier: id, enabled: false }
+        const clamped = Math.min(Math.max(index, 0), rest.length)
+        const moved = [...rest.slice(0, clamped), entry, ...rest.slice(clamped)]
+        const orders = seeded.prompt_order ?? []
+        const next = {
+          ...seeded,
+          prompt_order: orders.map(candidate => candidate === group ? { ...group, order: moved } : candidate),
+        }
+        return { manager: await this.#persistActivePreset(next) }
+      },
+
+      'preset.upsertPrompt': async ({ prompt }) => {
+        // `main` and `chatHistory` are slots, not text: upstream's edit form
+        // allows editing main's content but the marker slots carry no editable
+        // body, and letting a write replace `chatHistory`'s (absent) content
+        // would produce a prompt item the assembler reads as literal text in
+        // the conversation's slot. Refused by name.
+        const existing = this.#activePreset.prompts.find(candidate => candidate.identifier === prompt.identifier)
+        const identifier = prompt.identifier ?? randomUUID()
+        if (existing === undefined && BUILTIN_MARKERS.has(identifier)) {
+          throw invalid(`"${identifier}" is a built-in slot; edit the preset file to change it`)
+        }
+        const item: PromptItem = {
+          identifier,
+          ...prompt.name === undefined ? {} : { name: prompt.name },
+          ...prompt.role === undefined ? {} : { role: prompt.role },
+          ...prompt.content === undefined ? {} : { content: prompt.content },
+          ...prompt.marker === undefined ? {} : { marker: prompt.marker },
+          ...prompt.system_prompt === undefined ? {} : { system_prompt: prompt.system_prompt },
+          ...prompt.forbid_overrides === undefined ? {} : { forbid_overrides: prompt.forbid_overrides },
+          ...prompt.injection_position === undefined ? {} : { injection_position: prompt.injection_position },
+          ...prompt.injection_depth === undefined ? {} : { injection_depth: prompt.injection_depth },
+          ...prompt.injection_order === undefined ? {} : { injection_order: prompt.injection_order },
+        }
+        const prompts = existing === undefined
+          ? [...this.#activePreset.prompts, item]
+          : this.#activePreset.prompts.map(candidate => candidate === existing ? { ...candidate, ...item } : candidate)
+        let next: ChatCompletionPreset = { ...this.#activePreset, prompts }
+        // A new prompt joins the end of the ordering, enabled: an addition that
+        // does nothing would be the bad kind of surprise. (Upstream appends
+        // disabled and relies on its render to reconcile; the visible outcome
+        // there is the same row, on, at the end.)
+        if (existing === undefined) {
+          next = withSeededOrder(next)
+          const group = chosenOrder(next)
+          const orders = next.prompt_order ?? []
+          next = {
+            ...next,
+            prompt_order: orders.map(entry => entry === group
+              ? { ...group, order: [...group.order, { identifier, enabled: true }] }
+              : entry),
+          }
+        }
+        return { manager: await this.#persistActivePreset(next) }
+      },
+
+      'preset.removePrompt': async ({ id }) => {
+        const item = this.#activePreset.prompts.find(prompt => prompt.identifier === id)
+        if (item === undefined) throw notFound(`the active preset has no prompt "${id}"`)
+        // Upstream's rule: system prompts cannot be deleted (`isPromptDeletionAllowed`).
+        if (item.system_prompt === true) {
+          throw invalid(`"${item.name ?? id}" is a system prompt and cannot be removed`)
+        }
+        const next: ChatCompletionPreset = {
+          ...this.#activePreset,
+          prompts: this.#activePreset.prompts.filter(prompt => prompt !== item),
+          // An order-less preset stays order-less: `undefined` here would type
+          // as "the key present with no value", which is a different file shape
+          // than the one the preset came in with.
+          ...this.#activePreset.prompt_order === undefined ? {} : {
+            prompt_order: this.#activePreset.prompt_order.map(entry => ({
+              ...entry,
+              order: entry.order.filter(candidate => candidate.identifier !== id),
+            })),
+          },
+        }
+        return { manager: await this.#persistActivePreset(next) }
+      },
+
+      'preset.save': async ({ name }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        // The active body, exactly as it stands — that is what "save" means:
+        // the manager's state becomes a library preset.
+        await store.save(name, this.#activePreset)
+        // Saved over the active name? The state is now *that* preset.
+        if (this.#activePresetName === undefined || this.#activePresetName === name) {
+          this.#activePresetName = name
+          await this.#options.settings.setPreset(name, this.#activePreset)
+        }
+        return {
+          presets: (await store.list()).map(preset => ({ name: preset })),
+          active: this.#activePresetName,
+        }
+      },
+
+      'preset.delete': async ({ name }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        await store.delete(name)
+        // Deleting the active preset leaves the state live — the body is in
+        // memory and persisted in the settings file — but unnamed, which is
+        // honest: it is no longer a library preset.
+        if (this.#activePresetName === name) {
+          this.#activePresetName = undefined
+          await this.#options.settings.setPreset(undefined, this.#activePreset)
+        }
+        const presets = (await store.list()).map(preset => ({ name: preset }))
+        return { presets, ...this.#activePresetName === undefined ? {} : { active: this.#activePresetName } }
+      },
+
+      'preset.read': async ({ name }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        const body = await store.read(name)
+        return { name, preset: body as Record<string, unknown> }
+      },
+
+      'preset.import': async ({ names }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        const installDir = this.#options.sillyTavernDir
+        const outcomes = await store.importFrom(installDir, names)
+        const imported = outcomes.filter(outcome => outcome.imported).map(outcome => outcome.name)
+        const skipped = outcomes
+          .filter((outcome): outcome is Exclude<typeof outcome, { imported: true }> => !outcome.imported)
+          .map(outcome => ({
+            name: outcome.name,
+            reason: outcome.why === 'not-configured' ? 'no SillyTavern install is configured'
+              : outcome.why === 'absent' ? 'the install has no preset with this name'
+              : outcome.why === 'not-a-preset' ? 'the file is not a Chat Completion preset'
+              : 'the file could not be read this time',
+          }))
+        for (const skip of skipped) {
+          this.#report(`preset import skipped "${skip.name}": ${skip.reason}`, { kind: 'host', grade: 'note' })
+        }
+        return {
+          imported,
+          skipped,
+          presets: (await store.list()).map(preset => ({ name: preset })),
+        }
       },
 
       'character.list': async () => ({ characters: await library.list() }),
@@ -1361,7 +1712,7 @@ export class IrisAppService {
       contributions: session => this.#contributions(entry, session, count),
       history: session => this.#history(entry, session),
       budget: {
-        context: this.#options.contextWindow,
+        context: windowOf(settings, this.#options.contextWindow),
         reserve: this.#options.reserveTokens,
         count,
       },
@@ -1386,17 +1737,19 @@ export class IrisAppService {
     record = true,
   ): Contribution[] {
     const names = entry.names
+    const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
+    const window = windowOf(settings, this.#options.contextWindow)
     const built = buildPrompt({
       card: entry.card,
       ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
-      preset: this.#options.preset,
+      preset: this.#activePreset,
       userName: names.user,
       characterName: names.character,
       // The same projection the model gets, so a world-info scan cannot match a
       // keyword inside a block the prompt scripts are about to strip.
       history: this.#history(entry, session),
       count,
-      worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
+      worldInfoBudget: Math.floor(window * WORLD_INFO_BUDGET_SHARE),
       // The chat's expander, so the card's own variable macros resolve against
       // this chat's state rather than being sent as braces.
       substitute: entry.substitute,
@@ -1424,7 +1777,7 @@ export class IrisAppService {
     const turn = record ? entry.pending?.turn : undefined
     if (turn !== undefined) {
       entry.itemizations.set(turn, this.#itemizationOf(
-        assemble({ contributions, history: this.#history(entry, session), budget: this.#budget(count) }),
+        assemble({ contributions, history: this.#history(entry, session), budget: this.#budget(count, window) }),
         turn,
         false,
       ))
@@ -1434,12 +1787,12 @@ export class IrisAppService {
   }
 
   /** The budget every assembly for this host runs under. */
-  #budget(count: (text: string) => number): { context: number, reserve: number, count: (text: string) => number } {
-    return { context: this.#options.contextWindow, reserve: this.#options.reserveTokens, count }
+  #budget(count: (text: string) => number, window?: number): { context: number, reserve: number, count: (text: string) => number } {
+    return { context: window ?? this.#options.contextWindow, reserve: this.#options.reserveTokens, count }
   }
 
   /** Project an assembly onto the wire shape. */
-  #itemizationOf(result: AssembleResult, turn: number, preview: boolean): PromptItemization {
+  #itemizationOf(result: AssembleResult, turn: number, preview: boolean, window?: number): PromptItemization {
     return {
       turn,
       entries: result.items.map(item => ({
@@ -1452,7 +1805,10 @@ export class IrisAppService {
         ...item.role === undefined || item.role === 'system' ? {} : { role: item.role },
       })),
       tokens: result.tokens,
-      budget: { context: this.#options.contextWindow, reserve: this.#options.reserveTokens },
+      budget: {
+        context: window ?? this.#options.contextWindow,
+        reserve: this.#options.reserveTokens,
+      },
       droppedHistory: result.overflow.droppedHistory,
       overBudget: result.overflow.overBudget,
       preview,
@@ -1471,15 +1827,17 @@ export class IrisAppService {
   #previewItemization(entry: ChatEntry): PromptItemization {
     const count = (text: string): number => this.#counter.count(text)
     const names = entry.names
+    const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
+    const window = windowOf(settings, this.#options.contextWindow)
     const built = buildPrompt({
       card: entry.card,
       ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
-      preset: this.#options.preset,
+      preset: this.#activePreset,
       userName: names.user,
       characterName: names.character,
       history: this.#history(entry, entry.session),
       count,
-      worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
+      worldInfoBudget: Math.floor(window * WORLD_INFO_BUDGET_SHARE),
       // The preview has to show what would actually be sent, macros included —
       // an itemization that still holds `{{format_message_variable::…}}` would
       // hide precisely the defect this seam exists to prevent.
@@ -1490,9 +1848,9 @@ export class IrisAppService {
     const result = assemble({
       contributions,
       history: this.#history(entry, entry.session),
-      budget: this.#budget(count),
+      budget: this.#budget(count, window),
     })
-    return this.#itemizationOf(result, entry.lastTurn + 1, true)
+    return this.#itemizationOf(result, entry.lastTurn + 1, true, window)
   }
 
   /**
@@ -2086,5 +2444,188 @@ export function samplingOf(settings: GenerationSettings): GenerateOptions['sampl
     ...settings.frequencyPenalty === undefined ? {} : { frequencyPenalty: settings.frequencyPenalty },
     ...settings.presencePenalty === undefined ? {} : { presencePenalty: settings.presencePenalty },
     ...settings.seed === undefined ? {} : { seed: settings.seed },
+    ...settings.reasoningEffort === undefined ? {} : { reasoningEffort: settings.reasoningEffort },
   }
+}
+
+/**
+ * The context window one chat assembles under.
+ *
+ * Preset-scoped: the active preset's `openai_max_context` wins when it carries
+ * one (they always do in practice — measured on real presets: 4095 to
+ * 2 000 000), and the composition's value stands otherwise. A preset tuned for
+ * one window assembled against another does not fail loudly; it trims a
+ * different part of the conversation, which is the quiet kind of wrong.
+ * @param settings - the chat's merged settings.
+ * @param fallback - the composition's window.
+ * @returns the window in tokens.
+ */
+function windowOf(settings: GenerationSettings, fallback: number): number {
+  return settings.contextWindow ?? fallback
+}
+
+/**
+ * The markers upstream refuses to let the user untoggle, and the one rule the
+ * refusal follows.
+ *
+ * `isPromptToggleAllowed` (PromptManager.js:1099): a *marker* not on this list
+ * has no toggle at all; everything else — including `chatHistory` and
+ * `dialogueExamples`, which are markers and on the list — toggles freely.
+ * Mirrored exactly, because the list is upstream's opinion about which slots a
+ * prompt manager cannot function without, and a slot it cannot function
+ * without is a slot a preset cannot be edited to lose.
+ */
+const FORCE_TOGGLE_MARKERS = new Set([
+  'charDescription',
+  'charPersonality',
+  'scenario',
+  'personaDescription',
+  'worldInfoBefore',
+  'worldInfoAfter',
+  'main',
+  'chatHistory',
+  'dialogueExamples',
+])
+
+/**
+ * Whether the manager may toggle one prompt off, by upstream's rule.
+ * @param item - the prompt.
+ * @returns true when a toggle is allowed at all.
+ */
+function toggleAllowed(item: PromptItem): boolean {
+  if (item.marker === true) return FORCE_TOGGLE_MARKERS.has(item.identifier)
+  return true
+}
+
+/**
+ * The scalar fields of one preset that ride the global settings layer on a
+ * switch, mapped onto their GenerationSettings names.
+ *
+ * This is Iris's whole equivalent of upstream's 102-key `settingsToUpdate`
+ * overwrite table: the keys a preset can carry that this host *acts on*, and
+ * not one more. Applied to the **global** layer, so a chat-scoped override —
+ * an explicit decision made for one conversation — survives a preset switch,
+ * where upstream's single flat settings space has nothing to survive in.
+ *
+ * Garbage is skipped rather than refused: a preset with `"temperature": "high"`
+ * switches fine upstream (the DOM select simply fails to match), so it must not
+ * fail here either — one bad field must not take the whole preset down.
+ * @param preset - the preset being switched to.
+ * @returns a patch for `SettingsStore.set`, possibly empty.
+ */
+export function presetScalarPatch(preset: ChatCompletionPreset): Record<string, number | string> {
+  const numbers: [string, keyof GenerationSettings][] = [
+    ['temperature', 'temperature'],
+    ['openai_max_tokens', 'maxTokens'],
+    ['openai_max_context', 'contextWindow'],
+    ['top_p', 'topP'],
+    ['top_k', 'topK'],
+    ['min_p', 'minP'],
+    ['repetition_penalty', 'repetitionPenalty'],
+    ['frequency_penalty', 'frequencyPenalty'],
+    ['presence_penalty', 'presencePenalty'],
+    ['seed', 'seed'],
+  ]
+  const patch: Record<string, number | string> = {}
+  for (const [key, field] of numbers) {
+    const value = preset[key]
+    if (typeof value === 'number' && Number.isFinite(value)) patch[field] = value
+  }
+  const effort = preset['reasoning_effort']
+  if (typeof effort === 'string' && REASONING_EFFORT_VALUES.has(effort)) {
+    patch['reasoningEffort'] = effort
+  }
+  return patch
+}
+
+/** The reasoning-effort words upstream accepts, as a set for the patch filter. */
+const REASONING_EFFORT_VALUES: ReadonlySet<string> = new Set<string>(['auto', 'low', 'medium', 'high', 'min', 'max'])
+
+/**
+ * The built-in identifiers the manager must not let a new prompt overwrite.
+ *
+ * These are the assembler's slots — `resolvePreset` reads them from the
+ * markers map, not from user text — and a `preset.upsertPrompt` that created
+ * one would put literal content where the host fills in live data.
+ */
+const BUILTIN_MARKERS: ReadonlySet<string> = new Set([
+  'main', 'nsfw', 'worldInfoBefore', 'personaDescription', 'charDescription',
+  'charPersonality', 'scenario', 'enhanceDefinitions', 'worldInfoAfter',
+  'dialogueExamples', 'chatHistory', 'jailbreak',
+])
+
+/**
+ * The prompt manager's ordering: the global sentinel first, the legacy one as a
+ * last resort — the same chain the assembler runs, kept identical so the
+ * manager can only ever edit the list the assembler reads.
+ * @param preset - the preset.
+ * @returns the chosen order group, creating nothing.
+ */
+function chosenOrder(preset: ChatCompletionPreset): PromptOrder | undefined {
+  const orders = preset.prompt_order ?? []
+  return orders.find(entry => entry.character_id === GLOBAL_ORDER_ID)
+    ?? orders.find(entry => entry.character_id === LEGACY_ORDER_ID)
+}
+
+/**
+ * The manager's view of one preset: every prompt, in order, with its toggle.
+ *
+ * Prompts missing from the ordering sit disabled at the end, which is the
+ * reading the assembler gives them too — absence from the order is how a
+ * preset turns a prompt off.
+ * @param name - the preset's library name, when it has one.
+ * @param preset - the preset itself.
+ * @returns the view.
+ */
+function managerViewOf(name: string | undefined, preset: ChatCompletionPreset): PresetManagerView {
+  const order = chosenOrder(preset)
+  const enabled = new Map((order?.order ?? []).map(entry => [entry.identifier, entry.enabled]))
+  const position = new Map((order?.order ?? []).map((entry, index) => [entry.identifier, index]))
+
+  const prompts: PresetPromptView[] = preset.prompts.map(item => {
+    const absolute = item.injection_position === 'absolute' || item.injection_position === 1
+    return {
+      id: item.identifier,
+      ...item.name === undefined ? {} : { name: item.name },
+      ...item.role === undefined ? {} : { role: item.role },
+      // No ordering at all runs everything on, in file order — the same
+      // fallback `resolveOrder` makes.
+      enabled: order === undefined ? true : enabled.get(item.identifier) ?? false,
+      ...item.marker === true ? { marker: true } : {},
+      ...item.system_prompt === true ? { systemPrompt: true } : {},
+      ...(item.injection_position === 'relative' || item.injection_position === 'absolute')
+        ? { injectionPosition: item.injection_position }
+        : {},
+      ...absolute && item.injection_depth !== undefined ? { injectionDepth: item.injection_depth } : {},
+      ...absolute && item.injection_order !== undefined ? { injectionOrder: item.injection_order } : {},
+      ...item.forbid_overrides === true ? { forbidOverrides: true } : {},
+      toggleable: toggleAllowed(item),
+    }
+  })
+  // Stable sort by order position; unpositioned prompts (Infinity) keep their
+  // file order behind the ordered ones.
+  prompts.sort((left, right) => (position.get(left.id) ?? Number.POSITIVE_INFINITY) - (position.get(right.id) ?? Number.POSITIVE_INFINITY))
+  return {
+    ...name === undefined ? {} : { name },
+    prompts,
+  }
+}
+
+/**
+ * Give the preset an ordering group to mutate, when it has none.
+ *
+ * Seeded with every prompt enabled in file order — the exact semantics the
+ * assembler gives an order-less preset — so the first toggle against such a
+ * preset turns one prompt off instead of inventing a list that contradicts
+ * what was being assembled a moment before.
+ * @param preset - the preset to seed; not mutated.
+ * @returns the preset carrying a global order group.
+ */
+function withSeededOrder(preset: ChatCompletionPreset): ChatCompletionPreset {
+  if (chosenOrder(preset) !== undefined) return preset
+  const seeded: PromptOrder = {
+    character_id: GLOBAL_ORDER_ID,
+    order: preset.prompts.map(prompt => ({ identifier: prompt.identifier, enabled: true })),
+  }
+  return { ...preset, prompt_order: [...preset.prompt_order ?? [], seeded] }
 }

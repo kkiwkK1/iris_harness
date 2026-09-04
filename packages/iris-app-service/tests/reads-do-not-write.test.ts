@@ -11,6 +11,7 @@ import type { StreamFn } from '@iris/turn'
 import { ChatStore } from '../src/chats.ts'
 import { ExtensionSettingsStore } from '../src/context.ts'
 import { CharacterLibrary } from '../src/library.ts'
+import { PresetStore } from '../src/presets.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { ScriptVariableStore } from '../src/script-variables.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
@@ -89,6 +90,12 @@ async function fixture(t: TestContext): Promise<Fixture> {
   await writeFile(join(dir, 'worlds', 'Eldoria.json'), JSON.stringify({
     entries: { 1: { uid: 1, key: ['tower'], comment: 'Tower', content: 'Maps.', displayIndex: 0 } },
   }), 'utf8')
+  // A real preset in the library, so the `preset.*` reads below perform actual
+  // reads rather than refusing their way past the check.
+  await mkdir(join(dir, 'presets'), { recursive: true })
+  await writeFile(join(dir, 'presets', 'Sample.json'), JSON.stringify({
+    prompts: [{ identifier: 'main', name: 'Main', marker: true }],
+  }), 'utf8')
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const scriptVariables = new ScriptVariableStore(join(dir, 'script-variables.json'))
@@ -107,6 +114,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
     scripts: new ScriptPolicyStore(join(dir, 'script-policy.json')),
     extensionSettings: new ExtensionSettingsStore(join(dir, 'extension-settings.json')),
     worldbooks: new WorldbookStore(join(dir, 'worlds')),
+    presets: new PresetStore(join(dir, 'presets')),
     broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
     userName: 'Traveller',
   }).handlers()
@@ -189,6 +197,9 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   { method: 'worldbook.names', params: () => ({}) },
   { method: 'worldbook.get', params: () => ({ name: 'Eldoria' }) },
   { method: 'worldbook.charNames', params: () => ({ characterId: 'aria' }) },
+  { method: 'preset.list', params: () => ({}) },
+  { method: 'preset.view', params: () => ({}) },
+  { method: 'preset.read', params: () => ({ name: 'Sample' }) },
 ]
 
 for (const { method, params } of READS) {

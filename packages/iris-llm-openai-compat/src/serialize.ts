@@ -24,6 +24,14 @@ export interface IrisSampling {
   frequencyPenalty?: number
   presencePenalty?: number
   seed?: number
+  /**
+   * Upstream's `reasoning_effort`, verbatim (`openai.js:2756` sends the
+   * setting straight into the body). `'auto'` never reaches the wire: it is
+   * upstream's client-side "let the provider decide", and providers disagree
+   * about the literal word — sending nothing is the one spelling every
+   * OpenAI-compatible endpoint agrees on.
+   */
+  reasoningEffort?: string
 }
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -89,5 +97,8 @@ export function serializeRequest(options: GenerateOptions): Record<string, unkno
     ...sampling.frequencyPenalty !== undefined ? { frequency_penalty: sampling.frequencyPenalty } : {},
     ...sampling.presencePenalty !== undefined ? { presence_penalty: sampling.presencePenalty } : {},
     ...sampling.seed !== undefined ? { seed: sampling.seed } : {},
+    ...sampling.reasoningEffort !== undefined && sampling.reasoningEffort !== 'auto'
+      ? { reasoning_effort: sampling.reasoningEffort }
+      : {},
   }
 }

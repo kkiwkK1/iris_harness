@@ -12,7 +12,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import type { GenerationSettings } from '@iris/protocol'
+import type { ChatCompletionPreset } from '@iris/preset'
+import type { GenerationSettings, ReasoningEffort } from '@iris/protocol'
 
 import { invalid } from './errors.ts'
 
@@ -20,6 +21,7 @@ import { invalid } from './errors.ts'
 const NUMERIC_FIELDS = {
   temperature: [0, 5],
   maxTokens: [1, 1_000_000],
+  contextWindow: [1, 4_000_000],
   topP: [0, 1],
   topK: [0, 10_000],
   minP: [0, 1],
@@ -28,6 +30,15 @@ const NUMERIC_FIELDS = {
   presencePenalty: [-2, 2],
   seed: [Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
 } as const satisfies Partial<Record<keyof GenerationSettings, readonly [number, number]>>
+
+/**
+ * The reasoning-effort values upstream accepts, verbatim.
+ *
+ * `reasoning_effort_types` (openai.js:237): six words, and nothing else a
+ * client may send — an unknown level would either be refused by the provider
+ * or silently ignored by it, and neither failure says where it came from.
+ */
+const REASONING_EFFORTS: readonly ReasoningEffort[] = ['auto', 'low', 'medium', 'high', 'min', 'max']
 
 /** What one settings file holds. */
 interface SettingsFile {
@@ -43,6 +54,17 @@ interface SettingsFile {
    * under `world_info_settings.world_info`, not beside the sampler.
    */
   worldbooks?: { globalSelect: string[] }
+  /**
+   * The active preset and the prompt manager's state on top of it.
+   *
+   * Present only once a switch or an edit has happened: a host still running
+   * on its configured file carries no section at all, which is what makes the
+   * configuration the authority while it is the only decision ever made.
+   * Upstream's equivalent is the `prompts` / `prompt_order` /
+   * `preset_settings_openai` triple inside `oai_settings`, persisted in its
+   * settings.json the same way.
+   */
+  preset?: { name?: string, body: ChatCompletionPreset }
 }
 
 /** Fields of {@link GenerationSettings} that may simply be absent. */
@@ -89,13 +111,29 @@ export class SettingsStore {
     }
     try {
       const parsed = JSON.parse(text) as Partial<SettingsFile>
+      const preset = this.#validatedPreset(parsed.preset)
       this.#file = {
         global: { ...this.#file.global, ...parsed.global },
         chats: parsed.chats ?? {},
+        // A section that fails its one invariant is not a state to restore: the
+        // active preset must be a preset, or the first generation would fail
+        // somewhere far from the file that caused it.
+        ...preset === undefined ? {} : { preset },
       }
     } catch {
       // Keep the defaults.
     }
+  }
+
+  /**
+   * The stored preset section, when it still names a real preset.
+   * @param section - what the file carried.
+   * @returns the section, or undefined when it is not one.
+   */
+  #validatedPreset(section: SettingsFile['preset']): SettingsFile['preset'] {
+    if (section === undefined || typeof section !== 'object') return undefined
+    if (section.body === undefined || (section.body as { prompts?: unknown }).prompts === undefined) return undefined
+    return section
   }
 
   /**
@@ -155,8 +193,8 @@ export class SettingsStore {
   /**
    * The books injected into every chat, whatever character is playing.
    *
-   * Upstream's `world_info.globalSelect`. Names verbatim, because a book's name
-   * is its identity and 13 of 18 real names change under `toId`.
+   * Upstream's `world_info.globalSelect`. Names verbatim, because a book's
+   * name is its identity and 13 of 18 real names change under `toId`.
    * @returns the selected names, empty when none are.
    */
   globalSelect(): string[] {
@@ -175,6 +213,46 @@ export class SettingsStore {
    */
   async setGlobalSelect(names: readonly string[]): Promise<void> {
     this.#file.worldbooks = { globalSelect: [...names] }
+    await this.save()
+  }
+
+  /**
+   * The active preset's name, when it came from the library.
+   *
+   * Upstream's `preset_settings_openai`. Absent means the host is still
+   * assembling with what its composition configured — a state upstream cannot
+   * represent and this one can, because the configured file is a decision the
+   * composition owns rather than one the user made here.
+   * @returns the name, or undefined.
+   */
+  presetName(): string | undefined {
+    return this.#file.preset?.name
+  }
+
+  /**
+   * The prompt manager's live state: the active preset's body.
+   *
+   * Undefined until a switch or an edit first happens, and that absence is
+   * load-bearing — the assembler falls back to the configured preset for it,
+   * which is what keeps a config-driven host config-driven.
+   * @returns the active preset body, or undefined.
+   */
+  presetBody(): ChatCompletionPreset | undefined {
+    return this.#file.preset?.body
+  }
+
+  /**
+   * Replace the active preset and persist it.
+   *
+   * Whole-body replacement rather than a merge, on purpose: this is what a
+   * switch means (upstream copies the preset's fields over `oai_settings` and
+   * keeps nothing of what was there), and a merge would turn "switch" into
+   * "sometimes switch".
+   * @param name - the library name, when it has one.
+   * @param body - the preset the manager now runs on.
+   */
+  async setPreset(name: string | undefined, body: ChatCompletionPreset): Promise<void> {
+    this.#file.preset = { ...name === undefined ? {} : { name }, body }
     await this.save()
   }
 
@@ -241,6 +319,16 @@ export function sanitize(patch: Record<string, unknown>): SettingsPatch {
       throw invalid('"stop" must be an array of strings')
     } else {
       set.stop = stop as string[]
+    }
+  }
+
+  if (Object.hasOwn(patch, 'reasoningEffort')) {
+    const value = patch['reasoningEffort']
+    if (value === null) clear.push('reasoningEffort')
+    else if (typeof value !== 'string' || !REASONING_EFFORTS.includes(value as ReasoningEffort)) {
+      throw invalid(`"reasoningEffort" must be one of ${REASONING_EFFORTS.join(', ')}`)
+    } else {
+      set.reasoningEffort = value as ReasoningEffort
     }
   }
 
