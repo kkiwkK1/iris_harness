@@ -1059,3 +1059,71 @@ question was built to judge.
 cards whose messages carry interfaces (then the widening folds back into
 `mayRun`), or evidence that a card ships an empty script pack as a marker with
 meaning beyond "nothing to run".
+
+---
+
+## 25. Bare HTML in a message renders as a sandbox frame, not as escaped source
+
+**Kind:** compatibility gap, closed — with one deliberate twist.
+
+**Upstream.** Message HTML is sanitized in place (`messageFormatting`: DOMPurify
+over the whole rendered message), so a card's bare `<div>`/`<style>` fragment —
+no fence anywhere — renders as the panel the card author wrote. The measured
+population is large: 936 fragment floors across the corpus carry line-initial
+block tags with no fence, and cards like 尸变纪元 ship their MVU status widget
+exactly that way.
+
+**Iris** renders message text through `MarkdownText`, which disables raw HTML by
+design — so until this change the two claimers of the message-frame pipeline
+covered only **fenced** blocks (`claimFrontendBlocks`), and a bare widget arrived
+on the reading surface as escaped source text. `splitHtmlRegions` (the
+936-floor-spec split in `app/html-regions.ts`) existed but had no consumer.
+
+**The wiring** (`claimMessageSurfaces` in `sandbox/frontend-blocks.ts`): one
+claim list per message, fenced blocks and bare regions together, in source
+order, consumed by all three surfaces that count or render instances — the
+frame budget's plan, the frame controller, and the row's prose splice. Regions
+run through the fence pipeline's own frame path (same `runCard`, same CSP and
+opaque origin, same `planFrames` budget and count gate, same height sync), not
+through a second renderer.
+
+**The twist, and why it is not the INLINE-HTML.md plan.** That document's
+recommendation is a sanitizer-based **inline** path (§三: "加一条内联渲染路，不是
+给 frame 路加一个片段模式"), and this wiring deliberately does not follow it: the
+task ordered the frame path, and the frame path is the stronger floor for the
+same compatibility target — a bare region can carry a `<script>`, which the
+inline path must strip (fragment gains no script capability, by ruling) but the
+frame runs inside the existing wall. What is lost is upstream's styling
+continuity: a bare panel renders in a frame that breaks out of the measure,
+like every interface, rather than inside the message's own flow. Measured on
+the acceptance fixtures: the widget renders with its own `<style>` intact inside
+the frame, 898px wide, height-synced.
+
+**Composition rule, because two grammars now describe one text:** fence-first.
+The region split runs only on the prose between fences, so a fence body's
+line-initial tags never open a region and nothing is claimed twice; unclaimed
+fences are excluded too (their tags would frame while the fence markers leaked
+into the prose); indented blocks are *not* excluded, because a region can only
+open at up to three leading spaces while card markup is routinely indented
+deeper behind blank lines — excluding them would carve real panels in half. A
+region that still reaches into a claimed indented block loses to the claim and
+falls back to the renderer.
+
+**The unclosed region is reported, not silent.** The split's fallback (rest of
+the gap becomes HTML) puts a note on the durable card-report channel
+(`addCardReport`, channel `interface`); the store's one-entry-per-fact dedupe
+keeps a card with the flaw on many floors at one line.
+
+**What it costs.** Every bare region is now a frame candidate, so the frame
+budget spends on both populations from one pool — intended (there is no second,
+quieter accounting), and bounded by the same count gate. And a prose sentence
+that happens to *open* with a line-initial block tag mid-sentence-flow is now a
+frame: the split's own measurements (936 floors, blank lines inside regions
+normal, 66% multi-region) are the evidence the rule fits cards, and the
+unclosed-region report is the tripwire when a card does not.
+
+**What would overturn it.** A card whose narrative regularly begins lines with
+CommonMark type-6 tags as *prose* (none in the corpus — that is the split's
+specification), or an interface that must style its surrounding message text
+(impossible from a frame; would reopen the inline path as a separate, ruled
+piece of work).

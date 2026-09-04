@@ -69,6 +69,17 @@ const VOID_TAGS: ReadonlySet<string> = new Set([
 export interface Region {
   kind: 'markdown' | 'html'
   text: string
+  /**
+   * Offset of the region's first character in the input.
+   *
+   * Computed in the same walk that produces the text, so the two cannot drift:
+   * a caller that splices the source by these offsets — the message-frame
+   * pipeline carves claimed regions out of the message the way it carves out
+   * fenced blocks — gets exactly the characters `text` holds.
+   */
+  start: number
+  /** Offset just past the region's last character. */
+  end: number
 }
 
 /** The split, plus anything a card author should be told about it. */
@@ -118,16 +129,34 @@ export function splitHtmlRegions(text: string): SplitMessage {
   if (text === '') return { regions: [], refused: [] }
 
   const lines = text.split('\n')
+
+  /** Offset of each line's first character; the walk reports regions in these. */
+  const starts: number[] = []
+  let cursor = 0
+  for (const line of lines) {
+    starts.push(cursor)
+    cursor += line.length + 1
+  }
+
   const regions: Region[] = []
   const refused = new Set<string>()
 
   let pending: string[] = []
+  let pendingFrom = 0
+  let pendingTo = 0
   const flushMarkdown = (): void => {
     if (pending.length === 0) return
     const joined = pending.join('\n')
     // Whitespace-only runs between two regions are not prose; emitting them
     // would put an empty paragraph between two panels.
-    if (joined.trim() !== '') regions.push({ kind: 'markdown', text: joined })
+    if (joined.trim() !== '') {
+      regions.push({
+        kind: 'markdown',
+        text: joined,
+        start: starts[pendingFrom] ?? 0,
+        end: (starts[pendingTo] ?? 0) + (lines[pendingTo] ?? '').length,
+      })
+    }
     pending = []
   }
 
@@ -137,7 +166,9 @@ export function splitHtmlRegions(text: string): SplitMessage {
     const tag = opensRegion(line)
 
     if (tag === undefined) {
+      if (pending.length === 0) pendingFrom = at
       pending.push(line)
+      pendingTo = at
       at += 1
       continue
     }
@@ -145,7 +176,7 @@ export function splitHtmlRegions(text: string): SplitMessage {
     flushMarkdown()
 
     if (VOID_TAGS.has(tag)) {
-      regions.push({ kind: 'html', text: line })
+      regions.push({ kind: 'html', text: line, start: starts[at] ?? 0, end: (starts[at] ?? 0) + line.length })
       at += 1
       continue
     }
@@ -171,11 +202,16 @@ export function splitHtmlRegions(text: string): SplitMessage {
        * card's raw tags on screen, which is the fault we started from.
        */
       refused.add(`an HTML block opened with <${tag}> is never closed — the rest of the message is treated as HTML`)
-      regions.push({ kind: 'html', text: lines.slice(at).join('\n') })
+      regions.push({ kind: 'html', text: lines.slice(at).join('\n'), start: starts[at] ?? 0, end: text.length })
       return { regions, refused: [...refused] }
     }
 
-    regions.push({ kind: 'html', text: lines.slice(at, end + 1).join('\n') })
+    regions.push({
+      kind: 'html',
+      text: lines.slice(at, end + 1).join('\n'),
+      start: starts[at] ?? 0,
+      end: (starts[end] ?? 0) + (lines[end] ?? '').length,
+    })
     at = end + 1
   }
 

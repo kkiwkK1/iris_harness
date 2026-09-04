@@ -716,3 +716,18 @@ Steps 1 and 5 come first and last on purpose. The first cut of this pipeline can
 be entirely wrong about *which* blocks to claim, and the corpus cannot tell us —
 so the thing that has to work before anything else is the instrument that says
 what it claimed, and why.
+
+## Added 2026-09-04: the second claimer — bare HTML regions
+
+This document describes the fence path, and the pipeline now claims one more
+population: a card's **bare** HTML — line-initial block tags with no fence
+anywhere, the 936-floor fragment corpus and 尸变纪元's MVU widget among them —
+which upstream renders in place and Iris used to escape into source text.
+`splitHtmlRegions` (the split measured to that corpus's specification) is wired
+in through `claimMessageSurfaces` (`sandbox/frontend-blocks.ts`), which produces
+one claim list — fenced blocks and regions, in source order — that the budget,
+the controller and the row all read. Regions go through the frame path this
+document already specifies: same `runCard`, same wall, same budget, no second
+accounting. The composition rule (fence-first, and why indented blocks are not
+excluded) and the cost ledger live in `DEVIATIONS.md` §25; the split itself and
+its measured specification live in `app/html-regions.ts`.

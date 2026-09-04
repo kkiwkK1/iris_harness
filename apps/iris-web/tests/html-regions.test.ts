@@ -140,3 +140,43 @@ test('whitespace between two regions is not emitted as prose', () => {
 test('an empty message produces no regions', () => {
   assert.deepEqual(splitHtmlRegions(''), { regions: [], refused: [] })
 })
+
+test('every region reports offsets that carve its exact text out of the source', () => {
+  /*
+   * The offsets are what lets the message-frame pipeline splice regions out of
+   * a message the way it splices out fenced blocks, so the round trip
+   * `text === source.slice(start, end)` is the contract — checked over shapes
+   * with dropped whitespace, a void tag, and an unclosed tail.
+   */
+  const sources = [
+    '雨从檐角坠下来。\n\n她收了伞。',
+    '她把钳子插回围裙。\n\n<details>\n<summary>状态</summary>\n</details>\n\n后来呢。',
+    '<div>一</div>\n\n\n<div>二</div>',
+    '<hr>\n\n之后的叙事',
+    '<div>\n<span>x</span>\n\n后面还有叙事',
+    '\n\n开场之前有空行。\n\n<div class="w">\n\n    <span>很深的缩进</span>\n\n</div>\n\n结尾。\n\n',
+  ]
+  for (const source of sources) {
+    const { regions } = splitHtmlRegions(source)
+    assert.ok(regions.length > 0, `no regions at all for: ${JSON.stringify(source)}`)
+    regions.forEach((region, at) => {
+      assert.equal(
+        region.text,
+        source.slice(region.start, region.end),
+        `region ${String(at)} of ${JSON.stringify(source)} does not round-trip`,
+      )
+      const previous = regions[at - 1]
+      if (previous !== undefined) {
+        assert.ok(previous.end <= region.start, 'regions overlap or run backwards')
+      }
+    })
+  }
+})
+
+test('the unclosed fallback span reaches the end of the source', () => {
+  const text = '开头。\n\n<div>\n<span>x</span>'
+  const { regions } = splitHtmlRegions(text)
+  const region = regions[regions.length - 1]
+  assert.equal(region?.end, text.length)
+  assert.equal(region?.text, text.slice(region.start, region.end))
+})
