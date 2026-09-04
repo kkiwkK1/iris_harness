@@ -1244,3 +1244,117 @@
   gap: 8px;
   margin-top: 8px;
 }
+
+/* ------------------------------------------------------------------ presets */
+
+/*
+ * A preset row, like a connection row: the name is the identity, and the
+ * actions ride beside it rather than under it. The active row is marked the
+ * same way connections are — an accent edge — so "which one is running" has
+ * one answer with one shape across the drawer.
+ */
+.iris-preset {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-left: 2px solid transparent;
+  padding-left: 8px;
+}
+
+.iris-preset[aria-current='true'] {
+  border-left-color: var(--iris-accent);
+  background: var(--iris-accent-wash);
+}
+
+.iris-preset__name {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink);
+  overflow-wrap: anywhere;
+}
+
+.iris-preset__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+/* A small labelled chip: “active”, “slot”, “system”, a role. */
+.iris-preset__badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  font-family: var(--iris-font-ui);
+  font-size: 10px;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-preset__active {
+  font-family: var(--iris-font-mono);
+  color: var(--iris-ink);
+  overflow-wrap: anywhere;
+}
+
+.iris-preset__import {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+/* Why a name did not come over. Host-worded, so it is not translated here. */
+.iris-preset__report {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--iris-ink-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.iris-preset__head {
+  margin: 14px 0 4px;
+}
+
+/*
+ * Real presets carry dozens of prompts; the list scrolls inside the section so
+ * the reader keeps their place in the drawer while reordering.
+ */
+.iris-preset__prompts {
+  max-height: 40vh;
+  overflow-y: auto;
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-preset__prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-preset__toggle {
+  flex: none;
+  accent-color: var(--iris-accent);
+}
+
+.iris-preset__prompt-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.iris-preset__prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}

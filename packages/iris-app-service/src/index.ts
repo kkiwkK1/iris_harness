@@ -33,6 +33,7 @@ import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
+import { PresetStore } from './presets.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
 import { WorldbookStore } from './worldbooks.ts'
 import { openGlobalScope } from './context.ts'
@@ -452,6 +453,19 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // directory that does not exist yet.
   await settings.load()
 
+  // The profile's preset library — the files a switch reads and an import
+  // fills. Beside the installation, like every other store here.
+  const presets = new PresetStore(paths.presets)
+
+  // What the host assembles with at boot: a selection the user made in a
+  // previous run outranks the composition's file, because that is what
+  // persisting the choice means — a restart that snapped back to `presetPath`
+  // would make the picker a preference the host forgets. Absent (nothing ever
+  // switched or edited), the configured file stands, so a config-driven host
+  // stays config-driven.
+  const storedPreset = settings.presetBody()
+  const storedPresetName = settings.presetName()
+
   const service = new IrisAppService({
     stream: options => ctx.llm.stream(options),
     library,
@@ -463,7 +477,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     worldbooks,
     connections,
     scriptVariables,
-    preset: await loadPreset(config.presetPath),
+    preset: storedPreset ?? await loadPreset(config.presetPath),
+    ...storedPresetName === undefined ? {} : { presetName: storedPresetName },
+    presets,
+    ...config.sillyTavernDir === undefined ? {} : { sillyTavernDir: config.sillyTavernDir },
     broadcast: event => { ctx.irisRpc.broadcast(event) },
     diagnostics,
     cardStorage,
@@ -533,6 +550,17 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('character.delete', handlers['character.delete']),
       ctx.irisRpc.register('settings.get', handlers['settings.get']),
       ctx.irisRpc.register('settings.set', handlers['settings.set']),
+      ctx.irisRpc.register('preset.list', handlers['preset.list']),
+      ctx.irisRpc.register('preset.select', handlers['preset.select']),
+      ctx.irisRpc.register('preset.view', handlers['preset.view']),
+      ctx.irisRpc.register('preset.setEnabled', handlers['preset.setEnabled']),
+      ctx.irisRpc.register('preset.move', handlers['preset.move']),
+      ctx.irisRpc.register('preset.upsertPrompt', handlers['preset.upsertPrompt']),
+      ctx.irisRpc.register('preset.removePrompt', handlers['preset.removePrompt']),
+      ctx.irisRpc.register('preset.save', handlers['preset.save']),
+      ctx.irisRpc.register('preset.delete', handlers['preset.delete']),
+      ctx.irisRpc.register('preset.read', handlers['preset.read']),
+      ctx.irisRpc.register('preset.import', handlers['preset.import']),
       ctx.irisRpc.register('script.list', handlers['script.list']),
       ctx.irisRpc.register('script.setEnabled', handlers['script.setEnabled']),
       ctx.irisRpc.register('script.body', handlers['script.body']),

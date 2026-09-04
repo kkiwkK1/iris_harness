@@ -83,6 +83,11 @@
     userName: !!js process.env.IRIS_USER_NAME ?? 'User'
     contextWindow: !!js Number(process.env.IRIS_CONTEXT_WINDOW ?? 32768)
     presetPath: !!js process.env.IRIS_PRESET
+    # The SillyTavern **profile** directory (`…/data/<user>`, never the install
+    # root) that preset import reads from and book materialisation consults.
+    # Read-only, and refused at boot if it overlaps dataDir. Unset by default,
+    # and never guessed — without it the import row does not exist.
+    sillyTavernDir: !!js process.env.IRIS_ST_DIR
     # Trims the five MVU variable keys off older floors, matching SillyTavern,
     # whose own cleanup ships enabled and has already run over every long chat
     # in a real install. **It deletes those keys and nothing restores them** —

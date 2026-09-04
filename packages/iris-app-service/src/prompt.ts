@@ -57,6 +57,50 @@ export const DEFAULT_PRESET: ChatCompletionPreset = {
   ],
 }
 
+/**
+ * The format strings a preset may carry, and what they default to.
+ *
+ * Upstream defaults (`openai.js:106-113`): `wi_format` is `'{0}'`, so world
+ * info joins with no wrapper; `scenario_format` and `personality_format` are
+ * the bare macros, so the Chat Completion path sends raw scenario and
+ * personality text. Real presets do override them — measured on this machine's
+ * install: `[Circumstances and context of the dialogue: {{scenario}}]` — and a
+ * preset that does is sending the model a different prompt than the bare
+ * fields would produce.
+ */
+const DEFAULT_WI_FORMAT = '{0}'
+const DEFAULT_SCENARIO_FORMAT = '{{scenario}}'
+const DEFAULT_PERSONALITY_FORMAT = '{{personality}}'
+
+/**
+ * Read one format string off a preset, falling back to upstream's default.
+ * @param preset - the preset file.
+ * @param key - the file's snake_case key.
+ * @param fallback - the upstream default.
+ * @returns the format string.
+ */
+function formatOf(preset: ChatCompletionPreset, key: string, fallback: string): string {
+  const value = preset[key]
+  return typeof value === 'string' && value.length > 0 ? value : fallback
+}
+
+/**
+ * Fill a preset's world-info wrapper, upstream's `formatWorldInfo`.
+ *
+ * The `{0}` placeholder is `stringFormat`, not a macro, and gets no expansion
+ * pass of its own — macros in a `wi_format` ride through to the general
+ * expansion below, exactly as they do upstream, where the world info block is
+ * formatted before prompts are parameter-substituted.
+ * @param value - the joined entries; empty stays empty.
+ * @param format - the preset's `wi_format`.
+ * @returns the wrapped block.
+ */
+function formatWorldInfo(value: string, format: string): string {
+  if (value.length === 0) return ''
+  if (format.trim().length === 0) return value
+  return format.replace('{0}', value)
+}
+
 /** Everything one assembly needs that is not the conversation itself. */
 export interface PromptInput {
   /** The character being played, or absent for a chat with no card. */
@@ -208,7 +252,20 @@ export function applyCardOverrides(
  * @returns the contributions, the timed-effect state to carry forward, and what fired.
  */
 export function buildPrompt(input: PromptInput): PromptResult {
-  const macros = createMacroContext({ char: input.characterName, user: input.userName })
+  const data = input.card?.data
+  const macros = createMacroContext({
+    char: input.characterName,
+    user: input.userName,
+    // The card fields, so a preset's format strings can say `{{scenario}}` or
+    // `{{personality}}` — which is what upstream's own defaults do, and what
+    // real presets copy. Without them the format would degrade to its own
+    // braces, a worse prompt than no format at all.
+    character: {
+      ...data?.description === undefined ? {} : { description: data.description },
+      ...data?.personality === undefined ? {} : { personality: data.personality },
+      ...data?.scenario === undefined ? {} : { scenario: data.scenario },
+    },
+  })
   const expand = input.substitute ?? ((text: string): string => expandMacros(text, macros))
 
   const scan = activateEntries({
@@ -220,23 +277,30 @@ export function buildPrompt(input: PromptInput): PromptResult {
     substituteMacros: expand,
     ...input.timedEffects === undefined ? {} : { timedEffects: input.timedEffects },
     globalScanData: {
-      characterDescription: input.card?.data.description ?? '',
-      characterPersonality: input.card?.data.personality ?? '',
+      characterDescription: data?.description ?? '',
+      characterPersonality: data?.personality ?? '',
     },
   })
 
-  const data = input.card?.data
+  // The preset's own wrappers, applied the way upstream applies them
+  // (`preparePromptsForChatCompletion` + `formatWorldInfo`): a format that
+  // carries macros is expanded once, here. Expanded with the local context —
+  // not the chat's — because a chat's expander carries no card fields, and the
+  // whole point of these formats is naming them.
+  const wiFormat = formatOf(input.preset, 'wi_format', DEFAULT_WI_FORMAT)
+  const scenarioFormat = expandMacros(formatOf(input.preset, 'scenario_format', DEFAULT_SCENARIO_FORMAT), macros)
+  const personalityFormat = expandMacros(formatOf(input.preset, 'personality_format', DEFAULT_PERSONALITY_FORMAT), macros)
+  const scenario = data?.scenario ?? ''
+  const personality = data?.personality ?? ''
+
   const markers: MarkerSources = {
-    // `wi_format` defaults to a bare `{0}` upstream, so activated entries are
-    // concatenated with no wrapper. Verified against ST 1.18.0's openai.js.
-    worldInfoBefore: joinEntries(scan.buckets.before),
-    worldInfoAfter: joinEntries(scan.buckets.after),
+    worldInfoBefore: formatWorldInfo(joinEntries(scan.buckets.before), wiFormat),
+    worldInfoAfter: formatWorldInfo(joinEntries(scan.buckets.after), wiFormat),
     charDescription: data?.description ?? '',
-    // `personality_format` and `scenario_format` also default to bare
-    // substitutions on the Chat Completion path — the "{{char}}'s personality:"
-    // prefixes belong to the text-completion story string, not here.
-    charPersonality: data?.personality ?? '',
-    scenario: data?.scenario ?? '',
+    // Empty fields stay empty whatever the format says: upstream's `scenario
+    // &&` guard means a format string never manufactures content from nothing.
+    charPersonality: personality === '' ? '' : personalityFormat,
+    scenario: scenario === '' ? '' : scenarioFormat,
     dialogueExamples: [
       joinEntries(scan.buckets.emTop),
       data?.mes_example ?? '',

@@ -24,6 +24,8 @@ import type {
   GenerationSettings,
   IrisClient,
   IrisEvent,
+  PresetManagerView,
+  PresetSummary,
   ScriptContext,
   ScriptView,
 } from '@iris/protocol'
@@ -350,6 +352,27 @@ export interface IrisState {
   /** Saved connection profiles, and which one was last activated. */
   connections: ConnectionProfile[]
   activeConnectionId: string | undefined
+
+  /**
+   * The profile's preset library, once fetched.
+   *
+   * **Undefined is a real answer**, not "not yet": a host with no preset
+   * library (the seeded page, a composition that mounts no store) refuses
+   * `preset.list`, and the panel that asked renders nothing rather than an
+   * empty list that reads as "no presets". Loaded by the panel, not by boot —
+   * a seeded page must not raise an error notice for a feature it never had.
+   */
+  presets: PresetSummary[] | undefined
+  /** The active preset's library name, when it is one from the library. */
+  activePreset: string | undefined
+  /**
+   * Preset names the configured SillyTavern install offers, from the last
+   * `preset.list`. Undefined when no install is configured at all, which the
+   * panel reads as "the import row does not exist".
+   */
+  presetInstall: string[] | undefined
+  /** The prompt manager's state: the active preset and its ordered prompts. */
+  presetManager: PresetManagerView | undefined
 }
 
 /** What the interface calls. Every one of these is a host round trip. */
@@ -512,6 +535,46 @@ export interface IrisActions {
     sampling?: Record<string, unknown>
   }): Promise<void>
   deleteConnection(id: string): Promise<void>
+  /**
+   * Fetch the preset library, the active name and the prompt manager's state.
+   *
+   * Deliberately not `guard`-wrapped: the one expected failure is a host with
+   * no library, and a notice would make every seeded dev page announce a
+   * missing feature as if it were broken. The panel reads the refusal from
+   * `presets === undefined` and renders nothing.
+   */
+  loadPresets(): Promise<void>
+  /** Make a library preset the active one and apply what it carries. */
+  selectPreset(name: string): Promise<void>
+  /** Fetch the prompt manager's state for whatever preset is active. */
+  viewManager(): Promise<void>
+  /** Toggle one prompt of the active ordering, where the host allows it. */
+  setPromptEnabled(id: string, enabled: boolean): Promise<void>
+  /** Move one prompt within the active ordering. */
+  movePrompt(id: string, index: number): Promise<void>
+  /** Remove one non-system prompt from the active preset. */
+  removePrompt(id: string): Promise<void>
+  /** Persist the active state as a named library preset (upsert). */
+  savePreset(name: string): Promise<void>
+  /** Delete a preset from the library. */
+  deletePreset(name: string): Promise<void>
+  /**
+   * Copy presets from the configured SillyTavern install, read-only.
+   *
+   * Returns what happened rather than only raising a notice, because an import
+   * of twelve names with two skipped owes the reader which two and why.
+   */
+  importPresets(names?: readonly string[]): Promise<{
+    imported: readonly string[]
+    skipped: readonly { name: string, reason: string }[]
+  }>
+  /**
+   * Download one preset's file body — what an export is.
+   *
+   * Host-side read, browser-side save: the file never lands anywhere but the
+   * reader's own downloads folder.
+   */
+  exportPreset(name: string): Promise<void>
   notify(kind: Notice['kind'], text: string): void
   dismissNotice(): void
 }
@@ -590,14 +653,20 @@ export function createIrisStore(
      *
      * The distinction is available right here and was being discarded, so it is
      * kept: a fault of ours says it is ours.
+     *
+     * Generic since the preset import: a caller that needs to know what the
+     * call produced (which names imported, which were skipped and why) reads
+     * the answer here instead of re-asking, and `undefined` is its "it never
+     * happened" — distinct from an answer that says something.
      */
-    const guard = async (work: () => Promise<void>): Promise<void> => {
+    const guard = async <T>(work: () => Promise<T>): Promise<T | undefined> => {
       try {
-        await work()
+        return await work()
       } catch (error: unknown) {
         set(raise('error', isHostError(error)
           ? describeError(error, getLanguage())
           : translate(getLanguage(), 'irisOwnFault', { detail: describeError(error, getLanguage()) })))
+        return undefined
       }
     }
 
@@ -638,6 +707,10 @@ export function createIrisStore(
       documentGranted: false,
       connections: [],
       activeConnectionId: undefined,
+      presets: undefined,
+      activePreset: undefined,
+      presetInstall: undefined,
+      presetManager: undefined,
 
       async boot(): Promise<void> {
         await guard(async () => {
@@ -1210,6 +1283,122 @@ export function createIrisStore(
           // active profile clears it host-side, and holding the old value would
           // leave the interface reporting a current connection nobody can open.
           set({ connections: listed.profiles, activeConnectionId: listed.activeId })
+        })
+      },
+
+      async loadPresets(): Promise<void> {
+        try {
+          const listed = await client.call('preset.list', {})
+          set({
+            presets: listed.presets,
+            activePreset: listed.active,
+            presetInstall: listed.install,
+          })
+        } catch {
+          // A host with no library, saying so. The panel reads this state as
+          // "the feature does not exist here" rather than "no presets yet".
+          set({ presets: undefined, activePreset: undefined, presetInstall: undefined })
+        }
+      },
+
+      async selectPreset(name: string): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('preset.select', { name })
+          set({
+            presets: answer.presets,
+            activePreset: answer.active,
+            presetManager: answer.manager,
+          })
+          /*
+           * A switch applies the preset's scalars (temperature, window, effort)
+           * host-side, so the sampling sliders just went stale. Re-read what is
+           * in force — for the open chat, or the global defaults when none is —
+           * rather than letting the drawer disagree with the host it just told.
+           */
+          const chatId = get().chatId
+          const refreshed = chatId === undefined
+            ? await client.call('settings.get', {})
+            : await client.call('settings.get', { chatId })
+          set({ settings: refreshed.settings })
+        })
+      },
+
+      async viewManager(): Promise<void> {
+        await guard(async () => {
+          const { manager } = await client.call('preset.view', {})
+          set({ presetManager: manager })
+        })
+      },
+
+      async setPromptEnabled(id: string, enabled: boolean): Promise<void> {
+        await guard(async () => {
+          const { manager } = await client.call('preset.setEnabled', { id, enabled })
+          set({ presetManager: manager })
+        })
+      },
+
+      async movePrompt(id: string, index: number): Promise<void> {
+        await guard(async () => {
+          const { manager } = await client.call('preset.move', { id, index })
+          set({ presetManager: manager })
+        })
+      },
+
+      async removePrompt(id: string): Promise<void> {
+        await guard(async () => {
+          const { manager } = await client.call('preset.removePrompt', { id })
+          set({ presetManager: manager })
+        })
+      },
+
+      async savePreset(name: string): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('preset.save', { name })
+          set({ presets: answer.presets, activePreset: answer.active })
+          get().notify('info', translate(getLanguage(), 'presetSaved', { name }))
+        })
+      },
+
+      async deletePreset(name: string): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('preset.delete', { name })
+          set({ presets: answer.presets, activePreset: answer.active })
+          get().notify('info', translate(getLanguage(), 'presetDeleted', { name }))
+        })
+      },
+
+      async importPresets(names?: readonly string[]): Promise<{
+        imported: readonly string[]
+        skipped: readonly { name: string, reason: string }[]
+      }> {
+        const answer = await guard(async () =>
+          client.call('preset.import', { ...(names === undefined ? {} : { names: [...names] }) }))
+        // Refused: the notice is already up; nothing imported and nothing to list.
+        if (answer === undefined) return { imported: [], skipped: [] }
+        set({ presets: answer.presets })
+        const n = answer.imported.length
+        if (n > 0) {
+          get().notify('info', translate(getLanguage(), n === 1 ? 'presetImportedOne' : 'presetImported', { n }))
+        }
+        return { imported: answer.imported, skipped: answer.skipped }
+      },
+
+      async exportPreset(name: string): Promise<void> {
+        await guard(async () => {
+          const { preset } = await client.call('preset.read', { name })
+          /*
+           * Saved the way the host stores it — four-space JSON — so a file that
+           * goes out of an export can go straight back into an install without
+           * showing up as a full-file diff there either.
+           */
+          const body = JSON.stringify(preset, null, 4)
+          const url = URL.createObjectURL(new Blob([body], { type: 'application/json' }))
+          const link = document.createElement('a')
+          link.href = url
+          link.download = `${name}.json`
+          link.click()
+          URL.revokeObjectURL(url)
+          get().notify('info', translate(getLanguage(), 'presetExported', { name }))
         })
       },
 

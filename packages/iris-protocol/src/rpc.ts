@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, DebugReport, GenerationSettings, PromptItemization, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
+import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, DebugReport, GenerationSettings, PresetManagerView, PresetSummary, PromptItemization, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -255,6 +255,61 @@ export const requestSchemas = {
     chatId: z.string().min(1).optional(),
     settings: z.record(z.string(), z.unknown()),
   }),
+
+  /**
+   * The preset library and the prompt manager.
+   *
+   * The prompt manager's state (which prompts, in what order, which enabled)
+   * is the active preset's, live: a switch re-seeds it from the file, and the
+   * mutations below write through to the persisted state the assembler reads.
+   * Upstream keeps the same two layers — preset files are snapshots, the
+   * manager edits `oai_settings` on top — and this reproduces the mechanism.
+   */
+  'preset.list': z.object({}),
+  /** Make a library preset the active one and apply what it carries. */
+  'preset.select': z.object({ name: z.string().min(1).max(255) }),
+  /** The prompt manager's current state. */
+  'preset.view': z.object({}),
+  /** Toggle one prompt of the active ordering, where upstream allows it. */
+  'preset.setEnabled': z.object({ id: z.string().min(1), enabled: z.boolean() }),
+  /** Move one prompt within the active ordering. */
+  'preset.move': z.object({ id: z.string().min(1), index: z.number().int().min(0) }),
+  /**
+   * Create or edit one prompt of the active preset.
+   *
+   * An absent `identifier` creates one (upstream mints a UUID); an `id` the
+   * preset does not carry creates with that identifier, which is how a preset
+   * gains a prompt an extension or a card expects to find.
+   */
+  'preset.upsertPrompt': z.object({
+    prompt: z.object({
+      identifier: z.string().min(1).max(120).optional(),
+      name: z.string().max(500).optional(),
+      role: z.enum(['system', 'user', 'assistant']).optional(),
+      content: z.string().max(1_000_000).optional(),
+      marker: z.boolean().optional(),
+      system_prompt: z.boolean().optional(),
+      forbid_overrides: z.boolean().optional(),
+      injection_position: z.enum(['relative', 'absolute']).optional(),
+      injection_depth: z.number().int().min(0).max(1000).optional(),
+      injection_order: z.number().int().optional(),
+    }),
+  }),
+  /** Remove one non-system prompt from the active preset. */
+  'preset.removePrompt': z.object({ id: z.string().min(1) }),
+  /** Persist the active state as a named preset in the library (upsert). */
+  'preset.save': z.object({ name: z.string().min(1).max(255) }),
+  /** Delete a preset from the library. */
+  'preset.delete': z.object({ name: z.string().min(1).max(255) }),
+  /** Read one preset's file body — what an export downloads. */
+  'preset.read': z.object({ name: z.string().min(1).max(255) }),
+  /**
+   * Copy presets from the configured SillyTavern install, read-only.
+   *
+   * Names are file stems; absent means every preset the install has. Also the
+   * listing for an import picker: the response carries what the install offers.
+   */
+  'preset.import': z.object({ names: z.array(z.string().min(1).max(255)).optional() }),
 
   /** Every script a character's card carries, enabled or not. */
   'script.list': z.object({ characterId: z.string().min(1) }),
@@ -980,6 +1035,18 @@ export interface RpcResponseMap {
 
   'settings.get': { settings: GenerationSettings }
   'settings.set': { settings: GenerationSettings }
+
+  'preset.list': { presets: PresetSummary[], active?: string, install?: string[] }
+  'preset.select': { presets: PresetSummary[], active: string, manager: PresetManagerView }
+  'preset.view': { manager: PresetManagerView }
+  'preset.setEnabled': { manager: PresetManagerView }
+  'preset.move': { manager: PresetManagerView }
+  'preset.upsertPrompt': { manager: PresetManagerView }
+  'preset.removePrompt': { manager: PresetManagerView }
+  'preset.save': { presets: PresetSummary[], active: string }
+  'preset.delete': { presets: PresetSummary[], active?: string }
+  'preset.read': { name: string, preset: Record<string, unknown> }
+  'preset.import': { imported: string[], skipped: { name: string, reason: string }[], presets: PresetSummary[] }
 
   /**
    * What a card contains, and what the user has decided about it.

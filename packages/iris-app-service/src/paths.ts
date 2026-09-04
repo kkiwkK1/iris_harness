@@ -190,6 +190,16 @@ export interface ProfilePaths {
    * empty the other.
    */
   connections: string
+  /**
+   * Preset files, one per preset.
+   *
+   * Upstream's own directory name for them is `OpenAI Settings`, which is
+   * both a misnomer here (they are Chat Completion prompt presets) and a name
+   * that collides with this host's `settings.json` in a reader's mind. The
+   * files inside keep the exact names they had there, though — that is what an
+   * import preserves.
+   */
+  presets: string
 }
 
 /**
@@ -226,5 +236,6 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     cardStorage: join(root, 'card-storage.json'),
     scriptBundles: join(root, 'script-bundles'),
     connections: join(root, 'connections.json'),
+    presets: join(root, 'presets'),
   }
 }

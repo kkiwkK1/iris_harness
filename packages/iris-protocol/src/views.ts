@@ -509,12 +509,33 @@ export interface ConnectionProfile {
   sampling?: Partial<GenerationSettings>
 }
 
-/** The model route and sampling a chat is running with. */
+/**
+ * How much reasoning a reasoning model should spend on a reply.
+ *
+ * Upstream's own value set (`reasoning_effort_types`, openai.js:237), sent as
+ * the request body's `reasoning_effort`. `'auto'` is the upstream default and
+ * means "let the provider decide", which this host expresses by **sending no
+ * field at all** — see `@iris/llm-openai-compat`.
+ */
+export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'min' | 'max'
+
+/** The model route, budget and sampling a chat is running with. */
 export interface GenerationSettings {
   provider: string
   model: string
   temperature?: number
   maxTokens?: number
+  /**
+   * The context window in tokens — upstream's `openai_max_context`.
+   *
+   * Preset-scoped like everything here: a real preset is tuned for one window
+   * (measured on this machine's install: 4095, 655 350, 1 000 000, 2 000 000),
+   * and assembling against a different one silently trims a different part of
+   * the conversation. Absent falls back to the host composition's value.
+   */
+  contextWindow?: number
+  /** How hard a reasoning model thinks, upstream's `reasoning_effort`. */
+  reasoningEffort?: ReasoningEffort
   topP?: number
   topK?: number
   minP?: number
@@ -523,6 +544,46 @@ export interface GenerationSettings {
   presencePenalty?: number
   seed?: number
   stop?: string[]
+}
+
+/**
+ * One prompt of the active preset, as the prompt manager shows it.
+ *
+ * Field names are camelCased projections of the file's own (`injection_depth`
+ * → `injectionDepth`): the manager edits live state, not the file shape, and
+ * the file shape rides verbatim in `@iris/preset` for whoever needs it.
+ */
+export interface PresetPromptView {
+  id: string
+  /** Display name; absent for the built-in markers upstream leaves unnamed. */
+  name?: string
+  role?: string
+  /** Whether this prompt contributes to the assembled request. */
+  enabled: boolean
+  /** A slot the host fills with live data; carries no editable text. */
+  marker?: boolean
+  /** A built-in prompt upstream refuses to delete. */
+  systemPrompt?: boolean
+  /** `'relative'` follows the list order; `'absolute'` pins a chat depth. */
+  injectionPosition?: 'relative' | 'absolute'
+  injectionDepth?: number
+  injectionOrder?: number
+  /** A card may not replace this prompt's content with its own. */
+  forbidOverrides?: boolean
+  /** Whether the manager allows toggling this prompt at all. */
+  toggleable: boolean
+}
+
+/** The prompt manager's state: the active preset and its ordered prompts. */
+export interface PresetManagerView {
+  /** The active preset's name, when it is one from the library. */
+  name?: string
+  prompts: PresetPromptView[]
+}
+
+/** One preset file in the profile's library, by name. */
+export interface PresetSummary {
+  name: string
 }
 
 /** Where a world book entry is inserted, by TavernHelper's name for it. */

@@ -23,6 +23,7 @@ import { ChoiceField, NumberField, Section, TextField } from './fields.tsx'
 import { ConnectionPanel } from './ConnectionPanel.tsx'
 import { HostReports } from './HostReports.tsx'
 import { NoticeLog } from './NoticeLog.tsx'
+import { PresetPanel } from './PresetPanel.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
@@ -90,6 +91,14 @@ export function SettingsDrawer({
         ) : (
           <>
             <ConnectionPanel />
+
+            {/*
+              The preset library and the prompt manager, above the per-field
+              controls: a preset switch rewrites several of the values below at
+              once (temperature, window, effort), so the reader meets the thing
+              that changes them before the things changed.
+            */}
+            <PresetPanel />
 
             <Section title={t('sectionRoute')}>
               <TextField
@@ -189,6 +198,37 @@ export function SettingsDrawer({
                     fallback={0}
                     onCommit={value => patch('presencePenalty', value)}
                   />
+                  {/*
+                    The window and the effort a reasoning model spends. Behind
+                    the disclosure because a preset usually set them: they are
+                    shown so a switch's effect can be read and corrected, not
+                    because they are tuned every day.
+                  */}
+                  <NumberField
+                    label={t('contextWindow')}
+                    value={settings.contextWindow}
+                    bounds={{ min: 512, max: 2_000_000, step: 512 }}
+                    fallback={32_768}
+                    decimals={0}
+                    note={t('contextWindowNote')}
+                    onCommit={value => patch('contextWindow', value)}
+                  />
+                  <ChoiceField
+                    label={t('reasoningEffort')}
+                    value={settings.reasoningEffort ?? 'auto'}
+                    options={[
+                      // Upstream's own value words (`reasoning_effort_types`);
+                      // they name provider request fields and stay as written.
+                      { id: 'auto', label: 'auto' },
+                      { id: 'min', label: 'min' },
+                      { id: 'low', label: 'low' },
+                      { id: 'medium', label: 'medium' },
+                      { id: 'high', label: 'high' },
+                      { id: 'max', label: 'max' },
+                    ]}
+                    onSelect={id => patch('reasoningEffort', id === 'auto' ? null : id)}
+                  />
+                  <p className="iris-field__note">{t('reasoningEffortNote')}</p>
                   <NumberField
                     label={t('seed')}
                     value={settings.seed}
