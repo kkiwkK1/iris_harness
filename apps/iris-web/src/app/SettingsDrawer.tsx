@@ -24,6 +24,7 @@ import { ConnectionPanel } from './ConnectionPanel.tsx'
 import { HostReports } from './HostReports.tsx'
 import { NoticeLog } from './NoticeLog.tsx'
 import { PresetPanel } from './PresetPanel.tsx'
+import { RegexPanel } from './RegexPanel.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
@@ -99,6 +100,14 @@ export function SettingsDrawer({
               that changes them before the things changed.
             */}
             <PresetPanel />
+
+            {/*
+              The global regex tier, after the presets: like a preset, it is a
+              profile-wide surface that shapes what the reader and the model see
+              on every conversation, and the drawer is where a reader looks for
+              the things that change text they did not type.
+            */}
+            <RegexPanel />
 
             <Section title={t('sectionRoute')}>
               <TextField

@@ -1121,6 +1121,39 @@ export class IrisAppService {
         }
       },
 
+      /**
+       * The global regex tier.
+       *
+       * Every chat runs these before any card's own — upstream's
+       * `SCRIPT_TYPES.GLOBAL` — which is why they answer to the profile rather
+       * than to a character: the user wrote them once, against every
+       * conversation they will ever have.
+       */
+      'regex.list': async () => {
+        const extensionSettings = this.#options.extensionSettings
+        if (extensionSettings === undefined) throw new AppError('unsupported', 'this host keeps no global regex store')
+        return { scripts: await extensionSettings.globalRegex() }
+      },
+
+      'regex.set': async ({ scripts }) => {
+        const extensionSettings = this.#options.extensionSettings
+        if (extensionSettings === undefined) throw new AppError('unsupported', 'this host keeps no global regex store')
+        // A script without an id gets one, the way upstream's importer mints a
+        // fresh UUID for every import; one that arrived with an id keeps it, so
+        // a toggle or a reorder rewrites the same script rather than replacing
+        // it with a stranger that happens to look like it.
+        const stored = scripts.map(script =>
+          ({ ...script, ...(script.id === undefined ? { id: randomUUID() } : {}) }))
+        await extensionSettings.setGlobalRegex(stored)
+        // Live conversations re-compose now, and each is re-announced so every
+        // open page re-renders under the new list — the host's stand-in for
+        // upstream reloading the current chat after every regex edit.
+        for (const chatId of await chats.refreshGlobalRegex()) {
+          this.#announceChat(await chats.open(chatId))
+        }
+        return { scripts: await extensionSettings.globalRegex() }
+      },
+
       'character.list': async () => ({ characters: await library.list() }),
 
       'character.import': async ({ filename, content }) => ({

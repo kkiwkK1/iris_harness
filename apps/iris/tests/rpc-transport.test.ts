@@ -228,6 +228,10 @@ const PROBES: Record<string, unknown> = {
   'preset.delete': { name: 'no-such-preset' },
   'preset.read': { name: 'no-such-preset' },
   'preset.import': {},
+  // The global regex tier answers from a host with or without the store: an
+  // unsupported refusal still proves the handler is registered.
+  'regex.list': {},
+  'regex.set': { scripts: [] },
   'script.list': { characterId: 'no-such-card' },
   'script.setEnabled': { characterId: 'no-such-card', scriptId: 'x', enabled: true },
   'script.body': { characterId: 'no-such-card', scriptId: 'x' },

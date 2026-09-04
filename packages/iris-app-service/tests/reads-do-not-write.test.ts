@@ -200,6 +200,7 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   { method: 'preset.list', params: () => ({}) },
   { method: 'preset.view', params: () => ({}) },
   { method: 'preset.read', params: () => ({ name: 'Sample' }) },
+  { method: 'regex.list', params: () => ({}) },
 ]
 
 for (const { method, params } of READS) {

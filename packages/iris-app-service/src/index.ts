@@ -424,6 +424,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // the user can change at runtime, and a value read here would freeze it.
     () => settings.globalSelect(),
     bookFor,
+    // Same rule, same reason: the global regex list is edited at runtime, and
+    // each open composes from whatever it says right now.
+    () => extensionSettingsStore.globalRegex(),
   )
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset
@@ -561,6 +564,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('preset.delete', handlers['preset.delete']),
       ctx.irisRpc.register('preset.read', handlers['preset.read']),
       ctx.irisRpc.register('preset.import', handlers['preset.import']),
+      ctx.irisRpc.register('regex.list', handlers['regex.list']),
+      ctx.irisRpc.register('regex.set', handlers['regex.set']),
       ctx.irisRpc.register('script.list', handlers['script.list']),
       ctx.irisRpc.register('script.setEnabled', handlers['script.setEnabled']),
       ctx.irisRpc.register('script.body', handlers['script.body']),

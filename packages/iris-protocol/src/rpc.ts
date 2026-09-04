@@ -15,7 +15,24 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, DebugReport, GenerationSettings, PresetManagerView, PresetSummary, PromptItemization, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
+import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, DebugReport, GenerationSettings, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
+
+/**
+ * One global regex script as the wire carries it.
+ *
+ * Loose on purpose, and only here: the storage contract for this list is
+ * verbatim — an export file's unknown keys must survive the round trip — so
+ * this is the one request body that may carry fields nobody declared. The three
+ * required fields are the ones upstream's own importer insists on (`scriptName`
+ * — "No script name provided." — plus the two the engine reads on every run);
+ * the size caps keep a pasted file from being a memory request, and sit far
+ * above anything a real script carries.
+ */
+const regexScriptRequest = z.looseObject({
+  scriptName: z.string().min(1).max(300),
+  findRegex: z.string().max(100_000),
+  replaceString: z.string().max(100_000),
+})
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -310,6 +327,29 @@ export const requestSchemas = {
    * listing for an import picker: the response carries what the install offers.
    */
   'preset.import': z.object({ names: z.array(z.string().min(1).max(255)).optional() }),
+
+  /**
+   * The profile's global regex scripts — upstream's `extension_settings.regex`
+   * tier (`extensions/regex/engine.js:110`), the one every chat runs before any
+   * card's own.
+   *
+   * The list arrives loose (`regexScriptRequest` below) because the storage
+   * contract is verbatim: whatever an export file carried, the panel shows and
+   * the host keeps. The run order inside the tier is the array order, the same
+   * order upstream's drag handler persists.
+   */
+  'regex.list': z.object({}),
+  /**
+   * Replace the whole global list.
+   *
+   * One whole-list primitive rather than per-row verbs — the same shape
+   * `worldbook.replace` chose — so toggle, delete, reorder and import are all
+   * the panel doing a read-modify-write over what `regex.list` last showed. A
+   * script arriving without an `id` is given one (upstream's importer mints a
+   * UUID for every import); an id already on a script is kept, which is what
+   * makes a toggle a rewrite of the same script rather than a new one.
+   */
+  'regex.set': z.object({ scripts: z.array(regexScriptRequest).max(1000) }),
 
   /** Every script a character's card carries, enabled or not. */
   'script.list': z.object({ characterId: z.string().min(1) }),
@@ -1047,6 +1087,10 @@ export interface RpcResponseMap {
   'preset.delete': { presets: PresetSummary[], active?: string }
   'preset.read': { name: string, preset: Record<string, unknown> }
   'preset.import': { imported: string[], skipped: { name: string, reason: string }[], presets: PresetSummary[] }
+
+  /** The global tier as stored, in run order — so a writer sees what survived. */
+  'regex.list': { scripts: RegexScriptView[] }
+  'regex.set': { scripts: RegexScriptView[] }
 
   /**
    * What a card contains, and what the user has decided about it.

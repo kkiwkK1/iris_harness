@@ -179,6 +179,7 @@ test('the components that show words subscribe to the language', async () => {
     'StatePanel.tsx', 'SettingsDrawer.tsx', 'ConnectionPanel.tsx', 'ScriptPanel.tsx',
     'HostReports.tsx', 'NoticeLog.tsx', 'PromptPanel.tsx', 'CleanupOffer.tsx',
     'ConsentAsk.tsx', 'MessageInterfaces.tsx', 'useCardScripts.tsx',
+    'PresetPanel.tsx', 'RegexPanel.tsx',
   ]
   for (const name of mustSubscribe) {
     const text = await readFile(`${app}/${name}`, 'utf8')

@@ -26,6 +26,7 @@ import type {
   IrisEvent,
   PresetManagerView,
   PresetSummary,
+  RegexScriptView,
   ScriptContext,
   ScriptView,
 } from '@iris/protocol'
@@ -373,6 +374,17 @@ export interface IrisState {
   presetInstall: string[] | undefined
   /** The prompt manager's state: the active preset and its ordered prompts. */
   presetManager: PresetManagerView | undefined
+
+  /**
+   * The profile's global regex scripts, once fetched, in run order.
+   *
+   * Same meaning of `undefined` as `presets`: a host with no global regex store
+   * refuses `regex.list`, and the panel that asked renders nothing rather than
+   * an empty list that reads as "no scripts yet". Loaded by the panel, not by
+   * boot — a seeded page must not raise an error notice for a feature it never
+   * had.
+   */
+  regexScripts: RegexScriptView[] | undefined
 }
 
 /** What the interface calls. Every one of these is a host round trip. */
@@ -575,6 +587,22 @@ export interface IrisActions {
    * reader's own downloads folder.
    */
   exportPreset(name: string): Promise<void>
+  /**
+   * Fetch the profile's global regex scripts.
+   *
+   * Deliberately not `guard`-wrapped, same as `loadPresets`: the one expected
+   * failure is a host with no global regex store, and the panel reads that from
+   * `regexScripts === undefined` and renders nothing.
+   */
+  loadRegex(): Promise<void>
+  /**
+   * Replace the whole global list with what the panel computed.
+   *
+   * One whole-list primitive — the host has no per-row verbs — so a toggle, a
+   * delete, a reorder and an import are all this, over the rows
+   * `regexScripts` last showed.
+   */
+  setRegexScripts(scripts: readonly RegexScriptView[]): Promise<void>
   notify(kind: Notice['kind'], text: string): void
   dismissNotice(): void
 }
@@ -711,6 +739,7 @@ export function createIrisStore(
       activePreset: undefined,
       presetInstall: undefined,
       presetManager: undefined,
+      regexScripts: undefined,
 
       async boot(): Promise<void> {
         await guard(async () => {
@@ -1399,6 +1428,24 @@ export function createIrisStore(
           link.click()
           URL.revokeObjectURL(url)
           get().notify('info', translate(getLanguage(), 'presetExported', { name }))
+        })
+      },
+
+      async loadRegex(): Promise<void> {
+        try {
+          const { scripts } = await client.call('regex.list', {})
+          set({ regexScripts: scripts })
+        } catch {
+          // A host with no global regex store, saying so — read the same way
+          // `presets === undefined` is: the feature does not exist here.
+          set({ regexScripts: undefined })
+        }
+      },
+
+      async setRegexScripts(scripts: readonly RegexScriptView[]): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('regex.set', { scripts: [...scripts] })
+          set({ regexScripts: answer.scripts })
         })
       },
 

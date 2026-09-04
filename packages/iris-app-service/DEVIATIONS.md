@@ -1108,6 +1108,51 @@ should be re-read against that release, not defended against it.
 
 ---
 
+## 19. The global regex layer: the global tier is carried; the preset tier and the allow-gate are not
+
+**Upstream.** `extensions/regex/engine.js` composes three tiers and runs them in
+`SCRIPT_TYPES` order — global, then the character's, then the preset's
+(`getScriptsByType`: global reads `extension_settings.regex ?? []`, scoped reads
+`characters[this_chid].data.extensions.regex_scripts`, preset reads the active
+preset file's own `regex_scripts` field). Two gates ride beside them
+(`getRegexedString`, `allowedOnly: true`): a character's scripts run only when
+its avatar is in `extension_settings.character_allowed_regex`, and a preset's
+only when its name is in `preset_allowed_regex[apiId]`.
+
+**Iris.** The profile's global list is stored verbatim at the isomorphic path
+(`extension-settings.json`, partition `.regex`) and composed in front of the
+card's own on all three directions — storage, display, prompt. Two deliberate
+gaps:
+
+- **The preset tier is reserved, not carried.** Upstream writes preset-scoped
+  scripts into the preset file; this host's preset library is read-only copies
+  (§13 names the read-only install pattern the library keeps to), so there is
+  nowhere the tier could live and nothing a panel could edit. `orderScripts`
+  already orders the tier, so wiring it later is passing one more list in, not
+  reworking call sites.
+- **No allow-gate.** Upstream needs `character_allowed_regex` because card
+  scripts are untrusted code; this host asks once per card before running any
+  script at all (the `scriptsAllowed` consent), which answers the same question
+  one level up. Reproducing the regex-specific gate under that consent would
+  mean a granted card whose regex silently does nothing until a second,
+  better-hidden toggle is found.
+
+**What it costs, measured on this machine's install** (`data/default-user`):
+`extension_settings.regex` holds **0 scripts**; `character_allowed_regex` is
+**empty**; of the 1 preset file, **0** carry `regex_scripts`. So for this
+install: the global tier changes nothing until a user imports into it, the
+preset tier has nothing to carry, and the missing gate is the difference
+between the two MVU cards' regex working (here) and never running at all
+(upstream, as configured). A user moving an install that *uses* the gate would
+see card regex switch on — the consent ask is where they would see it named.
+
+**What would overturn this row.** A preset file carrying `regex_scripts` that
+a user expects to fire, or a card whose scripts a user wants runnable only
+after a per-feature allow — then the tier gets its storage and the gate gets
+re-examined against the consent flow, in that order.
+
+---
+
 # Upstream bugs, deliberately not reproduced
 
 A third column, and the reasoning in it differs from both neighbours. The
