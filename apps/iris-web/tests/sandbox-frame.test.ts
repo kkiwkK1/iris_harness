@@ -273,6 +273,7 @@ test('exactly the outward-reaching names are shadowed', () => {
     'updateScriptButtonsWith',
     'getCurrentMessageId',
     'getChatMessages',
+    'getWorldbookNames',
     'getCharWorldbookNames',
     'getLorebookSettings',
     'injectPrompts',
@@ -417,6 +418,130 @@ test('the three formerly-unbridged parent globals reach the same objects as the 
  * the test back alongside it — the distinction it protects (unbuilt is not
  * forbidden, and a card author debugging needs the right one) still matters.
  */
+
+test('the parent window event surface subscribes on the same bus as eventSource', () => {
+  /*
+   * Upstream's parent is a real window, so `window.top.addEventListener` is the
+   * browser's own bus and a dispatch anywhere on the page is heard. Here the
+   * stand-in routes onto the frame's EventBus — the same one `eventSource`
+   * wraps — because two buses would split "subscribe through the parent, emit
+   * through `eventEmit`" the way the eventSource bridging note describes. The
+   * projector card registers `MvuFloatingBgRequest` through `window.top` and
+   * the status bar dispatches it from another frame; neither name is in any TH
+   * table, which is why this registers without the name guard.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let parent: Record<string, unknown> | undefined
+  let bare: Record<string, unknown> | undefined
+  evaluate(scope, globals => {
+    parent = globals['parent'] as Record<string, unknown>
+    bare = globals
+  })
+
+  const heard: unknown[] = []
+  ;(parent?.['addEventListener'] as (event: string, listener: (event: unknown) => void) => void)(
+    'MvuFloatingBgRequest',
+    event => heard.push(event),
+  )
+  void (bare?.['eventEmit'] as (event: string, ...args: unknown[]) => Promise<void>)(
+    'MvuFloatingBgRequest',
+    { type: 'MvuFloatingBgRequest', detail: { action: 'show', src: 'x.png' } },
+  )
+
+  return Promise.resolve().then(() => {
+    assert.deepEqual(heard, [{ type: 'MvuFloatingBgRequest', detail: { action: 'show', src: 'x.png' } }])
+  })
+})
+
+test('parent.removeEventListener removes what addEventListener registered', () => {
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let parent: Record<string, unknown> | undefined
+  let emit: ((event: string, ...args: unknown[]) => Promise<void>) | undefined
+  const heard: string[] = []
+  evaluate(scope, globals => {
+    parent = globals['parent'] as Record<string, unknown>
+    emit = globals['eventEmit'] as (event: string, ...args: unknown[]) => Promise<void>
+  })
+
+  const add = parent?.['addEventListener'] as (event: string, listener: (event: unknown) => void) => void
+  const remove = parent?.['removeEventListener'] as (
+    event: string,
+    listener: (event: unknown) => void,
+  ) => void
+  const listener = (): void => {
+    heard.push('fired')
+  }
+  add('MvuFloatingBgRequest', listener)
+  remove('MvuFloatingBgRequest', listener)
+  void emit?.('MvuFloatingBgRequest')
+
+  return Promise.resolve().then(() => {
+    assert.deepEqual(heard, [], 'a removed listener was still called')
+  })
+})
+
+test('parent.dispatchEvent posts a winevent carrying the type and the detail', () => {
+  /*
+   * The dispatch cannot deliver into a sibling frame itself — no opaque origin
+   * can reach one — so it travels to the shell, which rebroadcasts to every
+   * frame of the card. What this frame owes the shell is the event's own two
+   * facts, named as the protocol names them.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    const dispatch = parent['dispatchEvent'] as (event: unknown) => boolean
+    assert.equal(dispatch({ type: 'MvuFloatingBgRequest', detail: { action: 'hide' } }), true)
+  })
+
+  const sent = scope.posted.find(message => message.type === 'winevent')
+  assert.ok(sent !== undefined, 'a dispatch never reached the shell')
+  assert.deepEqual(
+    sent,
+    { iris: 'tok', type: 'winevent', event: 'MvuFloatingBgRequest', detail: { action: 'hide' } },
+  )
+})
+
+test('parent.dispatchEvent without a type is refused by name', () => {
+  // A null or typeless argument is a card bug, and the refusal should say which
+  // member refused rather than dying as `Cannot read properties of undefined`.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let caught: unknown
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    try {
+      ;(parent['dispatchEvent'] as (event: unknown) => boolean)({})
+      caught = undefined
+    } catch (error: unknown) {
+      caught = error
+    }
+  })
+
+  assert.ok(caught instanceof UnsupportedApiError)
+  assert.match((caught as Error).message, /parent\.dispatchEvent/u)
+})
+
+test('the window event surface is read-only on the parent, like its native namesakes', () => {
+  // On a real window these are host-implemented and unwritable; a card that
+  // overwrites `parent.addEventListener` would be redefining the page itself.
+  const scope = realm()
+  let caught: unknown
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    try {
+      parent['addEventListener'] = () => undefined
+    } catch (error: unknown) {
+      caught = error
+    }
+  })
+
+  assert.ok(caught instanceof UnsupportedApiError)
+})
+
 
 test('an unpublished parent member yields undefined and is reported, not thrown', () => {
   /*
@@ -728,6 +853,7 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'updateScriptButtonsWith',
     'getCurrentMessageId',
     'getChatMessages',
+    'getWorldbookNames',
     'getCharWorldbookNames',
     'getLorebookSettings',
     'injectPrompts',
@@ -766,6 +892,10 @@ test('the bridged globals are published, and the window aliases are not', () => 
     // it is reported like anything else — rather than leaving co-located scripts
     // to fail on a preamble whose lookup does not exist.
     '__iris_script__',
+    // The shadowed window, for the preamble's `const window`: a module cannot
+    // be handed the shadow as a parameter and `top` cannot be published onto
+    // the real window, so it rides its own name.
+    '__iris_window__',
     // The coordination pair, bare. A card's scripts reach these through the
     // preamble, but the interface markup a script frame carries (神隐挑战's
     // overlay renders into this very body) reads them as bare globals, and it

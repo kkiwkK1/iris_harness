@@ -301,6 +301,20 @@ export interface ScriptContext {
    */
   charWorldbooks?: { primary: string | null, additional: string[] }
   /**
+   * Every world book the host knows, by name.
+   *
+   * The synchronous source for TavernHelper's `getWorldbookNames()`, which
+   * upstream answers with `klona(world_names)` — no promise. A book the host
+   * seeded from a card's embedded copy is a real book upstream (it lives in
+   * ST's `world_names` the moment it is written), so it has to be a real name
+   * here: a card that names its own book in an existence assertion must find it.
+   *
+   * Names only, and refreshed with the snapshot like `charWorldbooks` beside
+   * which it sits — the same freshness argument, and the same "names cost
+   * nothing" shape.
+   */
+  worldbookNames?: string[]
+  /**
    * Each script's buttons, by script id — **unfiltered**.
    *
    * `getScriptButtons()` is synchronous upstream

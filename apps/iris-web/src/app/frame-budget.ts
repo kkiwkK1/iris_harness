@@ -84,7 +84,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 45 * 1024
+export const FRAME_OVERHEAD_BYTES = 47 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -127,6 +127,8 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * | 43 KiB | 47.6 | 23.8 | 20 | held |
  * | 44 KiB | 46.5 | 23.3 | 20 | held |
 | 45 KiB | 45.5 | 22.8 | 20 | held |
+| 46 KiB | 44.5 | 22.3 | 20 | held |
+| 47 KiB | 43.6 | 21.8 | 20 | held |
  *
  * Both times the reasonable-looking response was to raise the constant above and
  * treat the ratio as incidental; both times the invariant said otherwise, and

@@ -166,6 +166,9 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   // A world book belongs to the card, not to whichever script asked for it, so
   // two scripts reading the same book must see the same entries.
   getWorldbook: 'shared',
+  // The host's whole name list: one answer for every script, and a clone per
+  // call so one reader's sort cannot reach the next.
+  getWorldbookNames: 'shared',
   // A binding belongs to the card; every script of it sees the same answer.
   getCharWorldbookNames: 'shared',
   /*

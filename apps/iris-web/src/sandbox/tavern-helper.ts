@@ -1728,6 +1728,32 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       })
     },
     /**
+     * Every world book the host knows, by name.
+     *
+     * **Synchronous, because upstream is.** `getWorldbookNames(): string[]` is
+     * `klona(world_names)` upstream (`JS-Slash-Runner/src/function/worldbook.ts:23`)
+     * — the page's own list, no promise — and the measured caller calls it
+     * bare and tests the result in the same statement:
+     * `names.includes('…')`. Behind an RPC that call site would read
+     * `undefined.includes`, throw, and report the host's book as missing — the
+     * exact misdiagnosis this member exists not to cause. So it answers from the
+     * pushed snapshot (`worldbookNames`), the way `getCharWorldbookNames` and
+     * `getLorebookSettings` already do.
+     *
+     * A book the host seeded from a card's embedded copy is a real name here, as
+     * it is a real name in upstream's `world_names`: the snapshot is built from
+     * the same store `worldbook.names` answers from.
+     *
+     * Cloned on the way out, for the reason its two sibling members are: this
+     * surface is shared between a card's scripts, and an array handed out by
+     * reference is one a card can mutate under the next reader.
+     * @returns every known book name, in the host's order.
+     */
+    getWorldbookNames: (): string[] => {
+      const names = snapshot('getWorldbookNames').worldbookNames
+      return [...(names ?? [])]
+    },
+    /**
      * Which world books this card is bound to.
      *
      * **Synchronous, and that is the whole design constraint.** Upstream declares

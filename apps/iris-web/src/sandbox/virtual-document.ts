@@ -10,8 +10,14 @@
  * ten truthfully grants nothing a frame cannot already read off its own
  * `window.screen`.
  *
- * Everything else throws, naming the member. See `errors.ts` for why that is not
- * negotiable.
+ * Every **provided** member keeps that shape. For an **unprovided** name the
+ * policy is the parent proxy's: a read yields `undefined` and is reported once
+ * by name, a write is stored in the card's own data bag and reported once, and
+ * nothing here pretends to be a capability the frame does not have. The
+ * distinction that decides it is the same one the read-answer split below drew:
+ * a library hanging private data on the document object is not a request for
+ * page access, and upstream's own document answers those reads with
+ * `undefined`.
  *
  * @module iris-web/sandbox/virtual-document
  */
@@ -182,6 +188,14 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
     )
   }
 
+  /*
+   * The data bag: names a card or its libraries hung on the document, and the
+   * one-note-per-name record shared by the read and write halves, so a name
+   * arriving as data first and read back later costs one line instead of two.
+   */
+  const expandos = new Map<string, unknown>()
+  const saidAboutData = new Set<string>()
+
   const members: Record<string, unknown> = {
     body: source.container,
     /*
@@ -334,26 +348,84 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
       // absent. Named members follow the policy exactly.
       if (typeof property === 'symbol') return undefined
       if (Object.hasOwn(members, property)) return members[property]
-      throw new UnsupportedApiError(
-        `document.${property}`,
-        'The sandbox provides body, head, documentElement, the three scoped lookups and the three node factories.',
-      )
+      if (expandos.has(property)) return expandos.get(property)
+      /*
+       * An unprovided name yields `undefined` and is reported once — the parent
+       * proxy's policy, adopted here for the same measured reason. The refusal
+       * this replaces was right about naming and wrong about the mechanism:
+       * libraries hang private data slots on the document object (`jQuery35…`
+       * is the one that arrived, from `$(parent.document)` in the 开场白2.0.1
+       * component), and their idiom is read-with-default — `var value =
+       * owner[this.expando]; if (!value) …` — so a throw killed the library
+       * three steps from the read, attributed to code that did nothing wrong.
+       * Upstream's document answers `undefined`; so does this one now, and
+       * unlike upstream it says which name was missing.
+       */
+      // Once per name, whatever half said it: a read that already reported, or
+      // a write that announced a slot, is not reported again by this path.
+      if (!saidAboutData.has(property)) {
+        saidAboutData.add(property)
+        source.report?.(
+          `a card read document.${property}, which this stand-in does not provide`
+          + ' — it returned undefined, which is not a statement that a real document has no such member',
+          false,
+        )
+      }
+      return undefined
     },
-    set(_target, property): boolean {
-      // Every write is refused, including to the members that exist: `body` is
-      // the container the shell owns, and letting a card replace it would hand
-      // it the one thing the sandbox is built to keep.
+
+    set(_target, property, value): boolean {
+      // Writes to the members that exist stay refused — `body` is the container
+      // the shell owns, and letting a card replace it would hand it the one
+      // thing the sandbox is built to keep.
+      if (typeof property !== 'symbol' && Object.hasOwn(members, property)) {
+        throw new ReadOnlyApiError(`document.${String(property)}`)
+      }
+      if (typeof property === 'symbol') {
+        throw new ReadOnlyApiError('document[symbol]')
+      }
+      /*
+       * A write to an unprovided name is **data**, not a capability request:
+       * this is the other half of the library idiom above — after reading its
+       * expando and finding nothing, jQuery writes the cache onto the document.
+       * Stored in a bag only the bag's readers can see, and said once, because
+       * a document that silently accepted capabilities would be worse than one
+       * that silently accepted data.
+       */
+      const name = String(property)
+      expandos.set(name, value)
+      if (!saidAboutData.has(name)) {
+        saidAboutData.add(name)
+        source.report?.(
+          `a card stored data on the document stand-in under "${name.slice(0, 80)}"`
+          + ' — the slot is the card\u2019s own, and dies with the frame',
+          false,
+        )
+      }
+      return true
+    },
+    deleteProperty(_target, property): boolean {
+      if (typeof property === 'string' && expandos.has(property)) {
+        expandos.delete(property)
+        return true
+      }
       throw new ReadOnlyApiError(`document.${String(property)}`)
     },
     has(_target, property): boolean {
-      return typeof property === 'string' && Object.hasOwn(members, property)
+      return typeof property === 'string' && (Object.hasOwn(members, property) || expandos.has(property))
     },
     ownKeys(): string[] {
-      return Object.keys(members)
+      return [...Object.keys(members), ...expandos.keys()]
     },
     getOwnPropertyDescriptor(_target, property): PropertyDescriptor | undefined {
-      if (typeof property !== 'string' || !Object.hasOwn(members, property)) return undefined
-      return { value: members[property], writable: false, enumerable: true, configurable: true }
+      if (typeof property !== 'string') return undefined
+      if (Object.hasOwn(members, property)) {
+        return { value: members[property], writable: false, enumerable: true, configurable: true }
+      }
+      if (expandos.has(property)) {
+        return { value: expandos.get(property), writable: true, enumerable: true, configurable: true }
+      }
+      return undefined
     },
   })
 

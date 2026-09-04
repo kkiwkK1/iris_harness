@@ -122,6 +122,16 @@ export interface RunnerHost {
    */
   onRegions?: (clip: string, detail?: string) => void
   /**
+   * A card dispatched an event onto the page window it sees.
+   *
+   * Required for a frame whose card may dispatch; optional because the shell
+   * hosts frames whose cards never do. The implementation fans the event out to
+   * every frame of the card — this one included — so a listener registered
+   * through `parent.addEventListener` in one frame hears a dispatch made in
+   * another, which is the whole of what a page-wide event target means.
+   */
+  onWindowEvent?: (event: string, detail: unknown) => void
+  /**
    * Something the frame observed that is not a failure.
    *
    * Optional because most hosts have nothing to do with it; the shell passes it
@@ -581,6 +591,9 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
          * copy of that fact.
          */
         host.onRegions?.(message.clip, message.detail)
+        return
+      case 'winevent':
+        host.onWindowEvent?.(message.event, message.detail)
         return
       case 'blocked':
         host.onBlocked(message.host, message.directive, message.detail, message.covered)

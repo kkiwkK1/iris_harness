@@ -169,6 +169,73 @@ function bound(charWorldbooks?: { primary: string | null, additional: string[] }
 /** `getCharWorldbookNames`, typed for these tests. */
 type GetCharWorldbookNames = (name?: string) => { primary: string | null, additional: string[] }
 
+/** A façade whose snapshot carries the given book names, or none at all. */
+function namedBooks(worldbookNames?: string[]) {
+  const calls: string[] = []
+  const api = createFrameTavernHelper({
+    context: () => ({
+      ...context(),
+      ...(worldbookNames === undefined ? {} : { worldbookNames }),
+    }),
+    scriptId: () => undefined,
+    reportGap: () => undefined,
+    reportFault: () => undefined,
+    adoptVariables: () => undefined,
+    call: async method => {
+      calls.push(method)
+      return undefined
+    },
+    triggerSlash: async () => '',
+    events: new EventBus(),
+  })
+  return { api, calls }
+}
+
+/** `getWorldbookNames`, typed for these tests. */
+type GetWorldbookNames = () => string[]
+
+test('the host’s book names are answered synchronously, with no host round trip', () => {
+  /*
+   * Upstream's member is `klona(world_names)` — the page's own list, no promise
+   * (`JS-Slash-Runner/src/function/worldbook.ts:23`). The measured caller tests
+   * the result in the same statement (`names.includes('…')`), so a promise here
+   * would throw `undefined.includes` and report a host-seeded book as missing —
+   * the misdiagnosis the 哈人冰恋世界 card shipped with.
+   */
+  const scope = namedBooks(['哈人冰恋世界v2.0', '另一本书'])
+  const names = (scope.api['getWorldbookNames'] as GetWorldbookNames)()
+
+  assert.equal(names instanceof Promise, false, 'the card would call .includes on a promise')
+  assert.deepEqual(names, ['哈人冰恋世界v2.0', '另一本书'])
+  assert.deepEqual(scope.calls, [], 'a synchronous member cannot make a round trip')
+})
+
+test('a book the host seeded from a card is named like any other', () => {
+  /*
+   * The assertion this exists for: a card names its own book and refuses to run
+   * unless the host has it. Seeding puts the book in the host's store, and the
+   * snapshot is built from that store — so the seeded name must be in the list
+   * a card checks. Absent means the host has no world-info store at all, which
+   * reads as the empty list rather than as an error.
+   */
+  const seeded = (namedBooks(['哈人冰恋世界v2.0']).api['getWorldbookNames'] as GetWorldbookNames)()
+  assert.deepEqual(seeded, ['哈人冰恋世界v2.0'])
+
+  const none = (namedBooks().api['getWorldbookNames'] as GetWorldbookNames)()
+  assert.deepEqual(none, [])
+})
+
+test('the returned name list cannot be mutated into another script’s view', () => {
+  // The surface is shared between a card's scripts, so handing back the
+  // snapshot's own array would let one script sort it under the next reader.
+  const scope = namedBooks(['a', 'b'])
+  const first = (scope.api['getWorldbookNames'] as GetWorldbookNames)()
+  first.push('injected')
+
+  const second = (scope.api['getWorldbookNames'] as GetWorldbookNames)()
+  assert.deepEqual(second, ['a', 'b'], 'one reader mutated the snapshot for the next')
+})
+
 test('the bindings are answered synchronously, with no host round trip', () => {
   /*
    * The property the whole design turns on. Upstream's declaration returns
