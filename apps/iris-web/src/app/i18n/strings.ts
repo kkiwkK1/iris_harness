@@ -43,6 +43,7 @@ export const en = {
   byCreator: 'by {creator}',
   messageCount: '{count} messages',
 
+<<<<<<< HEAD
   /** Sidebar content filter (`chat.search`). */
   chatSearchAria: 'Search conversations',
   chatSearchPlaceholder: 'Search message text…',
@@ -50,6 +51,15 @@ export const en = {
   /** The hit's floor, as the stored index a card script would use. */
   chatSearchFloor: 'floor {floor}',
   chatSearchMore: '+{count} more floors',
+=======
+  /** Chat import/export — the SillyTavern migration path. */
+  importChats: 'Import chats (SillyTavern JSONL)',
+  exportChat: 'Export as SillyTavern JSONL',
+  openParentChat: 'Open the conversation this branched from',
+  chatsImportedOne: 'Imported 1 chat.',
+  chatsImported: 'Imported {n} chats.',
+  chatExported: 'Exported “{name}”.',
+>>>>>>> dev/feat-chat-transfer
 
   /** Relative time (`since`) and sizes (`describeBytes`). */
   justNow: 'just now',
@@ -404,6 +414,7 @@ export const zh: Record<StringKey, string> = {
   byCreator: '作者：{creator}',
   messageCount: '{count} 条消息',
 
+<<<<<<< HEAD
   /** 侧栏内容搜索（`chat.search`）。 */
   chatSearchAria: '搜索对话内容',
   chatSearchPlaceholder: '搜索消息文本…',
@@ -411,6 +422,15 @@ export const zh: Record<StringKey, string> = {
   /** 命中楼层，按卡片脚本所见 0 起点的存储序号。 */
   chatSearchFloor: '第 {floor} 楼',
   chatSearchMore: '另有 {count} 楼命中',
+=======
+  /** 聊天导入/导出——SillyTavern 迁移路径。 */
+  importChats: '导入聊天（SillyTavern JSONL）',
+  exportChat: '导出为 SillyTavern JSONL',
+  openParentChat: '打开它分支自的对话',
+  chatsImportedOne: '已导入 1 个聊天。',
+  chatsImported: '已导入 {n} 个聊天。',
+  chatExported: '已导出「{name}」。',
+>>>>>>> dev/feat-chat-transfer
 
   /** 相对时间与大小。 */
   justNow: '刚刚',

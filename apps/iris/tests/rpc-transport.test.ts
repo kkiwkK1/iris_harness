@@ -203,6 +203,10 @@ const PROBES: Record<string, unknown> = {
   'chat.editMessage': { chatId: 'no-such-chat', id: 0, text: 'x' },
   'chat.deleteMessage': { chatId: 'no-such-chat', id: 0 },
   'chat.branch': { chatId: 'no-such-chat', id: 0 },
+  // The import probe names a card that is not in the library: reachability is
+  // the property, and the not-found answer proves the handler ran.
+  'chat.import': { filename: 'probe.jsonl', content: 'e30=', characterId: 'no-such-card' },
+  'chat.export': { chatId: 'no-such-chat' },
   'prompt.itemize': { chatId: 'no-such-chat' },
   'script.slash': { chatId: 'no-such-chat', command: '/send hi|/trigger' },
   'script.runEnded': { chatId: 'no-such-chat', runId: 'probe-run' },

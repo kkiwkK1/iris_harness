@@ -409,6 +409,15 @@ export interface IrisActions {
   editMessage(id: number, text: string): Promise<void>
   deleteMessage(id: number): Promise<void>
   importCard(filename: string, base64: string): Promise<void>
+  /**
+   * Copy SillyTavern chat files into this profile under one character.
+   *
+   * Per-file outcomes: the sidebar list is refreshed when any file lands, and
+   * every refused file raises a notice carrying the host's named reason.
+   */
+  importChats(characterId: string, files: readonly { filename: string, base64: string }[]): Promise<void>
+  /** Download one conversation as SillyTavern JSONL, named after its id. */
+  exportChat(chatId: string): Promise<void>
   deleteCharacter(characterId: string): Promise<void>
   patchSettings(patch: Record<string, unknown>): Promise<void>
   loadScripts(characterId: string): Promise<void>
@@ -877,6 +886,73 @@ export function createIrisStore(
           const { character } = await client.call('character.import', { filename, content: base64 })
           const { characters } = await client.call('character.list', {})
           set({ characters, ...raise('info', `Imported ${character.name}.`) })
+        })
+      },
+
+      /**
+       * Copy SillyTavern chat files into this profile, under one character.
+       *
+       * **Per-file outcomes, not a batch abort.** A folder of ten chats where
+       * two are not chat files must import the eight and say which two did not —
+       * failing the whole folder on the first bad file would let one stray
+       * download veto the user's whole history. The host refuses a file whole
+       * (nothing half-imported), so each file has exactly two outcomes.
+       *
+       * The failure sentence keeps the **host's own detail** rather than the
+       * generic invalid-request copy: the reason a file was refused names the
+       * field it was missing, and that detail is the information.
+       * @param characterId - the character every file belongs to.
+       * @param files - name and base64 payload, as the file picker read them.
+       */
+      async importChats(
+        characterId: string,
+        files: readonly { filename: string, base64: string }[],
+      ): Promise<void> {
+        let imported = 0
+        const failures: string[] = []
+        for (const file of files) {
+          try {
+            await client.call('chat.import', {
+              filename: file.filename,
+              content: file.base64,
+              characterId,
+            })
+            imported += 1
+          } catch (error: unknown) {
+            failures.push(asRpcError(error, getLanguage()).message)
+          }
+        }
+        if (imported > 0) {
+          // The host also pushes `chats.updated`; this read is the action's own
+          // answer, so the list is current even without an event socket.
+          const { chats } = await client.call('chat.list', {})
+          set({ chats })
+          get().notify('info', translate(
+            getLanguage(),
+            imported === 1 ? 'chatsImportedOne' : 'chatsImported',
+            { n: imported },
+          ))
+        }
+        for (const failure of failures) get().notify('error', failure)
+      },
+
+      /**
+       * Download one conversation as SillyTavern JSONL.
+       *
+       * Host-side read, browser-side save — the `exportPreset` shape, so the
+       * file never lands anywhere but the reader's own downloads folder.
+       * @param chatId - the conversation to take out.
+       */
+      async exportChat(chatId: string): Promise<void> {
+        await guard(async () => {
+          const { filename, content } = await client.call('chat.export', { chatId })
+          const url = URL.createObjectURL(new Blob([content], { type: 'application/jsonl' }))
+          const link = document.createElement('a')
+          link.href = url
+          link.download = filename
+          link.click()
+          URL.revokeObjectURL(url)
+          get().notify('info', translate(getLanguage(), 'chatExported', { name: filename }))
         })
       },
 

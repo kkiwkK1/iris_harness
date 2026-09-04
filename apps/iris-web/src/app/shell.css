@@ -175,6 +175,15 @@
   font-weight: 600;
 }
 
+/*
+ * A branch sitting under the conversation it left. The indent carries the
+ * relationship; the marker makes it legible when titles run long enough to
+ * start at different depths.
+ */
+.iris-row__branch {
+  color: var(--iris-ink-faint);
+}
+
 .iris-row__meta {
   display: block;
   margin-top: 3px;

@@ -103,3 +103,26 @@ test('a reply with no swipes still exports a one-entry swipe list', () => {
 test('an empty file is refused rather than producing an empty chat', () => {
   assert.throws(() => parseChatFile('   \n'), /empty/)
 })
+
+test('a line\'s own speaker name survives the round trip', () => {
+  // The real files on this machine often carry degenerate header names
+  // ("unused") while the lines name the actual speakers — including user rows
+  // spoken as a character. The header name is a fallback for new lines, never
+  // a rewrite of what a line already says.
+  const chat: SillyTavernChat = {
+    header: {
+      user_name: 'unused',
+      character_name: 'unused',
+      create_date: '2026-08-31 @00h00m00s000ms',
+      chat_metadata: {},
+    },
+    messages: [
+      { name: '牛头人大王', is_user: true, mes: '我的回合。' },
+      { name: 'Aria', is_user: false, mes: '请便。' },
+    ],
+  }
+  const parsed = parseChatFile(exportChatFile(importChat(chat, 'names'), chat.header))
+
+  assert.equal(parsed.messages[0]?.name, '牛头人大王', 'the user row keeps its own speaker')
+  assert.equal(parsed.messages[1]?.name, 'Aria', 'the reply keeps its own speaker')
+})
