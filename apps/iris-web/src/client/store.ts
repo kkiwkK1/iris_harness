@@ -28,6 +28,7 @@ import type {
   PresetSummary,
   ScriptContext,
   ScriptView,
+  WorldbookSettingsView,
 } from '@iris/protocol'
 
 import { asRpcError, describeError, isHostError } from './errors.ts'
@@ -177,6 +178,14 @@ export interface IrisState {
   stream: StreamBuffer | undefined
   /** Sampling in force for the open chat, or the global defaults. */
   settings: GenerationSettings | undefined
+  /**
+   * The worldbook panel's data, as last fetched.
+   *
+   * `undefined` until `loadWorldbooks` runs — which the panel reads as "not
+   * loaded yet" and shows as such, because "no books exist" and "nobody asked"
+   * are opposite answers that an empty list renders identically.
+   */
+  worldbooks: { names: string[], globalSelect: string[], settings: WorldbookSettingsView } | undefined
   notice: Notice | undefined
   /**
    * Every notice raised this session, newest last.
@@ -467,6 +476,19 @@ export interface IrisActions {
    * and the auto-run path has nobody watching to notice.
    */
   resolveScripts(characterId: string): Promise<{ scripts: ScriptView[], documentGranted: boolean }>
+  /**
+   * Fetch the worldbook panel's data: book names, the global selection, and the
+   * effective world-info settings.
+   *
+   * On demand rather than at boot — the drawer is where this is read, and a
+   * reader who never opens it should not pay for three round trips. `undefined`
+   * until the first fetch, which the panel shows as "not loaded".
+   */
+  loadWorldbooks(): Promise<void>
+  /** Choose the books injected into every chat, and hold the answer. */
+  setGlobalSelect(names: readonly string[]): Promise<void>
+  /** Patch the world-info scan settings, and hold the effective result. */
+  patchWorldbookSettings(patch: Partial<WorldbookSettingsView>): Promise<void>
   /** Fetch a card's remote dependency through the host, which owns the allowlist. */
   fetchScriptDependency(url: string): Promise<string>
   setDocumentGrant(granted: boolean): Promise<void>
@@ -678,6 +700,7 @@ export function createIrisStore(
       view: undefined,
       stream: undefined,
       settings: undefined,
+      worldbooks: undefined,
       notice: undefined,
       noticeLog: [],
       noticesDropped: 0,
@@ -903,6 +926,42 @@ export function createIrisStore(
             settings: patch,
           })
           set({ settings })
+        })
+      },
+
+      async loadWorldbooks(): Promise<void> {
+        await guard(async () => {
+          const [names, selection, settings] = await Promise.all([
+            client.call('worldbook.names', {}),
+            client.call('worldbook.globalSelect', {}),
+            client.call('worldbook.settings', {}),
+          ])
+          set({ worldbooks: { names: names.names, globalSelect: selection.names, settings: settings.settings } })
+        })
+      },
+
+      async setGlobalSelect(names: readonly string[]): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('worldbook.setGlobalSelect', { names: [...names] })
+          // Held from the answer, not from the argument: the host skips a name
+          // with no file behind it, so the selection as stored can differ from
+          // the selection as asked.
+          set(state => ({
+            worldbooks: state.worldbooks === undefined
+              ? undefined
+              : { ...state.worldbooks, globalSelect: answer.names },
+          }))
+        })
+      },
+
+      async patchWorldbookSettings(patch: Partial<WorldbookSettingsView>): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('worldbook.setSettings', patch)
+          set(state => ({
+            worldbooks: state.worldbooks === undefined
+              ? undefined
+              : { ...state.worldbooks, settings: answer.settings },
+          }))
         })
       },
 

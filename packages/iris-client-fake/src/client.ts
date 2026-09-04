@@ -810,6 +810,70 @@ class InMemoryClient implements FakeClient {
         throw new FakeRpcError('not-found', `no world book named ${name}`)
       }
 
+      case 'worldbook.settings': {
+        /*
+         * Answered, not refused: the effective settings of a host that has never
+         * stored any ARE these defaults — SillyTavern's shipped values
+         * (`world-info.js:69-82`), which is what the real host merges over an
+         * empty section. Inventing nothing: a fresh install genuinely scans with
+         * these numbers. Pinned to `worldbook-settings.ts` by
+         * `fake-worldbook-settings.test.ts`, so the two tables cannot drift.
+         */
+        return {
+          settings: {
+            scanDepth: 2,
+            budgetPercent: 25,
+            budgetCap: 0,
+            minActivations: 0,
+            minActivationsDepthMax: 0,
+            maxRecursionSteps: 0,
+            insertionStrategy: 'character_first',
+            recursive: false,
+            caseSensitive: false,
+            matchWholeWords: false,
+            useGroupScoring: false,
+          },
+        }
+      }
+
+      case 'worldbook.setSettings': {
+        /*
+         * Refused, on the writes-have-nowhere-to-land line: this client keeps no
+         * settings file, so accepting a patch would answer `{settings}` with the
+         * unchanged defaults — a success that is byte-identical to having done
+         * nothing, the exact shape `worldbook.setGlobalSelect` is refused for.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          'the fake client has no world-info settings store, so a settings patch cannot land',
+        )
+      }
+
+      case 'worldbook.create': {
+        const { name } = params as RpcRequest<'worldbook.create'>
+        /*
+         * Refused like `worldbook.replace`: a creation this client accepted
+         * would answer `{created: true}` with no file behind it, and a card's
+         * next `getWorldbook` — honestly refused here — would fail on a book it
+         * was told exists.
+         */
+        throw new FakeRpcError('not-found', `no world book store, so "${name}" cannot be created`)
+      }
+
+      case 'worldbook.bindChat': {
+        const { name } = params as RpcRequest<'worldbook.bindChat'>
+        /*
+         * Refused. The binding's whole effect is on the next prompt assembly,
+         * and this client assembles no prompts — accepting it would report a
+         * chat whose world info changed when nothing downstream could reflect
+         * that, the apparent-persist failure this package refuses along.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client models no chat world book binding (asked to bind ${name === null ? 'null' : `'${name}'`})`,
+        )
+      }
+
       case 'script.replaceScriptButtons': {
         /*
          * Refused, and the reason is specific rather than "not built yet".

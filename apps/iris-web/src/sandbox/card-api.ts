@@ -126,6 +126,15 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
    * `updateVariablesWith` uses. There is no wire method for it to map to.
    */
   replaceWorldbook: 'worldbook.replace',
+  /*
+   * The chat-book and creation family. The members the frame composes from
+   * these (`getOrCreateChatWorldbook`, `createWorldbookEntries`) are Tavern
+   * Helper's, so they sit in `OFF_ST_SURFACE` below with the other worldbook
+   * arms; the wire methods themselves are plain host capabilities.
+   */
+  createWorldbook: 'worldbook.create',
+  rebindChatWorldbook: 'worldbook.bindChat',
+  rebindGlobalWorldbooks: 'worldbook.setGlobalSelect',
 }
 
 /**
@@ -168,7 +177,21 @@ export const OFF_ST_SURFACE: readonly string[] = [
   'getVariables',
   'getWorldbook',
   'replaceWorldbook',
-  // A Tavern Helper member, like the three above it: not among
+  /*
+   * The rest of Tavern Helper's worldbook family, same ruling as the two above:
+   * none of these names appears among `st-context.js`'s 145 keys, so serving
+   * them on the SillyTavern object would be inventing members on a surface
+   * being mirrored. They answer through `TavernHelper.*`, as upstream does.
+   */
+  'getWorldbookNames',
+  'getGlobalWorldbookNames',
+  'rebindGlobalWorldbooks',
+  'getChatWorldbookName',
+  'rebindChatWorldbook',
+  'getOrCreateChatWorldbook',
+  'createWorldbook',
+  'createWorldbookEntries',
+  // A Tavern Helper member, like the worldbook family above it: not among
   // `st-context.js`'s 145 keys, so `SillyTavern.replaceScriptButtons` would be
   // Iris adding a member to the surface it is mirroring.
   'replaceScriptButtons',

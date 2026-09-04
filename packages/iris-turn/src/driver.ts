@@ -37,8 +37,13 @@ export interface TurnDriverOptions {
    * Build this turn's prompt contributions. Called fresh for every generation,
    * so world-info activation and variable state reflect the turn being written
    * rather than the one before it.
+   *
+   * May be async: the chat-bound world book is read from disk per generation,
+   * because it is the one body of world info a card writes during play, and a
+   * caller that awaited it once at construction would serve a book frozen at
+   * chat-open time.
    */
-  contributions: (session: Session) => readonly Contribution[]
+  contributions: (session: Session) => readonly Contribution[] | Promise<readonly Contribution[]>
   /** Turn the durable log into the conversation the model should see. */
   history: (session: Session) => readonly HistoryEntry[]
   budget: Budget
@@ -97,7 +102,7 @@ export class TurnDriver {
   async #generate(session: Session, turn: number, events: GenerateEvents = {}): Promise<Candidate> {
     const options = this.#options
     const request = assemble({
-      contributions: options.contributions(session),
+      contributions: await options.contributions(session),
       history: options.history(session),
       budget: options.budget,
     })

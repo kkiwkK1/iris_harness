@@ -311,7 +311,9 @@ export interface ScriptContext {
    *
    * Names only, and refreshed with the snapshot like `charWorldbooks` beside
    * which it sits — the same freshness argument, and the same "names cost
-   * nothing" shape.
+   * nothing" shape. `getChatWorldbookName()` applies the same list as the
+   * existence guard on `chat_metadata.world_info`, exactly as upstream's
+   * `getChatLorebook` honours the key only while `world_names` holds it.
    */
   worldbookNames?: string[]
   /**
@@ -767,4 +769,44 @@ export interface LorebookSettings {
   match_whole_words: boolean
   use_group_scoring: boolean
   overflow_alert: boolean
+}
+
+/**
+ * The world-info settings as this host stores and runs them, on the wire.
+ *
+ * This is the host's own vocabulary — the stored field names, camelCase, one
+ * meaning each — rather than TavernHelper's snake_case table above, and the
+ * deliberate difference is the point: {@link LorebookSettings} exists to be
+ * byte-compatible with what a card reads by name, while this exists to be
+ * settable by the host's own panel without dragging the compatibility table's
+ * misleading names (`max_depth`, `context_percentage`) into a UI that would
+ * have to explain them.
+ *
+ * Every field is effective, never absent: the host merges stored values over
+ * SillyTavern's shipped defaults before answering, so a client reading this
+ * sees exactly what the next scan will run with.
+ */
+export interface WorldbookSettingsView {
+  /** `world_info_depth` — how many messages back a scan reads. */
+  scanDepth: number
+  /** `world_info_budget` — a percentage of the context window. */
+  budgetPercent: number
+  /** `world_info_budget_cap` — an absolute token ceiling; `0` disables. */
+  budgetCap: number
+  /** `world_info_min_activations` — keep widening the scan until this many fire. */
+  minActivations: number
+  /** `world_info_min_activations_depth_max` — how far that widening may reach. */
+  minActivationsDepthMax: number
+  /** `world_info_max_recursion_steps` — hard cap on scan loop iterations. */
+  maxRecursionSteps: number
+  /** How the global and character books interleave. */
+  insertionStrategy: InsertionStrategy
+  /** Whether activated content is scanned for further matches. */
+  recursive: boolean
+  /** Default case sensitivity for entries that defer. */
+  caseSensitive: boolean
+  /** Default whole-word matching for entries that defer. */
+  matchWholeWords: boolean
+  /** Default inclusion-group resolution by key-match score. */
+  useGroupScoring: boolean
 }

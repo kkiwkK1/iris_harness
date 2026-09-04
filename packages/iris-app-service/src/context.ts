@@ -30,6 +30,7 @@ import type { ScopeBackend } from '@iris/variables'
 import type { ChatEntry } from './entry.ts'
 import { lorebookSettings } from './lorebook-settings.ts'
 import { invalid } from './errors.ts'
+import type { WorldbookSettings } from './worldbook-settings.ts'
 import { charWorldbookNames } from './worldbooks.ts'
 
 // The wire type is used directly rather than mirrored. A parallel shape would
@@ -245,7 +246,9 @@ export function buildCardContext(
     /** Globally selected book names, for the lorebook settings snapshot. */
     globalSelect?: readonly string[]
     /**
-     * Every book name the host knows, for `getWorldbookNames`.
+     * Every named book this installation has, for `getWorldbookNames` and the
+     * existence guard `getChatWorldbookName` applies to
+     * `chat_metadata.world_info`.
      *
      * Read by the caller rather than here: this function is synchronous and the
      * store is not. Absent means the host has no world-info store, which is the
@@ -253,6 +256,15 @@ export function buildCardContext(
      * apart and upstream's `world_names` would not let it, either.
      */
     worldbookNames?: readonly string[]
+    /**
+     * The stored world-info settings, for the same snapshot.
+     *
+     * Passed separately from `globalSelect` because the two live in different
+     * places upstream — the selection under `world_info.globalSelect`, the scan
+     * knobs beside the sampler settings — and merged over defaults here, so a
+     * field the user never touched still answers with ST's value.
+     */
+    worldbookSettings?: Partial<WorldbookSettings>
     /** The profile's shared card storage, key to value. */
     storage?: Record<string, string>
     /** Reports a growth alarm; see {@link variableLayersOf}. */
@@ -285,13 +297,15 @@ export function buildCardContext(
     // `getCharWorldbookNames('current')` from this field.
     charWorldbooks: charWorldbookNames(entry.card),
     // Beside `charWorldbooks` for the same freshness reason, and copied because
-    // the array travels into a frame a card can sort in place.
+    // the array travels into a frame a card can sort in place: `getWorldbookNames()`
+    // and `getChatWorldbookName()` are synchronous upstream, and only a value
+    // already in hand satisfies a caller that does not await.
     worldbookNames: [...(extras.worldbookNames ?? [])],
     scriptButtons: scriptButtonsOf(entry, extras.scriptButtons),
     // In the snapshot rather than behind a call, because `getLorebookSettings()`
     // is synchronous upstream — MVU invokes it both with and without `await`,
     // and only a value already in hand satisfies both.
-    lorebookSettings: lorebookSettings(extras.globalSelect ?? []),
+    lorebookSettings: lorebookSettings(extras.globalSelect ?? [], extras.worldbookSettings),
     // Values only. Which card wrote a key is the host's bookkeeping — a frame
     // has no use for it, and the snapshot is already the expensive part of
     // every turn.

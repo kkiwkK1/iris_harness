@@ -258,8 +258,13 @@ const PROBES: Record<string, unknown> = {
   'worldbook.load': { name: '' },
   'worldbook.charNames': { characterId: 'no-such-character' },
   'worldbook.replace': { name: 'no-such-book', entries: [] },
+  // Refused with not-found on the probe host (no store) — reachability, not success.
+  'worldbook.create': { name: 'no-such-book' },
+  'worldbook.bindChat': { chatId: 'no-such-chat', name: 'no-such-book' },
   'worldbook.globalSelect': {},
   'worldbook.setGlobalSelect': { names: [] },
+  'worldbook.settings': {},
+  'worldbook.setSettings': {},
   // Empty params: the cursor and the limit are both optional, and reading
   // from the oldest held record is the page's first call.
   'debug.reports': {},

@@ -50,8 +50,9 @@ test('key matching honours per-entry case and whole-word overrides', () => {
     { overrides: { key: ['Dragon'], caseSensitive: true }, chat: 'a dragon lands', expected: [] },
     { overrides: { key: ['Dragon'], caseSensitive: true }, chat: 'a Dragon lands', expected: [0] },
     { overrides: { key: ['Dragon'] }, chat: 'a dragon lands', expected: [0] },
-    { overrides: { key: ['cat'] }, chat: 'concatenate', expected: [] },
-    { overrides: { key: ['cat'], matchWholeWords: false }, chat: 'concatenate', expected: [0] },
+    // The global default is substring (ST's `false`); the boundary is per-entry.
+    { overrides: { key: ['cat'] }, chat: 'concatenate', expected: [0] },
+    { overrides: { key: ['cat'], matchWholeWords: true }, chat: 'concatenate', expected: [] },
     { overrides: { key: ['/dr.gon/i'] }, chat: 'a DRAGON lands', expected: [0] },
     { overrides: { key: ['/dr.gon/'] }, chat: 'a DRAGON lands', expected: [] },
   ]

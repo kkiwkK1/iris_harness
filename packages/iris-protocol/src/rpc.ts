@@ -15,7 +15,83 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, DebugReport, GenerationSettings, PresetManagerView, PresetSummary, PromptItemization, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
+import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, DebugReport, GenerationSettings, PresetManagerView, PresetSummary, PromptItemization, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView } from './views.ts'
+
+/**
+ * A partial card-facing entry, as the book-writing methods accept it.
+ *
+ * Shared by `worldbook.replace` and `worldbook.create`: both build a stored
+ * book from the same shape, and a second copy of an eight-nested-field schema
+ * is exactly how the two halves drift.
+ */
+const worldbookEntriesPatch = z.array(z.object({
+  uid: z.number().int().min(0),
+  name: z.string().max(500).optional(),
+  enabled: z.boolean().optional(),
+  strategy: z.object({
+    type: z.enum(['constant', 'vectorized', 'selective']).optional(),
+    /**
+     * Keys as **strings**, never as revived `RegExp` objects.
+     *
+     * This is the return leg of a round trip, and it is the half that gets
+     * forgotten. `worldbook.get` hands a card `RegExp` objects for its
+     * regex-shaped keys; the most natural way to write an update is to
+     * change one field and hand the entry straight back, so what arrives
+     * here is whatever `get` produced. A `RegExp` does not survive JSON —
+     * it serializes to `{}` — and this schema rejects it outright, which
+     * fails a card that did nothing wrong.
+     *
+     * So whoever revived them un-revives them before crossing:
+     * `String(re)` yields `/pattern/flags`, exactly the shape
+     * `parseRegexFromString` reads. The frame does this in
+     * `flattenKeys`.
+     *
+     * Both lists, for the same reason `keys_secondary` is revived on the
+     * way out — see `WorldbookEntry` in `views.ts`.
+     */
+    keys: z.array(z.string().max(1000)).max(200).optional(),
+    keys_secondary: z.object({
+      logic: z.enum(['and_any', 'not_all', 'not_any', 'and_all']).optional(),
+      /** Strings, like `keys` above — the same un-revival applies. */
+      keys: z.array(z.string().max(1000)).max(200).optional(),
+    }).optional(),
+    scan_depth: z.union([z.number().int(), z.literal('same_as_global')]).optional(),
+  }).optional(),
+  position: z.object({
+    type: z.enum([
+      'before_character_definition', 'after_character_definition',
+      'before_example_messages', 'after_example_messages',
+      'before_author_note', 'after_author_note', 'at_depth', 'outlet',
+    ]).optional(),
+    role: z.enum(['system', 'user', 'assistant']).optional(),
+    depth: z.number().int().optional(),
+    order: z.number().int().optional(),
+  }).optional(),
+  content: z.string().max(200_000).optional(),
+  probability: z.number().int().min(0).max(100).optional(),
+  recursion: z.object({
+    prevent_incoming: z.boolean().optional(),
+    prevent_outgoing: z.boolean().optional(),
+    delay_until: z.number().int().nullable().optional(),
+  }).optional(),
+  effect: z.object({
+    sticky: z.number().int().nullable().optional(),
+    cooldown: z.number().int().nullable().optional(),
+    delay: z.number().int().nullable().optional(),
+  }).optional(),
+  addMemo: z.boolean().optional(),
+  group: z.string().max(200).optional(),
+  groupOverride: z.boolean().optional(),
+  groupWeight: z.number().int().optional(),
+  caseSensitive: z.boolean().nullable().optional(),
+  matchWholeWords: z.boolean().nullable().optional(),
+  matchPersonaDescription: z.boolean().optional(),
+  matchCharacterDescription: z.boolean().optional(),
+  matchCharacterPersonality: z.boolean().optional(),
+  matchCharacterDepthPrompt: z.boolean().optional(),
+  matchScenario: z.boolean().optional(),
+  matchCreatorNotes: z.boolean().optional(),
+})).max(2000)
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -883,74 +959,58 @@ export const requestSchemas = {
   }),
   'worldbook.replace': z.object({
     name: z.string().min(1).max(120),
-    entries: z.array(z.object({
-      uid: z.number().int().min(0),
-      name: z.string().max(500).optional(),
-      enabled: z.boolean().optional(),
-      strategy: z.object({
-        type: z.enum(['constant', 'vectorized', 'selective']).optional(),
-        /**
-         * Keys as **strings**, never as revived `RegExp` objects.
-         *
-         * This is the return leg of a round trip, and it is the half that gets
-         * forgotten. `worldbook.get` hands a card `RegExp` objects for its
-         * regex-shaped keys; the most natural way to write an update is to
-         * change one field and hand the entry straight back, so what arrives
-         * here is whatever `get` produced. A `RegExp` does not survive JSON —
-         * it serializes to `{}` — and this schema rejects it outright, which
-         * fails a card that did nothing wrong.
-         *
-         * So whoever revived them un-revives them before crossing:
-         * `String(re)` yields `/pattern/flags`, exactly the shape
-         * `parseRegexFromString` reads. The frame does this in
-         * `flattenKeys`.
-         *
-         * Both lists, for the same reason `keys_secondary` is revived on the
-         * way out — see `WorldbookEntry` in `views.ts`.
-         */
-        keys: z.array(z.string().max(1000)).max(200).optional(),
-        keys_secondary: z.object({
-          logic: z.enum(['and_any', 'not_all', 'not_any', 'and_all']).optional(),
-          /** Strings, like `keys` above — the same un-revival applies. */
-          keys: z.array(z.string().max(1000)).max(200).optional(),
-        }).optional(),
-        scan_depth: z.union([z.number().int(), z.literal('same_as_global')]).optional(),
-      }).optional(),
-      position: z.object({
-        type: z.enum([
-          'before_character_definition', 'after_character_definition',
-          'before_example_messages', 'after_example_messages',
-          'before_author_note', 'after_author_note', 'at_depth', 'outlet',
-        ]).optional(),
-        role: z.enum(['system', 'user', 'assistant']).optional(),
-        depth: z.number().int().optional(),
-        order: z.number().int().optional(),
-      }).optional(),
-      content: z.string().max(200_000).optional(),
-      probability: z.number().int().min(0).max(100).optional(),
-      recursion: z.object({
-        prevent_incoming: z.boolean().optional(),
-        prevent_outgoing: z.boolean().optional(),
-        delay_until: z.number().int().nullable().optional(),
-      }).optional(),
-      effect: z.object({
-        sticky: z.number().int().nullable().optional(),
-        cooldown: z.number().int().nullable().optional(),
-        delay: z.number().int().nullable().optional(),
-      }).optional(),
-      addMemo: z.boolean().optional(),
-      group: z.string().max(200).optional(),
-      groupOverride: z.boolean().optional(),
-      groupWeight: z.number().int().optional(),
-      caseSensitive: z.boolean().nullable().optional(),
-      matchWholeWords: z.boolean().nullable().optional(),
-      matchPersonaDescription: z.boolean().optional(),
-      matchCharacterDescription: z.boolean().optional(),
-      matchCharacterPersonality: z.boolean().optional(),
-      matchCharacterDepthPrompt: z.boolean().optional(),
-      matchScenario: z.boolean().optional(),
-      matchCreatorNotes: z.boolean().optional(),
-    })).max(2000),
+    entries: worldbookEntriesPatch,
+  }),
+  /**
+   * Create a book that does not exist yet.
+   *
+   * Upstream's `createWorldbook` reports existence with `false` rather than an
+   * error — "already there" is a normal outcome of the get-or-create patterns
+   * cards write, and an exception would turn a race between two scripts into a
+   * card-facing failure. `entries` is optional and defaults to empty, which is
+   * what `getOrCreateChatWorldbook` wants: a file to bind before any entry
+   * exists to put in it.
+   */
+  'worldbook.create': z.object({
+    name: z.string().min(1).max(120),
+    entries: worldbookEntriesPatch.optional(),
+  }),
+  /**
+   * Bind (or unbind) a chat's own world book.
+   *
+   * `chat_metadata.world_info` — upstream's `setChatLorebook` — holds a book
+   * **name**, and the name must resolve: binding a book with no file behind it
+   * would make every later scan silently skip it, which reads as a book that
+   * activates nothing. `null` clears the binding, which is how upstream's
+   * own reader behaves when the key names a deleted file.
+   */
+  'worldbook.bindChat': z.object({
+    chatId: z.string().min(1),
+    name: z.string().min(1).max(120).nullable(),
+  }),
+  /**
+   * Read and write the scan knobs: scan depth, budget, recursion, matching.
+   *
+   * Their own pair of methods rather than fields of `settings.set` for the same
+   * reason `globalSelect` is: the sampler patch is merged per chat and
+   * range-checked as numbers, while these are installation-wide, semantically
+   * mixed, and default-valued — a field the user has never set still answers
+   * with SillyTavern's shipped value, because that is what the scan actually
+   * runs.
+   */
+  'worldbook.settings': z.object({}),
+  'worldbook.setSettings': z.object({
+    scanDepth: z.number().int().min(0).max(1000).optional(),
+    budgetPercent: z.number().int().min(0).max(100).optional(),
+    budgetCap: z.number().int().min(0).optional(),
+    minActivations: z.number().int().min(0).max(1000).optional(),
+    minActivationsDepthMax: z.number().int().min(0).max(1000).optional(),
+    maxRecursionSteps: z.number().int().min(0).max(1000).optional(),
+    insertionStrategy: z.enum(['evenly', 'character_first', 'global_first']).optional(),
+    recursive: z.boolean().optional(),
+    caseSensitive: z.boolean().optional(),
+    matchWholeWords: z.boolean().optional(),
+    useGroupScoring: z.boolean().optional(),
   }),
 } as const
 
@@ -1023,6 +1083,12 @@ export interface RpcResponseMap {
   'worldbook.replace': { entries: WorldbookEntry[] }
   'worldbook.globalSelect': { names: string[] }
   'worldbook.setGlobalSelect': { names: string[] }
+  /** `created` is false when the book already existed — upstream's boolean, not an error. */
+  'worldbook.create': { created: boolean }
+  /** The binding as it now stands, read back from the chat header. */
+  'worldbook.bindChat': { name: string | null }
+  'worldbook.settings': { settings: WorldbookSettingsView }
+  'worldbook.setSettings': { settings: WorldbookSettingsView }
 
   'connection.list': { profiles: ConnectionProfile[], activeId?: string }
   'connection.save': { profiles: ConnectionProfile[], activeId?: string }

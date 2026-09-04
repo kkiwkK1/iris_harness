@@ -200,6 +200,10 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   { method: 'preset.list', params: () => ({}) },
   { method: 'preset.view', params: () => ({}) },
   { method: 'preset.read', params: () => ({ name: 'Sample' }) },
+  // A read of the effective settings: it must answer what a scan would run
+  // with, and write nothing — an earlier sibling of this seam (the sampler's
+  // `settings.get`) is exactly where a silent write once hid.
+  { method: 'worldbook.settings', params: () => ({}) },
 ]
 
 for (const { method, params } of READS) {

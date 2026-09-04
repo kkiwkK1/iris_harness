@@ -19,7 +19,7 @@
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { CharacterCard } from '@iris/character'
 import { listCandidates, selectedCandidate } from '@iris/chat'
-import type { TimedEffectState } from '@iris/lorebook'
+import type { TimedEffect, TimedEffectState } from '@iris/lorebook'
 import { expandHelperMacros } from '@iris/compat-tavernhelper'
 import { applyCommands, formatYamlBlock, loadInitVars, scanDialects, type MvuData } from '@iris/mvu'
 import { extractScripts } from '@iris/script'
@@ -119,6 +119,86 @@ export function readMeta(header: SillyTavernChatHeader): IrisChatMeta {
  */
 function isMvuData(value: unknown): value is MvuData {
   return typeof value === 'object' && value !== null && 'stat_data' in value
+}
+
+/** The shape one sticky or cooldown window takes in `chat_metadata.timedWorldInfo`. */
+interface StoredTimedEffect {
+  hash: number
+  start: number
+  end: number
+  protected: boolean
+}
+
+/**
+ * Whether a value reads as one stored timed-effect window.
+ *
+ * Structural, not exact: upstream's own reader deletes entries whose value is
+ * "not an object" and accepts everything else, trusting the file it wrote. This
+ * checks the fields the engine will actually do arithmetic on, because a
+ * window carrying `start: "three"` would poison a comparison rather than throw.
+ * @param value - the candidate.
+ * @returns true when the shape is usable.
+ */
+function isStoredTimedEffect(value: unknown): value is StoredTimedEffect {
+  if (typeof value !== 'object' || value === null) return false
+  const row = value as Record<string, unknown>
+  return typeof row['hash'] === 'number'
+    && typeof row['start'] === 'number'
+    && typeof row['end'] === 'number'
+    && typeof row['protected'] === 'boolean'
+}
+
+/**
+ * Read the persisted sticky and cooldown windows out of a chat header.
+ *
+ * Upstream keeps these in `chat_metadata.timedWorldInfo` — regular chat
+ * metadata, saved with the chat file — keyed by `"<world>.<uid>"`, with the
+ * entry hash, the chat length the window opened at, and the chat length it
+ * closes at. Reading the same key and the same shape is what makes a window
+ * survive a host restart the way it survives anything else in SillyTavern, and
+ * what makes the key legible if a chat ever moves between the two programs.
+ * (The hashes themselves are Iris's and are not ST's; a chat arriving from
+ * upstream carries windows that match no Iris entry, and the engine's own
+ * rule for that — keep the window until it would have expired, then drop it —
+ * is the gentlest possible landing.)
+ * @param metadata - the chat header's metadata block.
+ * @returns the windows, or undefined when none are stored.
+ */
+export function readTimedEffects(metadata: Record<string, unknown>): TimedEffectState | undefined {
+  const stored = metadata['timedWorldInfo']
+  if (typeof stored !== 'object' || stored === null) return undefined
+  const raw = stored as Record<string, unknown>
+
+  const readWindows = (kind: 'sticky' | 'cooldown'): Record<string, TimedEffect> => {
+    const out: Record<string, TimedEffect> = {}
+    const table = raw[kind]
+    if (typeof table !== 'object' || table === null) return out
+    for (const [key, value] of Object.entries(table as Record<string, unknown>)) {
+      if (!isStoredTimedEffect(value)) continue
+      out[key] = value
+    }
+    return out
+  }
+
+  const sticky = readWindows('sticky')
+  const cooldown = readWindows('cooldown')
+  if (Object.keys(sticky).length === 0 && Object.keys(cooldown).length === 0) return undefined
+  return { sticky, cooldown }
+}
+
+/**
+ * Write the timed-effect windows into a chat header's metadata.
+ *
+ * The mirror of {@link readTimedEffects}, and the write half of why the
+ * windows survive: the engine returns fresh state every scan, the caller hands
+ * it here beside the live field, and the next `save` puts it on disk. The same
+ * key upstream uses, so the metadata a card script reads (`chatMetadata` in the
+ * snapshot) shows the windows exactly as upstream's would.
+ * @param metadata - the chat header's metadata block, mutated in place.
+ * @param state - the engine's returned windows.
+ */
+export function writeTimedEffects(metadata: Record<string, unknown>, state: TimedEffectState): void {
+  metadata['timedWorldInfo'] = structuredClone(state)
 }
 
 /**
@@ -311,6 +391,13 @@ export class ChatEntry {
     this.session = input.session
     this.card = input.card
     this.worldbook = input.worldbook
+    // Sticky and cooldown windows outlive the process in upstream: they live in
+    // `chat_metadata.timedWorldInfo`, which is saved with the chat file. Restored
+    // here rather than by the caller because every construction path — open,
+    // branch, import — reads the same header, and a window that resets because a
+    // host restarted would otherwise let a sticky entry lapse (or a cooled entry
+    // fire) silently.
+    this.timedEffects = readTimedEffects(input.header.chat_metadata)
     // Assigned before the first `#makeStore`, and held, because `rebuild` makes
     // a new store: a backend created inside `#makeStore` would drop every script
     // table the moment a message was edited.

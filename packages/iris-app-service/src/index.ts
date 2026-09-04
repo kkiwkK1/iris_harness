@@ -586,8 +586,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('worldbook.load', handlers['worldbook.load']),
       ctx.irisRpc.register('worldbook.charNames', handlers['worldbook.charNames']),
       ctx.irisRpc.register('worldbook.replace', handlers['worldbook.replace']),
+      ctx.irisRpc.register('worldbook.create', handlers['worldbook.create']),
       ctx.irisRpc.register('worldbook.globalSelect', handlers['worldbook.globalSelect']),
       ctx.irisRpc.register('worldbook.setGlobalSelect', handlers['worldbook.setGlobalSelect']),
+      ctx.irisRpc.register('worldbook.bindChat', handlers['worldbook.bindChat']),
+      ctx.irisRpc.register('worldbook.settings', handlers['worldbook.settings']),
+      ctx.irisRpc.register('worldbook.setSettings', handlers['worldbook.setSettings']),
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()
