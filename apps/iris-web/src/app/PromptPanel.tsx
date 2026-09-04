@@ -34,6 +34,7 @@ import {
   rowsFor,
   type ItemOrder,
 } from './itemization.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /** One decimal, and only where it says something: 0.4% and 66% both have to read cleanly. */
 function percent(share: number): string {
@@ -68,6 +69,8 @@ export function PromptPanel({
   const actions = useIrisActions()
   const [order, setOrder] = useState<ItemOrder>('size')
   const [state, setState] = useState<PanelState>({ kind: 'loading' })
+  // Subscribed so a language switch re-renders the panel's words.
+  useLanguage()
 
   useEffect(() => {
     if (!open) return
@@ -90,10 +93,10 @@ export function PromptPanel({
     <Modal
       open={open}
       onClose={onClose}
-      title={turn === undefined ? 'How the next request assembles' : `How turn ${turn} was assembled`}
-      closeLabel="Close"
+      title={turn === undefined ? t('promptNextTitle') : t('promptTurnTitle', { turn })}
+      closeLabel={t('close')}
     >
-      {state.kind === 'loading' ? <p className="iris-list__empty">Counting…</p> : null}
+      {state.kind === 'loading' ? <p className="iris-list__empty">{t('counting')}</p> : null}
       {state.kind === 'error' ? <p className="iris-list__empty">{state.message}</p> : null}
       {state.kind === 'ready' ? (
         <Breakdown
@@ -123,38 +126,41 @@ function Breakdown({
   const use = budgetUse(itemization)
   const mismatch = discrepancy(itemization)
   const mode = itemizationMode(itemization, requestedTurn)
+  // The parent subscribed to the language; these words follow it.
+  useLanguage()
 
   return (
     <div className="iris-prompt">
       {mode === 'expired' ? (
         <p className="iris-prompt__notice">
-          The record for this turn was lost when the chat closed. This is how the request would
-          assemble now.
+          {t('promptExpired')}
         </p>
       ) : null}
       {mismatch === undefined ? null : (
         <p className="iris-prompt__notice iris-prompt__notice--wrong">
-          These parts add up to {(itemization.tokens + mismatch).toLocaleString()}, not the reported{' '}
-          {itemization.tokens.toLocaleString()}. Treat the numbers below as unreliable.
+          {t('promptMismatch', {
+            sum: (itemization.tokens + mismatch).toLocaleString(),
+            reported: itemization.tokens.toLocaleString(),
+          })}
         </p>
       )}
 
       <div className="iris-prompt__totals">
         <div className="iris-prompt__total">
           <span className="iris-prompt__figure">{itemization.tokens.toLocaleString()}</span>
-          <span className="iris-label">estimated</span>
+          <span className="iris-label">{t('promptEstimated')}</span>
         </div>
         {itemization.actualTokens === undefined ? null : (
           <div className="iris-prompt__total">
             <span className="iris-prompt__figure">{itemization.actualTokens.toLocaleString()}</span>
             {/* Both, side by side: the only way to answer "is the estimate
                 trustworthy", which the reader cannot otherwise ask. */}
-            <span className="iris-label">provider counted</span>
+            <span className="iris-label">{t('promptProviderCounted')}</span>
           </div>
         )}
         <div className="iris-prompt__total">
           <span className="iris-prompt__figure">{percent(use.used)}</span>
-          <span className="iris-label">of {use.available.toLocaleString()} available</span>
+          <span className="iris-label">{t('promptOfAvailable', { n: use.available.toLocaleString() })}</span>
         </div>
       </div>
 
@@ -164,7 +170,7 @@ function Breakdown({
         prompt look like a different one depending on a control above it.
         Nothing is merged, so a one-pixel segment stays a real part.
       */}
-      <div className="iris-prompt__bar" role="img" aria-label="Share of the prompt by part">
+      <div className="iris-prompt__bar" role="img" aria-label={t('promptShareAria')}>
         {rowsFor(contributing(itemization.entries), 'assembly', itemization.tokens).map(row => (
           <span
             key={row.entry.id}
@@ -176,14 +182,14 @@ function Breakdown({
       </div>
 
       <div className="iris-prompt__controls">
-        <div className="iris-choice" role="group" aria-label="Row order">
+        <div className="iris-choice" role="group" aria-label={t('rowOrderAria')}>
           <button
             type="button"
             className="iris-choice__option"
             aria-pressed={order === 'size'}
             onClick={() => onOrder('size')}
           >
-            Largest first
+            {t('orderLargest')}
           </button>
           <button
             type="button"
@@ -191,15 +197,15 @@ function Breakdown({
             aria-pressed={order === 'assembly'}
             onClick={() => onOrder('assembly')}
           >
-            In assembly order
+            {t('orderAssembly')}
           </button>
         </div>
         {itemization.droppedHistory === 0 ? null : (
           <span className="iris-meta">
-            {itemization.droppedHistory} earlier messages dropped to fit
+            {t('droppedToFit', { n: itemization.droppedHistory })}
           </span>
         )}
-        {itemization.overBudget ? <span className="iris-prompt__over">over budget</span> : null}
+        {itemization.overBudget ? <span className="iris-prompt__over">{t('overBudget')}</span> : null}
       </div>
 
       <ul className="iris-prompt__rows">
@@ -223,7 +229,7 @@ function Breakdown({
               {row.entry.tokens === 0 ? '' : percent(row.share)}
             </span>
             <span className={`iris-prompt__tokens${row.entry.tokens === 0 ? ' iris-prompt__tokens--empty' : ''}`}>
-              {row.entry.tokens === 0 ? 'empty' : row.entry.tokens.toLocaleString()}
+              {row.entry.tokens === 0 ? t('tokenEmpty') : row.entry.tokens.toLocaleString()}
             </span>
           </li>
         ))}

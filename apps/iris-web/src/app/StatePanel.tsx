@@ -36,6 +36,8 @@
 import { useState, type ReactElement } from 'react'
 
 import { useIris } from '../client/provider.tsx'
+import { useLanguage, t } from './i18n/use-language.ts'
+import { translate, type Language } from './i18n/strings.ts'
 
 /** How one value wants to be typeset. */
 type Shown =
@@ -55,9 +57,11 @@ const SCALARS: readonly string[] = ['string', 'number', 'boolean']
  * @param value - the raw value from the snapshot.
  * @returns how to draw it.
  */
-function describe(value: unknown): Shown {
+function describe(value: unknown, lang: 'en' | 'zh' = 'en'): Shown {
   if (value === null || value === undefined) return { kind: 'absent' }
-  if (typeof value === 'boolean') return { kind: 'text', text: value ? 'yes' : 'no', numeric: false }
+  if (typeof value === 'boolean') {
+    return { kind: 'text', text: translate(lang, value ? 'booleanYes' : 'booleanNo'), numeric: false }
+  }
   if (typeof value === 'number') return { kind: 'text', text: String(value), numeric: true }
   if (typeof value === 'string') {
     // An empty string and a missing key are the same thing to a reader, and
@@ -118,17 +122,19 @@ function StateRows({
   path,
   opened,
   onToggle,
+  lang,
 }: {
   entries: [string, unknown][]
   depth: number
   path: string
   opened: ReadonlyMap<string, boolean>
   onToggle: (path: string, open: boolean) => void
+  lang: Language
 }): ReactElement {
   return (
     <dl className="iris-var">
       {entries.map(([key, value]) => {
-        const shown = describe(value)
+        const shown = describe(value, lang)
         const here = `${path}/${key}`
 
         if (shown.kind === 'branch') {
@@ -158,6 +164,7 @@ function StateRows({
                   path={here}
                   opened={opened}
                   onToggle={onToggle}
+                  lang={lang}
                 />
               </div>
             </details>
@@ -193,6 +200,9 @@ function StateRows({
 export function StatePanel(): ReactElement | null {
   const variables = useIris(state => state.view?.variables)
   const open = useIris(state => state.chatId !== undefined)
+  // Subscribed so a language switch re-renders the margin's words. Before the
+  // early return: hook order must not depend on whether a chat is open.
+  const { lang } = useLanguage()
   /*
    * Keyed by path rather than by object identity, so a branch stays open across a
    * refresh that replaced the objects underneath it — which is every refresh.
@@ -204,12 +214,12 @@ export function StatePanel(): ReactElement | null {
   const entries = Object.entries(variables ?? {})
 
   return (
-    <aside className="iris-aside" aria-label="Conversation state">
+    <aside className="iris-aside" aria-label={t('stateAria')}>
       <div className="iris-aside__inner">
-        <h2 className="iris-label iris-aside__head">State</h2>
+        <h2 className="iris-label iris-aside__head">{t('stateHead')}</h2>
         {entries.length === 0 ? (
           <p className="iris-aside__empty">
-            Nothing tracked yet. A card that keeps variables will fill this in as the scene moves.
+            {t('stateEmpty')}
           </p>
         ) : (
           <StateRows
@@ -217,6 +227,7 @@ export function StatePanel(): ReactElement | null {
             depth={0}
             path=""
             opened={opened}
+            lang={lang}
             onToggle={(at, isOpen) => {
               setOpened(previous => {
                 const next = new Map(previous)

@@ -44,6 +44,8 @@
  * @module iris-web/sandbox/message-frames
  */
 import type { FrontendBlock } from './frontend-blocks.ts'
+import type { Language } from '../app/i18n/strings.ts'
+import { translate } from '../app/i18n/strings.ts'
 
 
 /** Where one interface has got to. */
@@ -326,21 +328,27 @@ export function runMessageInterfaces(
 /**
  * One line for a reader, per interface.
  *
+ * English by default so `node --test` reads the source language; the slot
+ * passes the interface language through. The `never-started` detail is quoted
+ * evidence from the frame and is not rewritten.
  * @param state - the interface's state.
+ * @param lang - the language for the sentence.
  * @returns the sentence to show.
  */
-export function describeInterface(state: InterfaceState): string {
+export function describeInterface(state: InterfaceState, lang: Language = 'en'): string {
   switch (state.phase) {
     case 'claimed':
-      return 'starting…'
+      return translate(lang, 'ifaceStarting')
     case 'live':
       // Deliberately not "rendered". The frame's markup parsed; whether the card
       // drew anything is its own business and not observable from here.
-      return `live (${Math.round(state.bytes / 1024)} KB of markup)`
+      return translate(lang, 'ifaceLive', { kb: Math.round(state.bytes / 1024) })
     case 'never-started':
-      return `never started: ${state.detail ?? 'no reason given'}`
+      return state.detail === undefined
+        ? translate(lang, 'ifaceNeverStartedNoReason')
+        : translate(lang, 'ifaceNeverStarted', { detail: state.detail })
     case 'closed':
-      return 'closed with its message'
+      return translate(lang, 'ifaceClosed')
     case 'over-budget':
       /*
        * Three things, because a placeholder that says fewer is worse than none.
@@ -353,8 +361,6 @@ export function describeInterface(state: InterfaceState): string {
        * 3. **what to do** — and the button beside this line is the answer, which
        *    is why this text does not end in an apology.
        */
-      return `interface not rendered — the reading view's frame budget is spent (${String(
-        Math.round(state.bytes / 1024),
-      )} KB of markup)`
+      return translate(lang, 'ifaceOverBudget', { kb: Math.round(state.bytes / 1024) })
   }
 }

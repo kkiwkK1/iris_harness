@@ -36,26 +36,16 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { useIris, useIrisStore } from '../client/provider.tsx'
 import { actionsOf } from '../client/store.ts'
-
-/**
- * Upstream's own strings, `runtime.cleanup.*`.
- *
- * The English variants, because every other string in this interface is
- * English; upstream ships both and `UPSTREAM-MVU-INIT-PATH.md` holds the zh-CN
- * originals verbatim beside them.
- */
-const TEXT = {
-  title: '[MVU] Automatic cleanup',
-  prompt: 'Old variables can be removed from this chat to reduce its file size. Clean them now?'
-    + ' (Creating a backup uses considerable memory; on mobile, close other background apps'
-    + ' first or create the backup on a computer.)',
-  backupAndClean: 'Back up and clean',
-  cleanOnly: 'Clean only',
-  doNotRemind: 'Do not remind me again',
-} as const
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * The offer, when there is one for the conversation on screen.
+ *
+ * The dialog's copy is upstream's own — "what is copied is copied deliberately"
+ * below — and it lives in the dictionary now so the Chinese reader meets the
+ * same dialog in their language; the zh column follows the meaning of
+ * upstream's zh-CN variants. The counts line and the deferral note at the
+ * bottom are Iris's additions and translate as any other shell copy.
  *
  * @returns the dialog, or nothing.
  */
@@ -64,6 +54,8 @@ export function CleanupOffer(): ReactElement | null {
   const offer = useIris(state => state.cleanupOffer)
   const chatId = useIris(state => state.chatId)
   const dialog = useRef<HTMLDivElement>(null)
+  // Subscribed so a language switch re-renders the dialog.
+  useLanguage()
 
   /*
    * Focus moves into the dialog when it appears. A modal question about
@@ -152,8 +144,8 @@ export function CleanupOffer(): ReactElement | null {
           }
         }}
       >
-        <h2 className="iris-label" id="iris-cleanup-title">{TEXT.title}</h2>
-        <p className="iris-cleanup__body">{TEXT.prompt}</p>
+        <h2 className="iris-label" id="iris-cleanup-title">{t('cleanupTitle')}</h2>
+        <p className="iris-cleanup__body">{t('cleanupPrompt')}</p>
 
         {/*
           The counts, which upstream does not show. A question about deleting
@@ -162,8 +154,12 @@ export function CleanupOffer(): ReactElement | null {
           number is the one that can be zero while the first is large.
         */}
         <p className="iris-field__note">
-          {offer.layers} of the messages between {offer.from} and {offer.to} still hold old
-          {' '}variables ({offer.lines} lines in the file).
+          {t('cleanupCounts', {
+            layers: offer.layers,
+            from: offer.from,
+            to: offer.to,
+            lines: offer.lines,
+          })}
         </p>
 
         <div className="iris-cleanup__buttons">
@@ -188,7 +184,7 @@ export function CleanupOffer(): ReactElement | null {
               void actions.answerCleanup('backup-and-clean')
             }}
           >
-            {TEXT.backupAndClean}
+            {t('cleanupBackupAndClean')}
           </Button>
           <Button
             variant="primary"
@@ -197,7 +193,7 @@ export function CleanupOffer(): ReactElement | null {
               void actions.answerCleanup('clean')
             }}
           >
-            {TEXT.cleanOnly}
+            {t('cleanupCleanOnly')}
           </Button>
           <Button
             variant="ghost"
@@ -206,7 +202,7 @@ export function CleanupOffer(): ReactElement | null {
               void actions.answerCleanup('never')
             }}
           >
-            {TEXT.doNotRemind}
+            {t('cleanupDoNotRemind')}
           </Button>
         </div>
 
@@ -217,7 +213,7 @@ export function CleanupOffer(): ReactElement | null {
           know it exists.
         */}
         <p className="iris-field__note">
-          Closing this without choosing asks again next time — it does not decline.
+          {t('cleanupDeferNote')}
         </p>
       </div>
     </div>

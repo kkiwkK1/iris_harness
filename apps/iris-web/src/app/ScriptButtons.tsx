@@ -17,6 +17,7 @@ import type { ReactElement } from 'react'
 import type { ScriptView } from '@iris/protocol'
 
 import { visibleButtons, type ResolvedButton } from './script-buttons.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * The button bar.
@@ -41,11 +42,14 @@ export function ScriptButtons({
    */
   onPress: (button: ResolvedButton) => void
 }): ReactElement | null {
+  // Subscribed so a language switch re-renders the bar's label. Above the early
+  // return: hook order must not depend on whether a card published buttons.
+  useLanguage()
   const buttons = visibleButtons(scripts)
   if (buttons.length === 0) return null
 
   return (
-    <div className="iris-buttons" role="group" aria-label="Card script buttons">
+    <div className="iris-buttons" role="group" aria-label={t('cardButtonsAria')}>
       {buttons.map(button => (
         <button
           key={`${button.scriptId}/${button.name}`}

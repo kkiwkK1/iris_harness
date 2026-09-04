@@ -20,6 +20,7 @@ import type { MessageView } from '@iris/protocol'
 import { Slot } from '../slots/Slot.tsx'
 import { Reasoning } from './Reasoning.tsx'
 import { VariantRail } from './VariantRail.tsx'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /** What a message row can do, supplied by the pane that owns the chat. */
 export interface MessageHandlers {
@@ -51,6 +52,8 @@ export function Message({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(message.text)
   const field = useRef<HTMLTextAreaElement>(null)
+  // Subscribed so a language switch re-renders the row's actions.
+  useLanguage()
 
   useEffect(() => {
     if (editing) field.current?.focus()
@@ -104,10 +107,10 @@ export function Message({
             />
             <div className="iris-actions iris-actions--shown">
               <button type="button" className="iris-act" onClick={commit}>
-                Save
+                {t('save')}
               </button>
               <button type="button" className="iris-act" onClick={() => setEditing(false)}>
-                Cancel
+                {t('cancel')}
               </button>
             </div>
           </>
@@ -132,7 +135,7 @@ export function Message({
               ) : (
                 message.text
               )}
-              {streaming ? <span className="iris-caret" aria-label="Generating" /> : null}
+              {streaming ? <span className="iris-caret" aria-label={t('generatingAria')} /> : null}
             </div>
             <Slot name="iris.message.footer" owner={{ message, streaming }} />
 
@@ -142,17 +145,17 @@ export function Message({
                 className="iris-act"
                 onClick={() => {
                   void writeClipboard(message.text)
-                  handlers.onNotify('Copied.')
+                  handlers.onNotify(t('copied'))
                 }}
               >
-                Copy
+                {t('copy')}
               </button>
               <button type="button" className="iris-act" onClick={beginEdit}>
-                Edit
+                {t('edit')}
               </button>
               {message.role === 'assistant' && turn !== undefined ? (
                 <button type="button" className="iris-act" onClick={() => handlers.onExplain(turn)}>
-                  Prompt
+                  {t('promptButton')}
                 </button>
               ) : null}
               {canRegenerate ? (
@@ -161,7 +164,7 @@ export function Message({
                   className="iris-act iris-act--primary"
                   onClick={handlers.onRegenerate}
                 >
-                  Regenerate
+                  {t('regenerate')}
                 </button>
               ) : null}
               <button
@@ -169,7 +172,7 @@ export function Message({
                 className="iris-act iris-act--danger"
                 onClick={() => handlers.onDelete(message.id)}
               >
-                Delete
+                {t('delete')}
               </button>
               <Slot name="iris.message.actions" owner={{ message, streaming }} />
             </div>

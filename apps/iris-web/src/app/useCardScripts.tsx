@@ -42,6 +42,8 @@ import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun, isFailure } from '../sandbox/script-run-state.ts'
 import { describeRefusal } from './blocked-line.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
+import { getLanguage } from './i18n/language.ts'
 
 /**
  * Resolve this build's sandbox artifacts, once per run.
@@ -504,7 +506,7 @@ export function CardScriptFrames(): ReactElement {
            * A card that fails must not take the conversation with it, so this is
            * a notice rather than anything that interrupts reading.
            */
-          const text = `${state.name}: ${describeRun(state)}`
+          const text = `${state.name}: ${describeRun(state, getLanguage())}`
           /*
            * Both, and for different reasons. The notice is the immediate signal;
            * the card's report list is the record. The notice bar holds one entry
@@ -797,22 +799,37 @@ export function CardScriptFrames(): ReactElement {
        * reading a control hiding an interface needs.
        */}
       {occupied ? (
-        <button
-          type="button"
-          className="iris-overlay-toggle"
-          aria-pressed={collapsed}
-          title={
-            collapsed
-              ? 'Show the card interface'
-              : 'Collapse the card interface — Iris stays reachable'
-          }
-          onClick={() => {
-            setCollapsed(current => !current)
-          }}
-        >
-          {collapsed ? 'Show card UI' : 'Hide card UI'}
-        </button>
+        <CollapseToggle collapsed={collapsed} onToggle={() => setCollapsed(current => !current)} />
       ) : null}
     </>
+  )
+}
+
+/**
+ * The collapse control's own component, so it can subscribe to the language.
+ *
+ * A hook cannot be called conditionally, and this button exists only while a
+ * frame occupies the surface — so the subscription lives here rather than in
+ * `CardScriptFrames`'s body.
+ */
+function CollapseToggle({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean
+  onToggle: () => void
+}): ReactElement {
+  // Subscribed so a language switch re-renders the control's label.
+  useLanguage()
+  return (
+    <button
+      type="button"
+      className="iris-overlay-toggle"
+      aria-pressed={collapsed}
+      title={collapsed ? t('showCardUiTitle') : t('hideCardUiTitle')}
+      onClick={onToggle}
+    >
+      {collapsed ? t('showCardUi') : t('hideCardUi')}
+    </button>
   )
 }

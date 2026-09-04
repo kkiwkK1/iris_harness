@@ -31,6 +31,7 @@ import { ConsentAsk } from './ConsentAsk.tsx'
 import { CleanupOffer } from './CleanupOffer.tsx'
 import { StatePanel } from './StatePanel.tsx'
 import { toBase64 } from './format.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 import '../theme/tokens.css'
 import '../theme/bridge.css'
@@ -46,6 +47,10 @@ export function App(): ReactElement {
   const actions = useIrisActions()
   const notice = useIris(state => state.notice)
   const connected = useIris(state => state.connected)
+  // Subscribed so a language switch re-renders the shell's own words. The
+  // language itself lives in the i18n module, like the theme lives in its own:
+  // per-device, not store state.
+  useLanguage()
 
   const [theme, setThemeState] = useState<ThemeChoice>(loadTheme)
   const [reading, setReadingState] = useState<ReadingPrefs>(loadReading)
@@ -115,7 +120,7 @@ export function App(): ReactElement {
       <main className="iris-main">
         {connected ? null : (
           <div className="iris-notice iris-notice--error" role="status">
-            Not connected to the Iris host. Nothing you write will be sent.
+            {t('notConnected')}
           </div>
         )}
         {/*
@@ -138,7 +143,7 @@ export function App(): ReactElement {
             <button
               type="button"
               className="iris-notice__dismiss"
-              aria-label="Dismiss"
+              aria-label={t('dismiss')}
               onClick={() => actions.dismissNotice()}
             >
               ✕
@@ -198,7 +203,7 @@ export function App(): ReactElement {
 
       {dropping ? (
         <div className="iris-drop" role="status">
-          Drop a character card — PNG, JSON or .charx — to add it to the library.
+          {t('dropCard')}
         </div>
       ) : null}
 

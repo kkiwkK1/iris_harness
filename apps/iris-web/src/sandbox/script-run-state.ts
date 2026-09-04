@@ -26,6 +26,8 @@
 import { FRAME_MEMBERS, MEMBER_KINDS } from './identity.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { UPSTREAM_MEMBERS } from './upstream-surface.ts'
+import type { Language } from '../app/i18n/strings.ts'
+import { translate } from '../app/i18n/strings.ts'
 
 /** Where one script has got to. */
 export type ScriptRunPhase =
@@ -117,15 +119,21 @@ export function isFailure(phase: ScriptRunPhase): boolean {
  * says what happened and — where there is one — what would change it. The
  * refusal names the member, which is the whole reason refusals throw rather than
  * return undefined.
+ *
+ * English by default so `node --test` reads the source language; the panel
+ * passes the interface language through. The diagnostic detail inside a sentence
+ * (the thrown message, the refusal hint) stays whatever the producing side wrote
+ * — it is quoted evidence, not copy.
  * @param state - the script's state.
+ * @param lang - the language for the sentence around the evidence.
  * @returns the sentence to show.
  */
-export function describeRun(state: ScriptRunState): string {
+export function describeRun(state: ScriptRunState, lang: Language = 'en'): string {
   switch (state.phase) {
     case 'dispatched':
-      return 'starting…'
+      return translate(lang, 'runStarting')
     case 'running':
-      return 'running'
+      return translate(lang, 'runRunning')
     case 'ran': {
       /*
        * A module that arrives after the deadline says so, and says how long.
@@ -143,11 +151,11 @@ export function describeRun(state: ScriptRunState): string {
        */
       if (state.lateMs !== undefined) {
         const seconds = Math.round(state.lateMs / 1000)
-        return `loaded, but only after ${String(seconds)}s — reported as failed before it arrived`
+        return translate(lang, 'runLateArrival', { seconds })
       }
       // Deliberately not "finished". The body evaluated; a card that registered
       // listeners is still waiting to do its work.
-      return 'loaded'
+      return translate(lang, 'runLoaded')
     }
     case 'waiting': {
       /*
@@ -162,8 +170,10 @@ export function describeRun(state: ScriptRunState): string {
        * how long instead.
        */
       const seconds = Math.round((state.waitingMs ?? 0) / 1000)
-      const target = state.waitingFor ?? 'another script'
-      return seconds > 0 ? `still waiting for ${target} (${String(seconds)}s)` : `waiting for ${target}`
+      const target = state.waitingFor ?? translate(lang, 'runAnotherScript')
+      return seconds > 0
+        ? translate(lang, 'runStillWaitingFor', { target, seconds })
+        : translate(lang, 'runWaitingFor', { target })
     }
 
     case 'refused': {
@@ -180,17 +190,19 @@ export function describeRun(state: ScriptRunState): string {
        * saying which of the two it is — and the panel was throwing it away.
        */
       const hint = refusalHint(state.detail)
-      const member = state.member ?? 'a member'
-      return hint === undefined ? `refused ${member}` : `refused ${member} — ${hint}`
+      const member = state.member ?? translate(lang, 'runAMember')
+      return hint === undefined
+        ? translate(lang, 'runRefused', { member })
+        : translate(lang, 'runRefusedWhy', { member, hint })
     }
     case 'threw':
-      return `failed: ${attribute(state.detail ?? 'no message')}`
+      return translate(lang, 'runFailed', { detail: attribute(state.detail ?? 'no message') })
     case 'bootstrap-failed':
-      return `never started: ${state.detail ?? 'no message'}`
+      return translate(lang, 'runNeverStarted', { detail: state.detail ?? 'no message' })
     case 'silent':
-      return 'started but never reported — it may still be running'
+      return translate(lang, 'runSilent')
     case 'killed':
-      return 'stopped when the chat closed'
+      return translate(lang, 'runKilled')
   }
 }
 
@@ -283,17 +295,18 @@ function attribute(detail: string): string {
  * Replaces a static enabled-count, because "2 of 2 enabled" and "2 of 2 running"
  * are different answers to the only question that heading is opened to settle.
  * @param states - every script's state.
+ * @param lang - the language for the heading sentence.
  * @returns the heading sentence.
  */
-export function summariseRuns(states: readonly ScriptRunState[]): string {
-  if (states.length === 0) return 'No scripts are running.'
+export function summariseRuns(states: readonly ScriptRunState[], lang: Language = 'en'): string {
+  if (states.length === 0) return translate(lang, 'runsNone')
 
   const failed = states.filter(state => isFailure(state.phase)).length
   const settled = states.filter(state => isSettled(state.phase)).length
   const total = states.length
 
   if (failed > 0) {
-    return `${failed} of ${total} failed to run. The chat is unaffected.`
+    return translate(lang, 'runsFailed', { failed, total })
   }
 
   /*
@@ -306,12 +319,12 @@ export function summariseRuns(states: readonly ScriptRunState[]): string {
    */
   const blocked = states.filter(state => state.phase === 'waiting')
   if (blocked.length > 0) {
-    const names = [...new Set(blocked.map(state => state.waitingFor ?? 'another script'))]
-    return `${blocked.length} of ${total} are waiting for ${names.join(', ')}.`
+    const names = [...new Set(blocked.map(state => state.waitingFor ?? translate(lang, 'runAnotherScript')))]
+    return translate(lang, 'runsWaiting', { blocked: blocked.length, total, names: names.join(', ') })
   }
 
   if (settled < total) {
-    return `${settled} of ${total} loaded, ${total - settled} still starting.`
+    return translate(lang, 'runsPartial', { settled, total, remaining: total - settled })
   }
-  return `${total} of ${total} loaded and listening.`
+  return translate(lang, 'runsAll', { total })
 }

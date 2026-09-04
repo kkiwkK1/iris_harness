@@ -23,6 +23,7 @@ import { PromptPanel } from './PromptPanel.tsx'
 import { groupByTurn, lastReplyId, swipeTarget, withStream } from './project.ts'
 import { DEFAULT_WINDOW, grow, readingWindow } from './reading-window.ts'
 import { stepReading } from './rail.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * Render the conversation pane.
@@ -34,6 +35,8 @@ export function ChatPane(): ReactElement {
   const chatId = useIris(state => state.chatId)
   const booting = useIris(state => state.booting)
   const actions = useIrisActions()
+  // Subscribed so a language switch re-renders the pane's own words.
+  useLanguage()
 
   const generating = stream !== undefined
   const all = useMemo(() => withStream(view, stream), [view, stream])
@@ -156,10 +159,10 @@ export function ChatPane(): ReactElement {
       <div className="iris-scroll">
         <div className="iris-empty">
           <p className="iris-empty__line">
-            {booting ? 'Opening your last conversation…' : 'Nothing open yet.'}
+            {booting ? t('openingLastChat') : t('nothingOpen')}
           </p>
           {booting ? null : (
-            <p className="iris-empty__hint">Pick a character in the sidebar to begin a conversation.</p>
+            <p className="iris-empty__hint">{t('pickCharacterHint')}</p>
           )}
         </div>
       </div>
@@ -210,16 +213,16 @@ export function ChatPane(): ReactElement {
                 })
               }}
             >
-              {`Show ${String(Math.min(DEFAULT_WINDOW, window_.hidden))} earlier`}
+              {t('showEarlier', { n: Math.min(DEFAULT_WINDOW, window_.hidden) })}
               <span className="iris-more__count">
-                {`${String(window_.hidden)} above`}
+                {t('hiddenAbove', { n: window_.hidden })}
               </span>
             </button>
           )}
           {messages.length === 0 ? (
             <div className="iris-empty">
-              <p className="iris-empty__line">The page is blank.</p>
-              <p className="iris-empty__hint">Write the first line and {view.title} will answer.</p>
+              <p className="iris-empty__line">{t('pageBlank')}</p>
+              <p className="iris-empty__hint">{t('writeFirstLine', { title: view.title })}</p>
             </div>
           ) : (
             /*

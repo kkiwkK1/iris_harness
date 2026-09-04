@@ -18,6 +18,7 @@ import type { ResolvedButton } from './script-buttons.ts'
 import { Slot } from '../slots/Slot.tsx'
 import { ScriptButtons } from './ScriptButtons.tsx'
 import { registerComposer } from './composer-bus.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * Render the composer.
@@ -60,6 +61,8 @@ export function Composer({
   const scripts = useIris(state => state.scripts)
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
+  // Subscribed so a language switch re-renders the composer's words.
+  useLanguage()
 
   // Grow to fit. Measured in a layout effect rather than tracked as state: the
   // height is a function of the text, and holding it in state means a render
@@ -132,8 +135,8 @@ export function Composer({
           className="iris-composer__field"
           rows={1}
           value={draft}
-          placeholder={generating ? 'Iris is writing…' : 'Write your part…'}
-          aria-label="Your message"
+          placeholder={generating ? t('irisWriting') : t('writeYourPart')}
+          aria-label={t('yourMessage')}
           onChange={event => setDraft(event.target.value)}
           onKeyDown={event => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -147,14 +150,14 @@ export function Composer({
           {/* Beside the composer because that is where "what will be sent" lives.
               The per-turn record hangs off each message instead. */}
           <button type="button" className="iris-act" onClick={onPreviewPrompt}>
-            Prompt
+            {t('promptButton')}
           </button>
           <span className="iris-composer__hint">
-            Enter sends · Shift+Enter for a new line · Alt+←/→ changes reading
+            {t('composerHint')}
           </span>
           {generating ? (
             <Button variant="outline" size="sm" onClick={onStop}>
-              Stop
+              {t('stop')}
             </Button>
           ) : (
             // Quiet until there is something to send, saturated once there is.
@@ -167,7 +170,7 @@ export function Composer({
               onClick={submit}
               disabled={empty}
             >
-              Send
+              {t('send')}
             </Button>
           )}
         </div>

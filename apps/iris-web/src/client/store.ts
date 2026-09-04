@@ -33,6 +33,10 @@ import { isShellAction, wireMethodFor } from '../sandbox/card-api.ts'
 import { draftThroughComposer, sendThroughComposer } from '../app/composer-bus.ts'
 import { consentState, type ConsentState } from '../sandbox/consent.ts'
 import type { ScriptRunState } from '../sandbox/script-run-state.ts'
+// Read at call time, not subscribed: the store is not a React component, and a
+// notice is worded when it is raised, in the language in force at that moment.
+import { getLanguage } from '../app/i18n/language.ts'
+import { translate } from '../app/i18n/strings.ts'
 
 /** A prompt breakdown, or why there is not one. */
 export type ItemizationResult =
@@ -581,8 +585,8 @@ export function createIrisStore(
         await work()
       } catch (error: unknown) {
         set(raise('error', isHostError(error)
-          ? describeError(error)
-          : `Iris hit a problem of its own: ${describeError(error)}`))
+          ? describeError(error, getLanguage())
+          : translate(getLanguage(), 'irisOwnFault', { detail: describeError(error, getLanguage()) })))
       }
     }
 
@@ -953,12 +957,14 @@ export function createIrisStore(
            * clean?" — and hiding it would leave them wondering whether the
            * button worked.
            */
-          const swept = `cleaned ${result.cleaned} ${result.cleaned === 1 ? 'message' : 'messages'}`
+          const swept = result.cleaned === 1
+            ? translate(getLanguage(), 'cleanedOne')
+            : translate(getLanguage(), 'cleanedMessages', { n: result.cleaned })
           get().notify(
             'info',
             result.backup === undefined
               ? swept
-              : `${swept}; the chat was backed up to ${result.backup}`,
+              : `${swept} — ${translate(getLanguage(), 'backedUpTo', { path: result.backup })}`,
           )
         })
       },
@@ -998,7 +1004,9 @@ export function createIrisStore(
            */
           get().notify(
             'error',
-            `could not read the host's reports: ${error instanceof Error ? error.message : String(error)}`,
+            translate(getLanguage(), 'reportsUnreadable', {
+              detail: error instanceof Error ? error.message : String(error),
+            }),
           )
         } finally {
           set({ hostReportsLoading: false })
@@ -1106,8 +1114,8 @@ export function createIrisStore(
           get().notify(
             'info',
             granted
-              ? 'Page access granted. It takes effect the next time the card runs.'
-              : 'Page access revoked. It stops at the next run.',
+              ? translate(getLanguage(), 'pageAccessGranted')
+              : translate(getLanguage(), 'pageAccessRevoked'),
           )
         })
       },

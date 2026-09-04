@@ -17,3 +17,4 @@ secrets.json
 # the app, never to the repository.
 data/
 测试用卡/
+qa/results/

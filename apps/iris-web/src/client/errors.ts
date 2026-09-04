@@ -18,13 +18,24 @@
 
 import type { RpcError } from '@iris/protocol'
 
-/** Reader-facing copy per failure code. */
-const COPY: Record<RpcError['code'], string> = {
-  'not-found': 'That is not there any more. The sidebar may be out of date — reload to catch up.',
-  'invalid-request': 'Iris would not send that.',
-  'provider-error': 'The model refused the request.',
-  busy: 'This chat is still generating. Stop it first.',
-  unsupported: 'This build of Iris cannot do that yet.',
+import type { Language, StringKey } from '../app/i18n/strings.ts'
+import { translate } from '../app/i18n/strings.ts'
+
+/**
+ * The dictionary key carrying each failure code's reader-facing copy.
+ *
+ * The sentences live in `app/i18n/strings.ts` so the Chinese column is held to
+ * the same key set as the English one by the type system; the per-code lookup
+ * is what belongs here. `provider-error` and `internal` are absent on purpose:
+ * for those the host's own detail **is** the information, and `describeError`
+ * passes it through unrewritten.
+ */
+const COPY: Record<RpcError['code'], StringKey | undefined> = {
+  'not-found': 'errNotFound',
+  'invalid-request': 'errInvalidRequest',
+  'provider-error': undefined,
+  busy: 'errBusy',
+  unsupported: 'errUnsupported',
   /*
    * A card filled the shared card storage, and the shared part is what a reader
    * has to be told: the store is one profile-wide store, as `localStorage` is
@@ -32,9 +43,8 @@ const COPY: Record<RpcError['code'], string> = {
    * necessarily the card that filled it. A message naming only "this card"
    * would send a reader to delete the wrong thing.
    */
-  'quota-exceeded': 'The cards’ shared storage is full. Its contents are shared across every'
-    + ' card in this profile, so the one that ran out may not be the one that filled it.',
-  internal: 'Something broke on the host side.',
+  'quota-exceeded': 'errQuota',
+  internal: 'errInternal',
 }
 
 /** Whether a value carries a recognizable `RpcError` code. */
@@ -62,12 +72,14 @@ function hasCode(value: unknown): value is { code: RpcError['code'], message?: u
 /**
  * Normalize any rejection into an `RpcError`.
  * @param error - whatever was thrown or rejected.
+ * @param lang - the language for the fallback copy.
  * @returns a code and a message safe to render.
  */
-export function asRpcError(error: unknown): RpcError {
+export function asRpcError(error: unknown, lang: Language = 'en'): RpcError {
   if (hasCode(error)) {
     const detail = typeof error.message === 'string' && error.message.trim() !== '' ? error.message : undefined
-    return { code: error.code, message: detail ?? COPY[error.code] }
+    const key = COPY[error.code]
+    return { code: error.code, message: detail ?? (key === undefined ? '' : translate(lang, key)) }
   }
   if (error instanceof Error) return { code: 'internal', message: error.message }
   return { code: 'internal', message: String(error) }
@@ -80,10 +92,12 @@ export function asRpcError(error: unknown): RpcError {
  * the detail is an identifier ("no chat \"chat-7\""), and keeps the detail where
  * it is the actual information (a provider's refusal reason).
  * @param error - whatever was thrown or rejected.
+ * @param lang - the language to read the explanation in.
  * @returns one sentence, active voice, no apology.
  */
-export function describeError(error: unknown): string {
-  const rpc = asRpcError(error)
+export function describeError(error: unknown, lang: Language = 'en'): string {
+  const rpc = asRpcError(error, lang)
   if (rpc.code === 'provider-error' || rpc.code === 'internal') return rpc.message
-  return COPY[rpc.code]
+  const key = COPY[rpc.code]
+  return key === undefined ? rpc.message : translate(lang, key)
 }

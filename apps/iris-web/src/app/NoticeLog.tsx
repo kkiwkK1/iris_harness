@@ -23,6 +23,7 @@ import type { ReactElement } from 'react'
 import { NOTICE_LOG_LIMIT } from '../client/store.ts'
 import { reportRowClass } from './host-report-rows.ts'
 import { useIris } from '../client/provider.tsx'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /** A local time, to the second. */
 function timeOf(at: number): string {
@@ -41,13 +42,16 @@ function timeOf(at: number): string {
 export function NoticeLog(): ReactElement {
   const log = useIris(state => state.noticeLog)
   const dropped = useIris(state => state.noticesDropped)
+  // Subscribed so a language switch re-renders the section's words. The notice
+  // bodies stay as they were announced — quoted evidence, not copy.
+  useLanguage()
 
   return (
     <section className="iris-notices">
-      <span className="iris-field__label">Notices</span>
+      <span className="iris-field__label">{t('noticesHead')}</span>
 
       {log.length === 0 ? (
-        <p className="iris-field__note">Nothing has been announced this session.</p>
+        <p className="iris-field__note">{t('noticesEmpty')}</p>
       ) : (
         <ol className="iris-notices__list">
           {/*
@@ -82,8 +86,9 @@ export function NoticeLog(): ReactElement {
       */}
       {dropped > 0 && (
         <p className="iris-field__note">
-          {dropped} older {dropped === 1 ? 'notice has' : 'notices have'} been dropped; the last
-          {' '}{NOTICE_LOG_LIMIT} are kept.
+          {dropped === 1
+            ? t('noticesDroppedOne', { n: NOTICE_LOG_LIMIT })
+            : t('noticesDropped', { n: dropped })}
         </p>
       )}
     </section>

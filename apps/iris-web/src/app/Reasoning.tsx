@@ -13,6 +13,7 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 
 import { approximateWords } from './format.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * Render the reasoning disclosure.
@@ -24,6 +25,8 @@ import { approximateWords } from './format.ts'
  */
 export function Reasoning({ text, streaming }: { text: string, streaming: boolean }): ReactElement | null {
   const [open, setOpen] = useState(false)
+  // Subscribed so a language switch re-renders the label.
+  useLanguage()
   if (text.trim() === '') return null
 
   const shown = open || streaming
@@ -38,7 +41,7 @@ export function Reasoning({ text, streaming }: { text: string, streaming: boolea
         <span className={`iris-reason__chevron${shown ? ' iris-reason__chevron--open' : ''}`} aria-hidden="true">
           ▸
         </span>
-        {streaming ? 'Thinking' : `Reasoning · ${approximateWords(text)} words`}
+        {streaming ? t('thinking') : t('reasoningWords', { n: approximateWords(text) })}
       </button>
       {shown ? <div className="iris-reason__body">{text}</div> : null}
     </div>

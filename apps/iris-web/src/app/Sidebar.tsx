@@ -15,6 +15,7 @@ import { Button, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
+import { useLanguage, t } from './i18n/use-language.ts'
 import { since, toBase64 } from './format.ts'
 
 /** Which list the sidebar is showing. */
@@ -32,9 +33,12 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
   const chatId = useIris(state => state.chatId)
   const actions = useIrisActions()
   const picker = useRef<HTMLInputElement>(null)
+  // Subscribed so a language switch re-renders the list's words, not just the
+  // moment's rows; `lang` also drives the relative-time units in each row.
+  const { lang } = useLanguage()
 
   return (
-    <nav className={`iris-sidebar${open ? ' iris-sidebar--open' : ''}`} aria-label="Conversations and characters">
+    <nav className={`iris-sidebar${open ? ' iris-sidebar--open' : ''}`} aria-label={t('sidebarAria')}>
       <div className="iris-brand">
         <span className="iris-brand__mark" aria-hidden="true" />
         <span className="iris-brand__name">Iris</span>
@@ -48,7 +52,7 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
           aria-selected={tab === 'chats'}
           onClick={() => setTab('chats')}
         >
-          Reading
+          {t('tabReading')}
         </button>
         <button
           type="button"
@@ -57,42 +61,42 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
           aria-selected={tab === 'characters'}
           onClick={() => setTab('characters')}
         >
-          Characters
+          {t('tabCharacters')}
         </button>
       </div>
 
       <div className="iris-list" role="tabpanel">
         {tab === 'chats' ? (
           chats.length === 0 ? (
-            <p className="iris-list__empty">No conversations yet. Pick a character to start one.</p>
+            <p className="iris-list__empty">{t('chatsEmpty')}</p>
           ) : (
             chats.map(chat => (
               <ChatRow
                 key={chat.chatId}
                 title={chat.title}
-                meta={`${since(chat.updatedAt)} · ${chat.messageCount} messages`}
+                meta={`${since(chat.updatedAt, Date.now(), lang)} · ${t('messageCount', { count: chat.messageCount })}`}
                 current={chat.chatId === chatId}
                 onOpen={() => void actions.openChat(chat.chatId)}
                 onDelete={() => void actions.deleteChat(chat.chatId)}
-                deleteLabel="Delete conversation"
+                deleteLabel={t('deleteConversation')}
               />
             ))
           )
         ) : characters.length === 0 ? (
           <p className="iris-list__empty">
-            The library is empty. Drop a character card anywhere to import it.
+            {t('libraryEmpty')}
           </p>
         ) : (
           characters.map(character => (
             <ChatRow
               key={character.characterId}
               title={character.name}
-              meta={character.creator === undefined ? 'no creator listed' : `by ${character.creator}`}
+              meta={character.creator === undefined ? t('noCreatorListed') : t('byCreator', { creator: character.creator })}
               tags={character.tags}
               current={false}
               onOpen={() => void actions.createChat(character.characterId)}
               onDelete={() => void actions.deleteCharacter(character.characterId)}
-              deleteLabel="Remove from library"
+              deleteLabel={t('removeFromLibrary')}
             />
           ))
         )}
@@ -114,7 +118,7 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
           }}
         />
         <Button variant="outline" size="sm" onClick={() => picker.current?.click()}>
-          Import a card
+          {t('importCard')}
         </Button>
       </div>
     </nav>
@@ -164,7 +168,7 @@ function ChatRow({
           <button
             type="button"
             className="iris-act"
-            aria-label={`More actions for ${title}`}
+            aria-label={t('moreActionsFor', { title })}
             onClick={() => setMenuOpen(!menuOpen)}
           >
             ⋯

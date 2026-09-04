@@ -24,6 +24,9 @@
  * @module iris-web/sandbox/consent
  */
 
+import type { Language } from '../app/i18n/strings.ts'
+import { translate } from '../app/i18n/strings.ts'
+
 /** What the host's answer means. */
 export type ConsentState =
   /**
@@ -213,28 +216,39 @@ export function consentFigures(
  * is a guard someone will reuse this function without.
  * @param figures - the counts and sizes, measured in one pass.
  * @param bytes - how to render a size.
+ * @param lang - the language for the question.
  * @returns the sentence, or undefined when there is nothing to consent to.
  */
 export function describeConsentAsk(
   figures: ConsentFigures,
   bytes: (count: number) => string,
+  lang: Language = 'en',
 ): string | undefined {
   if (figures.total === 0) return undefined
   const dormant = figures.totalBytes - figures.runningBytes
+  // English joins its sentences with a space; Chinese closes a sentence with a
+  // full stop and starts the next without one.
+  const gap = lang === 'en' ? ' ' : ''
   const opening =
     figures.running === figures.total
-      ? `This card runs ${figures.running === 1 ? '1 script' : `${String(figures.running)} scripts`} (${bytes(figures.runningBytes)}).`
-      : `${String(figures.running)} of ${String(figures.total)} scripts would run now (${bytes(figures.runningBytes)}).`
+      ? figures.running === 1
+        ? translate(lang, 'consentOne', { size: bytes(figures.runningBytes) })
+        : translate(lang, 'consentAll', { count: figures.running, size: bytes(figures.runningBytes) })
+      : translate(lang, 'consentPart', {
+          running: figures.running,
+          total: figures.total,
+          size: bytes(figures.runningBytes),
+        })
   const covered =
     dormant > 0
-      ? ` Your answer covers all ${String(figures.total)}, including ${bytes(dormant)} switched off today.`
+      ? `${gap}${translate(lang, 'consentCovered', { total: figures.total, size: bytes(dormant) })}`
       : ''
   // Agrees with the number of scripts that would actually run — the subject of
   // the sentence — rather than with the card.
   const closing =
     figures.running === 1
-      ? ' It runs in an isolated sandbox and cannot read your other chats unless you also grant page access.'
-      : ' They run in an isolated sandbox and cannot read your other chats unless you also grant page access.'
+      ? `${gap}${translate(lang, 'consentSandboxOne')}`
+      : `${gap}${translate(lang, 'consentSandboxMany')}`
 
   return `${opening}${covered}${closing}`
 }

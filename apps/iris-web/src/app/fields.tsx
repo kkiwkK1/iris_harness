@@ -12,6 +12,8 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 
+import { useLanguage, t } from './i18n/use-language.ts'
+
 /** Bounds and granularity of one slider. */
 export interface Bounds {
   min: number
@@ -59,12 +61,14 @@ export function NumberField({
   useEffect(() => {
     setLive(value ?? fallback)
   }, [value, fallback])
+  // Subscribed so a language switch re-renders the field's words.
+  useLanguage()
 
   return (
     <div className="iris-field">
       <span className="iris-field__label">{label}</span>
       <span className="iris-field__value">
-        {value === undefined ? 'host default' : live.toFixed(decimals)}
+        {value === undefined ? t('hostDefault') : live.toFixed(decimals)}
       </span>
       <input
         className="iris-range iris-field__control"
@@ -86,7 +90,7 @@ export function NumberField({
           <>
             {note === undefined ? null : ' '}
             <button type="button" className="iris-act iris-act--inline" onClick={() => onCommit(null)}>
-              use host default
+              {t('useHostDefault')}
             </button>
           </>
         )}

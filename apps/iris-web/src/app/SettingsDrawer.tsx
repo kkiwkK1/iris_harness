@@ -27,6 +27,8 @@ import { ScriptPanel } from './ScriptPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
 import { READING_LIMITS, type ReadingPrefs, type ThemeChoice } from '../theme/theme.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
+import type { Language } from './i18n/strings.ts'
 
 /** Reading preferences and their setter, owned by the shell because they are per-device. */
 export interface ReadingControl {
@@ -56,6 +58,9 @@ export function SettingsDrawer({
   const chatId = useIris(state => state.chatId)
   const actions = useIrisActions()
   const [expanded, setExpanded] = useState(false)
+  // The language control, and the subscription that makes a switch repaint this
+  // drawer without a reload.
+  const { lang, setLang } = useLanguage()
 
   const patch = (key: string, value: number | string | null | string[]): void => {
     void actions.patchSettings({ [key]: value })
@@ -64,7 +69,7 @@ export function SettingsDrawer({
   return (
     <aside
       className={`iris-drawer${open ? ' iris-drawer--open' : ''}`}
-      aria-label="Settings"
+      aria-label={t('drawerAria')}
       aria-hidden={!open}
       onKeyDown={event => {
         if (event.key === 'Escape') onClose()
@@ -72,66 +77,66 @@ export function SettingsDrawer({
     >
       <div className="iris-drawer__head">
         <h2 className="iris-label iris-drawer__title">
-          {chatId === undefined ? 'Defaults for new conversations' : 'This conversation'}
+          {chatId === undefined ? t('defaultsForNew') : t('thisConversation')}
         </h2>
         <Button variant="ghost" size="sm" onClick={onClose}>
-          Close
+          {t('close')}
         </Button>
       </div>
 
       <div className="iris-drawer__body">
         {settings === undefined ? (
-          <p className="iris-list__empty">Settings have not loaded.</p>
+          <p className="iris-list__empty">{t('settingsNotLoaded')}</p>
         ) : (
           <>
             <ConnectionPanel />
 
-            <Section title="Route">
+            <Section title={t('sectionRoute')}>
               <TextField
-                label="Provider"
+                label={t('provider')}
                 value={settings.provider}
                 onCommit={value => patch('provider', value)}
               />
               <TextField
-                label="Model"
+                label={t('model')}
                 value={settings.model}
-                placeholder="e.g. local/qwen3-8b"
+                placeholder={t('modelPlaceholder')}
                 onCommit={value => patch('model', value)}
               />
             </Section>
 
-            <Section title="Sampling">
+            <Section title={t('sectionSampling')}>
               <NumberField
-                label="Temperature"
+                label={t('temperature')}
                 value={settings.temperature}
                 bounds={{ min: 0, max: 2, step: 0.01 }}
                 fallback={1}
-                note="How far the model strays from its likeliest next word."
+                note={t('temperatureNote')}
                 onCommit={value => patch('temperature', value)}
               />
               <NumberField
-                label="Reply length cap"
+                label={t('replyLengthCap')}
                 value={settings.maxTokens}
                 bounds={{ min: 128, max: 8192, step: 64 }}
                 fallback={1024}
                 decimals={0}
-                note="Tokens, not words. A long scene needs a high cap."
+                note={t('replyLengthCapNote')}
                 onCommit={value => patch('maxTokens', value)}
               />
               <NumberField
-                label="Top-p"
+                label={t('topP')}
                 value={settings.topP}
                 bounds={{ min: 0, max: 1, step: 0.01 }}
                 fallback={0.95}
-                note="Keeps only the likeliest words that add up to this much probability."
+                note={t('topPNote')}
                 onCommit={value => patch('topP', value)}
               />
               <NumberField
-                label="Repetition penalty"
+                label={t('repetitionPenalty')}
                 value={settings.repetitionPenalty}
                 bounds={{ min: 1, max: 1.5, step: 0.01 }}
                 fallback={1.05}
-                note="Raise it when the model starts repeating a phrase."
+                note={t('repetitionPenaltyNote')}
                 onCommit={value => patch('repetitionPenalty', value)}
               />
 
@@ -148,14 +153,14 @@ export function SettingsDrawer({
                   >
                     ▸
                   </span>
-                  {expanded ? 'Fewer parameters' : 'More parameters'}
+                  {expanded ? t('fewerParameters') : t('moreParameters')}
                 </button>
               </div>
 
               {expanded ? (
                 <>
                   <NumberField
-                    label="Top-k"
+                    label={t('topK')}
                     value={settings.topK}
                     bounds={{ min: 0, max: 200, step: 1 }}
                     fallback={40}
@@ -163,7 +168,7 @@ export function SettingsDrawer({
                     onCommit={value => patch('topK', value)}
                   />
                   <NumberField
-                    label="Min-p"
+                    label={t('minP')}
                     value={settings.minP}
                     bounds={{ min: 0, max: 0.5, step: 0.005 }}
                     fallback={0.05}
@@ -171,32 +176,32 @@ export function SettingsDrawer({
                     onCommit={value => patch('minP', value)}
                   />
                   <NumberField
-                    label="Frequency penalty"
+                    label={t('frequencyPenalty')}
                     value={settings.frequencyPenalty}
                     bounds={{ min: -2, max: 2, step: 0.01 }}
                     fallback={0}
                     onCommit={value => patch('frequencyPenalty', value)}
                   />
                   <NumberField
-                    label="Presence penalty"
+                    label={t('presencePenalty')}
                     value={settings.presencePenalty}
                     bounds={{ min: -2, max: 2, step: 0.01 }}
                     fallback={0}
                     onCommit={value => patch('presencePenalty', value)}
                   />
                   <NumberField
-                    label="Seed"
+                    label={t('seed')}
                     value={settings.seed}
                     bounds={{ min: 0, max: 1000000, step: 1 }}
                     fallback={0}
                     decimals={0}
-                    note="Fix it to make a regenerate reproducible."
+                    note={t('seedNote')}
                     onCommit={value => patch('seed', value)}
                   />
                   <TextField
-                    label="Stop at"
+                    label={t('stopAt')}
                     value={(settings.stop ?? []).join(' | ')}
-                    placeholder="separate with |"
+                    placeholder={t('stopPlaceholder')}
                     onCommit={value =>
                       patch(
                         'stop',
@@ -213,19 +218,19 @@ export function SettingsDrawer({
           </>
         )}
 
-        <Section title="Reading">
+        <Section title={t('sectionReading')}>
           <ChoiceField
-            label="Theme"
+            label={t('theme')}
             value={control.theme}
             options={[
-              { id: 'system', label: 'System' },
-              { id: 'light', label: 'Light' },
-              { id: 'dark', label: 'Dark' },
+              { id: 'system', label: t('themeSystem') },
+              { id: 'light', label: t('themeLight') },
+              { id: 'dark', label: t('themeDark') },
             ]}
             onSelect={control.setTheme}
           />
           <NumberField
-            label="Prose size"
+            label={t('proseSize')}
             value={control.reading.size}
             bounds={READING_LIMITS.size}
             fallback={17}
@@ -235,15 +240,33 @@ export function SettingsDrawer({
             }}
           />
           <NumberField
-            label="Line length"
+            label={t('lineLength')}
             value={control.reading.measure}
             bounds={READING_LIMITS.measure}
             fallback={68}
             decimals={0}
-            note="Characters per line. Around 66 is what a book uses."
+            note={t('lineLengthNote')}
             onCommit={value => {
               if (value !== null) control.setReading({ ...control.reading, measure: value })
             }}
+          />
+          {/*
+            The interface language. Lives beside the theme because it is the same
+            kind of thing — a per-device choice about the shell's own surface
+            (SETTINGS-IA.md 意图 #4, 界面本地) — and takes effect on the spot,
+            like the theme does.
+          */}
+          <ChoiceField
+            label={t('sectionLanguage')}
+            value={lang}
+            options={[
+              // Each option is shown in its own language, always: a reader who
+              // has switched to a language they cannot yet read has to be able
+              // to find their way back by shape.
+              { id: 'en', label: t('langEn') },
+              { id: 'zh', label: t('langZh') },
+            ]}
+            onSelect={(id: Language) => setLang(id)}
           />
         </Section>
 

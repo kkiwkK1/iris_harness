@@ -23,6 +23,7 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Section } from './fields.tsx'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * Render the connection section.
@@ -39,24 +40,26 @@ export function ConnectionPanel(): ReactElement {
 
   const [naming, setNaming] = useState(false)
   const [label, setLabel] = useState('')
+  // Subscribed so a language switch re-renders the panel's words.
+  useLanguage()
 
   useEffect(() => {
     void actions.loadConnections()
   }, [actions])
 
   return (
-    <Section title="Connection">
+    <Section title={t('sectionConnection')}>
       {/*
         **Which host this page is actually talking to**, said before anything
         about providers.
-        
+
         "Connection" already meant the provider profile — the model behind the
         conversation — and left the other connection unstated: the host serving
         this app and holding its chats. With more than one host in play (a dev
         instance and a probe instance), "is this page on 8787 or 8789?" is a
         question that has to be re-derived from the address bar every time, and
         an answer derived from somewhere else is an answer that can disagree.
-        
+
         `dataOrigin` is where the store already keeps it, and it was written and
         **never read** until now — the field's own doc says it exists "because
         the interface has to be able to say it", and only its sibling
@@ -64,11 +67,11 @@ export function ConnectionPanel(): ReactElement {
         the page was built against.
       */}
       <p className="iris-field__note">
-        Host: <code>{origin}</code>
-        {transport === 'fake' ? ' — seeded, not a real host' : null}
+        {t('host')} <code>{origin}</code>
+        {transport === 'fake' ? ` ${t('seededNotReal')}` : null}
       </p>
       {profiles.length === 0 ? (
-        <p className="iris-list__empty">No saved connections.</p>
+        <p className="iris-list__empty">{t('noSavedConnections')}</p>
       ) : (
         profiles.map(profile => (
           <div className="iris-conn" key={profile.id} aria-current={profile.id === activeId}>
@@ -89,19 +92,17 @@ export function ConnectionPanel(): ReactElement {
             <button
               type="button"
               className="iris-act iris-act--danger"
-              aria-label={`Delete ${profile.label ?? profile.summary}`}
+              aria-label={t('deleteNamed', { name: profile.label ?? profile.summary })}
               onClick={() => void actions.deleteConnection(profile.id)}
             >
-              Delete
+              {t('delete')}
             </button>
           </div>
         ))
       )}
 
       <p className="iris-field__note">
-        {chatId === undefined
-          ? 'Activating a connection sets the defaults for new conversations.'
-          : 'Activating a connection applies it to this conversation.'}
+        {chatId === undefined ? t('activateForDefaults') : t('activateForThisChat')}
       </p>
 
       {/*
@@ -115,8 +116,8 @@ export function ConnectionPanel(): ReactElement {
             className="iris-text"
             autoFocus
             value={label}
-            placeholder="Name this connection"
-            aria-label="Connection name"
+            placeholder={t('nameThisConnection')}
+            aria-label={t('connectionName')}
             onChange={event => setLabel(event.target.value)}
             onKeyDown={event => {
               if (event.key === 'Escape') setNaming(false)
@@ -137,12 +138,12 @@ export function ConnectionPanel(): ReactElement {
               })
             }}
           >
-            Save
+            {t('save')}
           </Button>
         </div>
       ) : (
         <Button variant="outline" size="sm" onClick={() => setNaming(true)}>
-          Save the current settings as a connection
+          {t('saveConnection')}
         </Button>
       )}
     </Section>

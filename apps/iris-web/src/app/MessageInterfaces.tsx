@@ -37,6 +37,8 @@ import { describeInterface, type InterfaceState } from '../sandbox/message-frame
 import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
+import { useLanguage, t } from './i18n/use-language.ts'
+import { getLanguage } from './i18n/language.ts'
 
 /**
  * This build's bootstrap and asset URLs, fetched at most once per page.
@@ -426,6 +428,8 @@ function InterfaceSlot({
   adopt: (node: HTMLDivElement | null) => void
   onOpen: () => void
 }): ReactElement {
+  // Subscribed so a language switch re-renders the slot's words.
+  useLanguage()
   return (
     <div className="iris-interfaces__slot" data-instance={instance}>
       <div ref={adopt} />
@@ -441,9 +445,9 @@ function InterfaceSlot({
          * the prose — noise that also reads as the card having broken.
          */
         <p className="iris-interfaces__over">
-          <span className="iris-interfaces__state">{describeInterface(state)}</span>
+          <span className="iris-interfaces__state">{describeInterface(state, getLanguage())}</span>
           <button type="button" className="iris-interfaces__open" onClick={onOpen}>
-            Render this one
+            {t('renderThisOne')}
           </button>
         </p>
       ) : state === undefined || state.phase === 'live' ? null : (
@@ -453,7 +457,7 @@ function InterfaceSlot({
          * that never started has nothing to show, so this line is all a reader
          * gets.
          */
-        <p className="iris-interfaces__state">{describeInterface(state)}</p>
+        <p className="iris-interfaces__state">{describeInterface(state, getLanguage())}</p>
       )}
     </div>
   )

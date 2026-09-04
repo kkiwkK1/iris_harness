@@ -27,6 +27,8 @@ import { describeBytes } from './format.ts'
 import { Section } from './fields.tsx'
 import { consentFigures, describeConsentAsk } from '../sandbox/consent.ts'
 import { reportRowClass } from './host-report-rows.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
+import { getLanguage } from './i18n/language.ts'
 import {
   describeRun,
   isFailure,
@@ -51,6 +53,8 @@ export function ScriptPanel(): ReactElement | null {
 
   const [asking, setAsking] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
+  // Subscribed so a language switch re-renders the panel's words.
+  useLanguage()
 
   useEffect(() => {
     if (characterId !== undefined) void actions.loadScripts(characterId)
@@ -61,11 +65,11 @@ export function ScriptPanel(): ReactElement | null {
   const loaded = scriptsFor === characterId
 
   return (
-    <Section title="Card scripts">
+    <Section title={t('sectionCardScripts')}>
       {!loaded ? (
-        <p className="iris-list__empty">Reading the card…</p>
+        <p className="iris-list__empty">{t('readingCard')}</p>
       ) : scripts.length === 0 ? (
-        <p className="iris-list__empty">This card ships no scripts.</p>
+        <p className="iris-list__empty">{t('cardNoScripts')}</p>
       ) : (
         <>
           {/*
@@ -85,18 +89,19 @@ export function ScriptPanel(): ReactElement | null {
             />
           ) : consent === 'declined' ? (
             <p className="iris-field__note iris-script__summary">
-              Not running. You declined this card&rsquo;s scripts — turn them on below if you
-              change your mind.
+              {t('declinedSummary')}
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={() => void actions.answerScriptsAllowed(true)}
               >
-                Allow scripts
+                {t('allowScripts')}
               </Button>
             </p>
           ) : (
-            <p className="iris-field__note iris-script__summary">{summariseRuns(runStates)}</p>
+            <p className="iris-field__note iris-script__summary">
+              {summariseRuns(runStates, getLanguage())}
+            </p>
           )}
           {/*
         What the frame said about itself, as opposed to about one script: a
@@ -153,10 +158,10 @@ export function ScriptPanel(): ReactElement | null {
                 afternoon.
               */}
               {report.withdrawn === true ? (
-                <span className="iris-script__stale"> · withdrawn — it arrived after all</span>
+                <span className="iris-script__stale"> · {t('withdrawn')}</span>
               ) : null}
               {report.generation === generation ? null : (
-                <span className="iris-script__stale"> · from an earlier run</span>
+                <span className="iris-script__stale"> · {t('fromEarlierRun')}</span>
               )}
             </p>
           ))}
@@ -176,23 +181,20 @@ export function ScriptPanel(): ReactElement | null {
 
       <div className="iris-grant">
         <div className="iris-grant__state">
-          <span className="iris-field__label">Page access</span>
+          <span className="iris-field__label">{t('pageAccess')}</span>
           <span className={`iris-grant__value${granted ? ' iris-grant__value--on' : ''}`}>
-            {granted ? 'granted' : 'off'}
+            {granted ? t('granted') : t('off')}
           </span>
         </div>
         <p className="iris-field__note">
-          {granted
-            ? 'This card can read and change anything on screen, including your other conversations. It stays this way until you turn it off.'
-            : 'This card’s scripts can only touch their own panel. They cannot read your other conversations.'}
+          {granted ? t('grantedNote') : t('offNote')}
         </p>
         <p className="iris-field__note">
-          Only you can turn this on. A card has no way to ask — if one tells you to enable something, that
-          text came from the card.
+          {t('onlyYouNote')}
         </p>
         {granted ? (
           <Button variant="outline" size="sm" onClick={() => void actions.setDocumentGrant(false)}>
-            Turn off page access
+            {t('turnOffPageAccess')}
           </Button>
         ) : (
           <Button
@@ -203,18 +205,18 @@ export function ScriptPanel(): ReactElement | null {
               setAsking(true)
             }}
           >
-            Give this card page access…
+            {t('givePageAccess')}
           </Button>
         )}
       </div>
 
       <RiskConfirmation
         open={asking}
-        title="Let this card read and change the whole page?"
-        description="Its scripts will be able to read and alter anything on screen — your other conversations, the text you are typing, your settings. Iris cannot limit what it does once this is on, and it stays on until you turn it off. Turn it on only for a card you trust and have a reason to."
-        acknowledgeLabel="I understand this card will be able to read my other conversations"
-        cancelLabel="Keep it off"
-        confirmLabel="Grant page access"
+        title={t('grantDialogTitle')}
+        description={t('grantDialogBody')}
+        acknowledgeLabel={t('grantDialogAck')}
+        cancelLabel={t('grantDialogCancel')}
+        confirmLabel={t('grantDialogConfirm')}
         acknowledged={acknowledged}
         onAcknowledgedChange={setAcknowledged}
         onCancel={() => setAsking(false)}
@@ -264,12 +266,12 @@ function ScriptRow({
       */}
       {run === undefined ? null : (
         <p className={isFailure(run.phase) ? 'iris-script__failed' : 'iris-field__note'}>
-          {describeRun(run)}
+          {describeRun(run, getLanguage())}
         </p>
       )}
       {cardOff ? (
         <p className="iris-field__note">
-          Off in the card. Its author shipped it switched off, so Iris does not run it.
+          {t('cardOffNote')}
         </p>
       ) : (
         <label className="iris-script__switch">
@@ -278,7 +280,7 @@ function ScriptRow({
             checked={script.enabled}
             onChange={event => onToggle(event.target.checked)}
           />
-          <span>{script.enabled ? 'Runs with this card' : 'You turned this off'}</span>
+          <span>{script.enabled ? t('runsWithCard') : t('youTurnedThisOff')}</span>
         </label>
       )}
     </div>
@@ -310,6 +312,8 @@ export function ConsentGate({
   scripts: readonly ScriptView[]
   onAnswer: (allowed: boolean) => void
 }): ReactElement {
+  // Subscribed so a language switch re-renders the question.
+  useLanguage()
   return (
     <div className="iris-grant">
       <p className="iris-field__note">
@@ -326,14 +330,14 @@ export function ConsentGate({
           shapes that expose those mistakes — a card whose counts diverge, and a
           card with exactly one script.
         */}
-        {describeConsentAsk(consentFigures(scripts), describeBytes) ?? ''}
+        {describeConsentAsk(consentFigures(scripts), describeBytes, getLanguage()) ?? ''}
       </p>
       <div className="iris-grant__actions">
         <Button size="sm" onClick={() => onAnswer(true)}>
-          Run them
+          {t('runThem')}
         </Button>
         <Button size="sm" variant="ghost" onClick={() => onAnswer(false)}>
-          Don&rsquo;t run them
+          {t('dontRunThem')}
         </Button>
       </div>
     </div>
