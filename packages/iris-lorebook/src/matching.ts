@@ -52,11 +52,13 @@ export interface KeyMatchOptions {
   /** Compare without lowercasing. Defaults to `false`. */
   caseSensitive?: boolean
   /**
-   * Require the key to sit on a non-word boundary. Defaults to `true`.
+   * Require the key to sit on a non-word boundary. Defaults to `false`.
    *
-   * Note that ST's own global default is `false`; Iris flips it because a
-   * substring-matching key is the usual cause of a book firing on nothing at
-   * all, and the per-entry `matchWholeWords` override still wins either way.
+   * ST's own global default is `false`, and the activation engine resolves
+   * every entry's option against the stored settings before calling, so this
+   * fallback only answers for a direct caller that passes nothing — it has to
+   * read the same setting the same way, or the two layers would disagree about
+   * the same book.
    */
   matchWholeWords?: boolean
 }
@@ -79,7 +81,7 @@ export function matchKey(haystack: string, needle: string, options: KeyMatchOpti
   }
 
   const caseSensitive = options.caseSensitive ?? false
-  const matchWholeWords = options.matchWholeWords ?? true
+  const matchWholeWords = options.matchWholeWords ?? false
 
   const text = caseSensitive ? haystack : haystack.toLowerCase()
   const key = caseSensitive ? needle : needle.toLowerCase()

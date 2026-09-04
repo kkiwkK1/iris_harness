@@ -18,15 +18,34 @@ import {
   activateEntries,
   fromCharacterBook,
   promptRole,
+  type ActivationSettings,
+  type LorebookEntry,
   type PreparedEntry,
   type ScanEntry,
   type TimedEffectState,
 } from '@iris/lorebook'
 
+import type { InsertionStrategy } from '@iris/protocol'
 import type { ResolvedWorldbook } from './worldbooks.ts'
 import { createMacroContext, expandMacros } from '@iris/macro'
 import type { Contribution, HistoryEntry, Role, TokenCounter } from '@iris/pipeline'
 import { resolvePreset, type ChatCompletionPreset, type MarkerSources, type PromptItem } from '@iris/preset'
+
+/**
+ * One chat-bound book's entries, tagged with its name.
+ *
+ * Upstream's `chatLore` (`world-info.js:4430`): `chat_metadata.world_info`
+ * holds a **book name**, and the book is loaded fresh at every scan — which is
+ * the point of the source. A chat book is the one body of world info a card
+ * writes *during play* (`getOrCreateChatWorldbook`), so a resolution taken when
+ * the chat opened would miss every entry the card added since.
+ */
+export interface ChatLoreBook {
+  /** The book's name, as `chat_metadata.world_info` spells it. */
+  world: string
+  /** Its entries, normalized. */
+  entries: LorebookEntry[]
+}
 
 /**
  * The preset used when the composition names none.
@@ -84,6 +103,29 @@ export interface PromptInput {
   /** Sticky and cooldown windows carried from the previous turn. */
   timedEffects?: TimedEffectState
   /**
+   * The chat-bound book's entries, read fresh per assembly by the caller.
+   *
+   * Upstream assembles `[...chatLore, ...personaLore, ...rest]` — chat lore
+   * first, ahead of the strategy ordering — so these entries compete for budget
+   * before everything else. Absent means the chat binds no book, which is the
+   * normal state.
+   */
+  chatLore?: readonly ChatLoreBook[]
+  /**
+   * The scan knobs, from the stored world-info settings.
+   *
+   * Absent fields take the engine's defaults, which are ST's shipped values —
+   * so an absent argument is the same answer a fresh installation gives, and a
+   * caller that has settings passes them through untouched.
+   */
+  activationSettings?: Partial<ActivationSettings>
+  /**
+   * How the global and character books interleave, from the same stored
+   * settings. Defaults to `character_first`, which is both ST's shipped value
+   * and the measured installation's.
+   */
+  insertionStrategy?: InsertionStrategy
+  /**
    * The chat's own macro expander, replacing the one built here.
    *
    * Supplied so that Tavern Helper's `{{get_*_variable::}}` and
@@ -116,52 +158,106 @@ function roleOf(value: number): Role {
 }
 
 /**
- * Flatten a card's book into the scan list.
+ * Flatten every open book into the scan list, in upstream's order.
  *
- * The engine takes the order as given and only re-sorts by `order` when it
- * buckets the winners, so the caller's ordering is what breaks activation ties.
- * Descending `order` puts the entries an author weighted highest in front,
- * which is the behaviour an author expects from the field they set.
+ * A transcription of `getSortedEntries` (`world-info.js:4478`) rather than an
+ * interpretation of it, because order is behaviour twice over: it breaks
+ * activation ties, and it decides who reaches the budget first.
+ *
+ * The rules, in order:
+ *
+ * 1. **Chat lore first, unconditionally** — upstream's own comment says so
+ *    (`world-info.js:4512`). A chat book's entries compete for budget ahead of
+ *    every other source.
+ * 2. Then the strategy result, and the strategy orders **only** the global and
+ *    character books. `character_first` sorts each group separately and
+ *    concatenates, so *every* character entry precedes *every* global one
+ *    however their `order` fields compare; `evenly` and `global_first` sort the
+ *    concatenation, where ties go to whichever source was concatenated first.
+ * 3. Ties inside a sort keep insertion order — the sort is stable and upstream
+ *    adds no tiebreak. The `uid` tiebreak an earlier version appended here was
+ *    a tidiness the upstream does not have.
+ *
+ * The per-source dedup guards travel with their sources (`getChatLore` and
+ * `getCharacterLore`, `world-info.js:4380-4449`): a chat book already globally
+ * selected is skipped, and a character book is skipped when it is globally
+ * selected **or** is the chat's book. Persona lore is absent — Iris has no
+ * persona store yet — so its guard has nothing to guard.
  * @param card - the character whose book to read.
- * @returns scan entries, or an empty list when the card ships no book.
+ * @param chosen - the resolved named/embedded book plus the global selection.
+ * @param chatLore - the chat-bound book's entries, read fresh by the caller.
+ * @param strategy - the stored insertion strategy.
+ * @returns scan entries, or an empty list when nothing is open.
  */
-export function scanEntriesOf(card: CharacterCard | undefined, chosen?: ResolvedWorldbook): ScanEntry[] {
-  let entries: ScanEntry[]
-  if (chosen !== undefined) {
-    // Character's own book first, then the globally selected ones. That is
-    // upstream's `character_first` strategy (`world_info_character_strategy`),
-    // which is the value the measured installation carries. Each book keeps its
-    // own name, because `getwi(name, …)` matches on it and a globally selected
-    // book is not the character's.
-    //
-    // **`ChatEntry.initVars` builds the same list in the opposite order, and
-    // that is not a typo in either place.** Prompt assembly is character-first
-    // by the installation's strategy setting; `[InitVar]` seeding is global-first
-    // because MVU's `getEnabledLorebookList` hardcodes
-    // `[...selected_global_lorebooks, primary, ...additional]`
-    // (`MagVarUpdate/src/function/initvar/variable_init.ts:230`), so a global
-    // book's declaration folds first and the character's wins on overlap. Two
-    // upstream decisions, made in different code for different reasons.
-    // Reconciling them would look like tidying and would change behaviour.
-    entries = [
-      ...chosen.entries.map(entry => ({ ...entry, world: chosen.world })),
-      ...chosen.global.flatMap(book => book.entries.map(entry => ({ ...entry, world: book.world }))),
-    ]
-  } else {
-    // No resolver: the embedded book, which is what a caller with no world book
-    // store can see. A host always passes `chosen`.
+export function scanEntriesOf(
+  card: CharacterCard | undefined,
+  chosen?: ResolvedWorldbook,
+  chatLore: readonly ChatLoreBook[] = [],
+  strategy: InsertionStrategy = 'character_first',
+): ScanEntry[] {
+  // Without a resolver this is the embedded book, which is what a caller with
+  // no world book store can see. A host always passes `chosen`.
+  const embedded = (): { entries: ScanEntry[], world: string } => {
     const book = card?.data.character_book
-    if (book === undefined) return []
+    if (book === undefined) return { entries: [], world: card?.data.name ?? 'character book' }
     try {
       const world = card?.data.name ?? 'character book'
-      entries = Object.values(fromCharacterBook(book).entries).map(entry => ({ ...entry, world }))
+      return { entries: Object.values(fromCharacterBook(book).entries).map(entry => ({ ...entry, world })) , world }
     } catch {
       // A book Iris cannot read is a reason to play the character without it,
       // not a reason to refuse the chat.
-      return []
+      return { entries: [], world: card?.data.name ?? 'character book' }
     }
   }
-  return entries.sort((a, b) => b.order - a.order || a.uid - b.uid)
+
+  const characterEntries: ScanEntry[] = chosen !== undefined
+    ? chosen.entries.map(entry => ({ ...entry, world: chosen.world }))
+    : embedded().entries
+  const characterWorld = chosen !== undefined ? chosen.world : (card?.data.name ?? 'character book')
+  const globalEntries: ScanEntry[] = chosen !== undefined
+    ? chosen.global.flatMap(book => book.entries.map(entry => ({ ...entry, world: book.world })))
+    : []
+
+  // The dedup guards, each cutting its own source exactly as its upstream
+  // getter does. A chat book already globally selected is skipped here — that
+  // is `getChatLore`'s guard; a character book that is globally selected or *is*
+  // the chat's book never reaches the sort at all, which is `getCharacterLore`'s
+  // (`world-info.js:4387-4396`). A source that loses its guard contributes no
+  // entries, rather than contributing entries that lose their `world` tag.
+  const globalNames = new Set(chosen?.global.map(book => book.world) ?? [])
+  const chatNames = new Set(chatLore.map(book => book.world))
+  const chatBooks = chatLore.filter(book => !globalNames.has(book.world))
+  const characterEntriesAdmitted = globalNames.has(characterWorld) || chatNames.has(characterWorld)
+    ? []
+    : characterEntries
+
+  // `sortFn` upstream: descending `order`, stable, no tiebreak. Array sort is
+  // stable in every runtime this runs on.
+  const byOrder = (a: ScanEntry, b: ScanEntry): number => b.order - a.order
+
+  // The strategy switch, spelled exactly as upstream's (`world-info.js:4496`):
+  // which arrays are sorted *before* concatenation is the whole difference
+  // between the three values.
+  let ordered: ScanEntry[]
+  switch (strategy) {
+    case 'character_first':
+      ordered = [...characterEntriesAdmitted].sort(byOrder).concat([...globalEntries].sort(byOrder))
+      break
+    case 'global_first':
+      ordered = [...globalEntries].sort(byOrder).concat([...characterEntriesAdmitted].sort(byOrder))
+      break
+    case 'evenly':
+    default:
+      // Upstream's default branch also logs an error and falls back here, for
+      // any strategy value it does not know.
+      ordered = [...globalEntries, ...characterEntriesAdmitted].sort(byOrder)
+      break
+  }
+
+  // Chat lore always goes first, then persona lore, then the rest
+  // (`world-info.js:4513`). Persona lore: no persona store yet.
+  const chatEntries = chatBooks.flatMap(book => book.entries.map(entry => ({ ...entry, world: book.world })))
+  return [...chatEntries.sort(byOrder), ...ordered]
 }
 
 /** Join a bucket's entries into one block of prompt text. */
@@ -212,12 +308,15 @@ export function buildPrompt(input: PromptInput): PromptResult {
   const expand = input.substitute ?? ((text: string): string => expandMacros(text, macros))
 
   const scan = activateEntries({
-    entries: scanEntriesOf(input.card, input.worldbook),
+    entries: scanEntriesOf(input.card, input.worldbook, input.chatLore, input.insertionStrategy),
     // The engine wants the conversation newest-first, the order ST scans in.
     chat: [...input.history].reverse().map(entry => entry.text),
     budget: input.worldInfoBudget,
     countTokens: input.count,
     substituteMacros: expand,
+    // The stored scan knobs, resolved over defaults by the caller. Absent
+    // fields fall back to ST's shipped values inside the engine.
+    ...input.activationSettings === undefined ? {} : { settings: input.activationSettings },
     ...input.timedEffects === undefined ? {} : { timedEffects: input.timedEffects },
     globalScanData: {
       characterDescription: input.card?.data.description ?? '',

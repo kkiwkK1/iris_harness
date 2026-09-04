@@ -1314,3 +1314,38 @@ reports that the floor was pruned rather than answering a bare empty table.
 a faithful reproduction — upstream stores a table per message and would answer
 with the user row's own. It is listed here only as the contrast: the two look
 alike from a bug report, and they belong in opposite columns.
+
+
+## 世界书机制补全（2026-09-04，任务 L）——三处向 ST 真值回归的修正，一处实测发现
+
+本节记录的是**对本仓既有行为的修正**，不是对上游的偏离；写在这里是因为三处都改变了
+已经跑过的路径上的可观察行为，读旧日志的人需要知道分界线。
+
+**一、扫描默认 `matchWholeWords` 从 `true` 改回 ST 的 `false`。** 引擎
+（`defaultActivationSettings`）与直呼 `matchKey` 的缺省曾是 `true`，而卡面
+`getLorebookSettings()` 一直报上游默认 `false`——同一台机器上两层对同一个设置给出
+相反答案，书是按 ST 调的，条目在此静默欠触发。现在存档设置是唯一真值，引擎、卡面、
+面板三方读同一张表，缺省与上游一致（`world-info.js:69-82`）。**行为变化**：以前靠
+整词边界挡住的误触发会回来，这是上游行为，不是回归。
+
+**二、世界书扫描设置成为真实存储。** 此前引擎跑死缺省、卡面报上游缺省、面板不存在，
+`world_info_budget_cap` 完全不生效（预算恒为 contextWindow × 25% 的硬编码份额）。
+现在 `settings.json` 的 `worldbooks` 节持有全部扫描旋钮，经 `worldbook.settings` /
+`worldbook.setSettings` 读写，`computeBudget` 落预算与上限。**顺带修掉一个存储缺陷**：
+`SettingsStore.load()` 重建文件态时丢弃 `worldbooks` 节，全局选择只在进程内存里活着，
+一次重启即静默清空——`tests/worldbook-settings.test.ts` 钉住。
+
+**三、插入顺序按 `getSortedEntries` 全量对齐。** 旧实现把角色书与全局书拼成一张表后
+做**单次** `order` 降序排序（外加 uid 决胜）——既不是 `character_first` 也不是
+`evenly`，是任何上游值都产不出的第三种顺序：全局书里 order 更高的条目会插到角色条目前面。
+现按上游三分支逐一转写：`character_first`/`global_first` 先组内排序再拼接（整组相续），
+`evenly` 拼接后排序（并列归先拼接的一方，上游数组顺序是全局在前），去掉 uid 决胜改用
+稳定排序。同书内并列的次序来自文件的键序，与上游读 `Object.keys` 的次序一致。
+
+**实测发现（未改，待裁）：新近一条用户消息在本卡上不进扫描窗。** 哈人冰恋世界
+（107 条目书）实测：首条用户消息含关键词（如「历史」）时不触发，第二条用户消息进入
+后（关键词落到深度 ≥1）触发正常。成因不是激活引擎——同一本书、同一个键直呼引擎
+2 条即中——而是 `#history` 先跑卡面 prompt 正则再给扫描（既定裁决「扫描不匹配正则
+即将剥掉的块」），而该卡的 prompt 正则恰好把最新一条用户输入从提示词里剥掉（其玩法
+就是首楼输入被界面吃掉）。ST 扫的是未过正则的原文，此处是 Iris 既有的投影裁决在此卡
+上的可见代价；是否改为「世界书扫原文」属跨任务裁定，未动。

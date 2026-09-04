@@ -67,6 +67,7 @@ export type {
   ViewRole,
   WorldbookEntry,
   WorldbookPosition,
+  WorldbookSettingsView,
 } from './views.ts'
 
 /**

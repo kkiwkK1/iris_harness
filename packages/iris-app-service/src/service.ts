@@ -20,6 +20,7 @@ import { BlockAssembler, createAssistantMessage, createUserMessage, type Generat
 import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, selectCandidate, SwipeError } from '@iris/chat'
 import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
+import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset } from '@iris/preset'
 import type { ChatView, GenerationSettings, IrisEvent, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
@@ -33,9 +34,11 @@ import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } fr
 import { ConnectionStore } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
+import { writeTimedEffects } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
 import { charWorldbookNames, WorldbookStore } from './worldbooks.ts'
+import { activationSettingsOf } from './worldbook-settings.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
@@ -54,15 +57,6 @@ import { textOf } from './views.ts'
 
 /** Provenance stamped on a partial reply the user stopped. */
 const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
-
-/**
- * Share of the context window world info may spend.
- *
- * SillyTavern's own default. Worth keeping: an unbudgeted book quietly eats the
- * conversation, and the symptom — the model forgetting the last ten messages —
- * looks nothing like its cause.
- */
-const WORLD_INFO_BUDGET_SHARE = 0.25
 
 /** Every method, keyed by name. */
 export type Handlers = {
@@ -668,7 +662,7 @@ export class IrisAppService {
         // A record when there is one, a preview otherwise — including for a turn
         // whose record went when the chat last closed. `preview` says which.
         const recorded = turn === undefined ? undefined : entry.itemizations.get(turn)
-        return { itemization: recorded ?? this.#previewItemization(entry) }
+        return { itemization: recorded ?? await this.#previewItemization(entry) }
       },
 
       'script.getVariables': async ({ chatId, scope, messageId, scriptId }) => {
@@ -853,6 +847,39 @@ export class IrisAppService {
         if (worldbooks === undefined) throw notFound(`world book "${name}"`)
         return { entries: await worldbooks.replace(name, entries) }
       },
+      // Upstream's `createWorldbook` answers existence with `false` rather than
+      // an error — get-or-create is the pattern cards write, and a race between
+      // two scripts is a normal outcome, not a failure. A host with no store has
+      // no books, so no name can be created: refused, not answered false, on the
+      // same line every other write here is drawn.
+      'worldbook.create': async ({ name, entries }) => {
+        if (worldbooks === undefined) throw notFound(`world book "${name}"`)
+        if ((await worldbooks.names()).includes(name)) return { created: false }
+        await worldbooks.create(name, entries ?? [])
+        return { created: true }
+      },
+      // Upstream's `setChatLorebook`. The name must resolve before it is bound:
+      // a binding with no file behind it makes every later scan silently skip
+      // the chat book, which reads as a book that activates nothing. Clearing is
+      // expressed as `null`, upstream's own `else` branch.
+      'worldbook.bindChat': async ({ chatId, name }) => {
+        if (name !== null) {
+          if (worldbooks === undefined) throw notFound(`world book "${name}"`)
+          if (!(await worldbooks.names()).includes(name)) throw notFound(`world book "${name}"`)
+        }
+        const entry = await chats.open(chatId)
+        if (name === null) delete entry.header.chat_metadata['world_info']
+        else entry.header.chat_metadata['world_info'] = name
+        entry.touch()
+        await chats.save(entry)
+        this.#options.broadcast({ type: 'chat.updated', chatId, view: entry.toView() })
+        const bound = entry.header.chat_metadata['world_info']
+        return { name: typeof bound === 'string' ? bound : null }
+      },
+      'worldbook.settings': async () => ({ settings: this.#options.settings.worldbookSettings() }),
+      'worldbook.setSettings': async patch => ({
+        settings: await this.#options.settings.setWorldbookSettings(patch),
+      }),
       'worldbook.charNames': async ({ characterId }) => {
         const card = await library.load(characterId)
         return charWorldbookNames(card)
@@ -957,6 +984,12 @@ export class IrisAppService {
             // partition read whole would hand one card another's panel state.
             scriptButtons: await this.#options.scriptButtons?.all(characterId) ?? {},
             globalSelect: settings.globalSelect(),
+            // The name list backs the synchronous `getWorldbookNames()` and the
+            // existence guard on `getChatWorldbookName()`; the stored scan knobs
+            // back `getLorebookSettings()`, which must answer what the engine
+            // actually runs rather than what a fresh install would run.
+            worldbookNames: await worldbooks?.names() ?? [],
+            worldbookSettings: settings.worldbookSettings(),
             ...cardStorage === undefined ? {} : { storage: await cardStorage.snapshot() },
             characters: await library.list(),
             ...messageId === undefined ? {} : { messageId },
@@ -1379,13 +1412,17 @@ export class IrisAppService {
    * @param count - the token counter the budget uses.
    * @returns the contributions for this generation.
    */
-  #contributions(
+  async #contributions(
     entry: ChatEntry,
     session: Session,
     count: (text: string) => number,
     record = true,
-  ): Contribution[] {
+  ): Promise<Contribution[]> {
     const names = entry.names
+    // The scan knobs, read per assembly: the settings file can change while the
+    // host runs, and a chat opened before the change must still scan with what
+    // the user set, not with what was set when the chat was opened.
+    const worldbookSettings = this.#options.settings.worldbookSettings()
     const built = buildPrompt({
       card: entry.card,
       ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
@@ -1396,11 +1433,18 @@ export class IrisAppService {
       // keyword inside a block the prompt scripts are about to strip.
       history: this.#history(entry, session),
       count,
-      worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
+      // `world_info_budget` and `world_info_budget_cap`, translated by
+      // `computeBudget` — the same percentage-of-context arithmetic upstream
+      // runs. The fixed 25% share this call site used to hard-code is the
+      // setting's own default, so a fresh installation computes the same number.
+      worldInfoBudget: computeBudget(this.#options.contextWindow, worldbookSettings.budgetPercent, worldbookSettings.budgetCap),
       // The chat's expander, so the card's own variable macros resolve against
       // this chat's state rather than being sent as braces.
       substitute: entry.substitute,
       ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
+      activationSettings: activationSettingsOf(worldbookSettings),
+      insertionStrategy: worldbookSettings.insertionStrategy,
+      chatLore: await this.#chatLore(entry),
     })
     // Carried forward, or a sticky entry would re-open its window every turn and
     // a cooldown would never elapse — the state exists precisely to span turns.
@@ -1411,7 +1455,14 @@ export class IrisAppService {
     // show up turns later as world info that stopped appearing. The same shape
     // as a preview that writes — a read-only path quietly changing chat state —
     // only hidden inside world-info timing instead of a variable table.
-    if (record) entry.timedEffects = built.timedEffects
+    if (record) {
+      entry.timedEffects = built.timedEffects
+      // Mirrored into the chat header, under the key upstream uses, so the
+      // windows ride the next save the way every other piece of chat metadata
+      // does. A restart without this would silently reset every sticky and
+      // cooldown window in every conversation.
+      writeTimedEffects(entry.header.chat_metadata, built.timedEffects)
+    }
 
     const contributions = [...built.contributions, ...injectedContributions(entry)]
 
@@ -1431,6 +1482,42 @@ export class IrisAppService {
     }
 
     return contributions
+  }
+
+  /**
+   * The chat-bound world book, read fresh for every assembly.
+   *
+   * `chat_metadata.world_info` holds a book **name**; the file is loaded here,
+   * per generation, because this is the one body of world info a card writes
+   * during play — `getOrCreateChatWorldbook` mints it and
+   * `createWorldbookEntries` appends to it, and a resolution taken at chat-open
+   * time would never see any of that.
+   *
+   * Upstream's guard is reproduced (`getChatLore`, `world-info.js:4430`): the
+   * key is only honoured when the named file exists (a failed read is a skip,
+   * not an error), and a chat book that is also globally selected is skipped —
+   * global wins that overlap. When the chat book *is* the character's bound
+   * book, upstream drops the character side instead ("already activated in chat
+   * lore! Skipping...", `world-info.js:4392`), and that guard lives in
+   * `scanEntriesOf`, where both sides are visible at once.
+   * @param entry - the conversation.
+   * @returns zero or one book; the key holds a single name upstream.
+   */
+  async #chatLore(entry: ChatEntry): Promise<{ world: string, entries: LorebookEntry[] }[]> {
+    if (this.#options.worldbooks === undefined) return []
+    const name = entry.header.chat_metadata['world_info']
+    if (typeof name !== 'string' || name === '') return []
+
+    if (this.#options.settings.globalSelect().includes(name)) return []
+
+    try {
+      const book = await this.#options.worldbooks.read(name)
+      return [{ world: name, entries: Object.values(book.entries) }]
+    } catch {
+      // Deleted, or never existed under this name. Upstream checks the key
+      // against `world_names` and silently ignores a miss; so does this.
+      return []
+    }
   }
 
   /** The budget every assembly for this host runs under. */
@@ -1468,9 +1555,10 @@ export class IrisAppService {
    * @param entry - the conversation.
    * @returns the itemization of a request that has not been sent.
    */
-  #previewItemization(entry: ChatEntry): PromptItemization {
+  async #previewItemization(entry: ChatEntry): Promise<PromptItemization> {
     const count = (text: string): number => this.#counter.count(text)
     const names = entry.names
+    const worldbookSettings = this.#options.settings.worldbookSettings()
     const built = buildPrompt({
       card: entry.card,
       ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
@@ -1479,12 +1567,15 @@ export class IrisAppService {
       characterName: names.character,
       history: this.#history(entry, entry.session),
       count,
-      worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
+      worldInfoBudget: computeBudget(this.#options.contextWindow, worldbookSettings.budgetPercent, worldbookSettings.budgetCap),
       // The preview has to show what would actually be sent, macros included —
       // an itemization that still holds `{{format_message_variable::…}}` would
       // hide precisely the defect this seam exists to prevent.
       substitute: entry.substitute,
       ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
+      activationSettings: activationSettingsOf(worldbookSettings),
+      insertionStrategy: worldbookSettings.insertionStrategy,
+      chatLore: await this.#chatLore(entry),
     })
     const contributions = [...built.contributions, ...injectedContributions(entry)]
     const result = assemble({
@@ -1570,7 +1661,7 @@ export class IrisAppService {
     const kept = maxHistory === undefined ? history : history.slice(Math.max(0, history.length - maxHistory))
 
     const result = assemble({
-      contributions: this.#contributions(entry, entry.session, count, false),
+      contributions: await this.#contributions(entry, entry.session, count, false),
       history: [...kept, { role: 'user' as const, text: userInput }],
       budget: this.#budget(count),
     })

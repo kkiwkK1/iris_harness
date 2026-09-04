@@ -24,6 +24,7 @@ import { ConnectionPanel } from './ConnectionPanel.tsx'
 import { HostReports } from './HostReports.tsx'
 import { NoticeLog } from './NoticeLog.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
+import { WorldbookPanel } from './WorldbookPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
 import { READING_LIMITS, type ReadingPrefs, type ThemeChoice } from '../theme/theme.ts'
@@ -271,6 +272,16 @@ export function SettingsDrawer({
         </Section>
 
         <ScriptPanel />
+
+        {/*
+          The world books panel, beside the script panel because it answers the
+          same kind of question from the other side: what shapes the model's
+          view of this scene. Its data is installation-wide rather than per
+          chat, which is why it sits outside the `settings === undefined`
+          branch — like the host reports below, it is meaningful with no
+          conversation open at all.
+        */}
+        <WorldbookPanel />
 
         {/*
           The host's own reports, **outside** the `settings === undefined`

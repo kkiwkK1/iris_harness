@@ -535,3 +535,150 @@ test('a host that answers with nothing yields no entries rather than throwing', 
   const book = await (scope.api['getWorldbook'] as GetWorldbook)('book')
   assert.deepEqual(book, [])
 })
+
+
+/*
+ * The chat-book and creation family.
+ *
+ * 神隐挑战 V1.5.4 mints a chat world book at runtime (`getOrCreateChatWorldbook`)
+ * and appends entries to it while playing (`createWorldbookEntries`); 2.png calls
+ * `getWorldbookNames`. Before this family existed those names answered nothing,
+ * and a card whose engine writes its own lore played in a world that could not
+ * grow.
+ */
+
+/** A façade whose snapshot carries the given chat book and name list. */
+function withSnapshot(fields: {
+  worldbookNames?: string[]
+  chatMetadata?: Record<string, unknown>
+  chatId?: string
+}) {
+  const calls: { method: string, params: Record<string, unknown> }[] = []
+  const answers = new Map<string, unknown>([
+    // `worldbook.create` reports true (created) — overridable per test.
+    ['createWorldbook', { created: true }],
+    ['rebindChatWorldbook', { name: null }],
+  ])
+  const api = createFrameTavernHelper({
+    context: () => ({
+      ...context(),
+      chatId: fields.chatId ?? 'chat-1',
+      ...(fields.worldbookNames === undefined ? {} : { worldbookNames: fields.worldbookNames }),
+      chatMetadata: { ...(fields.chatMetadata ?? {}) },
+    }),
+    scriptId: () => undefined,
+    reportGap: () => undefined,
+    reportFault: () => undefined,
+    adoptVariables: () => undefined,
+    call: async (method, params) => {
+      calls.push({ method, params })
+      if (answers.has(method)) return answers.get(method)
+      return undefined
+    },
+    triggerSlash: async () => '',
+    events: new EventBus(),
+  })
+  return {
+    api,
+    calls,
+    answer(method: string, value: unknown): void {
+      answers.set(method, value)
+    },
+  }
+}
+
+test('getWorldbookNames is synchronous and answered from the snapshot', () => {
+  const scope = withSnapshot({ worldbookNames: ['Eldoria', '创世回廊1.3'] })
+  const names = (scope.api['getWorldbookNames'] as () => string[])()
+
+  assert.equal(names instanceof Promise, false, 'upstream’s member is synchronous; a promise here hands awaited callers nothing')
+  assert.deepEqual(names, ['Eldoria', '创世回廊1.3'])
+})
+
+test('getChatWorldbookName honours the same existence guard upstream applies', () => {
+  // Upstream (`lorebook.ts:317`) only reports the key while the named file
+  // exists; a dangling key reads as unbound rather than as an error.
+  const scope = withSnapshot({
+    worldbookNames: ['Living'],
+    chatMetadata: { world_info: 'Dangling' },
+  })
+  const read = scope.api['getChatWorldbookName'] as (name?: string) => string | null
+  assert.equal(read('current'), null, 'a dangling binding is not a book')
+
+  const living = withSnapshot({
+    worldbookNames: ['Living'],
+    chatMetadata: { world_info: 'Living' },
+  })
+  assert.equal((living.api['getChatWorldbookName'] as (name?: string) => string | null)('current'), 'Living')
+
+  const unbound = withSnapshot({ chatMetadata: {} })
+  assert.equal((unbound.api['getChatWorldbookName'] as (name?: string) => string | null)('current'), null)
+})
+
+test('getOrCreateChatWorldbook mints upstream’s name and binds it', async () => {
+  const scope = withSnapshot({ chatId: '又看一集 1', worldbookNames: [] })
+
+  const name = await (scope.api['getOrCreateChatWorldbook'] as (chat: 'current', book?: string) => Promise<string>)('current')
+
+  // Upstream's exact recipe, `lorebook.ts:354`: "Chat Book <chatId>", every
+  // non-alphanumeric run collapsed to one underscore, cut at 64 characters.
+  // "又看一集 1" carries four Han characters and two spaces — five underscores
+  // in a row once the space between them is folded in, one after collapsing.
+  // A differently-minted name would never match the one a card went looking for
+  // in chat metadata.
+  assert.equal(name, 'Chat_Book_1')
+  const create = scope.calls.find(call => call.method === 'createWorldbook')
+  const bind = scope.calls.find(call => call.method === 'rebindChatWorldbook')
+  assert.ok(create !== undefined, 'the book must be created before it can be bound')
+  assert.ok(bind !== undefined, 'creating alone leaves the chat unbound')
+  assert.equal((bind?.params as { name?: string }).name, name)
+})
+
+test('getOrCreateChatWorldbook returns an existing binding without writing', async () => {
+  const scope = withSnapshot({
+    worldbookNames: ['Chat Book_x'],
+    chatMetadata: { world_info: 'Chat Book_x' },
+  })
+
+  const name = await (scope.api['getOrCreateChatWorldbook'] as (chat: 'current', book?: string) => Promise<string>)('current')
+  assert.equal(name, 'Chat Book_x')
+  assert.deepEqual(scope.calls, [], 'an existing binding is returned as-is')
+})
+
+test('a caller-supplied name that already exists is an error, as upstream throws', async () => {
+  const scope = withSnapshot({ worldbookNames: ['Taken'] })
+  scope.answer('createWorldbook', { created: false })
+
+  await assert.rejects(
+    (scope.api['getOrCreateChatWorldbook'] as (chat: 'current', book?: string) => Promise<string>)('current', 'Taken'),
+    /already exists/u,
+  )
+})
+
+test('createWorldbookEntries appends and reports the stored tail', async () => {
+  const stored = [entry(['a']), entry(['b']), entry(['c'])]
+  const scope = withSnapshot({ worldbookNames: ['Chat Book_x'] })
+  // `worldbook.get` answers the two entries already in the book; the host's
+  // replace answers with the re-read book, which now holds three.
+  scope.answer('getWorldbook', { entries: [stored[0], stored[1]] })
+  scope.answer('replaceWorldbook', { entries: stored })
+
+  const result = await (scope.api['createWorldbookEntries'] as (
+    name: string,
+    entries: unknown[],
+  ) => Promise<{ worldbook: unknown[], new_entries: unknown[] }>)('Chat Book_x', [{ uid: 9 }])
+
+  assert.equal(result.worldbook.length, 3, 'the whole book, as stored, is returned')
+  assert.equal(result.new_entries.length, 1, 'the tail is the newly added entries')
+  const replace = scope.calls.find(call => call.method === 'replaceWorldbook')
+  assert.ok(replace !== undefined)
+  assert.equal((replace.params as { entries: unknown[] }).entries.length, 3, 'the write carries existing entries plus the append')
+})
+
+test('a non-current chat or book argument is refused by name', async () => {
+  const scope = withSnapshot({})
+  const chatName = scope.api['getChatWorldbookName'] as (name?: string) => string | null
+  assert.throws(() => chatName('other chat'), /current/u)
+  const bind = scope.api['rebindChatWorldbook'] as (chat: 'current', name: string | null) => Promise<void>
+  await assert.rejects(bind('other chat' as 'current', 'x'), /current/u)
+})

@@ -286,6 +286,16 @@ test('exactly the outward-reaching names are shadowed', () => {
     'getWorldbook',
     'replaceWorldbook',
     'updateWorldbookWith',
+    // The chat-book and creation family, added for the card that mints a chat
+    // world book at runtime and appends entries to it while playing.
+    'getWorldbookNames',
+    'getGlobalWorldbookNames',
+    'getChatWorldbookName',
+    'rebindChatWorldbook',
+    'rebindGlobalWorldbooks',
+    'createWorldbook',
+    'getOrCreateChatWorldbook',
+    'createWorldbookEntries',
     'swipeTo',
     'generate',
     'generateRaw',
@@ -741,6 +751,16 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'getWorldbook',
     'replaceWorldbook',
     'updateWorldbookWith',
+    // The chat-book and creation family, added for the card that mints a chat
+    // world book at runtime and appends entries to it while playing.
+    'getWorldbookNames',
+    'getGlobalWorldbookNames',
+    'getChatWorldbookName',
+    'rebindChatWorldbook',
+    'rebindGlobalWorldbooks',
+    'createWorldbook',
+    'getOrCreateChatWorldbook',
+    'createWorldbookEntries',
     'swipeTo',
     'generate',
     // The caller-ordered generate, now on the bare surface where a card's

@@ -176,6 +176,20 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
    */
   replaceWorldbook: 'shared',
   updateWorldbookWith: 'shared',
+  /*
+   * The chat-book and creation family, shared for the same reason the reads and
+   * writes above are: a book, a binding and the name list all belong to the
+   * card's installation, and two scripts of one card asking must see — and
+   * write — the same one. None carries a scope or a script id.
+   */
+  getWorldbookNames: 'shared',
+  getGlobalWorldbookNames: 'shared',
+  rebindGlobalWorldbooks: 'shared',
+  getChatWorldbookName: 'shared',
+  rebindChatWorldbook: 'shared',
+  getOrCreateChatWorldbook: 'shared',
+  createWorldbook: 'shared',
+  createWorldbookEntries: 'shared',
   generate: 'shared',
   /**
    * The caller-ordered generate. `shared` for the same reason `generate` is:

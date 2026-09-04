@@ -15,6 +15,8 @@
  * @module @iris/app-service/lorebook-settings
  */
 
+import { resolveWorldbookSettings, type WorldbookSettings } from './worldbook-settings.ts'
+
 /** How the character's books and the global ones are interleaved. */
 export type InsertionStrategy = 'evenly' | 'character_first' | 'global_first'
 
@@ -78,17 +80,37 @@ export const UPSTREAM_DEFAULTS: Omit<LorebookSettings, 'selected_global_lorebook
 /**
  * The settings as this host can answer them.
  *
- * Only `selected_global_lorebooks` is a real Iris setting today; the rest are
- * upstream's defaults. That is stated rather than hidden: a card reading
- * `scan_depth` gets the number SillyTavern would have given it, and when Iris
- * grows a real setting for one of these, the value moves without the field
- * appearing or changing shape.
+ * Every numeric and boolean field now reads the **stored** world-info settings
+ * (`worldbook-settings.ts`) merged over upstream's defaults — so a scan depth
+ * the user set is the scan depth the card is told, which is the same scan depth
+ * the engine runs. Before the store existed this table reported the defaults
+ * while the engine ran its own, and on `match_whole_words` the two disagreed;
+ * that split is what wiring both sides to one store removes.
  * @param globalSelect - the globally selected book names.
+ * @param stored - the host's stored settings; absent means defaults.
  * @returns a fresh object each call, so a card scribbling on it changes nothing.
  */
-export function lorebookSettings(globalSelect: readonly string[]): LorebookSettings {
+export function lorebookSettings(
+  globalSelect: readonly string[],
+  stored?: Partial<WorldbookSettings>,
+): LorebookSettings {
+  const effective = resolveWorldbookSettings(stored)
   return {
     selected_global_lorebooks: [...globalSelect],
-    ...UPSTREAM_DEFAULTS,
+    scan_depth: effective.scanDepth,
+    context_percentage: effective.budgetPercent,
+    budget_cap: effective.budgetCap,
+    min_activations: effective.minActivations,
+    max_depth: effective.minActivationsDepthMax,
+    max_recursion_steps: effective.maxRecursionSteps,
+    insertion_strategy: effective.insertionStrategy,
+    recursive: effective.recursive,
+    case_sensitive: effective.caseSensitive,
+    match_whole_words: effective.matchWholeWords,
+    use_group_scoring: effective.useGroupScoring,
+    // Not stored (see `worldbook-settings.ts` for why each is out), reported at
+    // the value upstream ships so a card reading either gets ST's answer.
+    include_names: UPSTREAM_DEFAULTS.include_names,
+    overflow_alert: UPSTREAM_DEFAULTS.overflow_alert,
   }
 }

@@ -15,6 +15,7 @@ import { dirname } from 'node:path'
 import type { GenerationSettings } from '@iris/protocol'
 
 import { invalid } from './errors.ts'
+import { resolveWorldbookSettings, sanitizeWorldbookSettings, type WorldbookSettings } from './worldbook-settings.ts'
 
 /** Numeric sampling fields, with the range each is accepted in. */
 const NUMERIC_FIELDS = {
@@ -42,7 +43,11 @@ interface SettingsFile {
    * names is neither. Upstream keeps this apart too — `globalSelect` lives
    * under `world_info_settings.world_info`, not beside the sampler.
    */
-  worldbooks?: { globalSelect: string[] }
+  worldbooks?: {
+    globalSelect: string[]
+    /** The scan knobs, stored only when the user has set at least one. */
+    settings?: Partial<WorldbookSettings>
+  }
 }
 
 /** Fields of {@link GenerationSettings} that may simply be absent. */
@@ -92,6 +97,12 @@ export class SettingsStore {
       this.#file = {
         global: { ...this.#file.global, ...parsed.global },
         chats: parsed.chats ?? {},
+        // Carried through, not derived: **this line is a fix, not a refactor.**
+        // `load` rebuilds `#file` wholesale, and an earlier version stopped at
+        // `chats` — so the `worldbooks` section this store writes survived only
+        // until the next restart, and a user's global selection silently
+        // reset. Whatever the file holds is what the store holds.
+        ...(parsed.worldbooks === undefined ? {} : { worldbooks: parsed.worldbooks }),
       }
     } catch {
       // Keep the defaults.
@@ -174,8 +185,48 @@ export class SettingsStore {
    * @param names - book names, verbatim.
    */
   async setGlobalSelect(names: readonly string[]): Promise<void> {
-    this.#file.worldbooks = { globalSelect: [...names] }
+    // The scan settings inside the section are preserved, not reset: the
+    // selection and the knobs are unrelated facts, and rewriting a selection
+    // must not silently undo a scan depth the user chose.
+    this.#file.worldbooks = {
+      ...this.#file.worldbooks?.settings === undefined ? {} : { settings: this.#file.worldbooks.settings },
+      globalSelect: [...names],
+    }
     await this.save()
+  }
+
+  /**
+   * The world-info settings this host runs its scans on.
+   *
+   * Stored values merged over ST's defaults, so the answer is always complete:
+   * the caller deciding what a scan should do must not have to know which knobs
+   * the user has ever touched.
+   * @returns the effective settings.
+   */
+  worldbookSettings(): WorldbookSettings {
+    return resolveWorldbookSettings(this.#file.worldbooks?.settings)
+  }
+
+  /**
+   * Apply a world-info settings patch and persist it.
+   *
+   * An omitted field leaves the stored value alone; clearing is expressed by
+   * sending the default. The `globalSelect` write above replaces the whole
+   * `worldbooks` section wholesale — wrong for a list of unrelated scan knobs,
+   * which is why this patch keeps the section it was given and amends the
+   * settings block inside it.
+   * @param patch - the fields to change; unknown fields are refused by name.
+   * @returns the effective settings after the change.
+   */
+  async setWorldbookSettings(patch: Record<string, unknown>): Promise<WorldbookSettings> {
+    const set = sanitizeWorldbookSettings(patch)
+    const section = this.#file.worldbooks ?? { globalSelect: [] }
+    this.#file.worldbooks = {
+      ...section,
+      settings: { ...section.settings, ...set },
+    }
+    await this.save()
+    return this.worldbookSettings()
   }
 
   async forget(chatId: string): Promise<void> {

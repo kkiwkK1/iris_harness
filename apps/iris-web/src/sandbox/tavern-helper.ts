@@ -907,6 +907,27 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
   }
 
   /**
+   * The create and rebind arms, as locals.
+   *
+   * Both the members below and `getOrCreateChatWorldbook` — which composes the
+   * two — go through these, so "how a book is created" and "how a chat is bound"
+   * are decided once. A member that reached a sibling through `this` would break
+   * the first time the object was destructured or spread, which is how cards
+   * routinely import these APIs.
+   */
+  const createBook = async (name: string, entries: readonly unknown[] = []): Promise<boolean> => {
+    const answer = await host.call('createWorldbook', {
+      name,
+      entries: entries.map(entry => flattenWorldbookEntry(entry)),
+    })
+    return (answer as { created?: boolean } | undefined)?.created === true
+  }
+
+  const bindChatBook = async (name: string | null): Promise<void> => {
+    await host.call('rebindChatWorldbook', { name })
+  }
+
+  /**
    * One layer of the snapshot, by the name a card uses for it.
    *
    * The layers arrive **unmerged and labelled**, which is the shape that makes
@@ -2189,6 +2210,189 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       const stored = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
       return stored.map(entry => reviveWorldbookKeys(entry))
     },
+    /*
+     * The chat-book and creation family below answers one measured fact:
+     * 神隐挑战 V1.5.4 mints a chat world book at runtime and appends entries to
+     * it (`getOrCreateChatWorldbook` then `createWorldbookEntries`), and 2.png
+     * calls `getWorldbookNames`. Before this family existed those calls hit
+     * nothing, and a card whose game engine writes its own lore played with a
+     * world that could never grow.
+     */
+
+    /**
+     * Every named book this installation has.
+     *
+     * **Synchronous upstream** (`JS-Slash-Runner/src/function/worldbook.ts:23`)
+     * — it reads the in-memory `world_names` list — so this answers from the
+     * pushed snapshot, the way `getCharWorldbookNames` does, and a caller that
+     * does not `await` still gets the array. Copied on the way out for the same
+     * reason that member copies: a card sorting the list in place must not
+     * reorder it under the next reader.
+     */
+    getWorldbookNames: (): string[] => {
+      const names = snapshot('getWorldbookNames').worldbookNames
+      return [...(names ?? [])]
+    },
+
+    /**
+     * The globally selected books.
+     *
+     * Synchronous upstream, so it reads the snapshot's `lorebookSettings` — the
+     * same table `getLorebookSettings()` hands out, whose
+     * `selected_global_lorebooks` is this answer. Absent settings mean a host
+     * that shipped no table, and `[]` is that installation's truth rather than
+     * an invented empty selection.
+     */
+    getGlobalWorldbookNames: (): string[] => {
+      const settings = snapshot('getGlobalWorldbookNames').lorebookSettings
+      return [...(settings?.selected_global_lorebooks ?? [])]
+    },
+
+    /**
+     * The name of the chat's own book, or null.
+     *
+     * Reads `chat_metadata.world_info` from the snapshot and applies the same
+     * existence guard upstream's getter does (`lorebook.ts:317`): the key is
+     * honoured only while the named file exists, and a dangling key reads as
+     * unbound rather than as an error. Upstream also unsets the dangling key it
+     * finds; that write needs a round trip, so this member only refuses to
+     * report it — the next `getOrCreateChatWorldbook` minting a book will not
+     * collide, because the host's create refuses existing names.
+     * @param chatName - upstream's parameter; only `'current'` is served.
+     */
+    getChatWorldbookName: (chatName?: string): string | null => {
+      if (chatName !== 'current') {
+        throw new UnsupportedApiError(
+          'getChatWorldbookName',
+          'Iris only supports \'current\'; a named-chat query needs a synchronous'
+          + ' host read that is not available in a frame.',
+        )
+      }
+      const context = snapshot('getChatWorldbookName')
+      const bound = context.chatMetadata['world_info']
+      if (typeof bound !== 'string' || bound === '') return null
+      return (context.worldbookNames ?? []).includes(bound) ? bound : null
+    },
+
+    /**
+     * Bind — or, with null, unbind — the chat's own book.
+     *
+     * The host refuses a name with no file behind it, which is upstream's
+     * `setChatLorebook` behaviour (`lorebook.ts:331`): a dangling binding would
+     * make every later scan silently skip the chat book.
+     */
+    rebindChatWorldbook: async (chatName: 'current', worldbookName: string | null): Promise<void> => {
+      if (chatName !== 'current') {
+        throw new UnsupportedApiError(
+          'rebindChatWorldbook',
+          'Iris only supports \'current\'; the chat that is open is the one this frame can name.',
+        )
+      }
+      await bindChatBook(worldbookName)
+    },
+
+    /**
+     * Choose the books injected into every chat.
+     *
+     * Upstream writes `world_info.globalSelect` through the settings and saves
+     * debounced; this crosses to the host arm of the same name. Chats already
+     * open keep the selection they resolved with — the host's ruling, which this
+     * member inherits rather than softens.
+     */
+    rebindGlobalWorldbooks: async (worldbookNames: string[]): Promise<void> => {
+      await host.call('rebindGlobalWorldbooks', { names: [...worldbookNames] })
+    },
+
+    /**
+     * Create a book that does not exist yet, reporting rather than throwing.
+     *
+     * Upstream's `createWorldbook` answers `false` for "already there" — the
+     * get-or-create idiom treats that as a normal outcome. The `entries` may be
+     * omitted, which is what the chat-book path wants: a file to bind before
+     * any entry exists to put in it.
+     */
+    createWorldbook: async (name: string, entries: readonly unknown[] = []): Promise<boolean> =>
+      createBook(name, entries),
+
+    /**
+     * The chat's own book, minted when there is none.
+     *
+     * Upstream's `getOrCreateChatLorebook` (`lorebook.ts:339`), step for step:
+     * an existing binding returns as-is; a caller-supplied name must be free;
+     * otherwise the name is minted as `Chat Book <chatId>` with every
+     * non-alphanumeric run collapsed to one underscore and the whole thing cut
+     * at 64 characters — upstream's exact recipe, because the name is stored in
+     * chat metadata and a differently-minted name would simply never match the
+     * one a card went looking for.
+     * @param chatName - upstream's parameter; only `'current'` is served.
+     * @param worldbookName - the name to create when none is bound.
+     * @returns the bound book's name.
+     */
+    getOrCreateChatWorldbook: async (chatName: 'current', worldbookName?: string): Promise<string> => {
+      if (chatName !== 'current') {
+        throw new UnsupportedApiError(
+          'getOrCreateChatWorldbook',
+          'Iris only supports \'current\'; the chat that is open is the one this frame can name.',
+        )
+      }
+      const context = snapshot('getOrCreateChatWorldbook')
+      const bound = context.chatMetadata['world_info']
+      if (typeof bound === 'string' && bound !== '' && (context.worldbookNames ?? []).includes(bound)) {
+        return bound
+      }
+
+      const minted = worldbookName === undefined
+      const name = worldbookName
+        ?? `Chat Book ${context.chatId}`
+          .replace(/[^a-z0-9]/gi, '_')
+          .replace(/_{2,}/g, '_')
+          .substring(0, 64)
+
+      const created = await createBook(name)
+      if (!created) {
+        // Upstream throws this case for a caller-supplied name
+        // (`lorebook.ts:348`). A minted name colliding is possible too — two
+        // chats can sanitize to the same 64 characters — and upstream's
+        // `createNewWorldInfo` refuses it no less; the message is the same
+        // either way, with the name in it so the card can pick another.
+        throw new Error(
+          `getOrCreateChatWorldbook: the world book '${name}' already exists`
+          + (minted ? ' (name minted from the chat id; pass an explicit worldbook_name to choose your own)' : ''),
+        )
+      }
+      await bindChatBook(name)
+      return name
+    },
+
+    /**
+     * Append entries to a book, and say which ones landed.
+     *
+     * Upstream's `createWorldbookEntries` is `updateWorldbookWith` plus a slice:
+     * read, remember the length, append, write whole, and return the re-read
+     * tail. The tail comes from the **re-read**, not from the caller's array —
+     * the host fills in uids and renumbers `displayIndex`, so the entries as
+     * stored are the only ones worth reporting.
+     * @param name - the book's name; it must already exist, as upstream requires.
+     * @param newEntries - the entries to append; only `uid` is required on each.
+     * @param _options - upstream's `{ render }`, accepted and ignored.
+     * @returns the whole book as stored, and the newly added tail.
+     */
+    createWorldbookEntries: async (
+      name: string,
+      newEntries: readonly unknown[],
+      _options?: { render?: 'debounced' | 'immediate' },
+    ): Promise<{ worldbook: CardWorldbookEntry[], new_entries: CardWorldbookEntry[] }> => {
+      const current = await readWorldbook(name)
+      const sliceStart = current.length
+      const answer = await host.call('replaceWorldbook', {
+        name,
+        entries: [...current, ...newEntries].map(entry => flattenWorldbookEntry(entry)),
+      })
+      const stored = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
+      const worldbook = stored.map(entry => reviveWorldbookKeys(entry))
+      return { worldbook, new_entries: worldbook.slice(sliceStart) }
+    },
+
     swipeTo: async (messageId: number, swipeId: number) =>
       // `swipeIndex` on the wire; upstream's parameter is `swipeId`. Renamed at
       // the boundary rather than in either half's own vocabulary.
