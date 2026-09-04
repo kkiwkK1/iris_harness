@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { getActiveResourcesInfo } from 'node:process'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -38,7 +39,60 @@ before(async () => {
 after(async () => {
   await ctx.fiber.dispose()
   await mock.close()
+  // `dispose` resolves before the handles it asked to close are closed: the
+  // webserver's listen socket and the profile's last fs request drain over the
+  // next few event-loop turns. Under `--test-force-exit` the runner calls
+  // `process.exit()` the instant the tests finish, and exiting mid-close trips
+  // libuv's closing-handle assert on Windows (0xC0000409, fail-fast) — the
+  // process dies after reporting success and the file reads as failed. Let the
+  // loop run down to stdio alone first; a forced exit then finds nothing
+  // mid-close, the way every sibling file's exit already is.
+  await quiesce()
 })
+
+/**
+ * Wait until the process's live libuv handles are down to its own stdio, or a
+ * short budget runs out — whichever comes first.
+ *
+ * `dispose` resolves before the handles it asked to close have closed: the
+ * webserver's listen socket and the adapter's keep-alive connections take a
+ * few event-loop turns to finish, and nothing reports them afterwards —
+ * `getActiveResourcesInfo` drops a resource while its close is still in
+ * flight, which reads as clean while it is not. The lower-level handle list is
+ * the honest one. Waiting here matters because under `--test-force-exit` the
+ * runner calls `process.exit()` the instant the tests finish, and exiting
+ * mid-close trips libuv's closing-handle assert on Windows (0xC0000409,
+ * fail-fast) — the process dies after reporting success and the file reads as
+ * failed.
+ *
+ * The budget keeps a genuinely stuck teardown from turning this hook into the
+ * hang `--test-force-exit` exists to prevent.
+ */
+async function quiesce(): Promise<void> {
+  const handles = process as unknown as { _getActiveHandles?: () => unknown[] }
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline) {
+    const remaining = (handles._getActiveHandles?.() ?? [])
+      .map(handle => handle?.constructor?.name ?? 'unknown')
+      .filter(name => name !== 'Pipe' && name !== 'Socket' || true)
+    const busy = remaining.filter(name => /Server|TCP|FSReq|Immediate|Timeout|MessagePort|Worker/i.test(name))
+    if (busy.length === 0) {
+      // Keep-alive connections outlive their usefulness the moment the tests
+      // end, and `--test-force-exit` exits while their close is still being
+      // processed — the race that trips the libuv assert. Destroy them the
+      // way the pool would when the process asked it to.
+      for (const handle of handles._getActiveHandles?.() ?? []) {
+        const socket = handle as { destroy?: () => void, constructor?: { name?: string } }
+        if (socket.constructor?.name === 'Socket' && typeof socket.destroy === 'function') {
+          socket.destroy()
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 25))
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+}
 
 /** A minimal Chat Completion preset with a post-history instruction. */
 const PRESET: ChatCompletionPreset = {
