@@ -92,6 +92,10 @@ export const en = {
   copy: 'Copy',
   edit: 'Edit',
   regenerate: 'Regenerate',
+  /** Write on from the newest reply; the result rejoins that floor. */
+  continueWriting: 'Continue',
+  /** Have the model write the user's own next line. */
+  speakForMe: 'Speak for me',
   delete: 'Delete',
   copied: 'Copied.',
   generatingAria: 'Generating',
@@ -414,6 +418,10 @@ export const zh: Record<StringKey, string> = {
   copy: '复制',
   edit: '编辑',
   regenerate: '重新生成',
+  /** 从最新一条回复续写，结果并回原楼。 */
+  continueWriting: '继续',
+  /** 让模型替用户写下一条发言。 */
+  speakForMe: '代我发言',
   delete: '删除',
   copied: '已复制。',
   generatingAria: '正在生成',

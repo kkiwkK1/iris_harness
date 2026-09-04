@@ -35,7 +35,13 @@ export function withStream(view: ChatView | undefined, stream: StreamBuffer | un
   if (view === undefined) return []
   if (stream === undefined) return view.messages
 
-  const at = view.messages.findIndex(row => row.role === 'assistant' && row.turn === stream.turn)
+  // An impersonation writes the user's line, so it streams into a row of that
+  // role — one that does not exist in the view yet and settles as the newest
+  // user row. Everything else streams into the turn's reply.
+  const impersonating = stream.role === 'user'
+  const at = impersonating
+    ? -1
+    : view.messages.findIndex(row => row.role === 'assistant' && row.turn === stream.turn)
   // The key must be the one the settled row will carry, so React updates that
   // row in place when the reply lands rather than unmounting a half-written one
   // and mounting a finished one beside it. Both sources are the host's own
@@ -46,7 +52,7 @@ export function withStream(view: ChatView | undefined, stream: StreamBuffer | un
   const live = (base: Pick<MessageView, 'id' | 'name' | 'key'>): MessageView => ({
     id: base.id,
     key: base.key,
-    role: 'assistant',
+    role: impersonating ? 'user' : 'assistant',
     name: base.name,
     text: stream.text,
     turn: stream.turn,
@@ -59,7 +65,11 @@ export function withStream(view: ChatView | undefined, stream: StreamBuffer | un
   })
 
   if (at === -1) {
-    const name = [...view.messages].reverse().find(row => row.role === 'assistant')?.name ?? view.title
+    const find = (role: 'assistant' | 'user'): string | undefined =>
+      [...view.messages].reverse().find(row => row.role === role)?.name
+    const name = impersonating
+      ? stream.name ?? find('user') ?? view.title
+      : find('assistant') ?? view.title
     // The fallback is reachable only while a reconnect's reopen is still in
     // flight: without the opening frame there is no identity to be had, and one
     // remount when the view lands beats showing nothing while text arrives.

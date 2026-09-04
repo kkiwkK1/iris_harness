@@ -26,6 +26,10 @@ import { useLanguage, t } from './i18n/use-language.ts'
 export interface MessageHandlers {
   onSwipe: (turn: number, index: number) => void
   onRegenerate: () => void
+  /** Write on from the newest reply; the result rejoins that floor. */
+  onContinue: () => void
+  /** Have the model write the user's next line instead of a reply. */
+  onImpersonate: () => void
   onEdit: (id: number, text: string) => void
   onDelete: (id: number) => void
   onNotify: (text: string) => void
@@ -159,13 +163,29 @@ export function Message({
                 </button>
               ) : null}
               {canRegenerate ? (
-                <button
-                  type="button"
-                  className="iris-act iris-act--primary"
-                  onClick={handlers.onRegenerate}
-                >
-                  {t('regenerate')}
-                </button>
+                <>
+                  {/*
+                    The two generation kinds that act on this floor without
+                    replacing it: a continue writes on from THIS reading (the
+                    result rejoins it as a new one), and an impersonation has
+                    the model write the reader's next line. Both live beside
+                    regenerate because they answer the same question — what
+                    happens next — just from different seats.
+                  */}
+                  <button type="button" className="iris-act" onClick={handlers.onContinue}>
+                    {t('continueWriting')}
+                  </button>
+                  <button type="button" className="iris-act" onClick={handlers.onImpersonate}>
+                    {t('speakForMe')}
+                  </button>
+                  <button
+                    type="button"
+                    className="iris-act iris-act--primary"
+                    onClick={handlers.onRegenerate}
+                  >
+                    {t('regenerate')}
+                  </button>
+                </>
               ) : null}
               <button
                 type="button"

@@ -36,7 +36,7 @@ import {
 } from './connections.ts'
 import { mergeSettings } from './settings.ts'
 import { DEFAULT_SETTINGS, seedCharacters, seedChats } from './seed.ts'
-import { toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
+import { selected, toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
 
 /**
  * Scripts the fake reports for every character.
@@ -243,12 +243,36 @@ class InMemoryClient implements FakeClient {
       }
 
       case 'chat.send': {
-        const { chatId, text } = params as RpcRequest<'chat.send'>
+        const { chatId, kind, text } = params as RpcRequest<'chat.send'>
         const chat = this.#require(chatId)
         if (this.#streams.has(chatId)) throw new FakeRpcError('busy', 'this chat is already generating')
 
+        // A continue grows the newest reply by one more reading that opens with
+        // the current one, so the reader's floor count does not move; an
+        // impersonation writes the user's next line and no reply at all.
+        if (kind === 'continue') {
+          const at = this.#lastAssistantIndex(chat)
+          if (at === -1) throw new FakeRpcError('not-found', 'this chat has no reply to continue')
+          const message = chat.messages[at] as FakeMessage
+          const seed = selected(message).text
+          message.candidates.push({ text: seed })
+          message.index = message.candidates.length - 1
+          chat.updatedAt = Date.now()
+          this.#beginTurn(chat, message.turn, at, message.index, seed)
+          return { turn: message.turn }
+        }
+
+        if (kind === 'impersonate') {
+          const turn = this.#nextTurn(chat)
+          chat.messages.push({ role: 'user', name: 'You', candidates: [{ text: '' }], index: 0, turn })
+          chat.updatedAt = Date.now()
+          const at = chat.messages.length - 1
+          this.#beginTurn(chat, turn, at, 0, '', 'user', 'You')
+          return { turn }
+        }
+
         const turn = this.#nextTurn(chat)
-        chat.messages.push({ role: 'user', name: 'You', candidates: [{ text }], index: 0, turn })
+        chat.messages.push({ role: 'user', name: 'You', candidates: [{ text: text as string }], index: 0, turn })
         chat.updatedAt = Date.now()
         // Push the user's own message before the stream opens. The composer
         // clears on the response, and a UI that had to wait for `stream.end` to
@@ -1054,8 +1078,20 @@ class InMemoryClient implements FakeClient {
    * Timer-driven rather than an async loop, for two reasons: `chat.abort` gets
    * something concrete to cancel, and a test can run the whole thing at zero
    * delay without the ordering shifting under it.
+   *
+   * `seed` opens the buffer with existing text (a continue), and `role`/`name`
+   * say who the arriving text belongs to (an impersonation) — both forwarded
+   * exactly the way the host forwards its own.
    */
-  #beginTurn(chat: FakeChat, turn: number, messageIndex: number, candidate: number): void {
+  #beginTurn(
+    chat: FakeChat,
+    turn: number,
+    messageIndex: number,
+    candidate: number,
+    seed = '',
+    role?: 'user',
+    name?: string,
+  ): void {
     const chatId = chat.chatId
     const stream: Streaming = { turn, messageIndex, timers: [], aborted: false }
     this.#streams.set(chatId, stream)
@@ -1068,7 +1104,11 @@ class InMemoryClient implements FakeClient {
       // The fake's own identity for the row, announced the way the host
       // announces its own. Deliberately not made to resemble the host's: a
       // consumer that works against both can only be relying on the frame.
-      this.#emit({ type: 'stream.start', chatId, turn, key: `a${String(turn)}` })
+      this.#emit({
+        type: 'stream.start', chatId, turn, key: `a${String(turn)}`,
+        ...seed === '' ? {} : { seed },
+        ...role === undefined ? {} : { role, name: name ?? '' },
+      })
     })
 
     // Reasoning arrives first and on its own channel, which is the order a real
