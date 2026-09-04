@@ -6,12 +6,20 @@
  * Everything else an extension might want to put here goes through
  * `iris.sidebar.panels` rather than being added to the tab strip.
  *
+ * Branches render **under** the conversation they left, indented — the shape
+ * the list already carries (`ChatSummary.parentChatId`) and the one a reader
+ * expects: a branch is a continuation of something, not a sibling of it. A
+ * branch whose parent is not in the list is a top-level row; a wrong-looking
+ * guess at the parent would be worse than a flat list.
+ *
  * @module iris-web/app/Sidebar
  */
 
 import { useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
+
+import type { ChatSummary } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
@@ -20,6 +28,13 @@ import { since, toBase64 } from './format.ts'
 
 /** Which list the sidebar is showing. */
 export type SidebarTab = 'chats' | 'characters'
+
+/** One non-destructive row action, alongside the delete every row carries. */
+interface RowAction {
+  id: string
+  label: string
+  danger?: boolean
+}
 
 /**
  * Render the sidebar.
@@ -33,9 +48,46 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
   const chatId = useIris(state => state.chatId)
   const actions = useIrisActions()
   const picker = useRef<HTMLInputElement>(null)
+  // Chats import under the character whose menu row opened the picker, so the
+  // hidden input has to remember who it is picking for until the change fires.
+  const chatPicker = useRef<HTMLInputElement>(null)
+  const importFor = useRef<string>('')
   // Subscribed so a language switch re-renders the list's words, not just the
   // moment's rows; `lang` also drives the relative-time units in each row.
   const { lang } = useLanguage()
+
+  /** Chats grouped under the parent they were branched from, in list order. */
+  const childrenOf = (parentChatId: string): ChatSummary[] =>
+    chats.filter(row => row.parentChatId === parentChatId)
+  const roots = chats.filter(row =>
+    row.parentChatId === undefined || !chats.some(other => other.chatId === row.parentChatId))
+
+  const renderChatRows = (rows: readonly ChatSummary[], depth: number): ReactElement[] =>
+    rows.flatMap(row => [
+      <ChatRow
+        key={row.chatId}
+        title={row.title}
+        meta={`${since(row.updatedAt, Date.now(), lang)} · ${t('messageCount', { count: row.messageCount })}`}
+        current={row.chatId === chatId}
+        depth={depth}
+        branched={depth > 0}
+        onOpen={() => void actions.openChat(row.chatId)}
+        menu={{
+          items: [
+            ...(row.parentChatId === undefined ? [] : [{ id: 'parent', label: t('openParentChat') }]),
+            { id: 'export', label: t('exportChat') },
+            { id: 'delete', label: t('deleteConversation'), danger: true },
+          ],
+          onSelect: id => {
+            if (id === 'export') void actions.exportChat(row.chatId)
+            else if (id === 'parent' && row.parentChatId !== undefined) {
+              void actions.openChat(row.parentChatId)
+            } else if (id === 'delete') void actions.deleteChat(row.chatId)
+          },
+        }}
+      />,
+      ...renderChatRows(childrenOf(row.chatId), depth + 1),
+    ])
 
   return (
     <nav className={`iris-sidebar${open ? ' iris-sidebar--open' : ''}`} aria-label={t('sidebarAria')}>
@@ -70,17 +122,7 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
           chats.length === 0 ? (
             <p className="iris-list__empty">{t('chatsEmpty')}</p>
           ) : (
-            chats.map(chat => (
-              <ChatRow
-                key={chat.chatId}
-                title={chat.title}
-                meta={`${since(chat.updatedAt, Date.now(), lang)} · ${t('messageCount', { count: chat.messageCount })}`}
-                current={chat.chatId === chatId}
-                onOpen={() => void actions.openChat(chat.chatId)}
-                onDelete={() => void actions.deleteChat(chat.chatId)}
-                deleteLabel={t('deleteConversation')}
-              />
-            ))
+            renderChatRows(roots, 0)
           )
         ) : characters.length === 0 ? (
           <p className="iris-list__empty">
@@ -95,8 +137,20 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
               tags={character.tags}
               current={false}
               onOpen={() => void actions.createChat(character.characterId)}
-              onDelete={() => void actions.deleteCharacter(character.characterId)}
-              deleteLabel={t('removeFromLibrary')}
+              menu={{
+                items: [
+                  { id: 'importChats', label: t('importChats') },
+                  { id: 'delete', label: t('removeFromLibrary'), danger: true },
+                ],
+                onSelect: id => {
+                  if (id === 'importChats') {
+                    importFor.current = character.characterId
+                    chatPicker.current?.click()
+                  } else if (id === 'delete') {
+                    void actions.deleteCharacter(character.characterId)
+                  }
+                },
+              }}
             />
           ))
         )}
@@ -117,6 +171,25 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
             for (const file of files) await actions.importCard(file.name, await toBase64(file))
           }}
         />
+        {/* Owned by the character whose menu opened it; `importFor` says who. */}
+        <input
+          ref={chatPicker}
+          type="file"
+          accept=".jsonl"
+          multiple
+          hidden
+          onChange={async event => {
+            const files = [...(event.target.files ?? [])]
+            event.target.value = ''
+            const characterId = importFor.current
+            importFor.current = ''
+            if (characterId === '' || files.length === 0) return
+            await actions.importChats(
+              characterId,
+              await Promise.all(files.map(async file => ({ filename: file.name, base64: await toBase64(file) }))),
+            )
+          }}
+        />
         <Button variant="outline" size="sm" onClick={() => picker.current?.click()}>
           {t('importCard')}
         </Button>
@@ -125,30 +198,46 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
   )
 }
 
-/** One list row, with an overflow menu for the one destructive action it offers. */
+/**
+ * One list row, with an overflow menu for the actions it offers.
+ *
+ * The menu's items come from the caller: a chat row exports and deletes, a
+ * character row imports chats and is removed, and hard-coding either set here
+ * would make this one row shape pretend to be two.
+ */
 function ChatRow({
   title,
   meta,
   tags,
   current,
+  depth = 0,
+  branched = false,
   onOpen,
-  onDelete,
-  deleteLabel,
+  menu,
 }: {
   title: string
   meta: string
   tags?: string[]
   current: boolean
+  /** Indent level, for a branch sitting under the conversation it left. */
+  depth?: number
+  /** Whether the row is a branch, which is marked as such for a reader. */
+  branched?: boolean
   onOpen: () => void
-  onDelete: () => void
-  deleteLabel: string
+  menu: { items: RowAction[], onSelect: (id: string) => void }
 }): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false)
 
   return (
-    <div className="iris-row-group">
+    <div
+      className="iris-row-group"
+      style={depth > 0 ? { marginInlineStart: `${String(depth * 18)}px` } : undefined}
+    >
       <button type="button" className="iris-row" aria-current={current} onClick={onOpen}>
-        <span className="iris-row__title">{title}</span>
+        <span className="iris-row__title">
+          {branched ? <span className="iris-row__branch" aria-hidden="true">↳ </span> : null}
+          {title}
+        </span>
         <span className="iris-row__meta iris-meta">{meta}</span>
         {tags !== undefined && tags.length > 0 ? (
           <span className="iris-row__tags">
@@ -174,10 +263,10 @@ function ChatRow({
             ⋯
           </button>
         }
-        items={[{ id: 'delete', label: deleteLabel, danger: true }]}
+        items={menu.items}
         onSelect={id => {
           setMenuOpen(false)
-          if (id === 'delete') onDelete()
+          menu.onSelect(id)
         }}
         onClose={() => setMenuOpen(false)}
       />

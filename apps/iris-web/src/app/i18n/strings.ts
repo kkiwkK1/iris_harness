@@ -43,6 +43,14 @@ export const en = {
   byCreator: 'by {creator}',
   messageCount: '{count} messages',
 
+  /** Chat import/export — the SillyTavern migration path. */
+  importChats: 'Import chats (SillyTavern JSONL)',
+  exportChat: 'Export as SillyTavern JSONL',
+  openParentChat: 'Open the conversation this branched from',
+  chatsImportedOne: 'Imported 1 chat.',
+  chatsImported: 'Imported {n} chats.',
+  chatExported: 'Exported “{name}”.',
+
   /** Relative time (`since`) and sizes (`describeBytes`). */
   justNow: 'just now',
   minutesAgo: '{n}m ago',
@@ -364,6 +372,14 @@ export const zh: Record<StringKey, string> = {
   noCreatorListed: '未署名作者',
   byCreator: '作者：{creator}',
   messageCount: '{count} 条消息',
+
+  /** 聊天导入/导出——SillyTavern 迁移路径。 */
+  importChats: '导入聊天（SillyTavern JSONL）',
+  exportChat: '导出为 SillyTavern JSONL',
+  openParentChat: '打开它分支自的对话',
+  chatsImportedOne: '已导入 1 个聊天。',
+  chatsImported: '已导入 {n} 个聊天。',
+  chatExported: '已导出「{name}」。',
 
   /** 相对时间与大小。 */
   justNow: '刚刚',

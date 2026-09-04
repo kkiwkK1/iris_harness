@@ -790,6 +790,16 @@ export class IrisAppService {
         return { view, chats: await chats.list() }
       },
 
+      'chat.import': async ({ filename, content, characterId }) => {
+        const chat = await chats.importFile(filename, content, characterId)
+        // The list is pushed, not only returned: the new conversations belong
+        // in the sidebar the moment they exist, on every open page.
+        await this.#announceChats()
+        return { chat }
+      },
+
+      'chat.export': ({ chatId }) => chats.exportFile(chatId),
+
       'prompt.itemize': async ({ chatId, turn }) => {
         const entry = await chats.open(chatId)
         // A record when there is one, a preview otherwise — including for a turn

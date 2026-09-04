@@ -103,3 +103,55 @@
 - 装置侧逐名导入的勾选界面；`Antennae` 等真实预设的更多字段映射（sampler
   order 等本宿主暂无行为可施加的键）。
 - 六卡 QA 覆盖"切换预设后装配"尚在 wt-qa 队列之外。
+
+---
+
+# DEVIATIONS — A3：聊天导入/导出（ST 迁移路径）
+
+分支 `dev/feat-chat-transfer`。对照上游 `/api/chats/import|export`
+（`src/endpoints/chats.js:604,696`）。RPC 为 `chat.import`/`chat.export`，
+壳侧入口在 Sidebar（角色行菜单导入、聊天行菜单导出、分支行缩进归父）。
+
+## 范围
+
+18. **导入只收 SillyTavern JSONL 一种方言，且写入前整体校验、按名拒绝。**
+    上游同一端点还转换 Kobold Lite / CAI / oobabooga / Agnai / Risu 五种 JSON
+    方言，并把导入文件改名为 `<角色> - <时间> imported.jsonl`。本侧只走迁移
+    主路径：文件名词干保留为 chatId（分支的 `chat_metadata.main_chat` 正是按
+    文件名词干指向父聊天，改名即断链），五种方言与坏文件在写盘**之前**按名
+    拒绝（"缺少 `chat_metadata` 对象"这类具名错误），绝不半导入。聊天方言
+    转换与清单 B9（世界书方言）同构，量语料后再立项。
+
+19. **导出保留头行里的 `iris` 块。** 上游对头行未知键原样忽略；剥掉它只会
+    让 Iris 自己的导出变有损。`chat_metadata`（含 `integrity`、`main_chat`）
+    逐字保留——实测 ST 重导入后继续对话并保存，完整性校验（`force: false`）
+    原本就过，因为校验比对的正是这块的逐字保真。
+
+## 与上游不同但有意为之
+
+20. **重新导入 Iris 导出的文件时，标题与最后活跃时间从 `iris` 块继承，不再
+    重置为文件词干与到达时刻；`parentChatId` 则刻意丢弃**——谱系一律从
+    `chat_metadata.main_chat` 重新解析（`list()` 已有此机制，与导入顺序无
+    关），别的店里带过来的陈旧 id 不许错 link 到它并不指名的对话。
+
+21. **导出对坏行的两处规范化，均为持久层既有行为、有报告、不新增：** 某些
+    真实行带越界 `swipe_id`（如 `swipes` 仅 1 条却写 `swipe_id: 1`），导出按
+    实存 swipe 归位为 0；每楼变量表多于实存 swipe 时多余表丢弃并报告
+    （`hydrateVariables` 文档早已实测此形）。除此之外逐字段等价，包括
+    逐楼 `name`、`extra`、`send_date`。
+
+## 随 A3 修复的持久层缺陷（不改则验收不成立）
+
+22. **`importChat` 对"以角色开场白开头的文件"漏发 `turn/start`。** 真实
+    ST 聊天通常第一楼就是开场白（assistant 行），旧代码只给 user 行发
+    `turn/start`，恢复出的会话 `lastTurn === -1`——用户导入后发出的第一句话
+    会再次打开"回合 0"，回复被追加进开场白的 swipe 列表（实测：导出后一个
+    楼变成三词条 swipe 列表、产生它的那轮对话消失）。现在每个回合必有一次
+    `turn/start`，无论该回合以哪种行开头。
+
+23. **逐楼 `name` 改为携带字段（移出 `MODELLED_KEYS`）。** 实测本机 31 个
+    真实聊天，大量文件头行的 `user_name`/`character_name` 是字面 `"unused"`，
+    真实说话人名在每楼的 `name` 里（部分 user 行甚至是用户自扮的角色名）。
+    旧投影每楼 name 都从头行重导出，一次会话往返就把全楼说话人改写掉。现在
+    `name` 与 `extra`/`send_date` 同等对待：楼里带的逐字携带，头行名只作
+    本宿主新建行的回退。

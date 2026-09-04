@@ -919,6 +919,10 @@ class InMemoryClient implements FakeClient {
       // page refuses rather than answering from an imaginary library — the same
       // honesty `storage.*` is refused with.
       case 'script.runEnded':
+      // Chat files are host-side; a fake has no store to copy them into or
+      // out of, so the migration arms refuse rather than pretend.
+      case 'chat.import':
+      case 'chat.export':
       case 'chat.answerCleanup':
       case 'storage.set':
       case 'storage.remove':

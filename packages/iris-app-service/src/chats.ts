@@ -20,6 +20,7 @@ import {
   formatChatFile,
   parseChatFile,
   importChat,
+  type SillyTavernChat,
   type SillyTavernChatHeader,
 } from '@iris/persistence'
 import type { ChatSummary } from '@iris/protocol'
@@ -28,7 +29,7 @@ import type { ScopeBackend, Variables } from '@iris/variables'
 import { ChatEntry, createSession, readMeta } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
-import { backupsDir, fileFor, toId, uniqueId } from './paths.ts'
+import { backupsDir, fileFor, isSafeId, toId, uniqueId } from './paths.ts'
 import { resolveCardWorldbook, WorldbookStore } from './worldbooks.ts'
 import type { ScriptVariableStore } from './script-variables.ts'
 
@@ -372,6 +373,98 @@ export class ChatStore {
   }
 
   /**
+   * Copy a SillyTavern chat file into this profile, as `/api/chats/import` does.
+   *
+   * The whole file is read and checked **before anything is written**, so a
+   * refusal never leaves a half-imported conversation behind: the parse and the
+   * shape check both name what they found instead of what they expected. The
+   * original filename survives as the chat's id whenever it can — a branch's
+   * `chat_metadata.main_chat` names the parent's file stem, so keeping stems is
+   * what keeps imported families linked once they are here (and `list` does
+   * that linking from the field itself, so import order never matters).
+   *
+   * What Iris adds goes in the header's own `iris` block, exactly as `create`
+   * does; every SillyTavern field, `main_chat` included, is kept verbatim so an
+   * export can put the file back.
+   * @param filename - the file's name, whose stem becomes the chat id when safe.
+   * @param base64 - the file's bytes.
+   * @param characterId - the character this conversation is played with.
+   * @returns the new conversation's summary.
+   * @throws {AppError} `not-found` for an unknown character, `invalid-request`
+   *   with a named reason for anything that is not a SillyTavern chat file.
+   */
+  async importFile(filename: string, base64: string, characterId: string): Promise<ChatSummary> {
+    // The owner is resolved first: a chat recorded against a card that is not
+    // in the library would open with the wrong books or none, and the user
+    // asked for this one by name.
+    await this.#library.ref(characterId)
+
+    const chat = parseImportedChat(filename, base64)
+    await this.ensure()
+
+    const stem = filename.replace(/\.jsonl$/iu, '')
+    // A stem the filesystem cannot hold (a `:` in it, say) still imports under
+    // a flattened id: the conversation matters more than its name, and the
+    // branch links survive because titles match on the stem either way.
+    const base = isSafeId(stem) ? stem : toId(stem)
+    const taken = new Set(await this.ids())
+    const chatId = uniqueId(base, candidate => taken.has(candidate))
+
+    // A file this host exported comes back carrying its own `iris` block. The
+    // conversation's identity is re-minted here — chat ids belong to this
+    // store — and a carried `parentChatId` is deliberately dropped, because a
+    // stale id from another store must never link a chat it does not name:
+    // lineage re-derives from `chat_metadata.main_chat`, which is always
+    // verbatim. But the title the user saw and when the conversation was last
+    // active are facts about the conversation, so they survive the round trip
+    // instead of resetting to the file stem and the arrival time.
+    const carried = chat.header['iris'] !== undefined
+    const prior = readMeta(chat.header)
+    const updatedAt = carried && prior.updatedAt !== 0
+      ? prior.updatedAt
+      : parseCreateDate(typeof chat.header.create_date === 'string' ? chat.header.create_date : '') ?? Date.now()
+    const title = carried && prior.title.length > 0 ? prior.title : stem
+
+    chat.header['iris'] = {
+      chatId,
+      characterId,
+      title,
+      updatedAt,
+    }
+
+    await writeFile(fileFor(this.#dir, chatId, '.jsonl'), formatChatFile(chat), 'utf8')
+    return {
+      chatId,
+      title,
+      characterId,
+      updatedAt,
+      messageCount: chat.messages.length,
+    }
+  }
+
+  /**
+   * One conversation as SillyTavern's own JSONL, for `/api/chats/export`'s half
+   * of the migration.
+   *
+   * Through `toFile`, not a second writer: the projection every save already
+   * uses, with the carried-through fields and the original key order that the
+   * round-trip tests hold. The header keeps its `iris` block — SillyTavern
+   * ignores unknown header keys, and stripping it here would be a third answer
+   * to "what does this chat look like on disk".
+   * @param chatId - the conversation to take out.
+   * @returns the text and the file name to save it as — the chat's id, which is
+   *   the name a branch's `main_chat` addresses its parent by.
+   * @throws {AppError} `not-found` when no such chat is stored.
+   */
+  async exportFile(chatId: string): Promise<{ filename: string, content: string }> {
+    const entry = await this.open(chatId)
+    return {
+      filename: `${chatId}.jsonl`,
+      content: formatChatFile(entry.toFile()),
+    }
+  }
+
+  /**
    * Write a conversation to disk.
    * @param entry - the live conversation.
    */
@@ -591,4 +684,106 @@ export function branchTitle(parentTitle: string, taken: (title: string) => boole
     const candidate = `${base} - Branch #${String(index)}`
     if (!taken(candidate)) return candidate
   }
+}
+
+/**
+ * SillyTavern's `create_date` spelling, read back as a moment.
+ *
+ * The field is user-facing text upstream, not a timestamp, so this is a parse
+ * of the one format every real file carries — measured over the 31 chats on
+ * this machine — and not a general date reader. An unparseable or absent value
+ * returns `undefined`, which the caller replaces with the arrival time: a chat
+ * with no date still has to sort somewhere.
+ * @param when - e.g. `2026-01-18 @05h53m21s771ms`.
+ * @returns Unix epoch milliseconds, or undefined.
+ */
+export function parseCreateDate(when: string): number | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2}) @(\d{2})h(\d{2})m(\d{2})s(\d{3})?ms$/u.exec(when.trim())
+  if (match === null) return undefined
+  const [year, month, day, hour, minute, second, ms] = match.slice(1).map(part => Number(part))
+  // Local time, because that is how `formatCreateDate` wrote it: the same field
+  // read and written in the same zone, or every round trip would shift it.
+  const moment = new Date(
+    year ?? 1970, (month ?? 1) - 1, day ?? 1, hour ?? 0, minute ?? 0, second ?? 0, ms ?? 0,
+  )
+  return Number.isNaN(moment.getTime()) ? undefined : moment.getTime()
+}
+
+/**
+ * Decode an uploaded chat file to text, refusing what is not base64.
+ * @param base64 - the payload, as a browser file read produces it.
+ * @param filename - the file's name, for the refusal to name.
+ * @returns the file's text, byte-order mark stripped.
+ * @throws {AppError} `invalid-request` when the payload is not base64.
+ */
+function decodeChatFile(base64: string, filename: string): string {
+  // `Buffer.from` ignores what it cannot read, so the alphabet is checked
+  // first: without this, a truncated or mis-encoded upload decodes to silence
+  // and then fails as a JSON error pointing somewhere else entirely.
+  if (!/^[A-Za-z0-9+/=\s]*$/u.test(base64)) {
+    throw invalid(`"${filename}" is not a base64-encoded file`)
+  }
+  let text: string
+  try {
+    text = Buffer.from(base64, 'base64').toString('utf8')
+  } catch {
+    throw invalid(`"${filename}" is not a base64-encoded file`)
+  }
+  // A mark is metadata a text editor added, not content; JSON.parse would read
+  // it as a syntax error on the header's first byte.
+  return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text
+}
+
+/**
+ * Read and check an uploaded chat file, **before anything is written**.
+ *
+ * Upstream's import (`chats.js:604`) accepts several chat dialects and renames
+ * what it takes in; this is deliberately the stricter single-format arm the
+ * migration path needs. Every rule below was measured against the 31 real
+ * chats on this machine — all of which pass — so what it refuses is a file
+ * that is not a SillyTavern chat, never one that is. The refusal names the
+ * finding, because "import failed" is how a user ends up debugging the wrong
+ * end of the pipe.
+ * @param filename - the file's name, for the refusals to name.
+ * @param base64 - the file's bytes.
+ * @returns the parsed file.
+ * @throws {AppError} `invalid-request` naming what the file is missing.
+ */
+export function parseImportedChat(filename: string, base64: string): SillyTavernChat {
+  const text = decodeChatFile(base64, filename)
+  let chat: SillyTavernChat
+  try {
+    chat = parseChatFile(text)
+  } catch (cause: unknown) {
+    throw invalid(`"${filename}" is not a SillyTavern chat file: ${
+      cause instanceof Error ? cause.message : String(cause)}`)
+  }
+
+  const header = chat.header as Record<string, unknown>
+  for (const key of ['user_name', 'character_name'] as const) {
+    if (typeof header[key] !== 'string') {
+      throw invalid(`"${filename}" is not a SillyTavern chat file: the header has no "${key}" string`)
+    }
+  }
+  if (typeof header['chat_metadata'] !== 'object' || header['chat_metadata'] === null) {
+    throw invalid(`"${filename}" is not a SillyTavern chat file: the header has no "chat_metadata" object`)
+  }
+  if (header['create_date'] !== undefined && typeof header['create_date'] !== 'string') {
+    throw invalid(`"${filename}" is not a SillyTavern chat file: the header's "create_date" is not a string`)
+  }
+
+  for (const [index, line] of chat.messages.entries()) {
+    const row = line as unknown
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+      throw invalid(`"${filename}" is not a SillyTavern chat file: message ${String(index + 1)} is not an object`)
+    }
+    const message = row as Record<string, unknown>
+    if (typeof message['mes'] !== 'string') {
+      throw invalid(`"${filename}" is not a SillyTavern chat file: message ${String(index + 1)} has no "mes" text`)
+    }
+    if (typeof message['is_user'] !== 'boolean') {
+      throw invalid(`"${filename}" is not a SillyTavern chat file: message ${String(index + 1)} has no "is_user" flag`)
+    }
+  }
+  return chat
 }

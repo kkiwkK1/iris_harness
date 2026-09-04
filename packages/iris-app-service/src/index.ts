@@ -536,6 +536,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.editMessage', handlers['chat.editMessage']),
       ctx.irisRpc.register('chat.deleteMessage', handlers['chat.deleteMessage']),
       ctx.irisRpc.register('chat.branch', handlers['chat.branch']),
+      ctx.irisRpc.register('chat.import', handlers['chat.import']),
+      ctx.irisRpc.register('chat.export', handlers['chat.export']),
       ctx.irisRpc.register('prompt.itemize', handlers['prompt.itemize']),
       ctx.irisRpc.register('script.getVariables', handlers['script.getVariables']),
       ctx.irisRpc.register('script.setVariables', handlers['script.setVariables']),

@@ -80,8 +80,20 @@ export interface SillyTavernChat {
   messages: SillyTavernMessage[]
 }
 
-/** Message keys Iris models itself; everything else is carried in `fields`. */
-const MODELLED_KEYS = new Set(['name', 'is_user', 'mes', 'swipes', 'swipe_id'])
+/**
+ * Message keys Iris models itself; everything else is carried in `fields`.
+ *
+ * **`name` is deliberately not here.** It looks modelled — the projection
+ * writes one from the header — but the real files on this machine say
+ * otherwise: measured over the 31 chats, most carry header names that are
+ * literally `"unused"` while the *lines* carry the real speaker names (and
+ * some user rows are spoken by a character of the user's own). Deriving the
+ * name from the header would rewrite every speaker on an export, so the
+ * line's own `name` rides in `fields` and overrides the derived one — the
+ * same treatment `extra` and `send_date` get. A header name is only a
+ * fallback for lines this log created itself.
+ */
+const MODELLED_KEYS = new Set(['is_user', 'mes', 'swipes', 'swipe_id'])
 
 /** Provenance stamped on messages restored from a file. */
 const IMPORTED = { provider: 'sillytavern', model: 'imported' } as const
@@ -184,10 +196,28 @@ export function importChat(chat: SillyTavernChat, id: string): Session {
   // and shared, and every `iris/st-meta` above refers into it by index.
   const orders: string[][] = []
   let turn = 0
+  /**
+   * Whether this turn has had its `turn/start` yet.
+   *
+   * **A SillyTavern chat file usually opens with the character's greeting — an
+   * assistant line —** and a greeting-only file is exactly what an imported
+   * conversation starts as. Restoring that first turn without a `turn/start`
+   * left the session reporting `lastTurn === -1`, so the first message a user
+   * sent afterwards opened "turn 0" a second time and its reply was appended
+   * to the *greeting's* swipe list: on export, one floor had become a
+   * three-entry swipe list and the exchange that produced it had vanished.
+   * Every turn gets its opening event, whichever kind of line opens it.
+   */
+  let started = false
+  const startTurn = (): void => {
+    if (started) return
+    session.append('turn/start', { turn })
+    started = true
+  }
 
   for (const line of chat.messages) {
+    startTurn()
     if (line.is_user) {
-      session.append('turn/start', { turn })
       session.append('step/start', { turn, step: 0 })
       const event = session.append(
         'user/message',
@@ -217,6 +247,7 @@ export function importChat(chat: SillyTavernChat, id: string): Session {
 
     session.append('turn/end', { turn, reason: { kind: 'completed' } })
     turn += 1
+    started = false
   }
 
   if (orders.length > 0) session.append('iris/st-key-order', { orders })

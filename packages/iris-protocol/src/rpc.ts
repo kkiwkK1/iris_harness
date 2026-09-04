@@ -233,6 +233,51 @@ export const requestSchemas = {
     swipeId: z.number().int().min(0).optional(),
   }),
 
+  /**
+   * Copy a SillyTavern chat file into this profile.
+   *
+   * Upstream's `/api/chats/import` (`chats.js:604`) — the migration path for a
+   * user whose history lives in an install. The file crosses as base64 because
+   * that is how a browser file upload already reaches `character.import`; the
+   * bytes go in untouched, and everything below is reading, not conversion.
+   *
+   * **The owning character is asked for, not inferred.** Upstream hangs import
+   * off a character's own chat-management panel, so the file's `character_name`
+   * and the character it lands under can disagree there too. The id is recorded
+   * in the file's `iris` block — where the card, the scripts and the books come
+   * from when the chat opens — while the header's own names stay verbatim, so
+   * an exported file still reads as the file it was.
+   *
+   * **One file per call, all-or-nothing.** Upstream also accepts several other
+   * chat dialects (Kobold Lite, CAI, oobabooga, Agnai, Risu) and renames what
+   * it imports; this arm takes SillyTavern JSONL only and refuses everything
+   * else **before anything is written**, with the reason named. A file that
+   * half-imported would be worse than a file refused.
+   */
+  'chat.import': z.object({
+    /** The file's name, whose stem becomes the chat's id when it is a safe one. */
+    filename: z.string().min(1).max(255),
+    /** Base64 of the JSONL file, exactly as it left SillyTavern. */
+    content: z.string().min(1),
+    /** The character this conversation is played with. */
+    characterId: z.string().min(1),
+  }),
+  /**
+   * One conversation as SillyTavern's own JSONL.
+   *
+   * The reverse leg of `chat.import`, and the same promise the storage layer
+   * was built on: a chat taken out of Iris is a chat SillyTavern can read. The
+   * text is produced by the same projection every save uses — the one with the
+   * key-order round-trip tests — not a second exporter.
+   *
+   * The bytes travel as a response for the browser to save locally. Nothing
+   * lands on the host's disk, because an export the user cannot find is a
+   * backup only in the moment it was offered.
+   */
+  'chat.export': z.object({
+    chatId: z.string().min(1),
+  }),
+
   'character.list': z.object({}),
   'character.import': z.object({
     filename: z.string().min(1).max(255),
@@ -992,6 +1037,16 @@ export interface RpcResponseMap {
   'chat.deleteMessage': { view: ChatView }
   /** The new branch, already open, plus the refreshed list it now appears in. */
   'chat.branch': { view: ChatView, chats: ChatSummary[] }
+  /** The conversation as stored, summary-shaped — the sidebar's own currency. */
+  'chat.import': { chat: ChatSummary }
+  /**
+   * The JSONL text and the file name to save it under.
+   *
+   * The name is the chat's id, which is the name SillyTavern's own branch
+   * fields (`chat_metadata.main_chat`) address it by — so a branch exported
+   * with its parent still links up after a re-import on either host.
+   */
+  'chat.export': { filename: string, content: string }
   'prompt.itemize': { itemization: PromptItemization }
 
   /** The stored table, so a card sees what its write actually produced. */
