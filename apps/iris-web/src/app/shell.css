@@ -254,7 +254,28 @@
 
 @media (min-width: 1360px) {
   .iris-stage {
-    grid-template-columns: minmax(0, var(--iris-sheet)) var(--iris-aside);
+    /*
+     * Desk, sheet, aside. The aside is the flexible track (at least its 260px
+     * token, more when the window offers it) and the desk absorbs the rest, so
+     * the two flank the sheet evenly and the page column stays centred —
+     * `justify-content` has nothing left to centre when the tracks already
+     * fill the row.
+     */
+    grid-template-columns: minmax(0, 1fr) minmax(0, var(--iris-sheet)) minmax(var(--iris-aside), 1fr);
+  }
+
+  /*
+   * The stage has two children, so each names its track: the sheet takes the
+   * middle one (its own 1040px measure at most) and the aside takes the right,
+   * leaving the desk to the left — the flanks balance, and the aside reaches
+   * the stage's right edge by construction rather than by a measured margin.
+   */
+  .iris-sheet {
+    grid-column: 2;
+  }
+
+  .iris-aside {
+    grid-column: 3;
   }
 }
 

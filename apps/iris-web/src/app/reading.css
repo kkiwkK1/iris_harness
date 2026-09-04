@@ -15,6 +15,12 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   /*
+   * Reserve the gutter even before a scrollbar appears, so the message
+   * column's centre — and with it the composer's — does not shift half a
+   * scrollbar width the moment the conversation outgrows the viewport.
+   */
+  scrollbar-gutter: stable;
+  /*
    * Named as a container so an interface can ask how much room the window
    * actually has. Nothing else needs it: prose is bounded by the measure on
    * purpose, and only the thing that must escape the measure needs the page's
