@@ -1313,3 +1313,27 @@ use: 状态栏v2.0's `broadcastFloatingBg` — click-driven ("设为悬浮背景
 buttons), so it produces no chat-opening notice, and its behaviour is exactly
 what it was before this task. A fix means rewriting inline card scripts in
 srcdoc, which is a mechanism this task deliberately did not build.
+
+## 31. A message frame's inlined snapshot is read at install, so its surfaces exist before the push
+
+**Kind:** timing consequence, recorded because it changes when a report can
+appear rather than what any member answers.
+
+**What changed.** The seed script now precedes the bootstrap (see
+`srcdoc.ts`), so `installSandbox` consumes `__iris_context__` during the
+bootstrap instead of finding nothing. A consequence the seed's original author
+intended but the old ordering silently denied: an **interface** frame's
+install-time surface publication (`SillyTavern`, `extension_settings`, the
+whole member view) now answers from a real snapshot at install, where it used
+to publish `undefined` and wait for the pushed `context` message to re-publish.
+The push still happens on `ready` and still carries refreshes; nothing reads
+the seed after install, and frame-entry deletes the global so no stale copy
+survives for a card to find.
+
+**What it costs.** A plugin-detection probe in interface markup that
+previously reported "not SillyTavern" during the boot window and corrected
+itself a round trip later now answers correctly on the first read. The
+corrected-self behaviour is gone; nothing in the corpus depended on the wrong
+first answer. If a future mechanism needs to distinguish "seeded" from
+"pushed", the frame currently cannot tell them apart — the seed is deleted on
+consumption precisely so it cannot become a second, stale source.

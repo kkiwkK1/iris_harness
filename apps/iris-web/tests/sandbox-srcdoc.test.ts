@@ -336,6 +336,40 @@ test('a frame with no inlined snapshot has no seed at all', () => {
   const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
   assert.ok(!doc.includes('__iris_context__'))
 })
+test('the inlined snapshot precedes the bootstrap, positionally', () => {
+  /*
+   * **The order is the timing contract.** The bootstrap's `installSandbox`
+   * reads the seed synchronously (`env.seededContext()`), so the seed has to be
+   * in place before the bootstrap's first line runs. A seed emitted after the
+   * bootstrap script is present, parseable, and read by nobody — which is the
+   * exact shape that shipped: a message frame's inline card script called
+   * `getAllVariables()` at parse time, the snapshot was still `undefined`, and
+   * the member refused by name (新·架空政治经济模拟器's status bar).
+   *
+   * Asserted by **position**, not by presence — presence is the test above, and
+   * a dead seed passes it. The markup still comes last, so the assertion pins
+   * the whole parse-time order the invariant rests on: seed → bootstrap →
+   * markup.
+   */
+  const doc = buildSrcdoc('tok', 'BOOTSTRAP_MARKER', {
+    networkGranted: false,
+    libraries: [],
+    selfOrigin: SELF,
+    body: '<div id="x"></div>',
+    context: { variables: { hp: 5 } },
+  })
+
+  const seed = doc.indexOf('__iris_context__')
+  const bootstrap = doc.indexOf('BOOTSTRAP_MARKER')
+  const markup = doc.indexOf('<div id="x"></div>')
+  assert.ok(seed !== -1, 'the seed was not emitted')
+  assert.ok(
+    seed < bootstrap,
+    `the seed (at ${String(seed)}) runs after the bootstrap (at ${String(bootstrap)}) —`
+      + ' installSandbox reads it during the bootstrap, so a later seed is never read',
+  )
+  assert.ok(bootstrap < markup, 'the card markup must parse last')
+})
 test('the member table loads before the bootstrap, and blocking', () => {
   /*
    * **The ordering is the whole contract of the split.** A classic

@@ -9,6 +9,7 @@ import { UPSTREAM_MEMBERS } from '../src/sandbox/upstream-surface.ts'
 import { SCRIPT_REGISTRY } from '../src/sandbox/preamble.ts'
 import { SHARED_ORIGINAL } from '../src/sandbox/identity.ts'
 import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
+import type { ScriptContext } from '@iris/protocol'
 
 /**
  * A frame realm made of stubs, plus the levers a test needs.
@@ -16,8 +17,10 @@ import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
  *   card's markup and never receives a `run` message, so it is served at
  *   install; a script frame is served on `run`. Defaults to a script frame,
  *   which is what every test written before the distinction existed assumes.
+ *   `seeded` hands the frame the inlined-snapshot seed a srcdoc would carry —
+ *   the document-order guarantee that lets a parse-time call answer truth.
  */
-function realm(options?: { interfaceFrame?: boolean }): {
+function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext }): {
   posted: FromFrame[]
   send: (message: ToFrame) => void
   /** The globals the last evaluation was handed, by name. */
@@ -102,6 +105,11 @@ function realm(options?: { interfaceFrame?: boolean }): {
     token: 'tok',
     container,
     ...(options?.interfaceFrame === true ? { interfaceFrame: true } : {}),
+    // The seed a srcdoc would have inlined ahead of this bootstrap. The real
+    // reader (frame-entry) consumes and deletes the global; here the snapshot
+    // itself is the fixture, and "was it read before the body ran" is what the
+    // test below asserts.
+    ...(options?.seeded === undefined ? {} : { seededContext: () => options.seeded }),
     provideToastr: report => {
       toastrReport = report
     },
@@ -820,6 +828,41 @@ test('`in` and a read agree about an unbuilt member', () => {
     assert.equal('deleteAllChats' in bare, false)
     assert.equal(bare['deleteAllChats'], undefined)
   })
+})
+
+test('a seeded frame answers a parse-time snapshot read with no context push at all', () => {
+  /*
+   * The timing invariant the srcdoc's seed position exists for, asserted on the
+   * consuming side. A message frame's inline card script runs while the
+   * document is still parsing, and the pushed `context` message cannot arrive
+   * yet — the runner sends it only after the frame reports ready, a full
+   * postMessage round trip later. 新·架空政治经济模拟器's status bar calls
+   * `getAllVariables()` exactly there, and with the seed unread the call was
+   * refused by name and the panel shipped dead.
+   *
+   * No `context` message is sent in this test at all: with the seed in place
+   * the first answer must be the floor's own truth, not a refusal. The seed
+   * making the call answer is what "the window is closed" means.
+   */
+  const scope = realm({
+    interfaceFrame: true,
+    seeded: snapshot({
+      variableLayers: { global: {}, character: {}, script: {}, chat: { hp: 5 } },
+    }),
+  })
+
+  let answer: unknown = 'unset'
+  let threw: string | undefined
+  evaluate(scope, globals => {
+    try {
+      answer = (globals['getAllVariables'] as () => unknown)()
+    } catch (error: unknown) {
+      threw = String(error instanceof Error ? error.message : error).slice(0, 120)
+    }
+  })
+
+  assert.equal(threw, undefined, `a parse-time read was refused: ${threw ?? ''}`)
+  assert.deepEqual(answer, { hp: 5 }, 'the seed was not the snapshot the call answered from')
 })
 
 test('the bridged globals are published, and the window aliases are not', () => {
