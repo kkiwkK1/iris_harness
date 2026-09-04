@@ -20,7 +20,7 @@
  *
  * @module iris-web/app/useCardScripts
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
@@ -36,6 +36,7 @@ import {
 } from '../sandbox/asset-manifest.ts'
 import { runCard } from '../sandbox/runner.ts'
 import type { RunningCard } from '../sandbox/runner.ts'
+import { overlayViewport } from './overlay-surface.ts'
 import { STARTED_EVENTS, settledEvents } from '../sandbox/tavern-helper.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
@@ -74,6 +75,29 @@ export function CardScriptFrames(): ReactElement {
   const store = useIrisStore()
   const actions = useIrisActions()
   const mount = useRef<HTMLDivElement>(null)
+
+  /*
+   * Whether a card's frame is on the surface right now.
+   *
+   * The collapse control below is an escape hatch **for a frame**, so it exists
+   * exactly while a frame does: set when `attach` puts one on the surface,
+   * cleared when the run's teardown empties it. Derived from the element rather
+   * than from script states, because the thing being escaped is geometry — a
+   * card whose scripts report fine but whose interface ate the screen — and a
+   * frame with no reported states yet is precisely the case that needs the
+   * hatch most.
+   */
+  const [occupied, setOccupied] = useState(false)
+
+  /*
+   * Whether the reader has collapsed the card's interface back into Iris.
+   *
+   * Deliberately **not** keyed to the chat: it is reset in the run's teardown
+   * below, which is the one point every way a surface changes passes through —
+   * a new chat, a new card, a re-answered consent — so the next interface always
+   * arrives shown, and a collapse never silently outlives the frame it hid.
+   */
+  const [collapsed, setCollapsed] = useState(false)
 
   /*
    * Load the card's script list here, not only in the settings panel.
@@ -259,12 +283,31 @@ export function CardScriptFrames(): ReactElement {
               // there: a grant nobody has been asked for is not a grant.
               networkGranted: false,
               context: input.context,
-              viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+              /*
+               * **The surface's box, not the window's.**
+               *
+               * This frame's viewport *is* the overlay surface — the frame
+               * fills it with `width:100%; height:100%` — so the number a card
+               * hears here has to be the surface's own content box. It used to
+               * be `window.innerWidth/innerHeight`, which was correct only for
+               * as long as the surface was the whole window, and became the
+               * two-sources failure a user measured: a frame laying out at
+               * 1449px against a viewport the shell believed was 1218px, both
+               * numbers plausible, neither tied to the element the frame
+               * actually fills. One element now decides, so they cannot
+               * disagree (`overlay-surface.ts`).
+               */
+              viewport: () =>
+                overlayViewport(mount.current, {
+                  width: window.innerWidth,
+                  height: window.innerHeight,
+                }),
               /*
                * This frame's box is `attach`'s below, not a measurement's: it is
-               * the card's overlay surface, so it is always the whole viewport
-               * and the clip decides what it catches. Without this the frame's
-               * own `sizing` report stripped that height back off again.
+               * the card's overlay surface — the reading column's box, laid out
+               * by the shell — and the clip decides what it catches. Without
+               * this the frame's own `sizing` report stripped that height back
+               * off again.
                */
               sizedByHost: true,
               fetch: async url => actionsOf(store).fetchScriptDependency(url),
@@ -451,6 +494,8 @@ export function CardScriptFrames(): ReactElement {
           style.setProperty('pointer-events', 'auto')
           style.setProperty('clip-path', 'path("M0 0Z")')
           host.append(card.element)
+          // The surface has a frame on it, so the collapse control exists.
+          setOccupied(true)
         },
         onState: states => actionsOf(store).setRunStates(states),
         onFailure: state => {
@@ -570,8 +615,30 @@ export function CardScriptFrames(): ReactElement {
       running.emit(event, args)
     })
 
+    /*
+     * The surface's own box, watched directly.
+     *
+     * A window `resize` is one way the box changes, and the runner already
+     * listens for it — but the surface is laid out inside the reading column,
+     * so a layout change above it reshapes the frame with **no window event at
+     * all**: a notice appearing, a panel opening, a pane toggling. Each of
+     * those changes what the card was told its viewport is, and a stale
+     * viewport is the mismatch class this whole arrangement exists to kill.
+     *
+     * The push is cheap by construction: `applyViewport` deduplicates by value,
+     * so a change that does not alter the numbers costs one message and
+     * nothing else, and the runner's own resize listener covers the window
+     * case whatever this observer does.
+     */
+    let surfaceWatcher: ResizeObserver | undefined
+    if (typeof ResizeObserver === 'function') {
+      surfaceWatcher = new ResizeObserver(() => running.resize())
+      surfaceWatcher.observe(host)
+    }
+
     return () => {
       unregister()
+      surfaceWatcher?.disconnect()
       untap()
       running.dispose()
       actionsOf(store).setRunStates([])
@@ -596,6 +663,10 @@ export function CardScriptFrames(): ReactElement {
        */
       const surface = mount.current
       if (surface !== null) surface.replaceChildren()
+      // No frame on the surface, so no collapse control and no collapse: the
+      // next interface arrives shown, whichever way this run ended.
+      setOccupied(false)
+      setCollapsed(false)
 
       /*
        * And tell the host the run is over, so the injections it is holding for
@@ -641,64 +712,107 @@ export function CardScriptFrames(): ReactElement {
   }, [store])
 
   /*
-   * Off-screen, not `hidden`.
+   * **The reading column, not the window.**
    *
-   * `hidden` is `display: none`, and that is observable from inside a frame: a
-   * card measuring itself gets zeros, and the viewport height the bootstrap
-   * publishes as `--TH-viewport-height` stops describing anything real. These
-   * scripts render nothing today, so it would not bite yet — but "it does not
-   * matter yet" is how a frame ends up behaving differently here than in the
-   * message pipeline that will reuse this shape.
-   */
-  /*
-   * The card's overlay surface: the viewport, above the shell.
+   * This used to be `position:fixed; inset:0` — the whole viewport, sidebar
+   * and masthead included. That is upstream's own arrangement (a card appends
+   * to the page's body and may own the window), and it is exactly the property
+   * a user ruled out: a card whose interface fills the screen left no way back
+   * to Iris's own navigation, because the surface covered it. Iris's product
+   * requirement is that **the shell's navigation is always reachable**, so the
+   * surface is `position:absolute; inset:0` inside the reading column's
+   * container (`.iris-card-stage` in `App.tsx`) — the browser computes the
+   * rectangle from the layout, there is no second copy of the geometry to
+   * drift, and a window resize keeps it correct with no code at all.
    *
-   * This used to be a 0×0 box parked off-screen, on the premise that a card's
-   * scripts render nothing. [OVERLAY-CARDS.md] found the third class of card
-   * that does: it builds its whole interface with `.appendTo('body')`, and
-   * upstream's `parent_jquery.js` makes that the host page's body. Here `$` is
-   * the frame's own, so the interface was built in a frame nobody could see —
-   * "3 of 3 loaded and listening" over a blank screen.
+   * The cost is recorded in `DEVIATIONS.md` §25: a card designed against the
+   * whole window now lays out against the column, which is narrower. That is
+   * the product decision; the mechanism below is what makes it real:
    *
-   * **Full viewport, and the frame element needs explicit `width`/`height`.**
-   * An iframe is a replaced element, so `position:fixed; inset:0` alone leaves
-   * it at its intrinsic 300×150 — measured, after a probe that looked like it
-   * disproved this whole approach.
+   * - the frame fills this box, so the card's `100dvh` / `position:fixed`
+   *   ladder resolves against the column (`OVERLAY-HOST.md` §一);
+   * - the viewport metrics published to the card are read off this same box
+   *   (`overlayViewport` above), so geometry and numbers are one source;
+   * - a `ResizeObserver` re-publishes them whenever the box changes for any
+   *   reason, not only on a window resize.
    *
-   * `pointer-events` stays `auto` and the **clip** decides what catches
-   * clicks (`onRegions` above). The two alternatives were measured and both
-   * fail: `auto` with no clip swallows the shell, and `none` makes the card's
-   * own interface unclickable because content inside a frame cannot re-enable
-   * hit-testing the frame element switched off.
+   * `pointer-events` stays `auto` on the frames and the **clip** decides what
+   * catches clicks (`onRegions` above). The two alternatives were measured and
+   * both fail: `auto` with no clip swallows the shell, and `none` makes the
+   * card's own interface unclickable because content inside a frame cannot
+   * re-enable hit-testing the frame element switched off.
    *
-   * `aria-hidden` is gone with the invisibility: this is now real interface, and
-   * hiding it from assistive technology would be hiding the card's UI.
+   * **Collapse is `visibility`, never `hidden`.** The reader's escape hatch
+   * below toggles this element's visibility. `display:none` is observable from
+   * inside a frame — a card measuring itself gets zeros, and the published
+   * viewport stops describing anything real. `visibility:hidden` keeps the
+   * box laid out and the numbers true: the card neither knows nor cares, its
+   * animations keep their geometry, and showing it again is a style write, not
+   * a reload.
    */
   return (
-    /*
-     * `iris-overlay-surface` is a **marker class with no stylesheet rule, and
-     * deliberately so.** Every geometric decision about this element is inline
-     * below, because its size and layering are load-bearing and a stylesheet
-     * rule could be overridden by a card's own CSS. The class exists so a
-     * reader — or a CDP probe — can find the element by name.
-     *
-     * Said here because an audit of applied-versus-defined classes flags it,
-     * and a finding with no answer beside it gets rediscovered every time.
-     */
-    <div
-      ref={mount}
-      className="iris-overlay-surface"
-      style={{
-        position: 'fixed',
-        left: 0,
-        top: 0,
-        width: '100%',
-        height: '100%',
-        // Above the shell's own layers, whose highest is 30.
-        zIndex: 'var(--iris-overlay-z, 40)' as unknown as number,
-        // The container never catches anything; each frame's clip decides.
-        pointerEvents: 'none',
-      }}
-    />
+    <>
+      {/*
+       * `iris-overlay-surface` is a **marker class with no stylesheet rule, and
+       * deliberately so.** Every geometric decision about this element is inline
+       * below, because its size and layering are load-bearing and a stylesheet
+       * rule could be overridden by a card's own CSS. The class exists so a
+       * reader — or a CDP probe — can find the element by name.
+       *
+       * Said here because an audit of applied-versus-defined classes flags it,
+       * and a finding with no answer beside it gets rediscovered every time.
+       */}
+      <div
+        ref={mount}
+        className="iris-overlay-surface"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          // Above the shell's own layers, whose highest is 30.
+          zIndex: 'var(--iris-overlay-z, 40)' as unknown as number,
+          // The container never catches anything; each frame's clip decides.
+          pointerEvents: 'none',
+          // The reader's collapse toggle: hidden to the eye and to the pointer,
+          // while every measurement inside the frame stays real.
+          visibility: collapsed ? 'hidden' : 'visible',
+        }}
+      />
+      {/*
+       * Iris's own way back.
+       *
+       * A card that breaks its own interface — or simply takes the whole
+       * column — used to leave the reader with nothing of theirs on screen.
+       * Upstream's answer is the card's own escape (V1.5.4's page declares ESC
+       * exits its fullscreen); that is the card's key, and Iris binding a
+       * competing one would make the two fight over every keystroke. So the
+       * guaranteed exit is a **click**: a small Iris-owned control above the
+       * surface (`z` = the surface's layer + 5, so it follows that variable),
+       * positioned inside the reading column's container — it never strays
+       * over the sidebar or the masthead, and it needs no geometry of its own.
+       *
+       * It exists exactly while a frame does (`occupied`), and its label names
+       * the state it will produce rather than the one it is in, which is the
+       * reading a control hiding an interface needs.
+       */}
+      {occupied ? (
+        <button
+          type="button"
+          className="iris-overlay-toggle"
+          aria-pressed={collapsed}
+          title={
+            collapsed
+              ? 'Show the card interface'
+              : 'Collapse the card interface — Iris stays reachable'
+          }
+          onClick={() => {
+            setCollapsed(current => !current)
+          }}
+        >
+          {collapsed ? 'Show card UI' : 'Hide card UI'}
+        </button>
+      ) : null}
+    </>
   )
 }

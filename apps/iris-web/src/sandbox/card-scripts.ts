@@ -127,6 +127,17 @@ export interface RunningCardScripts {
    * indistinguishable from no delivery at all — both are silent.
    */
   emit: (event: string, args: readonly unknown[]) => void
+  /**
+   * Re-tell every frame its viewport, exactly as a window resize would.
+   *
+   * The frames' boxes belong to the shell's layout — the overlay surface sits
+   * in the reading column — so a box change needs no window event, and the
+   * shell watches the surface element for exactly that. Forwarded to every
+   * card because the set is the unit this module owns; a card that is mid-boot
+   * is re-told by its own `ready` sequence anyway, and a duplicate push is
+   * deduplicated on the far side.
+   */
+  resize: () => void
   /** Tear every frame down. Idempotent. */
   dispose: () => void
 }
@@ -332,6 +343,11 @@ export function startCardScripts(
     emit: (event, args) => {
       if (disposed) return
       for (const card of cards) card.emit(event, [...args])
+    },
+
+    resize: () => {
+      if (disposed) return
+      for (const card of cards) card.resize()
     },
 
     refresh: async () => {
