@@ -27,6 +27,7 @@ export {
   type MacroRole,
   type MacroVariableStore,
   type MemoryVariableStore,
+  type TokenBudget,
   type VariableScope,
 } from './registry.ts'
 

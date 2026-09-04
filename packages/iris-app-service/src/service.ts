@@ -1743,6 +1743,15 @@ export class IrisAppService {
     const names = entry.names
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
     const window = windowOf(settings, this.#options.contextWindow)
+    // The budget macros report the numbers this generation actually runs under:
+    // the context window, and the reply budget — `maxTokens` when the chat
+    // configures one, else the reserve every assembly holds back for the reply.
+    // Assigned before the prompt is built, because the build's expansions are
+    // what read it.
+    entry.tokenBudget = {
+      context: window,
+      response: settings.maxTokens ?? this.#options.reserveTokens,
+    }
     const built = buildPrompt({
       card: entry.card,
       ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
@@ -1757,6 +1766,10 @@ export class IrisAppService {
       // The chat's expander, so the card's own variable macros resolve against
       // this chat's state rather than being sent as braces.
       substitute: entry.substitute,
+      // The scan's outlet buckets become this chat's `{{outlet::key}}` answers
+      // for the rest of the build — upstream writes `extension_prompts` at
+      // exactly this point, before the preset's own text is rendered.
+      outletSink: outlets => { entry.outletPrompts = outlets },
       ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
     })
     // Carried forward, or a sticky entry would re-open its window every turn and
@@ -1780,11 +1793,17 @@ export class IrisAppService {
     // overwriting it would replace the record of the turn the user is looking at.
     const turn = record ? entry.pending?.turn : undefined
     if (turn !== undefined) {
-      entry.itemizations.set(turn, this.#itemizationOf(
-        assemble({ contributions, history: this.#history(entry, session), budget: this.#budget(count, window) }),
-        turn,
-        false,
-      ))
+      const assembled = assemble({
+        contributions,
+        history: this.#history(entry, session),
+        budget: this.#budget(count, window),
+      })
+      // The first floor the budget kept is the one the dropped count names —
+      // history entries map one-to-one onto chat-file lines. This is
+      // `chat_metadata.lastInContextMessageId` upstream and, like it, a real
+      // turn's byproduct: a preview must not write it.
+      entry.firstIncludedMessageId = assembled.overflow.droppedHistory
+      entry.itemizations.set(turn, this.#itemizationOf(assembled, turn, false))
     }
 
     return contributions

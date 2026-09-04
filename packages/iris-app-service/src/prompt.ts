@@ -18,13 +18,14 @@ import {
   activateEntries,
   fromCharacterBook,
   promptRole,
+  type PositionBuckets,
   type PreparedEntry,
   type ScanEntry,
   type TimedEffectState,
 } from '@iris/lorebook'
 
 import type { ResolvedWorldbook } from './worldbooks.ts'
-import { createMacroContext, expandMacros } from '@iris/macro'
+import { createMacroContext, expandMacros, type MacroMessage } from '@iris/macro'
 import type { Contribution, HistoryEntry, Role, TokenCounter } from '@iris/pipeline'
 import { resolvePreset, type ChatCompletionPreset, type MarkerSources, type PromptItem } from '@iris/preset'
 
@@ -141,6 +142,27 @@ export interface PromptInput {
    * test) still gets `{{char}}` and `{{user}}`.
    */
   substitute?: (text: string) => string
+  /**
+   * The conversation as macros see it, oldest first: `{{lastMessage}}` and the
+   * floor-addressing family read this when no chat expander was supplied.
+   *
+   * Optional, because the usual caller passes `substitute` — a live chat's
+   * expander already sees the floors — and this keeps a card-only caller honest
+   * rather than inventing an empty conversation for it.
+   */
+  chat?: readonly MacroMessage[]
+  /**
+   * Receives the world-info outlet buckets once the scan has filled them.
+   *
+   * Upstream parks the activated outlet entries in `extension_prompts` and every
+   * later `{{outlet::key}}` reads them back from there; the sink is that store's
+   * seam. Called after the scan and before the preset's own text is expanded, so
+   * a preset prompt asking for an outlet sees this turn's buckets — which is
+   * upstream's order too (`setExtensionPrompt` runs before the prompt is
+   * rendered). World-info content expanding *during* the scan still sees the
+   * previous buckets, which is also upstream's order.
+   */
+  outletSink?: (outlets: Record<string, string>) => void
 }
 
 /** The assembled policy for one generation. */
@@ -214,6 +236,21 @@ function joinEntries(entries: readonly PreparedEntry[]): string {
 }
 
 /**
+ * One outlet bucket per key, joined as upstream joins them onto the prompt.
+ *
+ * `script.js` writes each outlet's activated entries with `value.join('\n')`;
+ * {@link joinEntries} is that join, plus the drop-empty rule every other bucket
+ * applies, so an entry that rendered to nothing leaves no blank line behind.
+ * @param buckets - the scan's outlet buckets, keyed by `outletName`.
+ * @returns the prompt-ready text per key.
+ */
+function outletPromptsOf(buckets: PositionBuckets['outlets']): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(buckets).map(([key, entries]) => [key, joinEntries(entries)]),
+  )
+}
+
+/**
  * Apply a card's overrides to the preset it will be rendered with.
  *
  * SillyTavern lets a card replace the preset's main prompt and its post-history
@@ -253,6 +290,11 @@ export function applyCardOverrides(
  */
 export function buildPrompt(input: PromptInput): PromptResult {
   const data = input.card?.data
+  // Rebound after the scan, because the outlets do not exist until it has run:
+  // expansions before that (world-info content) read the previous buckets,
+  // expansions after (the preset's own text) read this turn's. That is the same
+  // order upstream's `extension_prompts` round-trip produces.
+  let outlets: Record<string, string> = {}
   const macros = createMacroContext({
     char: input.characterName,
     user: input.userName,
@@ -265,6 +307,8 @@ export function buildPrompt(input: PromptInput): PromptResult {
       ...data?.personality === undefined ? {} : { personality: data.personality },
       ...data?.scenario === undefined ? {} : { scenario: data.scenario },
     },
+    ...(input.chat === undefined ? {} : { chat: input.chat }),
+    outlet: key => outlets[key] ?? '',
   })
   const expand = input.substitute ?? ((text: string): string => expandMacros(text, macros))
 
@@ -281,6 +325,8 @@ export function buildPrompt(input: PromptInput): PromptResult {
       characterPersonality: data?.personality ?? '',
     },
   })
+  outlets = outletPromptsOf(scan.buckets.outlets)
+  input.outletSink?.(outlets)
 
   // The preset's own wrappers, applied the way upstream applies them
   // (`preparePromptsForChatCompletion` + `formatWorldInfo`): a format that

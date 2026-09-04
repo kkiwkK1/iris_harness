@@ -130,6 +130,18 @@ test('a macro name may be introduced by a space or a single colon', () => {
   assert.equal(expand('{{ char }}'), 'Seraphina')
 })
 
+test('a whitespace-introduced list keeps its `::` for the parts', () => {
+  const { expand } = fixture()
+
+  // The spelling upstream's own examples use: an introducer space followed by
+  // `::` introduces the list, it does not manufacture an empty first argument.
+  assert.equal(expand('{{ timeDiff :: 2023-01-02 :: 2023-01-01 }}'), 'in a day')
+  // Direct `::` after the name is unchanged, and a single-colon list still
+  // reaches the macro as one argument when the parts do not continue with `::`.
+  assert.equal(expand('{{timeDiff::2023-01-02::2023-01-01}}'), 'in a day')
+  assert.equal(expand('{{reverse:abc}}'), 'cba')
+})
+
 test('regex macros run after named expansion, so they see the leftovers', () => {
   const registry = new MacroRegistry()
   const context = createMacroContext()
