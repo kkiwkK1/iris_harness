@@ -10,7 +10,8 @@
  * @module @iris/app-service/chats
  */
 
-import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import type { CharacterCard } from '@iris/character'
@@ -28,10 +29,11 @@ import type { ChatSearchHit, ChatSearchMatch, ChatSummary } from '@iris/protocol
 import type { RegexScript } from '@iris/regex'
 import type { ScopeBackend, Variables } from '@iris/variables'
 
+import { BackupStore } from './backups.ts'
 import { ChatEntry, createSession, readMeta } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
-import { backupsDir, fileFor, isSafeId, toId, uniqueId } from './paths.ts'
+import { fileFor, isSafeId, toId, uniqueId } from './paths.ts'
 import { resolveCardWorldbook, WorldbookStore } from './worldbooks.ts'
 import type { ScriptVariableStore } from './script-variables.ts'
 
@@ -131,12 +133,23 @@ export class ChatStore {
    * `regex.set` takes to reach chats that are already open.
    */
   readonly #globalRegex: (() => Promise<readonly RegexScript[]>) | undefined
+  /**
+   * Where the pre-change copies live.
+   *
+   * Always present: a store without a snapshot directory would make the
+   * dangerous-operation protections a matter of which caller remembered to
+   * pass one. The parameter stays so a composition can share one store — and
+   * its retention setting — between this store and the service's handlers.
+   */
+  readonly #backups: BackupStore
 
   /**
    * @param dir - the folder holding chat files.
    * @param library - where the cards live, for reopening a chat's character.
    * @param scriptVariables - where the `script` scope persists. Absent keeps it
    *   in memory, which is what a host with nowhere to store it should do.
+   * @param backups - the snapshot store. Absent builds one on this store's own
+   *   directory with the default retention.
    */
   constructor(
     dir: string,
@@ -148,7 +161,11 @@ export class ChatStore {
     bookFor?: (characterId: string | undefined, card: CharacterCard | undefined) => Promise<string | undefined>,
     persona?: () => string,
     globalRegex?: () => Promise<readonly RegexScript[]>,
+<<<<<<< HEAD
     charBooks?: (characterId: string) => readonly string[],
+=======
+    backups?: BackupStore,
+>>>>>>> dev/feat-backups
   ) {
     this.#dir = dir
     this.#library = library
@@ -159,7 +176,11 @@ export class ChatStore {
     this.#globalSelect = globalSelect
     this.#persona = persona
     this.#globalRegex = globalRegex
+<<<<<<< HEAD
     this.#charBooks = charBooks
+=======
+    this.#backups = backups ?? new BackupStore(dir)
+>>>>>>> dev/feat-backups
   }
 
   /**
@@ -552,7 +573,16 @@ export class ChatStore {
       updatedAt,
     }
 
-    await writeFile(fileFor(this.#dir, chatId, '.jsonl'), formatChatFile(chat), 'utf8')
+    const target = fileFor(this.#dir, chatId, '.jsonl')
+    // **Import overwrite is the one dangerous operation that cannot happen
+    // today** — `uniqueId` above mints a fresh id whenever the stem is taken —
+    // and the guard is here anyway, because the mechanism's promise is about
+    // the operation, not about today's id arithmetic: if minting ever changes,
+    // the conversation that was there is copied aside first, not lost.
+    if (existsSync(target)) {
+      await this.#backups.snapshot(chatId, 'import-overwrite', characterId)
+    }
+    await writeFile(target, formatChatFile(chat), 'utf8')
     return {
       chatId,
       title,
@@ -603,24 +633,37 @@ export class ChatStore {
    * still find is what makes it so. A download that the browser refused, or that
    * went to a folder nobody remembers, is a backup only in the moment it was
    * offered.
+   *
+   * Through the snapshot store, so the copy lands where every other pre-change
+   * copy lands — `backups/<character>/<chat>/`, named with when and why — and
+   * the backup card lists it beside the rest instead of the store growing a
+   * second, invisible layout. Retention applies to it like to the rest.
    * @param chatId - the conversation to copy.
    * @returns the path written.
    * @throws {AppError} `not-found` when no such chat is stored.
    */
   async backup(chatId: string): Promise<string> {
-    const source = fileFor(this.#dir, chatId, '.jsonl')
-    const dir = backupsDir(this.#dir)
-    await mkdir(dir, { recursive: true })
-    // The instant is in the name: a second backup must not overwrite the first,
-    // and the one being replaced is exactly the one worth keeping.
-    const stamp = new Date().toISOString().replaceAll(/[:.]/gu, '-')
-    const target = fileFor(dir, `${chatId}-${stamp}`, '.jsonl')
-    try {
-      await copyFile(source, target)
-    } catch (cause: unknown) {
-      throw notFound(`no chat "${chatId}" to back up: ${String(cause)}`)
-    }
-    return target
+    const entry = await this.open(chatId)
+    const saved = await this.#backups.snapshot(chatId, 'cleanup', entry.meta.characterId)
+    return this.#backups.locate(saved.backupId)
+  }
+
+  /**
+   * Write an exact stored text back as a conversation's file.
+   *
+   * The restore arm's write half, and deliberately the only way in: the bytes
+   * go back **verbatim** — the whole point of a snapshot is that the
+   * conversation comes back as it went into the copy, floor for floor, not
+   * re-projected through today's writer. A live entry is dropped first, so the
+   * next open re-reads the disk instead of answering from the version the
+   * restore just replaced.
+   * @param chatId - the conversation to write.
+   * @param text - the snapshot's whole text.
+   */
+  async restoreFile(chatId: string, text: string): Promise<void> {
+    this.#entries.delete(chatId)
+    await this.ensure()
+    await writeFile(fileFor(this.#dir, chatId, '.jsonl'), text, 'utf8')
   }
 
   /**

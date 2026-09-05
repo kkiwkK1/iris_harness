@@ -207,6 +207,17 @@ const PROBES: Record<string, unknown> = {
   // the property, and the not-found answer proves the handler ran.
   'chat.import': { filename: 'probe.jsonl', content: 'e30=', characterId: 'no-such-card' },
   'chat.export': { chatId: 'no-such-chat' },
+  // The snapshot arms answer from a host whose profile has a snapshot store and
+  // no snapshots: `list` answers empty, and the other three name what is not
+  // there — the not-found and the named-confirm refusal both prove the handler
+  // ran. Reachability is the property, not success.
+  'backup.list': {},
+  'backup.preview': { backupId: 'no-such-card/no-such-chat/20260101-000000-000-f1-save-chat.jsonl' },
+  'backup.restore': {
+    backupId: 'no-such-card/no-such-chat/20260101-000000-000-f1-save-chat.jsonl',
+    confirm: 'no such conversation',
+  },
+  'backup.delete': { backupId: 'no-such-card/no-such-chat/20260101-000000-000-f1-save-chat.jsonl' },
   'prompt.itemize': { chatId: 'no-such-chat' },
   'script.slash': { chatId: 'no-such-chat', command: '/send hi|/trigger' },
   'script.runEnded': { chatId: 'no-such-chat', runId: 'probe-run' },

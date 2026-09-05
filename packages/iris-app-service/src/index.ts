@@ -21,6 +21,7 @@ import z from '@deepseek-ai/schemastery'
 import type { ChatCompletionPreset } from '@iris/preset'
 import { OpenAiCompatAdapter } from '@iris/llm-openai-compat'
 
+import { BackupStore, DEFAULT_BACKUP_KEEP } from './backups.ts'
 import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
@@ -47,6 +48,16 @@ import { ScriptPolicyStore } from './scripts.ts'
 import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
 
+export {
+  BackupStore,
+  DEFAULT_BACKUP_KEEP,
+  NO_CHARACTER,
+  backupStamp,
+  parseBackupStamp,
+  rotateBackups,
+  type BackupIntent,
+  type BackupStoreOptions,
+} from './backups.ts'
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
 export { ConnectionStore, keyTailOf, summarize, routeOf, type ProfileInput } from './connections.ts'
 export type { ConnectionEndpoint } from './service.ts'
@@ -225,6 +236,17 @@ export interface Config {
    * @default 2000
    */
   templateDeadlineMs?: number
+  /**
+   * Conversation snapshots kept per chat before the oldest is deleted.
+   *
+   * The retention for the copies the host takes before deleting messages, before
+   * a card's replay batch becomes the stored file, and before a restore writes
+   * over a conversation. Upstream keeps 50 by default (`backups.common
+   * .numberOfBackups`); the floor is 1, because a retention of zero would turn
+   * every protected operation into the loss it was meant to prevent.
+   * @default 50
+   */
+  backupKeep?: number
 }
 
 /** Runtime schema for the application row. */
@@ -249,6 +271,7 @@ export const Config: z<Config> = z.object({
   pruneSnapshotInterval: z.natural().default(50),
   pruneKeepRecent: z.natural().default(20),
   templateDeadlineMs: z.natural().default(2000),
+  backupKeep: z.natural().default(DEFAULT_BACKUP_KEEP),
 })
 
 /**
@@ -431,6 +454,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return done?.name
   }
 
+  // The pre-change copies: beside the chats they protect, one store shared by
+  // the chat store (whose own backup arm writes through it) and the service
+  // (whose dangerous-operation guards and backup.* methods read it).
+  const backups = new BackupStore(paths.chats, {
+    keep: config.backupKeep ?? DEFAULT_BACKUP_KEEP,
+    onError: error => { ctx.logger.warn(`backups: ${error.message}`) },
+  })
+
   const chats = new ChatStore(
     paths.chats, library, scriptVariables, globalScope, worldbooks,
     // Read through a closure rather than captured: the selection is a setting
@@ -445,10 +476,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // Same rule, same reason: the global regex list is edited at runtime, and
     // each open composes from whatever it says right now.
     () => extensionSettingsStore.globalRegex(),
+<<<<<<< HEAD
     // The per-character extra bindings — upstream's `world_info.charLore`.
     // Edited at runtime like the two above, so the closure rather than a
     // captured value; a chat re-open is when a rebind reaches a conversation.
     characterId => settings.charBooks(characterId),
+=======
+    // The snapshot store, shared with the service below — one retention
+    // setting, one directory layout, wherever a copy is taken from.
+    backups,
+>>>>>>> dev/feat-backups
   )
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset
@@ -569,6 +606,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     worldbookBindings,
     installConnection,
     scriptVariables,
+    backups,
     preset: storedPreset ?? await loadPreset(config.presetPath),
     ...storedPresetName === undefined ? {} : { presetName: storedPresetName },
     presets,
@@ -631,6 +669,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.branch', handlers['chat.branch']),
       ctx.irisRpc.register('chat.import', handlers['chat.import']),
       ctx.irisRpc.register('chat.export', handlers['chat.export']),
+      ctx.irisRpc.register('backup.list', handlers['backup.list']),
+      ctx.irisRpc.register('backup.preview', handlers['backup.preview']),
+      ctx.irisRpc.register('backup.restore', handlers['backup.restore']),
+      ctx.irisRpc.register('backup.delete', handlers['backup.delete']),
       ctx.irisRpc.register('prompt.itemize', handlers['prompt.itemize']),
       ctx.irisRpc.register('script.getVariables', handlers['script.getVariables']),
       ctx.irisRpc.register('script.setVariables', handlers['script.setVariables']),

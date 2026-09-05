@@ -998,3 +998,88 @@ export interface WorldbookSettingsView {
   /** Default inclusion-group resolution by key-match score. */
   useGroupScoring: boolean
 }
+
+/**
+ * Why a snapshot of a conversation exists.
+ *
+ * The host records the reason **in the snapshot's file name**, so a folder
+ * listing is self-describing and a sidecar index has nothing to drift from.
+ * Each value names the dangerous operation the copy was taken in front of.
+ */
+export type BackupReason =
+  /** The cleanup sweep's explicit "back up and clean" answer. */
+  | 'cleanup'
+  /** One floor was about to be removed (`chat.deleteMessage`). */
+  | 'delete-message'
+  /** Several floors were about to be removed by a card's replay batch. */
+  | 'delete-messages'
+  /** An import was about to write over an existing conversation file. */
+  | 'import-overwrite'
+  /** A restore was about to write a snapshot back over the live conversation. */
+  | 'pre-restore'
+  /** A card was about to rewrite floors in place (`script.setChatMessages`). */
+  | 'rewrite-messages'
+
+/**
+ * One stored snapshot of a conversation.
+ *
+ * `backupId` is the path **relative to the profile's backups root** — the
+ * handle every other backup method takes. It is built from validated ids, so
+ * it is safe to echo back, and it never leaks an absolute host path.
+ */
+export interface BackupSummary {
+  backupId: string
+  /** The conversation the snapshot was taken of. */
+  chatId: string
+  /** The card the conversation was played with, when it had one. */
+  characterId?: string
+  /**
+   * When the snapshot was taken, parsed from the file name's stamp.
+   *
+   * Unix epoch milliseconds. `0` when the name carries no readable stamp — a
+   * file dropped in by hand is still listable, it just sorts as oldest.
+   */
+  createdAt: number
+  /** Floors carried, header line excluded — recorded in the name at snapshot time. */
+  messageCount: number
+  /** File size in bytes. */
+  bytes: number
+  /** What the host was about to do, when the name says. */
+  reason?: BackupReason
+}
+
+/** One floor of a snapshot, as the read-only preview shows it. */
+export interface BackupPreviewFloor {
+  /** The floor's index in the snapshot, the same number a card script would see. */
+  messageId: number
+  /** The floor's speaker. */
+  name: string
+  /** True when the floor is the user's own line. */
+  isUser: boolean
+  /** The floor's text, clipped — a preview, not a re-render. */
+  text: string
+}
+
+/**
+ * A read-only look into one snapshot: the header's facts and the first floors.
+ *
+ * Everything here comes off the snapshot's own bytes, so what a reader sees is
+ * what a restore would write back — not a summary the host computed at
+ * snapshot time and could have gone stale.
+ */
+export interface BackupPreview {
+  /** The snapshot itself, as the list carries it. */
+  backup: BackupSummary
+  /** The conversation's title, as the snapshot's header records it. */
+  title: string
+  /** Who the user was in that conversation, when the header says. */
+  userName?: string
+  /** Who the character was, when the header says. */
+  characterName?: string
+  /** The header's own `create_date`, verbatim, when it carries one. */
+  createDate?: string
+  /** The first floors, in file order. */
+  floors: BackupPreviewFloor[]
+  /** How many floors the snapshot holds in full. */
+  totalFloors: number
+}

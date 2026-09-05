@@ -1673,3 +1673,89 @@
   gap: 4px;
   align-items: flex-start;
 }
+
+/*
+ * A backup row, the regex row's grammar again — time and size where the
+ * script's name goes, the snapshot reason as its badge, and the three actions
+ * beside it. The preview and the named-confirmation box open under the row
+ * they belong to, indented by the row's own left edge, so a reader never has
+ * to guess which snapshot a dialog is about.
+ */
+.iris-backup__list {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.iris-backup__group {
+  padding: 6px 0 2px;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+}
+
+.iris-backup__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-backup__when {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.iris-backup__detail {
+  flex: none;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-tertiary);
+  white-space: nowrap;
+}
+
+.iris-backup__badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  font-family: var(--iris-font-ui);
+  font-size: 10px;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-backup__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.iris-backup__panel {
+  margin: 4px 0 8px;
+  padding: 8px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.iris-backup__floor {
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+  overflow-wrap: anywhere;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+  padding-bottom: 4px;
+}
+
+.iris-backup__floor-name {
+  color: var(--iris-ink-tertiary);
+  margin-right: 6px;
+}
+
+.iris-backup__confirm-input {
+  width: 100%;
+}

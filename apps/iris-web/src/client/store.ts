@@ -16,6 +16,8 @@ import type { ReportGrade } from '../app/blocked-line.ts'
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import type {
+  BackupPreview,
+  BackupSummary,
   CharacterSummary,
   ChatSearchHit,
   ChatSummary,
@@ -485,6 +487,16 @@ export interface IrisState {
    * had.
    */
   regexScripts: RegexScriptView[] | undefined
+
+  /**
+   * The profile's conversation snapshots, once fetched, newest first.
+   *
+   * Same meaning of `undefined` as `presets` and `regexScripts`: a host that
+   * keeps no snapshot store refuses `backup.list`, and the panel that asked
+   * renders nothing rather than an empty list that reads as "nothing has ever
+   * needed a snapshot". Loaded by the panel, not by boot.
+   */
+  backups: BackupSummary[] | undefined
 }
 
 /** What the interface calls. Every one of these is a host round trip. */
@@ -624,6 +636,7 @@ export interface IrisActions {
   setGlobalSelect(names: readonly string[]): Promise<void>
   /** Patch the world-info scan settings, and hold the effective result. */
   patchWorldbookSettings(patch: Partial<WorldbookSettingsView>): Promise<void>
+<<<<<<< HEAD
   /**
    * Fetch the open chat character's world book binding, and hold it.
    *
@@ -638,6 +651,29 @@ export interface IrisActions {
    * list unbinds all. A no-op when no chat is open.
    */
   setCharBooks(names: readonly string[]): Promise<void>
+=======
+  /** Fetch the backup panel's data: every snapshot the profile holds. */
+  loadBackups(): Promise<void>
+  /**
+   * Read the head of one snapshot for the confirm dialog.
+   *
+   * **Resolves `undefined` on failure instead of raising through the guard**,
+   * like `searchChats`: the panel needs the value in place, and the host's
+   * named reason is raised as its own notice here.
+   */
+  previewBackup(backupId: string): Promise<BackupPreview | undefined>
+  /**
+   * Write a snapshot back over its conversation.
+   *
+   * The typed confirmation crosses to the host, which enforces it — the panel's
+   * disabled button is courtesy, the contract is the gate. The list is
+   * re-fetched afterwards, and a chat that is open re-opens so the page shows
+   * the conversation that came back.
+   */
+  restoreBackup(backupId: string, confirm: string): Promise<void>
+  /** Remove one snapshot; the live conversation is never touched. */
+  deleteBackup(backupId: string): Promise<void>
+>>>>>>> dev/feat-backups
   /** Fetch the persona panel's data: the personas and which one is active. */
   loadPersonas(): Promise<void>
   /**
@@ -987,6 +1023,7 @@ export function createIrisStore(
       presetInstall: undefined,
       presetManager: undefined,
       regexScripts: undefined,
+      backups: undefined,
 
       async boot(): Promise<void> {
         await guard(async () => {
@@ -1418,6 +1455,7 @@ export function createIrisStore(
         })
       },
 
+<<<<<<< HEAD
       async loadCharBooks(): Promise<void> {
         const characterId = get().view?.characterId
         if (characterId === undefined) {
@@ -1444,6 +1482,50 @@ export function createIrisStore(
           // binding as stored, which can differ from the list as asked.
           if (get().view?.characterId !== characterId) return
           set({ charBooks: { characterId, primary: answer.primary, additional: answer.additional } })
+=======
+      async loadBackups(): Promise<void> {
+        await guard(async () => {
+          const { backups } = await client.call('backup.list', {})
+          set({ backups })
+        })
+      },
+
+      async previewBackup(backupId: string): Promise<BackupPreview | undefined> {
+        try {
+          const { preview } = await client.call('backup.preview', { backupId })
+          return preview
+        } catch (error: unknown) {
+          get().notify('error', translate(
+            getLanguage(),
+            'backupFailed',
+            { detail: asRpcError(error, getLanguage()).message },
+          ))
+          return undefined
+        }
+      },
+
+      async restoreBackup(backupId: string, confirm: string): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('backup.restore', { backupId, confirm })
+          // Held from the answer, not assumed: the chat the host restored is
+          // the fact, and its list may have moved as well.
+          const { chats } = await client.call('chat.list', {})
+          set({ chats, ...raise('info', translate(
+            getLanguage(),
+            answer.previous === undefined ? 'backupRestoredClean' : 'backupRestored',
+            { title: answer.chat.title },
+          )) })
+          if (get().chatId === answer.chat.chatId) await get().openChat(answer.chat.chatId)
+          await get().loadBackups()
+        })
+      },
+
+      async deleteBackup(backupId: string): Promise<void> {
+        await guard(async () => {
+          await client.call('backup.delete', { backupId })
+          set(raise('info', translate(getLanguage(), 'backupDeleted')))
+          await get().loadBackups()
+>>>>>>> dev/feat-backups
         })
       },
 

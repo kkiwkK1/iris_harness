@@ -1093,6 +1093,7 @@ class InMemoryClient implements FakeClient {
       // none, and an imaginary list would let a panel believe an import landed.
       case 'regex.list':
       case 'regex.set':
+<<<<<<< HEAD
       // The character manager writes host-side files: a rename or a tag edit
       // rewrites a card on disk, a duplicate copies one, an export reads one
       // out, and a star lands in the profile's favorites file. The fake has no
@@ -1105,6 +1106,18 @@ class InMemoryClient implements FakeClient {
       case 'character.export':
       case 'character.setTags':
       case 'character.favorite': {
+=======
+      // Snapshots are files under the host's profile, taken before operations
+      // this client does not perform — it never deletes a floor to a file, so
+      // it would never have anything to list, preview, restore or delete. An
+      // empty list in particular would read as "protected, nothing yet" about
+      // a store that does not exist, which is the all-clear-without-a-host
+      // lie `debug.reports` is refused for.
+      case 'backup.list':
+      case 'backup.preview':
+      case 'backup.restore':
+      case 'backup.delete': {
+>>>>>>> dev/feat-backups
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 

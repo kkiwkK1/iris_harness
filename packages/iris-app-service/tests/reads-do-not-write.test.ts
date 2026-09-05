@@ -8,6 +8,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { IrisEvent, RpcMethod } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
+import { BackupStore } from '../src/backups.ts'
 import { ChatStore } from '../src/chats.ts'
 import { ExtensionSettingsStore } from '../src/context.ts'
 import { CharacterLibrary } from '../src/library.ts'
@@ -74,6 +75,8 @@ interface Fixture {
   handlers: Handlers
   chats: ChatStore
   chatId: string
+  /** One snapshot that exists, so the `backup.*` reads perform actual reads. */
+  backupId: string
   dir: string
   /** The script-variable store, whose writes are queued rather than awaited. */
   scriptVariables: ScriptVariableStore
@@ -108,6 +111,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const scriptVariables = new ScriptVariableStore(join(dir, 'script-variables.json'))
   const chats = new ChatStore(join(dir, 'chats'), library, scriptVariables)
+  const backups = new BackupStore(join(dir, 'chats'))
   let ends = 0
   const stream: StreamFn = async function* (_options: GenerateOptions): AsyncIterable<StreamChunk> {
     const text = "Noted. _.set('count', 1);"
@@ -127,6 +131,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
     // `persona.get` with no id resolves the active persona — rather than
     // refusing their way past the check.
     personas: await seedPersona(join(dir, 'personas.json')),
+    backups,
     broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
     userName: 'Traveller',
   }).handlers()
@@ -138,7 +143,12 @@ async function fixture(t: TestContext): Promise<Fixture> {
   await handlers['chat.send']({ chatId, text: 'Where are the maps?' })
   while (ends < 1) await new Promise(resolve => setTimeout(resolve, 1))
 
-  return { handlers, chats, chatId, dir, scriptVariables }
+  // One snapshot on disk, so the `backup.*` reads below read rather than
+  // refuse their way past the check — the same rule the book and the persona
+  // above follow.
+  const seeded = await backups.snapshot(chatId, 'cleanup')
+
+  return { handlers, chats, chatId, backupId: seeded.backupId, dir, scriptVariables }
 }
 
 /** Everything observable about a conversation and its store. */
@@ -219,6 +229,10 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   // `settings.get`) is exactly where a silent write once hid.
   { method: 'worldbook.settings', params: () => ({}) },
   { method: 'regex.list', params: () => ({}) },
+  // A listing and a preview of the snapshot seeded above: reads off the
+  // snapshot's own bytes, which must not so much as re-date it.
+  { method: 'backup.list', params: () => ({}) },
+  { method: 'backup.preview', params: fixed => ({ backupId: fixed.backupId }) },
 ]
 
 for (const { method, params } of READS) {
