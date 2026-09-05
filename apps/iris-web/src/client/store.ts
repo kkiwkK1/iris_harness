@@ -684,7 +684,6 @@ export interface IrisActions {
    * list unbinds all. A no-op when no chat is open.
    */
   setCharBooks(names: readonly string[]): Promise<void>
-<<<<<<< HEAD
   /** Fetch the backup panel's data: every snapshot the profile holds. */
   loadBackups(): Promise<void>
   /**
@@ -706,7 +705,6 @@ export interface IrisActions {
   restoreBackup(backupId: string, confirm: string): Promise<void>
   /** Remove one snapshot; the live conversation is never touched. */
   deleteBackup(backupId: string): Promise<void>
-=======
   /**
    * Fetch one book's entries into the entry editor's local draft.
    *
@@ -738,7 +736,6 @@ export interface IrisActions {
    * `worldbook.load` — the shape a restore would have to put back.
    */
   exportWiBackup(): Promise<void>
->>>>>>> dev/feat-wi-editor
   /** Fetch the persona panel's data: the personas and which one is active. */
   loadPersonas(): Promise<void>
   /**
@@ -1556,7 +1553,6 @@ export function createIrisStore(
         })
       },
 
-<<<<<<< HEAD
       async loadBackups(): Promise<void> {
         await guard(async () => {
           const { backups } = await client.call('backup.list', {})
@@ -1599,7 +1595,9 @@ export function createIrisStore(
           await client.call('backup.delete', { backupId })
           set(raise('info', translate(getLanguage(), 'backupDeleted')))
           await get().loadBackups()
-=======
+        })
+      },
+
       async openWiEditor(book: string): Promise<void> {
         // Replaced before the fetch: whatever the previous book's drafts held,
         // this book's editor must not open showing them. The panel's
@@ -1670,7 +1668,6 @@ export function createIrisStore(
           link.click()
           URL.revokeObjectURL(url)
           get().notify('info', translate(getLanguage(), 'wiBackupExported', { name: state.book }))
->>>>>>> dev/feat-wi-editor
         })
       },
 

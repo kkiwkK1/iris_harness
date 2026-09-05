@@ -1812,7 +1812,6 @@
   align-items: flex-start;
 }
 
-<<<<<<< HEAD
 /*
  * A backup row, the regex row's grammar again — time and size where the
  * script's name goes, the snapshot reason as its badge, and the three actions
@@ -1897,7 +1896,8 @@
 
 .iris-backup__confirm-input {
   width: 100%;
-=======
+}
+
 /* -------------------------------------------------- world book entry editor */
 
 /* A horizontal row of small controls; the toolbar and the inline pairs in the
@@ -2195,5 +2195,4 @@
 .iris-entry__editor {
   border-top: var(--iris-hairline) solid var(--iris-rule);
   padding: 4px 12px 10px;
->>>>>>> dev/feat-wi-editor
 }
