@@ -942,6 +942,24 @@ class InMemoryClient implements FakeClient {
         )
       }
 
+      case 'worldbook.setCharBooks': {
+        const { characterId, names } = params as RpcRequest<'worldbook.setCharBooks'>
+        /*
+         * Refused, for the same reason `worldbook.bindChat` is: the write's
+         * whole effect is on what the next scan admits, and this client runs no
+         * scan and keeps no `charLore` store. Accepting it would let a card
+         * believe a character now plays with an extra book that no read here
+         * can ever confirm — `worldbook.charNames` above answers
+         * `additional: []` unconditionally, so the apparent persist would be
+         * contradicted by the very next read.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client models no character world book bindings (asked to bind ${String(names.length)}`
+          + ` book(s) to '${characterId}')`,
+        )
+      }
+
       case 'script.replaceScriptButtons': {
         /*
          * Refused, and the reason is specific rather than "not built yet".

@@ -65,6 +65,23 @@ const CONTINUE_POSTFIXES = Object.keys(CONTINUE_POSTFIX_SEPARATORS) as readonly 
 const BOOLEAN_FIELDS = ['trimSentences', 'squashSystemMessages'] as const satisfies
   readonly (keyof GenerationSettings)[]
 
+/**
+ * One character's additional book bindings, in upstream's own shape.
+ *
+ * `world_info.charLore[]` (`world-info.js:6039`): a row per character that has
+ * at least one extra book, keyed by the character's **file name** —
+ * `getCharaFilename`'s stem, which is what this host's `characterId` already
+ * is (the card file's name without its extension). The row exists only while
+ * the list is non-empty: upstream's writer splices it when the last book is
+ * unbound (`world-info.js:6044`), and so does the write here.
+ */
+export interface WorldbookCharLoreRow {
+  /** The character file stem this row binds books to. */
+  name: string
+  /** Additional book names, in the order the user bound them. */
+  extraBooks: string[]
+}
+
 /** What one settings file holds. */
 interface SettingsFile {
   global: GenerationSettings
@@ -75,13 +92,16 @@ interface SettingsFile {
    *
    * Its own section rather than a field of {@link GenerationSettings}: that
    * type is merged per chat and range-checked as numbers, and a list of book
-   * names is neither. Upstream keeps this apart too — `globalSelect` lives
-   * under `world_info_settings.world_info`, not beside the sampler.
+   * names is neither. Upstream keeps this apart too — `globalSelect` and
+   * `charLore` live under `world_info_settings.world_info`, not beside the
+   * sampler.
    */
   worldbooks?: {
     globalSelect: string[]
     /** The scan knobs, stored only when the user has set at least one. */
     settings?: Partial<WorldbookSettings>
+    /** Rows only for characters with at least one additional book. */
+    charLore?: WorldbookCharLoreRow[]
   }
   /**
    * The active preset and the prompt manager's state on top of it.
@@ -247,14 +267,74 @@ export class SettingsStore {
    * @param names - book names, verbatim.
    */
   async setGlobalSelect(names: readonly string[]): Promise<void> {
-    // The scan settings inside the section are preserved, not reset: the
-    // selection and the knobs are unrelated facts, and rewriting a selection
-    // must not silently undo a scan depth the user chose.
+    // The scan settings and the per-character bindings inside the section are
+    // preserved, not reset: the selection, the knobs and the bindings are
+    // unrelated facts, and rewriting one must not silently undo the others.
+    const section = this.#file.worldbooks ?? { globalSelect: [] }
     this.#file.worldbooks = {
-      ...this.#file.worldbooks?.settings === undefined ? {} : { settings: this.#file.worldbooks.settings },
+      ...section,
       globalSelect: [...names],
     }
     await this.save()
+  }
+
+  /**
+   * The additional books one character is bound to, in binding order.
+   *
+   * Upstream's read half of `world_info.charLore`: `getCharacterLore` finds the
+   * row whose `name` is the character's file stem and takes its `extraBooks`.
+   * A character with no row — the normal case, and the case after an unbind —
+   * answers empty rather than absent, so a caller never branches on undefined.
+   * @param characterId - the character file stem.
+   * @returns the bound names; empty when none are.
+   */
+  charBooks(characterId: string): string[] {
+    const row = this.#file.worldbooks?.charLore?.find(row => row.name === characterId)
+    return row === undefined ? [] : [...row.extraBooks]
+  }
+
+  /**
+   * Replace one character's additional books, and persist.
+   *
+   * A **whole-list** write, matching upstream's `updateAuxBooks`
+   * (`world-info.js:6039`): the caller computes the next list, this stores it.
+   * Three properties carried over from that function because each one is a
+   * behaviour a caller can observe:
+   *
+   * 1. **Duplicates collapse to their first occurrence.** Upstream normalises
+   *    the array (`normalizeArray`) before storing; a doubled name would
+   *    otherwise load the same book twice into one scan.
+   * 2. **An empty list removes the row entirely.** Not an empty `extraBooks`
+   *    beside the name — the row is spliced out (`world-info.js:6044`), so an
+   *    unbound character leaves no key behind. This is the "解绑不留残键"
+   *    property, and it is upstream's own, not an addition.
+   * 3. **The other rows, the global selection and the scan knobs survive.**
+   *    The section is amended, not rewritten.
+   *
+   * Not written anywhere near the card file: the binding is runtime state about
+   * an installation, and the card file is shared between installations.
+   * @param characterId - the character file stem to bind under.
+   * @param names - the additional book names, in the order to keep.
+   * @returns the stored list after normalisation, read back.
+   */
+  async setCharBooks(characterId: string, names: readonly string[]): Promise<string[]> {
+    const next: string[] = []
+    for (const name of names) {
+      if (!next.includes(name)) next.push(name)
+    }
+
+    const rest = (this.#file.worldbooks?.charLore ?? []).filter(row => row.name !== characterId)
+    const { charLore: _dropped, ...keep } = this.#file.worldbooks ?? { globalSelect: [] as string[] }
+    this.#file.worldbooks = {
+      ...keep,
+      // `_dropped` is not spread through: an unbind that contributed no key of
+      // its own would otherwise restore exactly the row it was removing.
+      ...(next.length === 0
+        ? rest.length === 0 ? {} : { charLore: rest }
+        : { charLore: [...rest, { name: characterId, extraBooks: next }] }),
+    }
+    await this.save()
+    return [...next]
   }
 
   /**

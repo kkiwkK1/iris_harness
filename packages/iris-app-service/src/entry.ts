@@ -915,6 +915,19 @@ export class ChatEntry {
       })()
     if (own.length > 0 && !seen.has(ownName)) books.push({ name: ownName, entries: own })
 
+    // The host-stored extras, after the primary. MVU's own list reads
+    // `[...selected_global_lorebooks, primary, ...additional]`
+    // (`initvar/variable_init.ts:230`) — the additional bindings have a named
+    // position in it, so a book the user bound to this character through the
+    // host seeds variables exactly as it would upstream. Same skip rules as
+    // above: a name already folded (an extra that duplicates the primary or a
+    // global) contributes once, and an empty book leaves no row.
+    for (const book of chosen?.additional ?? []) {
+      if (seen.has(book.world) || book.entries.length === 0) continue
+      seen.add(book.world)
+      books.push({ name: book.world, entries: book.entries })
+    }
+
     if (books.length === 0) {
       this.#initVars = EMPTY_MVU
       return this.#initVars

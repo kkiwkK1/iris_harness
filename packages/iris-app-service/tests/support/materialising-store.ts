@@ -25,9 +25,16 @@ import { WorldbookStore } from '../../src/worldbooks.ts'
  * that runs on both the import and open paths.
  * @param dir - the fixture's profile directory.
  * @param library - the card library, as the fixture built it.
+ * @param charBooks - the per-character additional bindings reader, as the
+ *   production composition passes one. Absent leaves the store without the
+ *   channel, which is what fixtures that never bind extras want.
  * @returns a store that materialises embedded books on open.
  */
-export function materialisingChatStore(dir: string, library: CharacterLibrary): ChatStore {
+export function materialisingChatStore(
+  dir: string,
+  library: CharacterLibrary,
+  charBooks?: (characterId: string) => readonly string[],
+): ChatStore {
   const worldbooks = new WorldbookStore(join(dir, 'worlds'))
   const bindings = new WorldbookBindingStore(join(dir, 'worldbook-bindings.json'))
   return new ChatStore(
@@ -42,5 +49,8 @@ export function materialisingChatStore(dir: string, library: CharacterLibrary): 
       const done = await materialiseEmbeddedBook(characterId, card, worldbooks, bindings)
       return done?.name
     },
+    undefined,
+    undefined,
+    charBooks,
   )
 }

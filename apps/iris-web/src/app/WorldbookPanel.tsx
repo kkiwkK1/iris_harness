@@ -76,12 +76,21 @@ function Slider({ label, note, value, bounds, onCommit }: {
  */
 export function WorldbookPanel(): ReactElement {
   const worldbooks = useIris(state => state.worldbooks)
+  const characterId = useIris(state => state.view?.characterId)
+  const charBooks = useIris(state => state.charBooks)
   const actions = useIrisActions()
   useLanguage()
 
   useEffect(() => {
     if (worldbooks === undefined) void actions.loadWorldbooks()
   }, [worldbooks, actions])
+
+  // The binding belongs to the open chat's character: fetched on mount and on
+  // every character change, so switching conversations shows the new
+  // character's binding rather than the previous one's.
+  useEffect(() => {
+    if (characterId !== undefined) void actions.loadCharBooks()
+  }, [characterId, actions])
 
   const patch = (part: Partial<WorldbookSettingsView>): void => {
     void actions.patchWorldbookSettings(part)
@@ -98,6 +107,13 @@ export function WorldbookPanel(): ReactElement {
   const settings = worldbooks.settings
 
   const selected = worldbooks.globalSelect.length
+
+  // The additional bindings as they stand for the character actually open —
+  // never the held answer for a different character, which would bind books
+  // onto a conversation that never asked for them.
+  const charBinding = charBooks !== undefined && charBooks.characterId === characterId
+    ? charBooks
+    : undefined
 
   return (
     <CollapsibleSection
@@ -138,6 +154,55 @@ export function WorldbookPanel(): ReactElement {
             })}
         </div>
       </div>
+
+      {characterId !== undefined && (
+        <div className="iris-field">
+          <span className="iris-field__label">{t('worldbookCharBind')}</span>
+          <span />
+          <div className="iris-field__control">
+            {/*
+              The card's own binding, shown for orientation and deliberately
+              not editable here: it lives on the card file, which is shared
+              between installations — this panel only writes the host's own
+              per-character list.
+            */}
+            <p className="iris-field__note">
+              {charBinding?.primary !== null && charBinding?.primary !== undefined
+                ? t('worldbookCharPrimary', { name: charBinding.primary })
+                : t('worldbookCharPrimaryNone')}
+            </p>
+            <div className="iris-choice" role="group" aria-label={t('worldbookCharBind')}>
+              {worldbooks.names.length === 0
+                ? <span className="iris-list__empty">{t('worldbooksEmpty')}</span>
+                : worldbooks.names.map(name => {
+                  const bound = charBinding?.additional.includes(name) ?? false
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      className="iris-choice__option"
+                      aria-pressed={bound}
+                      onClick={() =>
+                        void actions.setCharBooks(
+                          bound
+                            ? charBinding?.additional.filter(row => row !== name) ?? []
+                            : [...charBinding?.additional ?? [], name],
+                        )}
+                    >
+                      {name}
+                    </button>
+                  )
+                })}
+            </div>
+            {/*
+              Honest about the two boundaries of the feature: a chat resolves
+              its books when it opens, and the list is stored with the profile
+              rather than written into the card file.
+            */}
+            <p className="iris-field__note">{t('worldbookCharNote')}</p>
+          </div>
+        </div>
+      )}
 
       <Slider
         label={t('worldbookScanDepth')}

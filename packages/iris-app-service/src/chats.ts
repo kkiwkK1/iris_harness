@@ -110,6 +110,18 @@ export class ChatStore {
    */
   readonly #persona: (() => string) | undefined
   /**
+   * The additional books bound to a character through the host, read when a
+   * chat opens.
+   *
+   * Upstream's `world_info.charLore[<file name>].extraBooks`. The same shape as
+   * `#globalSelect` for the same reason: the bindings are something the user
+   * edits while the host runs, and a snapshot taken at construction would leave
+   * every chat opened afterwards resolving against the old ones. A re-open is
+   * the moment the new list reaches a conversation, exactly as a changed
+   * global selection is.
+   */
+  readonly #charBooks: ((characterId: string) => readonly string[]) | undefined
+  /**
    * The profile's global regex scripts, read fresh each time a chat opens.
    *
    * The same shape as `#globalSelect`: the list is something the user edits
@@ -136,6 +148,7 @@ export class ChatStore {
     bookFor?: (characterId: string | undefined, card: CharacterCard | undefined) => Promise<string | undefined>,
     persona?: () => string,
     globalRegex?: () => Promise<readonly RegexScript[]>,
+    charBooks?: (characterId: string) => readonly string[],
   ) {
     this.#dir = dir
     this.#library = library
@@ -146,6 +159,7 @@ export class ChatStore {
     this.#globalSelect = globalSelect
     this.#persona = persona
     this.#globalRegex = globalRegex
+    this.#charBooks = charBooks
   }
 
   /**
@@ -312,6 +326,7 @@ export class ChatStore {
       worldbook: await resolveCardWorldbook(
         card, this.#worldbooks, this.#globalSelect?.() ?? [],
         await this.#bookFor?.(meta.characterId, card),
+        meta.characterId === undefined ? [] : this.#charBooks?.(meta.characterId) ?? [],
       ),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
@@ -360,6 +375,7 @@ export class ChatStore {
       worldbook: await resolveCardWorldbook(
         card, this.#worldbooks, this.#globalSelect?.() ?? [],
         await this.#bookFor?.(characterId, card),
+        this.#charBooks?.(characterId) ?? [],
       ),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },

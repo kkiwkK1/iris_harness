@@ -257,6 +257,18 @@ export function buildCardContext(
      */
     worldbookNames?: readonly string[]
     /**
+     * The chat character's additional book bindings, for
+     * `getCharWorldbookNames` — upstream's `world_info.charLore` row.
+     *
+     * Read by the caller for the same freshness-and-sync reasons as
+     * `worldbookNames`: the store is async, this function is not, and a
+     * rebind must reach the next snapshot rather than the next chat open. Keyed
+     * by the chat's own character (the caller reads it off the entry), because
+     * the snapshot describes this chat even when the asking script names
+     * another card.
+     */
+    charBooks?: readonly string[]
+    /**
      * The stored world-info settings, for the same snapshot.
      *
      * Passed separately from `globalSelect` because the two live in different
@@ -294,8 +306,10 @@ export function buildCardContext(
     variableLayers: variableLayersOf(entry, extras.onReport),
     // Refreshed with the rest of the snapshot rather than resolved once at open
     // time, because a card may rebind its book mid-chat and the frame answers
-    // `getCharWorldbookNames('current')` from this field.
-    charWorldbooks: charWorldbookNames(entry.card),
+    // `getCharWorldbookNames('current')` from this field. The extras are the
+    // host-stored `charLore` row for this chat's character — read by the
+    // caller, since this function is synchronous and the store is not.
+    charWorldbooks: charWorldbookNames(entry.card, extras.charBooks ?? []),
     // Beside `charWorldbooks` for the same freshness reason, and copied because
     // the array travels into a frame a card can sort in place: `getWorldbookNames()`
     // and `getChatWorldbookName()` are synchronous upstream, and only a value

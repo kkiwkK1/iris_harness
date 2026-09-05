@@ -1727,7 +1727,26 @@ export class IrisAppService {
       }),
       'worldbook.charNames': async ({ characterId }) => {
         const card = await library.load(characterId)
-        return charWorldbookNames(card)
+        return charWorldbookNames(card, settings.charBooks(characterId))
+      },
+
+      // The character's additional bindings, upstream's `world_info.charLore`.
+      // The character must exist — a binding for a card that is not there is a
+      // caller mistake and should read as one — and each bound name must
+      // resolve, for the same reason `bindChat` requires it: a binding with no
+      // file behind it is silently skipped by every later scan, which reads as
+      // a book that activates nothing rather than as the broken binding it is.
+      // An empty list is the unbind-all path and is checked against nothing.
+      'worldbook.setCharBooks': async ({ characterId, names }) => {
+        const card = await library.load(characterId)
+        if (names.length > 0) {
+          if (worldbooks === undefined) throw notFound(`world book "${names[0]}"`)
+          const known = new Set(await worldbooks.names())
+          const missing = names.find(name => !known.has(name))
+          if (missing !== undefined) throw notFound(`world book "${missing}"`)
+        }
+        await settings.setCharBooks(characterId, names)
+        return charWorldbookNames(card, settings.charBooks(characterId))
       },
 
       'script.list': async ({ characterId }) => {
@@ -1837,6 +1856,12 @@ export class IrisAppService {
             // `getLorebookSettings()`, which must answer what the engine actually
             // runs rather than what a fresh install would run.
             worldbookNames: await worldbooks?.names() ?? [],
+            // The chat character's host-stored extra bindings, keyed by the
+            // chat's own card — the snapshot describes this chat even when the
+            // asking script names another character.
+            charBooks: entry.meta.characterId === undefined
+              ? []
+              : settings.charBooks(entry.meta.characterId),
             worldbookSettings: settings.worldbookSettings(),
             ...cardStorage === undefined ? {} : { storage: await cardStorage.snapshot() },
             characters: await library.list(),

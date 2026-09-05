@@ -33,7 +33,7 @@ const entry = (uid: number, comment: string, extra: Partial<LorebookEntry> = {})
 }) as LorebookEntry
 
 const resolved = (partial: Partial<ResolvedWorldbook>): ResolvedWorldbook => ({
-  entries: [], source: 'none', world: 'nobody', global: [], ...partial,
+  entries: [], source: 'none', world: 'nobody', additional: [], global: [], ...partial,
 })
 
 const comments = (entries: { comment: string }[]): string[] => entries.map(entry => entry.comment)

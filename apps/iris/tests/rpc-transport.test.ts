@@ -293,6 +293,9 @@ const PROBES: Record<string, unknown> = {
   // Refused with not-found on the probe host (no store) — reachability, not success.
   'worldbook.create': { name: 'no-such-book' },
   'worldbook.bindChat': { chatId: 'no-such-chat', name: 'no-such-book' },
+  // Empty list: no book existence to check, and the unknown character answers
+  // not-found — which proves the handler ran, like the probes above it.
+  'worldbook.setCharBooks': { characterId: 'no-such-character', names: [] },
   'worldbook.globalSelect': {},
   'worldbook.setGlobalSelect': { names: [] },
   'worldbook.settings': {},
