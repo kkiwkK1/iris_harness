@@ -93,7 +93,11 @@ export function App(): ReactElement {
 
   return (
     <div
-      className="iris-shell"
+      className={`iris-shell${settingsOpen ? ' iris-shell--drawer-open' : ''}`}
+      // The modifier names the drawer's occupancy of the window (shell.css):
+      // while it is open the stage cedes the drawer's width and the sheet
+      // re-centres in the region actually visible, instead of sitting under a
+      // stationary grid with a dead desk beside the sidebar.
       // Card import is a whole-window drop rather than a small target: a reader
       // dragging a card off their desktop should not have to aim.
       onDragEnter={event => {

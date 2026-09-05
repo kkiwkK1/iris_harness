@@ -114,6 +114,14 @@
   --iris-sheet: 1040px;
   --iris-aside: 260px;
 
+  /*
+   * The settings drawer's width, written once because two surfaces consume it:
+   * the drawer itself, and — while it is open — the stage's right inset, which
+   * re-centres the sheet in the region the drawer leaves visible. A literal in
+   * each place would drift by exactly the amount the centring is off.
+   */
+  --iris-drawer-w: min(392px, 92vw);
+
   /* ---------------------------------------------------------------- rhythm */
 
   --iris-gutter: 46px;

@@ -19,6 +19,8 @@
 import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CharacterSummary, ChatSummary, MessageView } from '@iris/protocol'
 
+import type { MessageActionOwner } from './message-actions.ts'
+
 /** What a message-scoped contribution is handed. */
 export interface MessageSlotOwner {
   message: MessageView
@@ -35,10 +37,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      */
     root: { kind: 'single', scope: 'root' }
     /**
-     * Actions on one message, beside Iris's own. A `list` slot: several
-     * extensions can contribute, and each keeps its own `id` cell.
+     * Actions on one message, contributed by providers (the B10 seam: a TTS,
+     * translation or image provider registers a button and its handler —
+     * `registerMessageAction`, no feature is named here). A `list` slot: each
+     * contribution keeps its own `id` cell. The shell folds the ledger into
+     * one per-floor menu (`MessageActions`), so nothing registered can reshape
+     * the row, and nothing registered leaves the row unchanged.
      */
-    'iris.message.actions': { kind: 'list', scope: 'root', owner: MessageSlotOwner }
+    'iris.message.actions': { kind: 'list', scope: 'root', owner: MessageActionOwner }
     /** Blocks under a message's text — a status bar, a token readout, a rating. */
     'iris.message.footer': { kind: 'list', scope: 'root', owner: MessageSlotOwner }
     /** Panels in the sidebar, below the built-in chat and character lists. */

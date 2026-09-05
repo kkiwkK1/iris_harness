@@ -75,7 +75,9 @@
   z-index: 30;
   display: flex;
   flex-direction: column;
-  width: min(392px, 92vw);
+  /* The token, not a literal: the stage subtracts this same width to keep the
+     sheet centred in the region the drawer leaves visible (shell.css). */
+  width: var(--iris-drawer-w);
   background: var(--iris-bg-page);
   border-left: var(--iris-hairline) solid var(--iris-rule);
   box-shadow: var(--iris-shadow);
@@ -489,14 +491,13 @@
 /*
  * The margin's content column.
  *
- * The aside's grid track is the flexible flank (`minmax(260px, 1fr)`), so on a
- * wide window the track itself can run many hundreds of pixels to the window
- * edge — and an uncapped inner box stretched with it, pushing values hundreds
- * of pixels from their keys and pinning the text against the glass. Capped
- * here instead, and left-aligned so the margin stays beside the sheet it
- * annotates; the rest of the track stays desk. The right padding is the
- * breathing room the reader sees when the window is barely wide enough to
- * show the aside at all.
+ * The aside is anchored to the SHEET's right edge, not to its track's start
+ * and not to the window: the inner box is capped and left-aligned, so the
+ * annotations sit a fixed 24px from the page they annotate and never drift
+ * or float when the window widens — anchored but not pinned to the glass,
+ * with the rest of the track left as the desk's breathing room to the right
+ * edge. The track itself is floored at the aside token (shell.css) so the
+ * margin never collapses below legibility.
  */
 .iris-aside__inner {
   max-width: calc(var(--iris-aside) + 92px);
