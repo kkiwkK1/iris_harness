@@ -149,6 +149,27 @@
   --iris-ease: cubic-bezier(0.2, 0, 0.2, 1);
   --iris-fast: 90ms;
   --iris-slip: 150ms;
+
+  /* ------------------------------------------------------------- scrollbar */
+
+  /*
+   * One scrollbar, everywhere.
+   *
+   * Every scrollable surface on this page — the reading column, the sidebar,
+   * the STATE margin, the settings drawer, the reports — draws the same
+   * scrollbar, and it is defined here once rather than per panel, because a
+   * scrollbar that differs between two panels reads as two programs sharing a
+   * window. The figure is a very slim rounded capsule that sits quietly at
+   * rest and darkens only when the reader reaches for it.
+   *
+   * Two tokens, theme-defined below: the resting grey sits deliberately below
+   * the rules in contrast (a scrollbar is chrome for moving, not a line for
+   * reading), and the hover tone is the rule-strong grey so the affordance
+   * arrives exactly when the hand is on it.
+   */
+  --iris-scrollbar-size: 8px;
+  --iris-scrollbar: #cdd4d9;
+  --iris-scrollbar-strong: #a9b4bd;
 }
 
 /* ---------------------------------------------------------------- palette */
@@ -254,5 +275,63 @@
   --iris-code-inline: #1e262e;
   --iris-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 10px 30px rgb(0 0 0 / 46%);
   --iris-scrim: rgb(0 0 0 / 52%);
+
+  /* Quiet enough to sit on the raised ground, legible enough to find. */
+  --iris-scrollbar: #2c3540;
+  --iris-scrollbar-strong: #46545f;
   color-scheme: dark;
+}
+
+/*
+ * The scrollbar, drawn once for every surface that scrolls.
+ *
+ * Both mechanisms, because they are not redundant:
+ *
+ * - `::-webkit-scrollbar` (below) gives the slim capsule with a hover state —
+ *   the full treatment — on WebKit and on Chromium before 121.
+ * - `scrollbar-width: thin` + `scrollbar-color` are the standard properties,
+ *   which Chromium 121+ prefers; when it sees them it draws its own thin bar
+ *   in the given colours and *ignores* the webkit rules. The standard pair
+ *   cannot express a hover, so on current Chromium the bar stays at its
+ *   resting grey — the quiet state is the one that must be right.
+ *
+ * Universal selectors, deliberately: the point of the token layer is that no
+ * panel can forget, and one more thick native grey bar anywhere would undo
+ * the whole rule. Card frames' inner documents are their own origins and out
+ * of reach.
+ */
+*,
+*::before,
+*::after {
+  scrollbar-width: thin;
+  scrollbar-color: var(--iris-scrollbar) transparent;
+}
+
+::-webkit-scrollbar {
+  width: var(--iris-scrollbar-size);
+  height: var(--iris-scrollbar-size);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/*
+ * The capsule: a rounded thumb inset by a transparent border, so the visible
+ * bar is slimmer than the hit area — easy to grab, quiet to look at.
+ */
+::-webkit-scrollbar-thumb {
+  background: var(--iris-scrollbar);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--iris-scrollbar-strong);
+  background-clip: padding-box;
 }

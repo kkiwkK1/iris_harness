@@ -73,8 +73,9 @@
   --dsw-alias-state-business-primary: var(--iris-accent);
 
   /* -------------------------------------------------------------- scrollbar */
-  --dsw-alias-scrollbar-bg-l2: var(--iris-rule);
-  --dsw-alias-scrollbar-hover-l2: var(--iris-rule-strong);
+  /* The borrowed primitives take the same bar every Iris panel draws. */
+  --dsw-alias-scrollbar-bg-l2: var(--iris-scrollbar);
+  --dsw-alias-scrollbar-hover-l2: var(--iris-scrollbar-strong);
 
   /* --------------------------------------------------------------- markdown */
   /*
