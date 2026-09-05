@@ -54,7 +54,16 @@
 | `Sidebar.tsx` 角色库 | 标签过滤行与排序切换（aria + 选项）、过滤空态、行菜单六项（收藏/取消、复制、重命名、编辑标签、导出 PNG/JSON）、★ 开关 aria、行内编辑器 aria 与保存/取消 | `filterByTag allTags sortByAria sortByName sortByUpdated sortByFavorite libraryFilteredEmpty favorite unfavorite duplicateCharacter renameCharacterMenu editTags exportCardPng exportCardJson characterNameAria tagsInputAria` |
 | `store.ts` 通知 | 复制完成、改名完成、导出完成三句 | `characterDuplicated characterRenamed characterExported` |
 
-规模：词典 `en` 约 **200 条**（含复数/变体拆分），`zh` 与其逐键对应。
+任务 A1（世界书条目编辑器，`dev/feat-wi-editor`）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `WorldbookPanel.tsx` 条目编辑器 | 编辑器头与选书、未保存具名提醒与三键确认（保存并继续/放弃/继续编辑）、工具栏（过滤/排序/计数/保存/还原/下载备份/关闭）、条目行（标题/提示/徽标/启停）、键标签输入（aria/占位/删除） | `wiEditorTitle wiPickBook wiUnsaved* wiFilterPlaceholder wiFilterEmpty wiSort wiShownCount wiSave wiDiscard wiBackup wiClose wiExpand wiUntitled wiBadge* wiEnabledShort wiKey* wiKeysPrimary wiKeysSecondary` |
+| `WorldbookPanel.tsx` 条目表单 | 四逻辑、三状态（常驻/普通/向量化）、8 位置、角色、深度/顺序/概率、内容与标题、启用/批注/忽略预算、递归三件、计时三件、分组三件、逐条覆盖（扫描深度/自动化ID/输出口/大小写/整词/分组计分 + 三态选项）、生成类型六项、角色过滤、六匹配来源 | `wiLogic* wiStrategy* wiPos* wiRole* wiDepth wiOrder wiProbability wiUseProbability wiContent* wiTitle* wiEnabled wiAddMemo wiIgnoreBudget wiExcludeRecursion* wiPreventRecursion* wiDelayUntilRecursion* wiTimedEffects wiSticky* wiCooldown* wiDelay* wiGroup* wiOverrides wiScanDepthOverride wiAutomationId* wiOutletName* wiCaseSensitiveOverride wiWholeWordsOverride wiGroupScoringOverride wiOverride* wiNumUnset wiTriggers* wiTrigger_* wiFilter* wiMatchSources wiMatch_*` |
+| `WorldbookPanel.tsx` 排序下拉 | 上游 `#world_info_sort_order` 的 15 个选项逐项（14 可见 + 搜索相关度） | `wiSort_priority wiSort_custom wiSort_title_* wiSort_tokens_* wiSort_depth_* wiSort_order_* wiSort_uid_* wiSort_probability_* wiSort_search` |
+| `store.ts` 通知 | 保存完成、备份导出两句 | `wiSaved wiBackupExported` |
+
+规模：词典 `en` 约 **320 条**（含复数/变体拆分），`zh` 与其逐键对应。
 
 ## 二、刻意不翻译（及理由）
 
@@ -68,8 +77,10 @@
   （`?transport=rpc`、`local/qwen3-8b`）。
 - **语言选项自身**：`English` / `中文` 各以本语言显示，永不翻译（词典键
   `langEn` / `langZh` 两边同值）。
-- **dev-only 探针**（`SandboxProbe.tsx` / `RailPreview.tsx`，`import.meta.env.DEV`
-  门控，生产包中被摇树剔除）——开发工具，保持英文。
+- **世界书的状态记号与方向箭头**：条目状态的 🔵🟢🔗（上游选择器原样）与排序的
+  ↑↓↗↘ 保留记号不译；四逻辑枚举 zh 侧用社区惯例译名（与任意/与全部/非全部/
+  非任意），en 侧保留 `AND ANY` 等原文——注释句（`wiLogicNote`）里两者都出现，
+  对照上游下拉不致失联。
 
 ## 三、术语表（全库一致）
 
@@ -88,6 +99,23 @@
 | prompt / regenerate / swipe | 提示词 / 重新生成 / （读法切换） |
 | frame budget / markup | 帧预算 / 标记 |
 | overlay / card UI | 卡片界面（收起/显示） |
+| world book / entry | 世界书 / 条目 |
+| key / secondary key | 关键词 / 次要关键词（ST 中文社区惯例；「键」易与按键混淆） |
+| comment（entry title） | 批注（条目标题） |
+| constant / normal / vectorized | 常驻 / 普通 / 向量化 |
+| position: before/after char defs, before/after EM, before/after AN, at depth, outlet | 角色定义前/后、示例消息前/后、作者注释前/后、按深度注入、输出口 |
+| order / depth | 顺序 / 深度 |
+| probability（Trigger %） | 触发概率 |
+| sticky / cooldown / delay / delay until recursion | 黏滞 / 冷却 / 延迟 / 延迟至递归 |
+| exclude recursion / prevent recursion | 不可被递归激活 / 阻止继续递归 |
+| inclusion group / group weight / prioritize | 包含分组 / 分组权重 / 优先 |
+| automation ID / outlet name | 自动化 ID / 输出口名称 |
+| per-entry override | 逐条覆盖 |
+| scan depth / case-sensitive / whole words / group scoring | 扫描深度 / 区分大小写 / 整词匹配 / 分组计分 |
+| generation triggers（normal/continue/impersonate/swipe/regenerate/quiet） | 生成类型过滤（普通/续写/代写/切换/重新生成/后台） |
+| character filter / exclude | 限定角色 / 排除 |
+| additional matching sources | 额外匹配来源（角色描述/角色性格/情景/用户人格描述/角色小贴士/创作者注释） |
+| unsaved changes | 未保存的修改 |
 
 ## 四、持久化决策（同 `language.ts` 文档）
 

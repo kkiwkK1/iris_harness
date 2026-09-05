@@ -883,6 +883,27 @@ export interface WorldbookEntry {
   matchCharacterDepthPrompt: boolean
   matchScenario: boolean
   matchCreatorNotes: boolean
+  /**
+   * Identifier an automation (quick reply, STscript) can key off. Empty when
+   * the entry carries none.
+   *
+   * Added with the shell's entry editor: a field the stored shape carries and
+   * the editor has to show was missing from this view, and a book round-tripped
+   * through a save silently blanked every automation binding it had. The four
+   * fields below it are the same story — each is on disk, each was unreadable
+   * here, and each was dropped by a write that could not carry it.
+   */
+  automationId: string
+  /** Per-entry group-scoring override; `null` defers to the global setting. */
+  useGroupScoring: boolean | null
+  /** Bypass the token budget for this entry. */
+  ignoreBudget: boolean
+  /** Whether `probability` is rolled at all; `false` means the entry always fires. */
+  useProbability: boolean
+  /** Generation types this entry may fire on; empty means all of them. */
+  triggers: string[]
+  /** Restrict the entry to (or, with `isExclude`, away from) characters and tags. */
+  characterFilter: { isExclude: boolean, names: string[], tags: string[] }
 }
 
 /**

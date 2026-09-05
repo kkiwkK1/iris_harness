@@ -617,3 +617,61 @@ N 份，`backups.common.numberOfBackups` 默认 50）。验收宿主：8818 独�
 - 协同：未动 `wt-frame-fit` 管辖的 frame-height/消息帧几何；composer 量测逻辑
   （`Composer.tsx`）本次无需改动，几何修正全部落在 `panels.css` 的 composer 区。
 - 未花真钱：全程未调用模型端点（探针卡不生成、不发消息）。
+
+# DEVIATIONS — 任务 A1：世界书条目编辑器（30+ 字段、过滤与排序）
+
+分支 `dev/feat-wi-editor`，基线 `dev/iris-exploration` @ `d8362ef`（含任务 L 与
+B8）。对照装置：`E:/sillyTavern/SillyTavern`（1.18.0，
+`index.html:6802` `entry_edit_template`、`index.html:4838` `#world_info_sort_order`、
+`world-info.js` `sortWorldInfoEntries` / `addMissingWorldInfoFields`）。
+
+## 与任务书的偏离（有意为之）
+
+1. **`worldbook.replace`/`worldbook.get` 的线格式纯增量扩了 6 个字段，未新增宿主方法。**
+   任务书要求编辑器暴露 automationId、逐条覆盖、输出口等全部字段，但线格式
+   （TavernHelper 形状）读方向缺 `automationId`/`useGroupScoring`/`ignoreBudget`/
+   `useProbability`/`triggers`/`characterFilter`，写方向连 `outletName` 都被 zod
+   `z.object` 剥掉——整书保存会在保存的那一刻把这些字段从书里抹掉。全部字段
+   可选、默认值与既有写方一致（`useProbability` 缺省仍为 `true`，未动那条
+   load-bearing 铁律），未听过这些字段的旧调用方写出的书与从前逐字节相同；
+   测试钉死（`worldbook-write.test.ts`）。**没有新增任何 RPC 方法。**
+
+2. **排序是 15 种，不是任务书里的"10 种"。** 枚举逐一对照实机 1.18.0 的
+   `#world_info_sort_order`：14 个可见选项（priority/custom、title、tokens、depth、
+   order、uid、trigger% 各升降）+ 隐藏的 search 规则（有过滤词时才出现在下拉，
+   同上游）。任务书引用的 `world-info.js:4838` 在该实机版本里实际是
+   `index.html:4838`（选择器本体）；`world-info.js` 里是配套比较器
+   `sortWorldInfoEntries`，其二三级 tie-break（order 降序、uid 升序）一并转写。
+   少做一种，就意味着存在一种上游能产出、本壳产不出的条目顺序。
+
+3. **写前快照落在下载目录，不是 profile 的 `backups/`。** C17（备份视图）未合入：
+   `dev/feat-backups` 分支尖与主线重合，宿主没有任何世界书备份 RPC。按任务书
+   "否则记待办"执行：编辑器工具栏提供「下载备份」（`worldbook.load` 取原始
+   存盘形状，时间戳文件名落浏览器下载），`backups/` 目录接入记为待办，等 C17
+   合入后把 `exportWiBackup` 换成宿主快照调用。
+
+4. **`iris-web` 声明 `@iris/protocol` 为 `file:` 依赖。** 编辑器测试要拿真实的
+   `worldbook.replace` zod schema 验证整书草稿能过宿主的门，而 pnpm workspace
+   不含 iris-web（npm 管理），bare specifier 在 `node --test` 下不可解析。与
+   `client-fake`、`compat-tavernhelper-core` 同款 `file:` 链接，无新安装面。
+
+5. **`vite.config.ts` 的 dev 代理目标读 `IRIS_HOST_PORT`（默认 8787 不变）。**
+   本 worktree 宿主在 8820，开发代理需要一个不改文件的指法；生产构建不经过
+   这段配置。
+
+## 验收对账
+
+- 哈人冰恋（107 条）改 order/probability/键 → 保存 → 落盘与重读逐一核过
+  （`wi-editor-verify.mjs`，Iris leg 6/6 PASS）；顺序变化驱动激活顺序的引擎
+  链路已在 worldbook-source/timing 用例覆盖。
+- 与 ST 实机同书同编辑双方落盘等价：**107/107 条逐字段相等**（键序与
+  displayIndex 除外）。ST 侧经其自身 `/api/worldinfo` 往返一次性验证，先施加
+  上游客户端加载时的 `addMissingWorldInfoFields` 模板补齐——Iris 的写方在同一
+  6 字段上补的是同一批默认值（`automationId ''`、`useGroupScoring null`、
+  `ignoreBudget false`、`useProbability true`、`triggers []`、
+  `characterFilter {isExclude:false,names:[],tags:[]}`），对照
+  `newWorldInfoEntryDefinition`（world-info.js:4002）逐一核对。
+- 15 种排序逐一可切，纯函数对照上游比较器钉测（tie-break 含）。
+- 未保存提醒：具名（书名 + N 条）常驻条 + 离开路径（换书/关编辑器）三键确认，
+  状态机纯函数带测。
+- 回归：`pnpm test` 2302 例 0 失败、`pnpm typecheck` 与 iris-web typecheck 全绿。

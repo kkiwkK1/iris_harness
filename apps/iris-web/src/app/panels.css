@@ -1714,6 +1714,7 @@
   align-items: flex-start;
 }
 
+<<<<<<< HEAD
 /*
  * A backup row, the regex row's grammar again — time and size where the
  * script's name goes, the snapshot reason as its badge, and the three actions
@@ -1798,4 +1799,303 @@
 
 .iris-backup__confirm-input {
   width: 100%;
+=======
+/* -------------------------------------------------- world book entry editor */
+
+/* A horizontal row of small controls; the toolbar and the inline pairs in the
+   entry form share it, because both are "several related things, one line". */
+.iris-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.iris-inline__pair {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--iris-ink-secondary);
+}
+
+.iris-wi-toggles .iris-field {
+  padding: 2px 0;
+}
+
+/* Two-to-three narrow columns of small fields; timed effects and the per-entry
+   overrides use it to keep the form from running one control per line. */
+.iris-wi-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0 16px;
+}
+
+.iris-field--tight {
+  padding: 4px 0;
+}
+
+.iris-select {
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  max-width: 100%;
+}
+
+.iris-select:focus-visible {
+  outline: none;
+  border-color: var(--iris-accent-quiet);
+  box-shadow: 0 0 0 3px var(--iris-accent-wash);
+}
+
+.iris-num {
+  width: 88px;
+}
+
+.iris-textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  padding: 8px 10px;
+  /* Monospace because the file stores exactly these bytes; a proportional face
+     invites "tidying" that would survive into every future prompt. */
+  font-family: var(--iris-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.iris-textarea:focus-visible {
+  outline: none;
+  border-color: var(--iris-accent-quiet);
+  box-shadow: 0 0 0 3px var(--iris-accent-wash);
+}
+
+/* Keys as tags. */
+.iris-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  background: var(--iris-bg-raised);
+  padding: 6px 8px;
+}
+
+.iris-tags__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--iris-accent-wash);
+  color: var(--iris-ink);
+  border-radius: 999px;
+  padding: 2px 4px 2px 9px;
+  font-size: 12px;
+}
+
+.iris-tags__x {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--iris-ink-tertiary);
+  padding: 2px 5px;
+  border-radius: 999px;
+}
+
+.iris-tags__x:hover {
+  color: var(--iris-danger);
+}
+
+.iris-tags__input {
+  flex: 1;
+  min-width: 140px;
+  background: none;
+  border: 0;
+  color: var(--iris-ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.iris-tags__input:focus-visible {
+  outline: none;
+}
+
+/* The editor block and its toolbar. */
+.iris-wi-editor {
+  margin-top: 6px;
+  border-top: var(--iris-hairline) solid var(--iris-rule);
+  padding-top: 10px;
+}
+
+.iris-wi-picker {
+  max-width: 100%;
+}
+
+.iris-wi-unsaved {
+  margin: 8px 0 0;
+  padding: 7px 10px;
+  border-radius: var(--iris-radius);
+  background: var(--iris-danger-wash);
+  color: var(--iris-danger);
+  font-size: 12.5px;
+}
+
+.iris-wi-confirm {
+  margin: 8px 0 0;
+  padding: 9px 10px;
+  border: var(--iris-hairline) solid var(--iris-danger);
+  border-radius: var(--iris-radius);
+  font-size: 12.5px;
+}
+
+.iris-wi-confirm p {
+  margin: 0 0 7px;
+}
+
+.iris-wi-toolbar {
+  margin-top: 10px;
+}
+
+.iris-wi-filter {
+  flex: 1;
+  min-width: 160px;
+  max-width: 340px;
+}
+
+.iris-wi-count {
+  font-size: 11.5px;
+  color: var(--iris-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The entry list. */
+.iris-wi-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.iris-entry {
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  background: var(--iris-bg-raised);
+}
+
+.iris-entry--changed {
+  border-color: var(--iris-accent-quiet);
+}
+
+.iris-entry__head {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.iris-entry__toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: var(--iris-ink);
+  padding: 2px 0;
+}
+
+.iris-entry__switch {
+  align-self: center;
+}
+
+.iris-entry__dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.iris-entry__dot--normal {
+  /* Upstream's status dots are emoji in a select; these are their nearest
+     steady colours. Literal because the token sheet has no "ok" green — the
+     theme system (T2b) can promote them when it wants to. */
+  background: #3fa34d;
+}
+
+.iris-entry__dot--constant {
+  background: var(--iris-accent);
+}
+
+.iris-entry__dot--vectorized {
+  background: #8e6fc7;
+}
+
+.iris-entry__dot--off {
+  background: none;
+  border: var(--iris-hairline) solid var(--iris-rule);
+}
+
+.iris-entry__title {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.iris-entry__hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--iris-ink-faint);
+}
+
+.iris-entry__badges {
+  flex: none;
+  display: inline-flex;
+  gap: 5px;
+}
+
+.iris-entry__badge {
+  font-size: 10.5px;
+  color: var(--iris-ink-tertiary);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-entry__badge--off {
+  color: var(--iris-danger);
+  border-color: var(--iris-danger);
+}
+
+.iris-entry__badge--changed {
+  color: var(--iris-accent);
+  border-color: var(--iris-accent-quiet);
+}
+
+.iris-entry__editor {
+  border-top: var(--iris-hairline) solid var(--iris-rule);
+  padding: 4px 12px 10px;
+>>>>>>> dev/feat-wi-editor
 }

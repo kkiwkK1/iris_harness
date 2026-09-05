@@ -185,6 +185,25 @@ export interface PartialWorldbookEntry {
   matchCharacterDepthPrompt?: boolean | undefined
   matchScenario?: boolean | undefined
   matchCreatorNotes?: boolean | undefined
+  /**
+   * The stored shape's remaining fields, added with the shell's entry editor.
+   * Before these, a whole-book save rebuilt every row from a field list that
+   * could not name them: an automation binding, a per-entry group-scoring
+   * override, a budget exemption, a character filter or a generation-trigger
+   * filter was dropped by the very act of saving the book it lived in. Each is
+   * optional, and {@link fromWorldbookEntry} defaults each exactly as it
+   * defaults its own fields, so callers that never heard of them are unmoved.
+   */
+  automationId?: string | undefined
+  useGroupScoring?: boolean | null | undefined
+  ignoreBudget?: boolean | undefined
+  useProbability?: boolean | undefined
+  triggers?: readonly string[] | undefined
+  characterFilter?: {
+    isExclude: boolean
+    names: readonly string[]
+    tags: readonly string[]
+  } | undefined
 }
 
 /**
@@ -265,6 +284,22 @@ export function toWorldbookEntry(entry: LorebookEntry): WorldbookEntry {
     matchCharacterDepthPrompt: entry.matchCharacterDepthPrompt,
     matchScenario: entry.matchScenario,
     matchCreatorNotes: entry.matchCreatorNotes,
+    // The raw flag, not the resolved one `probability` carries: an entry that
+    // does not use probability reads `useProbability: false, probability: 100`
+    // here, and a caller writing the book back needs the flag to put the two
+    // fields back the way the file had them. The collection fields below fall
+    // back rather than reach a caller as `undefined` — the same rule
+    // `position` and `role` follow for a file a newer SillyTavern wrote.
+    useProbability: entry.useProbability === false ? false : true,
+    ignoreBudget: entry.ignoreBudget === true,
+    automationId: typeof entry.automationId === 'string' ? entry.automationId : '',
+    useGroupScoring: typeof entry.useGroupScoring === 'boolean' ? entry.useGroupScoring : null,
+    triggers: Array.isArray(entry.triggers) ? entry.triggers.map(String) : [],
+    characterFilter: {
+      isExclude: entry.characterFilter?.isExclude === true,
+      names: Array.isArray(entry.characterFilter?.names) ? entry.characterFilter.names.map(String) : [],
+      tags: Array.isArray(entry.characterFilter?.tags) ? entry.characterFilter.tags.map(String) : [],
+    },
   }
 }
 
@@ -671,9 +706,12 @@ export async function resolveCardWorldbook(
  *    not "keep everything and change nothing": it turns every entry in the book
  *    constant. This is copied rather than corrected, because a card may depend
  *    on it and correcting it is what would break them.
- * 2. **`useProbability` is always written `true`.** Reading resolves it away
+ * 2. **`useProbability` defaults to `true`.** Reading resolves it away
  *    (`useProbability ? probability : 100`), so a round trip stores the flag
- *    differently while leaving the effective probability the same.
+ *    differently while leaving the effective probability the same. Since the
+ *    view began reporting the raw flag, a caller may also send `false`
+ *    explicitly — that is taken verbatim; only the *absent* case is upstream's
+ *    `true`.
  *
  * Anyone reaching to "fix" either of these should note that both are load-
  * bearing compatibility, not oversights — and that this paragraph is the thing
@@ -713,8 +751,10 @@ export function fromWorldbookEntry(
 
     content: entry.content ?? '',
 
-    // See asymmetry 2 above.
-    useProbability: true,
+    // See asymmetry 2 above: absent stays `true` — but a caller that read the
+    // view (which now reports the raw flag) and sends `useProbability: false`
+    // is putting a stored flag back, and that answer is taken verbatim.
+    useProbability: entry.useProbability ?? true,
     probability: entry.probability ?? 100,
 
     // Kept in the stored row: the outlet macro answers from the scan's bucket,
@@ -728,6 +768,23 @@ export function fromWorldbookEntry(
     sticky: entry.effect?.sticky ?? null,
     cooldown: entry.effect?.cooldown ?? null,
     delay: entry.effect?.delay ?? null,
+
+    // The stored shape's remaining fields, each at the same default its read
+    // side resolves an absent field to — so a caller that never sends them
+    // writes a row indistinguishable from the one this wrote before they
+    // existed, and a caller that read a whole book and sends it back whole
+    // loses none of them.
+    ignoreBudget: entry.ignoreBudget ?? false,
+    automationId: entry.automationId ?? '',
+    useGroupScoring: entry.useGroupScoring ?? null,
+    triggers: [...entry.triggers ?? []],
+    characterFilter: entry.characterFilter !== undefined
+      ? {
+          isExclude: entry.characterFilter.isExclude,
+          names: [...entry.characterFilter.names],
+          tags: [...entry.characterFilter.tags],
+        }
+      : { isExclude: false, names: [], tags: [] },
 
     // The caller's own implicit keys win over the defaults spread above.
     ...pickImplicit(entry),

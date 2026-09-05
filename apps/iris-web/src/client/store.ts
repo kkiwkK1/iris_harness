@@ -34,6 +34,7 @@ import type {
   RpcResponse,
   ScriptContext,
   ScriptView,
+  WorldbookEntry,
   WorldbookSettingsView,
 } from '@iris/protocol'
 
@@ -43,6 +44,7 @@ import { draftThroughComposer, sendThroughComposer } from '../app/composer-bus.t
 import { loadAutoOpenChat } from '../theme/theme.ts'
 import { consentState, type ConsentState } from '../sandbox/consent.ts'
 import type { ScriptRunState } from '../sandbox/script-run-state.ts'
+import { markSaved, openWiEditor, updateWiEntry, type WiEditorState } from '../app/worldbook-editor.ts'
 // Read at call time, not subscribed: the store is not a React component, and a
 // notice is worded when it is raised, in the language in force at that moment.
 import { getLanguage } from '../app/i18n/language.ts'
@@ -290,6 +292,19 @@ export interface IrisState {
    * character's books onto the new one.
    */
   charBooks: { characterId: string, primary: string | null, additional: string[] } | undefined
+  /**
+   * The entry editor's local draft for the one book it has open, or undefined
+   * when none is open.
+   *
+   * **The one client-authored slice beside the notices.** Everything else here
+   * projects the host; this holds work the reader has typed and the host has
+   * not been given. It lives in the store rather than in the panel's state so
+   * a drawer can close, a chat can switch, and the draft — with its
+   * unsaved-changes warning — is still there when the reader comes back.
+   * `baseline` inside it is the host's last answer, which is what makes the
+   * dirty comparison a fact rather than a flag.
+   */
+  wiEditor: WiEditorState | undefined
   /**
    * The persona panel's data, as last fetched.
    *
@@ -669,6 +684,7 @@ export interface IrisActions {
    * list unbinds all. A no-op when no chat is open.
    */
   setCharBooks(names: readonly string[]): Promise<void>
+<<<<<<< HEAD
   /** Fetch the backup panel's data: every snapshot the profile holds. */
   loadBackups(): Promise<void>
   /**
@@ -690,6 +706,39 @@ export interface IrisActions {
   restoreBackup(backupId: string, confirm: string): Promise<void>
   /** Remove one snapshot; the live conversation is never touched. */
   deleteBackup(backupId: string): Promise<void>
+=======
+  /**
+   * Fetch one book's entries into the entry editor's local draft.
+   *
+   * Replaces whatever draft was open, after the panel has checked for unsaved
+   * work — the check is the caller's, because "you have unsaved changes" is a
+   * question about intent, and only the reader can answer it.
+   */
+  openWiEditor(book: string): Promise<void>
+  /** Put the entry editor away. Any unsaved work goes with it. */
+  closeWiEditor(): void
+  /** Edit one entry's draft. Local until `saveWiEditor` sends the whole book. */
+  patchWiEntry(uid: number, patch: Partial<WorldbookEntry>): void
+  /** Throw away unsaved work; the editor stays open on the host's last answer. */
+  discardWiEdits(): void
+  /**
+   * Save the whole book with one `worldbook.replace`.
+   *
+   * Whole-book because that is the only write the host offers, and upstream's
+   * semantics besides: the drafts arrive in the order to keep, and anything
+   * absent would be deleted. Dirty is then reset from the host's answer.
+   */
+  saveWiEditor(): Promise<void>
+  /**
+   * Download the book exactly as it sits on disk, before edits are saved.
+   *
+   * The pre-write snapshot, with the one destination available to a browser:
+   * the reader's downloads folder. The host owns no worldbook backup RPC, so
+   * this is the honest nearest thing, and it reads the raw saved shape via
+   * `worldbook.load` — the shape a restore would have to put back.
+   */
+  exportWiBackup(): Promise<void>
+>>>>>>> dev/feat-wi-editor
   /** Fetch the persona panel's data: the personas and which one is active. */
   loadPersonas(): Promise<void>
   /**
@@ -1010,6 +1059,7 @@ export function createIrisStore(
       settings: undefined,
       worldbooks: undefined,
       charBooks: undefined,
+      wiEditor: undefined,
       personas: undefined,
       notice: undefined,
       noticeLog: [],
@@ -1506,6 +1556,7 @@ export function createIrisStore(
         })
       },
 
+<<<<<<< HEAD
       async loadBackups(): Promise<void> {
         await guard(async () => {
           const { backups } = await client.call('backup.list', {})
@@ -1548,6 +1599,78 @@ export function createIrisStore(
           await client.call('backup.delete', { backupId })
           set(raise('info', translate(getLanguage(), 'backupDeleted')))
           await get().loadBackups()
+=======
+      async openWiEditor(book: string): Promise<void> {
+        // Replaced before the fetch: whatever the previous book's drafts held,
+        // this book's editor must not open showing them. The panel's
+        // unsaved-changes check runs *before* calling this, so a guarded
+        // switch never reaches here with work still on the table.
+        set({ wiEditor: undefined })
+        await guard(async () => {
+          const answer = await client.call('worldbook.get', { name: book })
+          set({ wiEditor: openWiEditor(book, answer.entries) })
+        })
+      },
+
+      closeWiEditor(): void {
+        set({ wiEditor: undefined })
+      },
+
+      patchWiEntry(uid: number, patch: Partial<WorldbookEntry>): void {
+        const state = get().wiEditor
+        if (state === undefined) return
+        set({ wiEditor: updateWiEntry(state, uid, patch) })
+      },
+
+      discardWiEdits(): void {
+        const state = get().wiEditor
+        if (state === undefined) return
+        // Back to the baseline, not to a closed editor: "throw these changes
+        // away" means keep looking at the book, at what the host last said.
+        set({ wiEditor: { ...state, drafts: JSON.parse(JSON.stringify(state.baseline)) as WorldbookEntry[] } })
+      },
+
+      async saveWiEditor(): Promise<void> {
+        const state = get().wiEditor
+        if (state === undefined) return
+        await guard(async () => {
+          // Whole-book, in the drafts' order — which is how display order is
+          // chosen, the same way upstream's writer assigns `displayIndex` from
+          // array position. The send is the drafts verbatim: they were built
+          // from the wire shape and are the wire shape.
+          const answer = await client.call('worldbook.replace', {
+            name: state.book,
+            entries: JSON.parse(JSON.stringify(state.drafts)) as WorldbookEntry[],
+          })
+          // Reset dirty from the host's answer, not from the drafts.
+          set(prev => ({
+            wiEditor: prev.wiEditor === undefined ? undefined : markSaved(prev.wiEditor, answer.entries),
+          }))
+          get().notify('info', translate(getLanguage(), 'wiSaved', { name: state.book }))
+        })
+      },
+
+      async exportWiBackup(): Promise<void> {
+        const state = get().wiEditor
+        if (state === undefined) return
+        await guard(async () => {
+          // The raw saved shape, not the card-facing one: this file is what a
+          // restore would put back, so it is the shape a restore would read.
+          // (The profile's `backups/` directory is not reachable from here —
+          // the host owns no worldbook backup RPC yet — so the pre-write
+          // snapshot lands in the reader's downloads folder instead, recorded
+          // as a debt in DEVIATIONS.md.)
+          const { book } = await client.call('worldbook.load', { name: state.book })
+          if (book === null || book === undefined) throw new Error(`world book "${state.book}" could not be read`)
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+          const url = URL.createObjectURL(new Blob([JSON.stringify(book, null, 2)], { type: 'application/json' }))
+          const link = document.createElement('a')
+          link.href = url
+          link.download = `${state.book}.${stamp}.json`
+          link.click()
+          URL.revokeObjectURL(url)
+          get().notify('info', translate(getLanguage(), 'wiBackupExported', { name: state.book }))
+>>>>>>> dev/feat-wi-editor
         })
       },
 
