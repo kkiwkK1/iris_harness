@@ -23,6 +23,7 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
 import { ChoiceField, CollapsibleSection, NumberField, TextField, ToggleField } from './fields.tsx'
 import { AboutCard } from './AboutCard.tsx'
+import { BackupPanel } from './BackupPanel.tsx'
 import { ConnectionPanel } from './ConnectionPanel.tsx'
 import { DemoActionsSection } from './DemoActionsSection.tsx'
 import { HostReports } from './HostReports.tsx'
@@ -443,6 +444,15 @@ export function SettingsDrawer({
           conversation open at all.
         */}
         <PersonaPanel />
+
+        {/*
+          The backups panel, beside the persona panel because both are
+          profile-wide surfaces that work with no conversation open: who the
+          user is, and the copies the host has taken of their conversations.
+          A snapshot names the chat it protects and the operation it was taken
+          in front of, so the card is where "can I undo this" is answered.
+        */}
+        <BackupPanel />
 
         {/*
           The host's own reports, **outside** the `settings === undefined`

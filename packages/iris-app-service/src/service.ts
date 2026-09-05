@@ -23,7 +23,7 @@ import { assemble, type AssembleResult, type Contribution, type HistoryEntry } f
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { ChatView, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import type { BackupSummary, ChatView, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import { providerPreset } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
@@ -34,6 +34,7 @@ import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } fr
 import { randomUUID } from 'node:crypto'
 
 import { PresetStore } from './presets.ts'
+import type { BackupStore } from './backups.ts'
 import { ConnectionStore, routeOf } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
@@ -335,6 +336,15 @@ export interface AppServiceOptions {
    * as it did before the store existed.
    */
   personas?: PersonaStore
+  /**
+   * The profile's conversation snapshots, shared with the chat store.
+   *
+   * Optional like the other stores. Absent, the dangerous operations still
+   * run — a test host with no snapshot directory is not thereby broken — but
+   * they run unprotected, and the `backup.*` methods refuse by name, which is
+   * the honest answer from a host that keeps no copies.
+   */
+  backups?: BackupStore
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
   /**
@@ -359,7 +369,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'backups'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
@@ -377,6 +387,7 @@ export class IrisAppService {
       sillyTavernDir?: string
       installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
       personas?: PersonaStore
+      backups?: BackupStore
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -424,6 +435,7 @@ export class IrisAppService {
       ...options.presets === undefined ? {} : { presets: options.presets },
       ...options.sillyTavernDir === undefined ? {} : { sillyTavernDir: options.sillyTavernDir },
       ...options.personas === undefined ? {} : { personas: options.personas },
+      ...options.backups === undefined ? {} : { backups: options.backups },
     }
     // The manager's live state starts on whatever the caller assembled: a
     // stored selection is applied by the caller (the plugin) before the
@@ -777,6 +789,11 @@ export class IrisAppService {
         // stand in the way of the ordinary case while still refusing a rewrite
         // that would race a turn.
         const entry = await this.#idle(chatId, 'rewritten by a script')
+        // **The rewrite arm is where a large rollback is decided** — a replay
+        // batch handing floors back older text — so the pre-change state is
+        // copied here, while the disk still holds it. Deduped: the next arm of
+        // the same batch would otherwise copy the same unchanged disk again.
+        await this.#snapshotBefore(chatId, entry.meta.characterId, 'rewrite-messages', true)
         // Not persisted here; see `#rewriteLines`. A card commits its batch with
         // `script.saveChat`, which is the one place that decision lives.
         return { view: await this.#rewriteLines(entry, messages, false) }
@@ -1020,6 +1037,12 @@ export class IrisAppService {
           if (lines[id] === undefined) throw notFound(`this chat has no message ${String(id)}`)
         }
 
+        // **Validated first, copied second**: a batch naming a floor that is
+        // not there is refused whole, and only a batch that will actually run
+        // costs a copy. Taken while the disk still holds every floor the batch
+        // is about to remove; deduped like the rewrite arm beside it.
+        await this.#snapshotBefore(chatId, entry.meta.characterId, 'delete-messages', true)
+
         const removed = new Set(ids)
         const sources = lines.map((_line, index) => index).filter(index => !removed.has(index))
         const kept = lines.filter((_line, index) => !removed.has(index))
@@ -1032,6 +1055,13 @@ export class IrisAppService {
         const entry = await this.#idle(chatId, 'edited')
         const { messages } = entry.toFile()
         if (messages[id] === undefined) throw notFound(`this chat has no message ${String(id)}`)
+
+        // **A deletion is one of the operations a snapshot exists for.** Taken
+        // before the save, the copy holds exactly what the floor was about to
+        // leave. A snapshot that cannot be written also stops the deletion —
+        // the same rule the cleanup sweep keeps: losing the safety net silently
+        // would be worse than being told the disk said no.
+        await this.#snapshotBefore(chatId, entry.meta.characterId, 'delete-message', false)
 
         messages.splice(id, 1)
         // Everything after the hole shifts down by one; everything before keeps
@@ -1853,6 +1883,53 @@ export class IrisAppService {
         return { removed: removed.length, foreign: removed.filter(one => one.foreign).length }
       },
 
+      'backup.list': async ({ chatId }) => ({ backups: await this.#backups().list(chatId) }),
+
+      'backup.preview': async ({ backupId, floors }) => ({
+        preview: await this.#backups().preview(backupId, floors),
+      }),
+
+      'backup.restore': async ({ backupId, confirm }) => {
+        const backups = this.#backups()
+        const intent = await backups.read(backupId)
+
+        // **The named confirmation, enforced here.** The interface shows the
+        // name and the reader types it; a host that accepted a bare call would
+        // let anything that can reach the wire overwrite a conversation by
+        // trying. Compared against the snapshot's own header, because that is
+        // the conversation a restore writes back — not whatever sits at that
+        // id now.
+        const expected = intent.title.length > 0 ? intent.title : intent.chatId
+        if (confirm.trim() !== expected) {
+          throw invalid(`restore refused: type the conversation's title ("${expected}") to confirm overwriting it`)
+        }
+
+        // The current version is snapshotted first — the task of the restore
+        // is to undo a mistake, and a restore that went wrong must itself be
+        // restorable. Absent when there is no live file: restoring into the
+        // hole a deletion left protects nothing because nothing survives.
+        let previous: BackupSummary | undefined
+        if (backups.hasChatFile(intent.chatId)) {
+          previous = await backups.snapshot(intent.chatId, 'pre-restore', intent.characterId)
+        }
+
+        await chats.restoreFile(intent.chatId, intent.text)
+        // An open page sees the conversation come back: pushed, not left for
+        // the next open to discover.
+        const entry = await chats.open(intent.chatId)
+        this.#options.broadcast({ type: 'chat.updated', chatId: intent.chatId, view: entry.toView() })
+        await this.#announceChats()
+        return {
+          chat: entry.toSummary(),
+          ...previous === undefined ? {} : { previous },
+        }
+      },
+
+      'backup.delete': async ({ backupId }) => {
+        await this.#backups().remove(backupId)
+        return {}
+      },
+
       'script.setExtensionSettings': async ({ characterId, settings }) => {
         const store = this.#options.extensionSettings
         if (store === undefined) throw new AppError('unsupported', 'extension settings are not configured on this host')
@@ -1866,6 +1943,12 @@ export class IrisAppService {
 
       'script.saveChat': async ({ chatId }) => {
         const entry = await chats.open(chatId)
+        // Deliberately no snapshot here. This arm persists; it decides nothing.
+        // The arms that *change* floors — deletion and rewrite — snapshot where
+        // the change is decided, while the disk still holds the pre-change
+        // state, and a save of an unchanged conversation is not a new restore
+        // point. Snapshotting here would copy once more per turn for MVU cards
+        // and churn the retention window without protecting anything new.
         entry.touch()
         await chats.save(entry)
         return {}
@@ -1955,6 +2038,40 @@ export class IrisAppService {
         }
       },
     }
+  }
+
+  /** The snapshot store, or a refusal naming why there is none. */
+  #backups(): BackupStore {
+    const store = this.#options.backups
+    if (store === undefined) {
+      throw new AppError('unsupported', 'this host keeps no snapshot store')
+    }
+    return store
+  }
+
+  /**
+   * Take a pre-change snapshot, when this host keeps a store at all.
+   *
+   * The copy is of the **file on disk** — the state that predates whatever the
+   * caller is about to make permanent. `dedup` is for the high-frequency arms:
+   * when the newest snapshot already holds these exact bytes, the write is
+   * skipped and the existing snapshot is named instead, so a card that saves
+   * every turn does not churn the retention window with copies of the same
+   * conversation.
+   * @param chatId - the conversation about to change.
+   * @param characterId - the card it is played with, when known.
+   * @param reason - what the caller is about to do.
+   * @param dedup - skip the write when the newest snapshot already matches.
+   */
+  async #snapshotBefore(
+    chatId: string,
+    characterId: string | undefined,
+    reason: 'delete-message' | 'delete-messages' | 'rewrite-messages',
+    dedup: boolean,
+  ): Promise<void> {
+    const store = this.#options.backups
+    if (store === undefined) return
+    await store.snapshot(chatId, reason, characterId, { dedup })
   }
 
   /** The connection store, or a refusal naming why there is none. */

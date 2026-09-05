@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView } from './views.ts'
+import type { BackupPreview, BackupSummary, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -1232,6 +1232,56 @@ export const requestSchemas = {
     matchWholeWords: z.boolean().optional(),
     useGroupScoring: z.boolean().optional(),
   }),
+
+  /**
+   * The profile's conversation snapshots, newest first.
+   *
+   * Upstream's `GET /api/backups/chat/get` (`endpoints/backups.js`), narrowed
+   * to what a restore point needs: when it was taken, how many floors it holds,
+   * how big it is, and **why the host took it** — a list of copies without the
+   * reasons is a list a reader cannot trust, because "which of these was made
+   * before the thing I want to undo" is the only question one asks of it.
+   * Absent `chatId` lists the whole profile.
+   */
+  'backup.list': z.object({
+    /** Only this conversation's snapshots, when given. */
+    chatId: z.string().min(1).max(120).optional(),
+  }),
+  /**
+   * Read the head of one snapshot.
+   *
+   * A restore is an overwrite, and confirming an overwrite sight-unseen is how
+   * the wrong snapshot gets written over the right conversation. The preview is
+   * read off the snapshot's own bytes — what it shows is what a restore writes.
+   */
+  'backup.preview': z.object({
+    /** The snapshot's handle, as `backup.list` carried it. */
+    backupId: z.string().min(1).max(400),
+    /** How many floors to show. Default is a head, not the whole file. */
+    floors: z.number().int().min(1).max(50).optional(),
+  }),
+  /**
+   * Write a snapshot back over its conversation.
+   *
+   * **`confirm` is the conversation's title, typed.** This is the one backup
+   * method that destroys something — the live file — so it refuses to run on a
+   * bare click: the caller must send the name the interface showed them, and a
+   * mismatch is refused by name. The check lives here and not only in the page,
+   * because the page is the untrusted side and an RPC that asks the host to
+   * overwrite a conversation should carry its own proof of intent.
+   *
+   * Before anything is written, the **current** file is snapshotted too — a
+   * restore that goes wrong must itself be restorable.
+   */
+  'backup.restore': z.object({
+    backupId: z.string().min(1).max(400),
+    /** The conversation's title as the reader typed it; compared against the snapshot's header. */
+    confirm: z.string().max(200),
+  }),
+  /** Remove one snapshot. The live conversation is never touched by this. */
+  'backup.delete': z.object({
+    backupId: z.string().min(1).max(400),
+  }),
 } as const
 
 /** Every callable method. */
@@ -1327,6 +1377,20 @@ export interface RpcResponseMap {
   'worldbook.bindChat': { name: string | null }
   'worldbook.settings': { settings: WorldbookSettingsView }
   'worldbook.setSettings': { settings: WorldbookSettingsView }
+
+  /** Newest first, so the snapshot a reader is looking for is the first one. */
+  'backup.list': { backups: BackupSummary[] }
+  'backup.preview': { preview: BackupPreview }
+  /**
+   * The conversation as it now stands, plus the snapshot the **previous**
+   * version was saved as before the restore wrote over it.
+   *
+   * `previous` is absent when there was no live file to snapshot — restoring
+   * into the hole a deletion left is a normal use, and there is nothing to
+   * protect where nothing survives.
+   */
+  'backup.restore': { chat: ChatSummary, previous?: BackupSummary }
+  'backup.delete': Record<string, never>
 
   'connection.list': { profiles: ConnectionProfile[], activeId?: string }
   'connection.save': { profiles: ConnectionProfile[], activeId?: string }

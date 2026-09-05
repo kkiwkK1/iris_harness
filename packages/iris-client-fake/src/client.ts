@@ -1074,7 +1074,17 @@ class InMemoryClient implements FakeClient {
       // The global regex list is profile state on the host's disk; a fake has
       // none, and an imaginary list would let a panel believe an import landed.
       case 'regex.list':
-      case 'regex.set': {
+      case 'regex.set':
+      // Snapshots are files under the host's profile, taken before operations
+      // this client does not perform — it never deletes a floor to a file, so
+      // it would never have anything to list, preview, restore or delete. An
+      // empty list in particular would read as "protected, nothing yet" about
+      // a store that does not exist, which is the all-clear-without-a-host
+      // lie `debug.reports` is refused for.
+      case 'backup.list':
+      case 'backup.preview':
+      case 'backup.restore':
+      case 'backup.delete': {
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 

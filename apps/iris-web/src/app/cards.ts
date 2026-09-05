@@ -18,6 +18,7 @@
 export type CardId =
   | 'connection'
   | 'presets'
+  | 'backups'
   | 'regex'
   | 'route'
   | 'sampling'

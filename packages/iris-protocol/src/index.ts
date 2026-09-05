@@ -47,6 +47,10 @@ export {
 } from './rpc.ts'
 
 export type {
+  BackupPreview,
+  BackupPreviewFloor,
+  BackupReason,
+  BackupSummary,
   ChatSearchHit,
   ChatSearchMatch,
   ChatSummary,
