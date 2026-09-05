@@ -220,3 +220,28 @@
 29. **假客户端对 `connection.test` 诚实拒绝**（unsupported："fake client cannot
     reach a real endpoint"）：该方法存在的意义就是把请求放到真网络上，伪造
     延迟或错误码会让连接表单在开发期学到一个没有任何端点给过的结论。
+
+# DEVIATIONS — 任务 T：宽屏整体布局修正（重心、留白与抽屉几何）
+
+分支 `dev/fix-widescreen`（基于 dev/iris-exploration d31f0a3）。验证装置：
+headless Chrome/CDP，1920×1080 与 2400×1200 两档 + 1280×800 窄档，
+测量脚本 `apps/../qa/verify-widescreen.mjs`（宿主端口 8816）。
+
+1. **抽屉打开时 aside（STATE）整体让位，而非挤压随行。** 任务书裁定"抽屉打开时
+   布局重新居中"，但未规定此刻 aside 的去留。若让 aside 留在书页与抽屉左缘的
+   余量里，1920 窗口下该轨道只剩 108px（内容 52px），状态列等于报废。故
+   `iris-shell--drawer-open` 期间 `display:none`，关抽屉即恢复——抽屉占据的
+   本来就是 margin 的地盘。若后续想让 aside 在超宽窗口（如 2400，轨道 348px）
+   抽屉开时仍然可见，需要一条按宽度分档的规则，本任务不做。
+
+2. **阅读列中线与输入框中线存在 42px 系统偏差——实测为既有几何，非本任务回归。**
+   同一脚本对未修改基线（stash 后重建 dist）测量：抽屉开居中偏差 196.5px（即
+   用户报告的 bug）、中线偏差 42px；修复后居中偏差 0.5px、中线偏差仍为 42px，
+   两档宽视口数字逐位相同。来源是 composer 内层的非对称 `padding-left:46px`
+   （右无对应内边距，把输入框推右 23px）加 scrollbar-gutter 预留的一半宽度
+   （~8.5px），属任务书范围外，未动。
+
+3. **验证侧细节：** headless 环境里 Escape 关不掉抽屉（drawer 的 Escape 处理
+   挂在元素 keydown 上，无焦点不触发），脚本改点抽屉头部的关闭按钮；测量读
+   `getBoundingClientRect`，居中判据为"书页中线 vs（侧栏右缘+可视右缘）/2"，
+   修复后 1920/2400 两档关、开四态偏差 0 / 0.5px（红线 <8px）。

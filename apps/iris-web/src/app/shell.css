@@ -308,11 +308,13 @@
 @media (min-width: 1360px) {
   .iris-stage {
     /*
-     * Desk, sheet, aside. The aside is the flexible track (at least its 260px
-     * token, more when the window offers it) and the desk absorbs the rest, so
-     * the two flank the sheet evenly and the page column stays centred —
-     * `justify-content` has nothing left to centre when the tracks already
-     * fill the row.
+     * Desk, sheet, aside. The aside is the flexible track, floored at its 260px
+     * token: where the window is ample the two flanks come out equal and the
+     * sheet sits centred between the sidebar's edge and the window's — the
+     * ruling the whole shell answers to. Where the window is merely wide, the
+     * floor holds the margin legible and the sheet takes what remains: it sits
+     * against the sidebar with no naked desk on either side, which is the same
+     * arrangement the sub-1360px window already showed.
      */
     grid-template-columns: minmax(0, 1fr) minmax(0, var(--iris-sheet)) minmax(var(--iris-aside), 1fr);
   }
@@ -329,6 +331,33 @@
 
   .iris-aside {
     grid-column: 3;
+  }
+
+  /*
+   * The settings drawer is an overlay — opening it must never re-wrap a page
+   * of prose mid-read. But the sheet's centring is computed against the
+   * *visible* region, and the drawer changes what is visible: overlaying the
+   * right flank while the grid stood still is what left a dead desk beside the
+   * sidebar and read as a page that failed to load. So while the drawer is
+   * open the stage cedes the drawer's width (the shared token, not a second
+   * copy of the number) and drops back to the single centred track, and the
+   * sheet re-centres between the sidebar and the drawer's left edge. The aside
+   * stands down for the duration: the drawer occupies exactly the margin's
+   * territory, and a variable column squeezed into what is left of it would
+   * serve nobody.
+   */
+  .iris-shell--drawer-open .iris-stage {
+    grid-template-columns: minmax(0, var(--iris-sheet));
+    justify-content: center;
+    padding-right: var(--iris-drawer-w);
+  }
+
+  .iris-shell--drawer-open .iris-sheet {
+    grid-column: auto;
+  }
+
+  .iris-shell--drawer-open .iris-aside {
+    display: none;
   }
 }
 
