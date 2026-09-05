@@ -97,9 +97,10 @@ function bookOf(entries: LorebookEntry[]): {
   entries: LorebookEntry[]
   source: 'named'
   world: string
+  additional: { world: string, entries: LorebookEntry[] }[]
   global: { world: string, entries: LorebookEntry[] }[]
 } {
-  return { entries, source: 'named', world: 'TestBook', global: [] }
+  return { entries, source: 'named', world: 'TestBook', additional: [], global: [] }
 }
 
 /** A preset whose main prompt asks for the persona explicitly. */

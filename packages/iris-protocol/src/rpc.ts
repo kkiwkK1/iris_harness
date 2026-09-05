@@ -1209,6 +1209,31 @@ export const requestSchemas = {
     name: z.string().min(1).max(120).nullable(),
   }),
   /**
+   * Replace one character's **additional** book bindings.
+   *
+   * Upstream's `world_info.charLore` — the row keyed by the character's file
+   * name whose `extraBooks` join the card's own binding in
+   * `getCharacterLore` (`world-info.js:4376`). Iris' `characterId` is that same
+   * file stem, so it keys the row directly.
+   *
+   * A whole-list write, matching upstream's `updateAuxBooks`: the caller sends
+   * the complete next list in the order to keep; duplicates collapse to their
+   * first occurrence; and **an empty list removes the row entirely** — upstream
+   * splices the `charLore` entry when the last book is unbound
+   * (`world-info.js:6044`), so unbinding leaves no residual key. The primary
+   * binding is deliberately out of reach here: it lives on the card, and the
+   * card file is shared between installations.
+   *
+   * Every name must resolve to a stored book — a binding with no file behind it
+   * makes every later scan silently skip it, which reads as a book that
+   * activates nothing (the same rule `worldbook.bindChat` applies).
+   */
+  'worldbook.setCharBooks': z.object({
+    characterId: z.string().min(1),
+    /** The complete additional list, in the order to keep. Empty unbinds all. */
+    names: z.array(z.string().min(1).max(120)).max(100),
+  }),
+  /**
    * Read and write the scan knobs: scan depth, budget, recursion, matching.
    *
    * Their own pair of methods rather than fields of `settings.set` for the same
@@ -1325,6 +1350,8 @@ export interface RpcResponseMap {
   'worldbook.create': { created: boolean }
   /** The binding as it now stands, read back from the chat header. */
   'worldbook.bindChat': { name: string | null }
+  /** The character's full binding, read back after the write. */
+  'worldbook.setCharBooks': { primary: string | null, additional: string[] }
   'worldbook.settings': { settings: WorldbookSettingsView }
   'worldbook.setSettings': { settings: WorldbookSettingsView }
 

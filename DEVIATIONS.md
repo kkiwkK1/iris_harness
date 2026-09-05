@@ -372,3 +372,62 @@ headless Chrome/CDP，1920×1080 与 2400×1200 两档 + 1280×800 窄档，
    本任务只把它们的分区改挂折叠卡。新暴露的宿主设置键共三个（trimSentences /
    continuePostfix / squashSystemMessages），全部有真实消费者与往返测试；文档
    （STRINGS.md）只登记了实际暴露的键。
+
+---
+
+# DEVIATIONS — B8：角色多书绑定（charLore.extraBooks）
+
+日期 2026-09-06，分支 `dev/feat-multibook`（基于 `dev/iris-exploration` @ `079bf31`，
+该主线已含任务 L 的世界书面板/扫描设置/聊天级书）。
+
+## 范围
+
+存储（`settings.json` 的 `worldbooks.charLore`，行 shape 与上游逐字同名
+`{name, extraBooks}`）；`resolveCardWorldbook` 扩为 primary+additional 有序合并
+（`ResolvedWorldbook.additional`，逐书 `world` 归属）；`scanEntriesOf` 逐书守卫
+（全局选中/聊天书同名即逐书跳过，主书失守不连坐附加书）；`worldbook.setCharBooks`
+RPC（整表替换、空表删整行＝解绑不留残键）+ `worldbook.charNames` 携带存量附加书；
+假客户端诚实拒绝；世界书面板「绑定到当前角色」交互 + 双语键；探针名单
+（`apps/iris/tests/rpc-transport.test.ts` PROBES + `registration.test.ts` 的
+register 清单）与验收脚本 `qa/multibook-acceptance.mjs`。MVU 侧 `initVars` 按上游
+`[...global, primary, ...additional]` 的硬编码次序把附加书的 `[InitVar]` 一并折入。
+
+## 与任务书的偏离（有意为之）
+
+1. **存储落点：SettingsStore，而不是 WorldbookStore 类本身。** 清单方案写
+   「WorldbookStore 加角色→附加书名数组」，实际落在 `SettingsStore` 的
+   `worldbooks` 区。理由：ST 自己就把 `charLore` 存在
+   `settings.json → world_info_settings.world_info.charLore`（与 `globalSelect`
+   同区），Iris 的 `worldbooks` 区正是那个区的对应物；落在这里继承既有的原子落盘、
+   加载合并和「运行时状态不进共享卡文件」的裁定，且行 shape 与上游逐字同名，
+   两个安装格式互读不隔。任务书的实质要求（profile 级持久化、不写卡文件）原样成立。
+
+2. **宿主端口：8817 被占，改用 8818。** 开工时 8817 已被一个无主宿主监听
+   （netstat 只读识别：PID 26832，`node apps/iris/bin.ts`，能应答 RPC）。按硬纪律
+   不按端口/进程名杀进程、亦不动其他 worktree 的东西，该进程原样未碰；本任务宿主
+   改用 **8818**，PID 记录在 `.b8-data/host.pid`（验收毕按记录 PID 停止，
+   数据目录 `.b8-data/` 验收后删除）。
+
+## 实测发现（未改，待裁）
+
+3. **附加书会被扫描预算的累计停止挤出——与上游一致，不是绑定缺陷。** ST 的预算
+   循环按 order 降序累计、超限即停（`world-info.js` 同款，Iris `activate.ts`
+   原样转写）。哈人冰恋世界（107 条目书，主书自身匹配已把累计推过 25% 预算线）上
+   挂 order=100 的附加书时，附加条目排在累计尾部被截；order=100000 的附加书则
+   正常入块（实测 6233→6258）。这与「同书同键直呼引擎 2 条即中」同类：行为归上游
+   语义，是否给附加书单独预算档属跨任务裁定。QA 探针因此用高 order 附加书做
+   确定性增长检查。
+
+## 验收对账
+
+- 扫描候选：单测（`worldbook-charlore.test.ts`，20 例：存储往返/无残键/逐书守卫/
+  `ScanEntry.world` 归属/character_first 组内排序）+ 实机（合成卡 16→36 token；
+  哈人冰恋 6233→6258、神隐挑战 4760→4785，解绑后逐 token 回到基线）。
+- 解绑不留残键：单测断言 settings 文件原文无 `charLore` 键 + 实机解绑后
+  `worldbook.charNames` 只余主绑定、原始文件无键。
+- 与 ST 同操作同结果：`getCharacterLore`（world-info.js:4363-4417）的
+  worldsToSearch 合并、三重守卫（全局选中/聊天书/persona 书——persona 书 Iris 尚无，
+  守卫无可守对象）与 `updateAuxBooks`（:6039，空表 splice 整行、normalizeArray
+  去重）逐一转写，行号见各处注释。
+- 回归：`pnpm test` 2263 例全绿（哈人冰恋/神隐挑战的既有语料用例在内），
+  `pnpm typecheck`、`apps/iris-web` typecheck 全绿。

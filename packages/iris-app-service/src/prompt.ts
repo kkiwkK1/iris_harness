@@ -263,8 +263,13 @@ function roleOf(value: number): Role {
  * The per-source dedup guards travel with their sources (`getChatLore` and
  * `getCharacterLore`, `world-info.js:4380-4449`): a chat book already globally
  * selected is skipped, and a character book is skipped when it is globally
- * selected **or** is the chat's book. Persona lore is absent — Iris has no
- * persona store yet — so its guard has nothing to guard.
+ * selected **or** is the chat's book. The character guard is **per book**,
+ * because upstream's `getCharacterLore` walks one `worldsToSearch` set — the
+ * primary binding plus the host-stored extras — and tests each name against the
+ * global and chat selections on its own turn through the loop. A host-stored
+ * extra that names the chat's book loses; the primary's loss does not take the
+ * extras down with it. Persona lore is absent — Iris has no persona store yet —
+ * so its guard has nothing to guard.
  * @param card - the character whose book to read.
  * @param chosen - the resolved named/embedded book plus the global selection.
  * @param chatLore - the chat-bound book's entries, read fresh by the caller.
@@ -304,14 +309,25 @@ export function scanEntriesOf(
   // getter does. A chat book already globally selected is skipped here — that
   // is `getChatLore`'s guard; a character book that is globally selected or *is*
   // the chat's book never reaches the sort at all, which is `getCharacterLore`'s
-  // (`world-info.js:4387-4396`). A source that loses its guard contributes no
-  // entries, rather than contributing entries that lose their `world` tag.
+  // (`world-info.js:4387-4396`). The character guard is per book: the primary's
+  // world is tested on its own, and each host-stored extra on its own, because
+  // upstream walks one search set name by name. A source that loses its guard
+  // contributes no entries, rather than contributing entries that lose their
+  // `world` tag.
   const globalNames = new Set(chosen?.global.map(book => book.world) ?? [])
   const chatNames = new Set(chatLore.map(book => book.world))
   const chatBooks = chatLore.filter(book => !globalNames.has(book.world))
-  const characterEntriesAdmitted = globalNames.has(characterWorld) || chatNames.has(characterWorld)
-    ? []
-    : characterEntries
+  const primaryAdmitted = !globalNames.has(characterWorld) && !chatNames.has(characterWorld)
+  // The host-stored extras (`charLore.extraBooks`), after the primary, in the
+  // order the user bound them — upstream's Set preserves insertion order, so
+  // the extras follow the primary in the search and in the scan list.
+  const additionalEntries: ScanEntry[] = (chosen?.additional ?? [])
+    .filter(book => !globalNames.has(book.world) && !chatNames.has(book.world))
+    .flatMap(book => book.entries.map(entry => ({ ...entry, world: book.world })))
+  const characterEntriesAdmitted: ScanEntry[] = [
+    ...(primaryAdmitted ? characterEntries : []),
+    ...additionalEntries,
+  ]
 
   // `sortFn` upstream: descending `order`, stable, no tiebreak. Array sort is
   // stable in every runtime this runs on.

@@ -260,6 +260,16 @@ export interface IrisState {
    */
   worldbooks: { names: string[], globalSelect: string[], settings: WorldbookSettingsView } | undefined
   /**
+   * The open chat character's world book binding, as last fetched.
+   *
+   * `primary` is the card's own `extensions.world` — displayed, not editable
+   * here, because it lives on the card file. `additional` is the host-stored
+   * list the panel edits. `characterId` names whose binding this is, so a chat
+   * switch can tell "stale" from "unbound" instead of rendering the previous
+   * character's books onto the new one.
+   */
+  charBooks: { characterId: string, primary: string | null, additional: string[] } | undefined
+  /**
    * The persona panel's data, as last fetched.
    *
    * `undefined` until `loadPersonas` runs — the same "not loaded" vs "none
@@ -604,6 +614,20 @@ export interface IrisActions {
   setGlobalSelect(names: readonly string[]): Promise<void>
   /** Patch the world-info scan settings, and hold the effective result. */
   patchWorldbookSettings(patch: Partial<WorldbookSettingsView>): Promise<void>
+  /**
+   * Fetch the open chat character's world book binding, and hold it.
+   *
+   * A no-op that clears the held answer when no chat is open: a binding belongs
+   * to a character, and the panel must not show one without its owner.
+   */
+  loadCharBooks(): Promise<void>
+  /**
+   * Replace the open chat character's additional books, and hold the answer.
+   *
+   * The whole list, in order — the host's write is whole-list, and an empty
+   * list unbinds all. A no-op when no chat is open.
+   */
+  setCharBooks(names: readonly string[]): Promise<void>
   /** Fetch the persona panel's data: the personas and which one is active. */
   loadPersonas(): Promise<void>
   /**
@@ -917,6 +941,7 @@ export function createIrisStore(
       stream: undefined,
       settings: undefined,
       worldbooks: undefined,
+      charBooks: undefined,
       personas: undefined,
       notice: undefined,
       noticeLog: [],
@@ -1275,6 +1300,35 @@ export function createIrisStore(
               ? undefined
               : { ...state.worldbooks, settings: answer.settings },
           }))
+        })
+      },
+
+      async loadCharBooks(): Promise<void> {
+        const characterId = get().view?.characterId
+        if (characterId === undefined) {
+          // No open chat, no owner for a binding — clearing beats showing the
+          // previous character's books beside a different conversation.
+          set({ charBooks: undefined })
+          return
+        }
+        await guard(async () => {
+          const answer = await client.call('worldbook.charNames', { characterId })
+          // The chat can switch while the call is in flight; an answer for the
+          // character that is no longer open is dropped, not shown.
+          if (get().view?.characterId !== characterId) return
+          set({ charBooks: { characterId, primary: answer.primary, additional: answer.additional } })
+        })
+      },
+
+      async setCharBooks(names: readonly string[]): Promise<void> {
+        const characterId = get().view?.characterId
+        if (characterId === undefined) return
+        await guard(async () => {
+          const answer = await client.call('worldbook.setCharBooks', { characterId, names: [...names] })
+          // Held from the answer: the host collapses duplicates and answers the
+          // binding as stored, which can differ from the list as asked.
+          if (get().view?.characterId !== characterId) return
+          set({ charBooks: { characterId, primary: answer.primary, additional: answer.additional } })
         })
       },
 
