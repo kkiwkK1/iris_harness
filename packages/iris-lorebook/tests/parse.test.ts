@@ -2,7 +2,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  DEFAULT_ORDER,
   LorebookParseError,
+  convertAgnaiMemoryBook,
+  convertLorebookDialect,
+  convertNovelLorebook,
+  convertRisuLorebook,
+  entryDefaults,
   fromCharacterBook,
   parseDecorators,
   parseLorebook,
@@ -212,3 +218,160 @@ test('an unknown decorator opens its @@@ fallback chain', () => {
     [['@@activate'], 'Body.'],
   )
 })
+
+// --- Dialect imports (ST world-info.js:5358/:5403/:5448) -------------------
+//
+// The samples are shaped after the upstream field lists: an Agnai memory book,
+// a Risu lorebook and a NovelAI lorebook, each carrying one fully-populated
+// entry plus one minimal one, because the minimal entry is where a mapping's
+// fallback disagrees with ST's (the template default is applied by
+// addMissingWorldInfoFields at load, and normalizeEntry is that same step).
+
+test('an Agnai memory book maps keywords/name/entry/weight onto the ST shape', () => {
+  const book = convertAgnaiMemoryBook({
+    kind: 'memory',
+    entries: [
+      { keywords: ['meridian', 'vein'], name: 'Ley lines', entry: 'Power flows along them.', weight: 4, enabled: true },
+      { keywords: ['quiet'], entry: 'Unmarked entry.' },
+    ],
+  })
+
+  assert.deepEqual(Object.keys(book.entries), ['0', '1'])
+  const named = at(book, 0)
+  assert.deepEqual(named.key, ['meridian', 'vein'])
+  assert.equal(named.comment, 'Ley lines')
+  assert.equal(named.addMemo, true, 'a non-empty name ticks the memo box')
+  assert.equal(named.content, 'Power flows along them.')
+  assert.equal(named.order, 4, 'the Agnai weight becomes order verbatim')
+  assert.equal(named.disable, false)
+  assert.equal(named.selective, false, 'the dialect writes selective false over the template true')
+  assert.equal(named.position, worldInfoPosition.before)
+
+  const minimal = at(book, 1)
+  assert.equal(minimal.comment, '')
+  assert.equal(minimal.addMemo, false)
+  assert.equal(minimal.disable, true, 'ST writes `!entry.enabled`, so a missing flag disables')
+  assert.equal(minimal.order, DEFAULT_ORDER, 'a missing weight falls to the template default on load')
+})
+
+test('a Risu lorebook splits its comma-string keys and maps activationPercent', () => {
+  const book = convertRisuLorebook({
+    type: 'risu',
+    data: [
+      {
+        key: 'ward, seal',
+        secondkey: 'full moon, eclipse',
+        comment: 'The barrier',
+        content: 'It holds.',
+        alwaysActive: true,
+        selective: true,
+        insertorder: 7,
+        activationPercent: 60,
+      },
+      { key: 'plain', content: 'Minimal entry.' },
+    ],
+  })
+
+  assert.deepEqual(Object.keys(book.entries), ['0', '1'])
+  const full = at(book, 0)
+  assert.deepEqual(full.key, ['ward', 'seal'], 'Risu keys are one comma-separated string')
+  assert.deepEqual(full.keysecondary, ['full moon', 'eclipse'])
+  assert.equal(full.comment, 'The barrier')
+  assert.equal(full.constant, true, 'alwaysActive becomes constant')
+  assert.equal(full.selective, true)
+  assert.equal(full.order, 7)
+  assert.equal(full.probability, 60)
+  assert.equal(full.useProbability, true, 'ST writes `activationPercent ?? true`, never false')
+  assert.equal(full.addMemo, true, 'Risu entries are always memo\'d')
+
+  const minimal = at(book, 1)
+  assert.deepEqual(minimal.key, ['plain'])
+  assert.deepEqual(minimal.keysecondary, [])
+  assert.equal(minimal.constant, false)
+  assert.equal(minimal.selective, true, 'a missing selective falls to the template default on load')
+  assert.equal(minimal.order, DEFAULT_ORDER)
+  assert.equal(minimal.probability, 100)
+  assert.equal(minimal.disable, false, 'Risu entries are imported enabled')
+})
+
+test('a NovelAI lorebook maps budgetPriority and the displayName memo rule', () => {
+  const book = convertNovelLorebook({
+    lorebookVersion: 4,
+    entries: [
+      {
+        keys: ['crown'],
+        displayName: 'The Crown',
+        text: 'Worn by the regent.',
+        enabled: true,
+        contextConfig: { budgetPriority: 400 },
+      },
+      { keys: ['ruins'], text: 'No name, no budget.', enabled: false },
+      { keys: ['crypt'], displayName: '   ', text: 'Blank name.', enabled: true },
+    ],
+  })
+
+  assert.deepEqual(Object.keys(book.entries), ['0', '1', '2'])
+  const titled = at(book, 0)
+  assert.deepEqual(titled.key, ['crown'])
+  assert.equal(titled.comment, 'The Crown')
+  assert.equal(titled.addMemo, true)
+  assert.equal(titled.content, 'Worn by the regent.')
+  assert.equal(titled.order, 400, 'budgetPriority becomes order')
+  assert.equal(titled.disable, false)
+  assert.equal(titled.selective, false)
+
+  const minimal = at(book, 1)
+  assert.equal(minimal.comment, '')
+  assert.equal(minimal.addMemo, false)
+  assert.equal(minimal.disable, true)
+  assert.equal(minimal.order, 0, 'a missing budgetPriority is a real 0, not the template 100')
+
+  const blank = at(book, 2)
+  assert.equal(blank.comment, '   ', 'ST writes `displayName || ""`, and whitespace is truthy')
+  assert.equal(blank.addMemo, false, 'but the memo test trims, so a blank name ticks no box')
+})
+
+test('the dialect dispatch mirrors the importer\'s file features', () => {
+  const novel = convertLorebookDialect({ lorebookVersion: 4, entries: [{ keys: ['a'], text: 'novel text', enabled: true }] })
+  if (!novel) throw new Error('lorebookVersion did not dispatch to the NovelAI converter')
+  assert.equal(at(novel, 0).content, 'novel text')
+
+  const agnai = convertLorebookDialect({ kind: 'memory', entries: [{ keywords: ['a'], entry: 'agnai text' }] })
+  if (!agnai) throw new Error('kind: memory did not dispatch to the Agnai converter')
+  assert.equal(at(agnai, 0).content, 'agnai text')
+
+  const risu = convertLorebookDialect({ type: 'risu', data: [{ key: 'a', content: 'risu text' }] })
+  if (!risu) throw new Error('type: risu did not dispatch to the Risu converter')
+  assert.equal(at(risu, 0).content, 'risu text')
+
+  // An ST book carries none of the dialect features; the caller keeps using parseLorebook.
+  assert.equal(convertLorebookDialect({ entries: { '0': { uid: 0, content: 'x' } } }), null)
+  assert.equal(convertLorebookDialect('not a book'), null)
+})
+
+test('dialect conversion lands on the same normalization as parseLorebook', () => {
+  // The superset invariant: whatever the dialect leaves unsaid, the entry says
+  // after conversion — every template field present — and the result is
+  // already in the shape parseLorebook returns, so the two import paths meet.
+  const samples: Array<[string, Lorebook]> = [
+    ['agnai', convertAgnaiMemoryBook({ kind: 'memory', entries: [{ keywords: ['a'], name: 'A', entry: 'x', weight: 1, enabled: true }] })],
+    ['risu', convertRisuLorebook({ type: 'risu', data: [{ key: 'a', content: 'x' }] })],
+    ['novel', convertNovelLorebook({ lorebookVersion: 4, entries: [{ keys: ['a'], text: 'x', enabled: true }] })],
+  ]
+
+  for (const [dialect, book] of samples) {
+    for (const entry of Object.values(book.entries)) {
+      for (const field of Object.keys(entryDefaults())) {
+        assert.ok(field in entry, `${dialect} entry is missing template field ${field}`)
+      }
+    }
+    assert.deepEqual(parseLorebook(book), book, `${dialect} output is already normalized`)
+  }
+})
+
+test('a dialect file without its entry array is refused by name', () => {
+  assert.throws(() => convertAgnaiMemoryBook({ kind: 'memory' }), LorebookParseError)
+  assert.throws(() => convertRisuLorebook({ type: 'risu', entries: [] }), LorebookParseError)
+  assert.throws(() => convertNovelLorebook({ lorebookVersion: 4 }), LorebookParseError)
+})
+
