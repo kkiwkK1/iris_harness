@@ -32,7 +32,7 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { PROVIDER_PRESETS, providerPreset, type ConnectionTestError } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
-import { Section } from './fields.tsx'
+import { CollapsibleSection } from './fields.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /** What the form holds while it is being edited. */
@@ -245,8 +245,14 @@ export function ConnectionPanel(): ReactElement {
     return <p className="iris-field__note iris-conn__test-error">{testState.errorText ?? t('testErrHttp')}</p>
   }
 
+  const active = profiles.find(profile => profile.id === activeId)
+
   return (
-    <Section title={t('sectionConnection')}>
+    <CollapsibleSection
+      id="connection"
+      title={t('sectionConnection')}
+      summary={active === undefined ? t('noActiveConnection') : active.label ?? active.summary}
+    >
       {/*
         **Which host this page is actually talking to**, said before anything
         about providers.
@@ -489,6 +495,6 @@ export function ConnectionPanel(): ReactElement {
           {t('saveConnection')}
         </Button>
       )}
-    </Section>
+    </CollapsibleSection>
   )
 }

@@ -108,6 +108,23 @@
   padding: 4px 15px 0 0;
 }
 
+/*
+ * The floor's number, when the reader asked for it (the `floors` reading
+ * preference). It rides the margin with the variant rail — marginalia, not
+ * body — and is hidden by attribute rather than by unmounting anything.
+ */
+.iris-msg__floor {
+  display: none;
+  margin-top: 7px;
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  color: var(--iris-ink-faint);
+}
+
+[data-iris-floors='on'] .iris-msg__floor {
+  display: block;
+}
+
 .iris-msg__body {
   min-width: 0;
 }

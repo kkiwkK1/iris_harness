@@ -210,3 +210,81 @@ test('impersonate records a user line, no reply, and the instruction last', asyn
   await driver.send(session, 'Thanks.')
   assert.equal(session.events.some(event => event.type === 'turn/start' && event.data.turn === 2), true)
 })
+
+test('a continue carries its separator on the request, not only on the composite', async () => {
+  const { driver, session, seen } = harness(['A reply.', ' And more.'])
+  await driver.send(session, 'begin')
+
+  const candidate = await driver.continueTurn(session, {}, 'carry on', '\n\n')
+
+  // The provider reads the same boundary it is expected to write from — the
+  // continued floor's text in the request carries the separator, exactly the
+  // way upstream appends `continue_postfix` to `cyclePrompt` (script.js:4919).
+  const texts = seen[1]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.equal(texts.includes('A reply.\n\n'), true, 'the request never carried the continue separator')
+  // The nudge still closes the request, after the separator.
+  assert.equal(texts.at(-1), 'carry on')
+  // And the recorded composite joins seed, separator, continuation.
+  assert.equal(textOf(candidate), 'A reply.\n\n And more.')
+})
+
+test('a seed already ending in a space takes no separator, so a space postfix cannot stack', async () => {
+  const { driver, session, seen } = harness(['A reply. ', ' And more.'])
+  await driver.send(session, 'begin')
+
+  const candidate = await driver.continueTurn(session, {}, undefined, ' ')
+
+  const texts = seen[1]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.equal(texts.includes('A reply. '), true, 'the trailing space was not left alone')
+  assert.equal(textOf(candidate), 'A reply.  And more.')
+})
+
+test('squashSystemMessages merges adjacent system messages and leaves the tail alone', async () => {
+  // Two depth-0 injections ride beside each other with the same role: exactly
+  // the shape a provider that takes repeated injected messages badly chokes on.
+  const injections: Contribution[] = [
+    { id: 'persona', placement: { kind: 'system', order: 0 }, text: 'You are Aria.' },
+    { id: 'injA', placement: { kind: 'depth', depth: 0, role: 'system' }, text: 'Injection A.' },
+    { id: 'injB', placement: { kind: 'depth', depth: 0, role: 'system' }, text: 'Injection B.' },
+  ]
+  const build = (squash: boolean) => {
+    const scripted = scriptedStream(['unused'])
+    const driver = new TurnDriver({
+      stream: scripted.stream,
+      provider: 'test',
+      model: 'test-model',
+      contributions: () => injections,
+      history: session => historyFromSession(session),
+      budget: { context: 10_000, reserve: 0, count: text => text.length },
+      ...squash ? { squashSystemMessages: true } : {},
+    })
+    return { driver, seen: scripted.seen, session: Session.create(SessionId(`squash-${String(squash)}`)) }
+  }
+
+  // Off (the default): the request rides exactly as it was assembled. The two
+  // injections are adjacent, which is the run the squash collapses.
+  const off = build(false)
+  await off.driver.send(off.session, 'Hello?')
+  const baseline = off.seen[0]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.equal(baseline.at(-2), 'Injection A.')
+  assert.equal(baseline.at(-1), 'Injection B.')
+
+  // On: adjacent system messages merge, joining with a blank line; nothing
+  // else about the conversation's shape changes.
+  const on = build(true)
+  await on.driver.send(on.session, 'Hello?')
+  const texts = on.seen[0]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.deepEqual(texts, [...baseline.slice(0, -2), 'Injection A.\n\nInjection B.'])
+
+  // A continue's nudge is exempt: it stays the request's LAST message, its own
+  // message, even when it follows a merged run.
+  await on.driver.send(on.session, 'And then?')
+  await on.driver.continueTurn(on.session, {}, 'carry the scene on')
+  const continued = on.seen[2]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.equal(continued.at(-1), 'carry the scene on')
+})

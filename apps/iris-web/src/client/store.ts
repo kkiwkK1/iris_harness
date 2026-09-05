@@ -36,6 +36,7 @@ import type {
 import { asRpcError, describeError, isHostError } from './errors.ts'
 import { isShellAction, wireMethodFor } from '../sandbox/card-api.ts'
 import { draftThroughComposer, sendThroughComposer } from '../app/composer-bus.ts'
+import { loadAutoOpenChat } from '../theme/theme.ts'
 import { consentState, type ConsentState } from '../sandbox/consent.ts'
 import type { ScriptRunState } from '../sandbox/script-run-state.ts'
 // Read at call time, not subscribed: the store is not a React component, and a
@@ -908,9 +909,11 @@ export function createIrisStore(
             connected: client.connected,
           })
           // Open the most recent conversation rather than an empty surface. This
-          // is a reading app: the reader almost always wants to continue.
+          // is a reading app: the reader almost always wants to continue. A
+          // reader who said otherwise gets the empty surface they asked for —
+          // the choice lives on the device (per-device prefs, never the host).
           const first = chats.chats[0]
-          if (first !== undefined) await get().openChat(first.chatId)
+          if (first !== undefined && loadAutoOpenChat()) await get().openChat(first.chatId)
         })
         set({ booting: false })
       },

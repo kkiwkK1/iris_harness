@@ -102,6 +102,25 @@ test('settings keep known fields and refuse malformed ones', () => {
   assert.throws(() => sanitize({ stop: [1] }), /array of strings/)
 })
 
+test('the reply-shaping settings round-trip through the sanitizer', () => {
+  // Booleans: on, off, clear. A non-boolean is refused rather than coerced —
+  // a `"true"` string would read as on forever and never say why.
+  assert.deepEqual(sanitize({ trimSentences: true }), { set: { trimSentences: true }, clear: [] })
+  assert.deepEqual(sanitize({ squashSystemMessages: false }), { set: { squashSystemMessages: false }, clear: [] })
+  assert.deepEqual(sanitize({ trimSentences: null }), { set: {}, clear: ['trimSentences'] })
+  assert.throws(() => sanitize({ trimSentences: 'yes' }), /must be a boolean/)
+  assert.throws(() => sanitize({ squashSystemMessages: 1 }), /must be a boolean/)
+
+  // The continue separator travels as the word, never the literal — the same
+  // refuse-garbage rule as every other field.
+  for (const word of ['none', 'space', 'newline', 'double']) {
+    assert.deepEqual(sanitize({ continuePostfix: word }), { set: { continuePostfix: word }, clear: [] })
+  }
+  assert.deepEqual(sanitize({ continuePostfix: null }), { set: {}, clear: ['continuePostfix'] })
+  assert.throws(() => sanitize({ continuePostfix: 'semicolon' }), /must be one of/)
+  assert.throws(() => sanitize({ continuePostfix: '  ' }), /must be one of/)
+})
+
 test('an explicit null asks for the override to be removed, not for a null value', () => {
   // The distinction a "use host default" control depends on: absent means leave
   // it alone, null means stop overriding it. Collapsing the two would make that

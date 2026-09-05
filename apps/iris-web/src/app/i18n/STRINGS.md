@@ -38,6 +38,15 @@
 | `CleanupOffer.tsx` | 标题/正文/三个按钮（对应上游 zh-CN 原文语义）/计数句/关闭不算拒绝 | `cleanup*` |
 | `errors.ts` COPY + `store.ts` 通知 | 各错误码文案、Iris 自身错误前缀、清理结果、备份去向、报告不可读、页面访问权授予/撤销 | `err* irisOwnFault cleanedMessages backedUpTo reportsUnreadable pageAccessGranted pageAccessRevoked` |
 
+任务 R（设置面扩容，`dev/feat-settings`）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `fields.tsx` / `SettingsDrawer.tsx` / 各面板 | 折叠卡九区标题与卡头摘要（连接/预设/路由/采样/回复/阅读/世界书/脚本/通用与关于） | `sectionReplies sectionAbout noActiveConnection presetNoneActive worldbookSummary scriptSummary samplingDefault samplingSet repliesTrim repliesSquash repliesContinue aboutSummary` |
+| `SettingsDrawer.tsx` 回复卡 | 三个回复形态键：裁剪未完成句、续写分隔符（四选）、合并相邻注入 | `trimSentences* continuePostfix* postfix* squashSystemMessages*` |
+| `SettingsDrawer.tsx` 阅读卡 | 楼层号开关（`mesIDDisplay_enabled` 的等价物，每设备） | `showFloorNumbers*` |
+| `AboutCard.tsx` | 启动自动打开开关、设置导出/导入全部文案、凭据安全声明两句 | `autoOpenChat* exportSettings importSettings settingsExported settingsImport* settingsTransferNote credentialHead credentialBody credentialBodyTransport` |
+
 规模：词典 `en` 约 **200 条**（含复数/变体拆分），`zh` 与其逐键对应。
 
 ## 二、刻意不翻译（及理由）

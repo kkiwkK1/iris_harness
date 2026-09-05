@@ -260,3 +260,58 @@ headless Chrome/CDP，1920×1080 与 2400×1200 两档 + 1280×800 窄档，
     标注"演示"的一节；它不是 feature：除 `registerMessageAction` 外不触碰
     任何 surface，卸载即还空（宿主实测 06 号截图可证）。
 
+
+---
+
+# DEVIATIONS — 任务 R：设置面扩容 + 凭据安全声明（B6 + B11）
+
+分支 `dev/feat-settings`（基于主线 e233eaf，已并入）。验证装置：8814 独立宿主
+（数据目录隔离、按记录 PID 管理）+ headless Chrome/CDP（`qa/r-cards-check.mjs`，
+23 项断言）+ 8814 上的逐键 RPC 往返断言（15 项）+ `node --test` 全绿。
+
+1. **接手即修正：`continue_postfix` 此前只落在拼回文本，未进请求。** 前任代理的
+   WIP（632700e）把分隔符加在被续写文本之后拼出候选，但发给模型的请求里最后一条
+   assistant 消息不带分隔符——上游在构建提示前把它追加到 `cyclePrompt`
+   （`script.js:4917-4921`，含「已以空格结尾则不加」守卫）。已在 `TurnDriver`
+   补上请求侧：postfix 加到最后一条 assistant 消息（nudge 豁免），守卫同上游，
+   并以 driver + service 两层测试钉住（请求文本含分隔符、candidate 拼回含分隔符、
+   尾随空格不叠加）。
+
+2. **IA 十组中，#8（我是谁）与 #10（文本补全格式化）不在本任务落键。** #8 的宿主
+   侧人格面由 wt-persona 任务承建，此处不重复造键（纪律：不碰其他 worktree）；
+   #10 按 SETTINGS.md §十项 #10 的裁定**主动不建**——Chat Completion 路线上那
+   6 次改动全部无效，建一个零效果的面板比不建更糟。其余八组各有键落地，其中三组
+   是本任务新落：回复形态三键（trim/postfix/squash，消费者分别是入库前裁剪、
+   continue 请求+拼回+流式显示、装配层相邻系统注入合并）、楼层号
+   （`mesIDDisplay_enabled` 的每设备等价物，消费点是消息行页边的 CSS 门控显示，
+   宪章量到该用户手动开启过）、启动自动打开（消费点是 store.boot 的重开最近对话，
+   原先无条件，现受键控）。
+
+3. **诊断面板（HostReports / NoticeLog）不折叠。** 任务书第 0 条说「各分区改为
+   折叠卡」，但抽屉自己的设计注释写明：诊断在「出错时更值得读」，把诊断折叠进卡
+   恰恰是「出事时藏起诊断」的形状。故 HostReports / NoticeLog / DemoActions 保持
+   常开原样，折叠卡只覆盖设置类分区（连接/预设/路由/采样/回复/阅读/世界书/脚本/
+   通用与关于，九卡；脚本卡仅在有打开对话时存在，面板本身无对话时返回 null）。
+
+4. **导出文件永不携带凭据，导入的连接配置档无键。** `connection.list` 本就不回显
+   密钥（只有 hasKey + 末四位），导出的 connections 是无凭据字段的投影（结构上
+   无处可藏，而非逐个 delete）；导入按上游同款语义恢复为**无键**配置档并在界面上
+   明说「请逐个重新输入」。格式（`iris.settings/1`：scope/device/generation/
+   worldbook/connections）记录在 `settings-transfer.ts` 头注，逐键往返有测试。
+   凭据声明落在设置抽屉「通用与关于」卡（两句：宿主持有、RPC 不回显、页面不滞留；
+   传输由宿主发起，边界由 rpc-transport 测试钉住），此处即 B11 的界面落点。
+
+5. **折叠卡状态曾按「挂载时快照」保存，会互相覆盖——改为保存时重读合并。** 验收
+   中发现：同一次开抽屉里先后折叠两张卡，先折叠的记录被后折叠的覆盖（各卡各存各
+   的挂载快照）。`CollapsibleSection` 的 toggle 现在保存前重读 `localStorage`
+   合并，跨卡与跨刷新记忆均有 CDP 断言（`qa/r-cards-check.mjs` 已入库，截图在
+   `qa/results/r-cards/`）。
+
+6. **取舍清单（没上的键及理由）**：发送/生成延迟类（任务书明说不需要）；字体缩放
+   （阅读偏好已有字号，跳过）；消息气泡样式（本产品的阅读面刻意无气泡，见
+   `Message.tsx` 头注，加气泡是美术语言决定不是设置键）；ST 的
+   `auto_connect`（对齐为「启动自动打开最近对话」，见第 2 条）；世界书扫描参数、
+   预设管理、提示词装配只读面等已在上个任务落地（WorldbookPanel / PresetPanel），
+   本任务只把它们的分区改挂折叠卡。新暴露的宿主设置键共三个（trimSentences /
+   continuePostfix / squashSystemMessages），全部有真实消费者与往返测试；文档
+   （STRINGS.md）只登记了实际暴露的键。

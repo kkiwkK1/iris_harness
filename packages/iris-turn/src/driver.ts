@@ -117,9 +117,9 @@ export class TurnDriver {
     session: Session,
     turn: number,
     events: GenerateEvents = {},
-    extend: { seed?: string, tail?: PipelineMessage } = {},
+    extend: { seed?: string, tail?: PipelineMessage, postfix?: string } = {},
   ): Promise<Candidate> {
-    const run = await this.#run(session, turn, events, extend.tail)
+    const run = await this.#run(session, turn, events, extend.tail, extend.postfix)
     const seed = extend.seed
     // A continue's candidate is the joined text, not the continuation alone:
     // the swipe list of this turn is what the file exports, and SillyTavern's
@@ -141,6 +141,9 @@ export class TurnDriver {
    * @param turn - the turn the chunks belong to, for the journal.
    * @param events - streaming callbacks and cancellation.
    * @param tail - a message appended after the assembled conversation.
+   * @param postfix - the separator a continue rides on the text being continued
+   *   (upstream appends `continue_postfix` to `cyclePrompt`, script.js:4917).
+   *   Absent leaves the request alone — only a continue has one.
    * @returns the content blocks, the message source they imply, and the visible
    *   text.
    * @throws {TurnError} when the provider ends the stream with a failure.
@@ -150,6 +153,7 @@ export class TurnDriver {
     turn: number,
     events: GenerateEvents,
     tail?: PipelineMessage,
+    postfix?: string,
   ): Promise<{
     blocks: AssistantMessage['content']
     source: Parameters<typeof createAssistantMessage>[0]['source']
@@ -170,6 +174,21 @@ export class TurnDriver {
     // merged into a neighbouring system message would no longer be the thing
     // the model reads before it writes.
     const base = options.squashSystemMessages === true ? squashSystemRuns(request.messages) : request.messages
+    // The continue's separator rides on the request too, not only on the
+    // recorded composite: upstream appends `continue_postfix` to the text being
+    // continued before the prompt is built (`cyclePrompt`, script.js:4917-4921),
+    // because the model needs the same boundary it is expected to write from.
+    // Same guard as upstream: text already ending in a space is left alone, so
+    // a space separator cannot stack. The continued floor is the last assistant
+    // message — a nudge, when one rides, sits after it and is not touched.
+    if (postfix !== undefined && postfix.length > 0) {
+      for (let index = base.length - 1; index >= 0; index -= 1) {
+        const message = base[index] as PipelineMessage
+        if (message.role !== 'assistant') continue
+        if (!message.text.endsWith(' ')) message.text += postfix
+        break
+      }
+    }
     const messages = tail === undefined
       ? base.map(toMessage)
       : [...base.map(toMessage), toMessage(tail)]
@@ -300,6 +319,7 @@ export class TurnDriver {
       seed: postfix === undefined || postfix.length === 0 || seedText.endsWith(' ')
         ? seedText
         : seedText + postfix,
+      ...postfix === undefined || postfix.length === 0 ? {} : { postfix },
       ...nudge === undefined ? {} : { tail: { role: 'user' as const, text: nudge } },
     })
   }

@@ -19,6 +19,8 @@ export interface ReadingPrefs {
   size: number
   /** Line-length cap, in `ch`. */
   measure: number
+  /** Show each floor's number in the margin (upstream's `mesIDDisplay_enabled`). */
+  floors: boolean
 }
 
 /** Bounds the panel and the stored value are both held to. */
@@ -29,9 +31,10 @@ export const READING_LIMITS = {
 
 const THEME_KEY = 'iris.theme'
 const READING_KEY = 'iris.reading'
+const AUTO_OPEN_KEY = 'iris.startup.autoOpen'
 
 /** Defaults: a book measure and a comfortable body size, not a UI size. */
-export const DEFAULT_READING: ReadingPrefs = { size: 17, measure: 68 }
+export const DEFAULT_READING: ReadingPrefs = { size: 17, measure: 68, floors: false }
 
 /**
  * Read the stored theme choice.
@@ -54,6 +57,7 @@ export function loadReading(): ReadingPrefs {
     return {
       size: clamp(parsed.size ?? DEFAULT_READING.size, READING_LIMITS.size),
       measure: clamp(parsed.measure ?? DEFAULT_READING.measure, READING_LIMITS.measure),
+      floors: parsed.floors === true,
     }
   } catch {
     return { ...DEFAULT_READING }
@@ -89,7 +93,30 @@ export function applyReading(prefs: ReadingPrefs): void {
   const root = document.documentElement
   root.style.setProperty('--iris-prose-size', `${prefs.size}px`)
   root.style.setProperty('--iris-measure', `${prefs.measure}ch`)
+  // The floor numbers ride the same attribute as the other reading surface
+  // choices: CSS shows them, so a row never has to know a pref exists.
+  root.setAttribute('data-iris-floors', prefs.floors ? 'on' : 'off')
   safeWrite(READING_KEY, JSON.stringify(prefs))
+}
+
+/**
+ * Read whether the most recent conversation should open on start.
+ *
+ * The shell reopens the newest chat by default — this is a reading app, and
+ * the reader almost always wants to continue — so `true` is also the value an
+ * unavailable store yields.
+ * @returns the stored choice, defaulting to open.
+ */
+export function loadAutoOpenChat(): boolean {
+  return safeRead(AUTO_OPEN_KEY) !== 'false'
+}
+
+/**
+ * Remember whether the most recent conversation should open on start.
+ * @param open - the choice.
+ */
+export function saveAutoOpenChat(open: boolean): void {
+  safeWrite(AUTO_OPEN_KEY, open ? 'true' : 'false')
 }
 
 /**
