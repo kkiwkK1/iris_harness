@@ -1337,3 +1337,45 @@ corrected-self behaviour is gone; nothing in the corpus depended on the wrong
 first answer. If a future mechanism needs to distinguish "seeded" from
 "pushed", the frame currently cannot tell them apart — the seed is deleted on
 consumption precisely so it cannot become a second, stale source.
+
+## 32. The frames' zod chains `prefault()` through the inner schema's methods
+
+**Kind:** compatibility layer over the served library, in the direction cards
+were written.
+
+**Upstream.** Tavern Helper bundles its own zod (4.9.x by `version:` in its
+dist) and publishes it as `globalThis.z`; frames take `window.parent.z`. The
+same chain that breaks here breaks there — `.prefault()` returns a
+`ZodPrefault`, whose type carries none of the inner schema's methods — so the
+upstream truth for `z.coerce.number().prefault(0).min(0)` is itself a
+`TypeError`. The corpus says the chain is nevertheless a living idiom:
+全职高手's variable-structure script is written entirely in it (158 `prefault`
+sites, 5 chained), while the other four `prefault`-using cards call it only at
+a chain's tail, where nothing follows and nothing breaks. A card that never ran
+upstream is not evidence about upstream; it is evidence about what its author
+believed `z` did — and under "every family must run as it does in ST", a
+believed API the host can honour for the whole family is the mechanism to
+implement.
+
+**Iris.** The preset bundle installs a forwarding view before publishing `z`:
+each classic schema prototype that owns `prefault` returns, instead of the bare
+wrapper, a proxy that answers the wrapper's own members and forwards anything
+else to the wrapped inner schema, re-applying the same prefault value to the
+result. `prefault(0).min(0)` therefore composes as
+`prefault(inner.min(0), 0)` — parse semantics identical to the author's left-
+to-right reading, chainable, and safe to embed inside objects, records and
+arrays. A contradictory chain (`prefault(0).min(1)` with no input) still
+refuses; nothing clamps, because a clamp would be an approximate answer wearing
+a schema's clothes. The install is deduplicated by prototype identity and runs
+exactly once (the preset evaluates once per origin); `check-preset`'s `z` probe
+now runs the measured chain against the built artifact, so a bundler change
+that silently dropped the install fails the build instead of failing a card.
+
+**What it costs.** A card probing the wrapper's *type* shape (`instanceof
+ZodPrefault` on a chained result) sees the proxy, whose `Symbol.hasInstance`
+target is unchanged, but a `getPrototypeOf`-sensitive walker would observe a
+Proxy where it expects a plain object. No measured helper does this: `mvu_zod`
+wraps the card's schema in `z.object(...)` (untouched — the wrapper sits
+inside), `safeParse`s it, and reads `_zod.def`, all of which the proxy forwards.
+If zod later makes `prefault` chain natively, the break-guard in
+`tests/zod-compat.test.ts` fails on its first assertion and names the removal.

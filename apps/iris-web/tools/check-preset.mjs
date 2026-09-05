@@ -134,7 +134,16 @@ const seeds = {
    * an implicitly-unwrapped result.
    */
   _: value => LODASH_IS_CALLABLE(value),
-  z: value => typeof value.object === 'function',
+  /*
+   * Chained, not merely probed for `object`. The prefault-compat install runs
+   * inside this bundle, and the break it fixes is invisible to a presence
+   * check: `typeof z.object === 'function'` passes on a namespace whose
+   * `.prefault()` still severs the chain — the failure then belongs to a card
+   * three steps later (`…prefault(...).min is not a function`, measured on the
+   * 全职高手 variable-structure script). So the probe exercises the exact
+   * measured chain: build, chain, parse the absent case and a present one.
+   */
+  z: value => ZOD_PREFAULT_CHAINS(value),
   YAML: value => YAML_ROUND_TRIPS(value),
   /*
    * `watch` and `ref` by name, not `Vue` by presence.
@@ -202,6 +211,33 @@ function YAML_ROUND_TRIPS(value) {
   if (typeof value.parse !== 'function' || typeof value.stringify !== 'function') return false
   const probe = { stat: { hp: 10 }, list: [1, 2] }
   return JSON.stringify(value.parse(value.stringify(probe))) === JSON.stringify(probe)
+}
+
+/**
+ * Whether the seeded zod chains `.prefault()` into the inner schema's methods.
+ *
+ * The chain is the one the corpus carries (全职高手's variable-structure
+ * script): a coerced number with a prefault, constrained after it. The absent
+ * input must yield the prefault value; a present input must coerce and still
+ * pass the constraints. A second assertion covers the chaining continuing past
+ * one hop, which is the shape of all five measured chains.
+ * @param value - the seeded global.
+ * @returns true when the chain parses as written.
+ */
+function ZOD_PREFAULT_CHAINS(value) {
+  if (typeof value.object !== 'function' || typeof value.coerce?.number !== 'function') return false
+  const chained = value.coerce.number().prefault(0).min(0).max(100)
+  if (chained.parse(undefined) !== 0) return false
+  if (chained.parse('55') !== 55) return false
+  // The absent case refused when the prefault value fails its own constraint —
+  // the composed semantics, not an invented clamp.
+  let refused = false
+  try {
+    value.coerce.number().prefault(0).min(1).parse(undefined)
+  } catch {
+    refused = true
+  }
+  return refused
 }
 
 const broken = []
