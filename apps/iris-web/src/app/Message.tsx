@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 
+import { MessageActions } from './MessageActions.tsx'
 import { MessageInterfaces } from './MessageInterfaces.tsx'
 import type { MessageView } from '@iris/protocol'
 
@@ -194,7 +195,13 @@ export function Message({
               >
                 {t('delete')}
               </button>
-              <Slot name="iris.message.actions" owner={{ message, streaming }} />
+              {/*
+                Provider-contributed actions (the `iris.message.actions`
+                seam), folded into one menu so the row's layout does not
+                depend on how many providers are installed. Renders nothing —
+                literally nothing, no wrapper — when none are.
+              */}
+              <MessageActions message={message} streaming={streaming} notify={handlers.onNotify} />
             </div>
           </>
         )}

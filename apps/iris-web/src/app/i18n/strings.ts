@@ -116,6 +116,19 @@ export const en = {
   copied: 'Copied.',
   generatingAria: 'Generating',
 
+  /** Floor actions menu (`iris.message.actions` — contributions fold in here). */
+  floorActions: 'Actions',
+  /** Demo provider (`DemoActionsSection`), the B10 seam's living fixture. */
+  demoSection: 'Demo — floor actions',
+  demoProvider: 'Demo provider',
+  demoOn: 'Installed',
+  demoOff: 'Not installed',
+  demoNote: 'Registers one floor action (“Copy as plain text”) through the iris.message.actions seam, as living proof of the extension point. Uninstalling leaves nothing behind.',
+  demoCopyPlain: 'Copy as plain text',
+  demoCopyPlainTitle: 'Copy this floor’s words without the markdown source',
+  copiedPlain: 'Copied as plain text.',
+  demoCopyFailed: 'Could not reach the clipboard.',
+
   /** Variant rail. */
   railReadings: '{count} readings of this reply',
   railRecord: '{count} readings were generated for this reply; the current one is {index}',
@@ -545,6 +558,19 @@ export const zh: Record<StringKey, string> = {
   delete: '删除',
   copied: '已复制。',
   generatingAria: '正在生成',
+
+  /** 楼层动作菜单（`iris.message.actions`——provider 注册项折叠于此）。 */
+  floorActions: '动作',
+  /** 演示 provider（`DemoActionsSection`），B10 接缝的活样例。 */
+  demoSection: '演示——楼层动作',
+  demoProvider: '演示 provider',
+  demoOn: '已装',
+  demoOff: '未装',
+  demoNote: '通过 iris.message.actions 接缝注册一个楼层动作（“复制为纯文本”），作为该扩展点的活样例。卸载后不留任何痕迹。',
+  demoCopyPlain: '复制为纯文本',
+  demoCopyPlainTitle: '复制本楼正文，不带 markdown 源码',
+  copiedPlain: '已复制纯文本。',
+  demoCopyFailed: '无法访问剪贴板。',
 
   /** 读法导轨。 */
   railReadings: '这条回复有 {count} 种读法',

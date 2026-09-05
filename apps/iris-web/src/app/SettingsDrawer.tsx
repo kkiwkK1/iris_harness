@@ -21,6 +21,7 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
 import { ChoiceField, NumberField, Section, TextField } from './fields.tsx'
 import { ConnectionPanel } from './ConnectionPanel.tsx'
+import { DemoActionsSection } from './DemoActionsSection.tsx'
 import { HostReports } from './HostReports.tsx'
 import { NoticeLog } from './NoticeLog.tsx'
 import { PresetPanel } from './PresetPanel.tsx'
@@ -343,6 +344,15 @@ export function SettingsDrawer({
           still sayable. The bar itself is gone in three seconds.
         */}
         <NoticeLog />
+
+        {/*
+          The B10 seam's demo provider and its switch — not a dev probe (it is
+          meant to be observable in a production build, which is exactly what
+          the seam's acceptance asks for), and not a feature: it contributes
+          one floor action through `iris.message.actions` and takes it back on
+          uninstall, leaving nothing behind.
+        */}
+        <DemoActionsSection />
 
         {/*
           Dev only, and written so the branch is statically dead in a production

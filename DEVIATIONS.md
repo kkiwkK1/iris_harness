@@ -220,3 +220,18 @@
 29. **假客户端对 `connection.test` 诚实拒绝**（unsupported："fake client cannot
     reach a real endpoint"）：该方法存在的意义就是把请求放到真网络上，伪造
     延迟或错误码会让连接表单在开发期学到一个没有任何端点给过的结论。
+
+---
+
+# DEVIATIONS — 任务 Q：楼层动作接缝（B10 第一期）
+
+分支 `dev/feat-action-seam`。只做接缝不做 provider；demo provider 是接缝的
+活样例与测试夹具，不是功能。
+
+30. **demo provider 的开关放在正式设置抽屉里（`DemoActionsSection`），不是
+    dev-only 探针。** 接缝的验收红线（无 provider 零残渣；注册后按钮出现、
+    点击回调到达、卸载即消失）要求在 production build 里可观察，而
+    `import.meta.env.DEV` 门控的探针在 production 构建中被静态替换成 false、
+    整段死亡——等于验收只在 dev 模式下成立。该 section 因此做成可见、明确
+    标注"演示"的一节；它不是 feature：除 `registerMessageAction` 外不触碰
+    任何 surface，卸载即还空（宿主实测 06 号截图可证）。
