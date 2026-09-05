@@ -24,7 +24,7 @@ import type { ScriptView } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { describeBytes } from './format.ts'
-import { Section } from './fields.tsx'
+import { CollapsibleSection } from './fields.tsx'
 import { consentFigures, describeConsentAsk } from '../sandbox/consent.ts'
 import { reportRowClass } from './host-report-rows.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
@@ -64,8 +64,12 @@ export function ScriptPanel(): ReactElement | null {
 
   const loaded = scriptsFor === characterId
 
+  const summary = !loaded
+    ? undefined
+    : scripts.length === 0 ? t('cardNoScripts') : t('scriptSummary', { count: scripts.length })
+
   return (
-    <Section title={t('sectionCardScripts')}>
+    <CollapsibleSection id="scripts" title={t('sectionCardScripts')} summary={summary}>
       {!loaded ? (
         <p className="iris-list__empty">{t('readingCard')}</p>
       ) : scripts.length === 0 ? (
@@ -225,7 +229,7 @@ export function ScriptPanel(): ReactElement | null {
           void actions.setDocumentGrant(true)
         }}
       />
-    </Section>
+    </CollapsibleSection>
   )
 }
 

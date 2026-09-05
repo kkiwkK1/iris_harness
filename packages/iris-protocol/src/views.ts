@@ -644,7 +644,16 @@ export interface PersonaView {
  */
 export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'min' | 'max'
 
-/** The model route, budget and sampling a chat is running with. */
+/**
+ * What separates a continued reply from the text it writes on from, in the
+ * four spellings upstream's own radio group offers (`continue_postfix_types`,
+ * openai.js:211). `'space'` is upstream's default; the words name the literal
+ * separators (`''`, `' '`, `'\n'`, `'\n\n'`), which the host maps at the
+ * consumer.
+ */
+export type ContinuePostfix = 'none' | 'space' | 'newline' | 'double'
+
+/** The model route, budget, sampling and reply shaping a chat is running with. */
 export interface GenerationSettings {
   provider: string
   model: string
@@ -669,6 +678,30 @@ export interface GenerationSettings {
   presencePenalty?: number
   seed?: number
   stop?: string[]
+  /**
+   * Cut a finished reply back to its last complete sentence — upstream's
+   * `power_user.trim_sentences` ("trim incomplete sentences"), applied to the
+   * text the model produced. Absent means off, which is upstream's default:
+   * most models end their replies cleanly and the cut only ever removes text.
+   */
+  trimSentences?: boolean
+  /**
+   * The separator between a reply and its continuation — upstream's
+   * `continue_postfix`, applied when a continue assembles its request.
+   * Absent means `'space'`, upstream's default; on every OpenAI-compatible
+   * route upstream applies this and so does this host, which has no other
+   * route.
+   */
+  continuePostfix?: ContinuePostfix
+  /**
+   * Merge consecutive system-role messages into one — upstream's
+   * `squash_system_messages`. Some providers take a system message in the
+   * middle of a conversation badly; depth injections and card scripts make
+   * adjacent system messages possible here, and this is the one control over
+   * whether they ride as they were assembled. Absent means off, upstream's
+   * default.
+   */
+  squashSystemMessages?: boolean
 }
 
 /**

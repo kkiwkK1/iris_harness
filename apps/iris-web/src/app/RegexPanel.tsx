@@ -26,7 +26,7 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RegexScriptView } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
-import { Section } from './fields.tsx'
+import { CollapsibleSection } from './fields.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
@@ -60,12 +60,12 @@ function exportName(script: RegexScriptView): string {
 }
 
 /**
- * Render the global regex section.
+ * Render the global regex card.
  *
  * Returns nothing when the host keeps no global regex store: the store's
- * `regexScripts === undefined` is that refusal, and a section of dead controls
+ * `regexScripts === undefined` is that refusal, and a card of dead controls
  * would read as breakage rather than absence.
- * @returns the section, or nothing.
+ * @returns the card, or nothing.
  */
 export function RegexPanel(): ReactElement | null {
   const scripts = useIris(state => state.regexScripts)
@@ -144,7 +144,11 @@ export function RegexPanel(): ReactElement | null {
   }
 
   return (
-    <Section title={t('sectionRegex')}>
+    <CollapsibleSection
+      id="regex"
+      title={t('sectionRegex')}
+      summary={t('regexSummary', { count: scripts.length })}
+    >
       <p className="iris-field__note">{t('regexNote')}</p>
 
       {scripts.length === 0 ? (
@@ -236,6 +240,6 @@ export function RegexPanel(): ReactElement | null {
         />
         <p className="iris-field__note">{t('regexImportNote')}</p>
       </div>
-    </Section>
+    </CollapsibleSection>
   )
 }

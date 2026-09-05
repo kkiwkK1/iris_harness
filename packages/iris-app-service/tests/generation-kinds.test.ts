@@ -133,7 +133,10 @@ function whole(options: GenerateOptions | undefined): string {
 }
 
 test('a continue rejoins the floor it continued and keeps the older readings', async (t) => {
-  const fix = await fixture(t, { replies: ['A reply.', ' And the scene goes on.'] })
+  // The continuation reply carries no leading space: the continue's separator
+  // (the default `continue_postfix`, a space) already rides on the seed the
+  // request is assembled with, so the composite keeps a single space.
+  const fix = await fixture(t, { replies: ['A reply.', 'And the scene goes on.'] })
   const created = await fix.handlers['chat.create']({ characterId: 'aria' })
   const chatId = created.view.chatId
 
@@ -297,7 +300,10 @@ test('a continue announces the seed so the row does not collapse while streaming
   await fix.handlers['chat.send']({ chatId, kind: 'continue' })
   const start = fix.events.filter(event => event.type === 'stream.start').at(-1)
   assert.notEqual(start, undefined)
-  assert.equal(start?.type === 'stream.start' && start.seed, 'A reply.')
+  // The seed announces with the separator included: the space postfix is part
+  // of what the request carries and part of what paints, so the floor never
+  // loses the character the model was actually given.
+  assert.equal(start?.type === 'stream.start' && start.seed, 'A reply. ')
 
   await fix.settled()
 })
@@ -316,4 +322,82 @@ test('an impersonate announces itself as the user, before it settles', async (t)
   await fix.settled()
   const view: ChatView = (await fix.handlers['chat.open']({ chatId })).view
   assert.equal(view.messages.at(-1)?.role, 'user')
+})
+
+test('trim_sentences cuts a completed reply back to its last sentence before it is stored', async (t) => {
+  // The generated text runs past its last complete sentence — the shape the
+  // setting exists for.
+  const fix = await fixture(t, { replies: ['He stood. He waved his hand'] })
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  // Default off: the reply is stored exactly as generated.
+  await fix.handlers['chat.send']({ chatId, text: 'Go on.' })
+  await fix.settled()
+  const first = (await fix.handlers['chat.open']({ chatId })).view
+  assert.equal(
+    first.messages.find(message => message.role === 'assistant' && message.turn === 1)?.text,
+    'He stood. He waved his hand',
+  )
+
+  await fix.handlers['settings.set']({ settings: { trimSentences: true } })
+  await fix.handlers['chat.send']({ chatId, text: 'Go on.' })
+  await fix.settled()
+
+  // The floor, and the file projection under it, carry the cut text: the trim
+  // runs before variables and storage read the reply, so everything downstream
+  // sees what upstream's cleanUpMessage would have left.
+  const view = (await fix.handlers['chat.open']({ chatId })).view
+  assert.equal(
+    view.messages.find(message => message.role === 'assistant' && message.turn === 2)?.text,
+    'He stood.',
+  )
+  const entry = await fix.chats.open(chatId)
+  const line = entry.toFile().messages.at(-1)
+  assert.equal(line?.is_user, false)
+  assert.equal((line as { mes?: string }).mes, 'He stood.')
+})
+
+test('an impersonated line is a user line, and trim_sentences never touches it', async (t) => {
+  const fix = await fixture(t, { replies: ['He waved his hand'] })
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await fix.handlers['settings.set']({ settings: { trimSentences: true } })
+  await fix.handlers['chat.send']({ chatId, kind: 'impersonate' })
+  await fix.settled()
+
+  const view = (await fix.handlers['chat.open']({ chatId })).view
+  // A user line with no sentence end keeps every word of it.
+  assert.equal(view.messages.at(-1)?.role, 'user')
+  assert.equal(view.messages.at(-1)?.text, 'He waved his hand')
+})
+
+test('continue_postfix spells the boundary on the announce, the request and the floor', async (t) => {
+  const fix = await fixture(t, { replies: ['A reply.', 'And the scene goes on.'] })
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await fix.handlers['chat.send']({ chatId, text: 'Go on.' })
+  await fix.settled()
+
+  await fix.handlers['settings.set']({ settings: { continuePostfix: 'double' } })
+  await fix.handlers['chat.send']({ chatId, kind: 'continue' })
+
+  // The announce paints the boundary the request carries.
+  const start = fix.events.filter(event => event.type === 'stream.start').at(-1)
+  assert.equal(start?.type === 'stream.start' && start.seed, 'A reply.\n\n')
+
+  await fix.settled()
+
+  // The provider read the same boundary (upstream appends `continue_postfix`
+  // to `cyclePrompt` before the prompt is built, script.js:4919).
+  const texts = textsOf(fix.seen[1])
+  assert.equal(texts.includes('A reply.\n\n'), true, 'the request never carried the continue separator')
+  // And the floor joins seed, separator, continuation.
+  const view = (await fix.handlers['chat.open']({ chatId })).view
+  assert.equal(
+    view.messages.find(message => message.role === 'assistant' && message.turn === 1)?.text,
+    'A reply.\n\nAnd the scene goes on.',
+  )
 })

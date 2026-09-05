@@ -22,7 +22,7 @@ import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
-import { Section } from './fields.tsx'
+import { CollapsibleSection } from './fields.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { toBase64 } from './format.ts'
 
@@ -120,7 +120,11 @@ export function PresetPanel(): ReactElement | null {
   }
 
   return (
-    <Section title={t('sectionPresets')}>
+    <CollapsibleSection
+      id="presets"
+      title={t('sectionPresets')}
+      summary={active ?? t('presetNoneActive')}
+    >
       <p className="iris-field__note">
         {t('presetActive')}: <span className="iris-preset__active">{active ?? t('hostDefault')}</span>
       </p>
@@ -312,6 +316,6 @@ export function PresetPanel(): ReactElement | null {
           </div>
         </>
       )}
-    </Section>
+    </CollapsibleSection>
   )
 }

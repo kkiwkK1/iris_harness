@@ -89,6 +89,13 @@ export function Message({
             onSelect={index => handlers.onSwipe(turn, index)}
           />
         ) : null}
+        {/*
+          The floor's number (upstream's `mesIDDisplay_enabled`, which the
+          measured profile turned on). Rendered whenever there is a floor to
+          name; the reading preference decides whether it shows, so toggling it
+          never remounts a row.
+        */}
+        <span className="iris-msg__floor" aria-hidden="true">#{message.id}</span>
       </div>
 
       <div className="iris-msg__body">

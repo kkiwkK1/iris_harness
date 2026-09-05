@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 
+import { isOpen, loadCardState, saveCardState, type CardId } from './cards.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /** Bounds and granularity of one slider. */
@@ -186,5 +187,111 @@ export function Section({ title, children }: { title: string, children: ReactNod
       <h3 className="iris-label iris-section__head">{title}</h3>
       {children}
     </section>
+  )
+}
+
+/**
+ * Render a titled group of fields that folds into a card.
+ *
+ * The head carries the section's name and a one-line summary of what is in
+ * force, so a closed card still answers "what is set here" — a table of
+ * contents that hides its contents' values would only hide them twice. The
+ * body stays mounted and merely hidden: collapsing a panel must not tear down
+ * the form state it holds, and remounting would re-fetch what the store already
+ * has. The open state is per-device ( {@link module:app/cards} ), remembered
+ * across reloads; before the reader has expressed a preference, the connection
+ * and reading cards stand open and everything else is folded.
+ * @param props.id - which card this is, for the remembered state.
+ * @param props.title - the card's name.
+ * @param props.summary - the values in force, read while folded.
+ * @param props.children - its fields.
+ * @returns the card.
+ */
+export function CollapsibleSection({
+  id,
+  title,
+  summary,
+  children,
+}: {
+  id: CardId
+  title: string
+  summary?: ReactNode
+  children: ReactNode
+}): ReactElement {
+  const [state, setState] = useState(loadCardState)
+  // Subscribed so a language switch re-renders the card's words.
+  useLanguage()
+
+  const open = isOpen(state, id)
+  const toggle = (): void => {
+    // Read the store again, not the mount-time snapshot: two cards toggled in
+    // one drawer visit must not overwrite each other, and the snapshot here
+    // predates the other card's write.
+    const next = { ...loadCardState(), [id]: !open }
+    setState(next)
+    saveCardState(next)
+  }
+
+  return (
+    <section className="iris-section iris-card">
+      <button
+        type="button"
+        className="iris-card__head"
+        aria-expanded={open}
+        aria-controls={`iris-card-${id}`}
+        onClick={toggle}
+      >
+        <span className={`iris-card__chevron${open ? ' iris-card__chevron--open' : ''}`} aria-hidden="true">
+          ▸
+        </span>
+        <span className="iris-label iris-card__title">{title}</span>
+        {summary === undefined ? null : <span className="iris-card__summary">{summary}</span>}
+      </button>
+      <div id={`iris-card-${id}`} className="iris-card__body" hidden={!open}>
+        {children}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * Render a labelled boolean setting as a pressed/unpressed toggle.
+ *
+ * Two states, said in words: a switch that renders "off" as a grey track reads
+ * as broken, not as off.
+ * @param props.label - what the reader controls.
+ * @param props.note - one line of guidance, shown under the control.
+ * @param props.value - whether the setting is on.
+ * @param props.onToggle - called with the next value.
+ * @returns the field.
+ */
+export function ToggleField({
+  label,
+  note,
+  value,
+  onToggle,
+}: {
+  label: string
+  note?: string
+  value: boolean
+  onToggle: (next: boolean) => void
+}): ReactElement {
+  // Subscribed so a language switch re-renders the field's words.
+  useLanguage()
+  return (
+    <div className="iris-field">
+      <span className="iris-field__label">{label}</span>
+      <span />
+      <button
+        type="button"
+        className="iris-choice__option iris-field__control"
+        style={{ justifySelf: 'start' }}
+        aria-pressed={value}
+        onClick={() => onToggle(!value)}
+      >
+        {value ? t('switchOn') : t('switchOff')}
+      </button>
+      <span className="iris-field__note">{note}</span>
+    </div>
   )
 }

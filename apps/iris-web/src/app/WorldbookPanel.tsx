@@ -18,7 +18,7 @@ import type { ReactElement } from 'react'
 import type { InsertionStrategy, WorldbookSettingsView } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
-import { ChoiceField, Section } from './fields.tsx'
+import { ChoiceField, CollapsibleSection, ToggleField } from './fields.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /** Range of one numeric scan setting, with its step. */
@@ -67,32 +67,6 @@ function Slider({ label, note, value, bounds, onCommit }: {
   )
 }
 
-/** Render one labelled boolean setting as a pressed/unpressed toggle. */
-function Toggle({ label, note, value, onToggle }: {
-  label: string
-  note?: string
-  value: boolean
-  onToggle: (next: boolean) => void
-}): ReactElement {
-  useLanguage()
-  return (
-    <div className="iris-field">
-      <span className="iris-field__label">{label}</span>
-      <span />
-      <button
-        type="button"
-        className="iris-choice__option iris-field__control"
-        style={{ justifySelf: 'start' }}
-        aria-pressed={value}
-        onClick={() => onToggle(!value)}
-      >
-        {value ? t('switchOn') : t('switchOff')}
-      </button>
-      <span className="iris-field__note">{note}</span>
-    </div>
-  )
-}
-
 /**
  * Render the world books panel.
  *
@@ -115,16 +89,22 @@ export function WorldbookPanel(): ReactElement {
 
   if (worldbooks === undefined) {
     return (
-      <Section title={t('sectionWorldbooks')}>
+      <CollapsibleSection id="worldbooks" title={t('sectionWorldbooks')}>
         <p className="iris-list__empty">{t('worldbooksNotLoaded')}</p>
-      </Section>
+      </CollapsibleSection>
     )
   }
 
   const settings = worldbooks.settings
 
+  const selected = worldbooks.globalSelect.length
+
   return (
-    <Section title={t('sectionWorldbooks')}>
+    <CollapsibleSection
+      id="worldbooks"
+      title={t('sectionWorldbooks')}
+      summary={t('worldbookSummary', { count: selected, total: worldbooks.names.length })}
+    >
       {/*
         The global selection. A checkbox list because the underlying fact is a
         set: order is upstream's array order, but every selected book applies
@@ -213,29 +193,29 @@ export function WorldbookPanel(): ReactElement {
         onSelect={id => patch({ insertionStrategy: id })}
       />
 
-      <Toggle
+      <ToggleField
         label={t('worldbookRecursive')}
         note={t('worldbookRecursiveNote')}
         value={settings.recursive}
         onToggle={next => patch({ recursive: next })}
       />
-      <Toggle
+      <ToggleField
         label={t('worldbookCaseSensitive')}
         value={settings.caseSensitive}
         onToggle={next => patch({ caseSensitive: next })}
       />
-      <Toggle
+      <ToggleField
         label={t('worldbookMatchWholeWords')}
         note={t('worldbookMatchWholeWordsNote')}
         value={settings.matchWholeWords}
         onToggle={next => patch({ matchWholeWords: next })}
       />
-      <Toggle
+      <ToggleField
         label={t('worldbookUseGroupScoring')}
         note={t('worldbookUseGroupScoringNote')}
         value={settings.useGroupScoring}
         onToggle={next => patch({ useGroupScoring: next })}
       />
-    </Section>
+    </CollapsibleSection>
   )
 }

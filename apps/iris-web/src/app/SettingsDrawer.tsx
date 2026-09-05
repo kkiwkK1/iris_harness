@@ -17,9 +17,12 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
+import type { ContinuePostfix, GenerationSettings } from '@iris/protocol'
+
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
-import { ChoiceField, NumberField, Section, TextField } from './fields.tsx'
+import { ChoiceField, CollapsibleSection, NumberField, TextField, ToggleField } from './fields.tsx'
+import { AboutCard } from './AboutCard.tsx'
 import { ConnectionPanel } from './ConnectionPanel.tsx'
 import { DemoActionsSection } from './DemoActionsSection.tsx'
 import { HostReports } from './HostReports.tsx'
@@ -33,7 +36,42 @@ import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
 import { READING_LIMITS, type ReadingPrefs, type ThemeChoice } from '../theme/theme.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
-import type { Language } from './i18n/strings.ts'
+import type { Language, StringKey } from './i18n/strings.ts'
+
+/** The continue separator's menu words, by the wire word the setting stores. */
+const POSTFIX_LABEL: Record<ContinuePostfix, StringKey> = {
+  none: 'postfixNone',
+  space: 'postfixSpace',
+  newline: 'postfixNewline',
+  double: 'postfixDouble',
+}
+
+/** The sampling fields, for the sampling card's summary count. */
+const SAMPLING_KEYS = [
+  'temperature', 'maxTokens', 'topP', 'topK', 'minP', 'repetitionPenalty',
+  'frequencyPenalty', 'presencePenalty', 'seed', 'stop', 'contextWindow', 'reasoningEffort',
+] as const
+
+/** The theme's menu word, by choice — the reading card's summary reads from it. */
+const THEME_LABEL: Record<ThemeChoice, StringKey> = {
+  system: 'themeSystem',
+  light: 'themeLight',
+  dark: 'themeDark',
+}
+
+/**
+ * The reply card's summary: what is shaping replies right now.
+ *
+ * The separator always runs (its default is upstream's), so it is the
+ * summary's backbone; the two switches appear only while they are on.
+ */
+function repliesSummaryOf(settings: GenerationSettings): string {
+  const parts: string[] = []
+  if (settings.trimSentences === true) parts.push(t('repliesTrim'))
+  if (settings.squashSystemMessages === true) parts.push(t('repliesSquash'))
+  parts.push(t('repliesContinue', { word: t(POSTFIX_LABEL[settings.continuePostfix ?? 'space']) }))
+  return parts.join(' · ')
+}
 
 /** Reading preferences and their setter, owned by the shell because they are per-device. */
 export interface ReadingControl {
@@ -67,9 +105,13 @@ export function SettingsDrawer({
   // drawer without a reload.
   const { lang, setLang } = useLanguage()
 
-  const patch = (key: string, value: number | string | null | string[]): void => {
+  const patch = (key: string, value: number | string | boolean | null | string[]): void => {
     void actions.patchSettings({ [key]: value })
   }
+
+  // Computed per render, guarded the way the branch below is: the reply card
+  // only exists when the settings exist.
+  const repliesSummary = settings === undefined ? undefined : repliesSummaryOf(settings)
 
   return (
     <aside
@@ -112,7 +154,11 @@ export function SettingsDrawer({
             */}
             <RegexPanel />
 
-            <Section title={t('sectionRoute')}>
+            <CollapsibleSection
+              id="route"
+              title={t('sectionRoute')}
+              summary={`${settings.provider} · ${settings.model}`}
+            >
               <TextField
                 label={t('provider')}
                 value={settings.provider}
@@ -124,9 +170,15 @@ export function SettingsDrawer({
                 placeholder={t('modelPlaceholder')}
                 onCommit={value => patch('model', value)}
               />
-            </Section>
+            </CollapsibleSection>
 
-            <Section title={t('sectionSampling')}>
+            <CollapsibleSection
+              id="sampling"
+              title={t('sectionSampling')}
+              summary={SAMPLING_KEYS.some(key => settings[key] !== undefined)
+                ? t('samplingSet', { count: SAMPLING_KEYS.filter(key => settings[key] !== undefined).length })
+                : t('samplingDefault')}
+            >
               <NumberField
                 label={t('temperature')}
                 value={settings.temperature}
@@ -266,11 +318,49 @@ export function SettingsDrawer({
                   />
                 </>
               ) : null}
-            </Section>
+            </CollapsibleSection>
+
+            {/*
+              The reply shapers — what happens to the text around the model's
+              words. Each one backs a stored setting with a real consumer: the
+              trim runs before a reply is stored, the separator rides the
+              continue request and the painted floor, and the squash changes the
+              messages a provider is sent.
+            */}
+            <CollapsibleSection id="replies" title={t('sectionReplies')} summary={repliesSummary}>
+              <ToggleField
+                label={t('trimSentences')}
+                note={t('trimSentencesNote')}
+                value={settings.trimSentences === true}
+                onToggle={next => patch('trimSentences', next)}
+              />
+              <ChoiceField<ContinuePostfix>
+                label={t('continuePostfix')}
+                value={settings.continuePostfix ?? 'space'}
+                options={[
+                  { id: 'none', label: t('postfixNone') },
+                  { id: 'space', label: t('postfixSpace') },
+                  { id: 'newline', label: t('postfixNewline') },
+                  { id: 'double', label: t('postfixDouble') },
+                ]}
+                onSelect={id => patch('continuePostfix', id)}
+              />
+              <p className="iris-field__note">{t('continuePostfixNote')}</p>
+              <ToggleField
+                label={t('squashSystemMessages')}
+                note={t('squashSystemMessagesNote')}
+                value={settings.squashSystemMessages === true}
+                onToggle={next => patch('squashSystemMessages', next)}
+              />
+            </CollapsibleSection>
           </>
         )}
 
-        <Section title={t('sectionReading')}>
+        <CollapsibleSection
+          id="reading"
+          title={t('sectionReading')}
+          summary={`${t(THEME_LABEL[control.theme])} · ${control.reading.size}px`}
+        >
           <ChoiceField
             label={t('theme')}
             value={control.theme}
@@ -303,6 +393,17 @@ export function SettingsDrawer({
             }}
           />
           {/*
+            The floor numbers (upstream's `mesIDDisplay_enabled`, which the
+            measured profile turned on): marginalia in the row's margin, shown
+            by a document attribute rather than per-row props.
+          */}
+          <ToggleField
+            label={t('showFloorNumbers')}
+            note={t('showFloorNumbersNote')}
+            value={control.reading.floors}
+            onToggle={next => control.setReading({ ...control.reading, floors: next })}
+          />
+          {/*
             The interface language. Lives beside the theme because it is the same
             kind of thing — a per-device choice about the shell's own surface
             (SETTINGS-IA.md 意图 #4, 界面本地) — and takes effect on the spot,
@@ -320,7 +421,7 @@ export function SettingsDrawer({
             ]}
             onSelect={(id: Language) => setLang(id)}
           />
-        </Section>
+        </CollapsibleSection>
 
         <ScriptPanel />
 
@@ -372,6 +473,14 @@ export function SettingsDrawer({
           uninstall, leaving nothing behind.
         */}
         <DemoActionsSection />
+
+        {/*
+          The general card: startup, the settings file in and out, and the
+          credential statement — the parts of the drawer that are not about the
+          conversation at all, which is why they sit last and work with no chat
+          open.
+        */}
+        <AboutCard control={control} />
 
         {/*
           Dev only, and written so the branch is statically dead in a production

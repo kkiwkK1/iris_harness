@@ -123,6 +123,74 @@
   margin-bottom: 12px;
 }
 
+/*
+ * A folded card. The head is one row — chevron, name, and the values in force
+ * — and the body rides below it. Collapsed, the drawer reads as a table of
+ * contents; the summary line is what keeps "collapsed" from meaning "hidden".
+ */
+.iris-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.iris-card__head:hover .iris-card__title {
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-card__chevron {
+  transition: transform var(--iris-fast) var(--iris-ease);
+}
+
+.iris-card__chevron--open {
+  transform: rotate(90deg);
+}
+
+.iris-card__title {
+  white-space: nowrap;
+}
+
+.iris-card__summary {
+  overflow: hidden;
+  color: var(--iris-ink-faint);
+  font-size: var(--iris-label-size);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-card__body[hidden] {
+  display: none;
+}
+
+/*
+ * The general card's transfer row and its report list, plus the credential
+ * heading — a label, because the statement under it is prose, not a form.
+ */
+.iris-about__transfer {
+  display: flex;
+  gap: 8px;
+  padding: 7px 0;
+}
+
+.iris-about__report {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--iris-ink-secondary);
+}
+
+.iris-about__credential-head {
+  margin: 14px 0 2px;
+}
+
 .iris-field {
   display: grid;
   grid-template-columns: 1fr auto;
