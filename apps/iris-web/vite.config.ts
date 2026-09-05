@@ -60,7 +60,10 @@ export default defineConfig({
      * bugs. `ws: true` because the event channel is a WebSocket.
      */
     proxy: {
-      '/iris/rpc': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+      // `IRIS_HOST_PORT` so a worktree running its own host on another port —
+      // this repo's parallel-work convention — can point the dev server at it
+      // without editing this file per branch. Default unchanged.
+      '/iris/rpc': { target: `http://127.0.0.1:${String(process.env.IRIS_HOST_PORT ?? 8787)}`, changeOrigin: true },
       /*
        * `rewriteWsOrigin` is the difference between this working and not.
        *
@@ -74,7 +77,7 @@ export default defineConfig({
        * event socket.
        */
       '/iris/events': {
-        target: 'ws://127.0.0.1:8787',
+        target: `ws://127.0.0.1:${String(process.env.IRIS_HOST_PORT ?? 8787)}`,
         ws: true,
         changeOrigin: true,
         rewriteWsOrigin: true,

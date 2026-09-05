@@ -85,6 +85,27 @@ const worldbookEntriesPatch = z.array(z.object({
   groupWeight: z.number().int().optional(),
   caseSensitive: z.boolean().nullable().optional(),
   matchWholeWords: z.boolean().nullable().optional(),
+  /**
+   * The write legs of the fields `WorldbookEntry` reads out, added with the
+   * shell's entry editor. Each is optional, and each defaults exactly as this
+   * host's stored writer always defaulted — so a caller that never heard of
+   * them writes the same book it always did, and the extension serves a caller
+   * that read a whole book and is putting it back whole. `outletName` was
+   * already on the stored writer and the read view; it was only ever missing
+   * here, which made an outlet name the one field a round trip could read and
+   * not write.
+   */
+  outletName: z.string().max(200).optional(),
+  automationId: z.string().max(200).optional(),
+  useGroupScoring: z.boolean().nullable().optional(),
+  ignoreBudget: z.boolean().optional(),
+  useProbability: z.boolean().optional(),
+  triggers: z.array(z.string().max(60)).max(12).optional(),
+  characterFilter: z.object({
+    isExclude: z.boolean(),
+    names: z.array(z.string().max(200)).max(100),
+    tags: z.array(z.string().max(200)).max(100),
+  }).optional(),
   matchPersonaDescription: z.boolean().optional(),
   matchCharacterDescription: z.boolean().optional(),
   matchCharacterPersonality: z.boolean().optional(),

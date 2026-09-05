@@ -82,13 +82,69 @@ test('omitting strategy makes an entry constant — upstream’s default, copied
   assert.equal(fromWorldbookEntry({ uid: 1, strategy: { type: 'selective' } }, 0)['constant'], false)
 })
 
-test('useProbability is always written true, and that is upstream too', () => {
-  // Benign, unlike the one above — reading resolves the flag away, so the
+test('useProbability is written true when absent, and verbatim when sent', () => {
+  // Benign, unlike the constant trap — reading resolves the flag away, so the
   // effective probability survives a round trip even though the stored flag
   // does not. Pinned so that "this looks wrong" is answered by a test rather
-  // than by a change.
+  // than by a change. Since the view began reporting the raw flag, a caller
+  // putting a stored book back may also send `false` explicitly; only the
+  // *absent* case is upstream's `true`.
   assert.equal(fromWorldbookEntry({ uid: 1 }, 0)['useProbability'], true)
   assert.equal(fromWorldbookEntry({ uid: 1, probability: 25 }, 0)['probability'], 25)
+  assert.equal(fromWorldbookEntry({ uid: 1, useProbability: false }, 0)['useProbability'], false)
+})
+
+test('the stored shape’s remaining fields survive a whole-book save', async () => {
+  // The reason the write shape grew these fields: before it did, a whole-book
+  // save — the editor's one write — rebuilt every row from a field list that
+  // could not name them, and an automation binding or a budget exemption was
+  // dropped by the very act of saving the book it lived in.
+  const { store } = await bookWith([entryFile(1, 'seed', {
+    automationId: 'my_quick_reply',
+    useGroupScoring: true,
+    ignoreBudget: true,
+    triggers: ['swipe', 'continue'],
+    characterFilter: { isExclude: true, names: ['Eldoria'], tags: ['nst'] },
+  })])
+
+  const [written] = await store.replace('Eldoria', [{
+    uid: 1,
+    name: 'seed',
+    strategy: { type: 'selective', keys: ['tower'] },
+    automationId: 'my_quick_reply',
+    useGroupScoring: true,
+    ignoreBudget: true,
+    useProbability: false,
+    probability: 40,
+    triggers: ['swipe', 'continue'],
+    characterFilter: { isExclude: true, names: ['Eldoria'], tags: ['nst'] },
+  }])
+  assert.ok(written)
+  assert.equal(written.automationId, 'my_quick_reply')
+  assert.equal(written.useGroupScoring, true)
+  assert.equal(written.ignoreBudget, true)
+  assert.equal(written.useProbability, false)
+  assert.deepEqual(written.triggers, ['swipe', 'continue'])
+  assert.deepEqual(written.characterFilter, { isExclude: true, names: ['Eldoria'], tags: ['nst'] })
+
+  // And from the file, not from the return value.
+  const [reread] = await store.get('Eldoria')
+  assert.ok(reread)
+  assert.equal(reread.automationId, 'my_quick_reply')
+  assert.equal(reread.useProbability, false)
+  assert.deepEqual(reread.characterFilter, { isExclude: true, names: ['Eldoria'], tags: ['nst'] })
+})
+
+test('a caller that never heard of the new fields writes the old row', () => {
+  // The defaults are the ones the read side resolves an absent field to, so
+  // pre-existing callers are unmoved by the extension.
+  const row = fromWorldbookEntry({ uid: 1 }, 0)
+  assert.equal(row['automationId'], '')
+  assert.equal(row['useGroupScoring'], null)
+  assert.equal(row['ignoreBudget'], false)
+  assert.equal(row['useProbability'], true)
+  assert.deepEqual(row['triggers'], [])
+  assert.deepEqual(row['characterFilter'], { isExclude: false, names: [], tags: [] })
 })
 
 test('the defaults are upstream’s, not this host’s guesses', () => {
