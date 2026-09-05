@@ -18,6 +18,7 @@ import {
   BlockAssembler,
   createAssistantMessage,
   createUserMessage,
+  type AssistantMessage,
   type GenerateOptions,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
@@ -96,23 +97,74 @@ export class TurnDriver {
    * @param session - the chat log.
    * @param turn - the turn to attach the candidate to.
    * @param events - streaming callbacks and cancellation.
+   * @param extend - what makes this call a continue rather than a reroll: the
+   *   text the candidate opens with, and a message pinned after the assembled
+   *   conversation (upstream's continue nudge).
    * @returns the recorded candidate.
    * @throws {TurnError} when the provider ends the stream with a failure.
    */
-  async #generate(session: Session, turn: number, events: GenerateEvents = {}): Promise<Candidate> {
+  async #generate(
+    session: Session,
+    turn: number,
+    events: GenerateEvents = {},
+    extend: { seed?: string, tail?: PipelineMessage } = {},
+  ): Promise<Candidate> {
+    const run = await this.#run(session, turn, events, extend.tail)
+    const seed = extend.seed
+    // A continue's candidate is the joined text, not the continuation alone:
+    // the swipe list of this turn is what the file exports, and SillyTavern's
+    // continue edits the message in place — here the same outcome is a new
+    // candidate that opens with what was already showing, which keeps every
+    // earlier reading swipable.
+    const content = seed === undefined
+      ? run.blocks
+      : joinedWithSeed(run.blocks, seed)
+    return appendCandidate(session, {
+      turn,
+      step: 0,
+      message: createAssistantMessage({ content, source: run.source }),
+    })
+  }  /**
+   * One model call, streamed and recorded chunk by chunk, without writing a
+   * candidate.
+   * @param session - the chat log the chunks are journalled to.
+   * @param turn - the turn the chunks belong to, for the journal.
+   * @param events - streaming callbacks and cancellation.
+   * @param tail - a message appended after the assembled conversation.
+   * @returns the content blocks, the message source they imply, and the visible
+   *   text.
+   * @throws {TurnError} when the provider ends the stream with a failure.
+   */
+  async #run(
+    session: Session,
+    turn: number,
+    events: GenerateEvents,
+    tail?: PipelineMessage,
+  ): Promise<{
+    blocks: AssistantMessage['content']
+    source: Parameters<typeof createAssistantMessage>[0]['source']
+    text: string
+  }> {
     const options = this.#options
     const request = assemble({
       contributions: await options.contributions(session),
       history: options.history(session),
       budget: options.budget,
     })
+    // The tail rides outside `assemble` because it has to be the request's LAST
+    // message whatever depth injections the contributions carry — depth 0 lands
+    // after the newest history entry, and a nudge that sat behind an injection
+    // would not be the thing the model reads last.
+    const messages = tail === undefined
+      ? request.messages.map(toMessage)
+      : [...request.messages.map(toMessage), toMessage(tail)]
 
     const assembler = new BlockAssembler()
     for await (const chunk of options.stream({
       provider: options.provider,
       model: options.model,
       system: request.system,
-      messages: request.messages.map(toMessage),
+      messages,
       ...options.temperature === undefined ? {} : { temperature: options.temperature },
       ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
       ...options.stop === undefined ? {} : { stop: options.stop },
@@ -137,18 +189,17 @@ export class TurnDriver {
     // is typed as a bare Message: a candidate is specifically model-produced,
     // and carrying the adapter's replay state keeps the turn re-playable.
     const replayState = assembler.replayState
-    return appendCandidate(session, {
-      turn,
-      step: 0,
-      message: createAssistantMessage({
-        content: assembler.blocks(),
-        source: {
-          provider: options.provider,
-          model: options.model,
-          ...replayState === undefined ? {} : { replayState },
-        },
-      }),
-    })
+    const blocks = assembler.blocks()
+    const text = blocks.filter(block => block.type === 'text').map(block => block.text).join('')
+    return {
+      blocks,
+      source: {
+        provider: options.provider,
+        model: options.model,
+        ...replayState === undefined ? {} : { replayState },
+      },
+      text,
+    }
   }
 
   /**
@@ -192,6 +243,88 @@ export class TurnDriver {
     const turn = lastTurn(session)
     if (turn < 0) throw new TurnError('there is no turn to regenerate')
     return this.#generate(session, turn, events)
+  }
+
+  /**
+   * Write on from the newest reply, as its own author.
+   *
+   * The result is a new candidate on the SAME turn whose text opens with the
+   * reading being continued, so the conversation keeps one floor and every
+   * earlier reading stays swipable — SillyTavern's continue edits the message
+   * in place, and the candidate it would have overwritten survives here as an
+   * alternate.
+   * @param session - the chat log.
+   * @param events - streaming callbacks and cancellation.
+   * @param nudge - the instruction that closes the request, after the whole
+   *   conversation (upstream's continue nudge). Absent sends the request
+   *   without one.
+   * @returns the recorded candidate, carrying seed plus continuation.
+   * @throws {TurnError} when the newest turn has no reply to continue.
+   */
+  async continueTurn(session: Session, events: GenerateEvents = {}, nudge?: string): Promise<Candidate> {
+    const turn = lastTurn(session)
+    if (turn < 0) throw new TurnError('there is no turn to continue')
+    const seed = selectedCandidate(session, turn)
+    if (seed === undefined) {
+      throw new TurnError('the newest turn has no reply to continue')
+    }
+    return this.#generate(session, turn, events, {
+      seed: seed.message.content
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join(''),
+      ...nudge === undefined ? {} : { tail: { role: 'user' as const, text: nudge } },
+    })
+  }
+
+  /**
+   * Write the user's next line instead of the character's.
+   *
+   * Upstream's impersonate: one generation from `{{user}}`'s perspective that
+   * becomes a user message — never an assistant candidate, and never the start
+   * of a fresh exchange. The generation runs against the conversation as it
+   * stands, because the line being written cannot be part of its own context;
+   * the turn only opens once there is text to put in it, so a failed
+   * impersonation opens nothing.
+   * @param session - the chat log.
+   * @param events - streaming callbacks and cancellation.
+   * @param instruction - the instruction that closes the request (upstream's
+   *   impersonation prompt, with `{{user}}`/`{{char}}` already expanded).
+   * @returns the text the user line was written with.
+   * @throws {TurnError} when the provider ends the stream with a failure.
+   */
+  async impersonate(session: Session, events: GenerateEvents = {}, instruction?: string): Promise<string> {
+    // The chunk journal needs a turn number, but the turn must not exist before
+    // there is a line to own it — journalled under `lastTurn + 1` they are
+    // `assistant/chunk` records only, which no projection reads as a message.
+    const turn = lastTurn(session) + 1
+    const run = await this.#run(session, turn, events,
+      instruction === undefined ? undefined : { role: 'user' as const, text: instruction })
+    this.recordImpersonation(session, run.text)
+    return run.text
+  }
+
+  /**
+   * Record an impersonated line as a user message opening a new turn.
+   *
+   * Split from {@link impersonate} so the abort path can land a partial line
+   * with exactly the same shape a completed one has.
+   * @param session - the chat log.
+   * @param text - the line to record.
+   * @returns the turn the line opened.
+   */
+  recordImpersonation(session: Session, text: string): number {
+    const turn = lastTurn(session) + 1
+    session.append('turn/start', { turn })
+    session.append('step/start', { turn, step: 0 })
+    session.append(
+      'user/message',
+      createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }),
+      { surfaceOp: 'append' },
+    )
+    session.append('step/end', { turn, step: 0 })
+    session.append('turn/end', { turn, reason: { kind: 'completed' } })
+    return turn
   }
 
   /**
@@ -240,4 +373,26 @@ function toMessage(message: PipelineMessage) {
   // System-placed depth injections ride as user-role content: the system slot
   // is already spoken for, and providers vary on mid-conversation system turns.
   return createUserMessage({ content: [{ type: 'text', text: message.text }], source: { kind: 'user' } })
+}
+
+/**
+ * Prepend a continue's seed to a generation's content blocks.
+ *
+ * The seed joins the FIRST text block, so a continuation that carries reasoning
+ * keeps that reasoning on its own blocks ahead of the joined text; a generation
+ * with no text at all still yields the seed alone, because a continue whose
+ * reading came back unchanged is a valid — if disappointing — outcome.
+ * @param blocks - the generation's content blocks.
+ * @param seed - the text being continued.
+ * @returns content blocks opening with the seed.
+ */
+function joinedWithSeed(blocks: AssistantMessage['content'], seed: string): AssistantMessage['content'] {
+  let placed = false
+  const joined = blocks.map(block => {
+    if (placed || block.type !== 'text') return block
+    placed = true
+    return { ...block, text: seed + block.text }
+  })
+  if (placed) return joined
+  return [...joined, { type: 'text' as const, text: seed }]
 }

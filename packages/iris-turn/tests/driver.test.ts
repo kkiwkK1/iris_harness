@@ -145,3 +145,68 @@ test('history pins the opening message against trimming', async () => {
 
   assert.equal(historyFromSession(session)[0]?.pinned, true)
 })
+
+test('continueTurn rejoins the continued reading and keeps its siblings', async () => {
+  const { driver, session, seen } = harness([' first act.', ' and more.'])
+  await driver.send(session, 'begin')
+
+  const candidate = await driver.continueTurn(session, {}, 'carry the scene on')
+
+  // The recorded candidate is the JOINED text, and it is a second reading of
+  // the same turn — the first one stays swipable, which is what SillyTavern's
+  // in-place continue would have overwritten.
+  assert.equal(textOf(candidate), ' first act. and more.')
+  assert.equal(listCandidates(session, 0).length, 2)
+  assert.equal(session.events.some(event => event.type === 'turn/start' && event.data.turn === 1), false)
+
+  // The nudge is the request's LAST message — after the depth-0 injection,
+  // which is where depth 0 lands by convention.
+  const texts = seen[1]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.equal(texts.at(-1), 'carry the scene on')
+})
+
+test('continueTurn without a nudge still closes on the conversation', async () => {
+  const { driver, session } = harness([' first act.', ' and more.'])
+  await driver.send(session, 'begin')
+
+  const candidate = await driver.continueTurn(session)
+  assert.equal(textOf(candidate), ' first act. and more.')
+})
+
+test('continueTurn refuses a log whose newest turn has no reply', async () => {
+  const { driver, session } = harness(['unused'])
+  await assert.rejects(() => driver.continueTurn(session), TurnError)
+})
+
+test('impersonate records a user line, no reply, and the instruction last', async () => {
+  const { driver, session, seen } = harness(['The maps are in the vault.', 'I will look for it myself.'])
+  await driver.send(session, 'Where are the maps?')
+
+  const text = await driver.impersonate(session, {}, 'write as the traveller')
+
+  const texts = seen[1]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  // The line being written was not part of its own context, and the
+  // instruction closed the request.
+  assert.equal(texts.includes('I will look for it myself.'), false, 'the generated line was in its own context')
+  assert.equal(texts.at(-1), 'write as the traveller')
+
+  // It settled as a user line opening its own turn, with no reply after it.
+  assert.equal(text, 'I will look for it myself.')
+  const userLine = session.events.filter(event => event.type === 'user/message').at(-1)
+  const reply = session.events.filter(event => event.type === 'assistant/message').at(-1)
+  assert.notEqual(userLine, undefined)
+  assert.notEqual(reply, undefined)
+  // The impersonated line is the NEWEST message: the only assistant/message on
+  // the log is the earlier turn's reply.
+  assert.equal(
+    (reply?.seq ?? Number.NEGATIVE_INFINITY) < (userLine?.seq ?? 0),
+    true,
+    'the impersonated line is the newest message on the log',
+  )
+
+  // The next send opens the turn AFTER the impersonated one.
+  await driver.send(session, 'Thanks.')
+  assert.equal(session.events.some(event => event.type === 'turn/start' && event.data.turn === 2), true)
+})

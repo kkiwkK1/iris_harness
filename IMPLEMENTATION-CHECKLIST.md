@@ -196,7 +196,7 @@
 | C8 | 表情分类 / 立绘 sprites | expressions（transformers.js/LLM 判定）、sprites 目录 | 独立立项；本地模型跑在宿主侧 | — | XL | 情绪→立绘映射对语料抽查 |
 | C9 | 数据银行 attachments | attachments 扩展（网页/YouTube 抓取→附带文件） | 独立立项；沙箱文件授予按卡 | — | L | 抓取物只对授权卡可见 |
 | C10 | 群聊 | GROUPS.md：三模式（SWAP/APPEND/APPEND_DISABLED）、swipe 走"上一条是谁说的" | 语料零使用零义务（ROADMAP Tier 2 裁决）；立项从 GROUPS.md 接 | — | XL | 存储契约与三模式测试先行 |
-| C11 | 文本补全后端 + instruct/context 族 | textgen/kobold/novel/horde 后端；context(34)/instruct(38) 出厂预设；story_string 仅 TC 路径 | 裸 `/completions` 管线独立立项，context+instruct 一体跟走（ROADMAP 1.5 裁决） | — | XL | 对 ST 实机同输入逐 token 对照 |
+| C11 | 文本补全后端 + instruct/context 族 | textgen/kobold/novel/horde 后端；context(34)/instruct(38) 出厂预设；story_string 仅 TC 路径 | 裸 `/completions` 管线独立立项，context+instruct 一体跟走（ROADMAP 1.5 裁决）。**裁定（用户确认）：ST 的「高级格式设置」（context/instruct/story_string 模板族）不单独立项——它只服务文本补全后端，Iris 的 Chat Completion 路线无消费者，语料零使用；归属本项目，届时随裸补全管线整体实现** | — | XL | 对 ST 实机同输入逐 token 对照 |
 | C12 | 多用户/鉴权 | users-public/private/admin 三组端点；实机 list 返回 default-user | 明确非目标（PLAN.md）；存储层 profilePaths 已成形，缺的只是切换契约与登录 | — | M（若立项） | profile 切换不串存储 |
 | C13 | 通用扩展加载器 | third-party 扩展同源任意 JS（刻意不照抄） | 不做；生态兼容走"逐扩展语义兼容"路线（ST-Prompt-Template/TavernHelper 模式） | — | — | 每兼容一个扩展 = 一份差分验收 |
 | C14 | WI automationId / vectorized 消费 | automationId→QR 钩子；vectorized→vectors 扩展 | 消费者分别是 C1/C3；标志位已在 `WorldbookEntry` 透传 | C1/C3 | S | 消费者落地时接线 |

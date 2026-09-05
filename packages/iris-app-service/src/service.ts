@@ -18,12 +18,13 @@
 
 import { BlockAssembler, createAssistantMessage, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { appendCandidate, selectCandidate, SwipeError } from '@iris/chat'
+import { appendCandidate, selectCandidate, selectedCandidate, SwipeError, type Candidate } from '@iris/chat'
 import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
 import type { ChatView, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import { providerPreset } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
 import { checkScriptFetch, extractScripts } from '@iris/script'
@@ -33,7 +34,7 @@ import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } fr
 import { randomUUID } from 'node:crypto'
 
 import { PresetStore } from './presets.ts'
-import { ConnectionStore } from './connections.ts'
+import { ConnectionStore, routeOf } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
 import { writeTimedEffects } from './entry.ts'
@@ -60,9 +61,103 @@ import { textOf } from './views.ts'
 /** Provenance stamped on a partial reply the user stopped. */
 const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
 
+/**
+ * The two utility prompts a generation kind can close its request with, in
+ * SillyTavern's own words (`openai.js:104-110`, the shipped defaults of
+ * `impersonation_prompt` / `continue_nudge_prompt`).
+ *
+ * Upstream keeps both in `oai_settings` where they are user-editable text; this
+ * host has no settings surface for them yet, so the defaults stand in until one
+ * exists. `{{lastChatMessage}}` in the nudge is upstream's own substitution
+ * slot (`openai.js:902`), filled with the trimmed text being continued.
+ */
+const IMPERSONATION_PROMPT =
+  '[Write your next reply from the point of view of {{user}}, using the chat history so far as a'
+  + ' guideline for the writing style of {{user}}. Don\'t write as {{char}} or system. Don\'t'
+  + ' describe actions of {{char}}.]'
+const CONTINUE_NUDGE_PROMPT = '[Continue your last message without repeating its original content.]'
+
+/**
+ * The Iris generation kinds in upstream's vocabulary — the words the preset's
+ * `injection_trigger` lists are matched against (`PromptManager.js:1537`).
+ */
+const GENERATION_TYPE_OF = {
+  send: 'normal',
+  regenerate: 'regenerate',
+  continue: 'continue',
+  impersonate: 'impersonate',
+} as const
+
+/**
+ * The text a continue writes on from: the reading under the cursor.
+ * @param seed - the newest turn's selected candidate, or absent.
+ * @returns its visible text.
+ */
+function seedTextOf(seed: Candidate | undefined): string {
+  return (seed?.message.content ?? [])
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('')
+}
+
+/**
+ * Share of the context window world info may spend.
+ *
+ * SillyTavern's own default. Worth keeping: an unbudgeted book quietly eats the
+ * conversation, and the symptom — the model forgetting the last ten messages —
+ * looks nothing like its cause.
+ */
+const WORLD_INFO_BUDGET_SHARE = 0.25
+
 /** Every method, keyed by name. */
 export type Handlers = {
   [M in RpcMethod]: (params: RpcRequest<M>) => Promise<RpcResponse<M>>
+}
+
+/**
+ * The endpoint a connection profile carries, as the runtime adapter needs it.
+ *
+ * The key rides in the clear **inside the host process only** — it reaches the
+ * LLM adapter's request headers and nothing else: no log line, no broadcast,
+ * no RPC response.
+ */
+export interface ConnectionEndpoint {
+  baseURL: string
+  /** The profile's own key. Wins over any environment-sourced credential. */
+  apiKey?: string
+  /** The header the key is sent in. Absent means the OpenAI-compatible `Authorization: Bearer`. */
+  apiKeyHeader?: string
+}
+
+/** How long a `connection.test` probe waits for an endpoint before saying `timeout`. */
+export const DEFAULT_PROBE_TIMEOUT_MS = 10_000
+
+/**
+ * Read the model ids out of a `/models` response body.
+ *
+ * The OpenAI-compatible shape is `{ data: [{ id }] }`; Ollama's native list is
+ * `{ models: [{ name }] }` and costs nothing to also accept. An empty list is
+ * still an answer — an endpoint that served 200 with nothing advertised has
+ * said something, and the form should show it.
+ * @param body - the parsed JSON body.
+ * @returns the ids, or undefined when the body carries no list at all.
+ */
+function modelIdsOf(body: unknown): string[] | undefined {
+  if (typeof body !== 'object' || body === null) return undefined
+  const record = body as Record<string, unknown>
+  for (const [key, field] of [['data', 'id'], ['models', 'name']] as const) {
+    const rows = record[key]
+    if (!Array.isArray(rows)) continue
+    const ids = rows
+      .map(row => {
+        if (typeof row !== 'object' || row === null) return undefined
+        const value = (row as Record<string, unknown>)[field]
+        return typeof value === 'string' && value.length > 0 ? value : undefined
+      })
+      .filter((id): id is string => id !== undefined)
+    return ids
+  }
+  return undefined
 }
 
 /** What the service needs that it does not own. */
@@ -116,6 +211,21 @@ export interface AppServiceOptions {
    * host with nowhere to keep them should report.
    */
   connections?: ConnectionStore
+  /**
+   * Re-points a provider route at the endpoint a profile carries, at runtime.
+   *
+   * Given by the composition, which owns the LLM registry. Absent — a test
+   * host with no registry — leaves activation a settings change only, and a
+   * profile that needs its own endpoint reports it rather than pretending.
+   * The key passes through here once, into the adapter's config; it never
+   * reaches a log line or a response.
+   */
+  installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
+  /**
+   * How long `connection.test` waits for an endpoint before saying `timeout`.
+   * @default 10000
+   */
+  probeTimeoutMs?: number
   /**
    * Fetches a remote script dependency. Defaults to global `fetch`.
    *
@@ -220,7 +330,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
@@ -236,6 +346,7 @@ export class IrisAppService {
       presets?: PresetStore
       presetName?: string
       sillyTavernDir?: string
+      installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -268,6 +379,8 @@ export class IrisAppService {
       templateOverhead: options.templateOverhead ?? 0,
       onError: options.onError ?? (() => {}),
       fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
+      probeTimeoutMs: options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+      ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
       ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
       ...options.scriptButtons === undefined ? {} : { scriptButtons: options.scriptButtons },
@@ -344,6 +457,120 @@ export class IrisAppService {
       return
     }
     await this.#applyPreset(name, await store.read(name))
+  }
+
+  /**
+   * Hand a profile's endpoint to the composition's installer, saying so in the
+   * report without saying the key.
+   * @param route - the provider route to serve the endpoint under.
+   * @param baseURL - the endpoint root.
+   * @param credential - the key and the header it is sent in.
+   */
+  #installConnectionFor(
+    route: string,
+    baseURL: string,
+    credential: { apiKey?: string | undefined, apiKeyHeader?: string | undefined },
+  ): void {
+    const install = this.#options.installConnection
+    if (install === undefined) return
+    install(route, {
+      baseURL,
+      ...credential.apiKey === undefined ? {} : { apiKey: credential.apiKey },
+      ...credential.apiKeyHeader === undefined ? {} : { apiKeyHeader: credential.apiKeyHeader },
+    })
+    this.#report(
+      `connection now generates through route "${route}" at ${new URL(baseURL).origin}`,
+      { kind: 'host', grade: 'note' },
+    )
+  }
+
+  /**
+   * Probe an endpoint the way a model list would be fetched.
+   *
+   * The credential, if any, goes into the request headers and **nowhere
+   * else** — not into an error message, not into the report log. A failed
+   * probe is a result rather than a thrown error: the caller is a form, and a
+   * form renders a verdict, it does not catch one.
+   * @param target - the endpoint and optional credential to probe.
+   * @returns the verdict: latency always, models when it worked, a named error when not.
+   */
+  async #probeEndpoint(target: {
+    baseURL: string
+    apiKey?: string | undefined
+    apiKeyHeader?: string | undefined
+  }): Promise<RpcResponse<'connection.test'>> {
+    const url = `${target.baseURL.replace(/\/+$/, '')}/models`
+    // `Authorization` carries the Bearer scheme; any other header name is a
+    // bare value — the same rule the LLM adapter applies, so a probe that
+    // passed is a stream that authenticates.
+    const headerName = (target.apiKeyHeader ?? 'Authorization').toLowerCase()
+    const headers: Record<string, string> = { accept: 'application/json' }
+    if (target.apiKey !== undefined && target.apiKey.length > 0) {
+      headers[headerName] = headerName === 'authorization' ? `Bearer ${target.apiKey}` : target.apiKey
+    }
+
+    const started = performance.now()
+    let response: Response
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(this.#options.probeTimeoutMs),
+      })
+    } catch (cause: unknown) {
+      const latencyMs = Math.round(performance.now() - started)
+      if (cause instanceof Error && cause.name === 'TimeoutError') {
+        return {
+          ok: false,
+          latencyMs,
+          error: { code: 'timeout', message: `no answer from ${url} within ${String(this.#options.probeTimeoutMs)}ms` },
+        }
+      }
+      const reason = cause instanceof Error ? cause.message : String(cause)
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'network', message: `could not reach ${url}: ${reason}` },
+      }
+    }
+    const latencyMs = Math.round(performance.now() - started)
+
+    if (response.status === 401 || response.status === 403) {
+      await response.arrayBuffer()
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'unauthorized', message: `${url} answered ${String(response.status)} — the key does not open this endpoint` },
+      }
+    }
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 300)
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'http-error', message: `${url} answered ${String(response.status)}: ${detail}` },
+      }
+    }
+
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'bad-response', message: `${url} answered 200, but the body is not JSON` },
+      }
+    }
+    const models = modelIdsOf(body)
+    if (models === undefined) {
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'bad-response', message: `${url} answered 200, but the body carries no model list` },
+      }
+    }
+    return { ok: true, latencyMs, models }
   }
 
   /**
@@ -477,7 +704,13 @@ export class IrisAppService {
         }),
       }),
 
-      'chat.send': async ({ chatId, text }) => ({ turn: await this.#start(chatId, { kind: 'send', text }) }),
+      'chat.send': async ({ chatId, kind, text }) => {
+        // The wire schema has already enforced which kind carries text; this
+        // branch is where the request becomes the one start call it means.
+        if (kind === 'continue') return { turn: await this.#start(chatId, { kind: 'continue' }) }
+        if (kind === 'impersonate') return { turn: await this.#start(chatId, { kind: 'impersonate' }) }
+        return { turn: await this.#start(chatId, { kind: 'send', text: text as string }) }
+      },
 
       'chat.regenerate': async ({ chatId }) => ({ turn: await this.#start(chatId, { kind: 'regenerate' }) }),
 
@@ -894,6 +1127,11 @@ export class IrisAppService {
         ...input.label === undefined ? {} : { label: input.label },
         ...input.preset === undefined ? {} : { preset: input.preset },
         ...input.sampling === undefined ? {} : { sampling: input.sampling },
+        ...input.baseURL === undefined ? {} : { baseURL: input.baseURL },
+        // Passed through untouched: the merge-or-clear decision belongs to the
+        // store, which is the only place that can still see the stored key.
+        ...input.apiKey === undefined ? {} : { apiKey: input.apiKey },
+        ...input.apiKeyHeader === undefined ? {} : { apiKeyHeader: input.apiKeyHeader },
       }),
 
       'connection.delete': async ({ id }) => this.#connections().delete(id),
@@ -901,9 +1139,18 @@ export class IrisAppService {
       'connection.activate': async ({ id, chatId }) => {
         const store = this.#connections()
         const profile = await store.get(id)
+        // A profile carrying its own endpoint is served by an adapter installed
+        // for it **now** — no host restart, and two profiles of one provider
+        // take turns by replacing the registration. The route it installs under
+        // is what the settings patch then names, so generation reaches the
+        // adapter that can actually see this profile's endpoint and key.
+        const route = routeOf(profile)
+        if (profile.baseURL !== undefined && profile.baseURL.length > 0) {
+          this.#installConnectionFor(route, profile.baseURL, profile)
+        }
         // Applied through `settings.set`, so a profile cannot install a value
         // that setting it by hand would have been refused.
-        const applied = await settings.set(chatId, ConnectionStore.patchOf(profile))
+        const applied = await settings.set(chatId, ConnectionStore.patchOf(profile, route))
         // The profile's bound preset comes with it — upstream's
         // `bind_preset_to_connection`, which defaults to true there: switching
         // a connection is switching the preset it was assembled with, and a
@@ -918,6 +1165,58 @@ export class IrisAppService {
         }
         await store.markActive(id)
         return { settings: applied, activeId: id }
+      },
+
+      'connection.test': async (input) => {
+        // One probe, two ways to name what it probes. A saved profile carries
+        // its key in the store — which the caller cannot re-send, because no
+        // read ever returned it — and unsaved form values carry the key as
+        // typed. Neither naming a stored key back, ever.
+        let baseURL: string
+        let apiKey: string | undefined
+        let apiKeyHeader: string | undefined
+        let presetId: string | undefined
+        if (input.profileId !== undefined) {
+          const profile = await this.#connections().get(input.profileId)
+          if (profile.baseURL === undefined || profile.baseURL.length === 0) {
+            return {
+              ok: false,
+              latencyMs: 0,
+              error: {
+                code: 'no-endpoint',
+                message: 'this profile rides the host\'s configured endpoint and carries none of its own; set a base URL to test it',
+              },
+            }
+          }
+          baseURL = profile.baseURL
+          apiKey = profile.apiKey
+          apiKeyHeader = profile.apiKeyHeader
+          // A profile saved from the form names its preset in `provider`.
+          presetId = profile.provider
+        } else if (input.baseURL !== undefined && input.baseURL.length > 0) {
+          baseURL = input.baseURL
+          apiKey = input.apiKey
+          apiKeyHeader = input.apiKeyHeader
+          presetId = input.preset
+        } else {
+          throw invalid('name a saved profile (profileId) or give the endpoint to probe (baseURL)')
+        }
+
+        const preset = presetId === undefined ? undefined : providerPreset(presetId)
+        const needsKey = preset?.requiresKey === true
+        if (needsKey && (apiKey === undefined || apiKey.length === 0)) {
+          return {
+            ok: false,
+            latencyMs: 0,
+            error: {
+              code: 'missing-key',
+              message: preset === undefined
+                ? 'this endpoint needs an API key, and none was given'
+                : `a ${preset.id} endpoint needs an API key, and none was given`,
+            },
+          }
+        }
+        return this.#probeEndpoint({ baseURL, apiKey, apiKeyHeader })
       },
 
       'preset.list': async () => {
@@ -1609,18 +1908,50 @@ export class IrisAppService {
    * statements are synchronous, so by the time this resolves the turn is on the
    * log and the client can start correlating `stream.*` frames to it.
    * @param chatId - the conversation.
-   * @param request - a new user message, or a reroll of the last turn.
+   * @param request - a new user message, a reroll of the last turn, a continue
+   *   of it, or an impersonation of the user.
    * @returns the turn now generating.
    * @throws {AppError} `busy` when one already is, `invalid-request` when there
-   *   is no turn to reroll.
+   *   is no turn to reroll or nothing on it to continue.
    */
-  async #start(chatId: string, request: { kind: 'send', text: string } | { kind: 'regenerate' }): Promise<number> {
+  async #start(
+    chatId: string,
+    request:
+      | { kind: 'send', text: string }
+      | { kind: 'regenerate' }
+      | { kind: 'continue' }
+      | { kind: 'impersonate' },
+  ): Promise<number> {
     const entry = await this.#options.chats.open(chatId)
-    const turn = request.kind === 'send' ? entry.lastTurn + 1 : entry.lastTurn
+    const generationType = GENERATION_TYPE_OF[request.kind]
+    const turn = request.kind === 'send' || request.kind === 'impersonate'
+      ? entry.lastTurn + 1
+      : entry.lastTurn
     if (turn < 0) throw invalid('this chat has no turn to regenerate')
 
+    // A continue needs a reply under it: the newest floor's selected reading is
+    // what the generation writes on from, and what it rejoins. A chat whose
+    // newest line is a user line (an exchange that never got its reply) has
+    // nothing to continue — refused by name rather than answered with a reply
+    // shaped like a continuation, which is what a bare reroll would produce.
+    const seed = request.kind === 'continue'
+      ? selectedCandidate(entry.session, turn)
+      : undefined
+    if (request.kind === 'continue' && seed === undefined) {
+      throw invalid('this chat has no reply to continue; its newest line is not a reply')
+    }
+
     const signal = entry.begin(turn)
-    const driver = this.#driver(entry)
+    // A continue's buffer opens on the text being continued, because the deltas
+    // that follow are only the new words: painting them over the row without
+    // the seed would collapse the floor to its tail while streaming.
+    if (seed !== undefined && entry.pending !== undefined) {
+      entry.pending.text = seed.message.content
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join('')
+    }
+    const driver = this.#driver(entry, generationType)
     const events: GenerateEvents = {
       onText: (delta) => {
         if (entry.pending !== undefined) entry.pending.text += delta
@@ -1633,7 +1964,19 @@ export class IrisAppService {
       signal,
     }
 
-    const running = request.kind === 'send'
+    // The two utility prompts that close a continue / impersonation request,
+    // expanded against this chat before the driver is asked for anything. The
+    // macro pass runs first, then the explicit slots, so text inserted into
+    // `{{lastChatMessage}}` is never re-scanned for braces.
+    const nudge = request.kind === 'continue'
+      ? entry.substitute(CONTINUE_NUDGE_PROMPT)
+        .replace('{{lastChatMessage}}', seedTextOf(seed).trim())
+      : undefined
+    const instruction = request.kind === 'impersonate'
+      ? entry.substitute(IMPERSONATION_PROMPT)
+      : undefined
+
+    const running: Promise<Candidate | string> = request.kind === 'send'
       // The storage direction runs on what the user typed, before it enters the
       // log — the one point where a message is written for the first time.
       ? driver.send(
@@ -1641,29 +1984,57 @@ export class IrisAppService {
         runScripts(request.text, 'user', entry.scripts, { substitute: entry.substitute }),
         events,
       )
-      : driver.regenerate(entry.session, events)
+      : request.kind === 'regenerate'
+        ? driver.regenerate(entry.session, events)
+        : request.kind === 'continue'
+          ? driver.continueTurn(entry.session, events, nudge)
+          : driver.impersonate(entry.session, events, instruction)
 
     // Announced after the call, not before: `send` appends the user's line
     // synchronously at the top of the driver, and until it has, the spare key
     // slot belongs to that line rather than to the reply. Nothing can have been
     // emitted yet — the first delta waits on the network — and the ordering is
     // pinned by test rather than argued.
-    this.#options.broadcast({ type: 'stream.start', chatId, turn, key: entry.streamingKeyFor(turn) })
+    const impersonating = request.kind === 'impersonate'
+    this.#options.broadcast({
+      type: 'stream.start',
+      chatId,
+      turn,
+      key: entry.streamingKeyFor(turn),
+      ...seed === undefined ? {} : { seed: seedTextOf(seed) },
+      ...impersonating ? { role: 'user' as const, name: entry.names.user } : {},
+    })
 
     void running.then(
-      candidate => this.#settle(entry, turn, textOf(candidate.message), 'completed'),
-      error => this.#fail(entry, turn, signal, error),
+      result => this.#settle(
+        entry,
+        turn,
+        // An impersonation resolves with its text rather than a candidate: the
+        // driver has already landed that text as the turn's user line.
+        typeof result === 'string' ? result : textOf(result.message),
+        'completed',
+        { recordVariables: !impersonating },
+      ),
+      error => this.#fail(entry, turn, signal, error, request.kind),
     )
 
     return turn
   }
 
-  /** Record a finished candidate and tell every page. */
+  /**
+   * Record a finished generation and tell every page.
+   * @param entry - the conversation.
+   * @param turn - the turn that settled.
+   * @param text - the generation's visible text.
+   * @param reason - whether it ran to completion or was stopped.
+   * @param options - what this kind of generation records.
+   */
   async #settle(
     entry: ChatEntry,
     turn: number,
     text: string,
     reason: 'completed' | 'aborted',
+    options: { recordVariables?: boolean } = {},
   ): Promise<void> {
     try {
       // Variables first: a permanent script may be there precisely to strip the
@@ -1671,14 +2042,22 @@ export class IrisAppService {
       // Reported, not swallowed: a reply whose update block nothing understood
       // is indistinguishable from a model that never wrote one, and telling
       // those apart is the difference between "the card is broken" and "we are".
-      entry.recordVariables(turn, text, message => {
-        this.#report(message, {
-          kind: 'mvu',
-          grade: 'fault',
-          chatId: entry.chatId,
-          ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+      //
+      // **An impersonation records nothing.** Its text became a user line, and
+      // a user line carries no variable consequences — the same rule a typed
+      // message lives under. Recording would also hang a table on a turn that
+      // has no candidate for it, and the next real turn's baseline walk would
+      // then stop one turn early.
+      if (options.recordVariables !== false) {
+        entry.recordVariables(turn, text, message => {
+          this.#report(message, {
+            kind: 'mvu',
+            grade: 'fault',
+            chatId: entry.chatId,
+            ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+          })
         })
-      })
+      }
       this.#storeRewritten(entry, entry.scripts, text)
       entry.touch()
       entry.finish()
@@ -1722,15 +2101,57 @@ export class IrisAppService {
   }
 
   /**
-   * Report a turn that did not finish.
+   * Report a generation that did not finish.
    *
    * A stop is not a failure: SillyTavern keeps whatever the model produced
    * before the user pressed stop, and throwing away half a reply the user
    * decided was good enough is worse than the abort itself. So a stopped turn
    * with text becomes a real candidate and settles normally.
+   *
+   * An impersonation keeps its partial as a **user line** instead — that is the
+   * only kind of line it was ever going to produce — and a provider failure
+   * keeps nothing at all, because a half-written user line nobody asked for is
+   * not a reply the user can retry; it is text in their mouth.
+   * @param entry - the conversation.
+   * @param turn - the turn that failed.
+   * @param signal - the abort signal the generation ran under.
+   * @param error - what the driver raised.
+   * @param kind - which generation this was.
    */
-  async #fail(entry: ChatEntry, turn: number, signal: AbortSignal, error: unknown): Promise<void> {
+  async #fail(
+    entry: ChatEntry,
+    turn: number,
+    signal: AbortSignal,
+    error: unknown,
+    kind: 'send' | 'regenerate' | 'continue' | 'impersonate',
+  ): Promise<void> {
     const partial = entry.pending?.text ?? ''
+
+    if (kind === 'impersonate') {
+      if (signal.aborted && partial.length > 0) {
+        try {
+          this.#driver(entry, GENERATION_TYPE_OF.impersonate).recordImpersonation(entry.session, partial)
+          await this.#settle(entry, turn, partial, 'aborted', { recordVariables: false })
+          return
+        } catch (cause: unknown) {
+          this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
+        }
+      }
+      entry.finish()
+      try {
+        await this.#options.chats.save(entry)
+      } catch (cause: unknown) {
+        this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
+      }
+      this.#options.broadcast({
+        type: 'stream.error',
+        chatId: entry.chatId,
+        turn,
+        code: signal.aborted ? 'aborted' : 'provider-error',
+        message: error instanceof Error ? error.message : String(error),
+      })
+      return
+    }
 
     if (signal.aborted && partial.length > 0) {
       try {
@@ -1770,7 +2191,7 @@ export class IrisAppService {
   }
 
   /** Build the driver for one chat, with its current settings. */
-  #driver(entry: ChatEntry): TurnDriver {
+  #driver(entry: ChatEntry, generationType = 'normal'): TurnDriver {
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
     const count = (text: string): number => this.#counter.count(text)
     const names = entry.names
@@ -1779,7 +2200,9 @@ export class IrisAppService {
       stream: options => this.#stream(options, entry),
       provider: settings.provider,
       model: settings.model,
-      contributions: session => this.#contributions(entry, session, count),
+      // The generation type travels with the driver so the assembly it drives
+      // is the one this turn asked for: triggers and the continue rule read it.
+      contributions: session => this.#contributions(entry, session, count, true, generationType),
       history: session => this.#history(entry, session),
       budget: {
         context: windowOf(settings, this.#options.contextWindow),
@@ -1798,6 +2221,8 @@ export class IrisAppService {
    * @param entry - the conversation.
    * @param session - the log to assemble from.
    * @param count - the token counter the budget uses.
+   * @param record - whether this is a real turn whose state advances.
+   * @param generationType - what is being generated, for the preset filters.
    * @returns the contributions for this generation.
    */
   async #contributions(
@@ -1805,6 +2230,7 @@ export class IrisAppService {
     session: Session,
     count: (text: string) => number,
     record = true,
+    generationType = 'normal',
   ): Promise<Contribution[]> {
     const names = entry.names
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
@@ -1850,6 +2276,7 @@ export class IrisAppService {
       activationSettings: activationSettingsOf(worldbookSettings),
       insertionStrategy: worldbookSettings.insertionStrategy,
       chatLore: await this.#chatLore(entry),
+      ...generationType === 'normal' ? {} : { generationType },
     })
     // Carried forward, or a sticky entry would re-open its window every turn and
     // a cooldown would never elapse — the state exists precisely to span turns.

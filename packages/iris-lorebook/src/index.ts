@@ -26,6 +26,10 @@ export {
 
 export {
   LorebookParseError,
+  convertAgnaiMemoryBook,
+  convertLorebookDialect,
+  convertNovelLorebook,
+  convertRisuLorebook,
   createEntry,
   entryDefaults,
   fromCharacterBook,

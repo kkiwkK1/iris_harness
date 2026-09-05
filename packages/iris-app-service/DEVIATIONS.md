@@ -1222,7 +1222,56 @@ flag.** If the repetition becomes a real annoyance the answer is the feature
 upstream actually has — ask the question, and record the reply under upstream’s
 own key.
 
+## Generation kinds: a continue closes with the nudge, not the wrap-up
+
+`chat.send` grew `kind: 'continue' | 'impersonate'` (the implementation plan's
+B2), and three readings of upstream's continue/impersonate are deliberately
+ours. Upstream source for all three: `public/scripts/openai.js` and
+`public/scripts/PromptManager.js` at tag `1.18.0`.
+
+**A continue drops the post-history section entirely.** Upstream keeps
+post-history instructions in a continue's prompt and splices the continued
+message past them (`openai.js:898` moves the last message plus the nudge to the
+end of the assembled prompt). Here the section is omitted instead
+(`resolvePreset` refuses everything after the history marker for
+`generationType: 'continue'`): its content is wrap-up instruction — telling the
+model how to *finish* a reply is exactly wrong when the request asks it to
+write on from one. Anyone diffing the two prompts side by side will see the
+difference; the preset's `injection_trigger` lists still apply first, so an
+item excluded by trigger on a normal send is not resurrected by this rule.
+
+**The continue result is a new reading, not an in-place edit.** Upstream's
+continue appends the model's words to `chat[last].mes` and rewrites the current
+swipe entry. Here the joined text (seed + continuation) is appended as a new
+candidate of the same turn, so every earlier reading stays swipable — the
+acceptance for B2 names swipe history as the thing to keep, and an in-place
+rewrite would spend it. The file projection is identical in shape
+(`swipes[]` grows by one, `swipe_id` points at the joined reading).
+
+**An impersonation records nothing and stores verbatim.** The generated text
+becomes a user line — no variable table is written for its turn (a user line
+carries no variable consequences, the same rule a typed message lives under;
+upstream's MVU processes impersonated text like any other message, so a card
+that expected a user-side fold will not see one here), the chat's
+storage-direction regex does not run on it (those scripts shape what the *user
+typed*), and no `assistant/chunk` journal is kept for the generation, because
+the text is not an assistant message and never replays as one. A partial
+impersonation kept on abort becomes the partial user line; a provider failure
+keeps nothing at all, because half a sentence in the user's mouth is not a
+reply the user can retry.
+
+Two upstream affordances are absent rather than changed: the nudge and the
+impersonation prompt are the shipped defaults (`openai.js:104-110`), because
+this host has no settings surface for them yet — `{{lastChatMessage}}` in the
+nudge is still substituted, so lifting them into settings later is additive.
+And a continue on a chat whose newest line is a user line (an exchange that
+never got its reply) is refused by name, where upstream would continue the
+user's text: the log can only extend a turn through candidates, which are
+assistant messages, and replying-as-the-character to a continue request would
+have looked identical from the outside while being a different operation.
+
 ## Host
+
 
 **Injection order inside a group is the keys' lexicographic order.**
 Upstream walks `Object.keys(extension_prompts).sort()` (`script.js:3249`), so

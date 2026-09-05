@@ -11,9 +11,20 @@
  * So the bar keeps its behaviour and gains a record. This is the argument the
  * card report list was built on, applied to the last channel with no memory.
  *
- * It is deliberately **not** deduplicated: the bar deduplicates by replacing,
- * because it can only show one thing, while the same sentence arriving twice is
- * two events — and that something recurred is usually the finding.
+ * **Repeats collapse into a count, within a short window.** The log used to
+ * keep every arrival, because the same sentence arriving twice is two events.
+ * The reconnect schedule refuted the absolute form of that: during a host
+ * restart it raises "the Iris event socket failed" every few seconds, and the
+ * panel filled with identical rows — one outage, four entries, no more
+ * information per entry than the first. So identical neighbours inside the
+ * store's dedup window render as one row with `×N`; a *recurrence* still shows
+ * itself as a number, which is the part that was worth keeping. The same
+ * sentence after the window is a separate row, as before.
+ *
+ * Transport errors — the one species the client survives on its own — show
+ * whether they healed: resolved rows dim and name themselves, because a
+ * standing red row for an outage that already ended teaches the reader to
+ * ignore the red rows that matter.
  *
  * @module iris-web/app/NoticeLog
  */
@@ -62,12 +73,33 @@ export function NoticeLog(): ReactElement {
           {[...log].reverse().map(notice => (
             <li
               key={notice.seq}
-              // The class names come from one place; which field decides is
-              // this list's own business — here it is the notice's kind.
-              className={reportRowClass(notice.kind === 'error')}
+              /*
+                The class names come from one place; which field decides is
+                this list's own business — here it is the notice's kind, dimmed
+                when the thing it reported has already healed itself.
+              */
+              className={[
+                reportRowClass(notice.kind === 'error'),
+                notice.resolved ? 'iris-notices__row--resolved' : '',
+              ].filter(Boolean).join(' ')}
             >
               <span className="iris-reports__at">{timeOf(notice.at)}</span>
               <span className="iris-reports__message">{notice.text}</span>
+              {/*
+                The recurrence count, and the healed mark. Both are facts the
+                row holds so the reader does not reconstruct them.
+              */}
+              {notice.count !== undefined && notice.count > 1 && (
+                <span
+                  className="iris-notices__times"
+                  aria-label={t('noticeRepeatAria', { n: notice.count })}
+                >
+                  ×{notice.count}
+                </span>
+              )}
+              {notice.resolved && (
+                <span className="iris-notices__healed">{t('stateSelfHealed')}</span>
+              )}
             </li>
           ))}
         </ol>

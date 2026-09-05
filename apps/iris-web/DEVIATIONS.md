@@ -1337,3 +1337,165 @@ corrected-self behaviour is gone; nothing in the corpus depended on the wrong
 first answer. If a future mechanism needs to distinguish "seeded" from
 "pushed", the frame currently cannot tell them apart — the seed is deleted on
 consumption precisely so it cannot become a second, stale source.
+
+## 32. The frames' zod chains `prefault()` through the inner schema's methods
+
+**Kind:** compatibility layer over the served library, in the direction cards
+were written.
+
+**Upstream.** Tavern Helper bundles its own zod (4.9.x by `version:` in its
+dist) and publishes it as `globalThis.z`; frames take `window.parent.z`. The
+same chain that breaks here breaks there — `.prefault()` returns a
+`ZodPrefault`, whose type carries none of the inner schema's methods — so the
+upstream truth for `z.coerce.number().prefault(0).min(0)` is itself a
+`TypeError`. The corpus says the chain is nevertheless a living idiom:
+全职高手's variable-structure script is written entirely in it (158 `prefault`
+sites, 5 chained), while the other four `prefault`-using cards call it only at
+a chain's tail, where nothing follows and nothing breaks. A card that never ran
+upstream is not evidence about upstream; it is evidence about what its author
+believed `z` did — and under "every family must run as it does in ST", a
+believed API the host can honour for the whole family is the mechanism to
+implement.
+
+**Iris.** The preset bundle installs a forwarding view before publishing `z`:
+each classic schema prototype that owns `prefault` returns, instead of the bare
+wrapper, a proxy that answers the wrapper's own members and forwards anything
+else to the wrapped inner schema, re-applying the same prefault value to the
+result. `prefault(0).min(0)` therefore composes as
+`prefault(inner.min(0), 0)` — parse semantics identical to the author's left-
+to-right reading, chainable, and safe to embed inside objects, records and
+arrays. A contradictory chain (`prefault(0).min(1)` with no input) still
+refuses; nothing clamps, because a clamp would be an approximate answer wearing
+a schema's clothes. The install is deduplicated by prototype identity and runs
+exactly once (the preset evaluates once per origin); `check-preset`'s `z` probe
+now runs the measured chain against the built artifact, so a bundler change
+that silently dropped the install fails the build instead of failing a card.
+
+**What it costs.** A card probing the wrapper's *type* shape (`instanceof
+ZodPrefault` on a chained result) sees the proxy, whose `Symbol.hasInstance`
+target is unchanged, but a `getPrototypeOf`-sensitive walker would observe a
+Proxy where it expects a plain object. No measured helper does this: `mvu_zod`
+wraps the card's schema in `z.object(...)` (untouched — the wrapper sits
+inside), `safeParse`s it, and reads `_zod.def`, all of which the proxy forwards.
+If zod later makes `prefault` chain natively, the break-guard in
+`tests/zod-compat.test.ts` fails on its first assertion and names the removal.
+
+## 33. The state margin's "this round" is measured against the last snapshot this session witnessed, not against "the previous floor"
+
+**Kind:** deliberate constraint — the task asked for the previous floor's
+variables; the protocol does not carry them, and the protocol was not to be
+touched.
+
+**What changed.** The brief read "diff the current floor against the previous
+one" (`chat_message.variables` is stored per floor, so the host could answer
+it). But `chat.open` — the one channel the panel is allowed to keep reading —
+carries only the **newest** turn's table. Rather than widen the protocol, the
+panel diffs the snapshots it has already been handed: consecutive views are
+consecutive floors whenever variables moved, which is the same comparison in
+every case the reader can witness. The baseline is kept per chat in
+`sessionStorage` (`iris.state.lastTree.<chatId>`), so the diff also survives a
+page reload and a stream whose end landed while the event socket was cycling —
+the two ordinary ways a long reading session loses the moment. On first sight
+in a session the chat starts unmarked.
+
+**What it costs.** Two genuine turns completing inside 90 seconds read as one
+round — the tally sums them, which is arguably "everything since you looked".
+A change that landed while *no* page was watching is invisible until the next
+witnessed change; the panel never claims a diff it did not see. A browser
+reopened tomorrow starts clean: `sessionStorage`, not `localStorage`, on
+purpose — yesterday's news is not this round. `diffStats` itself is a pure
+function over two trees (`state-panel.ts`), so if the protocol ever carries
+floor tables, the same function answers the original brief with a different
+caller. Along the way `sameValue` grew an equality the first live diff
+needed: an **empty array re-created under a new identity is not a change** —
+the host re-materialises tables wholesale, and `Object.is` on two fresh `[]`
+reported every empty list as moved.
+
+## 34. A branch renders open down to depth 1, folded below it — and the `toggle` event no longer gets to vote on what the reader did
+
+**Kind:** interpretation of the brief, plus a measured bug in the obvious
+implementation.
+
+**What changed.** "各分支默认折叠只留顶层" is realised as: depth 0 (the
+variable table's own shape) renders open, everything below folds behind a
+count badge — `政局 14` is countable without being shown, which is the point.
+The bug: `<details>` fires `toggle` whenever its state changes, **including
+when this panel changes the `open` attribute** — a chat switch, a search
+forcing hits open. Treating those echoes as reader input wrote one chat's
+forced-open paths into another chat's fold memory (observed live: a chat that
+was merely *visited* grew a `localStorage` record). Each tree level now keeps
+the `open` value it last rendered per path and drops any event that agrees
+with it — a real click always flips the DOM to the opposite of what was
+rendered.
+
+**What it costs.** A reader click that lands inside the millisecond window
+between a store-driven re-render and its `toggle` dispatch can be swallowed —
+the same window the old code raced unprotected; a second click folds it. The
+rendered-open map is per mounted tree level, so nothing survives a branch
+unmounting.
+
+## 35. Long values clamp to two lines with the full text on hover, instead of wrapping without bound
+
+**Kind:** deliberate reversal of this file's own earlier rule.
+
+**What changed.** The margin previously argued (in `StatePanel.tsx`'s header)
+that a long value should wrap the way prose wraps, because a 260px column that
+scrolls sideways cannot show both ends of a line. Real MVU trees settled it:
+values are frequently 20–40 character policy sentences, and unbounded wrapping
+was half of the "information too much" complaint the rebuild answers. Stacked
+values now clamp at two lines (`-webkit-line-clamp`), keep the prose face, and
+carry the full text as `title` — truncation with the whole value one hover
+away, and still no horizontal scrollbar anywhere.
+
+**What it costs.** A reader who wants the whole sentence without hovering must
+click nothing — it is not expandable, only hoverable. If touch-only reading
+ever matters here, the hover needs a tap affordance.
+
+## 36. The notice log now merges an identical notice into a counted row, inside a short window
+
+**Kind:** deliberate reversal of a recorded decision, on new evidence.
+
+**What changed.** `NoticeLog` refused dedup on the argument that "the same
+sentence arriving twice is two events — that something recurred is usually the
+finding". The reconnect schedule refuted the absolute form: during a host
+restart it raises `the Iris event socket failed` every few seconds, and the
+log filled with identical rows — one outage, four entries, no more information
+per entry than the first. The store's `raise` now merges an identical neighbour
+inside `NOTICE_DEDUP_WINDOW_MS` (10s — longer than any backoff step) into one
+row carrying `×N`; the bar still re-announces on every recurrence (fresh
+`seq`). Transport errors — the one species the client survives on its own —
+are tagged at the source (`notifyTransportError`) and marked **resolved** when
+the connection returns, dimmed in the log with a self-healed badge, plus one
+`reconnected` line; an outage that logged nothing announces nothing.
+
+**What it costs.** Two genuine occurrences of the same sentence inside ten
+seconds read as one row with `×2` — the recurrence is still on the record, as
+the count, but the per-event timestamps are gone. At the window's edge (the
+backoff ceiling is exactly 10s) a long outage can still open a second row;
+both carry counts, and the reconnected line closes them together.
+
+## 37. One scrollbar, defined once in the token layer, imposed on every surface with `*`
+
+**Kind:** deliberate globality.
+
+**What changed.** Scrollbars were whatever each scroll container inherited —
+which meant thick native grey bars in the reading column, the sidebar, the
+state margin and the drawer, on a page whose whole grammar is hairlines. The
+tokens now define `--iris-scrollbar` / `--iris-scrollbar-strong` (resting grey
+below the rules in contrast; hover deepens), and the token layer itself sets
+`scrollbar-width: thin` + `scrollbar-color` on `*` alongside the
+`::-webkit-scrollbar` capsule (8px hit area, 2px transparent border, 999px
+radius, transparent track). Both mechanisms, because Chromium 121+ prefers the
+standard pair and then *ignores* the webkit rules: current Chromium loses the
+hover state (the standard property cannot express one), older WebKit gets the
+full capsule. The dsh primitives' scrollbar aliases now point at the same
+tokens.
+
+**What it costs.** `*` reaches every surface by construction, so a panel
+cannot forget — and equally cannot opt out. Card frames' inner documents are
+their own origins and keep native scrollbars, which is out of reach by the
+same token. `scrollbar-gutter: stable` on the reading column now reserves a
+*thin* gutter: the message column's centre shifts less on first overflow than
+before, and card interfaces reading the container width see the content box,
+which already excludes the gutter.
+

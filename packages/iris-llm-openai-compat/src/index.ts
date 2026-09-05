@@ -47,6 +47,22 @@ export interface Config {
   baseURL: string
   /** Environment variable holding the API key. Absent means an unauthenticated endpoint. */
   apiKeyEnv?: string
+  /**
+   * The API key itself, as a connection profile carries it.
+   *
+   * Takes precedence over {@link apiKeyEnv}: a key the user typed into a form
+   * is more specific than one an operator put in the environment. Kept in the
+   * adapter's config only — never logged, never served.
+   */
+  apiKey?: string
+  /**
+   * The header the credential is sent in.
+   *
+   * Absent (or `Authorization`, in any casing) means the OpenAI-compatible
+   * convention: `Authorization: Bearer <key>`. Any other name sends the bare
+   * value — Anthropic's `x-api-key` is the case that exists.
+   */
+  apiKeyHeader?: string
   /** Advisory model catalog. Unlisted ids are still accepted. */
   models?: ModelEntry[]
 }
@@ -57,12 +73,42 @@ export const Config: z<Config> = z.object({
   displayName: z.string(),
   baseURL: z.string().required(),
   apiKeyEnv: z.string(),
+  apiKey: z.string(),
+  apiKeyHeader: z.string(),
   models: z.array(z.object({
     id: z.string().required(),
     name: z.string(),
     contextWindow: z.natural(),
   })).default([]),
 })
+
+/**
+ * Resolve the credential a request carries, and the header it goes in.
+ *
+ * One rule for every request this adapter makes, so a probe and a stream
+ * cannot disagree about what "authenticated" means. An explicit key wins over
+ * the environment; a configured source with nothing in it is a named error
+ * rather than a silent unauthenticated request — endpoints answer that with a
+ * 401 whose cause nobody can see.
+ * @param config - the adapter's configuration.
+ * @returns the header name and value to send, or undefined for an unauthenticated endpoint.
+ * @throws {LlmError} `INVALID_CREDENTIAL` when a configured key source is empty.
+ */
+export function credentialOf(config: Config): { name: string, value: string } | undefined {
+  const key = config.apiKey ?? (config.apiKeyEnv === undefined ? undefined : process.env[config.apiKeyEnv])
+  if (config.apiKey === undefined && config.apiKeyEnv === undefined) return undefined
+  if (key === undefined || key.length === 0) {
+    const source = config.apiKey ?? config.apiKeyEnv
+    throw new LlmError(
+      `missing API key: ${config.apiKey !== undefined ? 'the stored key is empty' : `set ${String(source)}`}`,
+      'INVALID_CREDENTIAL',
+    )
+  }
+  const name = config.apiKeyHeader ?? 'Authorization'
+  // `Authorization` carries a scheme; every other header is a bare value.
+  const value = name.toLowerCase() === 'authorization' ? `Bearer ${key}` : key
+  return { name: name.toLowerCase(), value }
+}
 
 /** Adapter over any endpoint speaking the OpenAI chat-completions SSE protocol. */
 export class OpenAiCompatAdapter extends LlmAdapter {
@@ -98,10 +144,7 @@ export class OpenAiCompatAdapter extends LlmAdapter {
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     // Resolve the credential once per call, so an in-flight stream never
     // observes a configuration change mid-response.
-    const apiKey = this.#config.apiKeyEnv === undefined ? undefined : process.env[this.#config.apiKeyEnv]
-    if (this.#config.apiKeyEnv !== undefined && (apiKey === undefined || apiKey.length === 0)) {
-      throw new LlmError(`missing API key: set ${this.#config.apiKeyEnv}`, 'INVALID_CREDENTIAL')
-    }
+    const credential = credentialOf(this.#config)
 
     const url = `${this.#config.baseURL.replace(/\/+$/, '')}/chat/completions`
     let response: Response
@@ -111,7 +154,7 @@ export class OpenAiCompatAdapter extends LlmAdapter {
         headers: {
           'content-type': 'application/json',
           'accept': 'text/event-stream',
-          ...apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` },
+          ...credential === undefined ? {} : { [credential.name]: credential.value },
           ...attributionHeaders(),
         },
         body: JSON.stringify(serializeRequest(options)),

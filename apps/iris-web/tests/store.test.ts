@@ -5,8 +5,11 @@ import {
   actionsOf,
   applyEvent,
   createIrisStore,
+  NOTICE_DEDUP_WINDOW_MS,
   NOTICE_LOG_LIMIT,
+  repeatsLatestNotice,
   type IrisStore,
+  type Notice,
 } from '../src/client/store.ts'
 import type { ChatView, IrisClient, IrisEvent } from '@iris/protocol'
 import { createFakeClient } from '@iris/client-fake'
@@ -822,15 +825,22 @@ function recordingStore(answer: {
 } = { cleaned: 0, recorded: true }, failOn?: string): {
   store: IrisStore
   push: (event: IrisEvent) => void
+  setConnected: (connected: boolean) => void
   calls: { method: string, params: unknown }[]
   dispose: () => void
 } {
   const calls: { method: string, params: unknown }[] = []
   const listeners = new Set<(event: IrisEvent) => void>()
+  const connectionListeners = new Set<(connected: boolean) => void>()
   const empty: ChatView = { chatId: 'c1', title: 'A scene', messages: [] }
   const client: IrisClient = {
     connected: true,
-    onConnectionChange: () => () => undefined,
+    onConnectionChange(listener) {
+      connectionListeners.add(listener)
+      return () => {
+        connectionListeners.delete(listener)
+      }
+    },
     subscribe(listener) {
       listeners.add(listener)
       return () => {
@@ -853,7 +863,13 @@ function recordingStore(answer: {
   }
   const { store, dispose } = createIrisStore(client, TEST_SOURCE)
   store.setState({ chatId: 'c1', view: empty })
-  return { store, push: event => listeners.forEach(l => l(event)), calls, dispose }
+  return {
+    store,
+    push: event => listeners.forEach(l => l(event)),
+    setConnected: connected => connectionListeners.forEach(l => l(connected)),
+    calls,
+    dispose,
+  }
 }
 
 test('a cleaning offer is held, with the chat it is about', () => {
@@ -986,13 +1002,22 @@ test('every notice is kept after the bar has forgotten it', () => {
   scope.dispose()
 })
 
-test('the log is not deduplicated, because a repeat is two events', async () => {
-  // The bar deduplicates by replacing — it can only show one thing. A record
-  // must not: that something recurred is usually the finding.
+test('a repeat inside the dedup window keeps one entry that carries the repeat count', async () => {
+  /*
+   * Rewritten when the window arrived. The old argument — "a repeat is two
+   * events, and something recurred is usually the finding" — held for the
+   * finding and failed for the reconnect schedule, which raises the *same*
+   * sentence every few seconds during a host restart: one outage, four rows,
+   * no more information per row than the first. The recurrence is still on
+   * the record, as a count on the one entry; what the log no longer does is
+   * spend a row per retry on it.
+   */
   const scope = recordingStore()
   actionsOf(scope.store).notify('info', 'the same sentence')
   actionsOf(scope.store).notify('info', 'the same sentence')
-  assert.equal(scope.store.getState().noticeLog.length, 2)
+  const log = scope.store.getState().noticeLog
+  assert.equal(log.length, 1)
+  assert.equal(log[0]?.count, 2)
   scope.dispose()
 })
 
@@ -1273,5 +1298,76 @@ test('nothing is reported as dropped until something actually is', () => {
 
   actionsOf(scope.store).notify('info', 'one more')
   assert.equal(scope.store.getState().noticesDropped, 1)
+  scope.dispose()
+})
+
+test('identical notices inside the dedup window become one entry that counts itself', () => {
+  /*
+   * The case that set the window: a host restart drops the event socket and
+   * the reconnect schedule raises the same sentence every few seconds. Four
+   * identical rows is one outage counting itself, not four findings — so the
+   * entry stays one and grows a ×N, and the bar still re-announces (a new seq).
+   */
+  const scope = recordingStore()
+  const { notify } = actionsOf(scope.store)
+  notify('error', 'the Iris event socket failed')
+  notify('error', 'the Iris event socket failed')
+  notify('error', 'the Iris event socket failed')
+
+  const log = scope.store.getState().noticeLog
+  assert.equal(log.length, 1)
+  assert.equal(log[0]?.count, 3)
+  // The bar re-announced on every recurrence: it shows the merged entry under
+  // its newest seq, not the original one.
+  assert.equal(scope.store.getState().notice?.seq, log[0]?.seq)
+  assert.equal(scope.store.getState().noticesDropped, 0)
+  scope.dispose()
+})
+
+test('a different notice does not merge, and the pure window check holds its edges', () => {
+  const scope = recordingStore()
+  const { notify } = actionsOf(scope.store)
+  notify('error', 'the Iris event socket failed')
+  notify('error', 'could not reach the Iris host: refused')
+  assert.equal(scope.store.getState().noticeLog.length, 2)
+  scope.dispose()
+
+  const last: Notice = { kind: 'error', text: 'x', seq: 1, at: 1_000 }
+  assert.equal(repeatsLatestNotice(last, 'error', 'x', undefined, 1_000 + NOTICE_DEDUP_WINDOW_MS - 1), true)
+  assert.equal(repeatsLatestNotice(last, 'error', 'x', undefined, 1_000 + NOTICE_DEDUP_WINDOW_MS), false)
+  // A different channel is a different species, whatever the words.
+  assert.equal(repeatsLatestNotice(last, 'error', 'x', 'transport', 1_001), false)
+  assert.equal(repeatsLatestNotice(undefined, 'error', 'x', undefined, 1_001), false)
+})
+
+test('a transport outage resolves itself when the connection returns', () => {
+  /*
+   * The socket failing during a host restart is expected, and the log should
+   * say the outage *ended* — the difference between "something is wrong" and
+   * "something was wrong". Marked, not deleted: the row is evidence.
+   */
+  const scope = recordingStore()
+  const { notifyTransportError } = actionsOf(scope.store)
+  notifyTransportError('the Iris event socket failed')
+
+  scope.setConnected(false)
+  assert.equal(scope.store.getState().connected, false)
+
+  scope.setConnected(true)
+  const log = scope.store.getState().noticeLog
+  assert.equal(log[0]?.resolved, true, 'the outage is closed, not forgotten')
+  // One closing line, and only because an outage actually logged an error.
+  const closing = log[1]
+  assert.equal(closing?.kind, 'info')
+  assert.match(closing?.text ?? '', /Reconnected|重新连接/)
+  scope.dispose()
+})
+
+test('a clean reconnect announces nothing', () => {
+  // No outage, no closure to announce: noise is not information.
+  const scope = recordingStore()
+  scope.setConnected(false)
+  scope.setConnected(true)
+  assert.equal(scope.store.getState().noticeLog.length, 0)
   scope.dispose()
 })

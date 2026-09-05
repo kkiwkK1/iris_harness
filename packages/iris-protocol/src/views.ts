@@ -559,6 +559,57 @@ export interface ConnectionProfile {
   preset?: string
   /** Sampling overrides applied when this profile is activated. */
   sampling?: Partial<GenerationSettings>
+  /**
+   * The endpoint this profile generates through, when it carries one of its
+   * own. Absent means the profile rides the host's configured route as it was
+   * before profiles carried endpoints — those still work exactly as they did.
+   */
+  baseURL?: string
+  /**
+   * Whether a key is stored for this profile. **The key itself is never on
+   * the wire** — a read answers with this flag and, when the key is long
+   * enough not to be given away by it, its last four characters, so the user
+   * can tell which key of theirs this is without the interface ever holding
+   * one to show.
+   */
+  hasKey?: boolean
+  /** The stored key's last four characters, when there is a key and it is long enough to show them. */
+  keyTail?: string
+  /** The header the key is sent in, when not the OpenAI-compatible default. */
+  apiKeyHeader?: string
+}
+
+/**
+ * Why a `connection.test` probe said no, named.
+ *
+ * Each code is a different next step for the person in front of the form, so
+ * they are kept apart rather than folded into one "failed": a missing key is
+ * fixed in this form, a 401 means the key typed is wrong or expired, a
+ * timeout points at the network or the endpoint's own serve, and the rest
+ * mean the thing reached is not speaking the OpenAI-compatible dialect the
+ * probe assumes.
+ */
+export type ConnectionTestErrorCode =
+  /** The endpoint is known to need a key and none was available to send. */
+  | 'missing-key'
+  /** The endpoint answered 401/403 — the key sent does not open it. */
+  | 'unauthorized'
+  /** The endpoint did not answer within the probe's budget. */
+  | 'timeout'
+  /** The request never reached an endpoint — DNS, refused, reset. */
+  | 'network'
+  /** The endpoint answered, with a status that is not one of the named kinds. */
+  | 'http-error'
+  /** The endpoint answered 200, but not with a model list the probe can read. */
+  | 'bad-response'
+  /** A saved profile was probed that carries no endpoint of its own. */
+  | 'no-endpoint'
+
+/** The named failure half of a `connection.test` result. */
+export interface ConnectionTestError {
+  code: ConnectionTestErrorCode
+  /** Human-readable detail. Safe to show; must not carry a credential. */
+  message: string
 }
 
 /**

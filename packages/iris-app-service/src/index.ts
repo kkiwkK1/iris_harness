@@ -19,6 +19,7 @@ import { existsSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { ChatCompletionPreset } from '@iris/preset'
+import { OpenAiCompatAdapter } from '@iris/llm-openai-compat'
 
 import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
@@ -30,7 +31,7 @@ import { DiagnosticBuffer } from './diagnostics.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import { IrisAppService } from './service.ts'
-import { ConnectionStore } from './connections.ts'
+import { ConnectionStore, routeOf } from './connections.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
 import { PresetStore } from './presets.ts'
@@ -45,7 +46,8 @@ import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
 
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
-export { ConnectionStore, summarize, type ProfileInput } from './connections.ts'
+export { ConnectionStore, keyTailOf, summarize, routeOf, type ProfileInput } from './connections.ts'
+export type { ConnectionEndpoint } from './service.ts'
 export {
   assertStorable,
   buildCardContext,
@@ -437,6 +439,49 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const scriptButtons = new ScriptButtonStore(
     paths.scriptButtons, error => { ctx.logger.warn(error.message) })
   const connections = new ConnectionStore(paths.connections)
+  // Runtime adapter installs, one per provider route this plugin has claimed.
+  //
+  // `connection.activate` and boot-time restoration both come through here: a
+  // profile carrying its own endpoint needs an adapter that can see that
+  // endpoint and its key, and the composition's own registration — route
+  // `default` — belongs to the `llm-openai-compat` row, which this runtime
+  // neither owns nor may displace. Replacing a route we installed before is
+  // how two profiles of one provider take turns; the in-flight stream of the
+  // old one keeps its adapter object and finishes untouched.
+  const installed = new Map<string, () => void>()
+  const installConnection = (route: string, endpoint: { baseURL: string, apiKey?: string, apiKeyHeader?: string }): void => {
+    installed.get(route)?.()
+    installed.set(route, ctx.llm.registerAdapter([route], new OpenAiCompatAdapter({
+      provider: route,
+      displayName: route,
+      baseURL: endpoint.baseURL,
+      ...endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey },
+      ...endpoint.apiKeyHeader === undefined ? {} : { apiKeyHeader: endpoint.apiKeyHeader },
+      models: [],
+    })))
+  }
+  // The last activated profile comes back the same way after a restart: its
+  // adapter is in place before any handler can be reached, because a
+  // persisted route (`conn/<id>` or the preset id) in `settings.json` is a
+  // promise the registry has to be able to keep on the first turn.
+  const storedActive = await (async () => {
+    const listed = await connections.list()
+    if (listed.activeId === undefined) return undefined
+    try {
+      return await connections.get(listed.activeId)
+    } catch {
+      // The active id points at a profile that was removed out-of-band; the
+      // list itself clears it on the next write.
+      return undefined
+    }
+  })()
+  if (storedActive?.baseURL !== undefined && storedActive.baseURL.length > 0) {
+    installConnection(routeOf(storedActive), {
+      baseURL: storedActive.baseURL,
+      ...storedActive.apiKey === undefined ? {} : { apiKey: storedActive.apiKey },
+      ...storedActive.apiKeyHeader === undefined ? {} : { apiKeyHeader: storedActive.apiKeyHeader },
+    })
+  }
   // Shared across the profile, matching upstream's one `localStorage` per
   // origin. Not partitioned per card, and deliberately not forgotten when a
   // card is deleted — see `character.delete`.
@@ -476,6 +521,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     scriptButtons,
     worldbooks,
     connections,
+    installConnection,
     scriptVariables,
     preset: storedPreset ?? await loadPreset(config.presetPath),
     ...storedPresetName === undefined ? {} : { presetName: storedPresetName },
@@ -548,6 +594,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('connection.save', handlers['connection.save']),
       ctx.irisRpc.register('connection.delete', handlers['connection.delete']),
       ctx.irisRpc.register('connection.activate', handlers['connection.activate']),
+      ctx.irisRpc.register('connection.test', handlers['connection.test']),
       ctx.irisRpc.register('character.list', handlers['character.list']),
       ctx.irisRpc.register('character.import', handlers['character.import']),
       ctx.irisRpc.register('character.delete', handlers['character.delete']),

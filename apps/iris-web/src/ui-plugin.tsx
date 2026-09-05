@@ -60,7 +60,11 @@ export function apply(ctx: Context): void {
 
   const wired = createIrisStore(built.client, { transport: built.transport, origin: built.origin })
   report = error => {
-    wired.store.getState().notify('error', error.message)
+    // Tagged as transport, not a plain error: these are the one species the
+    // client survives — the socket retries on its own schedule — so the log
+    // marks them resolved when the connection returns instead of leaving the
+    // reader with a standing red row for an outage that already ended.
+    wired.store.getState().notifyTransportError(error.message)
   }
   ctx.effect(() => wired.dispose, 'iris-client-shell.store')
 

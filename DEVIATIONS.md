@@ -155,3 +155,68 @@
     旧投影每楼 name 都从头行重导出，一次会话往返就把全楼说话人改写掉。现在
     `name` 与 `extra`/`send_date` 同等对待：楼里带的逐字携带，头行名只作
     本宿主新建行的回退。
+
+---
+
+# DEVIATIONS — 任务 N：API 连接面（密钥、测试连接、模型列表、提供方预置）
+
+分支 `dev/feat-connection-ui`。用户点名需求：连接设置区要有 ①填 key 的地方
+②测试连接按钮 ③拉取 /models 的模型列表，且提供方不允许手填裸字符串。
+本节第 24 条**推翻既有裁定**，其余为该推翻落地时的边界决定。
+
+## 密钥存储（推翻旧裁定）
+
+24. **连接密钥随配置档明文落盘（`connections.json`，data 目录内、gitignored），
+推翻 IMPLEMENTATION-CHECKLIST §"如需 UI 化，走宿主内存 + 不落盘（不提供 ST
+的 secrets 端点）"与 ST-COMPARE 10.3 "config 注入凭据，不落明文" 的立场。**
+    旧立场的场景是"配置由谁完成"——`.env`/cordis.yml 由装机器写，普通用户
+    无法自助，这正是本任务要打开的面。用户在表单里填 key，就必须有地方放，
+    否则每次重启都要重新填，"重启宿主密钥仍生效"无从谈起。上游 ST 的
+    `secrets.json`（明文、全套 view/read/write 端点）仍是反例：本侧**不提供
+    任何读取密钥的端点**，差异在传输边界而非磁盘：
+    - `connection.save` 的 `apiKey` 是 write-only——任何 RPC 永不回显，读取只答
+      `hasKey: true` + 尾四位（不足 8 字符的 key 连尾四位都不给，四字符足以
+      暴露短 key 全文）；
+    - 缺省 = 保留（编辑表单没有 key 可回填，把缺省当清除会静默缴械），
+      空串 = 显式清除；
+    - 日志与报告只写端点 origin，从不写 key（`#installConnectionFor`、
+      `#probeEndpoint` 的错误消息均不携带凭据）；
+    - rpc-transport 有实测断言：真实 HTTP 帧上 `connection.list` 的响应体不含
+      密钥明文或其片段。
+    这不是"secrets 端点"的重开：ST 泄漏在**接口**（view/secrets 全套），本侧
+    把密钥当作 store 的私有字段，接口只描述不携带。
+
+## 提供方预置
+
+25. **提供方是预置档案（DeepSeek/OpenAI/OpenRouter/Anthropic/Gemini/Ollama/
+    llama.cpp/LM Studio + 自定义），不是自由文本。** 一个提供方是端点、凭据
+    惯例与默认 header 的组合，裸字符串正是"名为 deepseek 实指 Gemini"漂移的
+    起点。选中即填 baseURL；Ollama/llama.cpp/LM Studio 三个本地端点标注
+    "无需密钥"，表单对它们不渲染 key 输入框。预置表定义在协议包
+    （`providers.ts`），宿主与界面共用一份，`connection.test` 以它判断
+    "此端点必须有 key"从而在出网之前报 `missing-key`。
+
+26. **Anthropic 预置的凭据走 `x-api-key` 裸值头。** `apiKeyHeader` 缺省即
+    OpenAI 兼容惯例 `Authorization: Bearer`；换名头时值不再加 Bearer 前缀。
+    同一条规则在 LLM 适配器（`credentialOf`）与探针（`#probeEndpoint`）各实现
+    一次、行为一致，测试连接通过的端点就是对話能过认证的端点。
+
+## 连接档与路由
+
+27. **带自有端点的 profile 激活时在运行时安装适配器，路由取 profile 的
+    provider 名；`provider: 'default'` 例外地派生为 `conn/<id>`。** `default`
+    路由属于组合里 `llm-openai-compat` 行自己的注册，激活不拥有也不许驱逐它。
+    同 provider 的两个 profile 交替启用 = 替换注册（dispose 后重装），在途
+    流持有旧适配器对象自然跑完。开机时按 activeId 恢复安装，重启宿主后
+    settings.json 里持久化的路由名在第一个回合就能兑现。
+
+28. **`connection.test` 对"失败"以结果而非错误作答**（`{ok:false, error:{code,
+    message}}`），具名错误各有其义：`missing-key`（出网前拦截）、`unauthorized`
+    （401/403）、`timeout`、`network`、`http-error`、`bad-response`、
+    `no-endpoint`（无自有端点的旧档诚实自报）。探针优先 `GET /models`，OpenAI
+    形状之外顺带接受 Ollama 原生 `{models:[{name}]}`；模型列表也可手填，因为
+    自建端点未必实现 /models。
+
+29. **假客户端对 `connection.test` 诚实拒绝**（unsupported："fake client cannot
+    reach a real endpoint"）：该方法存在的意义就是把请求放到真网络上，伪造
+    延迟或错误码会让连接表单在开发期学到一个没有任何端点给过的结论。

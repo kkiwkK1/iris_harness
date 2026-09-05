@@ -27,6 +27,7 @@ import type {
   IrisEvent,
   PresetManagerView,
   PresetSummary,
+  RpcResponse,
   ScriptContext,
   ScriptView,
   WorldbookSettingsView,
@@ -65,6 +66,20 @@ export interface StreamBuffer {
    * carries the row, and its own key is used instead.
    */
   key?: string
+  /**
+   * The text the buffer opened with: a continue paints its deltas over the
+   * reading it writes on from, and without the seed the row would collapse to
+   * the new words alone while streaming.
+   */
+  seed?: string
+  /**
+   * Who the arriving text is for. Absent means the character's reply; `'user'`
+   * is an impersonation, so the streaming row reads as the user's from its
+   * first delta instead of flipping roles when it settles.
+   */
+  role?: 'user'
+  /** The speaker to show for that role. */
+  name?: string
 }
 
 /** The host's standing offer to clean one chat, as it raised it. */
@@ -96,6 +111,60 @@ export interface Notice {
   seq: number
   /** When it was raised, so the log can date it. Epoch milliseconds. */
   at: number
+  /**
+   * How many identical notices, inside the dedup window, this entry stands
+   * for. Absent for a notice that stands for itself.
+   */
+  count?: number
+  /**
+   * Which channel raised it, when the channel matters to how the notice is
+   * read. Transport notices are the session's one self-healing species: the
+   * event socket failing during a host restart is expected, and the log marks
+   * them resolved when the connection returns.
+   */
+  source?: 'transport'
+  /** A transport error the connection has since recovered from. */
+  resolved?: boolean
+}
+
+/**
+ * How long an identical notice merges into the one before it.
+ *
+ * The case that set the window: a host restart drops the event socket, and the
+ * client's reconnect schedule fires "the Iris event socket failed" every few
+ * seconds — four identical rows in half a minute is noise shaped like a
+ * finding. Ten seconds is longer than any backoff step the client schedules,
+ * so one outage reads as one entry that counts its recurrences, while the same
+ * sentence arriving ten minutes apart is the two events it genuinely is.
+ */
+export const NOTICE_DEDUP_WINDOW_MS = 10_000
+
+/**
+ * Whether a notice about to be raised merges into the log's last entry.
+ *
+ * Pure so the window's edges can be asserted without a clock: a merge needs
+ * the same kind, text and channel, and a gap **inside** the window.
+ * @param last - the log's newest entry, if any.
+ * @param kind - the incoming notice's kind.
+ * @param text - the incoming notice's text.
+ * @param source - the incoming notice's channel, if it names one.
+ * @param now - the incoming notice's arrival time.
+ * @returns true when the incoming notice is a recurrence of `last`.
+ */
+export function repeatsLatestNotice(
+  last: Notice | undefined,
+  kind: Notice['kind'],
+  text: string,
+  source: Notice['source'],
+  now: number,
+): boolean {
+  return (
+    last !== undefined
+    && last.kind === kind
+    && last.text === text
+    && last.source === source
+    && now - last.at < NOTICE_DEDUP_WINDOW_MS
+  )
 }
 
 /**
@@ -404,6 +473,10 @@ export interface IrisActions {
   searchChats(query: string): Promise<ChatSearchHit[] | undefined>
   send(text: string): Promise<void>
   regenerate(): Promise<void>
+  /** Write on from the newest reply; the result rejoins that floor. */
+  continueReply(): Promise<void>
+  /** Have the model write the user's next line instead of a reply. */
+  impersonate(): Promise<void>
   abort(): Promise<void>
   swipe(turn: number, index: number): Promise<void>
   editMessage(id: number, text: string): Promise<void>
@@ -574,8 +647,32 @@ export interface IrisActions {
     model: string
     preset?: string
     sampling?: Record<string, unknown>
+    baseURL?: string
+    /**
+     * Write-only, exactly as the protocol says: absent keeps the stored key,
+     * empty string clears it, non-empty replaces it. The store never sees the
+     * key again after this call.
+     */
+    apiKey?: string
+    apiKeyHeader?: string
   }): Promise<void>
   deleteConnection(id: string): Promise<void>
+  /**
+   * Ask the host to probe an endpoint and fetch its model list.
+   *
+   * The verdict — a failed probe included — comes back as the response: the
+   * method answers "no, and here is why" rather than throwing for it, so the
+   * form renders a result instead of catching one. Only a refusal *before*
+   * any probe (a fake client, a malformed ask) rejects, and the panel shows
+   * that as its own sentence.
+   */
+  testConnection(params: {
+    profileId?: string
+    baseURL?: string
+    apiKey?: string
+    apiKeyHeader?: string
+    preset?: string
+  }): Promise<RpcResponse<'connection.test'>>
   /**
    * Fetch the preset library, the active name and the prompt manager's state.
    *
@@ -631,6 +728,8 @@ export interface IrisActions {
    */
   exportPreset(name: string): Promise<void>
   notify(kind: Notice['kind'], text: string): void
+  /** A failure of the event channel itself — resolvable, unlike a host refusal. */
+  notifyTransportError(text: string): void
   dismissNotice(): void
 }
 
@@ -672,24 +771,51 @@ export function createIrisStore(
      * been silently incomplete for exactly the errors most worth keeping. A
      * patch rather than a setter so a caller that is also writing other fields
      * (the import writes `characters` too) can spread it into one `set`.
+     *
+     * **Deduplicated within a short window, and only there.** The log used to
+     * keep every arrival, on the argument that the same sentence arriving twice
+     * is two events and that something recurred is usually the finding. Real
+     * traffic corrected the half of that which hurts: the reconnect schedule
+     * fires the *same* sentence every few seconds during a host restart, and
+     * four identical rows is not a finding, it is one outage counting itself.
+     * So an identical neighbour inside the window becomes a count on one entry
+     * — the recurrence is still on the record, as `×N` — while the same
+     * sentence after the window is the separate event it is.
      * @param kind - how loud it is.
      * @param text - what it says.
+     * @param source - the channel, when it changes how the notice reads.
      * @returns the fields to set.
      */
-    const raise = (kind: Notice['kind'], text: string): {
+    const raise = (kind: Notice['kind'], text: string, source?: Notice['source']): {
       notice: Notice
       noticeLog: readonly Notice[]
       noticesDropped: number
     } => {
       noticeSeq += 1
-      const notice: Notice = { kind, text, seq: noticeSeq, at: Date.now() }
-      /*
-       * The log is **not** deduplicated, unlike the bar, which deduplicates by
-       * replacing. The same sentence arriving twice is two events, and
-       * collapsing them loses the fact that something recurred — usually the
-       * finding itself.
-       */
-      const kept = [...get().noticeLog, notice]
+      const now = Date.now()
+      const log = get().noticeLog
+      const last = log[log.length - 1]
+      if (last !== undefined && repeatsLatestNotice(last, kind, text, source, now)) {
+        // A fresh occurrence is a live problem again, so a resolved mark from
+        // the merged entry does not ride along (the key is dropped, not set).
+        const { resolved: _closed, ...carried } = last
+        void _closed
+        const merged: Notice = {
+          ...carried,
+          seq: noticeSeq,
+          at: now,
+          count: (last.count ?? 1) + 1,
+        }
+        return {
+          notice: merged,
+          noticeLog: [...log.slice(0, -1), merged],
+          noticesDropped: get().noticesDropped,
+        }
+      }
+      const notice: Notice = source === undefined
+        ? { kind, text, seq: noticeSeq, at: now }
+        : { kind, text, seq: noticeSeq, at: now, source }
+      const kept = [...log, notice]
       return {
         notice,
         noticeLog: kept.slice(-NOTICE_LOG_LIMIT),
@@ -857,6 +983,22 @@ export function createIrisStore(
         if (chatId === undefined) return
         await guard(async () => {
           await client.call('chat.regenerate', { chatId })
+        })
+      },
+
+      async continueReply(): Promise<void> {
+        const chatId = get().chatId
+        if (chatId === undefined) return
+        await guard(async () => {
+          await client.call('chat.send', { chatId, kind: 'continue' })
+        })
+      },
+
+      async impersonate(): Promise<void> {
+        const chatId = get().chatId
+        if (chatId === undefined) return
+        await guard(async () => {
+          await client.call('chat.send', { chatId, kind: 'impersonate' })
         })
       },
 
@@ -1445,6 +1587,13 @@ export function createIrisStore(
         })
       },
 
+      async testConnection(params): Promise<RpcResponse<'connection.test'>> {
+        // The verdict passes through untouched. A refused probe is a response,
+        // not a rejection — only a refusal before any probe lands here as a
+        // throw, and the panel renders that as its own sentence.
+        return client.call('connection.test', params)
+      },
+
       async deleteConnection(id: string): Promise<void> {
         await guard(async () => {
           const listed = await client.call('connection.delete', { id })
@@ -1719,6 +1868,18 @@ export function createIrisStore(
         set(raise(kind, text))
       },
 
+      /**
+       * A transport failure — the event socket, not a host answer.
+       *
+       * Tagged at the source so the log can resolve these when the connection
+       * returns: a socket that failed during a host restart is the session's
+       * one self-healing error, and marking it recovered is the difference
+       * between "something is wrong" and "something was wrong".
+       */
+      notifyTransportError(text: string): void {
+        set(raise('error', text, 'transport'))
+      },
+
       dismissNotice(): void {
         set({ notice: undefined })
       },
@@ -1735,8 +1896,27 @@ export function createIrisStore(
   // The connection has its own channel because the host cannot report its own
   // silence. Inferring it from arriving frames means the banner only appears
   // once some unrelated traffic happens to show up.
+  //
+  // A return **closes** the outage's notices: every unresolved transport error
+  // is marked resolved — dimmed in the log, still on the record — and one
+  // reconnected line replaces the fear that the reader has to dispel
+  // themselves. Raised only when an outage actually logged an error, so a
+  // page that connected once and stayed connected never announces anything.
+  let wasConnected = client.connected
   const offConnection = client.onConnectionChange(connected => {
     store.setState({ connected })
+    if (connected && !wasConnected) {
+      const log = store.getState().noticeLog
+      const outage = log.some(notice => notice.source === 'transport' && !notice.resolved)
+      if (outage) {
+        store.setState({
+          noticeLog: log.map(notice =>
+            notice.source === 'transport' && !notice.resolved ? { ...notice, resolved: true } : notice),
+        })
+        store.getState().notify('info', translate(getLanguage(), 'reconnected'))
+      }
+    }
+    wasConnected = connected
   })
 
   return {
@@ -1913,7 +2093,16 @@ const HANDLERS: { [T in IrisEvent['type']]: (event: EventOf<T>, store: IrisStore
   },
 
   'stream.start': forOpenChat((event, store) => {
-    store.setState({ stream: { turn: event.turn, text: '', reasoning: '', key: event.key } })
+    store.setState({
+      stream: {
+        turn: event.turn,
+        text: event.seed ?? '',
+        reasoning: '',
+        key: event.key,
+        ...event.role === undefined ? {} : { role: event.role },
+        ...event.name === undefined ? {} : { name: event.name },
+      },
+    })
   }),
 
   'stream.text': forOpenChat((event, store) => {
