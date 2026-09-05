@@ -14,16 +14,51 @@
   border-top: var(--iris-hairline) solid var(--iris-rule);
   padding: 13px 20px 18px;
   background: var(--iris-bg-page);
+  /*
+   * Reserve the same scrollbar lane the reading surface above reserves
+   * (`reading.css`, `scrollbar-gutter: stable` on `.iris-scroll`), so the
+   * composer's centring box is the reading column's: without this, the
+   * scroller's lane made the message column sit half a scrollbar left of
+   * the composer's centre line, and the two midlines disagreed by that
+   * half for no reason a reader could see. Same property, so the parity is
+   * exact whatever the platform draws — a real lane here, nothing where
+   * scrollbars overlay. `overflow-y:auto` is what makes the box a scroll
+   * container (the property has no effect on a non-scrolling box); it never
+   * scrolls in practice, and `min-height` hands back the automatic minimum a
+   * scroll container otherwise loses — without it a short window would be
+   * allowed to squash the composer into an internal scroller, which is a
+   * narrow-window regression the reading surface never had.
+   */
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  min-height: max-content;
 }
 
 .iris-composer__inner {
   max-width: var(--iris-column-max);
   margin: 0 auto;
+  /*
+   * The margin column, not an inset: the message prose starts one gutter in
+   * from the reading column's content edge (`.iris-msg`'s 46px marginalia
+   * track), and the composer's field lines up under it. The right side
+   * deliberately has no twin — the prose ends at the column's padding, and
+   * so does the field. The 23px-asymmetric *centre* of this box is shared
+   * with the prose's, which is what the midline check measures.
+   */
   padding-left: var(--iris-gutter);
 }
 
 .iris-composer__field {
   display: block;
+  /*
+   * Stated, because a `textarea` is a replaced-ish form control whose
+   * `width: 100%` otherwise resolves as content width — the padding and
+   * hairline then push the real box past its container's right edge, and
+   * the field's midline sat ~14px right of the box it lives in. Measured:
+   * with the default `content-box` the field overflowed `__inner` by
+   * exactly its padding plus border on every viewport.
+   */
+  box-sizing: border-box;
   width: 100%;
   resize: none;
   max-height: 40vh;
@@ -377,9 +412,14 @@
     padding-inline: 12px;
   }
 
-  .iris-composer__inner {
-    padding-left: 0;
-  }
+  /*
+   * Deliberately **not** overridden to 0 here, though it once was. The prose
+   * keeps its marginalia track at this width (`--iris-gutter: 34px` below),
+   * so its centre sits half a gutter right of the column's — and a composer
+   * inset with no twin put the two midlines 17px apart, measured at
+   * 800×700. Inheriting the base `padding-left: var(--iris-gutter)` keeps
+   * the field under the prose, exactly as on the wide layout.
+   */
 
   :root {
     --iris-gutter: 34px;

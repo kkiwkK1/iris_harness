@@ -145,10 +145,29 @@ export interface Notice {
 export const NOTICE_DEDUP_WINDOW_MS = 10_000
 
 /**
+ * The identity a repeat has to match for the log's dedup.
+ *
+ * Exact text, **except for the parts of a failure that are per-run noise**. A
+ * card's scripts evaluate from a fresh blob URL on every run, and the frame's
+ * uncaught-error reports quote that URL with its stack position — so the same
+ * bug in the same card arrived as a *different* sentence each time, exact-text
+ * dedup collapsed nothing, and one recurring fault filled the panel with rows
+ * that differed only by a UUID. Stripped: `blob:` references, their embedded
+ * positions included. Kept: everything else, byte for byte — two failures that
+ * say anything differently about the cause are still two events.
+ * @param text - the notice's verbatim text.
+ * @returns the text with volatile addresses blanked.
+ */
+export function noticeRecurrenceKey(text: string): string {
+  return text.replace(/blob:\S+/g, 'blob')
+}
+
+/**
  * Whether a notice about to be raised merges into the log's last entry.
  *
  * Pure so the window's edges can be asserted without a clock: a merge needs
- * the same kind, text and channel, and a gap **inside** the window.
+ * the same kind, channel, and a gap **inside** the window, and a sentence
+ * whose only differences are per-run addresses (see `noticeRecurrenceKey`).
  * @param last - the log's newest entry, if any.
  * @param kind - the incoming notice's kind.
  * @param text - the incoming notice's text.
@@ -166,9 +185,9 @@ export function repeatsLatestNotice(
   return (
     last !== undefined
     && last.kind === kind
-    && last.text === text
     && last.source === source
     && now - last.at < NOTICE_DEDUP_WINDOW_MS
+    && noticeRecurrenceKey(last.text) === noticeRecurrenceKey(text)
   )
 }
 
@@ -636,7 +655,6 @@ export interface IrisActions {
   setGlobalSelect(names: readonly string[]): Promise<void>
   /** Patch the world-info scan settings, and hold the effective result. */
   patchWorldbookSettings(patch: Partial<WorldbookSettingsView>): Promise<void>
-<<<<<<< HEAD
   /**
    * Fetch the open chat character's world book binding, and hold it.
    *
@@ -651,7 +669,6 @@ export interface IrisActions {
    * list unbinds all. A no-op when no chat is open.
    */
   setCharBooks(names: readonly string[]): Promise<void>
-=======
   /** Fetch the backup panel's data: every snapshot the profile holds. */
   loadBackups(): Promise<void>
   /**
@@ -673,7 +690,6 @@ export interface IrisActions {
   restoreBackup(backupId: string, confirm: string): Promise<void>
   /** Remove one snapshot; the live conversation is never touched. */
   deleteBackup(backupId: string): Promise<void>
->>>>>>> dev/feat-backups
   /** Fetch the persona panel's data: the personas and which one is active. */
   loadPersonas(): Promise<void>
   /**
@@ -907,7 +923,9 @@ export function createIrisStore(
      * four identical rows is not a finding, it is one outage counting itself.
      * So an identical neighbour inside the window becomes a count on one entry
      * — the recurrence is still on the record, as `×N` — while the same
-     * sentence after the window is the separate event it is.
+     * sentence after the window is the separate event it is. "Identical" is
+     * `repeatsLatestNotice`'s call, and per-run addresses (`blob:` URLs and
+     * their stack positions) do not make a sentence new.
      * @param kind - how loud it is.
      * @param text - what it says.
      * @param source - the channel, when it changes how the notice reads.
@@ -925,10 +943,14 @@ export function createIrisStore(
       if (last !== undefined && repeatsLatestNotice(last, kind, text, source, now)) {
         // A fresh occurrence is a live problem again, so a resolved mark from
         // the merged entry does not ride along (the key is dropped, not set).
+        // The row speaks the **newest** occurrence's words: `at` already moves
+        // to now, and a sentence that still quotes this run's addresses is the
+        // evidence this entry stands for.
         const { resolved: _closed, ...carried } = last
         void _closed
         const merged: Notice = {
           ...carried,
+          text,
           seq: noticeSeq,
           at: now,
           count: (last.count ?? 1) + 1,
@@ -1455,7 +1477,6 @@ export function createIrisStore(
         })
       },
 
-<<<<<<< HEAD
       async loadCharBooks(): Promise<void> {
         const characterId = get().view?.characterId
         if (characterId === undefined) {
@@ -1482,7 +1503,9 @@ export function createIrisStore(
           // binding as stored, which can differ from the list as asked.
           if (get().view?.characterId !== characterId) return
           set({ charBooks: { characterId, primary: answer.primary, additional: answer.additional } })
-=======
+        })
+      },
+
       async loadBackups(): Promise<void> {
         await guard(async () => {
           const { backups } = await client.call('backup.list', {})
@@ -1525,7 +1548,6 @@ export function createIrisStore(
           await client.call('backup.delete', { backupId })
           set(raise('info', translate(getLanguage(), 'backupDeleted')))
           await get().loadBackups()
->>>>>>> dev/feat-backups
         })
       },
 

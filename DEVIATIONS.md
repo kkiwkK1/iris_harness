@@ -544,3 +544,76 @@ N 份，`backups.common.numberOfBackups` 默认 50）。验收宿主：8818 独�
    先备份后清扫（现走共享存储，原因记 `cleanup`），且备份失败仍然中止清扫。
 7. **轮转下限为 1。** `backupKeep: 0` 读作 1：把保留设为零会让每次受保护
    的写入变成它本要防止的那场丢失，没有一种诚实的「保留 N」会要这个。
+
+# DEVIATIONS — dev/fix-notice-center：通知面板可见性 + 对话区中线居中
+
+分支 `dev/fix-notice-center`（基于主线 dev/iris-exploration 3cf6fed，见下第 1 条）。
+验收宿主：**8824** 独立宿主（本 worktree 后台任务启动，数据目录为本 worktree 的
+`data/`，未按进程名/端口清理任何进程）。通知面板 = 设置抽屉底部的「通知」区
+（`NoticeLog`），对话区中线 = 消息正文列中线 vs 输入框（composer 输入域）中线。
+
+## 根因（实测）
+
+1. **接口帧错误从不进通知面板。** 消息接口帧宿主（`MessageInterfaces.tsx`）的
+   `onError` 只写 `addCardReport`（卡报告列表），从不 `notify` —— 与脚本帧宿主
+   （`useCardScripts` 的 `onFailure`：报告 + 通知双通道）不同轨。主流语料的卡片把
+   生成期逻辑放在接口帧的 markup 里（FRAME-FENCED 一族 18 卡），接口帧成形之后这
+   一整类错误在通知面板上消失——「卡明明报了错、通知区空空如也」的实测根因。
+   修复：接口帧错误在保留分级报告的同时补发 `notify('error', …)`。
+2. **同文去重被逐次变化的运行地址击穿。** 脚本每次运行从新的 blob URL 求值，帧的
+   错误报告引用该地址与栈位，同一故障每次到达都是「新句子」，精确文本去重一次也
+   不合并（实测三开同一坏卡得三行）。修复：`noticeRecurrenceKey` 只把 `blob:` 引用
+   连同栈位抹平，其余逐字节比较；合并行携带最新一次的原文；首个/唯一错误不受影响。
+3. **中线偏差 19px（两档视口实测），构成与任务书 T 的 42px 分解不同。** 实测构成：
+   输入域 `width:100%` 按 content-box 解析，文本域连内边距带边框溢出 `__inner`
+   28px（中线 +14）+ 阅读列 `scrollbar-gutter: stable` 预留而 composer 无对应预留
+   （中线 +5）。任务书点名的非对称 `padding-left:46` 与消息列 46px 边栏在两侧行为
+   相同、中线相互抵消，不构成偏差。窄窗（≤880px）另有第三处：媒体查询把 composer
+   内边距清零而正文保留 34px 边栏（+17px，此前被 box-sizing 反号偏差掩盖）。
+   修复：`box-sizing: border-box` + composer 同车道预留
+   （`overflow-y:auto; scrollbar-gutter:stable; min-height:max-content`）+
+   删除窄窗清零覆盖。修后 1920×1080 / 1366×768 / 800×700 实测 **0.00px**。
+
+## 与任务书的偏离（有意为之）
+
+4. **去重身份超出「同文」字面。** 任务书要求「去重只合并同文重复」；实现把身份
+   放宽到「同文去掉逐次变化的 blob 地址」。理由：语料证明逐字节同文在三开的场景
+   下从不出现，字面同文去重对该场景等于不去重；放宽只抹地址，凡对成因说了不同
+   的话的仍是两行，首个/唯一错误绝不合并（单测三例钉住这三条边界）。
+5. **非对称 `padding-left` 保留，未按任务书建议「对称化」。** 实测证明它与消息列
+   边栏镜像、中线本就重合；真正要对称化的是车道与盒模型。若按建议直接删除该
+   padding，反而制造 23px 偏差。
+6. **composer 成为滚动容器。** 车道对齐要求 `scrollbar-gutter` 生效，而它只对滚动
+   容器生效；`min-height: max-content` 归还被没收的自动最小尺寸，短窗下不回归。
+
+## 实测发现（未改/待裁）
+
+7. **主线 HEAD（3cf6fed，T2 合并）本身带未解决冲突标记。** `store.ts`、
+   `iris-app-service` 的 `service/chats/index`、`iris-client-fake/client` 五文件
+   内含 `<<<<<<< HEAD` 标记，主线工作树原样无法构建/启动（vite build 与
+   `node apps/iris/bin.ts` 均当场失败）。本分支按「两侧都是纯新增、keep-both」
+   逐处解决并随本分支提交；**主线上的同五文件仍是坏的**，需主线侧以同一解法
+   修复（`git checkout dev/fix-notice-center -- <file>` 或等价重放）。
+8. **非相邻重复不合并不计数（设计如此，未改）。** 去重只看日志最后一行
+   （`repeatsLatestNotice`），交错到达的同一错误（A B A）各占一行，与卡报告列表
+   的 `collapseRuns`「仅相邻合并」同一裁定。三开坏卡且中间插有其他通知时面板仍会
+   长行；若要按「同一逻辑错误」全局合并属跨任务裁定。
+9. **设置抽屉「通知」区位于抽屉底部**（宿主报告之后），需要滚动才见。本次未动
+   信息架构；若验收方期望通知更靠前，属 IA 裁定。
+
+## 验收对账
+
+- 单测：`store.test.ts` 新增 3 例（blob 地址变化合并 ×3、超出地址差异不合并、
+  带地址的首个错误不被吞）+ 既有 69 例全绿；`notice-channels.test.ts`（新文件）
+  4 例源级守卫（接口帧 onError 双通道、composer 车道/盒模型/内边距镜像）。
+- 实机（headless CDP，8824，探针卡 `qa/notice-probe*.json`，脚本
+  `qa/notice-center-baseline.mjs`）：无错误时面板干净（空态文案）；坏卡一开
+  → 三条错误全数入面板且标红（含接口帧 markup 错误「this frame carries the
+  card's markup」）；同一故障连续三次 → 一行 ×3；中线偏差 1920×1080=0.00、
+  1366×768=0.00、800×700=0.00；滚动条车道 `stable` 恒为 10px，出现与否不影响
+  两中线。截图 `qa/shots-notice-center/`（gitignore，不入库）。
+- 回归：`pnpm test` 2302 通过 0 失败（5 跳过为 live 用例）；`pnpm typecheck`、
+  `apps/iris-web` typecheck 全绿。
+- 协同：未动 `wt-frame-fit` 管辖的 frame-height/消息帧几何；composer 量测逻辑
+  （`Composer.tsx`）本次无需改动，几何修正全部落在 `panels.css` 的 composer 区。
+- 未花真钱：全程未调用模型端点（探针卡不生成、不发消息）。

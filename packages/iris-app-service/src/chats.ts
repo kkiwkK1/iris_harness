@@ -161,11 +161,8 @@ export class ChatStore {
     bookFor?: (characterId: string | undefined, card: CharacterCard | undefined) => Promise<string | undefined>,
     persona?: () => string,
     globalRegex?: () => Promise<readonly RegexScript[]>,
-<<<<<<< HEAD
     charBooks?: (characterId: string) => readonly string[],
-=======
     backups?: BackupStore,
->>>>>>> dev/feat-backups
   ) {
     this.#dir = dir
     this.#library = library
@@ -176,11 +173,8 @@ export class ChatStore {
     this.#globalSelect = globalSelect
     this.#persona = persona
     this.#globalRegex = globalRegex
-<<<<<<< HEAD
     this.#charBooks = charBooks
-=======
     this.#backups = backups ?? new BackupStore(dir)
->>>>>>> dev/feat-backups
   }
 
   /**

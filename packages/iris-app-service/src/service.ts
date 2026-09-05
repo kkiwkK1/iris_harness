@@ -23,11 +23,7 @@ import { assemble, type AssembleResult, type Contribution, type HistoryEntry } f
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-<<<<<<< HEAD
-import type { ChatView, CharacterSummary, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
-=======
-import type { BackupSummary, ChatView, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
->>>>>>> dev/feat-backups
+import type { BackupSummary, ChatView, CharacterSummary, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import { providerPreset } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
@@ -343,7 +339,6 @@ export interface AppServiceOptions {
    */
   personas?: PersonaStore
   /**
-<<<<<<< HEAD
    * The profile's starred characters.
    *
    * Optional like the other stores, with the same presence-is-the-switch rule:
@@ -361,7 +356,7 @@ export interface AppServiceOptions {
    * of the book that drifts apart from the original.
    */
   worldbookBindings?: WorldbookBindingStore
-=======
+  /**
    * The profile's conversation snapshots, shared with the chat store.
    *
    * Optional like the other stores. Absent, the dangerous operations still
@@ -370,7 +365,6 @@ export interface AppServiceOptions {
    * the honest answer from a host that keeps no copies.
    */
   backups?: BackupStore
->>>>>>> dev/feat-backups
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
   /**
@@ -395,11 +389,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-<<<<<<< HEAD
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings'>>
-=======
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'backups'>>
->>>>>>> dev/feat-backups
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings' | 'backups'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
@@ -417,12 +407,9 @@ export class IrisAppService {
       sillyTavernDir?: string
       installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
       personas?: PersonaStore
-<<<<<<< HEAD
       favorites?: FavoriteStore
       worldbookBindings?: WorldbookBindingStore
-=======
       backups?: BackupStore
->>>>>>> dev/feat-backups
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -470,12 +457,9 @@ export class IrisAppService {
       ...options.presets === undefined ? {} : { presets: options.presets },
       ...options.sillyTavernDir === undefined ? {} : { sillyTavernDir: options.sillyTavernDir },
       ...options.personas === undefined ? {} : { personas: options.personas },
-<<<<<<< HEAD
       ...options.favorites === undefined ? {} : { favorites: options.favorites },
       ...options.worldbookBindings === undefined ? {} : { worldbookBindings: options.worldbookBindings },
-=======
       ...options.backups === undefined ? {} : { backups: options.backups },
->>>>>>> dev/feat-backups
     }
     // The manager's live state starts on whatever the caller assembled: a
     // stored selection is applied by the caller (the plugin) before the

@@ -237,11 +237,25 @@ export function MessageInterfaces({
            * A fault: an interface frame reporting an error is the one channel
            * here that always describes something broken. The channel is a
            * **label**, not a prefix — see `CardReport.channel`.
+           *
+           * **Both channels, the same split the script frame uses.** The graded
+           * report is the durable record; the notice is the immediate signal,
+           * and it is how the fault reaches the drawer's notice log. This used
+           * to stop at the report list — which left the whole class of
+           * interface-frame failures (and on the interface-rendering cards,
+           * that is where a card's generation-time code lives) absent from the
+           * notice panel entirely: the one panel that answers "what did this
+           * session say" stayed empty while the error was on record in a list
+           * the reader has to know to look for. The store's dedup window
+           * collapses a burst into a count.
            */
-          onError: message => actionsOf(store).addCardReport(message, {
-            grade: 'fault',
-            channel: 'interface',
-          }),
+          onError: message => {
+            actionsOf(store).addCardReport(message, {
+              grade: 'fault',
+              channel: 'interface',
+            })
+            actionsOf(store).notify('error', message)
+          },
           onBlocked: (host, directive, detail, covered) => {
             const refusal = describeRefusal(host, directive, detail, covered)
             actionsOf(store).addCardReport(refusal.text, { grade: refusal.grade })

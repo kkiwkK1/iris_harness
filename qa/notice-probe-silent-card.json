@@ -1,0 +1,24 @@
+{
+  "spec": "chara_card_v2",
+  "spec_version": "2.0",
+  "data": {
+    "name": "NoticeSilent",
+    "description": "QA probe: a card with no scripts and no interface, for switching to without raising any notice.",
+    "personality": "",
+    "scenario": "",
+    "first_mes": "A quiet card. It says nothing to the notice panel, ever.",
+    "mes_example": "",
+    "creator_notes": "dev/fix-notice-center acceptance probe (silent switch partner)",
+    "system_prompt": "",
+    "post_history_instructions": "",
+    "alternate_greetings": [],
+    "tags": ["qa-probe"],
+    "creator": "iris-qa",
+    "character_version": "1.0",
+    "extensions": {
+      "talkativeness": "0.5",
+      "fav": false,
+      "world": ""
+    }
+  }
+}

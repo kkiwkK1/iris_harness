@@ -18,3 +18,8 @@ secrets.json
 data/
 测试用卡/
 qa/results/
+
+# Headless-acceptance screenshots and probe state: evidence for a round, not
+# source. The scripts that produce them are committed.
+qa/shots-*/
+qa/*-state.json

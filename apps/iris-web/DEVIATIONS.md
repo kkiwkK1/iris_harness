@@ -1499,3 +1499,75 @@ same token. `scrollbar-gutter: stable` on the reading column now reserves a
 before, and card interfaces reading the container width see the content box,
 which already excludes the gutter.
 
+
+## 38. An interface frame's fault raises an error notice beside its graded report
+
+**Kind:** channel completion — the same event now reaches the same two channels
+the script-frame side has always used.
+
+**What changed.** `MessageInterfaces`' host passed `onError` to
+`addCardReport` alone; the fault was on record in the card panel and **silent
+everywhere else**. The script-frame host (`useCardScripts`'s `onFailure`) has
+always done both — a graded report as the record and a `notify('error', …)` as
+the immediate signal — and an interface frame's uncaught error is the same
+species of event. It now raises the notice too. This was the measured cause of
+"the card errored and the notice panel is empty": on the interface-rendering
+cards (the corpus's dominant families put the card's generation-time code in
+markup), every frame fault after the move into message frames stopped short of
+the one panel that answers "what did this session say".
+
+**What it costs.** A burst of interface faults now interrupts the notice bar
+where it used to be quiet everywhere but the scripts panel. The store's dedup
+window (§36, and the recurrence identity of §39) collapses a burst of the same
+fault into one counted row, and distinct faults were never the kind of quiet a
+reader was served by.
+
+## 39. The notice log's recurrence identity blanks per-run addresses
+
+**Kind:** dedup identity, widened no further than the noise goes.
+
+**What changed.** `repeatsLatestNotice` compared exact text. A card's scripts
+evaluate from a fresh blob URL on every run and the frame's error reports quote
+it with a stack position, so the *same* bug arrived as a different sentence
+each run and exact-text dedup collapsed nothing — measured: three re-opens of
+one faulty card read as three separate rows. The identity is now
+`noticeRecurrenceKey(text)`: `blob:` references (positions included) blanked,
+every other byte compared. The merged row carries the **newest** occurrence's
+verbatim text, matching its `at`.
+
+**What it costs.** Two failures that differ only in which run they happened in
+read as one counted row rather than two rows. Two failures that say anything
+differently about the cause are still two rows; the first and only occurrence
+of anything is still a row of its own — the blanking applies to addresses and
+nothing else.
+
+## 40. The composer shares the reading column's centre line — lane, box, and inset
+
+**Kind:** geometry parity, stated in CSS rather than measured by hand.
+
+**What changed.** Three silent offsets put the composer's midline 19px right of
+the message prose's (measured on HEAD at 1920×1080 and 1366×768): the field's
+`width: 100%` resolved as **content** width, so the textarea overflowed
+`__inner` by its own padding plus border (+14px at centre); the reading
+surface's `scrollbar-gutter: stable` centred the column in a box the composer
+did not reserve (+5px); and the narrow-window stylesheet zeroed the composer's
+gutter inset while the prose kept its marginalia track (+17px at ≤880px, until
+then masked by the first bug's opposite sign). Now: the field is
+`box-sizing: border-box`; `.iris-composer` reserves the same lane
+(`overflow-y: auto; scrollbar-gutter: stable; min-height: max-content` — the
+reservation needs a scroll container, and the min-height hands back the
+automatic minimum a scroll container loses, so a short window cannot squash
+the composer into an internal scroller); the narrow override is gone, so the
+inner inset is `var(--iris-gutter)` at every width, mirroring `.iris-msg`'s
+marginalia track. The asymmetric `padding-left` itself stays: the prose starts
+one gutter in from the column's content edge, and the field starts one gutter
+in from the composer's — the two centres coincide exactly. Measured after:
+0.00px at 1920×1080, 1366×768 and 800×700, with the lane reserved
+(`stable`) so a scrollbar's appearance moves neither centre.
+
+**What it costs.** The composer is a scroll container; its lane is reserved
+even on the empty surface, and the field is inset by the gutter on narrow
+windows where it used to run full width — under the prose, which is the
+point. The lane's width is the UA's thin scrollbar, not a token, so the
+*reserved* amount is not project-owned; the *parity* is, because both
+surfaces ask the same question of the same browser.

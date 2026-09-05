@@ -476,16 +476,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // Same rule, same reason: the global regex list is edited at runtime, and
     // each open composes from whatever it says right now.
     () => extensionSettingsStore.globalRegex(),
-<<<<<<< HEAD
     // The per-character extra bindings — upstream's `world_info.charLore`.
     // Edited at runtime like the two above, so the closure rather than a
     // captured value; a chat re-open is when a rebind reaches a conversation.
     characterId => settings.charBooks(characterId),
-=======
     // The snapshot store, shared with the service below — one retention
     // setting, one directory layout, wherever a copy is taken from.
     backups,
->>>>>>> dev/feat-backups
   )
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset

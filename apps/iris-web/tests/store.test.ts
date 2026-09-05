@@ -5,6 +5,7 @@ import {
   actionsOf,
   applyEvent,
   createIrisStore,
+  noticeRecurrenceKey,
   NOTICE_DEDUP_WINDOW_MS,
   NOTICE_LOG_LIMIT,
   repeatsLatestNotice,
@@ -1322,6 +1323,58 @@ test('identical notices inside the dedup window become one entry that counts its
   assert.equal(scope.store.getState().notice?.seq, log[0]?.seq)
   assert.equal(scope.store.getState().noticesDropped, 0)
   scope.dispose()
+})
+
+test('a repeat whose only difference is its per-run address merges into the count', () => {
+  /*
+   * **The dedup the corpus defeated.** A card's scripts evaluate from a fresh
+   * blob URL on every run, and a frame's error report quotes that URL with its
+   * stack position — so the *same* bug arrived as a different sentence each
+   * run, exact-text dedup collapsed nothing, and one recurring fault filled
+   * the panel with rows that differed only by a UUID. Three re-opens of the
+   * same card must read as one entry standing for three.
+   */
+  const scope = recordingStore()
+  const { notify } = actionsOf(scope.store)
+  notify('error', 'probe-throw: failed: uncaught failure at blob:null/aaaa-1111:3:7')
+  notify('error', 'probe-throw: failed: uncaught failure at blob:null/bbbb-2222:3:7')
+  notify('error', 'probe-throw: failed: uncaught failure at blob:null/cccc-3333:3:7')
+
+  const log = scope.store.getState().noticeLog
+  assert.equal(log.length, 1, 'the same fault with a new address is the same event')
+  assert.equal(log[0]?.count, 3)
+  // The row speaks the newest occurrence's words: `at` moved to now, and the
+  // sentence should be the evidence for *that* occurrence, not the first.
+  assert.match(log[0]?.text ?? '', /cccc-3333/)
+  scope.dispose()
+})
+
+test('a fault that differs beyond its per-run address stays its own row', () => {
+  // Normalisation is for addresses and nothing else. Two sentences that say
+  // anything different about the cause are two findings, and merging them
+  // would be the swallow the dedup exists to avoid.
+  const scope = recordingStore()
+  const { notify } = actionsOf(scope.store)
+  notify('error', 'probe-throw: failed: uncaught failure at blob:null/aaaa-1111:3:7')
+  notify('error', 'probe-refused: failed: member refused at blob:null/aaaa-1111:3:7')
+
+  assert.equal(scope.store.getState().noticeLog.length, 2)
+  assert.equal(scope.store.getState().noticeLog[0]?.count, undefined)
+  scope.dispose()
+})
+
+test('a first error with a volatile address is never swallowed by the dedup', () => {
+  // The one failure the mechanism must not have: a unique error normalized
+  // into someone else's recurrence key. The blanking only ever applies to
+  // `blob:` references; everything that makes a sentence itself is kept.
+  const scope = recordingStore()
+  const { notify } = actionsOf(scope.store)
+  notify('error', 'mvu: variable schema rejected at blob:null/aaaa-1111:9:2')
+  assert.equal(scope.store.getState().noticeLog.length, 1)
+  assert.equal(scope.store.getState().notice?.kind, 'error')
+  scope.dispose()
+
+  assert.equal(noticeRecurrenceKey('plain failure, no address'), 'plain failure, no address')
 })
 
 test('a different notice does not merge, and the pure window check holds its edges', () => {
