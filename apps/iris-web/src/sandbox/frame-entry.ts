@@ -44,50 +44,93 @@ import {
 } from './frame-height.ts'
 
 /**
- * Tell the shell the frame is usable — but not before its libraries are.
+ * Tell the shell the frame is usable.
  *
- * The shell answers `ready` by immediately posting the card body, so announcing
- * too early is a race the card loses: it would evaluate against a window where
- * `Vue` does not exist yet, and fail with a message naming the symptom rather
- * than the timing.
+ * **The handshake completes when the channel exists, not when the network
+ * settles.** Everything `ready` actually vouches for — the captured `post`
+ * channel, the member bridge, the message listener, the run token — is in place
+ * the moment `installSandbox` returns, so an **interface** frame announces right
+ * here. Waiting longer handed the handshake to the card's own decorative
+ * resources: the `load` event waits on every stylesheet a card's markup links,
+ * and the measured card that broke this had linked Google Fonts from its title
+ * screen. On a network where that fetch hangs, the frame rendered, drew its
+ * button — and was reported as "never reported ready" because the fonts had not
+ * arrived. A handshake held hostage to a font is not a handshake about the
+ * channel any more.
+ *
+ * A **script** frame still waits for `load`. Its body is handed over *on*
+ * `ready` (`runner.ts` posts the `run` messages), so the libraries it must
+ * evaluate against have to be there first — that wait buys exactly what it
+ * costs, and a script frame's head carries only Iris-controlled resources.
  *
  * A library that fails outright is reported here rather than left to surface
  * later as `X is not defined`. That substitution — cause replaced by a symptom
  * three steps downstream — is the specific confusion this frame keeps being
- * rebuilt to avoid.
+ * rebuilt to avoid. The listener is a **capture-phase** one on the document:
+ * the library tags are parsed *after* this script, so the earlier version's
+ * `querySelectorAll('script[data-iris-lib]')` ran before its targets existed
+ * and attached the reporters to nothing.
+ *
  * @param run - the run token.
  * @param post - the channel to the shell.
+ * @param interfaceFrame - whether this frame carries a card's markup.
  */
-function announceReady(run: string, post: (message: FromFrame) => void): void {
-  for (const element of document.querySelectorAll('script[data-iris-lib]')) {
-    element.addEventListener('error', () => {
+function announceReady(
+  run: string,
+  post: (message: FromFrame) => void,
+  interfaceFrame: boolean,
+): void {
+  document.addEventListener(
+    'error',
+    event => {
+      const target = event.target
+      if (!(target instanceof HTMLScriptElement)) return
+      if (!target.hasAttribute('data-iris-lib')) return
       post({
         iris: run,
         type: 'error',
-      // No script owns this: it happened outside any body.
-      scriptId: undefined,
-        message: `a preset library failed to load: ${element.getAttribute('src') ?? 'unknown'}`,
+        // No script owns this: it happened outside any body.
+        scriptId: undefined,
+        message: `a preset library failed to load: ${target.getAttribute('src') ?? 'unknown'}`,
       })
-    })
+    },
+    // Resource `error` events do not bubble; capture is the only way a document
+    // listener sees them.
+    true,
+  )
+
+  /*
+   * What this frame paid for its libraries, reported once per frame.
+   *
+   * Sent from the load settle point because `load` is the first moment every
+   * subresource has finished, so the timing entries exist. It answers a question
+   * no other instrument in this project can reach: whether the HTTP cache is
+   * partitioned per frame origin, which decides whether a 2.29 MB message
+   * preset is paid once or once per chat.
+   *
+   * A `note` rather than an `error`: the panel counts errors as failures in its
+   * heading, and a frame reporting its own cost is not a card going wrong.
+   */
+  const reportCost = (): void => {
+    const cost = describeTransferCost(libraryTimings(), shortenAssetName)
+    if (cost !== undefined) post({ iris: run, type: 'note', scriptId: undefined, message: cost })
+  }
+
+  if (interfaceFrame) {
+    // The channel is up; the handshake is done. The cost report still belongs
+    // to the settle point — the timings it reads do not exist yet.
+    post({ iris: run, type: 'ready' })
+    // `complete` means every subresource has settled, load or error. A frame
+    // that reached this line mid-parse cannot be there yet, but the branch
+    // costs nothing and keeps the two paths honest about the same event.
+    if (document.readyState === 'complete') reportCost()
+    else window.addEventListener('load', reportCost, { once: true })
+    return
   }
 
   const announce = (): void => {
     post({ iris: run, type: 'ready' })
-
-    /*
-     * What this frame paid for its libraries, reported once per frame.
-     *
-     * Sent from here because `load` is the first moment every subresource has
-     * settled, so the timing entries exist. It answers a question no other
-     * instrument in this project can reach: whether the HTTP cache is
-     * partitioned per frame origin, which decides whether a 2.29 MB message
-     * preset is paid once or once per chat.
-     *
-     * A `note` rather than an `error`: the panel counts errors as failures in
-     * its heading, and a frame reporting its own cost is not a card going wrong.
-     */
-    const cost = describeTransferCost(libraryTimings(), shortenAssetName)
-    if (cost !== undefined) post({ iris: run, type: 'note', scriptId: undefined, message: cost })
+    reportCost()
   }
 
   // `complete` means every subresource has settled, load or error. A frame with
@@ -1896,7 +1939,10 @@ try {
   reportStorage(run, post)
   reportBodySummary(run, post)
   reportHeight(run, post)
-  announceReady(run, post)
+  // Read here rather than captured earlier: the attribute is on the body the
+  // document was built with, and this is the one decision the handshake timing
+  // turns on — see `announceReady` for which side waits for what.
+  announceReady(run, post, document.body?.hasAttribute('data-iris-interface') === true)
 } catch (error: unknown) {
   // Same reasoning: an install that throws is invisible from the outside, and
   // "nothing happened" is the most expensive answer a sandbox can give.

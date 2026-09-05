@@ -772,3 +772,75 @@ data-iris-slot="user-css">` 挂载点，512 KiB 上限，开关关闭即卸载�
   受信的 `DOM.setFileInputFiles` 喂真文件；其二，折叠卡的孩子保持挂载仅是
   隐藏，断言「卡展开」必须看 `offsetParent` 而非元素存在，否则会在折叠态
   点中隐藏元素、功能通过而截图失真。
+
+---
+
+# DEVIATIONS — 任务 V：帧就绪握手（the frame never reported ready 根因修复）
+
+分支 `dev/fix-ready-handshake`（worktree `wt-ready-handshake`）。基线 d8362ef。
+
+## 根因（实测，非推断）
+
+尸变纪元标题屏的界面标记引用 Google Fonts（`fonts.googleapis.com/css2/...`），该域是
+CSP 默认放行的唯一可挂起远程资源（style-src 的字体例外）。帧内 `announceReady` 等
+`window load` 才发 ready，而 load 要等全部子资源——字体 CSS 挂起时（用
+`--host-resolver-rules` 黑洞模拟，等效断网）ready 永不发出，壳层 8 秒后报
+"从未启动：the frame never reported ready"，与用户报错逐字一致（修复前基线实测复现）。
+同一次挂起还令字体 link 之后的卡片内联脚本被 script-blocking 样式表扣住：按钮画出来
+了、`jumpToOpening11` 却未定义，点击无响应（实测 `typeof jumpToOpening11 === 'undefined'`）。
+
+## 修复（六处，均机制层）
+
+1. `frame-entry.ts`：接口帧（interface frame）的 ready 在 bootstrap 装配完成的时刻
+   发出——握手担保的正是通道（post 能力、成员桥、消息监听、token），不再等网络。
+   脚本帧保持等 load（run 必须在库就位后求值，其 head 只有 Iris 自控资源）。顺带修正
+   库失败监听：原先 querySelectorAll 在库标签解析前执行、监听挂了个空，改为 document
+   捕获相位（资源 error 不冒泡，捕获是唯一能看到的挂法）。
+2. `srcdoc.ts`：接口帧卡标记里的字体样式表 link 改写为非阻塞装载（media=print +
+   onload 换回 all，上游同款模式）——下载与渲染照旧，只是不再让任何脚本、
+   DOMContentLoaded、load 等它。范围收窄在 CSP 默认放行的那个字体域（`FONT_CSS_ORIGIN`，
+   与 framePolicy 同一常量，两处不漂移）；被策略拒绝的样式表本来快速失败，授权放行的
+   与同域的不动。带 `media` 的 link 视为作者已有决定，不动。`@import` 进卡片内联
+   style 的路径是记录在案的缺口（非元素创建的子样式表；实测语料只出现在非标题屏）。
+3. `message-frames.ts` + `MessageInterfaces.tsx`：接口帧接上 `onBootstrapError`——
+   bootstrap 抛出时即时进入 never-started 并携带帧自己的原话，不再等 8 秒后由超时给
+   出猜因（"bootstrap did not run, or it was torn down"）。同步入报告清单
+   （channel: interface）。
+4. 按钮通道补全（验收要求"按钮功能生效"）：`tavern-helper.ts` 新增 `setChatMessages`
+   成员——swipe_id 翻译到 swipeTo 臂、message 翻译到文本改写臂（与 journal 回放同一
+   wire 调用）、其余字段具名上报不静默丢弃、message+swipe_id 同 patch 拒绝而非择一
+   应用。
+5. `frame.ts`：接口帧在 context 处理中把整个 TavernHelper 表面发布为裸全局。上游本就
+   把该表面注入每个消息 iframe，裸拼写与 `parent.TavernHelper` 是同一对象——发布的是
+   拼写，不是第二表面。修复前裸 `setChatMessages` 在卡自身 try/catch 里变成 ReferenceError，
+   按钮点了等于没点。
+6. `identity.ts`：`setChatMessages` 分类为 shared（按楼层序号寻址，与旁边的
+   getChatMessages/swipeTo 同理）。
+
+## 预算
+
+bootstrap 增至 47,168 B，`FRAME_OVERHEAD_BYTES` 47→48 KiB（同一改动内更新），gate 20
+对 42.7 的退化点仍成立（20 < 21.3），表格已补行，相邻注释数字已同步。
+
+## 与任务书的偏离
+
+- **政经博弈卡缺失**：任务要求回归"政经博弈"，本地（测试用卡目录与 ST 装置）无此卡
+  文件。以其同族（打开即 ready 的状态栏卡）替代：哈人冰恋、神隐挑战之外加绿茵好莱坞
+  （同样引用 fonts.googleapis 的界面卡，正好同测字体路径）。
+- **setChatMessages 成员超出"就绪握手"字面范围**：无它则按钮点击后卡自身 try/catch
+  吞掉 ReferenceError，验收的"按钮功能生效"不成立。属按钮→postMessage 通道链路的一
+  部分，已实现并带测试；若另有成员面任务在途，注意勿重复建设。
+- 挂起模拟用 Chrome `--host-resolver-rules` 把字体域映射到不可达地址（仅本验证脚本
+  的无头 Chrome 进程内生效），未改任何系统配置；基线复现与修复验证均在此条件下完成。
+
+## 验收对账
+
+- 修复前基线（dist-baseline）+ 字体挂起：逐字复现用户报错；字体正常时无错（证明挂起
+  是判别条件）。
+- 修复后 + 字体挂起：尸变纪元无 never-started、点击 SYSTEM START 成功、楼 0 由
+  &lt;开局&gt; 切至开场白（chat.export 实测 mes 变化）；哈人冰恋/神隐挑战/绿茵好莱坞
+  三卡打开均无 never-started。
+- 连续开关聊天 10 轮 stress：0 例 never-started，终态干净。
+- 无挂起真实网络复跑：全 PASS。
+- `npm test` 2,286 例全绿；根 typecheck、iris-web typecheck 全绿（iris-web 1,014 例，
+  含就绪握手时序、竞态回归、setChatMessages 翻译与接口帧裸发布新用例）。

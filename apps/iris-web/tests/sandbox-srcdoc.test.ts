@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import { readFileSync } from 'node:fs'
 
-import { FA_SENTINEL, buildSrcdoc, framePolicy } from '../src/sandbox/srcdoc.ts'
+import { FA_SENTINEL, buildSrcdoc, framePolicy, unblockFontStylesheets } from '../src/sandbox/srcdoc.ts'
 
 /** Iris's own origin, as the runner supplies it. */
 const SELF = 'http://127.0.0.1:5173'
@@ -522,4 +522,72 @@ test('both frame kinds give a nested-frame stand-in an iframe’s default size',
       `the ${body === undefined ? 'script' : 'interface'} frame's reset has no stand-in size`,
     )
   }
+})
+
+test('a card’s font stylesheet loads without blocking anything', () => {
+  /*
+   * A pending stylesheet blocks the execution of every classic script parsed
+   * after it and holds the `load` event. The one origin this frame admits by
+   * default is fonts.googleapis.com — admitted *because* it executes nothing —
+   * and the measured card defeated that premise with it: its title screen
+   * linked Google Fonts, and on a network where the fetch hung, the interface
+   * rendered, the button drew, and clicking it did nothing, because the
+   * `<script>` defining the button's handler was still waiting for a font.
+   *
+   * The swap is upstream's own load pattern: `media="print"` downloads the
+   * sheet without matching the screen (joining neither the render-blocking nor
+   * the script-blocking set), and `onload` applies it on arrival. The download
+   * and the rendering still happen — only the waiting is gone.
+   */
+  const body =
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    + '<link href="https://fonts.googleapis.com/css2?family=Orbitron&display=swap" rel="stylesheet">'
+    + '<button onclick="go()">SYSTEM_START</button><script>function go() {}</script>'
+  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF, body })
+
+  const link = /<link[^>]*Orbitron[^>]*>/.exec(doc)?.[0]
+  assert.ok(link, 'the font link was dropped outright')
+  assert.match(link ?? '', /media="print"/, 'the font stylesheet still blocks the frame')
+  assert.match(link ?? '', /onload="this\.media='all'"/, 'the font stylesheet would never apply')
+  // The preconnect links name a font host too, but connect nothing: leave them.
+  assert.doesNotMatch(doc, /preconnect[^>]*media=/, 'the transform reached a link it must not')
+})
+
+test('a font stylesheet the author already scoped is left as written', () => {
+  // `media` present means the author already decided when it applies; adding a
+  // second opinion would be exactly the quieter, second decision this file
+  // exists to prevent.
+  const body = '<link href="https://fonts.googleapis.com/css2?family=Noto" rel="stylesheet" media="screen and (min-width: 400px)">'
+  assert.equal(unblockFontStylesheets(body), body)
+})
+
+test('a stylesheet that is not the default-admitted font origin is untouched', () => {
+  /*
+   * The scope is the CSP's own premise. A stylesheet the policy refuses fails
+   * fast and blocks nothing; one a network grant admitted is the user's
+   * decision and keeps upstream's semantics; the same-origin sentinel is
+   * deterministic. Only the origin admitted *because it executes nothing*
+   * gets the non-blocking load.
+   */
+  const body =
+    `<link rel="stylesheet" href="${SELF}/sandbox/fontawesome.min.css">`
+    + '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css">'
+    + '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter&display=swap">'
+  const out = unblockFontStylesheets(body)
+
+  assert.ok(out.includes(`${SELF}/sandbox/fontawesome.min.css">`), 'the sentinel was rewritten')
+  assert.ok(out.includes('remixicon.css">'), 'a refused stylesheet was rewritten')
+  assert.match(out, /Inter[^>]*media="print"/, 'the font origin was not unblocked')
+})
+
+test('the unblocking is applied where the markup enters the document', () => {
+  // Asserted through `buildSrcdoc`, so the transform cannot drift away from the
+  // assembly the way a helper nobody calls would.
+  const doc = buildSrcdoc('tok', '', {
+    networkGranted: false,
+    libraries: [],
+    selfOrigin: SELF,
+    body: '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">',
+  })
+  assert.match(doc, /Inter[^>]*media="print"/)
 })

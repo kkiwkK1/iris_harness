@@ -84,7 +84,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
  */
-export const FRAME_OVERHEAD_BYTES = 47 * 1024
+export const FRAME_OVERHEAD_BYTES = 48 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -100,12 +100,12 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 49 frames the
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 43 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
- * 20 leaves about 1.2 MiB for content (overhead ≈ 820 KiB, 39%), and 20 live
+ * 20 leaves about 1.1 MiB for content (overhead ≈ 940 KiB, 46%), and 20 live
  * panels on one screen is already past any reading scenario. It is a trade-off
  * point rather than a threshold — moving it means revisiting the two measured
  * values above, not just this line.
@@ -129,6 +129,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * | 45 KiB | 45.5 | 22.8 | 20 | held |
  * | 46 KiB | 44.5 | 22.3 | 20 | held |
  * | 47 KiB | 43.6 | 21.8 | 20 | held |
+ * | 48 KiB | 42.7 | 21.3 | 20 | held |
  *
  * Both times the reasonable-looking response was to raise the constant above and
  * treat the ratio as incidental; both times the invariant said otherwise, and

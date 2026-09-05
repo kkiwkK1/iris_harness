@@ -52,7 +52,7 @@ import { translate } from '../app/i18n/strings.ts'
 export type InterfacePhase =
   /** Claimed, no frame yet. */
   | 'claimed'
-  /** The frame answered `ready`; its markup has parsed. */
+  /** The frame answered `ready`; the channel to it is up. */
   | 'live'
   /** The frame never became ready. */
   | 'never-started'
@@ -153,6 +153,17 @@ export interface MessageFramesEnv {
     floor: number
     instance: number
     onReady: () => void
+    /**
+     * The frame's bootstrap died before it could speak.
+     *
+     * A bootstrap that throws reports `bootstrap-error` and then has nothing
+     * left to be ready **with** — so without this, the only answer the
+     * controller could give was the timeout's generic guess, eight seconds of
+     * silence after the real reason had already arrived and been dropped. The
+     * message is the frame's own words for what killed it; it becomes the
+     * `never-started` detail verbatim.
+     */
+    onBootstrapError: (message: string) => void
   }) => StartedInterface
   /**
    * Put the frame into the document.
@@ -271,6 +282,7 @@ export function runMessageInterfaces(
       floor,
       instance,
       onReady: () => move(instance, { phase: 'live' }),
+      onBootstrapError: message => move(instance, { phase: 'never-started', detail: message }),
     })
     running.push(started)
 

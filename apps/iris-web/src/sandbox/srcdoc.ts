@@ -69,13 +69,25 @@ const NESTED_FRAME_RESET =
 
 export const FA_SENTINEL = '/sandbox/fontawesome.min.css'
 
+/**
+ * The font-CSS origin admitted by default, and the one the interface body's
+ * own font links are unblocked against.
+ *
+ * Shared between `framePolicy` and `unblockFontStylesheets` so the two cannot
+ * drift: the policy admits exactly this origin because "a stylesheet or a font
+ * file executes nothing", and the transform exists because a stylesheet whose
+ * *absence* blocks every script in the frame defeats that premise. One fact,
+ * one spelling.
+ */
+export const FONT_CSS_ORIGIN = 'https://fonts.googleapis.com'
+
 export function framePolicy(networkGranted: boolean, selfOrigin: string): string {
   const remotes = REMOTE_ALLOWLIST.map(host => `https://${host}`).join(' ')
 
   // Fonts are the one default widening: high coverage across real cards, and a
   // stylesheet or a font file executes nothing. `fonts.googleapis.com` serves the
   // CSS, `fonts.gstatic.com` the faces — both are needed or neither works.
-  const fontCss = 'https://fonts.googleapis.com'
+  const fontCss = FONT_CSS_ORIGIN
   const fontFiles = 'https://fonts.gstatic.com'
 
   /*
@@ -161,6 +173,79 @@ function attribute(value: string): string {
     .join('&gt;')
     .split('"')
     .join('&quot;')
+}
+
+/**
+ * Whether a `<link>` tag's attributes name a default-admitted font stylesheet.
+ *
+ * `rel` is read case-insensitively and may be a list (`rel="preload stylesheet"`
+ * is not a thing, but a defensive containment check costs nothing); `href` must
+ * resolve to the font-CSS origin `framePolicy` admits by default. A link the
+ * policy refuses anyway fails fast and blocks nothing, so it is not this
+ * function's business.
+ */
+function isFontStylesheetLink(tag: string): boolean {
+  const attributes = linkAttributes(tag)
+  const rel = attributes.get('rel')?.toLowerCase() ?? ''
+  if (!rel.split(/\s+/).includes('stylesheet')) return false
+  const href = attributes.get('href')
+  if (href === undefined) return false
+  try {
+    return new URL(href, 'https://card.invalid/').host === new URL(FONT_CSS_ORIGIN).host
+  } catch {
+    return false
+  }
+}
+
+/** A tag's attributes, name to value, as written (no case folding of values). */
+function linkAttributes(tag: string): Map<string, string> {
+  const attributes = new Map<string, string>()
+  const pattern = /([a-zA-Z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g
+  for (const match of tag.matchAll(pattern)) {
+    const value = match[2] ?? match[3] ?? match[4]
+    if (value !== undefined) attributes.set(match[1]?.toLowerCase() ?? '', value)
+  }
+  return attributes
+}
+
+/**
+ * Take a card interface's font stylesheets out of the frame's blocking sets —
+ * **download and apply them still, but let nothing wait on the network.**
+ *
+ * The mechanism is upstream's own load-swap pattern: `media="print"` makes the
+ * link download without matching the screen (so it joins neither the
+ * render-blocking nor the **script-blocking** set), and the `onload` swap makes
+ * it apply once it has arrived. The CSP already admits exactly this origin by
+ * default on the reasoning that a font stylesheet "executes nothing" — but a
+ * pending stylesheet blocks the execution of every classic script parsed after
+ * it, and a card whose interface links Google Fonts on a network where that
+ * fetch hangs had its own button handler held hostage behind a font: the
+ * interface rendered, the button drew, and clicking it did nothing, because the
+ * `<script>` defining its handler was still waiting for the CSS. That is the
+ * premise defeated, and this is the completion of the same reasoning: a
+ * resource admitted *because* it executes nothing must not be able to stop
+ * everything that does.
+ *
+ * Scoped deliberately. A stylesheet the CSP refuses fails fast and blocks
+ * nothing; a stylesheet the user's network grant admitted is a real decision
+ * and keeps upstream's blocking semantics; same-origin links are Iris's own and
+ * deterministic. A link that already carries `media` is left alone — its author
+ * already decided when it applies. `@import` inside a card's own `<style>` is a
+ * recorded gap: the child sheet does not join the element-created blocking set,
+ * but it can hold the load event, and rewriting into a stylesheet's text is a
+ * deeper surgery than this deserves until a card actually measures badly there.
+ * @param body - the card's markup, as the author wrote it.
+ * @returns the markup with font stylesheet links loading non-blocking.
+ */
+export function unblockFontStylesheets(body: string): string {
+  return body.replace(/<link\b[^>]*>/gi, tag => {
+    if (!isFontStylesheetLink(tag)) return tag
+    const attributes = linkAttributes(tag)
+    if (attributes.has('media')) return tag
+    // Before the closing `>`, past a possible solidus of a self-closing tag.
+    const at = tag.length - (tag.endsWith('/>') ? 2 : 1)
+    return `${tag.slice(0, at)} media="print" onload="this.media='all'"${tag.slice(at)}`
+  })
 }
 
 /**
@@ -432,8 +517,14 @@ export function buildSrcdoc(
      * the markup because a card's inline script calls `$()` on its first line,
      * and an external `<script src>` without `defer` blocks parsing until it has
      * run, which is what makes that ordering hold.
+     *
+     * The font stylesheets in the markup are rewritten on the way in — the same
+     * place upstream rewrites what a card means (`vh` units, bundle imports) —
+     * so a decorative font can never hold the interface's own scripts, and with
+     * them its buttons, hostage to the network. See
+     * `unblockFontStylesheets` for the reasoning and the scope.
      */
-    body === undefined ? '' : body,
+    body === undefined ? '' : unblockFontStylesheets(body),
     '</body></html>',
   ].join('')
 }
