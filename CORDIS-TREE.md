@@ -63,6 +63,7 @@
 | `SettingsStore`（settings.json） | 全局设置：当前激活的预设、世界书全局勾选、11 个扫描旋钮… | 设置抽屉里改的东西 |
 | `PresetStore`（presets/*.json） | **预设库**：你导入/保存的每个预设一个文件 | 预设面板的列表 |
 | persona store（personas.json） | **用户人格**：多个人设、当前激活的是谁 | 设置里的 Persona 区 |
+| favorites store（favorites.json） | **角色收藏星标**：档案级，不写进卡 | 角色库行的 ★ |
 | connections store（connections.json） | **连接配置档**：端点、模型、API key | 连接面板填的 key 和"保存这个连接" |
 | `ExtensionSettingsStore`（extension-settings.json） | 扩展设置：全局正则、变量 | 正则面板 |
 | `ChatStore`（chats/*.jsonl） | **所有对话**——格式和你 ST 的一模一样 | 侧栏的每个会话 |
@@ -75,7 +76,7 @@
 | 域 | 菜名举例 | 谁实现的 |
 | --- | --- | --- |
 | chat.* | 发消息、继续、代我发言、重新生成、搜索、导入/导出 | `app` 插件 + `@iris/turn` + `@iris/chat` |
-| character.* | 列表、导入、删除（复制/重命名/导出**进行中**，见 `dev/feat-character-mgmt` 分支，未合入） | `app` + `@iris/character` |
+| character.* | 列表、导入、删除、复制、重命名、导出（PNG/JSON）、标签、收藏 | `app` + `@iris/character` |
 | preset.* | 列表、切换、保存、导入文件、提示词管理器 | `app` + `@iris/preset` |
 | persona.* | 人格的增删改查 | `app` 的 persona store |
 | worldbook.* | 世界书七件套 + 聊天级书 + 扫描设置 | `app` + `@iris/lorebook` |

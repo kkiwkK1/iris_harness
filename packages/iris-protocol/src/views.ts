@@ -123,6 +123,16 @@ export interface CharacterSummary {
   tags: string[]
   creator?: string
   /**
+   * The card file's last modification, Unix epoch milliseconds.
+   *
+   * A rename or a tag edit touches the file, so this is "when the character
+   * last changed" and not "when it arrived" — which is what a sort by
+   * recency has to mean to match the user's expectation of it.
+   */
+  updatedAt?: number
+  /** Whether the profile has starred this character. Absent means not starred. */
+  favorite?: boolean
+  /**
    * The card's own data, carried **only for the character being played**.
    *
    * Upstream's `characters[this_chid]` is a whole card, and a card script reads

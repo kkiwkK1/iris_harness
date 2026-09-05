@@ -33,6 +33,7 @@ import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import { IrisAppService } from './service.ts'
 import { ConnectionStore, routeOf } from './connections.ts'
 import { PersonaStore } from './persona.ts'
+import { FavoriteStore } from './favorites.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
 import { PresetStore } from './presets.ts'
@@ -58,6 +59,7 @@ export {
 } from './context.ts'
 export { ChatEntry, lineTurns, metadataBackend, readMeta, type IrisChatMeta } from './entry.ts'
 export { AppError, busy, invalid, notFound } from './errors.ts'
+export { FavoriteStore } from './favorites.ts'
 export { CharacterLibrary, type CardFileRef } from './library.ts'
 export {
   DEFAULT_PROFILE,
@@ -459,6 +461,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // The user's personas — who `{{user}}` is. Its own file, like the
   // connections beside it, for the same owner-separation reason.
   const personas = new PersonaStore(paths.personas)
+  // The characters this profile has starred. Profile-level rather than the
+  // card's `fav`, on the standing rule that runtime state stays out of shared
+  // card files — an exported card carries no trace of the stars it earned here.
+  const favorites = new FavoriteStore(paths.favorites)
   // Runtime adapter installs, one per provider route this plugin has claimed.
   //
   // `connection.activate` and boot-time restoration both come through here: a
@@ -555,6 +561,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     worldbooks,
     connections,
     personas,
+    favorites,
+    worldbookBindings,
     installConnection,
     scriptVariables,
     preset: storedPreset ?? await loadPreset(config.presetPath),
@@ -632,6 +640,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('character.list', handlers['character.list']),
       ctx.irisRpc.register('character.import', handlers['character.import']),
       ctx.irisRpc.register('character.delete', handlers['character.delete']),
+      ctx.irisRpc.register('character.duplicate', handlers['character.duplicate']),
+      ctx.irisRpc.register('character.rename', handlers['character.rename']),
+      ctx.irisRpc.register('character.export', handlers['character.export']),
+      ctx.irisRpc.register('character.setTags', handlers['character.setTags']),
+      ctx.irisRpc.register('character.favorite', handlers['character.favorite']),
       ctx.irisRpc.register('settings.get', handlers['settings.get']),
       ctx.irisRpc.register('settings.set', handlers['settings.set']),
       ctx.irisRpc.register('persona.list', handlers['persona.list']),

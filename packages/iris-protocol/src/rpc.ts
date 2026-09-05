@@ -460,6 +460,56 @@ export const requestSchemas = {
   }),
   'character.delete': z.object({ characterId: z.string().min(1) }),
 
+  /**
+   * Manager operations on one card in the library.
+   *
+   * **Rename is in-place.** Upstream's `/api/characters/rename` writes the new
+   * name into the card *and* moves the file, because upstream's ids are avatar
+   * filenames and its chats live in per-character folders. Iris's ids are
+   * load-bearing far beyond the filename — the worldbook binding table, every
+   * chat header, the script policy and the favorites are keyed by them — so
+   * the display name changes and the id does not. The binding is untouched
+   * either way: `extensions.world` is a book *name*, used verbatim, and never
+   * derived from the character's (see `@iris/app-service/worldbooks`).
+   *
+   * **Duplicate copies the file bytes verbatim** — upstream's `copyFileSync` —
+   * under a fresh id minted the way imports mint them. Chats are not copied.
+   * The card's binding row is copied with it, so the duplicate resolves to the
+   * *same* named book its source binds, which is exactly what sharing one
+   * `extensions.world` name means upstream; minting the duplicate a second
+   * book of its own would be a divergence a user could only discover as two
+   * world infos that drift.
+   *
+   * **Export strips the private fields upstream strips** (`unsetPrivateFields`:
+   * `fav` in both spellings, and the last-open-chat pointer `chat`) and
+   * otherwise sends the card as stored — a PNG goes out as a PNG with its card
+   * chunks rewritten in place, a `.json` card as pretty-printed JSON.
+   */
+  'character.duplicate': z.object({ characterId: z.string().min(1) }),
+  'character.rename': z.object({
+    characterId: z.string().min(1),
+    /** The new display name, verbatim. Empty is refused. */
+    name: z.string().min(1).max(255),
+  }),
+  'character.export': z.object({
+    characterId: z.string().min(1),
+    format: z.enum(['png', 'json']),
+  }),
+  /** Replace the card's whole tag list — the add/remove/edit of a tag editor. */
+  'character.setTags': z.object({
+    characterId: z.string().min(1),
+    tags: z.array(z.string().min(1).max(120)).max(100),
+  }),
+  /**
+   * Star or unstar a character. **Profile-level, deliberately not the card's
+   * `fav`**: a star is this user's reading preference, and Iris's standing rule
+   * is that runtime state does not go into shared card files.
+   */
+  'character.favorite': z.object({
+    characterId: z.string().min(1),
+    favorite: z.boolean(),
+  }),
+
   'settings.get': z.object({ chatId: z.string().min(1).optional() }),
   /**
    * A partial patch, with three cases the two halves must read alike:
@@ -1352,6 +1402,13 @@ export interface RpcResponseMap {
   'character.list': { characters: CharacterSummary[] }
   'character.import': { character: CharacterSummary }
   'character.delete': Record<string, never>
+  'character.duplicate': { character: CharacterSummary }
+  'character.rename': { character: CharacterSummary }
+  /** The card's bytes as base64, named for the download a browser saves. */
+  'character.export': { filename: string, content: string }
+  'character.setTags': { character: CharacterSummary }
+  /** The star's new state, echoed so a caller need not diff the list. */
+  'character.favorite': { characterId: string, favorite: boolean }
 
   'settings.get': { settings: GenerationSettings }
   'settings.set': { settings: GenerationSettings }

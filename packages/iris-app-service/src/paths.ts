@@ -210,6 +210,8 @@ export interface ProfilePaths {
    * `settings.json`; the split is Iris's, the semantics are upstream's.
    */
   personas: string
+  /** Which characters this profile has starred, by character id. */
+  favorites: string
 }
 
 /**
@@ -248,5 +250,6 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     connections: join(root, 'connections.json'),
     presets: join(root, 'presets'),
     personas: join(root, 'personas.json'),
+    favorites: join(root, 'favorites.json'),
   }
 }

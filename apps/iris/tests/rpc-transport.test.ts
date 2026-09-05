@@ -223,6 +223,14 @@ const PROBES: Record<string, unknown> = {
   'character.list': {},
   'character.import': { filename: 'x.json', content: 'e30=' },
   'character.delete': { characterId: 'no-such-card' },
+  // The manager arms name a card that is not in the library: the not-found
+  // answer proves the handler ran, the same reachability verdict the other
+  // character probes answer.
+  'character.duplicate': { characterId: 'no-such-card' },
+  'character.rename': { characterId: 'no-such-card', name: 'probe' },
+  'character.export': { characterId: 'no-such-card', format: 'json' },
+  'character.setTags': { characterId: 'no-such-card', tags: ['probe'] },
+  'character.favorite': { characterId: 'no-such-card', favorite: true },
   'settings.get': {},
   'settings.set': { settings: {} },
   // Preset arms answer from a host whose library is empty or absent: a

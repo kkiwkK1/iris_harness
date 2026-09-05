@@ -515,6 +515,16 @@ export interface IrisActions {
   /** Download one conversation as SillyTavern JSONL, named after its id. */
   exportChat(chatId: string): Promise<void>
   deleteCharacter(characterId: string): Promise<void>
+  /** Copy a character under a fresh id; its chats are not copied. */
+  duplicateCharacter(characterId: string): Promise<void>
+  /** Change a character's display name on its card. The id does not move. */
+  renameCharacter(characterId: string, name: string): Promise<void>
+  /** Replace a character's whole tag list on its card. */
+  setCharacterTags(characterId: string, tags: readonly string[]): Promise<void>
+  /** Star or unstar a character — profile-level, never written into the card. */
+  favoriteCharacter(characterId: string, favorite: boolean): Promise<void>
+  /** Download a character card as PNG or JSON, the export the host names. */
+  exportCharacter(characterId: string, format: 'png' | 'json'): Promise<void>
   patchSettings(patch: Record<string, unknown>): Promise<void>
   loadScripts(characterId: string): Promise<void>
   setScriptEnabled(scriptId: string, enabled: boolean): Promise<void>
@@ -1226,6 +1236,111 @@ export function createIrisStore(
                 }
               : {}),
           })
+        })
+      },
+
+      /**
+       * Copy a character under a fresh id.
+       *
+       * The host does the copying and names the copy; the list re-read is this
+       * action's own answer, so the new row is there even without an event
+       * socket. The copy opens nothing and copies no chats — it is a card in a
+       * library, not a conversation.
+       * @param characterId - the character to copy.
+       */
+      async duplicateCharacter(characterId: string): Promise<void> {
+        await guard(async () => {
+          const { character } = await client.call('character.duplicate', { characterId })
+          const { characters } = await client.call('character.list', {})
+          set({ characters, ...raise('info', translate(getLanguage(), 'characterDuplicated', { name: character.name })) })
+        })
+      },
+
+      /**
+       * Change a character's display name.
+       *
+       * The name goes onto the card; the id stays, and with it every binding,
+       * chat and star keyed by it — which is exactly why the list is re-read
+       * here: the row's name changed without its identity moving.
+       * @param characterId - the character to rename.
+       * @param name - the new name, verbatim.
+       */
+      async renameCharacter(characterId: string, name: string): Promise<void> {
+        await guard(async () => {
+          await client.call('character.rename', { characterId, name })
+          const { characters } = await client.call('character.list', {})
+          set({ characters, ...raise('info', translate(getLanguage(), 'characterRenamed', { name })) })
+        })
+      },
+
+      /**
+       * Replace a character's whole tag list.
+       *
+       * One call, not add/remove/edit calls: the editor edits the list, and the
+       * card is too small a document for the traffic of a tag at a time.
+       * @param characterId - the character to edit.
+       * @param tags - the complete new list, in order.
+       */
+      async setCharacterTags(characterId: string, tags: readonly string[]): Promise<void> {
+        await guard(async () => {
+          await client.call('character.setTags', { characterId, tags: [...tags] })
+          const { characters } = await client.call('character.list', {})
+          set({ characters })
+        })
+      },
+
+      /**
+       * Star or unstar a character.
+       *
+       * Optimistic locally, then confirmed from the host's own echo: the star
+       * is one boolean on one row, and a round trip before the pixel moves is
+       * latency a list this size can feel. A host without the store refuses —
+       * and the refusal rolls the row back, because a lit star over an error
+       * notice is the one answer this control must never give.
+       * @param characterId - the character to change.
+       * @param favorite - the star's new state.
+       */
+      async favoriteCharacter(characterId: string, favorite: boolean): Promise<void> {
+        const before = get().characters
+        set(state => ({
+          characters: state.characters.map(character =>
+            character.characterId === characterId ? { ...character, favorite } : character),
+        }))
+        const done = await guard(async () => {
+          const answer = await client.call('character.favorite', { characterId, favorite })
+          if (answer.favorite !== favorite) {
+            const { characters } = await client.call('character.list', {})
+            set({ characters })
+          }
+          return answer
+        })
+        // `guard` swallows the refusal and answers undefined; the pixel goes
+        // back to where it was, and the notice says why.
+        if (done === undefined) set({ characters: before })
+      },
+
+      /**
+       * Download a character card as a file another front-end can read.
+       *
+       * The bytes cross as base64 because that is how `character.import` takes
+       * them; a PNG is binary, so they are decoded back before the blob is
+       * offered to the browser. Host-side read, browser-side save — the
+       * `exportChat` shape.
+       * @param characterId - the character to take out.
+       * @param format - the file shape to export as.
+       */
+      async exportCharacter(characterId: string, format: 'png' | 'json'): Promise<void> {
+        await guard(async () => {
+          const { filename, content } = await client.call('character.export', { characterId, format })
+          const type = format === 'png' ? 'image/png' : 'application/json'
+          const bytes = Uint8Array.from(atob(content), ch => ch.charCodeAt(0))
+          const url = URL.createObjectURL(new Blob([bytes], { type }))
+          const link = document.createElement('a')
+          link.href = url
+          link.download = filename
+          link.click()
+          URL.revokeObjectURL(url)
+          get().notify('info', translate(getLanguage(), 'characterExported', { name: filename }))
         })
       },
 

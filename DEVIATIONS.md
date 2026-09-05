@@ -372,3 +372,77 @@ headless Chrome/CDP，1920×1080 与 2400×1200 两档 + 1280×800 窄档，
    本任务只把它们的分区改挂折叠卡。新暴露的宿主设置键共三个（trimSentences /
    continuePostfix / squashSystemMessages），全部有真实消费者与往返测试；文档
    （STRINGS.md）只登记了实际暴露的键。
+
+# DEVIATIONS — 任务 P：角色管理操作（C15 + C16）
+
+分支 `dev/feat-character-mgmt`。对照装置：`E:/sillyTavern/SillyTavern`
+（`src/endpoints/characters.js` 的 `/rename`、`/duplicate`、`/export` 三个端点，
+逐行读过才动手）。机制层照上游真值，形状差异逐条记录如下。
+
+## 重命名（character.rename）
+
+1. **改名不动 id，也不动文件名。** 上游 `/rename` 把新名字写进卡片的**同时**
+   重命名头像文件、迁移 chats 目录——因为上游的 id 就是文件名，聊天按角色分
+   目录存。Iris 的 id 承重远超文件名：世界书物化绑定表（`worldbook-bindings.json`
+   按 characterId 键控）、每个聊天头、脚本策略、卡存储归属（新的收藏也是）都
+   挂在它上面，挪 id 意味着一次性重写这五处且没有一处是原子的。故本侧只改
+   `data.name` 与 V1 镜像 `name`（照抄上游 `_.set` 双写），id 与文件名原地不动。
+   验收「重命名不断绑定」因此在结构上成立而非靠迁移补丁。
+2. **绑定名（`extensions.world`）一字不动。** `worldbooks.ts` 的既裁定：绑定是
+   **书名**，verbatim 使用（13/18 在 `toId` 下会变形），从不从角色名派生——上游
+   改名同样不碰它。实测卡（哈人冰恋世界，绑定 `哈人冰恋世界v2.0`，107 条内嵌书）
+   改名后 `worldbook.charNames` 仍返回原绑定、书文件仍是那一个、107 条目不变。
+3. **写入是外科手术式的，不是重新编码。** 上游导出走 `mutateJsonString` 只改
+   tEXt 里的 JSON；重命名/标签沿用同一机制（新增 `@iris/character` 的
+   `mutateCardPng`：chara 与 ccv3 两个卡块都改，图的像素与其他块逐字节保留）。
+   重新编码虽然能过测，但会让一次改名顺手重排卡里它不认识的字段——那是带观点
+   的改名。`.json` 卡同理：原地改 JSON、其余键逐键保留（`create_date`、
+   `x_custom` 等有测试钉住），紧缩写出与上游写卡的格式一致。
+4. **纯图片（JPEG/无卡 PNG）改名拒绝** `unsupported`，而不是静默成功——名字无处
+   可写，谎报成功会让列表继续显示旧名。
+
+## 复制（character.duplicate）
+
+5. **逐字节复制（`copyFileSync` 语义），不重编码、不改任何字段。** 上游
+   `/duplicate` 就是这一行。聊天不复制（任务书明说）。新 id 从**源 id** 经
+   `toId` 归一（顺带限长）后按既有 `-2` 约定递进，而不是从显示名派生——文件
+   才是身份，改名后副本 id 不漂移。
+6. **副本复制绑定表行，与源共享同一本物化书。** 上游副本逐字节携带同一个
+   `extensions.world` 名 → 两张卡绑**同一本**书。Iris 的解析走绑定表（按
+   characterId 键控），若不复制行，副本首次开聊会把内嵌书再物化成
+   `哈人冰恋世界v2.0 (2)`——上游共享一本书的语义在本侧悄悄变成两本各自漂移的
+   书。实测：复制后 worlds 目录仍只有一个文件，副本开新聊天成功。
+
+## 导出（character.export）
+
+7. **PNG 导出逐块外科手术 + 上游 `unsetPrivateFields`（`characters.js:498`）**：
+   `fav` 两种拼写清零、顶层 `chat` 指针删除，其余逐字段保留；`.json` 卡四空格
+   缩进输出（对齐上游 JSON 臂）。Iris 自己从不写这两个字段，但从 ST 导入的卡
+   可能带着——照上游清掉，因为那是运行态，不该跟着卡走到别人的安装里。
+8. **JSON 导出不做 getCharaCardV2 升格。** 上游 JSON 臂先把卡转成规范 V2；本侧
+   导出**存储形状**——V3 卡出去还是 V3，未知字段原样随行。升格会替用户的卡做
+   一次单向迁移，导出没有这个授权。重导入逐字段等价有实测（8812 实宿 +
+   character-ops 测试组）。
+9. **格式与文件不符的导出拒绝**：`.json` 卡导 PNG `unsupported`（没有像素可写
+   块）；纯图片导出 `unsupported`（没有卡可导）。上游对应情形是 500/400，本侧
+   给出点名原因的 refusal。
+
+## 收藏（character.favorite）与档案级存储
+
+10. **星标不写卡，与上游 `fav` 刻意分道。** 上游把收藏写进 `data.extensions.fav`
+    随卡分发，所以导出端点才需要 `unsetPrivateFields` 把它再剥掉。本侧按「运行
+    态不进共享卡文件」的既裁定落在档案级 `favorites.json`（与 personas/
+    connections 同一套 owner 分离理由），键控 characterId；删卡即遗忘（id 复用
+    不继承，与脚本策略同款）。导出天然干净，不需要本侧的 unset 之外的动作。
+    前端星标开关乐观更新 + 宿主回读校验，标签过滤/排序/收藏全部客户端即时生效
+    （列表已在 store 里，一次过滤不值得一个往返）。
+
+## 验收与遗留
+
+11. **实测**（`qa/character-ops-acceptance.mjs`，8812 实宿，哈人冰恋 1_5.png）：
+    改名后绑定/书/107 条目原样、复制共享书且可开新聊、导出 PNG 块 JSON 与存储
+    卡 deepEqual、标签写回卡、收藏落档案不落卡，全部通过；宿主按记录 PID 停止。
+    UI（侧栏角色库：行菜单八项、★ 开关、标签过滤行、排序切换、行内改名/改标签
+    编辑器）为新增 i18n 双语键十七枚，en/zh 键集与占位符一致性由既有 i18n 测试
+    钉住。假客户端五方法诚实拒绝（无文件系统，谎称改名落地比拒绝更糟）；探针
+    名单补五条，rpc-transport 可达性测试全绿。

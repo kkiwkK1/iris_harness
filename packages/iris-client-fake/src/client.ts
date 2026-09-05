@@ -1074,7 +1074,19 @@ class InMemoryClient implements FakeClient {
       // The global regex list is profile state on the host's disk; a fake has
       // none, and an imaginary list would let a panel believe an import landed.
       case 'regex.list':
-      case 'regex.set': {
+      case 'regex.set':
+      // The character manager writes host-side files: a rename or a tag edit
+      // rewrites a card on disk, a duplicate copies one, an export reads one
+      // out, and a star lands in the profile's favorites file. The fake has no
+      // filesystem, and the one thing worse than refusing is a panel that
+      // believes a rename landed while the list keeps showing the old name —
+      // the next `character.list` would contradict it. The seeded summaries
+      // above stay read-only, exactly as `preset.*` stays refused.
+      case 'character.duplicate':
+      case 'character.rename':
+      case 'character.export':
+      case 'character.setTags':
+      case 'character.favorite': {
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 

@@ -23,7 +23,7 @@ import { assemble, type AssembleResult, type Contribution, type HistoryEntry } f
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { ChatView, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import type { ChatView, CharacterSummary, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import { providerPreset } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
@@ -39,6 +39,8 @@ import type { ChatStore } from './chats.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
 import { writeTimedEffects } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
+import { FavoriteStore } from './favorites.ts'
+import type { WorldbookBindingStore } from './materialise.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
 import { charWorldbookNames, WorldbookStore } from './worldbooks.ts'
 import { activationSettingsOf } from './worldbook-settings.ts'
@@ -335,6 +337,24 @@ export interface AppServiceOptions {
    * as it did before the store existed.
    */
   personas?: PersonaStore
+  /**
+   * The profile's starred characters.
+   *
+   * Optional like the other stores, with the same presence-is-the-switch rule:
+   * absent means `character.favorite` is refused rather than answered from an
+   * imaginary list, and no summary ever carries an invented star.
+   */
+  favorites?: FavoriteStore
+  /**
+   * Which named book each card's embedded book was materialised into.
+   *
+   * Read by `character.duplicate` alone: the copy's binding row is copied from
+   * its source's, so the duplicate resolves to the same named book — the
+   * semantics a shared `extensions.world` name already has upstream, which a
+   * binding-table re-materialisation would otherwise turn into a minted copy
+   * of the book that drifts apart from the original.
+   */
+  worldbookBindings?: WorldbookBindingStore
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
   /**
@@ -359,7 +379,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
@@ -377,6 +397,8 @@ export class IrisAppService {
       sillyTavernDir?: string
       installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
       personas?: PersonaStore
+      favorites?: FavoriteStore
+      worldbookBindings?: WorldbookBindingStore
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -424,6 +446,8 @@ export class IrisAppService {
       ...options.presets === undefined ? {} : { presets: options.presets },
       ...options.sillyTavernDir === undefined ? {} : { sillyTavernDir: options.sillyTavernDir },
       ...options.personas === undefined ? {} : { personas: options.personas },
+      ...options.favorites === undefined ? {} : { favorites: options.favorites },
+      ...options.worldbookBindings === undefined ? {} : { worldbookBindings: options.worldbookBindings },
     }
     // The manager's live state starts on whatever the caller assembled: a
     // stored selection is applied by the caller (the plugin) before the
@@ -1538,10 +1562,20 @@ export class IrisAppService {
         return { scripts: await extensionSettings.globalRegex() }
       },
 
-      'character.list': async () => ({ characters: await library.list() }),
+      'character.list': async () => {
+        const characters = await library.list()
+        const favorites = this.#options.favorites
+        if (favorites === undefined) return { characters }
+        // One read, not one per row: the list is the only caller that fans out.
+        const starred = new Set(await favorites.list())
+        return {
+          characters: characters.map(character =>
+            starred.has(character.characterId) ? { ...character, favorite: true } : character),
+        }
+      },
 
       'character.import': async ({ filename, content }) => ({
-        character: await library.import(filename, content),
+        character: await this.#withFavorite(await library.import(filename, content)),
       }),
 
       'character.delete': async ({ characterId }) => {
@@ -1551,10 +1585,12 @@ export class IrisAppService {
         // exist, so deleting one frees its id and the next card imported under
         // that name inherits whatever was left behind. For the script policy
         // that includes `documentGranted` — a grant the user gave to one card
-        // would silently apply to another.
+        // would silently apply to another. The favorites are the same shape of
+        // leftover: a star keyed by id would light up for a stranger.
         await this.#options.extensionSettings?.forget(characterId)
         await this.#options.scriptButtons?.forget(characterId)
         await this.#options.scriptVariables?.forget(characterId)
+        await this.#options.favorites?.forget(characterId)
         await scripts?.forget(characterId)
         // **`cardStorage` is deliberately not in this list, and it is the one
         // store where forgetting would be wrong.** The others are partitioned
@@ -1567,6 +1603,41 @@ export class IrisAppService {
         // attribution for a report, **not ownership**, and it is not a basis
         // for deletion.
         return {}
+      },
+
+      'character.duplicate': async ({ characterId }) => {
+        const character = await library.duplicate(characterId)
+        // The binding row travels with the copy, so both characters resolve to
+        // the same named book — what sharing one `extensions.world` name means
+        // upstream. Without this the duplicate's first open would re-materialise
+        // its embedded book under a minted name (`… (2)`), and two cards that
+        // upstream keeps on one book would quietly grow two that drift.
+        const bindings = this.#options.worldbookBindings
+        const binding = await bindings?.get(characterId)
+        if (bindings !== undefined && binding !== undefined) {
+          await bindings.set(character.characterId, binding)
+        }
+        return { character: await this.#withFavorite(character) }
+      },
+
+      'character.rename': async ({ characterId, name }) => ({
+        character: await this.#withFavorite(await library.rename(characterId, name)),
+      }),
+
+      'character.export': async ({ characterId, format }) =>
+        library.exportCard(characterId, format),
+
+      'character.setTags': async ({ characterId, tags }) => ({
+        character: await this.#withFavorite(await library.setTags(characterId, tags)),
+      }),
+
+      'character.favorite': async ({ characterId, favorite }) => {
+        // Refused rather than answered when there is nowhere to remember it: a
+        // star that lights up and then vanishes on the next list is worse than
+        // an honest refusal, because the first list after a reload disagrees
+        // with the toggle the user can still see.
+        await this.#favorites().set(characterId, favorite)
+        return { characterId, favorite }
       },
 
       'settings.get': ({ chatId }) => Promise.resolve({ settings: settings.get(chatId) }),
@@ -1973,6 +2044,32 @@ export class IrisAppService {
       throw new AppError('unsupported', 'personas are not configured on this host')
     }
     return store
+  }
+
+  /** The profile's star list, refused-by-name when the host keeps none. */
+  #favorites(): FavoriteStore {
+    const store = this.#options.favorites
+    if (store === undefined) {
+      throw new AppError('unsupported', 'favorites are not configured on this host')
+    }
+    return store
+  }
+
+  /**
+   * A summary with the profile's star state attached.
+   *
+   * Absent stays absent rather than becoming `false`: the summary is what the
+   * library saw on disk, and a field meaning "this host keeps favorites and
+   * says no" is the caller's to compute, not the summary's to imply.
+   * @param character - the summary from the library.
+   * @returns the same summary, starred when the profile says so.
+   */
+  async #withFavorite(character: CharacterSummary): Promise<CharacterSummary> {
+    const favorites = this.#options.favorites
+    if (favorites === undefined) return character
+    return await favorites.has(character.characterId)
+      ? { ...character, favorite: true }
+      : character
   }
 
   /**
