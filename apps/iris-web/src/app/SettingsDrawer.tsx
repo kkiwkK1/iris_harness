@@ -25,6 +25,7 @@ import { DemoActionsSection } from './DemoActionsSection.tsx'
 import { HostReports } from './HostReports.tsx'
 import { NoticeLog } from './NoticeLog.tsx'
 import { PresetPanel } from './PresetPanel.tsx'
+import { PersonaPanel } from './PersonaPanel.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
 import { WorldbookPanel } from './WorldbookPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
@@ -323,6 +324,15 @@ export function SettingsDrawer({
           conversation open at all.
         */}
         <WorldbookPanel />
+
+        {/*
+          The persona panel, beside the world books because both are
+          profile-wide inputs to every prompt: who the user is, and what the
+          world knows. Outside the `settings === undefined` branch for the same
+          reason the world books are — a persona is meaningful with no
+          conversation open at all.
+        */}
+        <PersonaPanel />
 
         {/*
           The host's own reports, **outside** the `settings === undefined`

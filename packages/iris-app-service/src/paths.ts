@@ -200,6 +200,16 @@ export interface ProfilePaths {
    * import preserves.
    */
   presets: string
+  /**
+   * The user's personas: who `{{user}}` is, one file per profile.
+   *
+   * Its own file rather than a section of `settings.json` for the same reason
+   * the connections are — settings are what a chat is using now, this is who
+   * the user says they are, and resetting one must not empty the other.
+   * Upstream keeps the equivalent in `power_user` inside its own
+   * `settings.json`; the split is Iris's, the semantics are upstream's.
+   */
+  personas: string
 }
 
 /**
@@ -237,5 +247,6 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     scriptBundles: join(root, 'script-bundles'),
     connections: join(root, 'connections.json'),
     presets: join(root, 'presets'),
+    personas: join(root, 'personas.json'),
   }
 }

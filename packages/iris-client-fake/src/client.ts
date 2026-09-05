@@ -1074,6 +1074,26 @@ class InMemoryClient implements FakeClient {
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 
+      case 'persona.list':
+      case 'persona.get':
+      case 'persona.set':
+      case 'persona.delete': {
+        /*
+         * Refused as a group, and the refusal is the honest answer rather than a
+         * stand-in for one. A persona's whole effect is on prompt assembly — the
+         * `personaDescription` slot, the depth injection, the `{{persona}}`
+         * macro and the world-info scan data — and this client assembles no
+         * prompts. Answering `persona.list` with an empty list would read as
+         * "configured, none yet" and invite building a panel whose every write
+         * lands nowhere; answering `persona.get` with an invented description
+         * would be worse. A host that has one shows the real state.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client keeps no persona store, so ${method} has nothing true to answer with`,
+        )
+      }
+
       default: {
         // Exhaustiveness guard: a method added to the protocol without an arm
         // here becomes a type error rather than a runtime surprise.

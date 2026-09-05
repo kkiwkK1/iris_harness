@@ -100,6 +100,14 @@ export class ChatStore {
   readonly #bookFor:
     | ((characterId: string | undefined, card: CharacterCard | undefined) => Promise<string | undefined>)
     | undefined
+  /**
+   * The active persona description, read when a chat's macros expand.
+   *
+   * The same function is shared by every entry this store builds, so a persona
+   * switch reaches every conversation at its next expansion without any of
+   * them being reopened.
+   */
+  readonly #persona: (() => string) | undefined
 
   /**
    * @param dir - the folder holding chat files.
@@ -115,6 +123,7 @@ export class ChatStore {
     worldbooks?: WorldbookStore,
     globalSelect?: () => readonly string[],
     bookFor?: (characterId: string | undefined, card: CharacterCard | undefined) => Promise<string | undefined>,
+    persona?: () => string,
   ) {
     this.#dir = dir
     this.#library = library
@@ -123,6 +132,7 @@ export class ChatStore {
     this.#worldbooks = worldbooks
     this.#bookFor = bookFor
     this.#globalSelect = globalSelect
+    this.#persona = persona
   }
 
   /**
@@ -266,6 +276,7 @@ export class ChatStore {
       ),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
+      ...this.#persona === undefined ? {} : { persona: this.#persona },
     })
     // The log carries the conversation; the variables ride alongside it and
     // have to be put back explicitly.
@@ -312,6 +323,7 @@ export class ChatStore {
       ),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
+      ...this.#persona === undefined ? {} : { persona: this.#persona },
     })
     seedGreeting(entry, card, { user: userName, char: name })
     seedInitialVariables(entry)
@@ -405,6 +417,7 @@ export class ChatStore {
       ...parent.worldbook === undefined ? {} : { worldbook: parent.worldbook },
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
+      ...this.#persona === undefined ? {} : { persona: this.#persona },
     })
     child.hydrateVariables(lines)
 

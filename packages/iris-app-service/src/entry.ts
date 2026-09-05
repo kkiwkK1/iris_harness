@@ -383,6 +383,8 @@ export class ChatEntry {
    */
   readonly unsupportedScopes = new Set<string>()
   #substitute: MacroSubstitute | undefined
+  /** The active persona description, read at expansion time; see the constructor input. */
+  #persona: (() => string) | undefined
   /**
    * The macro tier's one variable store, created on first use and held.
    *
@@ -435,12 +437,22 @@ export class ChatEntry {
     globalScope?: ScopeBackend
     /** The chosen world book; see the field of the same name. */
     worldbook?: ResolvedWorldbook
+    /**
+     * The active persona description, read at expansion time.
+     *
+     * A function rather than a value because the user can switch personas while
+     * the host runs, and a snapshot taken when the chat opened would serve the
+     * old one. Absent means no persona, which is what `{{persona}}` expanded to
+     * before a persona store existed.
+     */
+    persona?: () => string
   }) {
     this.chatId = input.chatId
     this.header = input.header
     this.session = input.session
     this.card = input.card
     this.worldbook = input.worldbook
+    this.#persona = input.persona
     // Sticky and cooldown windows outlive the process in upstream: they live in
     // `chat_metadata.timedWorldInfo`, which is saved with the chat file. Restored
     // here rather than by the caller because every construction path — open,
@@ -534,6 +546,12 @@ export class ChatEntry {
         const macros = createMacroContext({
           char: character,
           user,
+          // The active persona description, what upstream's `{{persona}}`
+          // expands to (`script.js:3353`, the persona row of the macro
+          // environment, which trims: `persona_description?.trim()`). Read at
+          // expansion time, so a switch reaches the next expansion of this chat
+          // without reopening it.
+          persona: this.#persona?.().trim() ?? '',
           variables,
           chat: this.macroChat,
           // Same lifetime as upstream's `extension_prompts` round-trip: the

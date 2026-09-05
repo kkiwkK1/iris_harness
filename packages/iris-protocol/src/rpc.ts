@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, PresetManagerView, PresetSummary, PromptItemization, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView } from './views.ts'
+import type { CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, PersonaView, PresetManagerView, PresetSummary, PromptItemization, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -531,6 +531,41 @@ export const requestSchemas = {
     /** Base64 of the `.json` file, exactly as it left the disk. */
     content: z.string().min(1),
   }),
+
+  /**
+   * The user's personas — who `{{user}}` is, in upstream's
+   * `power_user.persona_descriptions` sense, one per named persona with the
+   * active one standing in for upstream's selected avatar.
+   *
+   * `position` takes upstream's own words (`parsePersonaPosition`,
+   * `personas.js:1963`). The `topan` / `bottoman` words are deliberately
+   * absent from the enum: they merge the description into an author's note
+   * this host does not assemble, and accepting them would store a position
+   * nothing can act on.
+   */
+  'persona.list': z.object({}),
+  /**
+   * One persona, or the active one. Absent `id` reads the active persona —
+   * `undefined` in the answer means no persona is active, which is the
+   * every-install default and not an error.
+   */
+  'persona.get': z.object({ id: z.string().min(1).optional() }),
+  /**
+   * Create a persona (absent `id`) or edit one (present `id`), and optionally
+   * make it active in the same call. An absent `description` keeps whatever is
+   * stored, so a rename does not blank the text it was never shown.
+   */
+  'persona.set': z.object({
+    id: z.string().min(1).optional(),
+    name: z.string().min(1).max(255),
+    description: z.string().max(1_000_000).optional(),
+    position: z.enum(['inprompt', 'atdepth', 'none']).optional(),
+    depth: z.number().int().min(0).max(1000).optional(),
+    role: z.enum(['system', 'user', 'assistant']).optional(),
+    active: z.boolean().optional(),
+  }),
+  /** Remove a persona; removing the active one clears the activation. */
+  'persona.delete': z.object({ id: z.string().min(1) }),
 
   /** Every script a character's card carries, enabled or not. */
   'script.list': z.object({ characterId: z.string().min(1) }),
@@ -1298,6 +1333,12 @@ export interface RpcResponseMap {
       | { name: string, imported: false, reason: 'invalid-json' | 'not-a-preset' | 'unusable-name' }
     presets: PresetSummary[]
   }
+
+  'persona.list': { personas: PersonaView[], activeId?: string }
+  /** `persona` is absent when the id is unknown or nothing is active — not an error. */
+  'persona.get': { persona?: PersonaView }
+  'persona.set': { personas: PersonaView[], activeId?: string }
+  'persona.delete': { personas: PersonaView[], activeId?: string }
 
   /**
    * What a card contains, and what the user has decided about it.

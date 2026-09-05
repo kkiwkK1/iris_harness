@@ -32,6 +32,7 @@ import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import { IrisAppService } from './service.ts'
 import { ConnectionStore, routeOf } from './connections.ts'
+import { PersonaStore } from './persona.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
 import { PresetStore } from './presets.ts'
@@ -87,6 +88,14 @@ export {
   type ReportPage,
 } from './diagnostics.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
+export {
+  DEFAULT_PERSONA_DEPTH,
+  DEFAULT_PERSONA_ROLE,
+  PersonaStore,
+  type ActivePersona,
+  type PersonaInput,
+  type PersonaPosition,
+} from './persona.ts'
 export { ScriptCache, cacheKey, nodeFetch, type CacheFailure, type FetchLike, type ScriptCacheOptions } from './script-cache.ts'
 export { ScriptPolicyStore } from './scripts.ts'
 export { ScriptVariableStore, scriptIdOf } from './script-variables.ts'
@@ -426,6 +435,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // the user can change at runtime, and a value read here would freeze it.
     () => settings.globalSelect(),
     bookFor,
+    // The active persona description, read at expansion time — the same
+    // closure reaches every chat, so a switch lands at the next expansion
+    // without reopening anything. The store is primed below, before the first
+    // chat can open, so the closure answers from memory.
+    () => personas.activeSync() ?? '',
   )
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset
@@ -439,6 +453,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const scriptButtons = new ScriptButtonStore(
     paths.scriptButtons, error => { ctx.logger.warn(error.message) })
   const connections = new ConnectionStore(paths.connections)
+  // The user's personas — who `{{user}}` is. Its own file, like the
+  // connections beside it, for the same owner-separation reason.
+  const personas = new PersonaStore(paths.personas)
   // Runtime adapter installs, one per provider route this plugin has claimed.
   //
   // `connection.activate` and boot-time restoration both come through here: a
@@ -497,6 +514,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // been used should leave nothing behind, and both stores already tolerate a
   // directory that does not exist yet.
   await settings.load()
+  // Primed before any chat can open, so the persona closure the chats carry
+  // answers from memory instead of racing a file read inside a macro.
+  await personas.prime()
 
   // The profile's preset library — the files a switch reads and an import
   // fills. Beside the installation, like every other store here.
@@ -521,6 +541,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     scriptButtons,
     worldbooks,
     connections,
+    personas,
     installConnection,
     scriptVariables,
     preset: storedPreset ?? await loadPreset(config.presetPath),
@@ -600,6 +621,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('character.delete', handlers['character.delete']),
       ctx.irisRpc.register('settings.get', handlers['settings.get']),
       ctx.irisRpc.register('settings.set', handlers['settings.set']),
+      ctx.irisRpc.register('persona.list', handlers['persona.list']),
+      ctx.irisRpc.register('persona.get', handlers['persona.get']),
+      ctx.irisRpc.register('persona.set', handlers['persona.set']),
+      ctx.irisRpc.register('persona.delete', handlers['persona.delete']),
       ctx.irisRpc.register('preset.list', handlers['preset.list']),
       ctx.irisRpc.register('preset.select', handlers['preset.select']),
       ctx.irisRpc.register('preset.view', handlers['preset.view']),

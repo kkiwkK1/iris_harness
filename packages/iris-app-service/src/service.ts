@@ -48,6 +48,7 @@ import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
+import { PersonaStore, type ActivePersona } from './persona.ts'
 import type { PruneOptions } from './prune.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
@@ -306,6 +307,15 @@ export interface AppServiceOptions {
    * extension installed does.
    */
   templates?: TemplateOptions
+  /**
+   * The profile's personas — who `{{user}}` is.
+   *
+   * Optional like the other stores. Absent means no persona is configured,
+   * which is the state every existing profile is in and the one the red line
+   * protects: the assembler receives no `persona` argument and behaves exactly
+   * as it did before the store existed.
+   */
+  personas?: PersonaStore
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
   /**
@@ -330,7 +340,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
@@ -347,6 +357,7 @@ export class IrisAppService {
       presetName?: string
       sillyTavernDir?: string
       installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
+      personas?: PersonaStore
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -393,6 +404,7 @@ export class IrisAppService {
       ...options.cardStorage === undefined ? {} : { cardStorage: options.cardStorage },
       ...options.presets === undefined ? {} : { presets: options.presets },
       ...options.sillyTavernDir === undefined ? {} : { sillyTavernDir: options.sillyTavernDir },
+      ...options.personas === undefined ? {} : { personas: options.personas },
     }
     // The manager's live state starts on whatever the caller assembled: a
     // stored selection is applied by the caller (the plugin) before the
@@ -1448,6 +1460,32 @@ export class IrisAppService {
         }
       },
 
+      /**
+       * The user's personas. The whole group refuses by name on a host with no
+       * persona store — the same line the preset library and card storage draw —
+       * because an empty list from a storeless host would read as "configured,
+       * none yet" and a settings page would then offer a switch that cannot land.
+       */
+      'persona.list': async () => this.#personas().list(),
+
+      'persona.get': async ({ id }) => {
+        const persona = await this.#personas().get(id)
+        return persona === undefined ? {} : { persona }
+      },
+
+      'persona.set': async ({ id, name, description, position, depth, role, active }) =>
+        this.#personas().upsert({
+          ...id === undefined ? {} : { id },
+          name,
+          ...description === undefined ? {} : { description },
+          ...position === undefined ? {} : { position },
+          ...depth === undefined ? {} : { depth },
+          ...role === undefined ? {} : { role },
+          ...active === undefined ? {} : { active },
+        }),
+
+      'persona.delete': async ({ id }) => this.#personas().remove(id),
+
       'character.list': async () => ({ characters: await library.list() }),
 
       'character.import': async ({ filename, content }) => ({
@@ -1876,6 +1914,29 @@ export class IrisAppService {
     return store
   }
 
+  /** The persona store, or a refusal naming why there is none. */
+  #personas(): PersonaStore {
+    const store = this.#options.personas
+    if (store === undefined) {
+      throw new AppError('unsupported', 'personas are not configured on this host')
+    }
+    return store
+  }
+
+  /**
+   * The active persona for the next assembly, or undefined when there is none.
+   *
+   * Read per assembly, like the world-info settings: the user can switch or
+   * edit a persona while the host runs, and a chat opened before the change
+   * must still play as *this* user, not as whoever was active when the chat
+   * was opened.
+   */
+  async #activePersona(): Promise<ActivePersona | undefined> {
+    const store = this.#options.personas
+    if (store === undefined) return undefined
+    return await store.active()
+  }
+
   /**
    * Open a chat and refuse if a turn is in flight.
    * @param chatId - the conversation.
@@ -2239,6 +2300,7 @@ export class IrisAppService {
     // host runs, and a chat opened before the change must still scan with what
     // the user set, not with what was set when the chat was opened.
     const worldbookSettings = this.#options.settings.worldbookSettings()
+    const persona = await this.#activePersona()
     // The budget macros report the numbers this generation actually runs under:
     // the context window, and the reply budget — `maxTokens` when the chat
     // configures one, else the reserve every assembly holds back for the reply.
@@ -2276,6 +2338,9 @@ export class IrisAppService {
       activationSettings: activationSettingsOf(worldbookSettings),
       insertionStrategy: worldbookSettings.insertionStrategy,
       chatLore: await this.#chatLore(entry),
+      // The active persona, read per assembly — a switch must reach the next
+      // turn, not the next chat open. Absent is the no-persona default.
+      ...persona === undefined ? {} : { persona },
       ...generationType === 'normal' ? {} : { generationType },
     })
     // Carried forward, or a sticky entry would re-open its window every turn and
@@ -2402,6 +2467,7 @@ export class IrisAppService {
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
     const window = windowOf(settings, this.#options.contextWindow)
     const worldbookSettings = this.#options.settings.worldbookSettings()
+    const persona = await this.#activePersona()
     const built = buildPrompt({
       card: entry.card,
       ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
@@ -2422,6 +2488,9 @@ export class IrisAppService {
       activationSettings: activationSettingsOf(worldbookSettings),
       insertionStrategy: worldbookSettings.insertionStrategy,
       chatLore: await this.#chatLore(entry),
+      // Same persona read as a real turn: the preview has to show what would
+      // actually be sent, and that includes the persona's slot.
+      ...persona === undefined ? {} : { persona },
     })
     const contributions = [...built.contributions, ...injectedContributions(entry)]
     const result = assemble({

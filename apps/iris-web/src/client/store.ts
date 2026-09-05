@@ -25,6 +25,7 @@ import type {
   GenerationSettings,
   IrisClient,
   IrisEvent,
+  PersonaView,
   PresetManagerView,
   PresetSummary,
   RpcResponse,
@@ -256,6 +257,15 @@ export interface IrisState {
    * are opposite answers that an empty list renders identically.
    */
   worldbooks: { names: string[], globalSelect: string[], settings: WorldbookSettingsView } | undefined
+  /**
+   * The persona panel's data, as last fetched.
+   *
+   * `undefined` until `loadPersonas` runs — the same "not loaded" vs "none
+   * exist" split the worldbook panel draws, because a host with no persona
+   * store refuses the group outright and an empty list must not be the answer
+   * that renders instead of the refusal.
+   */
+  personas: { personas: PersonaView[], activeId?: string } | undefined
   notice: Notice | undefined
   /**
    * Every notice raised this session, newest last.
@@ -581,6 +591,24 @@ export interface IrisActions {
   setGlobalSelect(names: readonly string[]): Promise<void>
   /** Patch the world-info scan settings, and hold the effective result. */
   patchWorldbookSettings(patch: Partial<WorldbookSettingsView>): Promise<void>
+  /** Fetch the persona panel's data: the personas and which one is active. */
+  loadPersonas(): Promise<void>
+  /**
+   * Create or edit one persona, and optionally activate it in the same call.
+   * The answer (the list after the change) is held, not the argument — the
+   * host may have merged or rejected fields the form did not know about.
+   */
+  savePersona(input: {
+    id?: string
+    name: string
+    description?: string
+    position?: PersonaView['position']
+    depth?: number
+    role?: 'system' | 'user' | 'assistant'
+    active?: boolean
+  }): Promise<void>
+  /** Remove a persona; the held answer reflects the cleared activation if it was active. */
+  deletePersona(id: string): Promise<void>
   /** Fetch a card's remote dependency through the host, which owns the allowlist. */
   fetchScriptDependency(url: string): Promise<string>
   setDocumentGrant(granted: boolean): Promise<void>
@@ -860,6 +888,7 @@ export function createIrisStore(
       stream: undefined,
       settings: undefined,
       worldbooks: undefined,
+      personas: undefined,
       notice: undefined,
       noticeLog: [],
       noticesDropped: 0,
@@ -1214,6 +1243,35 @@ export function createIrisStore(
               ? undefined
               : { ...state.worldbooks, settings: answer.settings },
           }))
+        })
+      },
+
+      async loadPersonas(): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('persona.list', {})
+          set({ personas: { personas: answer.personas, ...(answer.activeId === undefined ? {} : { activeId: answer.activeId }) } })
+        })
+      },
+
+      async savePersona(input: {
+        id?: string
+        name: string
+        description?: string
+        position?: PersonaView['position']
+        depth?: number
+        role?: 'system' | 'user' | 'assistant'
+        active?: boolean
+      }): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('persona.set', input)
+          set({ personas: { personas: answer.personas, ...(answer.activeId === undefined ? {} : { activeId: answer.activeId }) } })
+        })
+      },
+
+      async deletePersona(id: string): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('persona.delete', { id })
+          set({ personas: { personas: answer.personas, ...(answer.activeId === undefined ? {} : { activeId: answer.activeId }) } })
         })
       },
 

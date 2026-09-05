@@ -12,6 +12,7 @@ import { ChatStore } from '../src/chats.ts'
 import { ExtensionSettingsStore } from '../src/context.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { PresetStore } from '../src/presets.ts'
+import { PersonaStore } from '../src/persona.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { ScriptVariableStore } from '../src/script-variables.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
@@ -78,6 +79,13 @@ interface Fixture {
   scriptVariables: ScriptVariableStore
 }
 
+/** One stored, active persona, so the persona reads land on real state. */
+async function seedPersona(path: string): Promise<PersonaStore> {
+  const store = new PersonaStore(path)
+  await store.upsert({ name: 'Wanderer', description: 'A hooded traveller.', active: true })
+  return store
+}
+
 async function fixture(t: TestContext): Promise<Fixture> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-reads-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
@@ -115,6 +123,10 @@ async function fixture(t: TestContext): Promise<Fixture> {
     extensionSettings: new ExtensionSettingsStore(join(dir, 'extension-settings.json')),
     worldbooks: new WorldbookStore(join(dir, 'worlds')),
     presets: new PresetStore(join(dir, 'presets')),
+    // A persona on disk, so the `persona.*` reads below perform actual reads —
+    // `persona.get` with no id resolves the active persona — rather than
+    // refusing their way past the check.
+    personas: await seedPersona(join(dir, 'personas.json')),
     broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
     userName: 'Traveller',
   }).handlers()
@@ -194,6 +206,8 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   { method: 'settings.get', params: fixed => ({ chatId: fixed.chatId }) },
   { method: 'connection.list', params: () => ({}) },
   { method: 'character.list', params: () => ({}) },
+  { method: 'persona.list', params: () => ({}) },
+  { method: 'persona.get', params: () => ({}) },
   { method: 'worldbook.names', params: () => ({}) },
   { method: 'worldbook.get', params: () => ({ name: 'Eldoria' }) },
   { method: 'worldbook.charNames', params: () => ({ characterId: 'aria' }) },

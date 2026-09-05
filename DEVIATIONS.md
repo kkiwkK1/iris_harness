@@ -260,3 +260,60 @@ headless Chrome/CDP，1920×1080 与 2400×1200 两档 + 1280×800 窄档，
     标注"演示"的一节；它不是 feature：除 `registerMessageAction` 外不触碰
     任何 surface，卸载即还空（宿主实测 06 号截图可证）。
 
+
+---
+
+# DEVIATIONS — 任务 S：Persona 用户人格（B5）
+
+分支 `dev/feat-persona`。对照装置：`E:/sillyTavern/SillyTavern`
+（`public/scripts/personas.js`、`public/script.js`、`public/scripts/openai.js`、
+`public/scripts/world-info.js`）。前任代理中断后的未提交工作由本任接手核实、
+补齐并提交；以下条目含两任的决定，均已按上游真值核实。
+
+1. **RPC 组是 `persona.list/get/set/delete` 四键，不是任务书的三个。**
+   任务书写 `persona.get/set/list`；列表管理面板必然要删（上游 persona 面板
+   同样有删除），少一个 delete 键等于 UI 只能增不能删。多出的键不引入新语义：
+   删除激活中的人格即清空激活（上游删 avatar 同样落空选中）。
+
+2. **位置词只收 `inprompt` / `atdepth` / `none`，拒绝 `topan` / `bottoman`。**
+   上游 `parsePersonaPosition`（personas.js:1963）五个词全收；后两个把描述
+   并进作者注释，而本宿主不装配作者注释（AN 桶只装世界书条目），收下就是
+   存一个无人能执行的位置。边界按名拒绝，不静默忽略。
+
+3. **`{{persona}}` 宏吃 trim，槽位与深度注入吃原文——两处读法分开（接手修正）。**
+   上游宏环境是 `persona_description?.trim()`（script.js:3352），而 Chat
+   Completion 槽位（openai.js:1424）和深度注入（script.js:3164）取存储原文。
+   接手前的实现对宏也不 trim；已改为一致并由测试钉住
+   （persona.test.ts 的 "the macro trims the description…"）。
+
+4. **世界书条目扫描字段加 `extensions.<snake_case>` 兜底读取。**
+   上游装载转换表（world-info.js:2601-2639）从 `extensions` 读这批字段，ST
+   自己写书时也嵌在 extensions 里；实测装置的书全部只带嵌套形式。顶层
+   camelCase 仍在时优先——只有"仅嵌套"的书（即全部真书）原先会被静默读成
+   默认值。这是 persona 之外的行为修正，全套测试绿可证无殃及。
+
+5. **persona 存储独立成 `personas.json`，不进 `settings.json`。**
+   与 connections 同理：settings 是对话正在用什么，persona 是用户说自己是谁，
+   重置其一不得清空另一。上游把等价物放在 `power_user` 里随其 settings.json
+   走；拆分是本侧的，语义是上游的（激活描述为空视为无人格——上游每个读取点
+   都有 `if (!power_user.persona_description …)` 守卫，这是默认零变化红线的
+   一半；另一半是 store 缺席时装配器收不到 persona 入参）。
+
+6. **激活是显式的：`active: true` 是唯一开关。** 编辑人格不带 `active`
+   不会顺带激活它（"存在即激活"会让每次改名都抢走当前人格）；面板里列表行
+   的点按才发 `active: true`，与上游把切换放在 persona 列表行是同一个决定。
+
+7. **假客户端对 persona 组按组诚实拒绝。** fake 客户端不装配提示词，persona
+   的全部效果都在装配层；答一个空列表会被读成"已配置、还没有"，邀请出一个
+   写了也白写的面板。按组抛 `unsupported`，指名无真话可答。
+
+8. **reads-do-not-write 夹具落了真人格（接手补齐）。** `persona.list/get`
+   加入 READS 时夹具原无 persona store——拒绝路径也能过对比，但那是绕过而非
+   检查。夹具现 seed 一条激活人格，两个读做真读，personas.json 进磁盘快照。
+
+9. **验收脚本落在 `qa/persona-acceptance.mjs`（接手改形）。** 起初是
+   apps/iris 下的进程内 boot 草稿；按 qa/ 目录惯例改为 spawn
+   `apps/iris/bin.ts` 独立宿主进程（记录 PID、只按 PID 停止），走产品自己的
+   cordis.yml，对 mock 提供方断言真实请求体：IN_PROMPT 槽位、`{{persona}}`
+   展开、啊不吃世界书 uid 4 践踏条的副键（身体）由人格描述触发、清空后请求
+   逐字回原。四项全过。

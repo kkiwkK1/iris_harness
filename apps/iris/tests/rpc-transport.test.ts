@@ -241,6 +241,13 @@ const PROBES: Record<string, unknown> = {
   // Empty JSON object: parses, is not a preset, and the named refusal proves
   // the handler ran — the same reachability verdict the other arms answer.
   'preset.importFile': { filename: 'probe.json', content: 'e30=' },
+  // The persona group. `list` answers from the probe host's own (empty)
+  // store; `set` writes one; a `get` and a `delete` for a persona that does
+  // not exist answer absent/not-found, which proves the handler ran.
+  'persona.list': {},
+  'persona.set': { name: 'probe-persona', description: 'a persona the probe wrote', active: true },
+  'persona.get': { id: 'no-such-persona' },
+  'persona.delete': { id: 'no-such-persona' },
   'script.list': { characterId: 'no-such-card' },
   'script.setEnabled': { characterId: 'no-such-card', scriptId: 'x', enabled: true },
   'script.body': { characterId: 'no-such-card', scriptId: 'x' },

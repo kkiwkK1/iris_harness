@@ -28,6 +28,7 @@ import {
 
 import type { InsertionStrategy } from '@iris/protocol'
 import type { ResolvedWorldbook } from './worldbooks.ts'
+import type { ActivePersona } from './persona.ts'
 import { createMacroContext, expandMacros, type MacroMessage } from '@iris/macro'
 import type { Contribution, HistoryEntry, Role, TokenCounter } from '@iris/pipeline'
 import { resolvePreset, type ChatCompletionPreset, type MarkerSources, type PromptItem } from '@iris/preset'
@@ -212,6 +213,14 @@ export interface PromptInput {
    * previous buckets, which is also upstream's order.
    */
   outletSink?: (outlets: Record<string, string>) => void
+  /**
+   * The active user persona, resolved over upstream's defaults by the caller
+   * (`PersonaStore.active`). Absent — no persona, or an empty description — is
+   * the state every install starts in, and it assembles the identical prompt:
+   * the marker stays empty, the scan data carries an empty persona description,
+   * and `{{persona}}` expands to nothing, exactly as before a store existed.
+   */
+  persona?: ActivePersona
 }
 
 /** The assembled policy for one generation. */
@@ -401,6 +410,14 @@ export function buildPrompt(input: PromptInput): PromptResult {
   const macros = createMacroContext({
     char: input.characterName,
     user: input.userName,
+    // The persona description, what upstream's `{{persona}}` expands to —
+    // the *description*, never the name (`script.js:3352`, the persona row of
+    // the macro environment, which trims: `persona_description?.trim()`). Empty
+    // when no persona is active, which is also what the macro expanded to
+    // before a persona store existed, so the default is unchanged. The slot and
+    // the depth injection below keep the stored text verbatim — upstream only
+    // trims the macro read.
+    persona: input.persona?.description.trim() ?? '',
     // The card fields, so a preset's format strings can say `{{scenario}}` or
     // `{{personality}}` — which is what upstream's own defaults do, and what
     // real presets copy. Without them the format would degrade to its own
@@ -427,6 +444,11 @@ export function buildPrompt(input: PromptInput): PromptResult {
     ...input.activationSettings === undefined ? {} : { settings: input.activationSettings },
     ...input.timedEffects === undefined ? {} : { timedEffects: input.timedEffects },
     globalScanData: {
+      // The persona description joins the scan **regardless of position** —
+      // upstream fills `globalScanData.personaDescription` from the active
+      // persona unconditionally (`script.js:4568`), so a `matchPersonaDescription`
+      // entry fires on it even at `none`, where the prompt itself never shows it.
+      personaDescription: input.persona?.description ?? '',
       characterDescription: data?.description ?? '',
       characterPersonality: data?.personality ?? '',
     },
@@ -448,6 +470,12 @@ export function buildPrompt(input: PromptInput): PromptResult {
   const markers: MarkerSources = {
     worldInfoBefore: formatWorldInfo(joinEntries(scan.buckets.before), wiFormat),
     worldInfoAfter: formatWorldInfo(joinEntries(scan.buckets.after), wiFormat),
+    // The persona's IN_PROMPT position is exactly upstream's Chat Completion
+    // rule (`openai.js:1424`): a system prompt at the `personaDescription`
+    // slot, only when the description exists **and** the position is IN_PROMPT.
+    // Every other position leaves the marker empty here — `atdepth` injects
+    // below, `none` keeps the text out of the prompt entirely.
+    personaDescription: input.persona?.position === 'inprompt' ? input.persona.description : '',
     charDescription: data?.description ?? '',
     // Empty fields stay empty whatever the format says: upstream's `scenario
     // &&` guard means a format string never manufactures content from nothing.
@@ -497,6 +525,20 @@ export function buildPrompt(input: PromptInput): PromptResult {
       label: `World Info (depth ${String(bucket.depth)})`,
       placement: { kind: 'depth', depth: bucket.depth, role: roleOf(bucket.role), order: 0 },
       text,
+    })
+  }
+
+  // The persona's AT_DEPTH position — upstream's `addPersonaDescriptionExtensionPrompt`
+  // (`script.js:3163`): the description as an IN_CHAT extension prompt at
+  // `persona_description_depth` (default 2) and `persona_description_role`
+  // (default system). Same shape as the card's note below, which is why it
+  // rides the same depth placement.
+  if (input.persona?.position === 'atdepth') {
+    contributions.push({
+      id: 'persona.depthPrompt',
+      label: 'Persona Description',
+      placement: { kind: 'depth', depth: input.persona.depth, role: input.persona.role, order: 1 },
+      text: expand(input.persona.description),
     })
   }
 

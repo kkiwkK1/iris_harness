@@ -613,6 +613,28 @@ export interface ConnectionTestError {
 }
 
 /**
+ * One user persona, as the persona panel lists it.
+ *
+ * `position` uses upstream's own words (`parsePersonaPosition`,
+ * `personas.js:1963`): the description either rides the `personaDescription`
+ * prompt slot (`inprompt`), sits a fixed number of turns from the end of the
+ * conversation (`atdepth`), or is held out of the prompt entirely (`none`) —
+ * where it still reaches the world-info scan, exactly as upstream's scan data
+ * carries it regardless of position.
+ */
+export interface PersonaView {
+  id: string
+  /** The persona's name — upstream keeps it beside the avatar file it is keyed by. */
+  name: string
+  description: string
+  position: 'inprompt' | 'atdepth' | 'none'
+  /** Turns from the end of the conversation, when `position` is `atdepth`. */
+  depth?: number
+  /** The injection's role, when `position` is `atdepth`. */
+  role?: 'system' | 'user' | 'assistant'
+}
+
+/**
  * How much reasoning a reasoning model should spend on a reply.
  *
  * Upstream's own value set (`reasoning_effort_types`, openai.js:237), sent as

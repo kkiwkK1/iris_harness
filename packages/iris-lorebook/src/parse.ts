@@ -208,6 +208,15 @@ export function createEntry(overrides: Partial<LorebookEntry> & { uid: number })
  */
 export function normalizeEntry(raw: unknown, uid: number): LorebookEntry {
   const source = isRecord(raw) ? raw : {}
+  // The extensions block is a second, upstream-canonical home for the scan
+  // fields: the conversion table (`world-info.js:2601-2639`) reads each of them
+  // from `extensions.<snake_case>` when a saved book is loaded for scanning,
+  // and ST's own writer nests them there. A top-level camelCase value wins when
+  // present — some writers hoist it — but a stored book that carries the flag
+  // in `extensions` only, which is every book on the measured install, must
+  // still be read.
+  const extensions = isRecord(source['extensions']) ? source['extensions'] : {}
+  const read = (top: string, nested: string): unknown => source[top] ?? extensions[nested]
   const defaults = entryDefaults()
 
   return {
@@ -218,42 +227,42 @@ export function normalizeEntry(raw: unknown, uid: number): LorebookEntry {
     comment: asString(source['comment'], defaults.comment),
     content: asString(source['content'], defaults.content),
     constant: asBoolean(source['constant'], defaults.constant),
-    vectorized: asBoolean(source['vectorized'], defaults.vectorized),
+    vectorized: asBoolean(read('vectorized', 'vectorized'), defaults.vectorized),
     selective: asBoolean(source['selective'], defaults.selective),
     selectiveLogic: asNumber(source['selectiveLogic'], defaults.selectiveLogic),
     order: asNumber(source['order'], defaults.order),
-    position: asNumber(source['position'], defaults.position),
+    position: asNumber(read('position', 'position'), defaults.position),
     disable: asBoolean(source['disable'], defaults.disable),
     excludeRecursion: asBoolean(source['excludeRecursion'], defaults.excludeRecursion),
     preventRecursion: asBoolean(source['preventRecursion'], defaults.preventRecursion),
     delayUntilRecursion: asRecursionDelay(source['delayUntilRecursion']),
-    probability: asNumber(source['probability'], defaults.probability),
+    probability: asNumber(read('probability', 'probability'), defaults.probability),
     useProbability: asBoolean(source['useProbability'], defaults.useProbability),
-    depth: asNumber(source['depth'], defaults.depth),
+    depth: asNumber(read('depth', 'depth'), defaults.depth),
     group: asString(source['group'], defaults.group),
     groupOverride: asBoolean(source['groupOverride'], defaults.groupOverride),
     groupWeight: asNumber(source['groupWeight'], defaults.groupWeight),
-    scanDepth: asNullableNumber(source['scanDepth']),
-    caseSensitive: asNullableBoolean(source['caseSensitive']),
-    matchWholeWords: asNullableBoolean(source['matchWholeWords']),
-    useGroupScoring: asNullableBoolean(source['useGroupScoring']),
-    automationId: asString(source['automationId'], defaults.automationId),
-    role: asNumber(source['role'], defaults.role),
-    sticky: asNullableNumber(source['sticky']),
-    cooldown: asNullableNumber(source['cooldown']),
-    delay: asNullableNumber(source['delay']),
+    scanDepth: asNullableNumber(read('scanDepth', 'scan_depth')),
+    caseSensitive: asNullableBoolean(read('caseSensitive', 'case_sensitive')),
+    matchWholeWords: asNullableBoolean(read('matchWholeWords', 'match_whole_words')),
+    useGroupScoring: asNullableBoolean(read('useGroupScoring', 'use_group_scoring')),
+    automationId: asString(read('automationId', 'automation_id'), defaults.automationId),
+    role: asNumber(read('role', 'role'), defaults.role),
+    sticky: asNullableNumber(read('sticky', 'sticky')),
+    cooldown: asNullableNumber(read('cooldown', 'cooldown')),
+    delay: asNullableNumber(read('delay', 'delay')),
     displayIndex: asNumber(source['displayIndex'], uid),
     characterFilter: asCharacterFilter(source['characterFilter']),
-    ignoreBudget: asBoolean(source['ignoreBudget'], defaults.ignoreBudget),
+    ignoreBudget: asBoolean(read('ignoreBudget', 'ignore_budget'), defaults.ignoreBudget),
     outletName: asString(source['outletName'], defaults.outletName),
-    triggers: asStringArray(source['triggers']),
+    triggers: asStringArray(read('triggers', 'triggers')),
     addMemo: asBoolean(source['addMemo'], defaults.addMemo),
-    matchPersonaDescription: asBoolean(source['matchPersonaDescription'], false),
-    matchCharacterDescription: asBoolean(source['matchCharacterDescription'], false),
-    matchCharacterPersonality: asBoolean(source['matchCharacterPersonality'], false),
-    matchCharacterDepthPrompt: asBoolean(source['matchCharacterDepthPrompt'], false),
-    matchScenario: asBoolean(source['matchScenario'], false),
-    matchCreatorNotes: asBoolean(source['matchCreatorNotes'], false),
+    matchPersonaDescription: asBoolean(read('matchPersonaDescription', 'match_persona_description'), false),
+    matchCharacterDescription: asBoolean(read('matchCharacterDescription', 'match_character_description'), false),
+    matchCharacterPersonality: asBoolean(read('matchCharacterPersonality', 'match_character_personality'), false),
+    matchCharacterDepthPrompt: asBoolean(read('matchCharacterDepthPrompt', 'match_character_depth_prompt'), false),
+    matchScenario: asBoolean(read('matchScenario', 'match_scenario'), false),
+    matchCreatorNotes: asBoolean(read('matchCreatorNotes', 'match_creator_notes'), false),
   }
 }
 
