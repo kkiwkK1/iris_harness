@@ -1132,6 +1132,23 @@ export class IrisAppService {
         }
       },
 
+      'preset.importFile': async ({ filename, content }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        // The bytes are decoded and parsed here rather than in the client, so
+        // every refusal is the store's own named reason and no caller can get
+        // a different sentence for the same file.
+        const text = Buffer.from(content, 'base64').toString('utf8')
+        const outcome = await store.importOne(filename, text)
+        if (!outcome.imported) {
+          this.#report(`preset file import refused "${outcome.name}": ${outcome.reason}`, { kind: 'host', grade: 'note' })
+        }
+        return {
+          outcome,
+          presets: (await store.list()).map(preset => ({ name: preset })),
+        }
+      },
+
       'character.list': async () => ({ characters: await library.list() }),
 
       'character.import': async ({ filename, content }) => ({

@@ -84,6 +84,39 @@ export type ImportOutcome =
   | { name: string, imported: true }
   | { name: string, imported: false, why: ImportSkip }
 
+/**
+ * The fields upstream treats as sensitive on hand import (`openai.js`
+ * `sensitiveFields`): proxy routes, proxy credentials, custom endpoints and
+ * provider identifiers. Upstream asks the reader about each one — cancel,
+ * strip them, or import as-is. This host reads none of them (the route lives
+ * in the connection settings), but a file carrying a password should be
+ * *said*, not silently stored and not silently stripped.
+ */
+const SENSITIVE_FIELDS: readonly string[] = [
+  'reverse_proxy',
+  'proxy_password',
+  'custom_url',
+  'custom_include_body',
+  'custom_exclude_body',
+  'custom_include_headers',
+  'vertexai_region',
+  'vertexai_express_project_id',
+  'azure_base_url',
+  'azure_deployment_name',
+  'workers_ai_account_id',
+]
+
+/** Why a hand-carried file could not come in. Each needs a different sentence. */
+export type FileImportSkip =
+  | 'invalid-json'
+  | 'not-a-preset'
+  | 'unusable-name'
+
+/** What one hand-carried file produced. */
+export type FileImportOutcome =
+  | { name: string, imported: true, overwritten: boolean, sensitive: readonly string[] }
+  | { name: string, imported: false, reason: FileImportSkip }
+
 /** Reads, writes and imports the profile's preset files. */
 export class PresetStore {
   readonly #dir: string
@@ -250,5 +283,54 @@ export class PresetStore {
     } catch {
       return undefined
     }
+  }
+
+  /**
+   * Bring one hand-carried file into the library — upstream's import button.
+   *
+   * The name is the filename minus its last extension, the way upstream's
+   * browser code derives it (`openai.js`: `file.name.replace(/\.[^/.]+$/, '')`)
+   * and the endpoint then sanitizes; the derivation lives here so every caller
+   * gets the same stem. A name already in the library is overwritten, which
+   * upstream also does — behind one confirm dialog this side replaces with the
+   * per-file `overwritten` report.
+   *
+   * Upstream saves **any** parseable JSON; nothing here converts or bends a
+   * foreign format. The refusal at the door instead is deliberate: this
+   * library's `list` skips files without a `prompts` array, so saving a
+   * non-preset would mean storing something that then silently never appears —
+   * the quiet kind of wrong.
+   * @param filename - the file's name, extension included.
+   * @param text - the file's text, parsed here rather than in the client so
+   *   the rejection reasons are one code path's.
+   * @returns the outcome, per file.
+   */
+  async importOne(filename: string, text: string): Promise<FileImportOutcome> {
+    const stem = filename.replace(/\.[^/.]+$/, '')
+    let name: string
+    try {
+      name = sanitizePresetName(stem)
+    } catch {
+      return { name: stem, imported: false, reason: 'unusable-name' }
+    }
+    let parsed: unknown
+    try {
+      // A leading BOM goes the way upstream's reader strips it: the browser's
+      // `readAsText` drops it before `JSON.parse` ever sees the text, and a
+      // Buffer decode does not — without this, a file Windows Notepad wrote
+      // would be refused as invalid for one invisible character.
+      parsed = JSON.parse(text.replace(/^\uFEFF/u, '')) as unknown
+    } catch {
+      return { name, imported: false, reason: 'invalid-json' }
+    }
+    const preset = asPreset(parsed)
+    if (preset === undefined) {
+      return { name, imported: false, reason: 'not-a-preset' }
+    }
+    const overwritten = await this.has(name)
+    await this.save(name, preset)
+    const body = preset as unknown as Record<string, unknown>
+    const sensitive = SENSITIVE_FIELDS.filter(field => body[field])
+    return { name, imported: true, overwritten, sensitive }
   }
 }

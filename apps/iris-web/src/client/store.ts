@@ -610,6 +610,20 @@ export interface IrisActions {
     skipped: readonly { name: string, reason: string }[]
   }>
   /**
+   * Import hand-carried preset files — the file-picker half of upstream's
+   * import button.
+   *
+   * Per-file outcomes rather than a batch abort, the `importChats` rule: one
+   * bad file must not veto the folder. Refusals come back as the host's named
+   * reasons (not prose) so the wording stays on the side that knows the
+   * language, alongside which files landed and whether one replaced a preset
+   * of the same name.
+   */
+  importPresetFiles(files: readonly { filename: string, base64: string }[]): Promise<{
+    imported: readonly { name: string, overwritten: boolean, sensitive: readonly string[] }[]
+    refused: readonly { name: string, reason: 'invalid-json' | 'not-a-preset' | 'unusable-name' }[]
+  }>
+  /**
    * Download one preset's file body — what an export is.
    *
    * Host-side read, browser-side save: the file never lands anywhere but the
@@ -1536,6 +1550,41 @@ export function createIrisStore(
           get().notify('info', translate(getLanguage(), n === 1 ? 'presetImportedOne' : 'presetImported', { n }))
         }
         return { imported: answer.imported, skipped: answer.skipped }
+      },
+
+      async importPresetFiles(files: readonly { filename: string, base64: string }[]): Promise<{
+        imported: readonly { name: string, overwritten: boolean, sensitive: readonly string[] }[]
+        refused: readonly { name: string, reason: 'invalid-json' | 'not-a-preset' | 'unusable-name' }[]
+      }> {
+        const imported: { name: string, overwritten: boolean, sensitive: readonly string[] }[] = []
+        const refused: { name: string, reason: 'invalid-json' | 'not-a-preset' | 'unusable-name' }[] = []
+        for (const file of files) {
+          const answer = await guard(async () =>
+            client.call('preset.importFile', { filename: file.filename, content: file.base64 }))
+          // Refused outright (the transport, or a host without a library): the
+          // guard has already raised the notice; the file simply did not land.
+          if (answer === undefined) continue
+          if (answer.outcome.imported) {
+            imported.push({
+              name: answer.outcome.name,
+              overwritten: answer.outcome.overwritten,
+              sensitive: answer.outcome.sensitive,
+            })
+          } else {
+            refused.push({ name: answer.outcome.name, reason: answer.outcome.reason })
+          }
+          // The response carries the library as of this file; the last one read
+          // is the current one, so the list never trails the loop.
+          set({ presets: answer.presets })
+        }
+        if (imported.length > 0) {
+          get().notify('info', translate(
+            getLanguage(),
+            imported.length === 1 ? 'presetImportedOne' : 'presetImported',
+            { n: imported.length },
+          ))
+        }
+        return { imported, refused }
       },
 
       async exportPreset(name: string): Promise<void> {

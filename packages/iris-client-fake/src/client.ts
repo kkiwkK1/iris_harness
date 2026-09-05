@@ -1036,7 +1036,8 @@ class InMemoryClient implements FakeClient {
       case 'preset.save':
       case 'preset.delete':
       case 'preset.read':
-      case 'preset.import': {
+      case 'preset.import':
+      case 'preset.importFile': {
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 

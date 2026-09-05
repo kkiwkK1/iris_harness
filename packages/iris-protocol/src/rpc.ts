@@ -450,6 +450,25 @@ export const requestSchemas = {
    * listing for an import picker: the response carries what the install offers.
    */
   'preset.import': z.object({ names: z.array(z.string().min(1).max(255)).optional() }),
+  /**
+   * Import one hand-carried preset file — upstream's import button.
+   *
+   * Upstream splits the work: the browser reads the picked file, derives the
+   * preset's name from the filename minus its last extension and refuses what
+   * does not parse (`openai.js` `onPresetImportFileChange`), then posts to
+   * `/api/presets/save` (`presets.js`), which sanitizes the name and writes the
+   * body four-space indented. Nothing on that path converts a foreign format —
+   * parseable JSON goes in as it is. This arm takes the whole file and answers
+   * one outcome, so the naming of refusals stays the host's job and the same
+   * code path's. The content crosses as base64 because that is how a browser
+   * file upload already reaches `character.import`.
+   */
+  'preset.importFile': z.object({
+    /** The file's name, extension included; the stem becomes the preset's name. */
+    filename: z.string().min(1).max(255),
+    /** Base64 of the `.json` file, exactly as it left the disk. */
+    content: z.string().min(1),
+  }),
 
   /** Every script a character's card carries, enabled or not. */
   'script.list': z.object({ characterId: z.string().min(1) }),
@@ -1195,6 +1214,12 @@ export interface RpcResponseMap {
   'preset.delete': { presets: PresetSummary[], active?: string }
   'preset.read': { name: string, preset: Record<string, unknown> }
   'preset.import': { imported: string[], skipped: { name: string, reason: string }[], presets: PresetSummary[] }
+  'preset.importFile': {
+    outcome:
+      | { name: string, imported: true, overwritten: boolean, sensitive: string[] }
+      | { name: string, imported: false, reason: 'invalid-json' | 'not-a-preset' | 'unusable-name' }
+    presets: PresetSummary[]
+  }
 
   /**
    * What a card contains, and what the user has decided about it.
