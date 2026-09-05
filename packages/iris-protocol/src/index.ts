@@ -57,6 +57,7 @@ export type {
   ConnectionTestErrorCode,
   DebugReport,
   ReportGrade,
+  ContinuePostfix,
   GenerationSettings,
   InsertionStrategy,
   LorebookSettings,

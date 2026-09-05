@@ -13,7 +13,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { ChatCompletionPreset } from '@iris/preset'
-import type { GenerationSettings, ReasoningEffort } from '@iris/protocol'
+import type { ContinuePostfix, GenerationSettings, ReasoningEffort } from '@iris/protocol'
 
 import { invalid } from './errors.ts'
 import { resolveWorldbookSettings, sanitizeWorldbookSettings, type WorldbookSettings } from './worldbook-settings.ts'
@@ -40,6 +40,30 @@ const NUMERIC_FIELDS = {
  * or silently ignored by it, and neither failure says where it came from.
  */
 const REASONING_EFFORTS: readonly ReasoningEffort[] = ['auto', 'low', 'medium', 'high', 'min', 'max']
+
+/**
+ * The continue-postfix words upstream's radio group stands for, mapped onto
+ * the separators they send (`continue_postfix_types`, openai.js:211). The
+ * words travel the wire; the separators reach the prompt.
+ */
+export const CONTINUE_POSTFIX_SEPARATORS: Record<ContinuePostfix, string> = {
+  none: '',
+  space: ' ',
+  newline: '\n',
+  double: '\n\n',
+}
+
+const CONTINUE_POSTFIXES = Object.keys(CONTINUE_POSTFIX_SEPARATORS) as readonly ContinuePostfix[]
+
+/**
+ * Boolean reply-shaping fields, each named after the upstream key it maps.
+ *
+ * A boolean gets the same three-case treatment as every other field: omitted
+ * leaves it alone, `null` clears the override, and a non-boolean value is
+ * refused — a `"true"` string would read as on forever and never say why.
+ */
+const BOOLEAN_FIELDS = ['trimSentences', 'squashSystemMessages'] as const satisfies
+  readonly (keyof GenerationSettings)[]
 
 /** What one settings file holds. */
 interface SettingsFile {
@@ -381,6 +405,27 @@ export function sanitize(patch: Record<string, unknown>): SettingsPatch {
     } else {
       set.reasoningEffort = value as ReasoningEffort
     }
+  }
+
+  if (Object.hasOwn(patch, 'continuePostfix')) {
+    const value = patch['continuePostfix']
+    if (value === null) clear.push('continuePostfix')
+    else if (typeof value !== 'string' || !CONTINUE_POSTFIXES.includes(value as ContinuePostfix)) {
+      throw invalid(`"continuePostfix" must be one of ${CONTINUE_POSTFIXES.join(', ')}`)
+    } else {
+      set.continuePostfix = value as ContinuePostfix
+    }
+  }
+
+  for (const key of BOOLEAN_FIELDS) {
+    if (!Object.hasOwn(patch, key)) continue
+    const value = patch[key]
+    if (value === null) {
+      clear.push(key)
+      continue
+    }
+    if (typeof value !== 'boolean') throw invalid(`"${key}" must be a boolean`)
+    Object.assign(set, { [key]: value })
   }
 
   return { set, clear }

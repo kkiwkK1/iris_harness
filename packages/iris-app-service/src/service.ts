@@ -23,7 +23,7 @@ import { assemble, type AssembleResult, type Contribution, type HistoryEntry } f
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { ChatView, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import type { ChatView, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import { providerPreset } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
@@ -55,7 +55,8 @@ import { evaluatePrompt, promptHasTemplate } from './templates.ts'
 import { applyOps, buildSnapshot } from './template.ts'
 import type { ScriptPolicyStore } from './scripts.ts'
 import type { ScriptVariableStore } from './script-variables.ts'
-import type { SettingsStore } from './settings.ts'
+import { CONTINUE_POSTFIX_SEPARATORS, type SettingsStore } from './settings.ts'
+import { trimToEndSentence } from './reply-trim.ts'
 import { textOf } from './views.ts'
 
 /** Provenance stamped on a partial reply the user stopped. */
@@ -98,6 +99,24 @@ function seedTextOf(seed: Candidate | undefined): string {
     .filter(block => block.type === 'text')
     .map(block => block.text)
     .join('')
+}
+
+/**
+ * The seed text a continue request assembles with, separator included.
+ *
+ * Upstream appends `continue_postfix` to the text being continued on every
+ * OpenAI route (`script.js:4917-4921`), with one guard: text already ending in
+ * a space is left alone, so a space separator cannot stack. Absent setting
+ * means `'space'`, upstream's default — the model needs *some* boundary
+ * between the floor's last word and the word it writes next, and every
+ * OpenAI-compatible route upstream gets one.
+ * @param seedText - the reading being continued, verbatim.
+ * @param postfix - the stored separator word, or absent for the default.
+ * @returns the text the request carries and the reply opens with.
+ */
+function continuedSeedText(seedText: string, postfix: string): string {
+  if (postfix.length === 0 || seedText.endsWith(' ')) return seedText
+  return seedText + postfix
 }
 
 /**
@@ -1944,12 +1963,15 @@ export class IrisAppService {
     const signal = entry.begin(turn)
     // A continue's buffer opens on the text being continued, because the deltas
     // that follow are only the new words: painting them over the row without
-    // the seed would collapse the floor to its tail while streaming.
+    // the seed would collapse the floor to its tail while streaming. The
+    // separator the request carries is part of what shows, so it rides here and
+    // in the event below — otherwise the floor's tail loses a character the
+    // model was actually given until the reply settles.
+    const continuePostfix = request.kind === 'continue'
+      ? CONTINUE_POSTFIX_SEPARATORS[this.#options.settings.get(chatId).continuePostfix ?? 'space']
+      : undefined
     if (seed !== undefined && entry.pending !== undefined) {
-      entry.pending.text = seed.message.content
-        .filter(block => block.type === 'text')
-        .map(block => block.text)
-        .join('')
+      entry.pending.text = continuedSeedText(seedTextOf(seed), continuePostfix ?? '')
     }
     const driver = this.#driver(entry, generationType)
     const events: GenerateEvents = {
@@ -1987,7 +2009,7 @@ export class IrisAppService {
       : request.kind === 'regenerate'
         ? driver.regenerate(entry.session, events)
         : request.kind === 'continue'
-          ? driver.continueTurn(entry.session, events, nudge)
+          ? driver.continueTurn(entry.session, events, nudge, continuePostfix)
           : driver.impersonate(entry.session, events, instruction)
 
     // Announced after the call, not before: `send` appends the user's line
@@ -2001,7 +2023,7 @@ export class IrisAppService {
       chatId,
       turn,
       key: entry.streamingKeyFor(turn),
-      ...seed === undefined ? {} : { seed: seedTextOf(seed) },
+      ...seed === undefined ? {} : { seed: continuedSeedText(seedTextOf(seed), continuePostfix ?? '') },
       ...impersonating ? { role: 'user' as const, name: entry.names.user } : {},
     })
 
@@ -2037,6 +2059,18 @@ export class IrisAppService {
     options: { recordVariables?: boolean } = {},
   ): Promise<void> {
     try {
+      // The reply-shaping settings run first, before variables and storage
+      // read the text: upstream applies `cleanUpMessage` before the message is
+      // stored, so the trim is part of what everything downstream sees. Only a
+      // completed reply is cut — a stop keeps whatever the user decided was
+      // good enough, and an impersonation is a user line, never trimmed.
+      const generated = text
+      let settledText = text
+      if (reason === 'completed' && options.recordVariables !== false) {
+        const settings = this.#options.settings.get(entry.chatId)
+        if (settings.trimSentences === true) settledText = trimToEndSentence(text)
+      }
+
       // Variables first: a permanent script may be there precisely to strip the
       // command block, and the commands have to be read before it does.
       // Reported, not swallowed: a reply whose update block nothing understood
@@ -2049,7 +2083,7 @@ export class IrisAppService {
       // has no candidate for it, and the next real turn's baseline walk would
       // then stop one turn early.
       if (options.recordVariables !== false) {
-        entry.recordVariables(turn, text, message => {
+        entry.recordVariables(turn, settledText, message => {
           this.#report(message, {
             kind: 'mvu',
             grade: 'fault',
@@ -2058,7 +2092,7 @@ export class IrisAppService {
           })
         })
       }
-      this.#storeRewritten(entry, entry.scripts, text)
+      this.#storeRewritten(entry, entry.scripts, generated, settledText)
       entry.touch()
       entry.finish()
       // After the turn is complete, so a prune can never race the assembly that
@@ -2212,6 +2246,7 @@ export class IrisAppService {
       ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...settings.stop === undefined ? {} : { stop: settings.stop },
+      ...settings.squashSystemMessages === undefined ? {} : { squashSystemMessages: settings.squashSystemMessages },
       sampling: samplingOf(settings),
     })
   }
@@ -2567,28 +2602,34 @@ export class IrisAppService {
   }
 
   /**
-   * Rewrite a settled reply the way a permanent script says it should be stored.
+   * Rewrite a settled reply the way reply shaping and permanent scripts say it
+   * should be stored.
    *
-   * Only the scripts marked neither display-only nor prompt-only reach this:
-   * they change the message itself, which is why the render and send directions
-   * then leave the stored form alone. It goes through the chat-file projection
-   * because an append-only log cannot rewrite a message in place — the same
-   * route `chat.editMessage` takes, and for the same reason.
+   * Two writers land here with one shape: the reply-shaping settings (the
+   * sentence trim) and the chat's permanent regex scripts — both change the
+   * message itself, which is why the render and send directions then leave the
+   * stored form alone. It goes through the chat-file projection because an
+   * append-only log cannot rewrite a message in place — the same route
+   * `chat.editMessage` takes, and for the same reason.
    * @param entry - the conversation.
    * @param scripts - the chat's ordered scripts.
-   * @param text - the reply as generated.
+   * @param generated - the reply as the model produced it.
+   * @param stored - the reply after reply shaping, before scripts.
    */
-  #storeRewritten(entry: ChatEntry, scripts: readonly RegexScript[], text: string): void {
-    if (scripts.length === 0) return
-    const stored = runScripts(text, 'assistant', scripts, { substitute: entry.substitute })
-    if (stored === text) return
+  #storeRewritten(entry: ChatEntry, scripts: readonly RegexScript[], generated: string, stored: string): void {
+    let final = stored
+    if (scripts.length > 0) {
+      const rewritten = runScripts(final, 'assistant', scripts, { substitute: entry.substitute })
+      if (rewritten !== final) final = rewritten
+    }
+    if (final === generated) return
 
     const { messages } = entry.toFile()
     const index = messages.length - 1
     const line = messages[index]
     if (line === undefined || line.is_user) return
-    line.mes = stored
-    if (line.swipes !== undefined) line.swipes[line.swipe_id ?? 0] = stored
+    line.mes = final
+    if (line.swipes !== undefined) line.swipes[line.swipe_id ?? 0] = final
     entry.rebuild(messages, position => position)
   }
 
@@ -3113,6 +3154,18 @@ export function presetScalarPatch(preset: ChatCompletionPreset): Record<string, 
   const effort = preset['reasoning_effort']
   if (typeof effort === 'string' && REASONING_EFFORT_VALUES.has(effort)) {
     patch['reasoningEffort'] = effort
+  }
+  // A preset is a full snapshot upstream, and a Chat Completion preset carries
+  // its continue separator (`continue_postfix`, openai.js:496, default ' ').
+  // Real presets tune it — the double-newline spelling is how a preset asks a
+  // continued reply to start a fresh paragraph — so switching presets without
+  // it would silently keep the last preset's boundary. Stored as the word, not
+  // the literal, so the same refuse-garbage rule as everything else applies.
+  const postfix = preset['continue_postfix']
+  if (typeof postfix === 'string') {
+    const word = (Object.entries(CONTINUE_POSTFIX_SEPARATORS) as [ContinuePostfix, string][])
+      .find(([, separator]) => separator === postfix)?.[0]
+    if (word !== undefined) patch['continuePostfix'] = word
   }
   return patch
 }
