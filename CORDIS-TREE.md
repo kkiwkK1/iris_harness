@@ -70,12 +70,12 @@
 
 ### 4.2 挂了一张"菜单"（handler 表——浏览器能点的一切）
 
-浏览器每点一下，就发一个请求给宿主，请求长这样：`{method: 'chat.send', params: {…}}`。`app` 插件注册了约 70 个"菜名"，按域分组：
+浏览器每点一下，就发一个请求给宿主，请求长这样：`{method: 'chat.send', params: {…}}`。`app` 插件注册了约 70 个"菜名"，按域分组（本表只登记当前 HEAD 上已注册的面；在途分支的功能不列）：
 
 | 域 | 菜名举例 | 谁实现的 |
 | --- | --- | --- |
 | chat.* | 发消息、继续、代我发言、重新生成、搜索、导入/导出 | `app` 插件 + `@iris/turn` + `@iris/chat` |
-| character.* | 列表、导入、删除、复制/重命名/导出 | `app` + `@iris/character` |
+| character.* | 列表、导入、删除（复制/重命名/导出**进行中**，见 `dev/feat-character-mgmt` 分支，未合入） | `app` + `@iris/character` |
 | preset.* | 列表、切换、保存、导入文件、提示词管理器 | `app` + `@iris/preset` |
 | persona.* | 人格的增删改查 | `app` 的 persona store |
 | worldbook.* | 世界书七件套 + 聊天级书 + 扫描设置 | `app` + `@iris/lorebook` |

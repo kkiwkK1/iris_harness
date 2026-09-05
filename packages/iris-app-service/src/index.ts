@@ -243,7 +243,7 @@ export const Config: z<Config> = z.object({
   webDistIndex: z.string(),
   sandboxPath: z.string().default('/sandbox'),
   templates: z.boolean().default(false),
-  pruneVariables: z.boolean().default(true),
+  pruneVariables: z.boolean().default(false),
   pruneSnapshotInterval: z.natural().default(50),
   pruneKeepRecent: z.natural().default(20),
   templateDeadlineMs: z.natural().default(2000),
@@ -468,17 +468,27 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // neither owns nor may displace. Replacing a route we installed before is
   // how two profiles of one provider take turns; the in-flight stream of the
   // old one keeps its adapter object and finishes untouched.
+  //
+  // Each install is wrapped in its own `ctx.effect` (the same shape the
+  // `llm-openai-compat` row uses), so the disposer is owned by this fiber:
+  // unloading the app plugin takes its runtime adapters with it, and a
+  // remount re-runs the boot restoration below — a hot reload can no longer
+  // leave a stale `conn/<id>` route behind to trip `DUPLICATE_ADAPTER`. The
+  // map is only the replacement index, not the lifetime owner.
   const installed = new Map<string, () => void>()
   const installConnection = (route: string, endpoint: { baseURL: string, apiKey?: string, apiKeyHeader?: string }): void => {
     installed.get(route)?.()
-    installed.set(route, ctx.llm.registerAdapter([route], new OpenAiCompatAdapter({
-      provider: route,
-      displayName: route,
-      baseURL: endpoint.baseURL,
-      ...endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey },
-      ...endpoint.apiKeyHeader === undefined ? {} : { apiKeyHeader: endpoint.apiKeyHeader },
-      models: [],
-    })))
+    installed.set(route, ctx.effect(
+      () => ctx.llm.registerAdapter([route], new OpenAiCompatAdapter({
+        provider: route,
+        displayName: route,
+        baseURL: endpoint.baseURL,
+        ...endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey },
+        ...endpoint.apiKeyHeader === undefined ? {} : { apiKeyHeader: endpoint.apiKeyHeader },
+        models: [],
+      })),
+      `irisApp: adapter ${route}`,
+    ))
   }
   // The last activated profile comes back the same way after a restart: its
   // adapter is in place before any handler can be reached, because a
