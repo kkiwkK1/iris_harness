@@ -17,13 +17,40 @@
  * @module iris-web/app/PresetPanel
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Section } from './fields.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
+import { toBase64 } from './format.ts'
+
+/**
+ * One hand-carried file's outcome, kept until the next import — the shape the
+ * store's `importPresetFiles` answers, flattened for the report list.
+ */
+type FileOutcome =
+  | { name: string, kind: 'imported', overwritten: boolean, sensitive: readonly string[] }
+  | { name: string, kind: 'refused', reason: 'invalid-json' | 'not-a-preset' | 'unusable-name' }
+
+/**
+ * The sentence one outcome renders as — the named part after "{name} — ".
+ * Kept out of the JSX so the three-way refusal mapping reads as the table it is.
+ */
+function outcomeNote(row: FileOutcome): string {
+  if (row.kind === 'refused') {
+    return row.reason === 'invalid-json' ? t('presetFileInvalidJson')
+      : row.reason === 'not-a-preset' ? t('presetFileNotAPreset')
+      : t('presetFileUnusableName')
+  }
+  const note = row.overwritten ? t('presetFileOverwrote') : t('presetFileImported')
+  // The safety-relevant half of the sentence never yields to the bookkeeping
+  // half: a file that carried a proxy password is said in the same breath as
+  // whether it replaced something.
+  return row.sensitive.length === 0 ? note
+    : `${note} ${t('presetFileSensitive', { fields: row.sensitive.join(', ') })}`
+}
 
 /**
  * Render the preset section.
@@ -48,6 +75,11 @@ export function PresetPanel(): ReactElement | null {
   // The last import's skips, kept until the next import or rename: a skipped
   // name that vanishes when the notice expires is a skipped name unexplained.
   const [skipped, setSkipped] = useState<readonly { name: string, reason: string }[]>([])
+  // The last file import's per-file outcomes, same memory rule as `skipped` —
+  // one "last import" story between the two arms, whichever ran last.
+  const [fileOutcomes, setFileOutcomes] = useState<readonly FileOutcome[]>([])
+  // The hidden picker behind the import button — the Sidebar's foot pattern.
+  const filePicker = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     void actions.loadPresets()
@@ -68,6 +100,23 @@ export function PresetPanel(): ReactElement | null {
     setNaming(false)
     setName('')
     void actions.savePreset(named)
+  }
+
+  // The hand-carried import: the browser reads each picked file (upstream's
+  // `onPresetImportFileChange` does the same in `openai.js`), the host parses
+  // and files it, and every file answers on its own — one bad body must not
+  // veto the folder, the `importChats` rule.
+  const importFiles = async (files: readonly File[]): Promise<void> => {
+    if (files.length === 0) return
+    setSkipped([])
+    const payload = await Promise.all(
+      files.map(async file => ({ filename: file.name, base64: await toBase64(file) })),
+    )
+    const answer = await actions.importPresetFiles(payload)
+    setFileOutcomes([
+      ...answer.imported.map(row => ({ ...row, kind: 'imported' as const })),
+      ...answer.refused.map(row => ({ ...row, kind: 'refused' as const })),
+    ])
   }
 
   return (
@@ -117,9 +166,44 @@ export function PresetPanel(): ReactElement | null {
       )}
 
       {/*
-        The import row exists only when the host has an install configured —
-        `install === undefined` means the composition never named one, and a
-        button that answers "no install" forever is a button that lies.
+        The hand-carried import is the primary entry: the file leaves no trail
+        through a SillyTavern install, and a preset someone sent is the common
+        case. The picker is hidden; the button only opens it. Per-file outcomes
+        are kept until the next import, like the install arm's skips.
+      */}
+      <div className="iris-preset__import">
+        <input
+          ref={filePicker}
+          type="file"
+          accept=".json"
+          multiple
+          hidden
+          onChange={event => {
+            const files = [...(event.target.files ?? [])]
+            // Reset before reading so picking the same file twice still fires —
+            // the second pick may be the fixed copy of the first, refused one.
+            event.target.value = ''
+            void importFiles(files)
+          }}
+        />
+        <Button variant="outline" size="sm" onClick={() => filePicker.current?.click()}>
+          {t('presetImportFiles')}
+        </Button>
+        {fileOutcomes.length === 0 ? null : (
+          <ul className="iris-preset__report">
+            {fileOutcomes.map((row, index) => (
+              <li key={`${String(index)}-${row.name}`}>
+                {row.name} — {outcomeNote(row)}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/*
+        The install-wide import stays as the secondary entry — the arm that
+        reaches into a configured SillyTavern install (`IRIS_ST_DIR`) and copies
+        its Chat Completion presets wholesale.
       */}
       {install !== undefined && install.length > 0 ? (
         <div className="iris-preset__import">
@@ -127,6 +211,7 @@ export function PresetPanel(): ReactElement | null {
             variant="outline"
             size="sm"
             onClick={() => {
+              setFileOutcomes([])
               void actions.importPresets().then(answer => setSkipped(answer.skipped))
             }}
           >

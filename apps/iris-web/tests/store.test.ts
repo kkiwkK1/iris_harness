@@ -1371,3 +1371,63 @@ test('a clean reconnect announces nothing', () => {
   assert.equal(scope.store.getState().noticeLog.length, 0)
   scope.dispose()
 })
+
+test('importPresetFiles answers per file — what landed, what was refused, and the list as of the last', async () => {
+  const stub = stubClient()
+  const answers: Record<string, unknown> = {
+    'good.json': {
+      outcome: { name: 'good', imported: true, overwritten: false, sensitive: [] },
+      presets: [{ name: 'good' }],
+    },
+    'twin.json': {
+      outcome: { name: 'good', imported: true, overwritten: true, sensitive: ['reverse_proxy'] },
+      presets: [{ name: 'good' }],
+    },
+    'bad.json': {
+      outcome: { name: 'bad', imported: false, reason: 'invalid-json' },
+      presets: [{ name: 'good' }],
+    },
+  }
+  const client: IrisClient = {
+    ...stub.client,
+    call: async (method, params) => {
+      if (method === 'preset.importFile') {
+        const answer = answers[(params as { filename: string }).filename]
+        assert.ok(answer !== undefined, `unexpected filename ${(params as { filename: string }).filename}`)
+        return answer as never
+      }
+      throw new Error(`unexpected ${method}`)
+    },
+  }
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+
+  const answer = await store.getState().importPresetFiles([
+    { filename: 'good.json', base64: 'e30=' },
+    { filename: 'twin.json', base64: 'e30=' },
+    { filename: 'bad.json', base64: 'e30=' },
+  ])
+
+  assert.deepEqual(answer.imported, [
+    { name: 'good', overwritten: false, sensitive: [] },
+    { name: 'good', overwritten: true, sensitive: ['reverse_proxy'] },
+  ])
+  assert.deepEqual(answer.refused, [{ name: 'bad', reason: 'invalid-json' }])
+  // The library in state is the last answer's, not a stale first read.
+  assert.deepEqual(store.getState().presets, [{ name: 'good' }])
+  assert.equal(store.getState().notice?.kind, 'info')
+  assert.match(store.getState().notice?.text ?? '', /Imported 2 presets/)
+  dispose()
+})
+
+test('a host without the file import answers honestly: nothing landed, and the refusal is the notice', async () => {
+  // The fake client's refusal of `preset.importFile` — the guard raises it as
+  // one notice, and no file invents an outcome it did not get.
+  const { dispose, store } = createIrisStore(createFakeClient(), TEST_SOURCE)
+
+  const answer = await store.getState().importPresetFiles([{ filename: 'x.json', base64: 'e30=' }])
+
+  assert.deepEqual(answer.imported, [])
+  assert.deepEqual(answer.refused, [])
+  assert.equal(store.getState().notice?.kind, 'error')
+  dispose()
+})

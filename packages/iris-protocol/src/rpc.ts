@@ -1294,7 +1294,7 @@ export interface RpcResponseMap {
   'preset.import': { imported: string[], skipped: { name: string, reason: string }[], presets: PresetSummary[] }
   'preset.importFile': {
     outcome:
-      | { name: string, imported: true, overwritten: boolean, sensitive: string[] }
+      | { name: string, imported: true, overwritten: boolean, sensitive: readonly string[] }
       | { name: string, imported: false, reason: 'invalid-json' | 'not-a-preset' | 'unusable-name' }
     presets: PresetSummary[]
   }

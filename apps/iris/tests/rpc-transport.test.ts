@@ -238,6 +238,9 @@ const PROBES: Record<string, unknown> = {
   'preset.delete': { name: 'no-such-preset' },
   'preset.read': { name: 'no-such-preset' },
   'preset.import': {},
+  // Empty JSON object: parses, is not a preset, and the named refusal proves
+  // the handler ran — the same reachability verdict the other arms answer.
+  'preset.importFile': { filename: 'probe.json', content: 'e30=' },
   'script.list': { characterId: 'no-such-card' },
   'script.setEnabled': { characterId: 'no-such-card', scriptId: 'x', enabled: true },
   'script.body': { characterId: 'no-such-card', scriptId: 'x' },

@@ -321,6 +321,91 @@ test('preset.import copies from the install and reports each skip with its reaso
   assert.ok(answer.presets.some(row => row.name === 'Good'))
 })
 
+const b64 = (text: string): string => Buffer.from(text, 'utf8').toString('base64')
+
+test('preset.importFile files a hand-carried preset under its filename’s stem, alone or in a folderful', async (t) => {
+  const { handlers, presets } = await fixture(t, {
+    library: [{ name: 'Existing', body: OTHER_PRESET }],
+  })
+
+  // One file: the stem is the filename minus its last extension, upstream's
+  // browser-side derivation, and the file lands as a full library member.
+  const single = await handlers['preset.importFile']({
+    filename: 'Hand Carried.json',
+    content: b64(JSON.stringify(LIBRARY_PRESET)),
+  })
+  assert.ok(single.outcome.imported)
+  assert.equal(single.outcome.name, 'Hand Carried')
+  assert.equal(single.outcome.overwritten, false, 'nothing of that name was there yet')
+  assert.deepEqual(single.outcome.sensitive, [])
+  assert.ok(await presets.has('Hand Carried'))
+
+  // Several files: each answers on its own, and the list the answer carries is
+  // the library as of the last file.
+  const batch = await handlers['preset.importFile']({
+    filename: 'Second One.json',
+    content: b64(JSON.stringify(OTHER_PRESET)),
+  })
+  assert.ok(batch.outcome.imported)
+  assert.deepEqual(batch.presets.map(row => row.name), ['Existing', 'Hand Carried', 'Second One'])
+
+  // And the imported preset is a real member: it selects like any other.
+  const selected = await handlers['preset.select']({ name: 'Hand Carried' })
+  assert.equal(selected.active, 'Hand Carried')
+})
+
+test('preset.importFile reports the named refusals, the overwrite, and the sensitive fields', async (t) => {
+  const { handlers, presets } = await fixture(t, {
+    library: [{ name: 'Existing', body: OTHER_PRESET }],
+  })
+
+  // A file that does not parse — the upstream "Invalid file" case, named here.
+  const broken = await handlers['preset.importFile']({
+    filename: 'Broken.json', content: b64('{"prompts": '),
+  })
+  assert.deepEqual(broken.outcome, { name: 'Broken', imported: false, reason: 'invalid-json' })
+
+  // A file that parses but is not a Chat Completion preset: refused at the
+  // door rather than stored where the list would silently never show it.
+  const notOne = await handlers['preset.importFile']({
+    filename: 'NotOne.json', content: b64('{"x": 1}'),
+  })
+  assert.deepEqual(notOne.outcome, { name: 'NotOne', imported: false, reason: 'not-a-preset' })
+
+  // A filename whose stem sanitizes to nothing — upstream's endpoint would 400.
+  const nameless = await handlers['preset.importFile']({
+    filename: '???.json', content: b64(JSON.stringify(LIBRARY_PRESET)),
+  })
+  assert.deepEqual(nameless.outcome, { name: '???', imported: false, reason: 'unusable-name' })
+
+  // None of the refusals wrote anything.
+  assert.deepEqual(await presets.list(), ['Existing'])
+
+  // The same name again is an overwrite, upstream's confirm dialog answered
+  // with a flag — and a body carrying proxy settings reports the fields it
+  // carries, said rather than stripped or silenced.
+  const proxied = {
+    ...JSON.parse(JSON.stringify(OTHER_PRESET)),
+    reverse_proxy: 'https://proxy.example/v1',
+    proxy_password: 'sk-hunter2',
+  } as unknown as ChatCompletionPreset
+  const again = await handlers['preset.importFile']({
+    filename: 'Existing.json', content: b64(JSON.stringify(proxied)),
+  })
+  assert.ok(again.outcome.imported)
+  assert.equal(again.outcome.name, 'Existing')
+  assert.equal(again.outcome.overwritten, true, 'the library already had this name')
+  assert.deepEqual(again.outcome.sensitive, ['reverse_proxy', 'proxy_password'])
+
+  // A BOM-prefixed file — what Windows Notepad writes — still parses: the
+  // invisible character is stripped before JSON.parse sees the text.
+  const bommed = await handlers['preset.importFile']({
+    filename: 'Bommed.json', content: b64(`\uFEFF${JSON.stringify(OTHER_PRESET)}`),
+  })
+  assert.ok(bommed.outcome.imported)
+  assert.deepEqual(await presets.list(), ['Bommed', 'Existing'])
+})
+
 test('a preset switch moves the assembly window: openai_max_context is what the budget reads', async (t) => {
   const { handlers, settings } = await fixture(t, {
     library: [{ name: 'Narrow', body: LIBRARY_PRESET }],
