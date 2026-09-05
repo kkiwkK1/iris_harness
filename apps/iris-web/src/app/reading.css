@@ -90,6 +90,13 @@
   color: var(--iris-ink-secondary);
   background: var(--iris-bg-page);
   font-variant-numeric: tabular-nums;
+  /*
+   * Above the interface breakout, for the same reason `.iris-msg__margin` is:
+   * the slot's negative margins reclaim the air this number sits in, and the
+   * frame is later in the DOM. Its own background would otherwise be painted
+   * under an opaque card with nothing to report the loss.
+   */
+  z-index: 1;
 }
 
 .iris-msg {
@@ -106,6 +113,23 @@
   flex-direction: column;
   align-items: flex-end;
   padding: 4px 15px 0 0;
+  /*
+   * **Marginalia above the breakout.**
+   *
+   * An interface slot escapes the measure with negative inline margins and
+   * reclaims the air beside the prose — air that includes this column, where
+   * the variant rail and the floor number live. The frame is opaque (a card
+   * paints its own background), it comes later in the DOM, and without a
+   * stacking position here it painted **over** the rail: measured at 240px² of
+   * rail hidden under a card interface, with nothing reporting a fault.
+   *
+   * A stacking position is the whole repair: the box never moves, the breakout
+   * keeps its width, and the marginalia simply keep their layer. The frame
+   * cannot answer in kind — nothing inside it can escape the frame's own box —
+   * so this is not a fight it is able to reopen.
+   */
+  position: relative;
+  z-index: 1;
 }
 
 /*
@@ -515,6 +539,30 @@
    * smaller height and shrinks; one with more grows.
    */
   height: 60vh;
+  /*
+   * **The clamp: a frame is never taller than the visible band.**
+   *
+   * The frame reports its content height and the runner applies it inline —
+   * 1847px on a measured card, against a 522px band — and that inline number is
+   * exactly the fault a user reads as "卡面前端超级大": the interface pushed the
+   * conversation down the page and the reading column scrolled to reach it. So
+   * the box is clamped here, in CSS, and the clamp wins over the inline height
+   * because `max-height` beats `height` at computed-value time no matter which
+   * of them is inline. The applied measurement stays on the element untouched —
+   * it is still the frame's own word about its content — and what renders is
+   * `min(content, band)`.
+   *
+   * The band is published on the reading scroller by `ChatPane`
+   * (`frame-fit.ts`); the `100vh` fallback covers the gap before it lands, and
+   * degrades to yesterday's behaviour rather than to a clamp of nothing.
+   *
+   * What the clamp owes the card: content taller than the clamped box must stay
+   * reachable, and it is — the frame's own bootstrap turns `overflow-y` on the
+   * moment its content exceeds its viewport (`frame-entry.ts`
+   * `overflowsViewport`), so a clamped interface scrolls **inside itself**,
+   * which is what a game-style screen was always supposed to do.
+   */
+  max-height: var(--iris-app-frame-height, 100vh);
   color-scheme: normal;
 }
 

@@ -504,6 +504,7 @@ register 清单）与验收脚本 `qa/multibook-acceptance.mjs`。MVU 侧 `initV
   去重）逐一转写，行号见各处注释。
 - 回归：`pnpm test` 2263 例全绿（哈人冰恋/神隐挑战的既有语料用例在内），
   `pnpm typecheck`、`apps/iris-web` typecheck 全绿。
+<<<<<<< HEAD
 # DEVIATIONS — 任务 T2：聊天备份视图（C17）
 
 分支 `dev/feat-backups`（基于主线 dev/iris-exploration 079bf31）。对照上游
@@ -844,3 +845,59 @@ bootstrap 增至 47,168 B，`FRAME_OVERHEAD_BYTES` 47→48 KiB（同一改动内
 - 无挂起真实网络复跑：全 PASS。
 - `npm test` 2,286 例全绿；根 typecheck、iris-web typecheck 全绿（iris-web 1,014 例，
   含就绪握手时序、竞态回归、setChatMessages 翻译与接口帧裸发布新用例）。
+=======
+
+---
+
+# DEVIATIONS — 任务 U：消息帧尺寸自适应与遮挡修复
+
+分支 `dev/fix-frame-fit`（基于 dev/iris-exploration @ d8362ef）。实测装置：headless
+Chrome CDP + 本 worktree 独立宿主（端口 8821，数据目录为仓库内 `apps/iris/data`
+副本），五张真卡 × 1920×1080 / 1366×768 两档视口。
+
+## 实测几何现状（修复前，HEAD d8362ef）
+
+- 尸变纪元：interface 帧高 **1797px@1080（可视带 834）/ 1847px@768（带 522）**——
+  即任务书引用的用户读数；帧超出可视带 2.2–3.5 倍，只能靠外层 `.iris-scroll` 滚。
+- 政经博弈：双帧 740+764px@1080（勉强各自入带，两帧叠 1504px）；**755/764px@768
+  全部超带**。
+- 哈人冰恋：消息帧 482px 在带内；但其论坛覆盖层（SCRIPT-DOM 族）按设计整层压在
+  阅读列上（有「收起卡片界面」逃生钮）——该族行为不属本任务（任务 H/W 域），不动。
+- 遮挡实证：尸变纪元的 breakout 帧把 margin 列的 variant rail 盖掉 **240px²**
+  （iframe 不透明、DOM 序在后、margin 列无 stacking 位置）。
+- 高度无振荡（3s 连续采样 1 种状态）；中线 prose 1091 / composer 1133（42px 差
+  为修复前既有，本任务前后逐位相等，无回归）。
+
+## 修复机制与偏离
+
+1. **夹持放在 CSS `max-height`，不改 runner 的 inline 高度。**
+   `reading.css` 给 `.iris-interfaces__slot iframe` 加
+   `max-height: var(--iris-app-frame-height, 100vh)`：`max-height` 在计算值阶段
+   压过 inline `height`，所以 runner 继续原样记录帧自报的内容高（诊断为真），
+   渲染盒自然是 `min(内容高, 可视带)`。可视带由 `ChatPane` 发布到 `.iris-scroll`
+   元素上（`frame-fit.ts` 纯函数 + ResizeObserver），帧内超出部分由既有
+   `frame-entry.ts` `overflowsViewport` 机制自动开 `overflow-y:auto` 帧内滚动
+   （实测 1847 帧在 522 带内可内部滚到全部 1058px 溢出）。任务 W（帧内滚动策略）
+   只需知道：夹持点在宿主 CSS，帧的自报高度消息未动；W 若改帧内滚动机制，与本
+   修法正交，唯一协同点是 `--iris-app-frame-height` 语义 =「可视带」，勿改。
+2. **`data-iris-sizing='viewport'` 卡从 `100vh` 改为正好一屏带。**
+   全职高手实测：修复前帧高 100vh（1080/768，超出带 246px），修复后 834/522
+   正好满屏。fallback 仍是 `100vh`（发布前的空窗退化为旧行为，不会夹成 0）。
+3. **遮挡修复 = margin 列给 stacking 位置，不动 breakout 几何。**
+   `.iris-msg__margin` 与 `.iris-turn__ordinal` 加 `position/z-index`，边栏
+   （variant rail、楼层号）改画在 breakout 帧之上；实测 rail 中心
+   elementFromPoint 由 iframe 变为 `SPAN.iris-rail__count`。breakout 宽度不变。
+4. **发布器用 ref callback，不用 mount effect（实测踩坑）。**
+   阅读视图「无聊天→开聊天」两次渲染间 React 重构了树：mount effect 在
+   `scroller.current` 仍为 null 时运行且 deps 不再变化，变量永远发布不出去
+   （首版实测踩中：帧 max-height 一直停在 100vh fallback）。ref callback 在
+   commit 阶段对准该元素本身，不存在「盒子在而无观察者」的状态。
+5. **"卡面盖正文"的定位结论**：消息帧在文档流内，几何上不可能压住正文
+   （帧∩正文矩形交集实测恒为 0，HEAD 前后一致）；用户实证的盖字属于
+   (a) overlay 族整层压列（设计如此，有逃生钮），(b) breakout 压边栏
+   （本次已修）。另见第 1 条：帧超高本身造成的「正文永远在屏幕外」观感
+   由夹持消除。
+6. **验收补充**：`qa/measure-frame-fit.mjs` 为本任务 CDP 验收脚本（基线/修复
+   两模式），产物在 `qa/results/`（gitignore 内）。回归卡（哈人冰恋/神隐挑战/
+   全职高手）双视口全部通过；`pnpm test` 2280 绿 / 0 失败，双 typecheck 绿。
+>>>>>>> dev/fix-frame-fit
