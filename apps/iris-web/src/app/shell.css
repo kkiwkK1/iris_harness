@@ -110,10 +110,16 @@
   padding: 6px 8px 16px;
 }
 
-/* The chats tab's content filter. Full width of the list, quiet until used. */
+/*
+ * The chats tab's content filter. Full width of the list, quiet until used.
+ *
+ * No `width: 100%`: the box is a block with inline margins, and a 100% width
+ * *plus* those margins overflowed the list by exactly the margin pair — which
+ * is where the sidebar's stray horizontal scrollbar came from. A block fills
+ * the space left over on its own.
+ */
 .iris-search {
   display: block;
-  width: 100%;
   box-sizing: border-box;
   margin: 2px 4px 8px;
   padding: 6px 10px;

@@ -103,6 +103,9 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* A fixed-width drawer has no horizontal story: a 2px ghost overflow (a
+     hairline-border field at 100% width) read as a second scrollbar. */
+  overflow-x: hidden;
   padding: 4px 18px 32px;
 }
 
@@ -483,8 +486,22 @@
   }
 }
 
+/*
+ * The margin's content column.
+ *
+ * The aside's grid track is the flexible flank (`minmax(260px, 1fr)`), so on a
+ * wide window the track itself can run many hundreds of pixels to the window
+ * edge — and an uncapped inner box stretched with it, pushing values hundreds
+ * of pixels from their keys and pinning the text against the glass. Capped
+ * here instead, and left-aligned so the margin stays beside the sheet it
+ * annotates; the rest of the track stays desk. The right padding is the
+ * breathing room the reader sees when the window is barely wide enough to
+ * show the aside at all.
+ */
 .iris-aside__inner {
-  padding: 26px 22px 40px 24px;
+  max-width: calc(var(--iris-aside) + 92px);
+  padding: 26px 32px 40px 24px;
+  box-sizing: border-box;
 }
 
 .iris-aside__head {
@@ -504,30 +521,36 @@
  * Set as an index rather than as a data structure: keys ranged left in the
  * annotation sans, values ranged right, one hairline per entry, and nesting shown
  * by indentation under a rule instead of by braces. No colour distinguishes a
- * kind — the previous panel used a syntax-highlighted tree, and red and purple
+ * *kind* — the previous panel used a syntax-highlighted tree, and red and purple
  * string literals beside a serif reading surface announced that this column
- * belonged to a different program.
+ * belonged to a different program. Colour does distinguish **what moved this
+ * round**, because that is information the reader asked for, not type lore.
  */
 
 .iris-var {
   margin: 0;
 }
 
+/* Compact rows: a 34-item section is only countable if a screenful holds some. */
 .iris-var__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  column-gap: 12px;
-  padding: 4px 0;
+  column-gap: 10px;
+  padding: 3px 0;
   border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
 }
 
 /*
- * A value too long to tally takes its own line.
+ * A value too long to tally takes its own line, clamped.
  *
  * Ranged right is what makes an index scannable, and it is exactly wrong for a
  * sentence: in a 260px column a set-right paragraph squeezes its key to two
- * characters a line. The component decides which of the two a value is.
+ * characters a line. The component decides which of the two a value is. The
+ * clamp replaces the old free wrap — an unbounded paragraph value was the
+ * "information too much" this panel was rebuilt against — and the full text
+ * stays one hover away, which is where a reader looks for it and *not* the
+ * horizontal scrollbar this refuses to become.
  */
 .iris-var__row--stacked {
   grid-template-columns: minmax(0, 1fr);
@@ -560,8 +583,12 @@
   overflow-wrap: anywhere;
 }
 
-/* At this length the value is a note, so it is set in the note face. */
+/* At this length the value is a note, so it is set in the note face and clamped. */
 .iris-var__row--stacked .iris-var__value {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   font-family: var(--iris-font-prose);
   font-size: 12.5px;
   line-height: 1.5;
@@ -569,11 +596,18 @@
   text-align: left;
 }
 
+/*
+ * Numbers are tallies, so they take the mono face — digits that agree in width
+ * run down the right edge as a column worth scanning.
+ */
 .iris-var__value--numeric {
+  font-family: var(--iris-font-mono);
   font-variant-numeric: tabular-nums;
 }
 
-.iris-var__value--absent {
+/* Absent, and present-but-saying-nothing (a literal `未知`), both dim. */
+.iris-var__value--absent,
+.iris-var__value--faint {
   color: var(--iris-ink-faint);
 }
 
@@ -581,7 +615,7 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 5px 0;
+  padding: 4px 0;
   border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
   cursor: default;
   /* Both are needed: the standard property and WebKit's older pseudo-element. */
@@ -645,6 +679,127 @@
   margin-left: 6px;
   padding-left: 11px;
   border-left: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+/*
+ * What moved this round. Two badges, spent as rarely as the accent itself: a
+ * row with no mark is the overwhelmingly common case, and the marks only work
+ * because they are scarce.
+ */
+.iris-var__delta {
+  flex: none;
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  line-height: 1.6;
+  vertical-align: 1px;
+}
+
+.iris-var__delta--new {
+  color: var(--iris-accent);
+  background: var(--iris-accent-wash);
+}
+
+/* A change hovers with the old reading; the amber says "different", not "bad". */
+.iris-var__delta--chg {
+  color: var(--iris-warn);
+  background: color-mix(in srgb, var(--iris-warn) 12%, transparent);
+}
+
+/* ------------------------------------------------- state margin: the tools */
+
+/*
+ * Search, fold, and the diff switch — one quiet stack under the heading. The
+ * box reuses the sidebar's `.iris-search` shape so the two filters on this page
+ * read as the same instrument.
+ */
+.iris-var__tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* Full width of the tools, without the sidebar copy's inline margins. */
+.iris-var__search {
+  margin: 0;
+}
+
+.iris-var__toolrow {
+  display: flex;
+  gap: 4px;
+}
+
+.iris-var__tool {
+  flex: 1;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--iris-ink-tertiary);
+  background: none;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.iris-var__tool:hover:not(:disabled) {
+  color: var(--iris-ink-secondary);
+  background: var(--iris-bg-sunken);
+}
+
+.iris-var__tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The diff switch holds its state visually: pressed is a wash, not a shadow. */
+.iris-var__tool--toggle[aria-pressed='true'] {
+  color: var(--iris-accent);
+  background: var(--iris-accent-wash);
+  border-color: var(--iris-accent-quiet);
+}
+
+/*
+ * The round's tally, always symbolic so it scans like a scoreboard: + added,
+ * ~ changed, − removed. The words live in the aria-label, where they belong.
+ */
+.iris-var__diffmeta {
+  margin: 0;
+  font-family: var(--iris-font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-var__diffadd {
+  color: var(--iris-accent);
+}
+
+.iris-var__diffchg {
+  color: var(--iris-warn);
+}
+
+.iris-var__diffrem {
+  color: var(--iris-ink-faint);
+}
+
+/*
+ * Removals, under the diff view. The rows are dimmed throughout: this section
+ * is an obituary, not an index, and it must never compete with the live tree
+ * above it.
+ */
+.iris-var__removed {
+  margin-top: 14px;
+}
+
+.iris-var__removedhead {
+  margin: 0 0 4px;
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  text-transform: uppercase;
+  color: var(--iris-ink-tertiary);
 }
 
 /* ------------------------------------------------------- sandbox probe (dev) */
@@ -1217,6 +1372,31 @@
   padding: 0;
   display: grid;
   gap: 6px;
+}
+
+/* How many identical arrivals one row stands for. Quiet: the count is metadata
+   about the row, not part of what was said. */
+.iris-notices__times {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--iris-ink-tertiary);
+}
+
+/* A transport outage that the connection has since closed. Dimmed but kept —
+   the row is evidence, not an alarm — and named as healed so its faintness
+   reads as resolved rather than as decoration. */
+.iris-notices__row--resolved .iris-reports__message {
+  color: var(--iris-ink-faint);
+}
+
+.iris-notices__healed {
+  margin-left: 6px;
+  font-size: 10.5px;
+  color: var(--iris-ink-faint);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: 999px;
+  padding: 0 7px 1px;
 }
 
 /* How many identical reports a row stands for. Tabular so a column of them
