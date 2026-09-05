@@ -84,6 +84,12 @@ export interface PromptItem {
   injection_position?: 'relative' | 'absolute' | number
   injection_depth?: number
   injection_order?: number
+  /**
+   * The generation types this item joins the prompt for (upstream's
+   * `injection_trigger`, `PromptManager.js:154`). An absent or **empty** array
+   * is every generation; a populated one is only the types it names.
+   */
+  injection_trigger?: string[]
   forbid_overrides?: boolean
   [key: string]: unknown
 }
@@ -110,6 +116,14 @@ export interface ResolveOptions {
   characterId?: number
   /** Text for `marker` items, keyed by identifier. */
   markers?: MarkerSources
+  /**
+   * The generation type the prompt is assembled for, in upstream's vocabulary —
+   * `'normal'`, `'continue'`, `'impersonate'`, `'regenerate'`, `'quiet'`.
+   * Drives two filters: an item's `injection_trigger` list, and the rule that a
+   * **continue** carries no post-history section (see {@link resolvePreset}).
+   * Absent means `'normal'`.
+   */
+  generationType?: string
 }
 
 /**
@@ -150,12 +164,54 @@ function textFor(item: PromptItem, markers: MarkerSources): string {
 }
 
 /**
+ * Upstream's generation-type word for whatever the caller passed.
+ *
+ * `PromptManager.getPromptCollection` normalises exactly this way —
+ * `String(generationType || 'normal').toLowerCase().trim()` — so an absent or
+ * blank type is `'normal'`, never `'undefined'` matching a stray entry.
+ * @param generationType - the caller's word, or absent.
+ * @returns the normalised generation type.
+ */
+export function normalizeGenerationType(generationType: string | undefined): string {
+  return String(generationType ?? 'normal').toLowerCase().trim() || 'normal'
+}
+
+/**
+ * Whether one item joins the prompt for a generation type, by upstream's rule.
+ *
+ * `PromptManager.shouldTrigger` (`PromptManager.js:1537`): a missing or empty
+ * `injection_trigger` is every generation; a populated one is only the types it
+ * names. Compared against the normalised type, so `['Impersonate']` in a
+ * preset file matches a caller asking for `'impersonate'`.
+ * @param item - the preset item.
+ * @param generationType - the normalised generation type.
+ * @returns whether the item is included.
+ */
+export function shouldTrigger(item: PromptItem, generationType: string): boolean {
+  const trigger = item.injection_trigger
+  if (!Array.isArray(trigger)) return true
+  if (trigger.length === 0) return true
+  return trigger.map(entry => String(entry).toLowerCase().trim()).includes(generationType)
+}
+
+/**
  * Translate a preset into pipeline contributions.
  *
  * Ordering is spaced by ten so a caller can interleave its own contributions
  * without renumbering the preset's.
+ *
+ * Generation types enter here as first-class inputs, the way upstream treats
+ * them (`getPromptCollection(generationType)`): an item whose
+ * `injection_trigger` names other types drops out, and a **continue** drops the
+ * whole post-history section. Upstream keeps post-history instructions on a
+ * continue and splices the continued message past them; here the section is
+ * omitted instead, because its content is wrap-up instruction — telling the
+ * model how to *finish* a reply is exactly wrong when the request asks it to
+ * write on from one. This is the implementation-plan's own ruling (B2, "禁
+ * `post_history_instructions` 之后的收尾"), a deliberate divergence from
+ * upstream recorded for whoever diffs the two prompts side by side.
  * @param preset - the preset file.
- * @param options - character identity, group flag, and marker text.
+ * @param options - character identity, generation type, and marker text.
  * @returns contributions ready for `assemble`, excluding the conversation itself.
  */
 export function resolvePreset(
@@ -163,6 +219,7 @@ export function resolvePreset(
   options: ResolveOptions = {},
 ): Contribution[] {
   const markers = options.markers ?? {}
+  const generationType = normalizeGenerationType(options.generationType)
   const byIdentifier = new Map(preset.prompts.map(prompt => [prompt.identifier, prompt]))
   const contributions: Contribution[] = []
 
@@ -179,6 +236,12 @@ export function resolvePreset(
 
     const item = byIdentifier.get(identifier)
     if (item === undefined) continue
+
+    // A continue carries no post-history section at all, whatever its items
+    // trigger for — the check sits before `shouldTrigger` because it is about
+    // position, not about the item's own trigger list.
+    if (afterHistory && generationType === 'continue') continue
+    if (!shouldTrigger(item, generationType)) continue
 
     const text = textFor(item, markers)
     if (text.trim().length === 0) continue

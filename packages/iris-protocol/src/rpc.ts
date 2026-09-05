@@ -141,11 +141,38 @@ export const requestSchemas = {
     answer: z.enum(['clean', 'never', 'backup-and-clean']),
   }),
 
+  /**
+   * Open a generation.
+   *
+   * `kind` selects what is generated, in SillyTavern's vocabulary. Absent (or
+   * `'send'`) is the ordinary exchange: `text` becomes a user line and a reply
+   * is generated after it. `'continue'` writes on from the newest reply — its
+   * result rejoins that floor as a new reading, every earlier reading
+   * preserved — and takes no text. `'impersonate'` writes the user's next line
+   * instead of a reply, and takes no text either: the model IS the author of
+   * the user side here.
+   */
   'chat.send': z.object({
     chatId: z.string().min(1),
+    kind: z.enum(['send', 'continue', 'impersonate']).optional(),
     // Bounded because it lands in a prompt; an unbounded field is a way to
     // burn someone's tokens from a page they were tricked into opening.
-    text: z.string().min(1).max(32_000),
+    // Required for `send` and refused for the other two kinds — a continue
+    // carries no input, and text sent with an impersonation has no defined
+    // meaning to be quietly dropped.
+    text: z.string().min(1).max(32_000).optional(),
+  }).superRefine((value, ctx) => {
+    const wantsText = value.kind === undefined || value.kind === 'send'
+    if (wantsText && value.text === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['text'], message: 'a send needs text' })
+    }
+    if (!wantsText && value.text !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['text'],
+        message: `a "${value.kind}" takes no text; the newest floor or the model supplies the words`,
+      })
+    }
   }),
   'chat.regenerate': z.object({ chatId: z.string().min(1) }),
   'chat.abort': z.object({ chatId: z.string().min(1) }),

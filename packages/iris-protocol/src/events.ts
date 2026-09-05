@@ -24,8 +24,26 @@ export type IrisEvent =
    * with the identity the settled row will have, the reply is torn down and
    * rebuilt at the instant it finishes, which is the single failure
    * {@link import('./views.ts').MessageView.key} exists to prevent.
+   *
+   * `seed` is the text the buffer opens with, when the generation writes on
+   * from something already showing (a continue): the arriving deltas are only
+   * the new words, and the row they paint over must not collapse to them.
+   *
+   * `role` and `name` say who the arriving text is for. Absent means the
+   * character's reply, which is what a turn ordinarily produces; `'user'` with
+   * a name is an impersonation — text the model writes that will settle as the
+   * user's own line, so the row it streams into must read as theirs from the
+   * first delta, not flip roles the moment it settles.
    */
-  | { type: 'stream.start', chatId: string, turn: number, key: string }
+  | {
+    type: 'stream.start'
+    chatId: string
+    turn: number
+    key: string
+    seed?: string
+    role?: 'user'
+    name?: string
+  }
   /** Visible text. Deltas concatenate; the client must not assume whole words. */
   | { type: 'stream.text', chatId: string, turn: number, delta: string }
   /** Reasoning, kept on its own channel so a UI can collapse it. */

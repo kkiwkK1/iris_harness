@@ -146,6 +146,8 @@ export function ChatPane(): ReactElement {
     () => ({
       onSwipe: (turn, index) => void actions.swipe(turn, index),
       onRegenerate: () => void actions.regenerate(),
+      onContinue: () => void actions.continueReply(),
+      onImpersonate: () => void actions.impersonate(),
       onEdit: (id, text) => void actions.editMessage(id, text),
       onDelete: id => void actions.deleteMessage(id),
       onNotify: text => actions.notify('info', text),

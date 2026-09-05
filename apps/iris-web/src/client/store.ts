@@ -65,6 +65,20 @@ export interface StreamBuffer {
    * carries the row, and its own key is used instead.
    */
   key?: string
+  /**
+   * The text the buffer opened with: a continue paints its deltas over the
+   * reading it writes on from, and without the seed the row would collapse to
+   * the new words alone while streaming.
+   */
+  seed?: string
+  /**
+   * Who the arriving text is for. Absent means the character's reply; `'user'`
+   * is an impersonation, so the streaming row reads as the user's from its
+   * first delta instead of flipping roles when it settles.
+   */
+  role?: 'user'
+  /** The speaker to show for that role. */
+  name?: string
 }
 
 /** The host's standing offer to clean one chat, as it raised it. */
@@ -404,6 +418,10 @@ export interface IrisActions {
   searchChats(query: string): Promise<ChatSearchHit[] | undefined>
   send(text: string): Promise<void>
   regenerate(): Promise<void>
+  /** Write on from the newest reply; the result rejoins that floor. */
+  continueReply(): Promise<void>
+  /** Have the model write the user's next line instead of a reply. */
+  impersonate(): Promise<void>
   abort(): Promise<void>
   swipe(turn: number, index: number): Promise<void>
   editMessage(id: number, text: string): Promise<void>
@@ -843,6 +861,22 @@ export function createIrisStore(
         if (chatId === undefined) return
         await guard(async () => {
           await client.call('chat.regenerate', { chatId })
+        })
+      },
+
+      async continueReply(): Promise<void> {
+        const chatId = get().chatId
+        if (chatId === undefined) return
+        await guard(async () => {
+          await client.call('chat.send', { chatId, kind: 'continue' })
+        })
+      },
+
+      async impersonate(): Promise<void> {
+        const chatId = get().chatId
+        if (chatId === undefined) return
+        await guard(async () => {
+          await client.call('chat.send', { chatId, kind: 'impersonate' })
         })
       },
 
@@ -1864,7 +1898,16 @@ const HANDLERS: { [T in IrisEvent['type']]: (event: EventOf<T>, store: IrisStore
   },
 
   'stream.start': forOpenChat((event, store) => {
-    store.setState({ stream: { turn: event.turn, text: '', reasoning: '', key: event.key } })
+    store.setState({
+      stream: {
+        turn: event.turn,
+        text: event.seed ?? '',
+        reasoning: '',
+        key: event.key,
+        ...event.role === undefined ? {} : { role: event.role },
+        ...event.name === undefined ? {} : { name: event.name },
+      },
+    })
   }),
 
   'stream.text': forOpenChat((event, store) => {

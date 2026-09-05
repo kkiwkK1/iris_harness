@@ -18,7 +18,7 @@
 
 import { BlockAssembler, createAssistantMessage, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { appendCandidate, selectCandidate, SwipeError } from '@iris/chat'
+import { appendCandidate, selectCandidate, selectedCandidate, SwipeError, type Candidate } from '@iris/chat'
 import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
@@ -59,6 +59,54 @@ import { textOf } from './views.ts'
 
 /** Provenance stamped on a partial reply the user stopped. */
 const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
+
+/**
+ * The two utility prompts a generation kind can close its request with, in
+ * SillyTavern's own words (`openai.js:104-110`, the shipped defaults of
+ * `impersonation_prompt` / `continue_nudge_prompt`).
+ *
+ * Upstream keeps both in `oai_settings` where they are user-editable text; this
+ * host has no settings surface for them yet, so the defaults stand in until one
+ * exists. `{{lastChatMessage}}` in the nudge is upstream's own substitution
+ * slot (`openai.js:902`), filled with the trimmed text being continued.
+ */
+const IMPERSONATION_PROMPT =
+  '[Write your next reply from the point of view of {{user}}, using the chat history so far as a'
+  + ' guideline for the writing style of {{user}}. Don\'t write as {{char}} or system. Don\'t'
+  + ' describe actions of {{char}}.]'
+const CONTINUE_NUDGE_PROMPT = '[Continue your last message without repeating its original content.]'
+
+/**
+ * The Iris generation kinds in upstream's vocabulary — the words the preset's
+ * `injection_trigger` lists are matched against (`PromptManager.js:1537`).
+ */
+const GENERATION_TYPE_OF = {
+  send: 'normal',
+  regenerate: 'regenerate',
+  continue: 'continue',
+  impersonate: 'impersonate',
+} as const
+
+/**
+ * The text a continue writes on from: the reading under the cursor.
+ * @param seed - the newest turn's selected candidate, or absent.
+ * @returns its visible text.
+ */
+function seedTextOf(seed: Candidate | undefined): string {
+  return (seed?.message.content ?? [])
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('')
+}
+
+/**
+ * Share of the context window world info may spend.
+ *
+ * SillyTavern's own default. Worth keeping: an unbudgeted book quietly eats the
+ * conversation, and the symptom — the model forgetting the last ten messages —
+ * looks nothing like its cause.
+ */
+const WORLD_INFO_BUDGET_SHARE = 0.25
 
 /** Every method, keyed by name. */
 export type Handlers = {
@@ -477,7 +525,13 @@ export class IrisAppService {
         }),
       }),
 
-      'chat.send': async ({ chatId, text }) => ({ turn: await this.#start(chatId, { kind: 'send', text }) }),
+      'chat.send': async ({ chatId, kind, text }) => {
+        // The wire schema has already enforced which kind carries text; this
+        // branch is where the request becomes the one start call it means.
+        if (kind === 'continue') return { turn: await this.#start(chatId, { kind: 'continue' }) }
+        if (kind === 'impersonate') return { turn: await this.#start(chatId, { kind: 'impersonate' }) }
+        return { turn: await this.#start(chatId, { kind: 'send', text: text as string }) }
+      },
 
       'chat.regenerate': async ({ chatId }) => ({ turn: await this.#start(chatId, { kind: 'regenerate' }) }),
 
@@ -1592,18 +1646,50 @@ export class IrisAppService {
    * statements are synchronous, so by the time this resolves the turn is on the
    * log and the client can start correlating `stream.*` frames to it.
    * @param chatId - the conversation.
-   * @param request - a new user message, or a reroll of the last turn.
+   * @param request - a new user message, a reroll of the last turn, a continue
+   *   of it, or an impersonation of the user.
    * @returns the turn now generating.
    * @throws {AppError} `busy` when one already is, `invalid-request` when there
-   *   is no turn to reroll.
+   *   is no turn to reroll or nothing on it to continue.
    */
-  async #start(chatId: string, request: { kind: 'send', text: string } | { kind: 'regenerate' }): Promise<number> {
+  async #start(
+    chatId: string,
+    request:
+      | { kind: 'send', text: string }
+      | { kind: 'regenerate' }
+      | { kind: 'continue' }
+      | { kind: 'impersonate' },
+  ): Promise<number> {
     const entry = await this.#options.chats.open(chatId)
-    const turn = request.kind === 'send' ? entry.lastTurn + 1 : entry.lastTurn
+    const generationType = GENERATION_TYPE_OF[request.kind]
+    const turn = request.kind === 'send' || request.kind === 'impersonate'
+      ? entry.lastTurn + 1
+      : entry.lastTurn
     if (turn < 0) throw invalid('this chat has no turn to regenerate')
 
+    // A continue needs a reply under it: the newest floor's selected reading is
+    // what the generation writes on from, and what it rejoins. A chat whose
+    // newest line is a user line (an exchange that never got its reply) has
+    // nothing to continue — refused by name rather than answered with a reply
+    // shaped like a continuation, which is what a bare reroll would produce.
+    const seed = request.kind === 'continue'
+      ? selectedCandidate(entry.session, turn)
+      : undefined
+    if (request.kind === 'continue' && seed === undefined) {
+      throw invalid('this chat has no reply to continue; its newest line is not a reply')
+    }
+
     const signal = entry.begin(turn)
-    const driver = this.#driver(entry)
+    // A continue's buffer opens on the text being continued, because the deltas
+    // that follow are only the new words: painting them over the row without
+    // the seed would collapse the floor to its tail while streaming.
+    if (seed !== undefined && entry.pending !== undefined) {
+      entry.pending.text = seed.message.content
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join('')
+    }
+    const driver = this.#driver(entry, generationType)
     const events: GenerateEvents = {
       onText: (delta) => {
         if (entry.pending !== undefined) entry.pending.text += delta
@@ -1616,7 +1702,19 @@ export class IrisAppService {
       signal,
     }
 
-    const running = request.kind === 'send'
+    // The two utility prompts that close a continue / impersonation request,
+    // expanded against this chat before the driver is asked for anything. The
+    // macro pass runs first, then the explicit slots, so text inserted into
+    // `{{lastChatMessage}}` is never re-scanned for braces.
+    const nudge = request.kind === 'continue'
+      ? entry.substitute(CONTINUE_NUDGE_PROMPT)
+        .replace('{{lastChatMessage}}', seedTextOf(seed).trim())
+      : undefined
+    const instruction = request.kind === 'impersonate'
+      ? entry.substitute(IMPERSONATION_PROMPT)
+      : undefined
+
+    const running: Promise<Candidate | string> = request.kind === 'send'
       // The storage direction runs on what the user typed, before it enters the
       // log — the one point where a message is written for the first time.
       ? driver.send(
@@ -1624,29 +1722,57 @@ export class IrisAppService {
         runScripts(request.text, 'user', entry.scripts, { substitute: entry.substitute }),
         events,
       )
-      : driver.regenerate(entry.session, events)
+      : request.kind === 'regenerate'
+        ? driver.regenerate(entry.session, events)
+        : request.kind === 'continue'
+          ? driver.continueTurn(entry.session, events, nudge)
+          : driver.impersonate(entry.session, events, instruction)
 
     // Announced after the call, not before: `send` appends the user's line
     // synchronously at the top of the driver, and until it has, the spare key
     // slot belongs to that line rather than to the reply. Nothing can have been
     // emitted yet — the first delta waits on the network — and the ordering is
     // pinned by test rather than argued.
-    this.#options.broadcast({ type: 'stream.start', chatId, turn, key: entry.streamingKeyFor(turn) })
+    const impersonating = request.kind === 'impersonate'
+    this.#options.broadcast({
+      type: 'stream.start',
+      chatId,
+      turn,
+      key: entry.streamingKeyFor(turn),
+      ...seed === undefined ? {} : { seed: seedTextOf(seed) },
+      ...impersonating ? { role: 'user' as const, name: entry.names.user } : {},
+    })
 
     void running.then(
-      candidate => this.#settle(entry, turn, textOf(candidate.message), 'completed'),
-      error => this.#fail(entry, turn, signal, error),
+      result => this.#settle(
+        entry,
+        turn,
+        // An impersonation resolves with its text rather than a candidate: the
+        // driver has already landed that text as the turn's user line.
+        typeof result === 'string' ? result : textOf(result.message),
+        'completed',
+        { recordVariables: !impersonating },
+      ),
+      error => this.#fail(entry, turn, signal, error, request.kind),
     )
 
     return turn
   }
 
-  /** Record a finished candidate and tell every page. */
+  /**
+   * Record a finished generation and tell every page.
+   * @param entry - the conversation.
+   * @param turn - the turn that settled.
+   * @param text - the generation's visible text.
+   * @param reason - whether it ran to completion or was stopped.
+   * @param options - what this kind of generation records.
+   */
   async #settle(
     entry: ChatEntry,
     turn: number,
     text: string,
     reason: 'completed' | 'aborted',
+    options: { recordVariables?: boolean } = {},
   ): Promise<void> {
     try {
       // Variables first: a permanent script may be there precisely to strip the
@@ -1654,14 +1780,22 @@ export class IrisAppService {
       // Reported, not swallowed: a reply whose update block nothing understood
       // is indistinguishable from a model that never wrote one, and telling
       // those apart is the difference between "the card is broken" and "we are".
-      entry.recordVariables(turn, text, message => {
-        this.#report(message, {
-          kind: 'mvu',
-          grade: 'fault',
-          chatId: entry.chatId,
-          ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+      //
+      // **An impersonation records nothing.** Its text became a user line, and
+      // a user line carries no variable consequences — the same rule a typed
+      // message lives under. Recording would also hang a table on a turn that
+      // has no candidate for it, and the next real turn's baseline walk would
+      // then stop one turn early.
+      if (options.recordVariables !== false) {
+        entry.recordVariables(turn, text, message => {
+          this.#report(message, {
+            kind: 'mvu',
+            grade: 'fault',
+            chatId: entry.chatId,
+            ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+          })
         })
-      })
+      }
       this.#storeRewritten(entry, entry.scripts, text)
       entry.touch()
       entry.finish()
@@ -1705,15 +1839,57 @@ export class IrisAppService {
   }
 
   /**
-   * Report a turn that did not finish.
+   * Report a generation that did not finish.
    *
    * A stop is not a failure: SillyTavern keeps whatever the model produced
    * before the user pressed stop, and throwing away half a reply the user
    * decided was good enough is worse than the abort itself. So a stopped turn
    * with text becomes a real candidate and settles normally.
+   *
+   * An impersonation keeps its partial as a **user line** instead — that is the
+   * only kind of line it was ever going to produce — and a provider failure
+   * keeps nothing at all, because a half-written user line nobody asked for is
+   * not a reply the user can retry; it is text in their mouth.
+   * @param entry - the conversation.
+   * @param turn - the turn that failed.
+   * @param signal - the abort signal the generation ran under.
+   * @param error - what the driver raised.
+   * @param kind - which generation this was.
    */
-  async #fail(entry: ChatEntry, turn: number, signal: AbortSignal, error: unknown): Promise<void> {
+  async #fail(
+    entry: ChatEntry,
+    turn: number,
+    signal: AbortSignal,
+    error: unknown,
+    kind: 'send' | 'regenerate' | 'continue' | 'impersonate',
+  ): Promise<void> {
     const partial = entry.pending?.text ?? ''
+
+    if (kind === 'impersonate') {
+      if (signal.aborted && partial.length > 0) {
+        try {
+          this.#driver(entry, GENERATION_TYPE_OF.impersonate).recordImpersonation(entry.session, partial)
+          await this.#settle(entry, turn, partial, 'aborted', { recordVariables: false })
+          return
+        } catch (cause: unknown) {
+          this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
+        }
+      }
+      entry.finish()
+      try {
+        await this.#options.chats.save(entry)
+      } catch (cause: unknown) {
+        this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
+      }
+      this.#options.broadcast({
+        type: 'stream.error',
+        chatId: entry.chatId,
+        turn,
+        code: signal.aborted ? 'aborted' : 'provider-error',
+        message: error instanceof Error ? error.message : String(error),
+      })
+      return
+    }
 
     if (signal.aborted && partial.length > 0) {
       try {
@@ -1753,7 +1929,7 @@ export class IrisAppService {
   }
 
   /** Build the driver for one chat, with its current settings. */
-  #driver(entry: ChatEntry): TurnDriver {
+  #driver(entry: ChatEntry, generationType = 'normal'): TurnDriver {
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
     const count = (text: string): number => this.#counter.count(text)
     const names = entry.names
@@ -1762,7 +1938,9 @@ export class IrisAppService {
       stream: options => this.#stream(options, entry),
       provider: settings.provider,
       model: settings.model,
-      contributions: session => this.#contributions(entry, session, count),
+      // The generation type travels with the driver so the assembly it drives
+      // is the one this turn asked for: triggers and the continue rule read it.
+      contributions: session => this.#contributions(entry, session, count, true, generationType),
       history: session => this.#history(entry, session),
       budget: {
         context: windowOf(settings, this.#options.contextWindow),
@@ -1781,6 +1959,8 @@ export class IrisAppService {
    * @param entry - the conversation.
    * @param session - the log to assemble from.
    * @param count - the token counter the budget uses.
+   * @param record - whether this is a real turn whose state advances.
+   * @param generationType - what is being generated, for the preset filters.
    * @returns the contributions for this generation.
    */
   async #contributions(
@@ -1788,6 +1968,7 @@ export class IrisAppService {
     session: Session,
     count: (text: string) => number,
     record = true,
+    generationType = 'normal',
   ): Promise<Contribution[]> {
     const names = entry.names
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
@@ -1833,6 +2014,7 @@ export class IrisAppService {
       activationSettings: activationSettingsOf(worldbookSettings),
       insertionStrategy: worldbookSettings.insertionStrategy,
       chatLore: await this.#chatLore(entry),
+      ...generationType === 'normal' ? {} : { generationType },
     })
     // Carried forward, or a sticky entry would re-open its window every turn and
     // a cooldown would never elapse — the state exists precisely to span turns.

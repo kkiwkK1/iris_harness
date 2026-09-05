@@ -171,6 +171,13 @@ export interface PromptInput {
    */
   insertionStrategy?: InsertionStrategy
   /**
+   * The generation type this prompt is assembled for, in upstream's vocabulary
+   * (`'normal'`, `'continue'`, `'impersonate'`, …). Passed to the preset
+   * resolver, where it drives the `injection_trigger` filter and the rule that
+   * a continue carries no post-history section. Absent means `'normal'`.
+   */
+  generationType?: string
+  /**
    * The chat's own macro expander, replacing the one built here.
    *
    * Supplied so that Tavern Helper's `{{get_*_variable::}}` and
@@ -457,7 +464,10 @@ export function buildPrompt(input: PromptInput): PromptResult {
   // prompt text uses `{{char}}` as freely as a card's description does, so
   // expanding only the marker sources would leave the instruction that actually
   // shapes the reply talking about a character named "{{char}}".
-  const contributions = resolvePreset(applyCardOverrides(input.preset, input.card), { markers })
+  const contributions = resolvePreset(applyCardOverrides(input.preset, input.card), {
+    markers,
+    ...input.generationType === undefined ? {} : { generationType: input.generationType },
+  })
     .map(contribution => ({ ...contribution, text: expand(contribution.text) }))
 
   // The author's-note buckets have no note of their own to sit around yet, so
