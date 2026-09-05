@@ -307,6 +307,8 @@ test('exactly the outward-reaching names are shadowed', () => {
     'getOrCreateChatWorldbook',
     'createWorldbookEntries',
     'swipeTo',
+    // The chat-patch member, bare like upstream's injected iframe API.
+    'setChatMessages',
     'generate',
     'generateRaw',
     'substitudeMacros',
@@ -933,6 +935,8 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'getOrCreateChatWorldbook',
     'createWorldbookEntries',
     'swipeTo',
+    // The chat-patch member, bare like upstream's injected iframe API.
+    'setChatMessages',
     'generate',
     // The caller-ordered generate, now on the bare surface where a card's
     // script reads it. It was documented in this file's mapping table and never
@@ -1008,6 +1012,38 @@ test('an interface frame’s bare SillyTavern answers once the context lands, no
     first,
     'extension_settings was not re-published on the next snapshot',
   )
+})
+
+test('an interface frame publishes the Tavern Helper surface bare', () => {
+  /*
+   * Upstream injects the Tavern Helper API into every message iframe as plain
+   * globals, so a message frame's own inline script reaches
+   * `setChatMessages(...)` bare. Namespaced-only here meant the measured card's
+   * start button clicked, ran, and died on a ReferenceError its own try/catch
+   * swallowed — the player saw a button that does nothing. The bare spellings
+   * must be the *same objects* the `parent.TavernHelper` spelling hands out:
+   * one surface, two ways to reach it.
+   */
+  const scope = realm({ interfaceFrame: true })
+  const parent = scope.publishedValue('parent') as Record<string, unknown>
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  const namespaced = parent['TavernHelper'] as Record<string, unknown>
+  assert.notEqual(namespaced, undefined, 'the parent spelling of the surface was absent')
+  for (const name of ['triggerSlash', 'setChatMessages', 'getChatMessages', 'eventOn']) {
+    assert.equal(
+      scope.publishedNames().includes(name),
+      true,
+      `the bare name ${name} stayed absent, so a card's own script cannot call it`,
+    )
+    assert.equal(
+      scope.publishedValue(name),
+      (namespaced as Record<string, unknown>)[name],
+      `the bare ${name} disagrees with the parent.TavernHelper spelling`,
+    )
+  }
+  // And the namespace itself is reachable bare too, matching the parent's copy.
+  assert.deepEqual(scope.publishedValue('TavernHelper'), namespaced)
 })
 
 test('a module body reports ran only after it has loaded', async () => {

@@ -48,6 +48,16 @@ function harness(options?: {
   states: () => InterfaceState[]
   attached: () => number
   becomeReady: (instance: number) => void
+  /**
+   * Fire every superseded generation's `onReady` for an instance.
+   *
+   * A real caller reuses one `start` closure across rebuilds, so a torn-down
+   * frame's ready can still be in flight when its successor is built. This
+   * replays exactly those late answers.
+   */
+  becomeStaleReady: (instance: number) => void
+  /** The frame reports that its bootstrap died before it could speak. */
+  failBootstrap: (instance: number, message: string) => void
   /** Snapshots pushed into each frame after it was built, by instance. */
   refreshed: () => { instance: number, context: unknown }[]
   /** Events delivered into each frame after it was built, by instance. */
@@ -67,12 +77,17 @@ function harness(options?: {
   const pushed: { instance: number, context: unknown }[] = []
   const delivered: { instance: number, event: string, args: readonly unknown[] }[] = []
   const startedWith: { instance: number, markup: string }[] = []
-  const readies = new Map<number, () => void>()
+  /** One list per instance; each `start` appends, so generations stay apart. */
+  const readies = new Map<number, (() => void)[]>()
+  const failures = new Map<number, (message: string) => void>()
 
   const env: MessageFramesEnv = {
     start: input => {
       startedWith.push({ instance: input.instance, markup: input.markup })
-      readies.set(input.instance, input.onReady)
+      const list = readies.get(input.instance) ?? []
+      list.push(input.onReady)
+      readies.set(input.instance, list)
+      failures.set(input.instance, input.onBootstrapError)
       return {
         element: { isConnected: options?.attachWorks !== false },
         refreshContext: context => pushed.push({ instance: input.instance, context }),
@@ -95,7 +110,11 @@ function harness(options?: {
     env,
     states: () => latest,
     attached: () => attachedCount,
-    becomeReady: instance => readies.get(instance)?.(),
+    becomeReady: instance => readies.get(instance)?.at(-1)?.(),
+    becomeStaleReady: instance => {
+      for (const ready of readies.get(instance)?.slice(0, -1) ?? []) ready()
+    },
+    failBootstrap: (instance, message) => failures.get(instance)?.(message),
     refreshed: () => pushed,
     emitted: () => delivered,
     started: () => startedWith,
@@ -181,6 +200,72 @@ test('a frame that reports ready becomes live, and the timeout stands down', asy
   running.dispose()
 })
 
+test('a bootstrap error names the failure the moment it arrives', async () => {
+  /*
+   * A bootstrap that throws has nothing left to be ready *with* — its channel
+   * exists precisely to speak that error. The controller used to have no ear
+   * for it: the real reason arrived from the frame and was dropped, and eight
+   * seconds later the timeout's generic guess ("bootstrap did not run, or it
+   * was torn down") answered in its place — a detail that cannot distinguish
+   * the one case a reader can act on from the rest.
+   *
+   * The frame's own message becomes the detail verbatim, immediately — and the
+   * deadline that follows must not overwrite it with the generic guess.
+   */
+  const blocks = claimFrontendBlocks(oneInterface())
+  const scope = harness({ readyTimeoutMs: 5 })
+  const running = runMessageInterfaces(blocks, 2, scope.env)
+
+  scope.failBootstrap(0, 'the member table did not arrive, so nothing a card calls exists')
+  assert.equal(scope.states()[0]?.phase, 'never-started', 'the named state waited for the clock')
+  assert.equal(
+    scope.states()[0]?.detail,
+    'the member table did not arrive, so nothing a card calls exists',
+    'the frame\u2019s own reason was replaced by a guessed one',
+  )
+
+  await new Promise(resolve => setTimeout(resolve, 25))
+  assert.equal(
+    scope.states()[0]?.detail,
+    'the member table did not arrive, so nothing a card calls exists',
+    'the deadline spoke over the named failure',
+  )
+  running.dispose()
+})
+
+test('a ready that arrives for a torn-down frame does not answer for its rebuild', () => {
+  /*
+   * The teardown/rebuild race. A message re-rendered (edit, swipe, budget gate)
+   * disposes its frames and builds fresh ones with fresh tokens, through the
+   * same `start` closure a real caller reuses. The old frame's `ready` can
+   * still be in flight when that happens; answering for the successor would
+   * mark live an interface whose frame does not exist, and a ready flag left
+   * in a shared place would let one frame's handshake stand in for another's
+   * forever.
+   */
+  const blocks = claimFrontendBlocks(oneInterface())
+  const scope = harness({ readyTimeoutMs: 5 })
+  const runningA = runMessageInterfaces(blocks, 2, scope.env)
+  runningA.dispose()
+
+  const runningB = runMessageInterfaces(blocks, 2, scope.env)
+  assert.equal(scope.states()[0]?.phase, 'claimed', 'the rebuild inherited its answer')
+
+  // The late answers from the dead generation, replayed exactly as they would
+  // arrive: after the successor was built.
+  scope.becomeStaleReady(0)
+  assert.equal(
+    scope.states()[0]?.phase,
+    'claimed',
+    'a torn-down frame\u2019s ready stood in for the rebuilt frame\u2019s',
+  )
+
+  // And its own answer still moves it.
+  scope.becomeReady(0)
+  assert.equal(scope.states()[0]?.phase, 'live')
+  runningB.dispose()
+})
+
 test('disposing drops the states rather than leaving stale rows', () => {
   /*
    * A message that scrolled out of view has no interfaces. Keeping their last
@@ -221,6 +306,73 @@ test('the reader line says "live", not "rendered"', () => {
   assert.ok(live.includes('360 KB'), `expected the size, got: ${live}`)
 
   assert.equal(describeInterface({ floor: 1, instance: 0, phase: 'claimed', bytes: 0 }), 'starting…')
+})
+
+test('the interface frame completes the handshake at bootstrap end, not at load', () => {
+  /*
+   * The root cause of "the frame never reported ready", pinned at the decision.
+   *
+   * `ready` vouches for the channel: the post capability, the member bridge,
+   * the message listener. All of that exists the moment `installSandbox`
+   * returns. Waiting for `load` handed the handshake to the card's own
+   * decorative resources instead — the measured card linked Google Fonts from
+   * its title screen, and on a network where that fetch hangs the frame drew
+   * its button and was reported as never ready, eight seconds later, by a
+   * message guessing at causes it could not see.
+   *
+   * A script frame keeps the load wait on purpose: its body arrives *on*
+   * `ready`, so the libraries it evaluates against have to be there first.
+   *
+   * Asserted against the source, because this lives in the browser entry where
+   * there is no unit harness — the same convention as the height guards below.
+   */
+  const frameEntry = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
+    'utf8',
+  )
+
+  // The interface branch posts before any wait, and reports the transfer cost
+  // from the settle point where the timings actually exist.
+  assert.match(
+    frameEntry,
+    /if \(interfaceFrame\) \{\s*\n[^\}]*post\(\{ iris: run, type: 'ready' \}\)/u,
+    'an interface frame\u2019s handshake waits on the network again',
+  )
+  // The script branch keeps the library wait: `run` must evaluate against
+  // libraries that are already there.
+  assert.match(
+    frameEntry,
+    /window\.addEventListener\('load', announce, \{ once: true \}\)/u,
+    'a script frame\u2019s body would evaluate before its libraries',
+  )
+  // The library failure reporter listens in capture phase: the library tags
+  // parse after this script, so the earlier querySelectorAll version attached
+  // its reporters to nothing.
+  assert.match(
+    frameEntry,
+    /addEventListener\(\s*'error',\s*\n[^]*?true,/u,
+    'the library failure reporter was attached to elements that do not exist yet',
+  )
+})
+
+test('a bootstrap error becomes a named state on the controller side too', () => {
+  /*
+   * The other half of the named-failure contract. The runner calls
+   * `onBootstrapError`; the controller turns it into `never-started` with the
+   * frame's own words. The wiring lives in `message-frames.ts` (tested above
+   * with a harness); what a source assertion can add is that the React glue
+   * actually *passes* it — the one place a dropped callback would be silent,
+   * and the place the dropped one sat.
+   */
+  const glue = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'app', 'MessageInterfaces.tsx'),
+    'utf8',
+  )
+  assert.match(
+    glue,
+    /onBootstrapError: message => \{\s*\n\s*input\.onBootstrapError\(message\)/u,
+    'the interface host drops the frame\u2019s bootstrap error on the floor again',
+  )
 })
 
 test('a height of zero is refused at both ends, because applying it is unrecoverable', () => {

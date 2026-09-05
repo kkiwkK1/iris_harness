@@ -163,6 +163,12 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   getChatMessages: 'shared',
   getSwipes: 'shared',
   swipeTo: 'shared',
+  /*
+   * Upstream's chat-patch member. It addresses floors by index — a fact of the
+   * chat, not of whichever script asked — so it shares the surface, like the
+   * read and the swipe beside it.
+   */
+  setChatMessages: 'shared',
   // A world book belongs to the card, not to whichever script asked for it, so
   // two scripts reading the same book must see the same entries.
   getWorldbook: 'shared',

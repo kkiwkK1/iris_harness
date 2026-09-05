@@ -2086,6 +2086,25 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         env.publishGlobals?.([
           ['SillyTavern', sillyTavern],
           ['extension_settings', extensionSettings],
+          /*
+           * The Tavern Helper surface, published **bare**.
+           *
+           * Upstream injects this same surface into every message iframe as
+           * plain globals — a message frame's own inline script reaches
+           * `setChatMessages(...)` or `triggerSlash(...)` bare, without the
+           * `parent.` prefix a card *script* needs. An interface frame that
+           * kept these namespaced-only answered every bare spelling with a
+           * ReferenceError inside the card's own try/catch: the measured card's
+           * start button clicked, ran, and did nothing, and its guard
+           * (`typeof triggerSlash === 'function'`) silently skipped the second
+           * half of its work.
+           *
+           * These are the same objects `parent.TavernHelper.*` already hands
+           * out — this publish adds the spellings, not a second surface.
+           */
+          ...Object.entries(tavernHelper).map(
+            ([name, value]) => [name, value] as [string, unknown],
+          ),
         ])
       }
       return

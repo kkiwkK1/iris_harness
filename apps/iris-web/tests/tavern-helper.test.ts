@@ -112,6 +112,63 @@ test('resolveRange agrees with the host, case for case', () => {
   assert.deepEqual(resolveRange(0, 0), [], 'an empty chat names nothing')
 })
 
+/** The member under test, typed off the surface bag. */
+function setChatMessages(
+  scope: { api: Record<string, unknown> },
+): (messages: readonly Record<string, unknown>[]) => Promise<void> {
+  return scope.api['setChatMessages'] as (messages: readonly Record<string, unknown>[]) => Promise<void>
+}
+
+test('setChatMessages routes each patch field to the arm that owns it', async () => {
+  /*
+   * The measured card starts its whole game through
+   * `setChatMessages([{ message_id: 0, swipe_id: 1 }])` — a swipe patch, and
+   * the swipe arm is where it has to land. A text patch lands on the rewrite
+   * arm the journal replay uses. Both routable, neither invented.
+   */
+  const swipe = surface()
+  await setChatMessages(swipe)([{ message_id: 0, swipe_id: 1 }])
+  assert.deepEqual(swipe.calls, [
+    { method: 'swipeTo', params: { messageId: 0, swipeIndex: 1 } },
+  ])
+
+  const text = surface()
+  await setChatMessages(text)([{ message_id: 2, message: ' rewritten ' }])
+  assert.deepEqual(text.calls, [
+    { method: 'setChatMessages', params: { messages: [{ messageId: 2, message: ' rewritten ' }] } },
+  ])
+})
+
+test('setChatMessages names the fields it could not carry', async () => {
+  /*
+   * A patch carrying `data` must not be readable as one that applied. The
+   * carried fields still run; the uncarrried ones are named once, on the gap
+   * channel, because the card carried on.
+   */
+  const scope = surface()
+  await setChatMessages(scope)([
+    { message_id: 0, swipe_id: 1 },
+    { message_id: 1, data: { hp: 5 } },
+  ])
+  assert.equal(scope.calls.length, 1, 'the uncarrried patch was applied anyway')
+  assert.match(scope.gaps.join(' '), /data/)
+
+  // And a carried field must not smuggle an uncarrried one past the report.
+  const mixed = surface()
+  await setChatMessages(mixed)([{ message_id: 0, message: 'x', data: 1 }])
+  assert.equal(mixed.calls.length, 1)
+  assert.match(mixed.gaps.join(' '), /data/)
+})
+
+test('setChatMessages refuses a patch without a readable message_id', async () => {
+  const scope = surface()
+  await assert.rejects(
+    () => setChatMessages(scope)([{ swipe_id: 1 }]),
+    /message_id/,
+    'a patch naming no floor would silently do nothing',
+  )
+})
+
 test('a span may carry negative bounds on either side', () => {
   // The separator and the sign are the same character, which is the whole
   // reason this is scanned rather than split.

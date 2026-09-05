@@ -2410,6 +2410,76 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       // the boundary rather than in either half's own vocabulary.
       host.call('swipeTo', { messageId, swipeIndex: swipeId }),
 
+    /**
+     * Upstream's chat-patch member, and the one a message frame's own button
+     * most often calls — the measured card starts its whole game through
+     * `setChatMessages([{ message_id: 0, swipe_id: 1 }])`.
+     *
+     * Two of upstream's patch fields are carried, each to the arm that owns it:
+     * `swipe_id` moves a floor to another of its swipes, and `message` rewrites
+     * a floor's text through the same wire call the journal replay uses.
+     * Anything else a patch may carry (`data`, `variables`, `role`, …) is
+     * **named once per call and not silently dropped**: a patch that
+     * half-applied must not be readable as one that applied.
+     *
+     * Accepted and ignored: upstream's second argument (the `group_id` /
+     * `chat_id` chat selector and the `refresh` repaint hint). This frame
+     * answers for its own chat, and the host repaints every attached page
+     * itself.
+     * @param messages - upstream's patch list; `message_id` required per item.
+     * @param _options - upstream's chat selector and refresh hint.
+     * @returns nothing.
+     */
+    setChatMessages: async (
+      messages: readonly Record<string, unknown>[],
+      _options?: Record<string, unknown>,
+    ): Promise<void> => {
+      let unsupported: string[] | undefined
+      for (const patch of messages) {
+        const messageId = patch['message_id']
+        if (typeof messageId !== 'number' || !Number.isInteger(messageId) || messageId < 0) {
+          throw new UnsupportedApiError(
+            'setChatMessages([...])',
+            'every patch needs a numeric `message_id`, and one item had none Iris could read',
+          )
+        }
+        const swipe = patch['swipe_id']
+        const message = patch['message']
+        // Collected whichever arm runs: a patch that carries a carried field
+        // *and* an uncarrried one must not use the carried arm to slip the
+        // other past the report.
+        const carried = Object.keys(patch).filter(
+          name => name !== 'message_id' && name !== 'swipe_id' && name !== 'message',
+        )
+        unsupported = [...unsupported ?? [], ...carried]
+        if (typeof message === 'string') {
+          // The text arm. A patch carrying both a text and a `swipe_id` would,
+          // upstream, rewrite the floor as shown in *that* swipe; this host
+          // addresses text by floor alone, so the pair is refused rather than
+          // applied to whichever swipe happens to be showing.
+          if (typeof swipe === 'number') {
+            throw new UnsupportedApiError(
+              'setChatMessages([{ message_id, message, swipe_id }])',
+              'a patch carrying both a text and a `swipe_id` is not answerable here —'
+                + ' swipe first, then send the text as a second patch',
+            )
+          }
+          await host.call('setChatMessages', { messages: [{ messageId, message }] })
+          continue
+        }
+        if (typeof swipe === 'number') {
+          await host.call('swipeTo', { messageId, swipeIndex: swipe })
+          continue
+        }
+      }
+      if (unsupported !== undefined && unsupported.length > 0) {
+        host.reportGap(
+          `a card patched setChatMessages with fields Iris does not carry`
+            + ` (${[...new Set(unsupported)].join(', ')}); every such field was skipped, not applied`,
+        )
+      }
+    },
+
     // ── host capabilities that were already asynchronous ─────────────────
     /**
      * Upstream has **two** generate functions, and this is the assembling one.

@@ -258,6 +258,19 @@ export function MessageInterfaces({
             broadcastWindowEvent(event, detail)
           },
           onReady: input.onReady,
+          /*
+           * The frame's own words for why it never came up, named the moment
+           * they arrive. The bootstrap cannot report `ready` after a throw —
+           * its channel exists to speak that error — so this is the only path
+           * that turns "the handshake broke" from eight seconds of timed-out
+           * silence into a reason a reader can act on. The row carries it as
+           * the `never-started` detail; the report list keeps a copy, where
+           * failures survive the message scrolling away.
+           */
+          onBootstrapError: message => {
+            input.onBootstrapError(message)
+            actionsOf(store).addCardReport(message, { grade: 'fault', channel: 'interface' })
+          },
         },
         document,
       )
