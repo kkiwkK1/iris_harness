@@ -133,7 +133,10 @@ function whole(options: GenerateOptions | undefined): string {
 }
 
 test('a continue rejoins the floor it continued and keeps the older readings', async (t) => {
-  const fix = await fixture(t, { replies: ['A reply.', ' And the scene goes on.'] })
+  // The continuation reply carries no leading space: the continue's separator
+  // (the default `continue_postfix`, a space) already rides on the seed the
+  // request is assembled with, so the composite keeps a single space.
+  const fix = await fixture(t, { replies: ['A reply.', 'And the scene goes on.'] })
   const created = await fix.handlers['chat.create']({ characterId: 'aria' })
   const chatId = created.view.chatId
 
@@ -297,7 +300,10 @@ test('a continue announces the seed so the row does not collapse while streaming
   await fix.handlers['chat.send']({ chatId, kind: 'continue' })
   const start = fix.events.filter(event => event.type === 'stream.start').at(-1)
   assert.notEqual(start, undefined)
-  assert.equal(start?.type === 'stream.start' && start.seed, 'A reply.')
+  // The seed announces with the separator included: the space postfix is part
+  // of what the request carries and part of what paints, so the floor never
+  // loses the character the model was actually given.
+  assert.equal(start?.type === 'stream.start' && start.seed, 'A reply. ')
 
   await fix.settled()
 })
