@@ -22,6 +22,7 @@ export type CardId =
   | 'route'
   | 'sampling'
   | 'replies'
+  | 'appearance'
   | 'reading'
   | 'worldbooks'
   | 'scripts'
@@ -73,7 +74,7 @@ export function isOpen(state: Readonly<Partial<Record<CardId, boolean>>>, id: Ca
 
 /** Every card id — the set of keys a stored record is filtered to. */
 const ALL_CARDS: readonly CardId[] = [
-  'connection', 'presets', 'regex', 'route', 'sampling', 'replies', 'reading', 'worldbooks', 'scripts', 'about',
+  'connection', 'presets', 'regex', 'route', 'sampling', 'replies', 'appearance', 'reading', 'worldbooks', 'scripts', 'about',
 ]
 
 /**

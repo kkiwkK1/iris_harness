@@ -21,6 +21,7 @@ import type { WorldbookSettingsView } from '@iris/protocol'
 
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
 import { loadAutoOpenChat, saveAutoOpenChat } from '../theme/theme.ts'
+import { useThemeChoice } from '../theme/use-theme-choice.ts'
 import type { ReadingControl } from './SettingsDrawer.tsx'
 import { CollapsibleSection, ToggleField } from './fields.tsx'
 import { buildExport, parseSettingsExport, transferDevice } from './settings-transfer.ts'
@@ -43,6 +44,9 @@ export function AboutCard({ control }: { control: ReadingControl }): ReactElemen
   const picker = useRef<HTMLInputElement>(null)
   const store = useIrisStore()
   const { lang, setLang } = useLanguage()
+  // The theme choice rides the theme store now; the export carries it with the
+  // rest of the device half.
+  const { theme, setTheme } = useThemeChoice()
   // Subscribed so a language switch re-renders the card's words.
   useLanguage()
 
@@ -55,7 +59,7 @@ export function AboutCard({ control }: { control: ReadingControl }): ReactElemen
     const live = store.getState()
     const file = buildExport({
       chatId: live.chatId,
-      theme: control.theme,
+      theme,
       reading: control.reading,
       language: lang,
       autoOpenChat: autoOpen,
@@ -84,11 +88,11 @@ export function AboutCard({ control }: { control: ReadingControl }): ReactElemen
     const notes: string[] = []
 
     // The device half first, through the same owners the live controls use —
-    // App applies theme and reading to the document on every change, so the
-    // attributes follow the state; writing them here too would be a second
-    // writer for the same value.
+    // App applies reading to the document on every change and the theme store
+    // applies the theme the moment it is set; writing them here too would be a
+    // second writer for the same value.
     const device = transferDevice(data.device)
-    control.setTheme(device.theme)
+    setTheme(device.theme)
     control.setReading(device.reading)
     if (device.language !== lang) setLang(device.language)
     saveAutoOpenChat(device.autoOpenChat)

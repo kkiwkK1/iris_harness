@@ -34,7 +34,8 @@ import { ScriptPanel } from './ScriptPanel.tsx'
 import { WorldbookPanel } from './WorldbookPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
-import { READING_LIMITS, type ReadingPrefs, type ThemeChoice } from '../theme/theme.ts'
+import { AppearanceCard } from './AppearanceCard.tsx'
+import { READING_LIMITS, type ReadingPrefs } from '../theme/theme.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import type { Language, StringKey } from './i18n/strings.ts'
 
@@ -52,13 +53,6 @@ const SAMPLING_KEYS = [
   'frequencyPenalty', 'presencePenalty', 'seed', 'stop', 'contextWindow', 'reasoningEffort',
 ] as const
 
-/** The theme's menu word, by choice — the reading card's summary reads from it. */
-const THEME_LABEL: Record<ThemeChoice, StringKey> = {
-  system: 'themeSystem',
-  light: 'themeLight',
-  dark: 'themeDark',
-}
-
 /**
  * The reply card's summary: what is shaping replies right now.
  *
@@ -73,11 +67,14 @@ function repliesSummaryOf(settings: GenerationSettings): string {
   return parts.join(' · ')
 }
 
-/** Reading preferences and their setter, owned by the shell because they are per-device. */
+/** Reading preferences and their setter, owned by the shell because they are per-device.
+ *
+ * The theme is not here: it moved to the appearance card, which reads the
+ * theme store directly — a choice drawn as swatches wants the store, not a
+ * prop drilled from the shell.
+ */
 export interface ReadingControl {
-  theme: ThemeChoice
   reading: ReadingPrefs
-  setTheme: (choice: ThemeChoice) => void
   setReading: (prefs: ReadingPrefs) => void
 }
 
@@ -356,21 +353,19 @@ export function SettingsDrawer({
           </>
         )}
 
+        {/*
+          The appearance card, before the reading card: how the page is painted
+          (themes, user.css, the theme package) is the louder half of
+          "screen on the outside", and the theme choice lives here now — drawn
+          as swatches — rather than as a menu in the reading card.
+        */}
+        <AppearanceCard />
+
         <CollapsibleSection
           id="reading"
           title={t('sectionReading')}
-          summary={`${t(THEME_LABEL[control.theme])} · ${control.reading.size}px`}
+          summary={`${control.reading.size}px`}
         >
-          <ChoiceField
-            label={t('theme')}
-            value={control.theme}
-            options={[
-              { id: 'system', label: t('themeSystem') },
-              { id: 'light', label: t('themeLight') },
-              { id: 'dark', label: t('themeDark') },
-            ]}
-            onSelect={control.setTheme}
-          />
           <NumberField
             label={t('proseSize')}
             value={control.reading.size}

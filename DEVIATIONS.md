@@ -504,3 +504,79 @@ register 清单）与验收脚本 `qa/multibook-acceptance.mjs`。MVU 侧 `initV
   去重）逐一转写，行号见各处注释。
 - 回归：`pnpm test` 2263 例全绿（哈人冰恋/神隐挑战的既有语料用例在内），
   `pnpm typecheck`、`apps/iris-web` typecheck 全绿。
+
+---
+
+# DEVIATIONS — B7：主题系统（主题=token 表 + user.css 插槽）
+
+日期 2026-09-06，分支 `dev/feat-themes`（基于 `dev/iris-exploration` @ `d8362ef`，
+该主线已含任务 O 滚动条 token、任务 N 连接面与 B6 折叠卡设置抽屉）。
+
+## 范围
+
+主题=token 覆盖表（`theme/presets.ts`：light/dark/parchment 三套内置，各 26 个
+`--iris-*` 调色键）；主题选择外部 store（`theme/theme.ts`，useSyncExternalStore
+同 i18n 机制，切换即写 `data-iris-theme` 属性、CSS 级联即时重绘，免刷新）；
+localStorage 持久化（`iris.theme`，默认 `system` 跟随 prefers-color-scheme，
+手动选择即持久）；第三套主题「羊皮纸」（正文 12.3:1、次级墨 6.8:1、tick 3.6:1、
+accent 5.4:1，数值写进 tokens.css 注释并由测试计算复核）；token 覆盖层
+（`iris.theme.overrides`，只收 THEME_TOKENS 名单内、≤64 键，内联写在根元素上，
+外观卡可一键清除）；user.css 插槽（`slots/user-css.ts`：`<style
+data-iris-slot="user-css">` 挂载点，512 KiB 上限，开关关闭即卸载元素、文本保留）；
+设置抽屉新增「外观」卡（三套内置预览缩略块——由各主题 token 表内联上色、跟随系统
+开关、覆盖层清除、user.css 编辑器/开关/导入 .css、主题包导出导入 JSON）；主题包
+格式 `iris.theme` v1（`theme/theme-transfer.ts`：完整调色表+覆盖差集+user.css，
+往返等价有测试）；index.html 预涂色脚本认得 parchment；任务 O 的
+`--iris-scrollbar*` 随主题联动（三套互异，由 theme-presets 测试钉住）。
+
+## 与任务书的偏离（有意为之）
+
+1. **movingUI 拖拽明确不做**（清单已裁定，记录在案）。上游该功能以复杂著称，
+   Iris 以响应式布局（抽屉宽 token、小屏侧栏、外观卡）替代。
+
+2. **user.css 的「slot 注入」落为专用 `<style>` 挂载模块（`slots/user-css.ts`），
+   不走 SlotCore children。** SlotCore 槽位登记的是 React 组件（declarer+renderSlot
+   纪律），`<style>` 挂载点不是组件，硬塞进去需要一个渲染 null 的假 declarer。
+   该模块遵循 slots/ 目录对 DOM 的同一纪律并在文件头声明：install 挂载、dispose
+   拆除、不留残迹（元素带 `data-iris-slot="user-css"` 供外部断言）。任务书的实质
+   （「`<style>` 挂载点」注入、可开关、受 overlay 约束兜底）原样成立。
+
+3. **内置主题调色声明两次：tokens.css 的 CSS 块 + presets.ts 的 token 表。**
+   CSS 块保证存储的主题在 bundle 之前上墙（index.html 预涂色脚本同款理由，刷新
+   不闪底色）；token 表是导出/导入/预览缩略块的数据源。双份一致由
+   `theme-presets.test.ts` 逐值比对钉住（解析 tokens.css 与表格 deepEqual），
+   重复无检查即是漂移。
+
+4. **主题选择从阅读卡移到新增「外观」卡。** B6 的阅读卡原本带三选一主题菜单；
+   主题换成画出来的缩略块后菜单与缩略块并存会变成两处入口，故主题选择整体移入
+   外观卡（缩略块三套 + 「跟随系统」开关），阅读卡只留字号/行长/楼层号/语言。
+   `ReadingControl` 相应收窄为 reading-only；设置导出/导入的 device.theme 不变。
+
+5. **宿主端口 8819 空闲，按任务书使用。** 宿主 PID 起初记录到
+   `.b7-data/host.pid` 失败（Git Bash 对反斜杠路径的转义），改由 netstat 只读
+   定位后按命令行核验（`node apps/iris/bin.ts`，PID 28792）再停止；未按端口或
+   进程名误杀任何进程。QA 无头 Chrome 各自带一次性 user-data-dir，只杀自己
+   spawn 的 PID。`.b7-data/`（QA 脚本与截图证据）留在 worktree 未提交。
+
+## 实测发现（未改，待裁）
+
+6. **tokens.css 原先的浅色 scrollbar token 在结构块里**（第一个 `:root`，与字号
+   圆角同区），暗色块却覆盖了它——同一 token 分居两处。本次把浅色的
+   `--iris-scrollbar/--iris-scrollbar-strong` 移入浅色调色板块（`--iris-scrollbar-size`
+   是结构值，留在原处），三套主题的 scrollbar 现在都随各自的调色板块走，并被
+   theme-presets 测试的「三套互异」断言钉住。
+
+## 验收对账
+
+- 切换免刷新/持久化/滚动条联动/user.css 生效与关闭/重挂载：实机 CDP 验收脚本
+  （`.b7-data/qa-b7.mjs`，8819 实宿）11/11 通过；同一 JS 上下文内完成三次主题
+  切换（window 标记存活）、scrollbar token 三套互异（#cdd4d9 / #2c3540 / #cfc2a4）、
+  parchment 跨刷新存活（属性来自存储）、user.css 规则实测上墙（抽屉底色变
+  rgb(255,0,102)）、关闭即卸载且文本保留、再刷新自动重挂载。
+- 对比度：`theme-presets.test.ts` 对三套内置计算正文≥4.5:1、次级≥4.5:1、
+  tick≥3:1、accent>tick×1.3；`contrast.test.ts` 扩到三套同地板。低对比不破：
+  各主题 scrollbar 仍低于 rule 对比度（chrome 而非读线），faint 墨阶原样。
+- 导出导入往返等价：`theme-transfer.test.ts`（build→stringify→parse 同主题；
+  原厂配色导入即零覆盖、不遮蔽后续切换；改色主题导入即精确差集；格式拒绝）。
+- 回归：`pnpm test` 2323 例全绿（2310 pass + 13 既有语料 skip，0 fail），
+  `pnpm typecheck`、`apps/iris-web` typecheck 全绿。

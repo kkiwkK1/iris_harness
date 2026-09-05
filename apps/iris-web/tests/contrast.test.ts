@@ -26,17 +26,23 @@ const TOKENS = readFileSync(
 )
 
 /**
- * Read one token's hex value from a theme block.
+ * Read one theme's palette block and take one token's hex value from it.
  * @param name - the custom property, without the leading dashes.
- * @param theme - which block to read: the bare `:root`, or the dark override.
+ * @param theme - which block to read: the light palette (the second bare
+ *   `:root` — the first holds typography, which no theme overrides), or one
+ *   of the `data-iris-theme` override blocks.
  * @returns the hex string.
  */
-function token(name: string, theme: 'light' | 'dark'): string {
-  // The dark block is the second definition of every token in this file, which
-  // is the same order the cascade relies on.
-  const all = [...TOKENS.matchAll(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`, 'g'))]
-  const at = theme === 'light' ? 0 : 1
-  const found = all[at]?.[1]
+function token(name: string, theme: 'light' | 'dark' | 'parchment'): string {
+  let block: string | undefined
+  if (theme === 'light') {
+    const bare = [...TOKENS.matchAll(/:root\s*\{([^}]*)\}/g)].map(match => match[1])
+    block = bare[1]
+  } else {
+    block = TOKENS.match(new RegExp(`:root\\[data-iris-theme='${theme}'\\]\\s*\\{([^}]*)\\}`))?.[1]
+  }
+  assert.ok(block !== undefined, `tokens.css has no ${theme} block`)
+  const found = block.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1]
   assert.ok(found !== undefined, `--${name} has no ${theme} value`)
   return found
 }
@@ -69,7 +75,7 @@ function contrast(one: string, other: string): number {
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
 }
 
-for (const theme of ['light', 'dark'] as const) {
+for (const theme of ['light', 'dark', 'parchment'] as const) {
   test(`the rail tick clears the non-text contrast floor in ${theme}`, () => {
     /*
      * 3:1 is WCAG 1.4.11, the floor for a UI component that carries meaning

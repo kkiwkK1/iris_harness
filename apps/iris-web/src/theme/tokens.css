@@ -176,8 +176,6 @@
    * arrives exactly when the hand is on it.
    */
   --iris-scrollbar-size: 8px;
-  --iris-scrollbar: #cdd4d9;
-  --iris-scrollbar-strong: #a9b4bd;
 }
 
 /* ---------------------------------------------------------------- palette */
@@ -243,6 +241,14 @@
   /* Behind a modal question. Lighter here than in the dark theme: the same
      alpha over a pale page reads as fog rather than as depth. */
   --iris-scrim: rgb(20 26 32 / 28%);
+
+  /* The resting grey sits below the rules in contrast on purpose — chrome for
+     moving, not a line for reading — and the hover tone is the rule-strong
+     grey, so the affordance arrives with the hand. Kept beside the other
+     palette tokens (not up in the structural block) because both move with
+     the theme: the dark and parchment blocks override exactly this pair. */
+  --iris-scrollbar: #cdd4d9;
+  --iris-scrollbar-strong: #a9b4bd;
   color-scheme: light;
 }
 
@@ -288,6 +294,60 @@
   --iris-scrollbar: #2c3540;
   --iris-scrollbar-strong: #46545f;
   color-scheme: dark;
+}
+
+:root[data-iris-theme='parchment'] {
+  /*
+   * The third built-in, and the warm pole of the set: aged paper under the
+   * same lamp. Where light is a proof sheet and dark is the small hours,
+   * parchment is a well-read page — a warm ground, umber ink, and the accent
+   * kept as an iron-gall green so the one-accent rule survives the century
+   * skip.
+   *
+   * Every value here is measured, not tasted, and the same floors hold: ink
+   * `#33291a` reads 12.3:1 on the page, secondary ink `#5f5033` 6.8:1 (both
+   * past the 4.5:1 text floor), the tick `#8a7a55` 3.6:1 (past the 3:1
+   * non-text floor), and the accent 5.4:1, clearly louder than the tick. The
+   * token tables in `theme/presets.ts` carry these same numbers — the two
+   * statements are held together by `theme-presets.test.ts`, because
+   * duplication without a check is drift wearing a comment.
+   */
+  --iris-bg-base: #e7dfca;
+  --iris-bg-page: #f4eede;
+  --iris-bg-raised: #fbf7ec;
+  --iris-bg-sunken: #eae2cd;
+  --iris-bg-mask: rgb(53 42 26 / 38%);
+
+  --iris-rule: #d9cfb4;
+  --iris-rule-strong: #c3b593;
+  --iris-rule-faint: #e7dfc8;
+
+  --iris-tick: #8a7a55;
+
+  --iris-ink: #33291a;
+  --iris-ink-secondary: #5f5033;
+  --iris-ink-tertiary: #857452;
+  --iris-ink-faint: #a4946f;
+  --iris-ink-inverted: #f4eede;
+
+  --iris-accent: #416a45;
+  --iris-accent-quiet: #6d9673;
+  --iris-accent-wash: rgb(65 106 69 / 10%);
+  --iris-danger: #a4472f;
+  --iris-danger-wash: rgb(164 71 47 / 10%);
+  --iris-warn: #7d5c1e;
+
+  --iris-code-bg: #ece4cf;
+  --iris-code-inline: #e7dec6;
+  --iris-shadow: 0 1px 2px rgb(53 42 26 / 8%), 0 8px 24px rgb(53 42 26 / 12%);
+  --iris-scrim: rgb(40 30 15 / 30%);
+
+  /* Below the rules in contrast, like every other theme's bar: chrome for
+     moving, not a line for reading — but the theme's own pair, so the bar
+     follows the paper the way the task-O acceptance asks. */
+  --iris-scrollbar: #cfc2a4;
+  --iris-scrollbar-strong: #a99a76;
+  color-scheme: light;
 }
 
 /*
