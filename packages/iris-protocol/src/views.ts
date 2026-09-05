@@ -711,6 +711,36 @@ export interface PresetSummary {
   name: string
 }
 
+/**
+ * One global regex script, in the shape SillyTavern stores under
+ * `extension_settings.regex` and exports as a `regex-*.json` file.
+ *
+ * The known fields are spelled out so the shell can render a row without
+ * guessing; the index signature is the actual contract. Upstream's script
+ * objects are open — extensions and shared decks add keys this host has never
+ * heard of — and a list → set → disk round trip must hand them back untouched,
+ * or an import from an install would arrive complete and quietly degrade. The
+ * engine's reading of these fields is `@iris/regex`'s `RegexScript`.
+ */
+export interface RegexScriptView {
+  id?: string
+  /** Required, the same gate upstream's importer applies ("No script name provided."). */
+  scriptName: string
+  /** Pattern, either bare or in `/pattern/flags` form. */
+  findRegex: string
+  replaceString: string
+  trimStrings?: string[]
+  placement?: number[]
+  disabled?: boolean
+  markdownOnly?: boolean
+  promptOnly?: boolean
+  runOnEdit?: boolean
+  substituteRegex?: number
+  minDepth?: number | null
+  maxDepth?: number | null
+  [key: string]: unknown
+}
+
 /** Where a world book entry is inserted, by TavernHelper's name for it. */
 export type WorldbookPosition =
   | 'before_character_definition'

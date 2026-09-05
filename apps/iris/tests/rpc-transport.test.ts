@@ -248,6 +248,10 @@ const PROBES: Record<string, unknown> = {
   'persona.set': { name: 'probe-persona', description: 'a persona the probe wrote', active: true },
   'persona.get': { id: 'no-such-persona' },
   'persona.delete': { id: 'no-such-persona' },
+  // The global regex tier answers from a host with or without the store: an
+  // unsupported refusal still proves the handler is registered.
+  'regex.list': {},
+  'regex.set': { scripts: [] },
   'script.list': { characterId: 'no-such-card' },
   'script.setEnabled': { characterId: 'no-such-card', scriptId: 'x', enabled: true },
   'script.body': { characterId: 'no-such-card', scriptId: 'x' },

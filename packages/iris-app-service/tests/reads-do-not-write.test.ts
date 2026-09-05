@@ -218,6 +218,7 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   // with, and write nothing — an earlier sibling of this seam (the sampler's
   // `settings.get`) is exactly where a silent write once hid.
   { method: 'worldbook.settings', params: () => ({}) },
+  { method: 'regex.list', params: () => ({}) },
 ]
 
 for (const { method, params } of READS) {

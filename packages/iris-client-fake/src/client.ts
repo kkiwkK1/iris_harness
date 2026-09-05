@@ -1070,7 +1070,11 @@ class InMemoryClient implements FakeClient {
       case 'preset.delete':
       case 'preset.read':
       case 'preset.import':
-      case 'preset.importFile': {
+      case 'preset.importFile':
+      // The global regex list is profile state on the host's disk; a fake has
+      // none, and an imaginary list would let a panel believe an import landed.
+      case 'regex.list':
+      case 'regex.set': {
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 

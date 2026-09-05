@@ -25,6 +25,7 @@ import {
   type SillyTavernMessage,
 } from '@iris/persistence'
 import type { ChatSearchHit, ChatSearchMatch, ChatSummary } from '@iris/protocol'
+import type { RegexScript } from '@iris/regex'
 import type { ScopeBackend, Variables } from '@iris/variables'
 
 import { ChatEntry, createSession, readMeta } from './entry.ts'
@@ -108,6 +109,16 @@ export class ChatStore {
    * them being reopened.
    */
   readonly #persona: (() => string) | undefined
+  /**
+   * The profile's global regex scripts, read fresh each time a chat opens.
+   *
+   * The same shape as `#globalSelect`: the list is something the user edits
+   * while the host runs, and a snapshot taken here would outlive the edit. Read
+   * once per open rather than per message because the scripts getter is
+   * synchronous and feeds three directions; `refreshGlobalRegex` is the path a
+   * `regex.set` takes to reach chats that are already open.
+   */
+  readonly #globalRegex: (() => Promise<readonly RegexScript[]>) | undefined
 
   /**
    * @param dir - the folder holding chat files.
@@ -124,6 +135,7 @@ export class ChatStore {
     globalSelect?: () => readonly string[],
     bookFor?: (characterId: string | undefined, card: CharacterCard | undefined) => Promise<string | undefined>,
     persona?: () => string,
+    globalRegex?: () => Promise<readonly RegexScript[]>,
   ) {
     this.#dir = dir
     this.#library = library
@@ -133,6 +145,7 @@ export class ChatStore {
     this.#bookFor = bookFor
     this.#globalSelect = globalSelect
     this.#persona = persona
+    this.#globalRegex = globalRegex
   }
 
   /**
@@ -149,6 +162,11 @@ export class ChatStore {
     const store = this.#scriptVariables
     if (store === undefined || characterId === undefined) return undefined
     return store.backendFor(await store.open(characterId, card))
+  }
+
+  /** The global regex tier as it stands right now; absent when there is no store. */
+  async #globals(): Promise<readonly RegexScript[]> {
+    return await this.#globalRegex?.() ?? []
   }
 
   /** Create the folder if this is a first run. */
@@ -243,6 +261,26 @@ export class ChatStore {
   }
 
   /**
+   * Re-read the global regex tier and hand it to every live conversation.
+   *
+   * Called after a `regex.set`: the store's list is what the next open would
+   * compose from, but a chat left open across the edit is still running on the
+   * snapshot it took, and SillyTavern's answer to that is `reloadCurrentChat()` —
+   * the reader sees the new text, not the text the old list produced.
+   * @returns the ids of the live conversations that were refreshed.
+   */
+  async refreshGlobalRegex(): Promise<string[]> {
+    if (this.#globalRegex === undefined) return []
+    const scripts = await this.#globalRegex()
+    const ids: string[] = []
+    for (const [chatId, entry] of this.#entries) {
+      entry.setGlobalScripts(scripts)
+      ids.push(chatId)
+    }
+    return ids
+  }
+
+  /**
    * Open a conversation, loading it if it is not already live.
    * @param chatId - the id from the request.
    * @returns the live entry.
@@ -270,6 +308,7 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(meta.characterId, card)
     const entry = new ChatEntry({
       chatId, header: file.header, session, card,
+      globalScripts: await this.#globals(),
       worldbook: await resolveCardWorldbook(
         card, this.#worldbooks, this.#globalSelect?.() ?? [],
         await this.#bookFor?.(meta.characterId, card),
@@ -317,6 +356,7 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(characterId, card)
     const entry = new ChatEntry({
       chatId, header, session, card,
+      globalScripts: await this.#globals(),
       worldbook: await resolveCardWorldbook(
         card, this.#worldbooks, this.#globalSelect?.() ?? [],
         await this.#bookFor?.(characterId, card),
@@ -411,6 +451,7 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(parentMeta.characterId, parent.card)
     const child = new ChatEntry({
       chatId: childId, header, session, card: parent.card,
+      globalScripts: await this.#globals(),
       // Reused rather than re-resolved: a branch plays the same character from
       // the same books, and a second resolution could disagree with its parent
       // if a book changed on disk in between.

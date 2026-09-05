@@ -307,6 +307,23 @@ export const en = {
   promptRole: 'role: {role}',
   promptNoToggle: 'This slot has no toggle.',
 
+  /** Regex panel — the global tier, the user's own scripts. */
+  sectionRegex: 'Global regex',
+  regexNote: 'Scripts every conversation runs before anything the character ships. Display-only ones change what you read, prompt-only ones what the model reads, the rest rewrite the message as it is stored.',
+  regexEmpty: 'No global scripts. Import a regex-*.json file exported from SillyTavern to add one.',
+  regexImport: 'Import a regex export',
+  regexImportNote: 'Accepts one script or a bulk export array. An imported script gets a fresh identity, so importing the same file twice adds it twice.',
+  regexImportFailed: 'That file is not a SillyTavern regex export.',
+  regexImportedOne: 'Imported 1 script.',
+  regexImported: 'Imported {n} scripts.',
+  regexExport: 'Export',
+  regexDeleteNamed: 'Delete the script {name}',
+  regexMoveUp: 'Move up',
+  regexMoveDown: 'Move down',
+  regexDisplayOnly: 'display only',
+  regexPromptOnly: 'prompt only',
+  regexPermanent: 'rewrites stored text',
+
   /** Reasoning and context window (sampling section, behind “more parameters”). */
   contextWindow: 'Context window',
   contextWindowNote: 'Tokens of conversation one request may carry. Switching a preset sets it.',
@@ -767,6 +784,23 @@ export const zh: Record<StringKey, string> = {
   promptSystem: '系统',
   promptRole: '角色：{role}',
   promptNoToggle: '此槽位没有开关。',
+
+  /** 正则面板——全局层，用户自己的脚本。 */
+  sectionRegex: '全局正则',
+  regexNote: '每段对话都会先于角色自带脚本运行的正则。仅显示的改变你看到的文本，仅提示词的改变模型读到的文本，其余的直接改写存盘的消息。',
+  regexEmpty: '还没有全局脚本。导入从 SillyTavern 导出的 regex-*.json 文件即可添加。',
+  regexImport: '导入正则导出文件',
+  regexImportNote: '接受单个脚本或批量导出的数组。导入的脚本会获得全新标识，同一文件导入两次就会添加两份。',
+  regexImportFailed: '该文件不是 SillyTavern 的正则导出文件。',
+  regexImportedOne: '已导入 1 个脚本。',
+  regexImported: '已导入 {n} 个脚本。',
+  regexExport: '导出',
+  regexDeleteNamed: '删除脚本 {name}',
+  regexMoveUp: '上移',
+  regexMoveDown: '下移',
+  regexDisplayOnly: '仅显示',
+  regexPromptOnly: '仅提示词',
+  regexPermanent: '改写存盘文本',
 
   /** 推理与上下文窗口（采样区，收在“更多参数”里）。 */
   contextWindow: '上下文窗口',

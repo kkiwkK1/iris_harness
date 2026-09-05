@@ -68,6 +68,7 @@ export type {
   PromptItemEntry,
   PromptItemization,
   ReasoningEffort,
+  RegexScriptView,
   ScriptChatMessage,
   ScriptContext,
   ScriptPromptPosition,

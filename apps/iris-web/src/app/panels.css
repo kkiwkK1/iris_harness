@@ -1547,3 +1547,61 @@
   gap: 2px;
   flex: none;
 }
+
+/*
+ * A global regex row, the preset prompt row's grammar: a toggle, the name with
+ * its badges, and the actions beside it. Same spacing, same hairlines — the
+ * two lists sit one above the other in the drawer, and matching them is what
+ * makes that read as one drawer rather than two bolted together.
+ */
+.iris-regex__list {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.iris-regex__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-regex__toggle {
+  flex: none;
+  accent-color: var(--iris-accent);
+}
+
+.iris-regex__name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.iris-regex__badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  font-family: var(--iris-font-ui);
+  font-size: 10px;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-regex__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.iris-regex__import {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}

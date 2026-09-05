@@ -26,6 +26,7 @@ import {
   PLACEMENT,
   SCRIPT_TYPE,
   type MacroSubstitute,
+  type OwnedScript,
   type Placement,
   type RegexScript,
 } from '@iris/regex'
@@ -42,16 +43,27 @@ export function placementFor(role: ViewRole): Placement {
 /**
  * The scripts one chat runs, in upstream's order.
  *
- * Only the character's own tier exists so far; the global and preset tiers are
- * ordered around it already, so adding them later is a matter of passing them
- * in rather than reworking the call sites.
+ * Two of the three tiers exist: the profile's global scripts
+ * (`extension_settings.regex` upstream — the user's own, run before anything a
+ * card ships) and the character's own. The preset tier is ordered around them
+ * already and stays reserved — upstream reads it from the active preset file's
+ * own `regex_scripts` field, which this host's read-only preset library does
+ * not carry — so adding it later is a matter of passing it in rather than
+ * reworking the call sites.
+ *
+ * Stable within a tier, so a card's own scripts keep the order it listed them
+ * in — they are often written to run in sequence.
  * @param card - the character being played, if any.
- * @returns the ordered scripts, empty when the card ships none.
+ * @param global - the profile's global scripts, in stored order.
+ * @returns the ordered scripts, empty when neither tier has any.
  */
-export function scriptsOf(card: CharacterCard | undefined): RegexScript[] {
+export function scriptsOf(card: CharacterCard | undefined, global: readonly RegexScript[] = []): RegexScript[] {
+  const owned: OwnedScript[] = global.map(script => ({ script, type: SCRIPT_TYPE.GLOBAL }))
   const scoped = card?.data.extensions.regex_scripts
-  if (!Array.isArray(scoped)) return []
-  return orderScripts(scoped.map(script => ({ script: script as RegexScript, type: SCRIPT_TYPE.SCOPED })))
+  if (Array.isArray(scoped)) {
+    owned.push(...(scoped as RegexScript[]).map(script => ({ script, type: SCRIPT_TYPE.SCOPED })))
+  }
+  return orderScripts(owned)
 }
 
 /**

@@ -370,6 +370,8 @@ export class ChatEntry {
   #initVars: MvuData | undefined
   #initialVariables: Record<string, unknown> | undefined
   #scripts: RegexScript[] | undefined
+  /** The global regex tier this chat opened with; replaced by `setGlobalScripts`. */
+  #globalScripts: readonly RegexScript[]
   /** Storage for the `script` scope; outlives `rebuild`, so it is held here. */
   readonly #scriptScope: ScopeBackend
   /** Storage for the `global` scope; outlives `rebuild`, so it is held here. */
@@ -446,6 +448,14 @@ export class ChatEntry {
      * before a persona store existed.
      */
     persona?: () => string
+    /**
+     * The profile's global regex scripts, as they stand at open time.
+     *
+     * A snapshot rather than a live provider because the getter below is
+     * synchronous and feeds three directions; {@link setGlobalScripts} is how a
+     * change reaches entries that are already open.
+     */
+    globalScripts?: readonly RegexScript[]
   }) {
     this.chatId = input.chatId
     this.header = input.header
@@ -453,6 +463,7 @@ export class ChatEntry {
     this.card = input.card
     this.worldbook = input.worldbook
     this.#persona = input.persona
+    this.#globalScripts = input.globalScripts ?? []
     // Sticky and cooldown windows outlive the process in upstream: they live in
     // `chat_metadata.timedWorldInfo`, which is saved with the chat file. Restored
     // here rather than by the caller because every construction path — open,
@@ -489,8 +500,21 @@ export class ChatEntry {
    * work proportional to the square of the conversation.
    */
   get scripts(): readonly RegexScript[] {
-    this.#scripts ??= scriptsOf(this.card)
+    this.#scripts ??= scriptsOf(this.card, this.#globalScripts)
     return this.#scripts
+  }
+
+  /**
+   * Replace the global tier and drop the composed list.
+   *
+   * This is how a `regex.set` reaches chats that are already open: the snapshot
+   * each entry composed at open time is otherwise a fact about the past, and a
+   * script the user just switched off would keep rewriting every page until the
+   * chat happened to be reopened.
+   */
+  setGlobalScripts(scripts: readonly RegexScript[]): void {
+    this.#globalScripts = scripts
+    this.#scripts = undefined
   }
 
   /**
