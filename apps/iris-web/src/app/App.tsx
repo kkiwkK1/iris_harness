@@ -1,10 +1,12 @@
 /**
  * The Iris shell.
  *
- * Holds the three things that are genuinely global — the theme, the drop target
- * for character cards, and which of the two overlays is open — and nothing else.
- * Chat state lives in the store; reading preferences live on the device. Keeping
- * those three concerns apart is what makes the shell small enough to read.
+ * Holds the things that are genuinely global — the drop target for character
+ * cards, which of the two overlays is open, the reading preferences, and the
+ * user.css slot's lifetime — and nothing else. The theme lives in its own
+ * module store (`theme/theme.ts`), which applies the document the moment the
+ * choice changes; chat state lives in the store. Keeping those concerns apart
+ * is what makes the shell small enough to read.
  *
  * @module iris-web/app/App
  */
@@ -15,13 +17,12 @@ import type { ReactElement } from 'react'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import {
   applyReading,
-  applyTheme,
   loadReading,
-  loadTheme,
   watchSystemTheme,
+  getThemeChoice,
   type ReadingPrefs,
-  type ThemeChoice,
 } from '../theme/theme.ts'
+import { installUserCssSlot } from '../slots/user-css.ts'
 import { ChatPane } from './ChatPane.tsx'
 import { SettingsDrawer } from './SettingsDrawer.tsx'
 import { Masthead } from './Masthead.tsx'
@@ -52,25 +53,26 @@ export function App(): ReactElement {
   // per-device, not store state.
   useLanguage()
 
-  const [theme, setThemeState] = useState<ThemeChoice>(loadTheme)
   const [reading, setReadingState] = useState<ReadingPrefs>(loadReading)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
   const [dropping, setDropping] = useState(false)
   const dragDepth = useRef(0)
 
-  // Apply on mount as well as on change: the stored preference has to reach the
-  // document before the first paint of prose, not after it.
-  useEffect(() => {
-    applyTheme(theme)
-  }, [theme])
+  // The theme needs no shell state: it lives in its own module store, applies
+  // the document the moment it is set, and the pre-paint script in
+  // `index.html` already put the stored choice on the attribute before this
+  // bundle ran. Reading still rides through here because its setter owns the
+  // document writes.
   useEffect(() => {
     applyReading(reading)
   }, [reading])
 
-  const themeRef = useRef(theme)
-  themeRef.current = theme
-  useEffect(() => watchSystemTheme(() => themeRef.current), [])
+  // Keep a `system` choice in step with the OS, and mount the user.css slot
+  // for as long as the shell lives — its disposer takes the style element
+  // back, leaving nothing behind.
+  useEffect(() => watchSystemTheme(getThemeChoice), [])
+  useEffect(() => installUserCssSlot(), [])
 
   useEffect(() => {
     void actions.boot()
@@ -198,9 +200,7 @@ export function App(): ReactElement {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         control={{
-          theme,
           reading,
-          setTheme: setThemeState,
           setReading: setReadingState,
         }}
       />

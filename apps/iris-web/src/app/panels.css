@@ -226,6 +226,104 @@
   margin: 14px 0 2px;
 }
 
+/* ---------------------------------------------------------------- appearance */
+
+/*
+ * The appearance card's swatch row. Each swatch is painted from the theme's
+ * own token table (inline styles from `presets.ts`), so preview and page are
+ * the same numbers; the classes here only do the geometry — a desk, a sheet
+ * on it, two lines of prose, and the one accent tick.
+ */
+.iris-appearance__themes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.iris-appearance__swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 8px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius-lg);
+  cursor: pointer;
+  font: inherit;
+}
+
+.iris-appearance__swatch:focus-visible {
+  outline: 2px solid var(--iris-accent);
+  outline-offset: 2px;
+}
+
+/* Chosen is a ring in the accent, not a fill: the swatch's own colours are
+   the content, and tinting them would misrepresent the theme. */
+.iris-appearance__swatch[aria-pressed='true'] {
+  outline: 2px solid var(--iris-accent);
+  outline-offset: 1px;
+}
+
+.iris-appearance__sheet {
+  display: block;
+  padding: 7px 8px 9px;
+  border: 1px solid;
+  border-radius: var(--iris-radius);
+}
+
+.iris-appearance__line {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  margin-bottom: 4px;
+  opacity: 0.85;
+}
+
+.iris-appearance__line--short {
+  width: 62%;
+  margin-bottom: 6px;
+}
+
+.iris-appearance__tick {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.iris-appearance__name {
+  padding-top: 6px;
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-secondary);
+}
+
+/*
+ * The user.css editor. Mono, because it is code; raised, because it is a
+ * sheet on the drawer; and resizable, because a stylesheet grows downward.
+ */
+.iris-usercss__editor {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  padding: 8px 10px;
+  font-family: var(--iris-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.iris-usercss__editor::placeholder {
+  color: var(--iris-ink-faint);
+}
+
+.iris-usercss__editor:focus-visible {
+  outline: none;
+  border-color: var(--iris-accent-quiet);
+  box-shadow: 0 0 0 3px var(--iris-accent-wash);
+}
+
 .iris-field {
   display: grid;
   grid-template-columns: 1fr auto;

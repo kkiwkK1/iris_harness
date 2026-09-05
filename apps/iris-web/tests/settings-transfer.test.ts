@@ -121,3 +121,15 @@ test('imported device choices are held to the same ranges the live controls are'
   assert.equal(device.reading.measure, 48)
   assert.equal(device.reading.floors, false)
 })
+
+test('a named theme travels by its word, parchment included', () => {
+  for (const theme of ['light', 'dark', 'parchment'] as const) {
+    const device = transferDevice({
+      theme,
+      reading: { size: 17, measure: 68, floors: false },
+      language: 'en',
+      autoOpenChat: true,
+    })
+    assert.equal(device.theme, theme, `${theme} must survive the file, not fall back to system`)
+  }
+})

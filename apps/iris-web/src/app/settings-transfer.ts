@@ -144,7 +144,8 @@ export function transferDevice(raw: SettingsTransferFile['device']): {
   language: Language
   autoOpenChat: boolean
 } {
-  const theme: ThemeChoice = raw.theme === 'light' || raw.theme === 'dark' ? raw.theme : 'system'
+  const theme: ThemeChoice =
+    raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'parchment' ? raw.theme : 'system'
   const language: Language = raw.language === 'zh' ? 'zh' : 'en'
   const reading = raw.reading ?? ({} as Partial<ReadingPrefs>)
   return {
