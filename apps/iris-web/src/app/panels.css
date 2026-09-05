@@ -1073,6 +1073,14 @@
 }
 
 /*
+ * A probe's verdict is news, and a failed one is the kind a reader acts on:
+ * it takes the danger token rather than the quiet of a note.
+ */
+.iris-conn__test-error {
+  color: var(--iris-danger);
+}
+
+/*
  * The card-script button bar, above the composer.
  *
  * Upstream borrows QuickReply's classes so its buttons look like that

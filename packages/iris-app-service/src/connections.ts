@@ -27,6 +27,17 @@ import type { ConnectionProfile, GenerationSettings } from '@iris/protocol'
 import { notFound } from './errors.ts'
 import { sanitize } from './settings.ts'
 
+/**
+ * How much of a stored key a read may show.
+ *
+ * The tail is a convenience for the one question a user asks of a masked
+ * field — "which of my keys is this?" — and a boundary: shorter than this,
+ * showing four characters shows most of the key, so nothing is shown at all.
+ */
+export const KEY_TAIL_MIN_LENGTH = 8
+/** How many trailing characters a masked key shows. */
+export const KEY_TAIL_LENGTH = 4
+
 /** A profile as it is stored: no derived values. */
 interface StoredProfile {
   id: string
@@ -35,6 +46,12 @@ interface StoredProfile {
   model: string
   preset?: string
   sampling?: Partial<GenerationSettings>
+  /** The endpoint this profile generates through. Absent rides the host's route. */
+  baseURL?: string
+  /** The key as the user typed it. Stored in the file; never projected to the wire. */
+  apiKey?: string
+  /** The header the key is sent in. Absent means the OpenAI-compatible default. */
+  apiKeyHeader?: string
 }
 
 /** The file's shape. */
@@ -51,25 +68,58 @@ export interface ProfileInput {
   model: string
   preset?: string
   sampling?: Record<string, unknown>
+  baseURL?: string
+  /**
+   * Write-only, with merge semantics the other fields do not have.
+   *
+   * Absent keeps whatever is stored — a caller editing a label cannot re-send
+   * a key it was never shown. Empty string clears. Non-empty replaces.
+   */
+  apiKey?: string
+  apiKeyHeader?: string
 }
 
 /**
- * What to show for a profile the user never named.
+ * The last characters of a stored key, for the mask a form shows.
+ * @param key - the stored key, or absent.
+ * @returns the tail, or undefined when there is no key or it is too short to show one.
+ */
+export function keyTailOf(key: string | undefined): string | undefined {
+  if (key === undefined || key.length < KEY_TAIL_MIN_LENGTH) return undefined
+  return key.slice(-KEY_TAIL_LENGTH)
+}
+
+/**
+ * Describe a profile from its current values.
  *
  * Computed on every read, never stored — this is the whole point. The moment
  * this became a field, it would start being true only of the values it was
  * written from.
+ *
+ * The endpoint rides in the summary as its origin, because for a profile that
+ * carries one, **where it points is the truth the summary exists to tell** —
+ * the measured failure this design answers is a profile whose name says one
+ * provider and whose endpoint says another.
  * @param profile - the stored values.
  * @returns a one-line description of what the profile currently is.
  */
 export function summarize(profile: StoredProfile): string {
   const parts = [profile.provider, profile.model]
   if (profile.preset !== undefined && profile.preset.length > 0) parts.push(profile.preset)
+  if (profile.baseURL !== undefined && profile.baseURL.length > 0) {
+    try {
+      parts.push(new URL(profile.baseURL).origin)
+    } catch {
+      // Not a parseable URL — show it raw rather than hide where it points.
+      parts.push(profile.baseURL)
+    }
+  }
   return parts.join(' · ')
 }
 
-/** Project a stored profile onto the wire shape. */
+/** Project a stored profile onto the wire shape. **Never carries the key.** */
 function toWire(profile: StoredProfile): ConnectionProfile {
+  const tail = keyTailOf(profile.apiKey)
   return {
     id: profile.id,
     ...profile.label === undefined ? {} : { label: profile.label },
@@ -78,6 +128,10 @@ function toWire(profile: StoredProfile): ConnectionProfile {
     model: profile.model,
     ...profile.preset === undefined ? {} : { preset: profile.preset },
     ...profile.sampling === undefined ? {} : { sampling: profile.sampling },
+    ...profile.baseURL === undefined ? {} : { baseURL: profile.baseURL },
+    ...profile.apiKey === undefined ? {} : { hasKey: true },
+    ...tail === undefined ? {} : { keyTail: tail },
+    ...profile.apiKeyHeader === undefined ? {} : { apiKeyHeader: profile.apiKeyHeader },
   }
 }
 
@@ -149,9 +203,24 @@ export class ConnectionStore {
       model: input.model,
       ...input.preset === undefined || input.preset.length === 0 ? {} : { preset: input.preset },
       ...sampling === undefined || Object.keys(sampling).length === 0 ? {} : { sampling },
+      ...input.baseURL === undefined || input.baseURL.length === 0 ? {} : { baseURL: input.baseURL },
+      ...input.apiKeyHeader === undefined || input.apiKeyHeader.length === 0
+        ? {}
+        : { apiKeyHeader: input.apiKeyHeader },
     }
 
+    // The key is the one field that merges. Every read withholds it, so a
+    // caller replacing a profile cannot send it back — treating absent as
+    // "clear it" would silently disarm a profile whose label someone edited.
+    // `''` is the explicit clear; anything else replaces.
     const at = this.#file.profiles.findIndex(profile => profile.id === stored.id)
+    const previous = at === -1 ? undefined : this.#file.profiles[at]
+    if (input.apiKey === undefined) {
+      if (previous?.apiKey !== undefined) stored.apiKey = previous.apiKey
+    } else if (input.apiKey.length > 0) {
+      stored.apiKey = input.apiKey
+    }
+
     if (at === -1) this.#file.profiles.push(stored)
     else this.#file.profiles[at] = stored
 
@@ -204,9 +273,34 @@ export class ConnectionStore {
   /**
    * The settings patch that applying a profile amounts to.
    * @param profile - the stored profile.
+   * @param route - the provider route the patch should name, when it differs
+   * from the profile's own (a profile with an endpoint of its own is served
+   * by a runtime-installed adapter, not the route its `provider` was named for).
    * @returns a patch for `SettingsStore.set`.
    */
-  static patchOf(profile: StoredProfile): Record<string, unknown> {
-    return { provider: profile.provider, model: profile.model, ...profile.sampling }
+  static patchOf(profile: StoredProfile, route?: string): Record<string, unknown> {
+    const patch = { provider: profile.provider, model: profile.model, ...profile.sampling }
+    // The runtime-installed route wins over anything a sampling block carried:
+    // the adapter registered for it is the one that can actually reach this
+    // profile's endpoint.
+    return route === undefined ? patch : { ...patch, provider: route }
   }
+}
+
+/**
+ * The adapter route a profile is served through once activated.
+ *
+ * A profile carrying its own endpoint cannot generate through `default`: that
+ * route belongs to the composition's own adapter registration, which this
+ * runtime neither owns nor may displace. Everything else generates through
+ * the route its provider names — presets install there on activation, and two
+ * profiles of one provider take turns by replacing that registration.
+ * @param profile - the stored profile (the id matters only for the derived route).
+ * @returns the route key to install an adapter under and to write into settings.
+ */
+export function routeOf(
+  profile: Pick<StoredProfile, 'id' | 'provider' | 'model'> & { baseURL?: string | undefined },
+): string {
+  if (profile.baseURL === undefined || profile.baseURL.length === 0) return profile.provider
+  return profile.provider === 'default' ? `conn/${profile.id}` : profile.provider
 }

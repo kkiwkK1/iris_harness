@@ -53,6 +53,8 @@ export type {
   ChatView,
   CharacterSummary,
   ConnectionProfile,
+  ConnectionTestError,
+  ConnectionTestErrorCode,
   DebugReport,
   ReportGrade,
   GenerationSettings,
@@ -75,6 +77,12 @@ export type {
   WorldbookPosition,
   WorldbookSettingsView,
 } from './views.ts'
+
+export {
+  PROVIDER_PRESETS,
+  providerPreset,
+  type ProviderPreset,
+} from './providers.ts'
 
 /**
  * The client-side facade both halves agree on.

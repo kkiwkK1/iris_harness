@@ -24,6 +24,7 @@ import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
 import type { ChatView, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import { providerPreset } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
 import { checkScriptFetch, extractScripts } from '@iris/script'
@@ -33,7 +34,7 @@ import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } fr
 import { randomUUID } from 'node:crypto'
 
 import { PresetStore } from './presets.ts'
-import { ConnectionStore } from './connections.ts'
+import { ConnectionStore, routeOf } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
 import { writeTimedEffects } from './entry.ts'
@@ -113,6 +114,52 @@ export type Handlers = {
   [M in RpcMethod]: (params: RpcRequest<M>) => Promise<RpcResponse<M>>
 }
 
+/**
+ * The endpoint a connection profile carries, as the runtime adapter needs it.
+ *
+ * The key rides in the clear **inside the host process only** — it reaches the
+ * LLM adapter's request headers and nothing else: no log line, no broadcast,
+ * no RPC response.
+ */
+export interface ConnectionEndpoint {
+  baseURL: string
+  /** The profile's own key. Wins over any environment-sourced credential. */
+  apiKey?: string
+  /** The header the key is sent in. Absent means the OpenAI-compatible `Authorization: Bearer`. */
+  apiKeyHeader?: string
+}
+
+/** How long a `connection.test` probe waits for an endpoint before saying `timeout`. */
+export const DEFAULT_PROBE_TIMEOUT_MS = 10_000
+
+/**
+ * Read the model ids out of a `/models` response body.
+ *
+ * The OpenAI-compatible shape is `{ data: [{ id }] }`; Ollama's native list is
+ * `{ models: [{ name }] }` and costs nothing to also accept. An empty list is
+ * still an answer — an endpoint that served 200 with nothing advertised has
+ * said something, and the form should show it.
+ * @param body - the parsed JSON body.
+ * @returns the ids, or undefined when the body carries no list at all.
+ */
+function modelIdsOf(body: unknown): string[] | undefined {
+  if (typeof body !== 'object' || body === null) return undefined
+  const record = body as Record<string, unknown>
+  for (const [key, field] of [['data', 'id'], ['models', 'name']] as const) {
+    const rows = record[key]
+    if (!Array.isArray(rows)) continue
+    const ids = rows
+      .map(row => {
+        if (typeof row !== 'object' || row === null) return undefined
+        const value = (row as Record<string, unknown>)[field]
+        return typeof value === 'string' && value.length > 0 ? value : undefined
+      })
+      .filter((id): id is string => id !== undefined)
+    return ids
+  }
+  return undefined
+}
+
 /** What the service needs that it does not own. */
 export interface AppServiceOptions {
   /** Normally `ctx.llm.stream` bound to the registry. */
@@ -164,6 +211,21 @@ export interface AppServiceOptions {
    * host with nowhere to keep them should report.
    */
   connections?: ConnectionStore
+  /**
+   * Re-points a provider route at the endpoint a profile carries, at runtime.
+   *
+   * Given by the composition, which owns the LLM registry. Absent — a test
+   * host with no registry — leaves activation a settings change only, and a
+   * profile that needs its own endpoint reports it rather than pretending.
+   * The key passes through here once, into the adapter's config; it never
+   * reaches a log line or a response.
+   */
+  installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
+  /**
+   * How long `connection.test` waits for an endpoint before saying `timeout`.
+   * @default 10000
+   */
+  probeTimeoutMs?: number
   /**
    * Fetches a remote script dependency. Defaults to global `fetch`.
    *
@@ -268,7 +330,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
@@ -284,6 +346,7 @@ export class IrisAppService {
       presets?: PresetStore
       presetName?: string
       sillyTavernDir?: string
+      installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -316,6 +379,8 @@ export class IrisAppService {
       templateOverhead: options.templateOverhead ?? 0,
       onError: options.onError ?? (() => {}),
       fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
+      probeTimeoutMs: options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+      ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
       ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
       ...options.scriptButtons === undefined ? {} : { scriptButtons: options.scriptButtons },
@@ -392,6 +457,120 @@ export class IrisAppService {
       return
     }
     await this.#applyPreset(name, await store.read(name))
+  }
+
+  /**
+   * Hand a profile's endpoint to the composition's installer, saying so in the
+   * report without saying the key.
+   * @param route - the provider route to serve the endpoint under.
+   * @param baseURL - the endpoint root.
+   * @param credential - the key and the header it is sent in.
+   */
+  #installConnectionFor(
+    route: string,
+    baseURL: string,
+    credential: { apiKey?: string | undefined, apiKeyHeader?: string | undefined },
+  ): void {
+    const install = this.#options.installConnection
+    if (install === undefined) return
+    install(route, {
+      baseURL,
+      ...credential.apiKey === undefined ? {} : { apiKey: credential.apiKey },
+      ...credential.apiKeyHeader === undefined ? {} : { apiKeyHeader: credential.apiKeyHeader },
+    })
+    this.#report(
+      `connection now generates through route "${route}" at ${new URL(baseURL).origin}`,
+      { kind: 'host', grade: 'note' },
+    )
+  }
+
+  /**
+   * Probe an endpoint the way a model list would be fetched.
+   *
+   * The credential, if any, goes into the request headers and **nowhere
+   * else** — not into an error message, not into the report log. A failed
+   * probe is a result rather than a thrown error: the caller is a form, and a
+   * form renders a verdict, it does not catch one.
+   * @param target - the endpoint and optional credential to probe.
+   * @returns the verdict: latency always, models when it worked, a named error when not.
+   */
+  async #probeEndpoint(target: {
+    baseURL: string
+    apiKey?: string | undefined
+    apiKeyHeader?: string | undefined
+  }): Promise<RpcResponse<'connection.test'>> {
+    const url = `${target.baseURL.replace(/\/+$/, '')}/models`
+    // `Authorization` carries the Bearer scheme; any other header name is a
+    // bare value — the same rule the LLM adapter applies, so a probe that
+    // passed is a stream that authenticates.
+    const headerName = (target.apiKeyHeader ?? 'Authorization').toLowerCase()
+    const headers: Record<string, string> = { accept: 'application/json' }
+    if (target.apiKey !== undefined && target.apiKey.length > 0) {
+      headers[headerName] = headerName === 'authorization' ? `Bearer ${target.apiKey}` : target.apiKey
+    }
+
+    const started = performance.now()
+    let response: Response
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(this.#options.probeTimeoutMs),
+      })
+    } catch (cause: unknown) {
+      const latencyMs = Math.round(performance.now() - started)
+      if (cause instanceof Error && cause.name === 'TimeoutError') {
+        return {
+          ok: false,
+          latencyMs,
+          error: { code: 'timeout', message: `no answer from ${url} within ${String(this.#options.probeTimeoutMs)}ms` },
+        }
+      }
+      const reason = cause instanceof Error ? cause.message : String(cause)
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'network', message: `could not reach ${url}: ${reason}` },
+      }
+    }
+    const latencyMs = Math.round(performance.now() - started)
+
+    if (response.status === 401 || response.status === 403) {
+      await response.arrayBuffer()
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'unauthorized', message: `${url} answered ${String(response.status)} — the key does not open this endpoint` },
+      }
+    }
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 300)
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'http-error', message: `${url} answered ${String(response.status)}: ${detail}` },
+      }
+    }
+
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'bad-response', message: `${url} answered 200, but the body is not JSON` },
+      }
+    }
+    const models = modelIdsOf(body)
+    if (models === undefined) {
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'bad-response', message: `${url} answered 200, but the body carries no model list` },
+      }
+    }
+    return { ok: true, latencyMs, models }
   }
 
   /**
@@ -948,6 +1127,11 @@ export class IrisAppService {
         ...input.label === undefined ? {} : { label: input.label },
         ...input.preset === undefined ? {} : { preset: input.preset },
         ...input.sampling === undefined ? {} : { sampling: input.sampling },
+        ...input.baseURL === undefined ? {} : { baseURL: input.baseURL },
+        // Passed through untouched: the merge-or-clear decision belongs to the
+        // store, which is the only place that can still see the stored key.
+        ...input.apiKey === undefined ? {} : { apiKey: input.apiKey },
+        ...input.apiKeyHeader === undefined ? {} : { apiKeyHeader: input.apiKeyHeader },
       }),
 
       'connection.delete': async ({ id }) => this.#connections().delete(id),
@@ -955,9 +1139,18 @@ export class IrisAppService {
       'connection.activate': async ({ id, chatId }) => {
         const store = this.#connections()
         const profile = await store.get(id)
+        // A profile carrying its own endpoint is served by an adapter installed
+        // for it **now** — no host restart, and two profiles of one provider
+        // take turns by replacing the registration. The route it installs under
+        // is what the settings patch then names, so generation reaches the
+        // adapter that can actually see this profile's endpoint and key.
+        const route = routeOf(profile)
+        if (profile.baseURL !== undefined && profile.baseURL.length > 0) {
+          this.#installConnectionFor(route, profile.baseURL, profile)
+        }
         // Applied through `settings.set`, so a profile cannot install a value
         // that setting it by hand would have been refused.
-        const applied = await settings.set(chatId, ConnectionStore.patchOf(profile))
+        const applied = await settings.set(chatId, ConnectionStore.patchOf(profile, route))
         // The profile's bound preset comes with it — upstream's
         // `bind_preset_to_connection`, which defaults to true there: switching
         // a connection is switching the preset it was assembled with, and a
@@ -972,6 +1165,58 @@ export class IrisAppService {
         }
         await store.markActive(id)
         return { settings: applied, activeId: id }
+      },
+
+      'connection.test': async (input) => {
+        // One probe, two ways to name what it probes. A saved profile carries
+        // its key in the store — which the caller cannot re-send, because no
+        // read ever returned it — and unsaved form values carry the key as
+        // typed. Neither naming a stored key back, ever.
+        let baseURL: string
+        let apiKey: string | undefined
+        let apiKeyHeader: string | undefined
+        let presetId: string | undefined
+        if (input.profileId !== undefined) {
+          const profile = await this.#connections().get(input.profileId)
+          if (profile.baseURL === undefined || profile.baseURL.length === 0) {
+            return {
+              ok: false,
+              latencyMs: 0,
+              error: {
+                code: 'no-endpoint',
+                message: 'this profile rides the host\'s configured endpoint and carries none of its own; set a base URL to test it',
+              },
+            }
+          }
+          baseURL = profile.baseURL
+          apiKey = profile.apiKey
+          apiKeyHeader = profile.apiKeyHeader
+          // A profile saved from the form names its preset in `provider`.
+          presetId = profile.provider
+        } else if (input.baseURL !== undefined && input.baseURL.length > 0) {
+          baseURL = input.baseURL
+          apiKey = input.apiKey
+          apiKeyHeader = input.apiKeyHeader
+          presetId = input.preset
+        } else {
+          throw invalid('name a saved profile (profileId) or give the endpoint to probe (baseURL)')
+        }
+
+        const preset = presetId === undefined ? undefined : providerPreset(presetId)
+        const needsKey = preset?.requiresKey === true
+        if (needsKey && (apiKey === undefined || apiKey.length === 0)) {
+          return {
+            ok: false,
+            latencyMs: 0,
+            error: {
+              code: 'missing-key',
+              message: preset === undefined
+                ? 'this endpoint needs an API key, and none was given'
+                : `a ${preset.id} endpoint needs an API key, and none was given`,
+            },
+          }
+        }
+        return this.#probeEndpoint({ baseURL, apiKey, apiKeyHeader })
       },
 
       'preset.list': async () => {

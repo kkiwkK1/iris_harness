@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionProfile, DebugReport, GenerationSettings, PresetManagerView, PresetSummary, PromptItemization, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView } from './views.ts'
+import type { CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, PresetManagerView, PresetSummary, PromptItemization, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -336,12 +336,47 @@ export const requestSchemas = {
     model: z.string().min(1),
     preset: z.string().max(255).optional(),
     sampling: z.record(z.string(), z.unknown()).optional(),
+    /**
+     * The endpoint this profile generates through. Absent on a **new** profile
+     * means it rides the host's configured route; absent on a **replacement**
+     * drops the stored one, like every non-secret field.
+     */
+    baseURL: z.string().max(2000).optional(),
+    /**
+     * The key to store, **write-only**: no read ever returns it, so the form
+     * has nothing to pre-fill and must not pretend otherwise.
+     *
+     * Absent keeps the stored key — the only field that merges, because a
+     * caller editing a label cannot re-send what it was never shown. Empty
+     * string clears it. Non-empty replaces it.
+     */
+    apiKey: z.string().max(2000).optional(),
+    /** The header the key is sent in. Absent means the OpenAI-compatible `Authorization: Bearer`. */
+    apiKeyHeader: z.string().max(200).optional(),
   }),
   'connection.delete': z.object({ id: z.string().min(1) }),
   /** Apply a profile: globally, or to one chat when `chatId` is given. */
   'connection.activate': z.object({
     id: z.string().min(1),
     chatId: z.string().min(1).optional(),
+  }),
+  /**
+   * Probe an endpoint the way a model list would be fetched, and say what
+   * happened in words a form can show.
+   *
+   * Either a saved profile (`profileId`) or unsaved form values (`baseURL`,
+   * with the key as typed). The two share one schema rather than two methods:
+   * the question is the same — can this endpoint serve me — and the caller's
+   * distinction of "saved or not" is not worth a second method to guess at.
+   */
+  'connection.test': z.object({
+    profileId: z.string().min(1).optional(),
+    baseURL: z.string().max(2000).optional(),
+    /** The key as typed in the form. Never logged, never echoed back. */
+    apiKey: z.string().max(2000).optional(),
+    apiKeyHeader: z.string().max(200).optional(),
+    /** Which provider preset the form is testing, so a known-to-need-a-key endpoint says so by name. */
+    preset: z.string().max(200).optional(),
   }),
 
   'prompt.itemize': z.object({
@@ -1203,6 +1238,22 @@ export interface RpcResponseMap {
   'connection.save': { profiles: ConnectionProfile[], activeId?: string }
   'connection.delete': { profiles: ConnectionProfile[], activeId?: string }
   'connection.activate': { settings: GenerationSettings, activeId: string }
+  /**
+   * The probe's verdict, said in full even when it failed.
+   *
+   * A failed probe is a **result, not an error**: the method answered, and the
+   * answer is "no, and here is the named reason" — so a form can render it
+   * without a try/catch and the transport stays out of the story. `latencyMs`
+   * is present either way, because "how long until it said no" is itself a
+   * diagnosis.
+   */
+  'connection.test': {
+    ok: boolean
+    latencyMs: number
+    /** Model ids from `GET /models`, in the endpoint's own order, when the probe succeeded. */
+    models?: string[]
+    error?: ConnectionTestError
+  }
 
   'character.list': { characters: CharacterSummary[] }
   'character.import': { character: CharacterSummary }

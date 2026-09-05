@@ -27,6 +27,7 @@ import type {
   IrisEvent,
   PresetManagerView,
   PresetSummary,
+  RpcResponse,
   ScriptContext,
   ScriptView,
   WorldbookSettingsView,
@@ -646,8 +647,32 @@ export interface IrisActions {
     model: string
     preset?: string
     sampling?: Record<string, unknown>
+    baseURL?: string
+    /**
+     * Write-only, exactly as the protocol says: absent keeps the stored key,
+     * empty string clears it, non-empty replaces it. The store never sees the
+     * key again after this call.
+     */
+    apiKey?: string
+    apiKeyHeader?: string
   }): Promise<void>
   deleteConnection(id: string): Promise<void>
+  /**
+   * Ask the host to probe an endpoint and fetch its model list.
+   *
+   * The verdict — a failed probe included — comes back as the response: the
+   * method answers "no, and here is why" rather than throwing for it, so the
+   * form renders a result instead of catching one. Only a refusal *before*
+   * any probe (a fake client, a malformed ask) rejects, and the panel shows
+   * that as its own sentence.
+   */
+  testConnection(params: {
+    profileId?: string
+    baseURL?: string
+    apiKey?: string
+    apiKeyHeader?: string
+    preset?: string
+  }): Promise<RpcResponse<'connection.test'>>
   /**
    * Fetch the preset library, the active name and the prompt manager's state.
    *
@@ -1546,6 +1571,13 @@ export function createIrisStore(
           const listed = await client.call('connection.save', patch)
           set({ connections: listed.profiles, activeConnectionId: listed.activeId })
         })
+      },
+
+      async testConnection(params): Promise<RpcResponse<'connection.test'>> {
+        // The verdict passes through untouched. A refused probe is a response,
+        // not a rejection — only a refusal before any probe lands here as a
+        // throw, and the panel renders that as its own sentence.
+        return client.call('connection.test', params)
       },
 
       async deleteConnection(id: string): Promise<void> {

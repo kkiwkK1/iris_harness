@@ -217,6 +217,9 @@ const PROBES: Record<string, unknown> = {
   'connection.save': { provider: 'default', model: 'mock-model' },
   'connection.delete': { id: 'no-such-profile' },
   'connection.activate': { id: 'no-such-profile' },
+  // A profile that does not exist answers not-found, which proves the handler
+  // ran; the probe's verdict-on-failure shape is the connections suite's business.
+  'connection.test': { profileId: 'no-such-profile' },
   'character.list': {},
   'character.import': { filename: 'x.json', content: 'e30=' },
   'character.delete': { characterId: 'no-such-card' },
@@ -409,6 +412,58 @@ test('a reused character id inherits no answer the user gave about the card befo
     false,
     'a new card inherited an answer given about another card',
   )
+})
+
+/**
+ * The secret-storage boundary, asserted on real frames.
+ *
+ * A connection profile's key is stored host-side — that is the deliberate
+ * design — but the **wire** must behave as if it did not exist: no read, no
+ * listing, no echo of any field a save accepted. Asserted on the parsed JSON
+ * of an HTTP response rather than on handler return values, because the frame
+ * is the thing a hostile or careless reader gets.
+ */
+test('a saved key never crosses the wire back, only its mask does', async () => {
+  const key = 'sk-iris-transport-secret-a1b2'
+
+  const saved = await client.call('connection.save', {
+    provider: 'deepseek',
+    model: 'deepseek-v4-flash',
+    baseURL: 'https://api.deepseek.test/v1',
+    apiKey: key,
+  })
+  const profile = saved.profiles.find(row => row.provider === 'deepseek')
+  assert.ok(profile !== undefined, 'the profile was saved')
+
+  const response = await fetch(`${origin}/iris/rpc`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'mask', method: 'connection.list', params: {} }),
+  })
+  const frame = await response.json() as { ok: boolean, result?: unknown }
+  assert.equal(frame.ok, true)
+  const body = JSON.stringify(frame.result)
+  assert.equal(body.includes(key), false, 'the listing carries the key')
+  assert.equal(body.includes('sk-iris-transport-secret'), false, 'the listing carries part of the key')
+
+  const listed = frame.result as { profiles: { id: string, hasKey?: boolean, keyTail?: string }[] }
+  const read = listed.profiles.find(row => row.id === profile.id)
+  assert.ok(read !== undefined)
+  assert.equal(read.hasKey, true)
+  assert.equal(read.keyTail, 'a1b2')
+
+  // And the boundary is the wire's, not the handler's: an update that does
+  // not send the key leaves it armed, which only the store can see.
+  const updated = await client.call('connection.save', {
+    id: profile.id,
+    provider: 'deepseek',
+    model: 'deepseek-reasoner',
+    baseURL: 'https://api.deepseek.test/v1',
+  })
+  assert.equal(updated.profiles.find(row => row.id === profile.id)?.hasKey, true)
+
+  // Clean up, so the rest of the suite sees the profile list it started with.
+  await client.call('connection.delete', { id: profile.id })
 })
 
 /**

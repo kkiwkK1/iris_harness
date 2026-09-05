@@ -474,6 +474,15 @@ class InMemoryClient implements FakeClient {
         return result
       }
 
+      case 'connection.test':
+        // Refused, not modelled: the one thing this method exists to do is put
+        // a request on a real network, and faking a latency or an error code
+        // would let a connection form teach the interface a verdict no
+        // endpoint ever gave. An interface developed against the fake sees
+        // this refusal in dev, where its absence of a real probe is visible —
+        // not against a host, where it would be a lie.
+        throw new FakeRpcError('unsupported', 'the fake client cannot reach a real endpoint; run against a host to test a connection')
+
       case 'prompt.itemize': {
         const { chatId, turn } = params as RpcRequest<'prompt.itemize'>
         const chat = this.#require(chatId)
