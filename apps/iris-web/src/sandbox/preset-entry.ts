@@ -48,6 +48,8 @@ import * as YAML from 'yaml'
  */
 import * as z from 'zod'
 
+import { installPrefaultCompat } from './zod-compat.ts'
+
 const host = window as unknown as Record<string, unknown>
 
 /*
@@ -95,6 +97,14 @@ const host = window as unknown as Record<string, unknown>
 const lodash: unknown = (lodashModule as unknown as { default?: unknown }).default
 
 host['_'] = lodash
+/*
+ * The prefault-chaining compat **before** the namespace is published: a card
+ * reading `z` must never see the broken chain. Runs once — the preset bundle is
+ * evaluated once per origin — and the prototype set inside is deduplicated, so
+ * the install is idempotent by construction. See `zod-compat.ts` for the
+ * measured break and the semantics the forwarding preserves.
+ */
+installPrefaultCompat(z)
 host['z'] = z
 host['YAML'] = YAML
 
