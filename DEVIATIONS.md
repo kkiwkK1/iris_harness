@@ -580,3 +580,24 @@ data-iris-slot="user-css">` 挂载点，512 KiB 上限，开关关闭即卸载�
   原厂配色导入即零覆盖、不遮蔽后续切换；改色主题导入即精确差集；格式拒绝）。
 - 回归：`pnpm test` 2323 例全绿（2310 pass + 13 既有语料 skip，0 fail），
   `pnpm typecheck`、`apps/iris-web` typecheck 全绿。
+
+## 接管复核（同日，另一代理）
+
+首次执行代理中断后由接管代理独立复核，未改产品代码，结论：全部成立。
+
+- 独立重跑 `pnpm test`（2318 pass / 0 fail / 5 skip——skip 数随环境的既有语料
+  条件跳过，与上行 13 的差异同源）、`pnpm typecheck`、iris-web typecheck，全绿。
+- 实机复测换了更严的驱动（`.b7-data/qa-verify-takeover.mjs`，8819 实宿，宿主
+  PID 记录于 `.b7-data/host-8819.pid`、用后按 PID 停止）：19/19 通过。较首轮
+  验收新增四项浏览器内证据：跟随系统开关把 `data-iris-theme-source` 还原为
+  `system`；导出在页面内截获（object-URL 拦截），`iris.theme` v1 全 26 键调色表
+  + user.css 逐字；真文件导入（CDP `DOM.setFileInputFiles`）改色主题包后
+  dark + accent 覆盖（`--iris-accent: #ff80aa` 内联上墙、`data-iris-overrides=on`
+  恰 1 键）+ user.css 全部生效并跨刷新存活；**真往返**——清空 localStorage 后
+  仅凭导出的 JSON 文件原样恢复主题、覆盖层（原厂=零覆盖）与 user.css；
+  异格式文件整包拒绝且一行报告，不应用任何键。
+- 复测中的两个驱动层发现（非产品缺陷，QA 手法记录）：其一，合成
+  `change` 事件在本 Chromium 不能唤醒 React 的文件输入处理器，导入路径须用
+  受信的 `DOM.setFileInputFiles` 喂真文件；其二，折叠卡的孩子保持挂载仅是
+  隐藏，断言「卡展开」必须看 `offsetParent` 而非元素存在，否则会在折叠态
+  点中隐藏元素、功能通过而截图失真。
