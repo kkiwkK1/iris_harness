@@ -23,8 +23,9 @@
  * its subject just as completely. Both are the same requirement.
  *
  * On this side, ids are minted from the card's name against the cards that exist
- * (`library.ts`), so deleting "Aria" frees `aria` and the next card imported
- * under that name takes it. For **content** that is correct and deliberate —
+ * (`library.ts`), so deleting "Aria" frees `Aria` — the minting keeps the name's
+ * case (`toId('Aria')` is `Aria`, not `aria`) — and the next card imported under
+ * that name takes it. For **content** that is correct and deliberate —
  * SillyTavern stores chats under `chats/<character name>/` for exactly this
  * reason, and re-importing a card to carry on playing is a normal thing to do,
  * so the old conversations reattaching is the behaviour a user wants. `forget`
@@ -109,10 +110,11 @@ export class ScriptPolicyStore {
    *
    * Load-bearing rather than tidy. Ids are derived from the card's name —
    * `library.ts` mints `uniqueId(toId(name), …)` against the cards **present** —
-   * so deleting "Aria" frees the id `aria`, and the next card imported under
-   * that name takes it. A policy left behind is therefore not orphaned, it is
-   * inherited, and one of the things it carries is `documentGranted`: a grant
-   * the user gave to one card would silently apply to a different one.
+   * so deleting "Aria" frees the id `Aria` (`toId` keeps the case), and the next
+   * card imported under that name takes it. A policy left behind is therefore not
+   * orphaned, it is inherited, and one of the things it carries is
+   * `documentGranted`: a grant the user gave to one card would silently apply to
+   * a different one.
    * @param characterId - the card being deleted.
    */
   async forget(characterId: string): Promise<void> {

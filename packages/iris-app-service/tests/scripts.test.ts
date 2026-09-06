@@ -264,10 +264,11 @@ test('a deleted card does not leave its document grant for the next card to inhe
   await handlers['character.delete']({ characterId: 'Aria' })
 
   // Ids are minted from the card's name against the cards that exist, so
-  // deleting "Aria" frees `aria` and the next card named Aria takes it. A
+  // deleting "Aria" frees `Aria` and the next card named Aria takes it. A
   // policy left behind is not orphaned — it is inherited, and it carries the
   // grant the user gave to a card that no longer exists.
-  await handlers['character.import']({ filename: 'Aria.json', content: Buffer.from(CARD, 'utf8').toString('base64') })
+  const second = await handlers['character.import']({ filename: 'Aria.json', content: Buffer.from(CARD, 'utf8').toString('base64') })
+  assert.equal(second.character.characterId, 'Aria', 'the freed id was not handed back; this test proves nothing')
 
   const after = await handlers['script.list']({ characterId: 'Aria' })
   assert.equal(after.documentGranted, false, 'a new card inherited a grant the user never gave it')
