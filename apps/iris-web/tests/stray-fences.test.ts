@@ -208,7 +208,15 @@ test('the streaming gate holds where the text enters, and every consumer repairs
   assert.match(row, /const display = streaming \? text : repairStrayFences\(text\)/, 'the row repairs only settled text')
   assert.match(row, /claimMessageSurfaces\(display\)/, 'the row claims over the repaired text')
   assert.match(row, /text: display/, 'the controller claims the same string the row splices')
-  assert.match(row, /MarkdownText text=\{display\}/, 'the fallback renders the repaired text')
+  /*
+   * The fallback splits by role: an assistant row reads the repaired text as
+   * markdown, every other row keeps the raw text it has always shown. Assert
+   * the branch rather than one arm of it.
+   */
+  assert.ok(
+    row.includes("markdownProse ? <MarkdownText text={text} streaming={streaming} /> : <>{text}</>"),
+    'the fallback splits the repaired-vs-raw rendering by role',
+  )
 
   const pane = readFileSync(fileURLToPath(new URL('../src/app/ChatPane.tsx', import.meta.url)), 'utf8')
   assert.match(
