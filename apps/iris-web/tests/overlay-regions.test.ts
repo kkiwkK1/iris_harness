@@ -169,38 +169,6 @@ test('the path a real card shape produces is short', () => {
   ])
   assert.ok(path.length < 60, `${String(path.length)} characters: ${path}`)
 })
-
-test('the reporter survives a frame Chrome refuses to paint', () => {
-  /*
-   * The shell attaches the frame with the zero-area clip this reporter exists
-   * to replace, and Chrome skips rendering a frame whose clip paints nothing:
-   * no paint runs, so the frame's `requestAnimationFrame` never fires, so no
-   * measurement is asked for, so the clip stays zero-area. Measured end to end
-   * on a real card — the shell running its own animation frames at 120 fps
-   * beside a frame whose count was zero, its interface fully mounted and laid
-   * out inside, and the screen showing the chat through it.
-   *
-   * `reportRegions` lives in the frame entry, where there is no unit harness,
-   * so — as with the height guards in `message-frames.test.ts` — the property
-   * is pinned against the source: the schedule must arm a timer beside the
-   * animation frame, and the timer must run `send` only while the animation
-   * frame it rescues has not. The interval matches the height reporter's
-   * non-`rAF` fallback, and the reason is the same sentence in both places.
-   */
-  const entry = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
-    'utf8',
-  )
-  const schedule = entry.slice(entry.indexOf('const schedule = (): void => {'), entry.indexOf('Both observers, for the two ways'))
-
-  assert.match(schedule, /requestAnimationFrame\(send\)/u, 'the batching path is gone')
-  assert.match(schedule, /setTimeout\(send, 0\)/u, 'the hidden-tab path is gone')
-  assert.match(
-    schedule,
-    /if \(scheduled\) send\(\)/u,
-    'the rescue timer is gone — a zero-area clip then seals its own silence forever',
-  )
-  assert.match(schedule, /, 500\)/u, 'the rescue interval no longer matches the height fallback')
 /*
  * ── The zero-area instrument ────────────────────────────────────────────────
  *
@@ -302,18 +270,31 @@ test('the empty-surface sentence fires only when every element is empty', () => 
   assert.equal(describeEmptySurface(0, 0), undefined, 'a card that built nothing is not this')
 })
 
-test('a frame with no layout says so, because vh explains the zeros', () => {
+test('the viewport is reported as a number, and a zero one draws no conclusion', () => {
   /*
-   * The reading that made this necessary: the same card in the same chat was
-   * empty once and full-screen once. A frame that has never been laid out
-   * reports `clientHeight === 0`, and an element sized `height:100vh` inside it
-   * measures zero **with entirely correct CSS**. Without this clause the report
-   * blames the card's styles for something the frame never gave it.
+   * **This test used to assert the opposite, and the reversal is the point.**
+   *
+   * It pinned a second clause on a zero viewport — `THE FRAME HAS NO LAYOUT, so
+   * every vw/vh length inside it is 0` — written from a blank screen on the
+   * reasoning that the elements measured zero because the frame was never laid
+   * out. Measured afterwards on that same card, the frame *was* laid out and its
+   * content correct; the screen was blank because no measurement had been asked
+   * for at all. The clause was a cause this number cannot establish, and it sent
+   * a reader to debug layout.
+   *
+   * A zero viewport is still a real state worth printing — one foreground
+   * reading caught a 0x0 — so the number keeps its place in the report. What it
+   * may not do is explain itself. Hence a zero and a healthy box differ only in
+   * their digits.
    */
   assert.match(describeFrameViewport({ width: 2498, height: 1353 }), /viewport is 2498x1353/)
   const unlaid = describeFrameViewport({ width: 2498, height: 0 })
-  assert.match(unlaid, /NO LAYOUT/)
-  assert.match(unlaid, /vw\/vh/)
+  assert.match(unlaid, /viewport is 2498x0/, 'a zero viewport must still be reported')
+  assert.equal(
+    unlaid,
+    describeFrameViewport({ width: 2498, height: 1353 }).replace('1353', '0'),
+    'a zero viewport says something a healthy one does not — that extra clause is a diagnosis',
+  )
 })
 
 test('the dedup key changes when the viewport does, so recovery is reported', () => {
@@ -419,4 +400,100 @@ test('a healthy root is described too, so the report is comparable', () => {
   const { regions, seen } = walk([{ rect: at(0, 0, 390, 844), label: 'div#app' }])
   assert.equal(regions.length, 1)
   assert.deepEqual(seen.map(it => it.label), ['div#app'])
+})
+
+test('the reporter survives a frame Chrome refuses to paint', () => {
+  /*
+   * The shell attaches the frame with the zero-area clip this reporter exists
+   * to replace, and Chrome skips rendering a frame whose clip paints nothing:
+   * no paint runs, so the frame's `requestAnimationFrame` never fires, so no
+   * measurement is asked for, so the clip stays zero-area. Measured end to end
+   * on a real card — the shell running its own animation frames at 120 fps
+   * beside a frame whose count was zero, its interface fully mounted and laid
+   * out inside, and the screen showing the chat through it.
+   *
+   * `reportRegions` lives in the frame entry, where there is no unit harness,
+   * so — as with the height guards in `message-frames.test.ts` — the property
+   * is pinned against the source: the schedule must arm a timer beside the
+   * animation frame, and the timer must run `send` only while the animation
+   * frame it rescues has not. The interval matches the height reporter's
+   * non-`rAF` fallback, and the reason is the same sentence in both places.
+   */
+  const entry = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
+    'utf8',
+  )
+  const schedule = entry.slice(entry.indexOf('const schedule = (): void => {'), entry.indexOf('Both observers, for the two ways'))
+
+  assert.match(schedule, /requestAnimationFrame\(send\)/u, 'the batching path is gone')
+  assert.match(schedule, /setTimeout\(send, 0\)/u, 'the hidden-tab path is gone')
+  assert.match(
+    schedule,
+    /if \(scheduled\) send\(\)/u,
+    'the rescue timer is gone — a zero-area clip then seals its own silence forever',
+  )
+  assert.match(schedule, /, 500\)/u, 'the rescue interval no longer matches the height fallback')
+})
+
+test('the foreground pass measures twice, because the rescue timer cannot cover it', () => {
+  /*
+   * **A second 500ms timer that is not the one above, and the difference is
+   * the whole reason both exist.**
+   *
+   * The rescue timer fires `if (scheduled)` — that is, only when the animation
+   * frame it rescues *never ran*. Coming back to a foreground tab is the other
+   * failure: the `rAF` does run, but the browser has not necessarily laid the
+   * frame out before it does, so the forced pass reads the same zeros a hidden
+   * frame reported. `send` clears `scheduled` on the way in, so by the time the
+   * rescue timer checks, the latch is false and it no-ops. Nothing else
+   * schedules another pass — this reporter is event-driven and one-shot per
+   * trigger, not a polling loop — and the card sits at a zero-area clip, with
+   * the correct answer one measurement away, for as long as the chat is open.
+   *
+   * The two were nearly merged into one on the grounds that they share an
+   * interval and sit ten lines apart. They share nothing else: their triggers
+   * are disjoint, and deleting either one leaves a real failure uncovered.
+   *
+   * Pinned against the source for the same reason as the test above — the entry
+   * has no DOM harness — but against **its own slice**. The rescue timer lives
+   * in `schedule`, which ends at the observers; this handler is registered well
+   * below them, so the slice above cannot see it, and a single slice covering
+   * both would let either half satisfy an assertion meant for the other.
+   */
+  const entry = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
+    'utf8',
+  )
+  const opens = entry.indexOf("document.addEventListener('visibilitychange'")
+  const closes = entry.indexOf('And on a resize, forced.')
+  /*
+   * Both anchors, before the slice. `indexOf` answers -1 for a string that is
+   * not there, and `slice(-1, …)` is a cheerful empty string that every
+   * `assert.match` below would fail against with a message about the wrong
+   * thing entirely — a renamed handler would read as a deleted guard.
+   */
+  assert.ok(opens >= 0, 'the visibilitychange handler was renamed or removed')
+  assert.ok(closes > opens, 'the resize comment no longer follows the handler')
+  const foreground = entry.slice(opens, closes)
+
+  assert.match(
+    foreground,
+    /forceMeasure\(\)/u,
+    'the immediate foreground pass is gone — a tab that was hidden keeps the clip it measured while nobody could see it',
+  )
+  assert.match(
+    foreground,
+    /setTimeout\(forceMeasure, 500\)/u,
+    'the second foreground pass is gone — when the rAF runs before layout it reads the hidden tab\'s zeros,'
+    + ' and the rescue timer cannot help because send already cleared the latch',
+  )
+  /*
+   * And that this really is the other slice. If the two ever overlap, both
+   * tests start passing on one guard and the pair silently becomes one.
+   */
+  assert.doesNotMatch(
+    foreground,
+    /if \(scheduled\) send\(\)/u,
+    'the two slices overlap, so neither test is pinning what its name says',
+  )
 })

@@ -1085,6 +1085,39 @@ i.style.setProperty('z-index','9999','important');
 **都不写 wrapper**，**都默认可见**——
 所以「界面没出来」这个报障，第一个要排的永远是 MVU 有没有 ready，不是 CSS。
 
+### 六 · 覆盖层这条路上有三个盒子，`16a07b9` 统一了前两个
+
+卡写的 `100vw`/`100vh` 要落在哪，取决于三个数，而它们**不是同一次测量**：
+
+| # | 盒子 | 谁写的 | 谁读它 |
+|---|---|---|---|
+| ① | 覆盖层面元素 `.iris-overlay-surface` 的内容盒 | `useCardScripts.tsx`：`position:absolute; inset:0; width/height:100%`，装在 `App.tsx` 的 `.iris-card-stage` 里 | `overlay-surface.ts` 的 `overlayViewport` 读它的 `clientWidth/clientHeight`，发给卡 |
+| ② | 帧元素自己的盒 | 同上，`attach` 里显式 `width/height:100%`（iframe 是替换元素，`inset:0` 不给它定尺寸，不写就退回 300×150） | 浏览器 |
+| ③ | **帧内** `document.documentElement.client*` | 没有人写——它是 ② 被布局之后的结果 | `describeFrameViewport`，以及卡里每一个 `vw`/`vh` |
+
+**① 与 ② 由构造统一**：两者都是同一个面元素的盒，发给卡的数字和帧真正占的地方出自同一个来源。
+这正是 `16a07b9` 的裁定（`overlay-surface.ts` 模块注释），它换掉的是 `window.innerWidth/innerHeight` ——
+用户量到过 **1449px 帧 vs 1218px viewport** 的两源现象。
+
+**③ 与前两个没有任何代码把它们绑在一起**，它只是 ② 被浏览器布局之后的产物。已知会不同的四种时刻：
+
+1. **帧还没被布局过**（隐藏标签，或从未 paint 过的帧）——③ 是 `0x0` 而 ①② 是真数。
+   顶层文档被强制读取时会同步布局，**子帧不会**（METHODS §二十三）。零视口的读数就出在这里。
+2. **① 变了而 ③ 还没跟上**——`ResizeObserver` 已经把新数发给卡，帧内布局落后至多一帧。
+   这正是 `frame-entry.ts` 里 `visibilitychange` 第二趟 `forceMeasure` 覆盖的那一种。
+3. **帧内出现滚动条**——③ 的宽度比 ② 少一条滚动条宽（`clientWidth` 不含它）。
+4. **折叠**——`visibility:hidden` 是**为了不让它们分开**才选的：盒子照样参与布局，③ 保持为真；
+   换成 `display:none` 会让 ③ 塌成 0 而 ①② 不变（该理由已写在 `useCardScripts.tsx` 的注释里）。
+
+> **所以读到 ③ 是 0 时，唯一成立的结论是「这一刻帧内没有布局」，不能推出屏幕为什么空。**
+> `describeFrameViewport` 因此只报数字、不再附诊断句——它知道自己量的是哪个盒子，
+> 不知道那个盒子为什么是那么大。
+
+**范围**：以上只管**覆盖层**这条路。消息帧走的是**第四个盒子** ——
+阅读滚动器的 `clientHeight`，由 `ChatPane` 发布成 CSS 变量 `--iris-app-frame-height`
+（`frame-fit.ts`），`max-height` 在计算值层面压过内联 `height`；那条路上**没有** `viewport` 消息，
+`overlayViewport` 一次都不经过。两条路不要合并成一件事。
+
 ### 口径
 
 - 语料：`E:/sillyTavern/SillyTavern/data/default-user/characters` 下 `银麒赎世`，

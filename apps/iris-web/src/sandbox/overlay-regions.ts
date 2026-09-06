@@ -299,21 +299,35 @@ export interface FrameViewport {
 }
 
 /**
- * Say how big the frame's viewport is, and shout when it does not have one.
+ * Say how big the frame's viewport is.
  *
  * Lives here, next to the element descriptions, because it is the same kind of
  * sentence and because `reportRegions` — where it is used — runs only inside a
  * real frame and cannot be reached by `node --test`. Keeping the decision in a
  * tested module is the difference between this behaviour having teeth and
  * merely having a comment.
+ *
+ * **A reading, not a diagnosis, and it used to be both.** A zero viewport had a
+ * second clause on it — `THE FRAME HAS NO LAYOUT, so every vw/vh length inside
+ * it is 0` — which named a cause this number cannot establish. It was written
+ * from a blank screen whose report showed two built elements and no boxes, read
+ * as "the elements measured zero because the frame had no layout". The measured
+ * answer on that same card was the other one: the frame was laid out and its
+ * content correct (stand-in 1384x905, `#app` 1384x905, 52 descendants), and no
+ * measurement was ever *asked for*, because Chrome skips rendering a frame
+ * whose clip paints nothing and the reporter's `rAF` therefore never fired.
+ * The zero viewport is real — one foreground reading caught a 0x0 — but it is a
+ * transient state, not the reason the screen was blank.
+ *
+ * So this reports the number and stops. The shout cost a round of debugging
+ * aimed at layout, which is [METHODS.md §二十]'s rule about a report signing
+ * its own name: this instrument knows the box it measured, and it does not know
+ * why the box is that size.
  * @param viewport - the frame's `documentElement` client box.
  * @returns one clause for the regions detail.
  */
 export function describeFrameViewport(viewport: FrameViewport): string {
-  const size = `${String(viewport.width)}x${String(viewport.height)}`
-  if (viewport.width > 0 && viewport.height > 0) return `the frame's own viewport is ${size}`
-  return `the frame's own viewport is ${size}`
-    + ' — THE FRAME HAS NO LAYOUT, so every vw/vh length inside it is 0'
+  return `the frame's own viewport is ${String(viewport.width)}x${String(viewport.height)}`
 }
 
 /**
