@@ -28,7 +28,14 @@ interface StoredProfile {
   model: string
   preset?: string
   sampling?: Partial<GenerationSettings>
+  baseURL?: string
+  /** A made-up key, for the mask the interface shows. Never projected to the wire. */
+  apiKey?: string
+  apiKeyHeader?: string
 }
+
+/** How much of a key a mask may show — matching the host's store. */
+const KEY_TAIL_MIN_LENGTH = 8
 
 const STORED: StoredProfile[] = [
   {
@@ -37,6 +44,7 @@ const STORED: StoredProfile[] = [
     provider: 'openai-compat',
     model: 'local/qwen3-8b',
     sampling: { temperature: 0.9, topP: 0.95 },
+    baseURL: 'http://127.0.0.1:11434/v1',
   },
   {
     // The upstream trap, reproduced: the label says one thing and the route says
@@ -48,6 +56,9 @@ const STORED: StoredProfile[] = [
     model: 'gemini-2.5-pro',
     preset: 'MengJing-V1',
     sampling: { temperature: 1.1 },
+    // A key the mask can render, and a tail long enough to be shown.
+    apiKey: 'sk-fake-key-9f2e77ab',
+    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
   },
   {
     // Never named. The interface has to fall back to something, and the summary
@@ -70,14 +81,24 @@ let nextId = 1
  * @param profile - the stored values.
  * @returns a one-line description of where this profile actually goes.
  */
-export function summarize(profile: { provider: string, model: string, preset?: string }): string {
+export function summarize(profile: { provider: string, model: string, preset?: string, baseURL?: string }): string {
   const parts = [profile.provider, profile.model]
   if (profile.preset !== undefined && profile.preset !== '') parts.push(profile.preset)
+  if (profile.baseURL !== undefined && profile.baseURL !== '') {
+    try {
+      parts.push(new URL(profile.baseURL).origin)
+    } catch {
+      parts.push(profile.baseURL)
+    }
+  }
   return parts.join(' · ')
 }
 
-/** Project a stored profile to the wire shape. */
+/** Project a stored profile to the wire shape. **Never carries the key.** */
 function project(profile: StoredProfile): ConnectionProfile {
+  const tail = profile.apiKey !== undefined && profile.apiKey.length >= KEY_TAIL_MIN_LENGTH
+    ? profile.apiKey.slice(-4)
+    : undefined
   return {
     id: profile.id,
     ...(profile.label === undefined ? {} : { label: profile.label }),
@@ -86,6 +107,10 @@ function project(profile: StoredProfile): ConnectionProfile {
     model: profile.model,
     ...(profile.preset === undefined ? {} : { preset: profile.preset }),
     ...(profile.sampling === undefined ? {} : { sampling: { ...profile.sampling } }),
+    ...(profile.baseURL === undefined ? {} : { baseURL: profile.baseURL }),
+    ...(profile.apiKey === undefined ? {} : { hasKey: true }),
+    ...(tail === undefined ? {} : { keyTail: tail }),
+    ...(profile.apiKeyHeader === undefined ? {} : { apiKeyHeader: profile.apiKeyHeader }),
   }
 }
 
@@ -117,6 +142,9 @@ export function saveConnection(patch: {
   model: string
   preset?: string | undefined
   sampling?: Record<string, unknown> | undefined
+  baseURL?: string | undefined
+  apiKey?: string | undefined
+  apiKeyHeader?: string | undefined
 }): { profiles: ConnectionProfile[], activeId?: string } {
   const stored: StoredProfile = {
     id: patch.id ?? `profile-${nextId++}`,
@@ -125,9 +153,21 @@ export function saveConnection(patch: {
     model: patch.model,
     ...(patch.preset === undefined ? {} : { preset: patch.preset }),
     ...(patch.sampling === undefined ? {} : { sampling: patch.sampling as Partial<GenerationSettings> }),
+    ...(patch.baseURL === undefined || patch.baseURL === '' ? {} : { baseURL: patch.baseURL }),
+    ...(patch.apiKeyHeader === undefined || patch.apiKeyHeader === '' ? {} : { apiKeyHeader: patch.apiKeyHeader }),
   }
 
+  // The key merges, exactly as the host's store merges it: absent keeps what
+  // is stored (the caller was never shown it, so it cannot re-send it), `''`
+  // clears, anything else replaces.
   const at = STORED.findIndex(row => row.id === stored.id)
+  const previous = at === -1 ? undefined : STORED[at]
+  if (patch.apiKey === undefined) {
+    if (previous?.apiKey !== undefined) stored.apiKey = previous.apiKey
+  } else if (patch.apiKey.length > 0) {
+    stored.apiKey = patch.apiKey
+  }
+
   if (at === -1) STORED.push(stored)
   else STORED[at] = stored
 

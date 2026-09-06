@@ -18,30 +18,40 @@
 
 import { BlockAssembler, createAssistantMessage, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { appendCandidate, selectCandidate, SwipeError } from '@iris/chat'
+import { appendCandidate, selectCandidate, selectedCandidate, SwipeError, type Candidate } from '@iris/chat'
 import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
+import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
-import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset } from '@iris/preset'
-import type { ChatView, GenerationSettings, IrisEvent, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
+import type { BackupSummary, ChatView, CharacterSummary, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import { providerPreset } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
 import { checkScriptFetch, extractScripts } from '@iris/script'
 import { defaultRegistry } from '@iris/macro'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
 import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } from '@iris/turn'
+import { randomUUID } from 'node:crypto'
 
-import { ConnectionStore } from './connections.ts'
+import { PresetStore } from './presets.ts'
+import type { BackupStore } from './backups.ts'
+import { ConnectionStore, routeOf } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
+import { writeTimedEffects } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
+import { FavoriteStore } from './favorites.ts'
+import type { WorldbookBindingStore } from './materialise.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
 import { charWorldbookNames, WorldbookStore } from './worldbooks.ts'
+import { activationSettingsOf } from './worldbook-settings.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
 import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
+import { PersonaStore, type ActivePersona } from './persona.ts'
 import type { PruneOptions } from './prune.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
@@ -49,11 +59,69 @@ import { evaluatePrompt, promptHasTemplate } from './templates.ts'
 import { applyOps, buildSnapshot } from './template.ts'
 import type { ScriptPolicyStore } from './scripts.ts'
 import type { ScriptVariableStore } from './script-variables.ts'
-import type { SettingsStore } from './settings.ts'
+import { CONTINUE_POSTFIX_SEPARATORS, type SettingsStore } from './settings.ts'
+import { trimToEndSentence } from './reply-trim.ts'
 import { textOf } from './views.ts'
 
 /** Provenance stamped on a partial reply the user stopped. */
 const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
+
+/**
+ * The two utility prompts a generation kind can close its request with, in
+ * SillyTavern's own words (`openai.js:104-110`, the shipped defaults of
+ * `impersonation_prompt` / `continue_nudge_prompt`).
+ *
+ * Upstream keeps both in `oai_settings` where they are user-editable text; this
+ * host has no settings surface for them yet, so the defaults stand in until one
+ * exists. `{{lastChatMessage}}` in the nudge is upstream's own substitution
+ * slot (`openai.js:902`), filled with the trimmed text being continued.
+ */
+const IMPERSONATION_PROMPT =
+  '[Write your next reply from the point of view of {{user}}, using the chat history so far as a'
+  + ' guideline for the writing style of {{user}}. Don\'t write as {{char}} or system. Don\'t'
+  + ' describe actions of {{char}}.]'
+const CONTINUE_NUDGE_PROMPT = '[Continue your last message without repeating its original content.]'
+
+/**
+ * The Iris generation kinds in upstream's vocabulary — the words the preset's
+ * `injection_trigger` lists are matched against (`PromptManager.js:1537`).
+ */
+const GENERATION_TYPE_OF = {
+  send: 'normal',
+  regenerate: 'regenerate',
+  continue: 'continue',
+  impersonate: 'impersonate',
+} as const
+
+/**
+ * The text a continue writes on from: the reading under the cursor.
+ * @param seed - the newest turn's selected candidate, or absent.
+ * @returns its visible text.
+ */
+function seedTextOf(seed: Candidate | undefined): string {
+  return (seed?.message.content ?? [])
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('')
+}
+
+/**
+ * The seed text a continue request assembles with, separator included.
+ *
+ * Upstream appends `continue_postfix` to the text being continued on every
+ * OpenAI route (`script.js:4917-4921`), with one guard: text already ending in
+ * a space is left alone, so a space separator cannot stack. Absent setting
+ * means `'space'`, upstream's default — the model needs *some* boundary
+ * between the floor's last word and the word it writes next, and every
+ * OpenAI-compatible route upstream gets one.
+ * @param seedText - the reading being continued, verbatim.
+ * @param postfix - the stored separator word, or absent for the default.
+ * @returns the text the request carries and the reply opens with.
+ */
+function continuedSeedText(seedText: string, postfix: string): string {
+  if (postfix.length === 0 || seedText.endsWith(' ')) return seedText
+  return seedText + postfix
+}
 
 /**
  * Share of the context window world info may spend.
@@ -67,6 +135,52 @@ const WORLD_INFO_BUDGET_SHARE = 0.25
 /** Every method, keyed by name. */
 export type Handlers = {
   [M in RpcMethod]: (params: RpcRequest<M>) => Promise<RpcResponse<M>>
+}
+
+/**
+ * The endpoint a connection profile carries, as the runtime adapter needs it.
+ *
+ * The key rides in the clear **inside the host process only** — it reaches the
+ * LLM adapter's request headers and nothing else: no log line, no broadcast,
+ * no RPC response.
+ */
+export interface ConnectionEndpoint {
+  baseURL: string
+  /** The profile's own key. Wins over any environment-sourced credential. */
+  apiKey?: string
+  /** The header the key is sent in. Absent means the OpenAI-compatible `Authorization: Bearer`. */
+  apiKeyHeader?: string
+}
+
+/** How long a `connection.test` probe waits for an endpoint before saying `timeout`. */
+export const DEFAULT_PROBE_TIMEOUT_MS = 10_000
+
+/**
+ * Read the model ids out of a `/models` response body.
+ *
+ * The OpenAI-compatible shape is `{ data: [{ id }] }`; Ollama's native list is
+ * `{ models: [{ name }] }` and costs nothing to also accept. An empty list is
+ * still an answer — an endpoint that served 200 with nothing advertised has
+ * said something, and the form should show it.
+ * @param body - the parsed JSON body.
+ * @returns the ids, or undefined when the body carries no list at all.
+ */
+function modelIdsOf(body: unknown): string[] | undefined {
+  if (typeof body !== 'object' || body === null) return undefined
+  const record = body as Record<string, unknown>
+  for (const [key, field] of [['data', 'id'], ['models', 'name']] as const) {
+    const rows = record[key]
+    if (!Array.isArray(rows)) continue
+    const ids = rows
+      .map(row => {
+        if (typeof row !== 'object' || row === null) return undefined
+        const value = (row as Record<string, unknown>)[field]
+        return typeof value === 'string' && value.length > 0 ? value : undefined
+      })
+      .filter((id): id is string => id !== undefined)
+    return ids
+  }
+  return undefined
 }
 
 /** What the service needs that it does not own. */
@@ -121,6 +235,21 @@ export interface AppServiceOptions {
    */
   connections?: ConnectionStore
   /**
+   * Re-points a provider route at the endpoint a profile carries, at runtime.
+   *
+   * Given by the composition, which owns the LLM registry. Absent — a test
+   * host with no registry — leaves activation a settings change only, and a
+   * profile that needs its own endpoint reports it rather than pretending.
+   * The key passes through here once, into the adapter's config; it never
+   * reaches a log line or a response.
+   */
+  installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
+  /**
+   * How long `connection.test` waits for an endpoint before saying `timeout`.
+   * @default 10000
+   */
+  probeTimeoutMs?: number
+  /**
    * Fetches a remote script dependency. Defaults to global `fetch`.
    *
    * Injectable so the whitelist can be tested without a network, and so a
@@ -129,8 +258,37 @@ export interface AppServiceOptions {
   fetchRemote?: (url: string) => Promise<{ ok: boolean, status: number, text: () => Promise<string>, headers: { get: (name: string) => string | null } }>
   /** Pushes one frame to every attached page. */
   broadcast: (event: IrisEvent) => void
-  /** The preset every chat is assembled with. */
+  /**
+   * The preset every chat is assembled with, before the user picks one.
+   *
+   * The *starting* preset rather than a permanent one: once a preset is
+   * selected or the prompt manager is edited, the active state lives in the
+   * settings store and this value stops being read until the next host start.
+   */
   preset?: ChatCompletionPreset
+  /**
+   * The library name of that preset, when it is one from the store.
+   *
+   * Given by the caller that resolved a stored selection before constructing
+   * the service; absent means the preset came from the composition or is the
+   * built-in one, and the first manager mutation then decides it is the state
+   * worth persisting.
+   */
+  presetName?: string
+  /**
+   * The SillyTavern **profile** directory, when one is configured — the same
+   * value the plugin's `sillyTavernDir` carries. Read-only, and used only by
+   * `preset.import` to enumerate what the install has to offer.
+   */
+  sillyTavernDir?: string
+  /**
+   * The profile's preset library.
+   *
+   * Optional like the other stores: absent means every `preset.*` method that
+   * needs the files refuses, which is the honest answer from a host with no
+   * folder to keep them in.
+   */
+  presets?: PresetStore
   /** Name recorded for the user in new chats. */
   userName?: string
   /** Context window in tokens. */
@@ -171,6 +329,42 @@ export interface AppServiceOptions {
    * extension installed does.
    */
   templates?: TemplateOptions
+  /**
+   * The profile's personas — who `{{user}}` is.
+   *
+   * Optional like the other stores. Absent means no persona is configured,
+   * which is the state every existing profile is in and the one the red line
+   * protects: the assembler receives no `persona` argument and behaves exactly
+   * as it did before the store existed.
+   */
+  personas?: PersonaStore
+  /**
+   * The profile's starred characters.
+   *
+   * Optional like the other stores, with the same presence-is-the-switch rule:
+   * absent means `character.favorite` is refused rather than answered from an
+   * imaginary list, and no summary ever carries an invented star.
+   */
+  favorites?: FavoriteStore
+  /**
+   * Which named book each card's embedded book was materialised into.
+   *
+   * Read by `character.duplicate` alone: the copy's binding row is copied from
+   * its source's, so the duplicate resolves to the same named book — the
+   * semantics a shared `extensions.world` name already has upstream, which a
+   * binding-table re-materialisation would otherwise turn into a minted copy
+   * of the book that drifts apart from the original.
+   */
+  worldbookBindings?: WorldbookBindingStore
+  /**
+   * The profile's conversation snapshots, shared with the chat store.
+   *
+   * Optional like the other stores. Absent, the dangerous operations still
+   * run — a test host with no snapshot directory is not thereby broken — but
+   * they run unprotected, and the `backup.*` methods refuse by name, which is
+   * the honest answer from a host that keeps no copies.
+   */
+  backups?: BackupStore
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
   /**
@@ -195,7 +389,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings' | 'backups'>>
     & {
       onError: (error: Error) => void
       scripts?: ScriptPolicyStore
@@ -208,10 +402,28 @@ export class IrisAppService {
       scriptVariables?: ScriptVariableStore
       pruneVariables?: PruneOptions
       diagnostics?: DiagnosticBuffer
+      presets?: PresetStore
+      presetName?: string
+      sillyTavernDir?: string
+      installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
+      personas?: PersonaStore
+      favorites?: FavoriteStore
+      worldbookBindings?: WorldbookBindingStore
+      backups?: BackupStore
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
   #traceId = 0
+  /**
+   * The preset the assembler reads, live.
+   *
+   * Swapped by `preset.select` and mutated in place by the manager, then
+   * persisted through the settings store — the same two layers upstream keeps
+   * between preset files and `oai_settings`.
+   */
+  #activePreset: ChatCompletionPreset
+  /** The active preset's library name, when it has one. */
+  #activePresetName: string | undefined
 
   /**
    * @param options - domain stores, the model stream, and the event sink.
@@ -230,6 +442,8 @@ export class IrisAppService {
       templateOverhead: options.templateOverhead ?? 0,
       onError: options.onError ?? (() => {}),
       fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
+      probeTimeoutMs: options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+      ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
       ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
       ...options.scriptButtons === undefined ? {} : { scriptButtons: options.scriptButtons },
@@ -240,12 +454,210 @@ export class IrisAppService {
       ...options.pruneVariables === undefined ? {} : { pruneVariables: options.pruneVariables },
       ...options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics },
       ...options.cardStorage === undefined ? {} : { cardStorage: options.cardStorage },
+      ...options.presets === undefined ? {} : { presets: options.presets },
+      ...options.sillyTavernDir === undefined ? {} : { sillyTavernDir: options.sillyTavernDir },
+      ...options.personas === undefined ? {} : { personas: options.personas },
+      ...options.favorites === undefined ? {} : { favorites: options.favorites },
+      ...options.worldbookBindings === undefined ? {} : { worldbookBindings: options.worldbookBindings },
+      ...options.backups === undefined ? {} : { backups: options.backups },
     }
+    // The manager's live state starts on whatever the caller assembled: a
+    // stored selection is applied by the caller (the plugin) before the
+    // handlers are ever registered, so nothing here needs to read files.
+    this.#activePreset = this.#options.preset
+    this.#activePresetName = options.presetName
   }
 
   /** How well the token estimate currently tracks the provider, for diagnostics. */
   get calibration(): { scale: number, samples: number } {
     return { scale: this.#counter.scale, samples: this.#counter.samples }
+  }
+
+  /** The prompt manager's view of the live preset. */
+  #managerView(): PresetManagerView {
+    return managerViewOf(this.#activePresetName, this.#activePreset)
+  }
+
+  /**
+   * Swap the live preset for another body and persist the choice.
+   *
+   * One path for both `preset.select` and a connection's bound preset, so the
+   * two cannot disagree about what a switch means: the body becomes the
+   * assembler's input, the scalar fields it acts on land in the global
+   * settings layer, and the state persists for the next host start.
+   * @param name - the library name, when it has one.
+   * @param body - the preset to run on.
+   */
+  async #applyPreset(name: string | undefined, body: ChatCompletionPreset): Promise<void> {
+    this.#activePreset = body
+    this.#activePresetName = name
+    await this.#options.settings.setPreset(name, body)
+    const patch = presetScalarPatch(body)
+    if (Object.keys(patch).length > 0) await this.#options.settings.set(undefined, patch)
+  }
+
+  /**
+   * Persist the live state after a manager mutation.
+   *
+   * Clone-on-write: the assembler may be mid-assembly on another turn, and it
+   * must never observe a half-edited prompt list.
+   * @param body - the mutated preset.
+   */
+  async #persistActivePreset(body: ChatCompletionPreset): Promise<PresetManagerView> {
+    this.#activePreset = body
+    await this.#options.settings.setPreset(this.#activePresetName, body)
+    return this.#managerView()
+  }
+
+  /**
+   * Apply a connection profile's bound preset, skipping an absent one.
+   * @param name - the preset name stored on the profile.
+   */
+  async #activateBoundPreset(name: string): Promise<void> {
+    const store = this.#options.presets
+    if (store === undefined) return
+    if (await store.has(name) === false) {
+      this.#report(
+        `connection names preset "${name}", which the library does not have — activate it from the preset panel after importing`,
+        { kind: 'host', grade: 'note' },
+      )
+      return
+    }
+    await this.#applyPreset(name, await store.read(name))
+  }
+
+  /**
+   * Hand a profile's endpoint to the composition's installer, saying so in the
+   * report without saying the key.
+   * @param route - the provider route to serve the endpoint under.
+   * @param baseURL - the endpoint root.
+   * @param credential - the key and the header it is sent in.
+   */
+  #installConnectionFor(
+    route: string,
+    baseURL: string,
+    credential: { apiKey?: string | undefined, apiKeyHeader?: string | undefined },
+  ): void {
+    const install = this.#options.installConnection
+    if (install === undefined) return
+    install(route, {
+      baseURL,
+      ...credential.apiKey === undefined ? {} : { apiKey: credential.apiKey },
+      ...credential.apiKeyHeader === undefined ? {} : { apiKeyHeader: credential.apiKeyHeader },
+    })
+    this.#report(
+      `connection now generates through route "${route}" at ${new URL(baseURL).origin}`,
+      { kind: 'host', grade: 'note' },
+    )
+  }
+
+  /**
+   * Probe an endpoint the way a model list would be fetched.
+   *
+   * The credential, if any, goes into the request headers and **nowhere
+   * else** — not into an error message, not into the report log. A failed
+   * probe is a result rather than a thrown error: the caller is a form, and a
+   * form renders a verdict, it does not catch one.
+   * @param target - the endpoint and optional credential to probe.
+   * @returns the verdict: latency always, models when it worked, a named error when not.
+   */
+  async #probeEndpoint(target: {
+    baseURL: string
+    apiKey?: string | undefined
+    apiKeyHeader?: string | undefined
+  }): Promise<RpcResponse<'connection.test'>> {
+    const url = `${target.baseURL.replace(/\/+$/, '')}/models`
+    // `Authorization` carries the Bearer scheme; any other header name is a
+    // bare value — the same rule the LLM adapter applies, so a probe that
+    // passed is a stream that authenticates.
+    const headerName = (target.apiKeyHeader ?? 'Authorization').toLowerCase()
+    const headers: Record<string, string> = { accept: 'application/json' }
+    if (target.apiKey !== undefined && target.apiKey.length > 0) {
+      headers[headerName] = headerName === 'authorization' ? `Bearer ${target.apiKey}` : target.apiKey
+    }
+
+    const started = performance.now()
+    let response: Response
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(this.#options.probeTimeoutMs),
+      })
+    } catch (cause: unknown) {
+      const latencyMs = Math.round(performance.now() - started)
+      if (cause instanceof Error && cause.name === 'TimeoutError') {
+        return {
+          ok: false,
+          latencyMs,
+          error: { code: 'timeout', message: `no answer from ${url} within ${String(this.#options.probeTimeoutMs)}ms` },
+        }
+      }
+      const reason = cause instanceof Error ? cause.message : String(cause)
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'network', message: `could not reach ${url}: ${reason}` },
+      }
+    }
+    const latencyMs = Math.round(performance.now() - started)
+
+    if (response.status === 401 || response.status === 403) {
+      await response.arrayBuffer()
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'unauthorized', message: `${url} answered ${String(response.status)} — the key does not open this endpoint` },
+      }
+    }
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 300)
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'http-error', message: `${url} answered ${String(response.status)}: ${detail}` },
+      }
+    }
+
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'bad-response', message: `${url} answered 200, but the body is not JSON` },
+      }
+    }
+    const models = modelIdsOf(body)
+    if (models === undefined) {
+      return {
+        ok: false,
+        latencyMs,
+        error: { code: 'bad-response', message: `${url} answered 200, but the body carries no model list` },
+      }
+    }
+    return { ok: true, latencyMs, models }
+  }
+
+  /**
+   * The preset names the configured SillyTavern install offers.
+   * @returns the names, or undefined when no install is configured.
+   */
+  async #installPresets(): Promise<string[] | undefined> {
+    const dir = this.#options.sillyTavernDir
+    if (dir === undefined) return undefined
+    const { readdir } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    try {
+      return (await readdir(join(dir, 'OpenAI Settings')))
+        .filter(entry => entry.endsWith('.json'))
+        .map(entry => entry.slice(0, -'.json'.length))
+        .sort((left, right) => left.localeCompare(right))
+    } catch {
+      // Not a profile directory, or no presets were ever saved there.
+      return []
+    }
   }
 
   /**
@@ -352,7 +764,20 @@ export class IrisAppService {
         return { chats: await chats.list() }
       },
 
-      'chat.send': async ({ chatId, text }) => ({ turn: await this.#start(chatId, { kind: 'send', text }) }),
+      'chat.search': async ({ query, caseSensitive, limit }) => ({
+        hits: await chats.search(query, {
+          ...caseSensitive === undefined ? {} : { caseSensitive },
+          ...limit === undefined ? {} : { limit },
+        }),
+      }),
+
+      'chat.send': async ({ chatId, kind, text }) => {
+        // The wire schema has already enforced which kind carries text; this
+        // branch is where the request becomes the one start call it means.
+        if (kind === 'continue') return { turn: await this.#start(chatId, { kind: 'continue' }) }
+        if (kind === 'impersonate') return { turn: await this.#start(chatId, { kind: 'impersonate' }) }
+        return { turn: await this.#start(chatId, { kind: 'send', text: text as string }) }
+      },
 
       'chat.regenerate': async ({ chatId }) => ({ turn: await this.#start(chatId, { kind: 'regenerate' }) }),
 
@@ -388,6 +813,11 @@ export class IrisAppService {
         // stand in the way of the ordinary case while still refusing a rewrite
         // that would race a turn.
         const entry = await this.#idle(chatId, 'rewritten by a script')
+        // **The rewrite arm is where a large rollback is decided** — a replay
+        // batch handing floors back older text — so the pre-change state is
+        // copied here, while the disk still holds it. Deduped: the next arm of
+        // the same batch would otherwise copy the same unchanged disk again.
+        await this.#snapshotBefore(chatId, entry.meta.characterId, 'rewrite-messages', true)
         // Not persisted here; see `#rewriteLines`. A card commits its batch with
         // `script.saveChat`, which is the one place that decision lives.
         return { view: await this.#rewriteLines(entry, messages, false) }
@@ -527,7 +957,7 @@ export class IrisAppService {
       },
 
       'script.getPreset': async ({ name }) => {
-        // Refused by name rather than falling back. This host loads one preset;
+        // Refused by name rather than falling back. This host runs one preset;
         // answering a request for another with the one in use would let a card
         // reason confidently about prompts that are not in the preset it asked
         // for, and nothing in its reply would say so.
@@ -535,7 +965,10 @@ export class IrisAppService {
           throw notFound(`preset "${name}" — this host only carries the one in use`)
         }
 
-        const preset = this.#options.preset
+        // Read live, not captured at construction: the preset the manager
+        // swapped in is the one a card's next generation assembles with, and a
+        // card reading the preset should see the preset that will run.
+        const preset = this.#activePreset
         const orders = preset.prompt_order ?? []
         // The same fallback chain the assembler uses, minus the enabled filter:
         // a card reads `enabled` and so needs the disabled entries too.
@@ -628,6 +1061,12 @@ export class IrisAppService {
           if (lines[id] === undefined) throw notFound(`this chat has no message ${String(id)}`)
         }
 
+        // **Validated first, copied second**: a batch naming a floor that is
+        // not there is refused whole, and only a batch that will actually run
+        // costs a copy. Taken while the disk still holds every floor the batch
+        // is about to remove; deduped like the rewrite arm beside it.
+        await this.#snapshotBefore(chatId, entry.meta.characterId, 'delete-messages', true)
+
         const removed = new Set(ids)
         const sources = lines.map((_line, index) => index).filter(index => !removed.has(index))
         const kept = lines.filter((_line, index) => !removed.has(index))
@@ -640,6 +1079,13 @@ export class IrisAppService {
         const entry = await this.#idle(chatId, 'edited')
         const { messages } = entry.toFile()
         if (messages[id] === undefined) throw notFound(`this chat has no message ${String(id)}`)
+
+        // **A deletion is one of the operations a snapshot exists for.** Taken
+        // before the save, the copy holds exactly what the floor was about to
+        // leave. A snapshot that cannot be written also stops the deletion —
+        // the same rule the cleanup sweep keeps: losing the safety net silently
+        // would be worse than being told the disk said no.
+        await this.#snapshotBefore(chatId, entry.meta.characterId, 'delete-message', false)
 
         messages.splice(id, 1)
         // Everything after the hole shifts down by one; everything before keeps
@@ -663,12 +1109,22 @@ export class IrisAppService {
         return { view, chats: await chats.list() }
       },
 
+      'chat.import': async ({ filename, content, characterId }) => {
+        const chat = await chats.importFile(filename, content, characterId)
+        // The list is pushed, not only returned: the new conversations belong
+        // in the sidebar the moment they exist, on every open page.
+        await this.#announceChats()
+        return { chat }
+      },
+
+      'chat.export': ({ chatId }) => chats.exportFile(chatId),
+
       'prompt.itemize': async ({ chatId, turn }) => {
         const entry = await chats.open(chatId)
         // A record when there is one, a preview otherwise — including for a turn
         // whose record went when the chat last closed. `preview` says which.
         const recorded = turn === undefined ? undefined : entry.itemizations.get(turn)
-        return { itemization: recorded ?? this.#previewItemization(entry) }
+        return { itemization: recorded ?? await this.#previewItemization(entry) }
       },
 
       'script.getVariables': async ({ chatId, scope, messageId, scriptId }) => {
@@ -727,7 +1183,21 @@ export class IrisAppService {
         const commands = parseSlashCommands(command)
         const names = commands.map(entry => entry.name)
 
-        // The corpus's only pattern, and the only one with a meaning Iris can
+        // A lone `/trigger` is upstream's "make the model answer the chat now"
+        // (`/trigger`, script.js: "Clicks the send button"): reply to whatever
+        // the newest line is. Measured call site: a card that has just landed
+        // its own user line — `createChatMessages` appends without generating,
+        // by design — then asks for the reply with this command. A reroll of
+        // the newest turn is the one Iris word for that: a turn whose newest
+        // line is a user message has no candidate yet, so `regenerate` writes
+        // its first; a turn that already has one gets the next swipe, which is
+        // what pressing send on an AI-last chat does upstream too.
+        if (names.length === 1 && names[0] === 'trigger') {
+          await this.#start(chatId, { kind: 'regenerate' })
+          return { result: '' }
+        }
+
+        // The corpus's other pattern, and the only one with a meaning Iris can
         // honour exactly. A lone `/send` means "insert without generating", and
         // treating it as this pair would start a generation the card explicitly
         // did not ask for — spending the user's tokens. Doing more silently is
@@ -735,7 +1205,7 @@ export class IrisAppService {
         if (names.length !== 2 || names[0] !== 'send' || names[1] !== 'trigger') {
           throw new AppError(
             'unsupported',
-            `only "/send <text>|/trigger" is supported; got "${names.map(name => `/${name}`).join('|')}". `
+            `only "/trigger" and "/send <text>|/trigger" are supported; got "${names.map(name => `/${name}`).join('|')}". `
             + 'A lone /send would need a method that inserts without generating, which does not exist yet.',
           )
         }
@@ -756,6 +1226,11 @@ export class IrisAppService {
         ...input.label === undefined ? {} : { label: input.label },
         ...input.preset === undefined ? {} : { preset: input.preset },
         ...input.sampling === undefined ? {} : { sampling: input.sampling },
+        ...input.baseURL === undefined ? {} : { baseURL: input.baseURL },
+        // Passed through untouched: the merge-or-clear decision belongs to the
+        // store, which is the only place that can still see the stored key.
+        ...input.apiKey === undefined ? {} : { apiKey: input.apiKey },
+        ...input.apiKeyHeader === undefined ? {} : { apiKeyHeader: input.apiKeyHeader },
       }),
 
       'connection.delete': async ({ id }) => this.#connections().delete(id),
@@ -763,17 +1238,388 @@ export class IrisAppService {
       'connection.activate': async ({ id, chatId }) => {
         const store = this.#connections()
         const profile = await store.get(id)
+        // A profile carrying its own endpoint is served by an adapter installed
+        // for it **now** — no host restart, and two profiles of one provider
+        // take turns by replacing the registration. The route it installs under
+        // is what the settings patch then names, so generation reaches the
+        // adapter that can actually see this profile's endpoint and key.
+        const route = routeOf(profile)
+        if (profile.baseURL !== undefined && profile.baseURL.length > 0) {
+          this.#installConnectionFor(route, profile.baseURL, profile)
+        }
         // Applied through `settings.set`, so a profile cannot install a value
         // that setting it by hand would have been refused.
-        const applied = await settings.set(chatId, ConnectionStore.patchOf(profile))
+        const applied = await settings.set(chatId, ConnectionStore.patchOf(profile, route))
+        // The profile's bound preset comes with it — upstream's
+        // `bind_preset_to_connection`, which defaults to true there: switching
+        // a connection is switching the preset it was assembled with, and a
+        // profile whose summary names a preset while activation ignores it
+        // would advertise something it does not do. Only on the **global**
+        // layer, matching `patchOf` above; a chat-scoped switch keeps its own
+        // mind. A named preset the library does not have is skipped with a
+        // report rather than failing the activation: the connection still
+        // works, and one absent file must not take it down.
+        if (profile.preset !== undefined && chatId === undefined) {
+          await this.#activateBoundPreset(profile.preset)
+        }
         await store.markActive(id)
         return { settings: applied, activeId: id }
       },
 
-      'character.list': async () => ({ characters: await library.list() }),
+      'connection.test': async (input) => {
+        // One probe, two ways to name what it probes. A saved profile carries
+        // its key in the store — which the caller cannot re-send, because no
+        // read ever returned it — and unsaved form values carry the key as
+        // typed. Neither naming a stored key back, ever.
+        let baseURL: string
+        let apiKey: string | undefined
+        let apiKeyHeader: string | undefined
+        let presetId: string | undefined
+        if (input.profileId !== undefined) {
+          const profile = await this.#connections().get(input.profileId)
+          if (profile.baseURL === undefined || profile.baseURL.length === 0) {
+            return {
+              ok: false,
+              latencyMs: 0,
+              error: {
+                code: 'no-endpoint',
+                message: 'this profile rides the host\'s configured endpoint and carries none of its own; set a base URL to test it',
+              },
+            }
+          }
+          baseURL = profile.baseURL
+          apiKey = profile.apiKey
+          apiKeyHeader = profile.apiKeyHeader
+          // A profile saved from the form names its preset in `provider`.
+          presetId = profile.provider
+        } else if (input.baseURL !== undefined && input.baseURL.length > 0) {
+          baseURL = input.baseURL
+          apiKey = input.apiKey
+          apiKeyHeader = input.apiKeyHeader
+          presetId = input.preset
+        } else {
+          throw invalid('name a saved profile (profileId) or give the endpoint to probe (baseURL)')
+        }
+
+        const preset = presetId === undefined ? undefined : providerPreset(presetId)
+        const needsKey = preset?.requiresKey === true
+        if (needsKey && (apiKey === undefined || apiKey.length === 0)) {
+          return {
+            ok: false,
+            latencyMs: 0,
+            error: {
+              code: 'missing-key',
+              message: preset === undefined
+                ? 'this endpoint needs an API key, and none was given'
+                : `a ${preset.id} endpoint needs an API key, and none was given`,
+            },
+          }
+        }
+        return this.#probeEndpoint({ baseURL, apiKey, apiKeyHeader })
+      },
+
+      'preset.list': async () => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        // Awaited, not passed: an unawaited promise is truthy, so the response
+        // would always claim an install and carry something that serializes to
+        // an empty list — the picker would offer nothing with no word as to why.
+        const install = await this.#installPresets()
+        return {
+          presets: (await store.list()).map(name => ({ name })),
+          ...this.#activePresetName === undefined ? {} : { active: this.#activePresetName },
+          ...install === undefined ? {} : { install },
+        }
+      },
+
+      'preset.select': async ({ name }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        const body = await store.read(name)
+        await this.#applyPreset(name, body)
+        return {
+          presets: (await store.list()).map(preset => ({ name: preset })),
+          active: name,
+          manager: this.#managerView(),
+        }
+      },
+
+      'preset.view': async () => ({ manager: this.#managerView() }),
+
+      'preset.setEnabled': async ({ id, enabled }) => {
+        const item = this.#activePreset.prompts.find(prompt => prompt.identifier === id)
+        if (item === undefined) throw notFound(`the active preset has no prompt "${id}"`)
+        // Refused, not ignored, for the markers upstream gives no toggle: a
+        // silent no-op would read as "the toggle is broken", and the user would
+        // be right — the control would appear to do nothing.
+        if (!toggleAllowed(item)) throw invalid(`"${item.name ?? id}" is a marker the prompt manager does not allow toggling`)
+        const seeded = withSeededOrder(this.#activePreset)
+        const group = chosenOrder(seeded)
+        if (group === undefined) throw new AppError('unsupported', 'the preset carries no ordering to toggle in')
+        const orders = seeded.prompt_order ?? []
+        const next = {
+          ...seeded,
+          prompt_order: orders.map(entry => entry === group
+            ? {
+                ...group,
+                order: group.order.some(candidate => candidate.identifier === id)
+                  ? group.order.map(candidate =>
+                      candidate.identifier === id ? { ...candidate, enabled } : candidate)
+                  // A prompt the ordering omits is off; toggling it on adds it
+                  // to the end, which is where the view showed it.
+                  : [...group.order, { identifier: id, enabled }],
+              }
+            : entry),
+        }
+        return { manager: await this.#persistActivePreset(next) }
+      },
+
+      'preset.move': async ({ id, index }) => {
+        const seeded = withSeededOrder(this.#activePreset)
+        const group = chosenOrder(seeded)
+        if (group === undefined) throw new AppError('unsupported', 'the preset carries no ordering to move in')
+        // The prompt must exist in the preset; membership in the ordering is
+        // repaired rather than required, so a prompt the file's ordering
+        // omitted can still be dragged into place (it lands disabled, as the
+        // view showed it).
+        if (seeded.prompts.some(prompt => prompt.identifier === id) === false) {
+          throw notFound(`the active preset has no prompt "${id}"`)
+        }
+        const rest = group.order.filter(candidate => candidate.identifier !== id)
+        const entry = group.order.find(candidate => candidate.identifier === id)
+          ?? { identifier: id, enabled: false }
+        const clamped = Math.min(Math.max(index, 0), rest.length)
+        const moved = [...rest.slice(0, clamped), entry, ...rest.slice(clamped)]
+        const orders = seeded.prompt_order ?? []
+        const next = {
+          ...seeded,
+          prompt_order: orders.map(candidate => candidate === group ? { ...group, order: moved } : candidate),
+        }
+        return { manager: await this.#persistActivePreset(next) }
+      },
+
+      'preset.upsertPrompt': async ({ prompt }) => {
+        // `main` and `chatHistory` are slots, not text: upstream's edit form
+        // allows editing main's content but the marker slots carry no editable
+        // body, and letting a write replace `chatHistory`'s (absent) content
+        // would produce a prompt item the assembler reads as literal text in
+        // the conversation's slot. Refused by name.
+        const existing = this.#activePreset.prompts.find(candidate => candidate.identifier === prompt.identifier)
+        const identifier = prompt.identifier ?? randomUUID()
+        if (existing === undefined && BUILTIN_MARKERS.has(identifier)) {
+          throw invalid(`"${identifier}" is a built-in slot; edit the preset file to change it`)
+        }
+        const item: PromptItem = {
+          identifier,
+          ...prompt.name === undefined ? {} : { name: prompt.name },
+          ...prompt.role === undefined ? {} : { role: prompt.role },
+          ...prompt.content === undefined ? {} : { content: prompt.content },
+          ...prompt.marker === undefined ? {} : { marker: prompt.marker },
+          ...prompt.system_prompt === undefined ? {} : { system_prompt: prompt.system_prompt },
+          ...prompt.forbid_overrides === undefined ? {} : { forbid_overrides: prompt.forbid_overrides },
+          ...prompt.injection_position === undefined ? {} : { injection_position: prompt.injection_position },
+          ...prompt.injection_depth === undefined ? {} : { injection_depth: prompt.injection_depth },
+          ...prompt.injection_order === undefined ? {} : { injection_order: prompt.injection_order },
+        }
+        const prompts = existing === undefined
+          ? [...this.#activePreset.prompts, item]
+          : this.#activePreset.prompts.map(candidate => candidate === existing ? { ...candidate, ...item } : candidate)
+        let next: ChatCompletionPreset = { ...this.#activePreset, prompts }
+        // A new prompt joins the end of the ordering, enabled: an addition that
+        // does nothing would be the bad kind of surprise. (Upstream appends
+        // disabled and relies on its render to reconcile; the visible outcome
+        // there is the same row, on, at the end.)
+        if (existing === undefined) {
+          next = withSeededOrder(next)
+          const group = chosenOrder(next)
+          const orders = next.prompt_order ?? []
+          next = {
+            ...next,
+            prompt_order: orders.map(entry => entry === group
+              ? { ...group, order: [...group.order, { identifier, enabled: true }] }
+              : entry),
+          }
+        }
+        return { manager: await this.#persistActivePreset(next) }
+      },
+
+      'preset.removePrompt': async ({ id }) => {
+        const item = this.#activePreset.prompts.find(prompt => prompt.identifier === id)
+        if (item === undefined) throw notFound(`the active preset has no prompt "${id}"`)
+        // Upstream's rule: system prompts cannot be deleted (`isPromptDeletionAllowed`).
+        if (item.system_prompt === true) {
+          throw invalid(`"${item.name ?? id}" is a system prompt and cannot be removed`)
+        }
+        const next: ChatCompletionPreset = {
+          ...this.#activePreset,
+          prompts: this.#activePreset.prompts.filter(prompt => prompt !== item),
+          // An order-less preset stays order-less: `undefined` here would type
+          // as "the key present with no value", which is a different file shape
+          // than the one the preset came in with.
+          ...this.#activePreset.prompt_order === undefined ? {} : {
+            prompt_order: this.#activePreset.prompt_order.map(entry => ({
+              ...entry,
+              order: entry.order.filter(candidate => candidate.identifier !== id),
+            })),
+          },
+        }
+        return { manager: await this.#persistActivePreset(next) }
+      },
+
+      'preset.save': async ({ name }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        // The active body, exactly as it stands — that is what "save" means:
+        // the manager's state becomes a library preset.
+        await store.save(name, this.#activePreset)
+        // Saved over the active name? The state is now *that* preset.
+        if (this.#activePresetName === undefined || this.#activePresetName === name) {
+          this.#activePresetName = name
+          await this.#options.settings.setPreset(name, this.#activePreset)
+        }
+        return {
+          presets: (await store.list()).map(preset => ({ name: preset })),
+          active: this.#activePresetName,
+        }
+      },
+
+      'preset.delete': async ({ name }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        await store.delete(name)
+        // Deleting the active preset leaves the state live — the body is in
+        // memory and persisted in the settings file — but unnamed, which is
+        // honest: it is no longer a library preset.
+        if (this.#activePresetName === name) {
+          this.#activePresetName = undefined
+          await this.#options.settings.setPreset(undefined, this.#activePreset)
+        }
+        const presets = (await store.list()).map(preset => ({ name: preset }))
+        return { presets, ...this.#activePresetName === undefined ? {} : { active: this.#activePresetName } }
+      },
+
+      'preset.read': async ({ name }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        const body = await store.read(name)
+        return { name, preset: body as Record<string, unknown> }
+      },
+
+      'preset.import': async ({ names }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        const installDir = this.#options.sillyTavernDir
+        const outcomes = await store.importFrom(installDir, names)
+        const imported = outcomes.filter(outcome => outcome.imported).map(outcome => outcome.name)
+        const skipped = outcomes
+          .filter((outcome): outcome is Exclude<typeof outcome, { imported: true }> => !outcome.imported)
+          .map(outcome => ({
+            name: outcome.name,
+            reason: outcome.why === 'not-configured' ? 'no SillyTavern install is configured'
+              : outcome.why === 'absent' ? 'the install has no preset with this name'
+              : outcome.why === 'not-a-preset' ? 'the file is not a Chat Completion preset'
+              : 'the file could not be read this time',
+          }))
+        for (const skip of skipped) {
+          this.#report(`preset import skipped "${skip.name}": ${skip.reason}`, { kind: 'host', grade: 'note' })
+        }
+        return {
+          imported,
+          skipped,
+          presets: (await store.list()).map(preset => ({ name: preset })),
+        }
+      },
+
+      'preset.importFile': async ({ filename, content }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        // The bytes are decoded and parsed here rather than in the client, so
+        // every refusal is the store's own named reason and no caller can get
+        // a different sentence for the same file.
+        const text = Buffer.from(content, 'base64').toString('utf8')
+        const outcome = await store.importOne(filename, text)
+        if (!outcome.imported) {
+          this.#report(`preset file import refused "${outcome.name}": ${outcome.reason}`, { kind: 'host', grade: 'note' })
+        }
+        return {
+          outcome,
+          presets: (await store.list()).map(preset => ({ name: preset })),
+        }
+      },
+
+      /**
+       * The user's personas. The whole group refuses by name on a host with no
+       * persona store — the same line the preset library and card storage draw —
+       * because an empty list from a storeless host would read as "configured,
+       * none yet" and a settings page would then offer a switch that cannot land.
+       */
+      'persona.list': async () => this.#personas().list(),
+
+      'persona.get': async ({ id }) => {
+        const persona = await this.#personas().get(id)
+        return persona === undefined ? {} : { persona }
+      },
+
+      'persona.set': async ({ id, name, description, position, depth, role, active }) =>
+        this.#personas().upsert({
+          ...id === undefined ? {} : { id },
+          name,
+          ...description === undefined ? {} : { description },
+          ...position === undefined ? {} : { position },
+          ...depth === undefined ? {} : { depth },
+          ...role === undefined ? {} : { role },
+          ...active === undefined ? {} : { active },
+        }),
+
+      'persona.delete': async ({ id }) => this.#personas().remove(id),
+
+      /**
+       * The global regex tier.
+       *
+       * Every chat runs these before any card's own — upstream's
+       * `SCRIPT_TYPES.GLOBAL` — which is why they answer to the profile rather
+       * than to a character: the user wrote them once, against every
+       * conversation they will ever have.
+       */
+      'regex.list': async () => {
+        const extensionSettings = this.#options.extensionSettings
+        if (extensionSettings === undefined) throw new AppError('unsupported', 'this host keeps no global regex store')
+        return { scripts: await extensionSettings.globalRegex() }
+      },
+
+      'regex.set': async ({ scripts }) => {
+        const extensionSettings = this.#options.extensionSettings
+        if (extensionSettings === undefined) throw new AppError('unsupported', 'this host keeps no global regex store')
+        // A script without an id gets one, the way upstream's importer mints a
+        // fresh UUID for every import; one that arrived with an id keeps it, so
+        // a toggle or a reorder rewrites the same script rather than replacing
+        // it with a stranger that happens to look like it.
+        const stored = scripts.map(script =>
+          ({ ...script, ...(script.id === undefined ? { id: randomUUID() } : {}) }))
+        await extensionSettings.setGlobalRegex(stored)
+        // Live conversations re-compose now, and each is re-announced so every
+        // open page re-renders under the new list — the host's stand-in for
+        // upstream reloading the current chat after every regex edit.
+        for (const chatId of await chats.refreshGlobalRegex()) {
+          this.#announceChat(await chats.open(chatId))
+        }
+        return { scripts: await extensionSettings.globalRegex() }
+      },
+
+      'character.list': async () => {
+        const characters = await library.list()
+        const favorites = this.#options.favorites
+        if (favorites === undefined) return { characters }
+        // One read, not one per row: the list is the only caller that fans out.
+        const starred = new Set(await favorites.list())
+        return {
+          characters: characters.map(character =>
+            starred.has(character.characterId) ? { ...character, favorite: true } : character),
+        }
+      },
 
       'character.import': async ({ filename, content }) => ({
-        character: await library.import(filename, content),
+        character: await this.#withFavorite(await library.import(filename, content)),
       }),
 
       'character.delete': async ({ characterId }) => {
@@ -783,10 +1629,12 @@ export class IrisAppService {
         // exist, so deleting one frees its id and the next card imported under
         // that name inherits whatever was left behind. For the script policy
         // that includes `documentGranted` — a grant the user gave to one card
-        // would silently apply to another.
+        // would silently apply to another. The favorites are the same shape of
+        // leftover: a star keyed by id would light up for a stranger.
         await this.#options.extensionSettings?.forget(characterId)
         await this.#options.scriptButtons?.forget(characterId)
         await this.#options.scriptVariables?.forget(characterId)
+        await this.#options.favorites?.forget(characterId)
         await scripts?.forget(characterId)
         // **`cardStorage` is deliberately not in this list, and it is the one
         // store where forgetting would be wrong.** The others are partitioned
@@ -799,6 +1647,41 @@ export class IrisAppService {
         // attribution for a report, **not ownership**, and it is not a basis
         // for deletion.
         return {}
+      },
+
+      'character.duplicate': async ({ characterId }) => {
+        const character = await library.duplicate(characterId)
+        // The binding row travels with the copy, so both characters resolve to
+        // the same named book — what sharing one `extensions.world` name means
+        // upstream. Without this the duplicate's first open would re-materialise
+        // its embedded book under a minted name (`… (2)`), and two cards that
+        // upstream keeps on one book would quietly grow two that drift.
+        const bindings = this.#options.worldbookBindings
+        const binding = await bindings?.get(characterId)
+        if (bindings !== undefined && binding !== undefined) {
+          await bindings.set(character.characterId, binding)
+        }
+        return { character: await this.#withFavorite(character) }
+      },
+
+      'character.rename': async ({ characterId, name }) => ({
+        character: await this.#withFavorite(await library.rename(characterId, name)),
+      }),
+
+      'character.export': async ({ characterId, format }) =>
+        library.exportCard(characterId, format),
+
+      'character.setTags': async ({ characterId, tags }) => ({
+        character: await this.#withFavorite(await library.setTags(characterId, tags)),
+      }),
+
+      'character.favorite': async ({ characterId, favorite }) => {
+        // Refused rather than answered when there is nowhere to remember it: a
+        // star that lights up and then vanishes on the next list is worse than
+        // an honest refusal, because the first list after a reload disagrees
+        // with the toggle the user can still see.
+        await this.#favorites().set(characterId, favorite)
+        return { characterId, favorite }
       },
 
       'settings.get': ({ chatId }) => Promise.resolve({ settings: settings.get(chatId) }),
@@ -853,9 +1736,61 @@ export class IrisAppService {
         if (worldbooks === undefined) throw notFound(`world book "${name}"`)
         return { entries: await worldbooks.replace(name, entries) }
       },
+      // Upstream's `createWorldbook` answers existence with `false` rather than
+      // an error — get-or-create is the pattern cards write, and a race between
+      // two scripts is a normal outcome, not a failure. A host with no store has
+      // no books, so no name can be created: refused, not answered false, on the
+      // same line every other write here is drawn.
+      'worldbook.create': async ({ name, entries }) => {
+        if (worldbooks === undefined) throw notFound(`world book "${name}"`)
+        if ((await worldbooks.names()).includes(name)) return { created: false }
+        await worldbooks.create(name, entries ?? [])
+        return { created: true }
+      },
+      // Upstream's `setChatLorebook`. The name must resolve before it is bound:
+      // a binding with no file behind it makes every later scan silently skip
+      // the chat book, which reads as a book that activates nothing. Clearing is
+      // expressed as `null`, upstream's own `else` branch.
+      'worldbook.bindChat': async ({ chatId, name }) => {
+        if (name !== null) {
+          if (worldbooks === undefined) throw notFound(`world book "${name}"`)
+          if (!(await worldbooks.names()).includes(name)) throw notFound(`world book "${name}"`)
+        }
+        const entry = await chats.open(chatId)
+        if (name === null) delete entry.header.chat_metadata['world_info']
+        else entry.header.chat_metadata['world_info'] = name
+        entry.touch()
+        await chats.save(entry)
+        this.#options.broadcast({ type: 'chat.updated', chatId, view: entry.toView() })
+        const bound = entry.header.chat_metadata['world_info']
+        return { name: typeof bound === 'string' ? bound : null }
+      },
+      'worldbook.settings': async () => ({ settings: this.#options.settings.worldbookSettings() }),
+      'worldbook.setSettings': async patch => ({
+        settings: await this.#options.settings.setWorldbookSettings(patch),
+      }),
       'worldbook.charNames': async ({ characterId }) => {
         const card = await library.load(characterId)
-        return charWorldbookNames(card)
+        return charWorldbookNames(card, settings.charBooks(characterId))
+      },
+
+      // The character's additional bindings, upstream's `world_info.charLore`.
+      // The character must exist — a binding for a card that is not there is a
+      // caller mistake and should read as one — and each bound name must
+      // resolve, for the same reason `bindChat` requires it: a binding with no
+      // file behind it is silently skipped by every later scan, which reads as
+      // a book that activates nothing rather than as the broken binding it is.
+      // An empty list is the unbind-all path and is checked against nothing.
+      'worldbook.setCharBooks': async ({ characterId, names }) => {
+        const card = await library.load(characterId)
+        if (names.length > 0) {
+          if (worldbooks === undefined) throw notFound(`world book "${names[0]}"`)
+          const known = new Set(await worldbooks.names())
+          const missing = names.find(name => !known.has(name))
+          if (missing !== undefined) throw notFound(`world book "${missing}"`)
+        }
+        await settings.setCharBooks(characterId, names)
+        return charWorldbookNames(card, settings.charBooks(characterId))
       },
 
       'script.list': async ({ characterId }) => {
@@ -957,6 +1892,21 @@ export class IrisAppService {
             // partition read whole would hand one card another's panel state.
             scriptButtons: await this.#options.scriptButtons?.all(characterId) ?? {},
             globalSelect: settings.globalSelect(),
+            // The same source `worldbook.names` answers from, so a book the host
+            // seeded from a card's embedded copy is a name here too — the one
+            // fact an existence assertion in a card hangs on. The name list backs
+            // the synchronous `getWorldbookNames()` and the existence guard on
+            // `getChatWorldbookName()`; the stored scan knobs back
+            // `getLorebookSettings()`, which must answer what the engine actually
+            // runs rather than what a fresh install would run.
+            worldbookNames: await worldbooks?.names() ?? [],
+            // The chat character's host-stored extra bindings, keyed by the
+            // chat's own card — the snapshot describes this chat even when the
+            // asking script names another character.
+            charBooks: entry.meta.characterId === undefined
+              ? []
+              : settings.charBooks(entry.meta.characterId),
+            worldbookSettings: settings.worldbookSettings(),
             ...cardStorage === undefined ? {} : { storage: await cardStorage.snapshot() },
             characters: await library.list(),
             ...messageId === undefined ? {} : { messageId },
@@ -1043,6 +1993,53 @@ export class IrisAppService {
         return { removed: removed.length, foreign: removed.filter(one => one.foreign).length }
       },
 
+      'backup.list': async ({ chatId }) => ({ backups: await this.#backups().list(chatId) }),
+
+      'backup.preview': async ({ backupId, floors }) => ({
+        preview: await this.#backups().preview(backupId, floors),
+      }),
+
+      'backup.restore': async ({ backupId, confirm }) => {
+        const backups = this.#backups()
+        const intent = await backups.read(backupId)
+
+        // **The named confirmation, enforced here.** The interface shows the
+        // name and the reader types it; a host that accepted a bare call would
+        // let anything that can reach the wire overwrite a conversation by
+        // trying. Compared against the snapshot's own header, because that is
+        // the conversation a restore writes back — not whatever sits at that
+        // id now.
+        const expected = intent.title.length > 0 ? intent.title : intent.chatId
+        if (confirm.trim() !== expected) {
+          throw invalid(`restore refused: type the conversation's title ("${expected}") to confirm overwriting it`)
+        }
+
+        // The current version is snapshotted first — the task of the restore
+        // is to undo a mistake, and a restore that went wrong must itself be
+        // restorable. Absent when there is no live file: restoring into the
+        // hole a deletion left protects nothing because nothing survives.
+        let previous: BackupSummary | undefined
+        if (backups.hasChatFile(intent.chatId)) {
+          previous = await backups.snapshot(intent.chatId, 'pre-restore', intent.characterId)
+        }
+
+        await chats.restoreFile(intent.chatId, intent.text)
+        // An open page sees the conversation come back: pushed, not left for
+        // the next open to discover.
+        const entry = await chats.open(intent.chatId)
+        this.#options.broadcast({ type: 'chat.updated', chatId: intent.chatId, view: entry.toView() })
+        await this.#announceChats()
+        return {
+          chat: entry.toSummary(),
+          ...previous === undefined ? {} : { previous },
+        }
+      },
+
+      'backup.delete': async ({ backupId }) => {
+        await this.#backups().remove(backupId)
+        return {}
+      },
+
       'script.setExtensionSettings': async ({ characterId, settings }) => {
         const store = this.#options.extensionSettings
         if (store === undefined) throw new AppError('unsupported', 'extension settings are not configured on this host')
@@ -1056,6 +2053,12 @@ export class IrisAppService {
 
       'script.saveChat': async ({ chatId }) => {
         const entry = await chats.open(chatId)
+        // Deliberately no snapshot here. This arm persists; it decides nothing.
+        // The arms that *change* floors — deletion and rewrite — snapshot where
+        // the change is decided, while the disk still holds the pre-change
+        // state, and a save of an unchanged conversation is not a new restore
+        // point. Snapshotting here would copy once more per turn for MVU cards
+        // and churn the retention window without protecting anything new.
         entry.touch()
         await chats.save(entry)
         return {}
@@ -1147,6 +2150,40 @@ export class IrisAppService {
     }
   }
 
+  /** The snapshot store, or a refusal naming why there is none. */
+  #backups(): BackupStore {
+    const store = this.#options.backups
+    if (store === undefined) {
+      throw new AppError('unsupported', 'this host keeps no snapshot store')
+    }
+    return store
+  }
+
+  /**
+   * Take a pre-change snapshot, when this host keeps a store at all.
+   *
+   * The copy is of the **file on disk** — the state that predates whatever the
+   * caller is about to make permanent. `dedup` is for the high-frequency arms:
+   * when the newest snapshot already holds these exact bytes, the write is
+   * skipped and the existing snapshot is named instead, so a card that saves
+   * every turn does not churn the retention window with copies of the same
+   * conversation.
+   * @param chatId - the conversation about to change.
+   * @param characterId - the card it is played with, when known.
+   * @param reason - what the caller is about to do.
+   * @param dedup - skip the write when the newest snapshot already matches.
+   */
+  async #snapshotBefore(
+    chatId: string,
+    characterId: string | undefined,
+    reason: 'delete-message' | 'delete-messages' | 'rewrite-messages',
+    dedup: boolean,
+  ): Promise<void> {
+    const store = this.#options.backups
+    if (store === undefined) return
+    await store.snapshot(chatId, reason, characterId, { dedup })
+  }
+
   /** The connection store, or a refusal naming why there is none. */
   #connections(): ConnectionStore {
     const store = this.#options.connections
@@ -1154,6 +2191,55 @@ export class IrisAppService {
       throw new AppError('unsupported', 'connection profiles are not configured on this host')
     }
     return store
+  }
+
+  /** The persona store, or a refusal naming why there is none. */
+  #personas(): PersonaStore {
+    const store = this.#options.personas
+    if (store === undefined) {
+      throw new AppError('unsupported', 'personas are not configured on this host')
+    }
+    return store
+  }
+
+  /** The profile's star list, refused-by-name when the host keeps none. */
+  #favorites(): FavoriteStore {
+    const store = this.#options.favorites
+    if (store === undefined) {
+      throw new AppError('unsupported', 'favorites are not configured on this host')
+    }
+    return store
+  }
+
+  /**
+   * A summary with the profile's star state attached.
+   *
+   * Absent stays absent rather than becoming `false`: the summary is what the
+   * library saw on disk, and a field meaning "this host keeps favorites and
+   * says no" is the caller's to compute, not the summary's to imply.
+   * @param character - the summary from the library.
+   * @returns the same summary, starred when the profile says so.
+   */
+  async #withFavorite(character: CharacterSummary): Promise<CharacterSummary> {
+    const favorites = this.#options.favorites
+    if (favorites === undefined) return character
+    return await favorites.has(character.characterId)
+      ? { ...character, favorite: true }
+      : character
+  }
+
+  /**
+   * The active persona for the next assembly, or undefined when there is none.
+   *
+   * Read per assembly, like the world-info settings: the user can switch or
+   * edit a persona while the host runs, and a chat opened before the change
+   * must still play as *this* user, not as whoever was active when the chat
+   * was opened.
+   */
+  async #activePersona(): Promise<ActivePersona | undefined> {
+    const store = this.#options.personas
+    if (store === undefined) return undefined
+    return await store.active()
   }
 
   /**
@@ -1188,18 +2274,53 @@ export class IrisAppService {
    * statements are synchronous, so by the time this resolves the turn is on the
    * log and the client can start correlating `stream.*` frames to it.
    * @param chatId - the conversation.
-   * @param request - a new user message, or a reroll of the last turn.
+   * @param request - a new user message, a reroll of the last turn, a continue
+   *   of it, or an impersonation of the user.
    * @returns the turn now generating.
    * @throws {AppError} `busy` when one already is, `invalid-request` when there
-   *   is no turn to reroll.
+   *   is no turn to reroll or nothing on it to continue.
    */
-  async #start(chatId: string, request: { kind: 'send', text: string } | { kind: 'regenerate' }): Promise<number> {
+  async #start(
+    chatId: string,
+    request:
+      | { kind: 'send', text: string }
+      | { kind: 'regenerate' }
+      | { kind: 'continue' }
+      | { kind: 'impersonate' },
+  ): Promise<number> {
     const entry = await this.#options.chats.open(chatId)
-    const turn = request.kind === 'send' ? entry.lastTurn + 1 : entry.lastTurn
+    const generationType = GENERATION_TYPE_OF[request.kind]
+    const turn = request.kind === 'send' || request.kind === 'impersonate'
+      ? entry.lastTurn + 1
+      : entry.lastTurn
     if (turn < 0) throw invalid('this chat has no turn to regenerate')
 
+    // A continue needs a reply under it: the newest floor's selected reading is
+    // what the generation writes on from, and what it rejoins. A chat whose
+    // newest line is a user line (an exchange that never got its reply) has
+    // nothing to continue — refused by name rather than answered with a reply
+    // shaped like a continuation, which is what a bare reroll would produce.
+    const seed = request.kind === 'continue'
+      ? selectedCandidate(entry.session, turn)
+      : undefined
+    if (request.kind === 'continue' && seed === undefined) {
+      throw invalid('this chat has no reply to continue; its newest line is not a reply')
+    }
+
     const signal = entry.begin(turn)
-    const driver = this.#driver(entry)
+    // A continue's buffer opens on the text being continued, because the deltas
+    // that follow are only the new words: painting them over the row without
+    // the seed would collapse the floor to its tail while streaming. The
+    // separator the request carries is part of what shows, so it rides here and
+    // in the event below — otherwise the floor's tail loses a character the
+    // model was actually given until the reply settles.
+    const continuePostfix = request.kind === 'continue'
+      ? CONTINUE_POSTFIX_SEPARATORS[this.#options.settings.get(chatId).continuePostfix ?? 'space']
+      : undefined
+    if (seed !== undefined && entry.pending !== undefined) {
+      entry.pending.text = continuedSeedText(seedTextOf(seed), continuePostfix ?? '')
+    }
+    const driver = this.#driver(entry, generationType)
     const events: GenerateEvents = {
       onText: (delta) => {
         if (entry.pending !== undefined) entry.pending.text += delta
@@ -1212,7 +2333,19 @@ export class IrisAppService {
       signal,
     }
 
-    const running = request.kind === 'send'
+    // The two utility prompts that close a continue / impersonation request,
+    // expanded against this chat before the driver is asked for anything. The
+    // macro pass runs first, then the explicit slots, so text inserted into
+    // `{{lastChatMessage}}` is never re-scanned for braces.
+    const nudge = request.kind === 'continue'
+      ? entry.substitute(CONTINUE_NUDGE_PROMPT)
+        .replace('{{lastChatMessage}}', seedTextOf(seed).trim())
+      : undefined
+    const instruction = request.kind === 'impersonate'
+      ? entry.substitute(IMPERSONATION_PROMPT)
+      : undefined
+
+    const running: Promise<Candidate | string> = request.kind === 'send'
       // The storage direction runs on what the user typed, before it enters the
       // log — the one point where a message is written for the first time.
       ? driver.send(
@@ -1220,45 +2353,93 @@ export class IrisAppService {
         runScripts(request.text, 'user', entry.scripts, { substitute: entry.substitute }),
         events,
       )
-      : driver.regenerate(entry.session, events)
+      : request.kind === 'regenerate'
+        ? driver.regenerate(entry.session, events)
+        : request.kind === 'continue'
+          ? driver.continueTurn(entry.session, events, nudge, continuePostfix)
+          : driver.impersonate(entry.session, events, instruction)
 
     // Announced after the call, not before: `send` appends the user's line
     // synchronously at the top of the driver, and until it has, the spare key
     // slot belongs to that line rather than to the reply. Nothing can have been
     // emitted yet — the first delta waits on the network — and the ordering is
     // pinned by test rather than argued.
-    this.#options.broadcast({ type: 'stream.start', chatId, turn, key: entry.streamingKeyFor(turn) })
+    const impersonating = request.kind === 'impersonate'
+    this.#options.broadcast({
+      type: 'stream.start',
+      chatId,
+      turn,
+      key: entry.streamingKeyFor(turn),
+      ...seed === undefined ? {} : { seed: continuedSeedText(seedTextOf(seed), continuePostfix ?? '') },
+      ...impersonating ? { role: 'user' as const, name: entry.names.user } : {},
+    })
 
     void running.then(
-      candidate => this.#settle(entry, turn, textOf(candidate.message), 'completed'),
-      error => this.#fail(entry, turn, signal, error),
+      result => this.#settle(
+        entry,
+        turn,
+        // An impersonation resolves with its text rather than a candidate: the
+        // driver has already landed that text as the turn's user line.
+        typeof result === 'string' ? result : textOf(result.message),
+        'completed',
+        { recordVariables: !impersonating },
+      ),
+      error => this.#fail(entry, turn, signal, error, request.kind),
     )
 
     return turn
   }
 
-  /** Record a finished candidate and tell every page. */
+  /**
+   * Record a finished generation and tell every page.
+   * @param entry - the conversation.
+   * @param turn - the turn that settled.
+   * @param text - the generation's visible text.
+   * @param reason - whether it ran to completion or was stopped.
+   * @param options - what this kind of generation records.
+   */
   async #settle(
     entry: ChatEntry,
     turn: number,
     text: string,
     reason: 'completed' | 'aborted',
+    options: { recordVariables?: boolean } = {},
   ): Promise<void> {
     try {
+      // The reply-shaping settings run first, before variables and storage
+      // read the text: upstream applies `cleanUpMessage` before the message is
+      // stored, so the trim is part of what everything downstream sees. Only a
+      // completed reply is cut — a stop keeps whatever the user decided was
+      // good enough, and an impersonation is a user line, never trimmed.
+      const generated = text
+      let settledText = text
+      if (reason === 'completed' && options.recordVariables !== false) {
+        const settings = this.#options.settings.get(entry.chatId)
+        if (settings.trimSentences === true) settledText = trimToEndSentence(text)
+      }
+
       // Variables first: a permanent script may be there precisely to strip the
       // command block, and the commands have to be read before it does.
       // Reported, not swallowed: a reply whose update block nothing understood
       // is indistinguishable from a model that never wrote one, and telling
       // those apart is the difference between "the card is broken" and "we are".
-      entry.recordVariables(turn, text, message => {
-        this.#report(message, {
-          kind: 'mvu',
-          grade: 'fault',
-          chatId: entry.chatId,
-          ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+      //
+      // **An impersonation records nothing.** Its text became a user line, and
+      // a user line carries no variable consequences — the same rule a typed
+      // message lives under. Recording would also hang a table on a turn that
+      // has no candidate for it, and the next real turn's baseline walk would
+      // then stop one turn early.
+      if (options.recordVariables !== false) {
+        entry.recordVariables(turn, settledText, message => {
+          this.#report(message, {
+            kind: 'mvu',
+            grade: 'fault',
+            chatId: entry.chatId,
+            ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+          })
         })
-      })
-      this.#storeRewritten(entry, entry.scripts, text)
+      }
+      this.#storeRewritten(entry, entry.scripts, generated, settledText)
       entry.touch()
       entry.finish()
       // After the turn is complete, so a prune can never race the assembly that
@@ -1301,15 +2482,57 @@ export class IrisAppService {
   }
 
   /**
-   * Report a turn that did not finish.
+   * Report a generation that did not finish.
    *
    * A stop is not a failure: SillyTavern keeps whatever the model produced
    * before the user pressed stop, and throwing away half a reply the user
    * decided was good enough is worse than the abort itself. So a stopped turn
    * with text becomes a real candidate and settles normally.
+   *
+   * An impersonation keeps its partial as a **user line** instead — that is the
+   * only kind of line it was ever going to produce — and a provider failure
+   * keeps nothing at all, because a half-written user line nobody asked for is
+   * not a reply the user can retry; it is text in their mouth.
+   * @param entry - the conversation.
+   * @param turn - the turn that failed.
+   * @param signal - the abort signal the generation ran under.
+   * @param error - what the driver raised.
+   * @param kind - which generation this was.
    */
-  async #fail(entry: ChatEntry, turn: number, signal: AbortSignal, error: unknown): Promise<void> {
+  async #fail(
+    entry: ChatEntry,
+    turn: number,
+    signal: AbortSignal,
+    error: unknown,
+    kind: 'send' | 'regenerate' | 'continue' | 'impersonate',
+  ): Promise<void> {
     const partial = entry.pending?.text ?? ''
+
+    if (kind === 'impersonate') {
+      if (signal.aborted && partial.length > 0) {
+        try {
+          this.#driver(entry, GENERATION_TYPE_OF.impersonate).recordImpersonation(entry.session, partial)
+          await this.#settle(entry, turn, partial, 'aborted', { recordVariables: false })
+          return
+        } catch (cause: unknown) {
+          this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
+        }
+      }
+      entry.finish()
+      try {
+        await this.#options.chats.save(entry)
+      } catch (cause: unknown) {
+        this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
+      }
+      this.#options.broadcast({
+        type: 'stream.error',
+        chatId: entry.chatId,
+        turn,
+        code: signal.aborted ? 'aborted' : 'provider-error',
+        message: error instanceof Error ? error.message : String(error),
+      })
+      return
+    }
 
     if (signal.aborted && partial.length > 0) {
       try {
@@ -1349,7 +2572,7 @@ export class IrisAppService {
   }
 
   /** Build the driver for one chat, with its current settings. */
-  #driver(entry: ChatEntry): TurnDriver {
+  #driver(entry: ChatEntry, generationType = 'normal'): TurnDriver {
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
     const count = (text: string): number => this.#counter.count(text)
     const names = entry.names
@@ -1358,16 +2581,19 @@ export class IrisAppService {
       stream: options => this.#stream(options, entry),
       provider: settings.provider,
       model: settings.model,
-      contributions: session => this.#contributions(entry, session, count),
+      // The generation type travels with the driver so the assembly it drives
+      // is the one this turn asked for: triggers and the continue rule read it.
+      contributions: session => this.#contributions(entry, session, count, true, generationType),
       history: session => this.#history(entry, session),
       budget: {
-        context: this.#options.contextWindow,
+        context: windowOf(settings, this.#options.contextWindow),
         reserve: this.#options.reserveTokens,
         count,
       },
       ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...settings.stop === undefined ? {} : { stop: settings.stop },
+      ...settings.squashSystemMessages === undefined ? {} : { squashSystemMessages: settings.squashSystemMessages },
       sampling: samplingOf(settings),
     })
   }
@@ -1377,30 +2603,66 @@ export class IrisAppService {
    * @param entry - the conversation.
    * @param session - the log to assemble from.
    * @param count - the token counter the budget uses.
+   * @param record - whether this is a real turn whose state advances.
+   * @param generationType - what is being generated, for the preset filters.
    * @returns the contributions for this generation.
    */
-  #contributions(
+  async #contributions(
     entry: ChatEntry,
     session: Session,
     count: (text: string) => number,
     record = true,
-  ): Contribution[] {
+    generationType = 'normal',
+  ): Promise<Contribution[]> {
     const names = entry.names
+    const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
+    const window = windowOf(settings, this.#options.contextWindow)
+    // The scan knobs, read per assembly: the settings file can change while the
+    // host runs, and a chat opened before the change must still scan with what
+    // the user set, not with what was set when the chat was opened.
+    const worldbookSettings = this.#options.settings.worldbookSettings()
+    const persona = await this.#activePersona()
+    // The budget macros report the numbers this generation actually runs under:
+    // the context window, and the reply budget — `maxTokens` when the chat
+    // configures one, else the reserve every assembly holds back for the reply.
+    // Assigned before the prompt is built, because the build's expansions are
+    // what read it.
+    entry.tokenBudget = {
+      context: window,
+      response: settings.maxTokens ?? this.#options.reserveTokens,
+    }
     const built = buildPrompt({
       card: entry.card,
       ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
-      preset: this.#options.preset,
+      preset: this.#activePreset,
       userName: names.user,
       characterName: names.character,
       // The same projection the model gets, so a world-info scan cannot match a
       // keyword inside a block the prompt scripts are about to strip.
       history: this.#history(entry, session),
       count,
-      worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
+      // `world_info_budget` and `world_info_budget_cap`, translated by
+      // `computeBudget` — the same percentage-of-context arithmetic upstream
+      // runs, against the window this chat actually assembles under (a per-chat
+      // override included). The fixed 25% share this call site used to
+      // hard-code is the setting's own default, so a fresh installation
+      // computes the same number.
+      worldInfoBudget: computeBudget(window, worldbookSettings.budgetPercent, worldbookSettings.budgetCap),
       // The chat's expander, so the card's own variable macros resolve against
       // this chat's state rather than being sent as braces.
       substitute: entry.substitute,
+      // The scan's outlet buckets become this chat's `{{outlet::key}}` answers
+      // for the rest of the build — upstream writes `extension_prompts` at
+      // exactly this point, before the preset's own text is rendered.
+      outletSink: outlets => { entry.outletPrompts = outlets },
       ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
+      activationSettings: activationSettingsOf(worldbookSettings),
+      insertionStrategy: worldbookSettings.insertionStrategy,
+      chatLore: await this.#chatLore(entry),
+      // The active persona, read per assembly — a switch must reach the next
+      // turn, not the next chat open. Absent is the no-persona default.
+      ...persona === undefined ? {} : { persona },
+      ...generationType === 'normal' ? {} : { generationType },
     })
     // Carried forward, or a sticky entry would re-open its window every turn and
     // a cooldown would never elapse — the state exists precisely to span turns.
@@ -1411,7 +2673,14 @@ export class IrisAppService {
     // show up turns later as world info that stopped appearing. The same shape
     // as a preview that writes — a read-only path quietly changing chat state —
     // only hidden inside world-info timing instead of a variable table.
-    if (record) entry.timedEffects = built.timedEffects
+    if (record) {
+      entry.timedEffects = built.timedEffects
+      // Mirrored into the chat header, under the key upstream uses, so the
+      // windows ride the next save the way every other piece of chat metadata
+      // does. A restart without this would silently reset every sticky and
+      // cooldown window in every conversation.
+      writeTimedEffects(entry.header.chat_metadata, built.timedEffects)
+    }
 
     const contributions = [...built.contributions, ...injectedContributions(entry)]
 
@@ -1423,23 +2692,65 @@ export class IrisAppService {
     // overwriting it would replace the record of the turn the user is looking at.
     const turn = record ? entry.pending?.turn : undefined
     if (turn !== undefined) {
-      entry.itemizations.set(turn, this.#itemizationOf(
-        assemble({ contributions, history: this.#history(entry, session), budget: this.#budget(count) }),
-        turn,
-        false,
-      ))
+      const assembled = assemble({
+        contributions,
+        history: this.#history(entry, session),
+        budget: this.#budget(count, window),
+      })
+      // The first floor the budget kept is the one the dropped count names —
+      // history entries map one-to-one onto chat-file lines. This is
+      // `chat_metadata.lastInContextMessageId` upstream and, like it, a real
+      // turn's byproduct: a preview must not write it.
+      entry.firstIncludedMessageId = assembled.overflow.droppedHistory
+      entry.itemizations.set(turn, this.#itemizationOf(assembled, turn, false))
     }
 
     return contributions
   }
 
+  /**
+   * The chat-bound world book, read fresh for every assembly.
+   *
+   * `chat_metadata.world_info` holds a book **name**; the file is loaded here,
+   * per generation, because this is the one body of world info a card writes
+   * during play — `getOrCreateChatWorldbook` mints it and
+   * `createWorldbookEntries` appends to it, and a resolution taken at chat-open
+   * time would never see any of that.
+   *
+   * Upstream's guard is reproduced (`getChatLore`, `world-info.js:4430`): the
+   * key is only honoured when the named file exists (a failed read is a skip,
+   * not an error), and a chat book that is also globally selected is skipped —
+   * global wins that overlap. When the chat book *is* the character's bound
+   * book, upstream drops the character side instead ("already activated in chat
+   * lore! Skipping...", `world-info.js:4392`), and that guard lives in
+   * `scanEntriesOf`, where both sides are visible at once.
+   * @param entry - the conversation.
+   * @returns zero or one book; the key holds a single name upstream.
+   */
+  async #chatLore(entry: ChatEntry): Promise<{ world: string, entries: LorebookEntry[] }[]> {
+    if (this.#options.worldbooks === undefined) return []
+    const name = entry.header.chat_metadata['world_info']
+    if (typeof name !== 'string' || name === '') return []
+
+    if (this.#options.settings.globalSelect().includes(name)) return []
+
+    try {
+      const book = await this.#options.worldbooks.read(name)
+      return [{ world: name, entries: Object.values(book.entries) }]
+    } catch {
+      // Deleted, or never existed under this name. Upstream checks the key
+      // against `world_names` and silently ignores a miss; so does this.
+      return []
+    }
+  }
+
   /** The budget every assembly for this host runs under. */
-  #budget(count: (text: string) => number): { context: number, reserve: number, count: (text: string) => number } {
-    return { context: this.#options.contextWindow, reserve: this.#options.reserveTokens, count }
+  #budget(count: (text: string) => number, window?: number): { context: number, reserve: number, count: (text: string) => number } {
+    return { context: window ?? this.#options.contextWindow, reserve: this.#options.reserveTokens, count }
   }
 
   /** Project an assembly onto the wire shape. */
-  #itemizationOf(result: AssembleResult, turn: number, preview: boolean): PromptItemization {
+  #itemizationOf(result: AssembleResult, turn: number, preview: boolean, window?: number): PromptItemization {
     return {
       turn,
       entries: result.items.map(item => ({
@@ -1452,7 +2763,10 @@ export class IrisAppService {
         ...item.role === undefined || item.role === 'system' ? {} : { role: item.role },
       })),
       tokens: result.tokens,
-      budget: { context: this.#options.contextWindow, reserve: this.#options.reserveTokens },
+      budget: {
+        context: window ?? this.#options.contextWindow,
+        reserve: this.#options.reserveTokens,
+      },
       droppedHistory: result.overflow.droppedHistory,
       overBudget: result.overflow.overBudget,
       preview,
@@ -1468,31 +2782,44 @@ export class IrisAppService {
    * @param entry - the conversation.
    * @returns the itemization of a request that has not been sent.
    */
-  #previewItemization(entry: ChatEntry): PromptItemization {
+  async #previewItemization(entry: ChatEntry): Promise<PromptItemization> {
     const count = (text: string): number => this.#counter.count(text)
     const names = entry.names
+    const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
+    const window = windowOf(settings, this.#options.contextWindow)
+    const worldbookSettings = this.#options.settings.worldbookSettings()
+    const persona = await this.#activePersona()
     const built = buildPrompt({
       card: entry.card,
       ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
-      preset: this.#options.preset,
+      preset: this.#activePreset,
       userName: names.user,
       characterName: names.character,
       history: this.#history(entry, entry.session),
       count,
-      worldInfoBudget: Math.floor(this.#options.contextWindow * WORLD_INFO_BUDGET_SHARE),
+      // Against the window this chat actually assembles under (a per-chat
+      // override included), with `world_info_budget` and `world_info_budget_cap`
+      // from the stored settings.
+      worldInfoBudget: computeBudget(window, worldbookSettings.budgetPercent, worldbookSettings.budgetCap),
       // The preview has to show what would actually be sent, macros included —
       // an itemization that still holds `{{format_message_variable::…}}` would
       // hide precisely the defect this seam exists to prevent.
       substitute: entry.substitute,
       ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
+      activationSettings: activationSettingsOf(worldbookSettings),
+      insertionStrategy: worldbookSettings.insertionStrategy,
+      chatLore: await this.#chatLore(entry),
+      // Same persona read as a real turn: the preview has to show what would
+      // actually be sent, and that includes the persona's slot.
+      ...persona === undefined ? {} : { persona },
     })
     const contributions = [...built.contributions, ...injectedContributions(entry)]
     const result = assemble({
       contributions,
       history: this.#history(entry, entry.session),
-      budget: this.#budget(count),
+      budget: this.#budget(count, window),
     })
-    return this.#itemizationOf(result, entry.lastTurn + 1, true)
+    return this.#itemizationOf(result, entry.lastTurn + 1, true, window)
   }
 
   /**
@@ -1570,7 +2897,7 @@ export class IrisAppService {
     const kept = maxHistory === undefined ? history : history.slice(Math.max(0, history.length - maxHistory))
 
     const result = assemble({
-      contributions: this.#contributions(entry, entry.session, count, false),
+      contributions: await this.#contributions(entry, entry.session, count, false),
       history: [...kept, { role: 'user' as const, text: userInput }],
       budget: this.#budget(count),
     })
@@ -1630,28 +2957,34 @@ export class IrisAppService {
   }
 
   /**
-   * Rewrite a settled reply the way a permanent script says it should be stored.
+   * Rewrite a settled reply the way reply shaping and permanent scripts say it
+   * should be stored.
    *
-   * Only the scripts marked neither display-only nor prompt-only reach this:
-   * they change the message itself, which is why the render and send directions
-   * then leave the stored form alone. It goes through the chat-file projection
-   * because an append-only log cannot rewrite a message in place — the same
-   * route `chat.editMessage` takes, and for the same reason.
+   * Two writers land here with one shape: the reply-shaping settings (the
+   * sentence trim) and the chat's permanent regex scripts — both change the
+   * message itself, which is why the render and send directions then leave the
+   * stored form alone. It goes through the chat-file projection because an
+   * append-only log cannot rewrite a message in place — the same route
+   * `chat.editMessage` takes, and for the same reason.
    * @param entry - the conversation.
    * @param scripts - the chat's ordered scripts.
-   * @param text - the reply as generated.
+   * @param generated - the reply as the model produced it.
+   * @param stored - the reply after reply shaping, before scripts.
    */
-  #storeRewritten(entry: ChatEntry, scripts: readonly RegexScript[], text: string): void {
-    if (scripts.length === 0) return
-    const stored = runScripts(text, 'assistant', scripts, { substitute: entry.substitute })
-    if (stored === text) return
+  #storeRewritten(entry: ChatEntry, scripts: readonly RegexScript[], generated: string, stored: string): void {
+    let final = stored
+    if (scripts.length > 0) {
+      const rewritten = runScripts(final, 'assistant', scripts, { substitute: entry.substitute })
+      if (rewritten !== final) final = rewritten
+    }
+    if (final === generated) return
 
     const { messages } = entry.toFile()
     const index = messages.length - 1
     const line = messages[index]
     if (line === undefined || line.is_user) return
-    line.mes = stored
-    if (line.swipes !== undefined) line.swipes[line.swipe_id ?? 0] = stored
+    line.mes = final
+    if (line.swipes !== undefined) line.swipes[line.swipe_id ?? 0] = final
     entry.rebuild(messages, position => position)
   }
 
@@ -1953,7 +3286,15 @@ export function injectedContributions(entry: ChatEntry): Contribution[] {
       id: `script.${key}`,
       label: `Script injection (${key})`,
       placement,
-      text: injection.value,
+      // Expanded here, at assembly, against the chat's own expander — the same
+      // projection every other contribution gets from `buildPrompt`. Measured on
+      // the 不要被神隐挑战 card: its engine injects a prompt carrying `{{user}}`,
+      // and the raw braces reached the provider — the host's own residual-macro
+      // report names exactly this as a fault ("Iris implements these, so the
+      // expansion did not reach that text"). The stored value stays raw on
+      // purpose: speaker names and variables are read at assembly time, so an
+      // injection keeps meaning what its author wrote across turns and renames.
+      text: entry.substitute(injection.value),
     })
   }
   return contributions
@@ -2078,5 +3419,200 @@ export function samplingOf(settings: GenerationSettings): GenerateOptions['sampl
     ...settings.frequencyPenalty === undefined ? {} : { frequencyPenalty: settings.frequencyPenalty },
     ...settings.presencePenalty === undefined ? {} : { presencePenalty: settings.presencePenalty },
     ...settings.seed === undefined ? {} : { seed: settings.seed },
+    ...settings.reasoningEffort === undefined ? {} : { reasoningEffort: settings.reasoningEffort },
   }
+}
+
+/**
+ * The context window one chat assembles under.
+ *
+ * Preset-scoped: the active preset's `openai_max_context` wins when it carries
+ * one (they always do in practice — measured on real presets: 4095 to
+ * 2 000 000), and the composition's value stands otherwise. A preset tuned for
+ * one window assembled against another does not fail loudly; it trims a
+ * different part of the conversation, which is the quiet kind of wrong.
+ * @param settings - the chat's merged settings.
+ * @param fallback - the composition's window.
+ * @returns the window in tokens.
+ */
+function windowOf(settings: GenerationSettings, fallback: number): number {
+  return settings.contextWindow ?? fallback
+}
+
+/**
+ * The markers upstream refuses to let the user untoggle, and the one rule the
+ * refusal follows.
+ *
+ * `isPromptToggleAllowed` (PromptManager.js:1099): a *marker* not on this list
+ * has no toggle at all; everything else — including `chatHistory` and
+ * `dialogueExamples`, which are markers and on the list — toggles freely.
+ * Mirrored exactly, because the list is upstream's opinion about which slots a
+ * prompt manager cannot function without, and a slot it cannot function
+ * without is a slot a preset cannot be edited to lose.
+ */
+const FORCE_TOGGLE_MARKERS = new Set([
+  'charDescription',
+  'charPersonality',
+  'scenario',
+  'personaDescription',
+  'worldInfoBefore',
+  'worldInfoAfter',
+  'main',
+  'chatHistory',
+  'dialogueExamples',
+])
+
+/**
+ * Whether the manager may toggle one prompt off, by upstream's rule.
+ * @param item - the prompt.
+ * @returns true when a toggle is allowed at all.
+ */
+function toggleAllowed(item: PromptItem): boolean {
+  if (item.marker === true) return FORCE_TOGGLE_MARKERS.has(item.identifier)
+  return true
+}
+
+/**
+ * The scalar fields of one preset that ride the global settings layer on a
+ * switch, mapped onto their GenerationSettings names.
+ *
+ * This is Iris's whole equivalent of upstream's 102-key `settingsToUpdate`
+ * overwrite table: the keys a preset can carry that this host *acts on*, and
+ * not one more. Applied to the **global** layer, so a chat-scoped override —
+ * an explicit decision made for one conversation — survives a preset switch,
+ * where upstream's single flat settings space has nothing to survive in.
+ *
+ * Garbage is skipped rather than refused: a preset with `"temperature": "high"`
+ * switches fine upstream (the DOM select simply fails to match), so it must not
+ * fail here either — one bad field must not take the whole preset down.
+ * @param preset - the preset being switched to.
+ * @returns a patch for `SettingsStore.set`, possibly empty.
+ */
+export function presetScalarPatch(preset: ChatCompletionPreset): Record<string, number | string> {
+  const numbers: [string, keyof GenerationSettings][] = [
+    ['temperature', 'temperature'],
+    ['openai_max_tokens', 'maxTokens'],
+    ['openai_max_context', 'contextWindow'],
+    ['top_p', 'topP'],
+    ['top_k', 'topK'],
+    ['min_p', 'minP'],
+    ['repetition_penalty', 'repetitionPenalty'],
+    ['frequency_penalty', 'frequencyPenalty'],
+    ['presence_penalty', 'presencePenalty'],
+    ['seed', 'seed'],
+  ]
+  const patch: Record<string, number | string> = {}
+  for (const [key, field] of numbers) {
+    const value = preset[key]
+    if (typeof value === 'number' && Number.isFinite(value)) patch[field] = value
+  }
+  const effort = preset['reasoning_effort']
+  if (typeof effort === 'string' && REASONING_EFFORT_VALUES.has(effort)) {
+    patch['reasoningEffort'] = effort
+  }
+  // A preset is a full snapshot upstream, and a Chat Completion preset carries
+  // its continue separator (`continue_postfix`, openai.js:496, default ' ').
+  // Real presets tune it — the double-newline spelling is how a preset asks a
+  // continued reply to start a fresh paragraph — so switching presets without
+  // it would silently keep the last preset's boundary. Stored as the word, not
+  // the literal, so the same refuse-garbage rule as everything else applies.
+  const postfix = preset['continue_postfix']
+  if (typeof postfix === 'string') {
+    const word = (Object.entries(CONTINUE_POSTFIX_SEPARATORS) as [ContinuePostfix, string][])
+      .find(([, separator]) => separator === postfix)?.[0]
+    if (word !== undefined) patch['continuePostfix'] = word
+  }
+  return patch
+}
+
+/** The reasoning-effort words upstream accepts, as a set for the patch filter. */
+const REASONING_EFFORT_VALUES: ReadonlySet<string> = new Set<string>(['auto', 'low', 'medium', 'high', 'min', 'max'])
+
+/**
+ * The built-in identifiers the manager must not let a new prompt overwrite.
+ *
+ * These are the assembler's slots — `resolvePreset` reads them from the
+ * markers map, not from user text — and a `preset.upsertPrompt` that created
+ * one would put literal content where the host fills in live data.
+ */
+const BUILTIN_MARKERS: ReadonlySet<string> = new Set([
+  'main', 'nsfw', 'worldInfoBefore', 'personaDescription', 'charDescription',
+  'charPersonality', 'scenario', 'enhanceDefinitions', 'worldInfoAfter',
+  'dialogueExamples', 'chatHistory', 'jailbreak',
+])
+
+/**
+ * The prompt manager's ordering: the global sentinel first, the legacy one as a
+ * last resort — the same chain the assembler runs, kept identical so the
+ * manager can only ever edit the list the assembler reads.
+ * @param preset - the preset.
+ * @returns the chosen order group, creating nothing.
+ */
+function chosenOrder(preset: ChatCompletionPreset): PromptOrder | undefined {
+  const orders = preset.prompt_order ?? []
+  return orders.find(entry => entry.character_id === GLOBAL_ORDER_ID)
+    ?? orders.find(entry => entry.character_id === LEGACY_ORDER_ID)
+}
+
+/**
+ * The manager's view of one preset: every prompt, in order, with its toggle.
+ *
+ * Prompts missing from the ordering sit disabled at the end, which is the
+ * reading the assembler gives them too — absence from the order is how a
+ * preset turns a prompt off.
+ * @param name - the preset's library name, when it has one.
+ * @param preset - the preset itself.
+ * @returns the view.
+ */
+function managerViewOf(name: string | undefined, preset: ChatCompletionPreset): PresetManagerView {
+  const order = chosenOrder(preset)
+  const enabled = new Map((order?.order ?? []).map(entry => [entry.identifier, entry.enabled]))
+  const position = new Map((order?.order ?? []).map((entry, index) => [entry.identifier, index]))
+
+  const prompts: PresetPromptView[] = preset.prompts.map(item => {
+    const absolute = item.injection_position === 'absolute' || item.injection_position === 1
+    return {
+      id: item.identifier,
+      ...item.name === undefined ? {} : { name: item.name },
+      ...item.role === undefined ? {} : { role: item.role },
+      // No ordering at all runs everything on, in file order — the same
+      // fallback `resolveOrder` makes.
+      enabled: order === undefined ? true : enabled.get(item.identifier) ?? false,
+      ...item.marker === true ? { marker: true } : {},
+      ...item.system_prompt === true ? { systemPrompt: true } : {},
+      ...(item.injection_position === 'relative' || item.injection_position === 'absolute')
+        ? { injectionPosition: item.injection_position }
+        : {},
+      ...absolute && item.injection_depth !== undefined ? { injectionDepth: item.injection_depth } : {},
+      ...absolute && item.injection_order !== undefined ? { injectionOrder: item.injection_order } : {},
+      ...item.forbid_overrides === true ? { forbidOverrides: true } : {},
+      toggleable: toggleAllowed(item),
+    }
+  })
+  // Stable sort by order position; unpositioned prompts (Infinity) keep their
+  // file order behind the ordered ones.
+  prompts.sort((left, right) => (position.get(left.id) ?? Number.POSITIVE_INFINITY) - (position.get(right.id) ?? Number.POSITIVE_INFINITY))
+  return {
+    ...name === undefined ? {} : { name },
+    prompts,
+  }
+}
+
+/**
+ * Give the preset an ordering group to mutate, when it has none.
+ *
+ * Seeded with every prompt enabled in file order — the exact semantics the
+ * assembler gives an order-less preset — so the first toggle against such a
+ * preset turns one prompt off instead of inventing a list that contradicts
+ * what was being assembled a moment before.
+ * @param preset - the preset to seed; not mutated.
+ * @returns the preset carrying a global order group.
+ */
+function withSeededOrder(preset: ChatCompletionPreset): ChatCompletionPreset {
+  if (chosenOrder(preset) !== undefined) return preset
+  const seeded: PromptOrder = {
+    character_id: GLOBAL_ORDER_ID,
+    order: preset.prompts.map(prompt => ({ identifier: prompt.identifier, enabled: true })),
+  }
+  return { ...preset, prompt_order: [...preset.prompt_order ?? [], seeded] }
 }

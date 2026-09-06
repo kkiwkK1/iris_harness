@@ -145,3 +145,146 @@ test('history pins the opening message against trimming', async () => {
 
   assert.equal(historyFromSession(session)[0]?.pinned, true)
 })
+
+test('continueTurn rejoins the continued reading and keeps its siblings', async () => {
+  const { driver, session, seen } = harness([' first act.', ' and more.'])
+  await driver.send(session, 'begin')
+
+  const candidate = await driver.continueTurn(session, {}, 'carry the scene on')
+
+  // The recorded candidate is the JOINED text, and it is a second reading of
+  // the same turn — the first one stays swipable, which is what SillyTavern's
+  // in-place continue would have overwritten.
+  assert.equal(textOf(candidate), ' first act. and more.')
+  assert.equal(listCandidates(session, 0).length, 2)
+  assert.equal(session.events.some(event => event.type === 'turn/start' && event.data.turn === 1), false)
+
+  // The nudge is the request's LAST message — after the depth-0 injection,
+  // which is where depth 0 lands by convention.
+  const texts = seen[1]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.equal(texts.at(-1), 'carry the scene on')
+})
+
+test('continueTurn without a nudge still closes on the conversation', async () => {
+  const { driver, session } = harness([' first act.', ' and more.'])
+  await driver.send(session, 'begin')
+
+  const candidate = await driver.continueTurn(session)
+  assert.equal(textOf(candidate), ' first act. and more.')
+})
+
+test('continueTurn refuses a log whose newest turn has no reply', async () => {
+  const { driver, session } = harness(['unused'])
+  await assert.rejects(() => driver.continueTurn(session), TurnError)
+})
+
+test('impersonate records a user line, no reply, and the instruction last', async () => {
+  const { driver, session, seen } = harness(['The maps are in the vault.', 'I will look for it myself.'])
+  await driver.send(session, 'Where are the maps?')
+
+  const text = await driver.impersonate(session, {}, 'write as the traveller')
+
+  const texts = seen[1]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  // The line being written was not part of its own context, and the
+  // instruction closed the request.
+  assert.equal(texts.includes('I will look for it myself.'), false, 'the generated line was in its own context')
+  assert.equal(texts.at(-1), 'write as the traveller')
+
+  // It settled as a user line opening its own turn, with no reply after it.
+  assert.equal(text, 'I will look for it myself.')
+  const userLine = session.events.filter(event => event.type === 'user/message').at(-1)
+  const reply = session.events.filter(event => event.type === 'assistant/message').at(-1)
+  assert.notEqual(userLine, undefined)
+  assert.notEqual(reply, undefined)
+  // The impersonated line is the NEWEST message: the only assistant/message on
+  // the log is the earlier turn's reply.
+  assert.equal(
+    (reply?.seq ?? Number.NEGATIVE_INFINITY) < (userLine?.seq ?? 0),
+    true,
+    'the impersonated line is the newest message on the log',
+  )
+
+  // The next send opens the turn AFTER the impersonated one.
+  await driver.send(session, 'Thanks.')
+  assert.equal(session.events.some(event => event.type === 'turn/start' && event.data.turn === 2), true)
+})
+
+test('a continue carries its separator on the request, not only on the composite', async () => {
+  const { driver, session, seen } = harness(['A reply.', ' And more.'])
+  await driver.send(session, 'begin')
+
+  const candidate = await driver.continueTurn(session, {}, 'carry on', '\n\n')
+
+  // The provider reads the same boundary it is expected to write from — the
+  // continued floor's text in the request carries the separator, exactly the
+  // way upstream appends `continue_postfix` to `cyclePrompt` (script.js:4919).
+  const texts = seen[1]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.equal(texts.includes('A reply.\n\n'), true, 'the request never carried the continue separator')
+  // The nudge still closes the request, after the separator.
+  assert.equal(texts.at(-1), 'carry on')
+  // And the recorded composite joins seed, separator, continuation.
+  assert.equal(textOf(candidate), 'A reply.\n\n And more.')
+})
+
+test('a seed already ending in a space takes no separator, so a space postfix cannot stack', async () => {
+  const { driver, session, seen } = harness(['A reply. ', ' And more.'])
+  await driver.send(session, 'begin')
+
+  const candidate = await driver.continueTurn(session, {}, undefined, ' ')
+
+  const texts = seen[1]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.equal(texts.includes('A reply. '), true, 'the trailing space was not left alone')
+  assert.equal(textOf(candidate), 'A reply.  And more.')
+})
+
+test('squashSystemMessages merges adjacent system messages and leaves the tail alone', async () => {
+  // Two depth-0 injections ride beside each other with the same role: exactly
+  // the shape a provider that takes repeated injected messages badly chokes on.
+  const injections: Contribution[] = [
+    { id: 'persona', placement: { kind: 'system', order: 0 }, text: 'You are Aria.' },
+    { id: 'injA', placement: { kind: 'depth', depth: 0, role: 'system' }, text: 'Injection A.' },
+    { id: 'injB', placement: { kind: 'depth', depth: 0, role: 'system' }, text: 'Injection B.' },
+  ]
+  const build = (squash: boolean) => {
+    const scripted = scriptedStream(['unused'])
+    const driver = new TurnDriver({
+      stream: scripted.stream,
+      provider: 'test',
+      model: 'test-model',
+      contributions: () => injections,
+      history: session => historyFromSession(session),
+      budget: { context: 10_000, reserve: 0, count: text => text.length },
+      ...squash ? { squashSystemMessages: true } : {},
+    })
+    return { driver, seen: scripted.seen, session: Session.create(SessionId(`squash-${String(squash)}`)) }
+  }
+
+  // Off (the default): the request rides exactly as it was assembled. The two
+  // injections are adjacent, which is the run the squash collapses.
+  const off = build(false)
+  await off.driver.send(off.session, 'Hello?')
+  const baseline = off.seen[0]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.equal(baseline.at(-2), 'Injection A.')
+  assert.equal(baseline.at(-1), 'Injection B.')
+
+  // On: adjacent system messages merge, joining with a blank line; nothing
+  // else about the conversation's shape changes.
+  const on = build(true)
+  await on.driver.send(on.session, 'Hello?')
+  const texts = on.seen[0]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.deepEqual(texts, [...baseline.slice(0, -2), 'Injection A.\n\nInjection B.'])
+
+  // A continue's nudge is exempt: it stays the request's LAST message, its own
+  // message, even when it follows a merged run.
+  await on.driver.send(on.session, 'And then?')
+  await on.driver.continueTurn(on.session, {}, 'carry the scene on')
+  const continued = on.seen[2]?.messages.map(message =>
+    message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  assert.equal(continued.at(-1), 'carry the scene on')
+})

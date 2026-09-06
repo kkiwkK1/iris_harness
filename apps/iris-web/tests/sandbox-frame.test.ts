@@ -9,6 +9,7 @@ import { UPSTREAM_MEMBERS } from '../src/sandbox/upstream-surface.ts'
 import { SCRIPT_REGISTRY } from '../src/sandbox/preamble.ts'
 import { SHARED_ORIGINAL } from '../src/sandbox/identity.ts'
 import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
+import type { ScriptContext } from '@iris/protocol'
 
 /**
  * A frame realm made of stubs, plus the levers a test needs.
@@ -16,8 +17,10 @@ import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
  *   card's markup and never receives a `run` message, so it is served at
  *   install; a script frame is served on `run`. Defaults to a script frame,
  *   which is what every test written before the distinction existed assumes.
+ *   `seeded` hands the frame the inlined-snapshot seed a srcdoc would carry —
+ *   the document-order guarantee that lets a parse-time call answer truth.
  */
-function realm(options?: { interfaceFrame?: boolean }): {
+function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext }): {
   posted: FromFrame[]
   send: (message: ToFrame) => void
   /** The globals the last evaluation was handed, by name. */
@@ -30,6 +33,8 @@ function realm(options?: { interfaceFrame?: boolean }): {
   forwarded: (name: string) => unknown
   /** Nodes the sandbox appended to the container itself. */
   appended: () => unknown[]
+  /** Requests the frame handed to the native fetch, exactly as passed. */
+  nativeFetches: () => { input: unknown, init: unknown }[]
   /** The reporter the toastr substitute was handed, if it was handed one. */
   reportFromToastr: () => ((message: string, channel: 'note' | 'error') => void) | undefined
   /** The `localStorage` the frame asked to have installed, if it asked. */
@@ -91,6 +96,7 @@ function realm(options?: { interfaceFrame?: boolean }): {
 
   let toastrReport: ((message: string, channel: 'note' | 'error') => void) | undefined
   let installedStorage: Record<string, unknown> | undefined
+  const nativeCalls: { input: unknown, init: unknown }[] = []
   const env: FrameEnv = {
     // The real table: a test has no document to load the members script
     // into, so it hands the core the same members `members-entry.ts`
@@ -99,6 +105,11 @@ function realm(options?: { interfaceFrame?: boolean }): {
     token: 'tok',
     container,
     ...(options?.interfaceFrame === true ? { interfaceFrame: true } : {}),
+    // The seed a srcdoc would have inlined ahead of this bootstrap. The real
+    // reader (frame-entry) consumes and deletes the global; here the snapshot
+    // itself is the fixture, and "was it read before the body ran" is what the
+    // test below asserts.
+    ...(options?.seeded === undefined ? {} : { seededContext: () => options.seeded }),
     provideToastr: report => {
       toastrReport = report
     },
@@ -126,7 +137,16 @@ function realm(options?: { interfaceFrame?: boolean }): {
       setTimeout(): string {
         return this === undefined ? 'unbound' : 'bound'
       },
+      // The native fetch of the realm, defined before install: the frame
+      // captures it at install time, so a fetch seeded later would never be
+      // seen — which is exactly the property the bridge relies on.
+      fetch: (input: unknown, init?: unknown) => {
+        nativeCalls.push({ input, init })
+        return Promise.resolve(new Response('native body'))
+      },
     },
+    // The srcdoc's inherited base: the shell page's URL.
+    baseUrl: 'http://127.0.0.1:8791/chats/current',
     post: message => posted.push(message),
     defineForwarding: (name, read) => forwarded.set(name, read),
     listScript: id => { if (id !== undefined) listed.push(id) },
@@ -155,6 +175,7 @@ function realm(options?: { interfaceFrame?: boolean }): {
     realWindow: env.realWindow as unknown as Record<string, unknown>,
     /** What the sandbox put into the container, in order. */
     appended: () => appended,
+    nativeFetches: () => nativeCalls,
     reportFromToastr: () => toastrReport,
     storage: () => installedStorage,
     run: next => {
@@ -237,6 +258,19 @@ test('exactly the outward-reaching names are shadowed', () => {
     'triggerSlash',
     'getScriptId',
     'EjsTemplate',
+    // The same-origin fetch bridge, which replaces the name outright.
+    'fetch',
+    /*
+     * The dialog trio, bridged for the same reason `fetch` is: without
+     * `allow-modals` the browser answers all three with silence, which is how a
+     * card's chosen failure channel was swallowed. They sit at `core`'s tail,
+     * immediately after `fetch` — the position the values array must mirror,
+     * because the name-to-value pairing is positional (pinned by the alignment
+     * test below).
+     */
+    'alert',
+    'confirm',
+    'prompt',
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
@@ -258,6 +292,7 @@ test('exactly the outward-reaching names are shadowed', () => {
     'updateScriptButtonsWith',
     'getCurrentMessageId',
     'getChatMessages',
+    'getWorldbookNames',
     'getCharWorldbookNames',
     'getLorebookSettings',
     'injectPrompts',
@@ -271,8 +306,25 @@ test('exactly the outward-reaching names are shadowed', () => {
     'getWorldbook',
     'replaceWorldbook',
     'updateWorldbookWith',
+    // The chat-book and creation family, added for the card that mints a chat
+    // world book at runtime and appends entries to it while playing.
+    // (`getWorldbookNames` itself is listed above, where the page-globals merge
+    // placed it.)
+    'getGlobalWorldbookNames',
+    'getChatWorldbookName',
+    'rebindChatWorldbook',
+    'rebindGlobalWorldbooks',
+    'createWorldbook',
+    'getOrCreateChatWorldbook',
+    'createWorldbookEntries',
     'swipeTo',
+    // The chat-patch member, bare like upstream's injected iframe API, with
+    // the append and delete arms that share its route.
+    'setChatMessages',
+    'createChatMessages',
+    'deleteChatMessages',
     'generate',
+    'generateRaw',
     'substitudeMacros',
     'eventOn',
     'eventOnce',
@@ -288,6 +340,48 @@ test('exactly the outward-reaching names are shadowed', () => {
     'mvu_events',
     'TavernHelper',
   ])
+})
+
+test('the dialog bridges sit at their own names, and no Tavern Helper member slid', () => {
+  /*
+   * The shadowed names pair with their values **positionally** (`new
+   * Function(...names)` fed the values in order), and the hazard note on
+   * `resolveValues` records a real incident of the silent shift. The dialog
+   * bridges were appended at `core`'s tail — immediately after `fetch`, ahead
+   * of the Tavern Helper block — so their values have to sit at the same three
+   * indexes. One round of calls tells every wrong arrangement apart: a bridge
+   * under a helper's name posts a dialog; a helper under a bridge's name posts
+   * no dialog at all.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  let confirmed: unknown
+  let answered: unknown
+  evaluate(scope, globals => {
+    ;(globals['alert'] as (text: string) => undefined)('发送失败: 400')
+    confirmed = (globals['confirm'] as (text: string) => boolean)('proceed?')
+    answered = (globals['prompt'] as (text: string) => string | null)('name?')
+  })
+
+  assert.deepEqual(
+    scope.posted.filter(message => message.type === 'dialog'),
+    [
+      { iris: 'tok', type: 'dialog', kind: 'alert', text: '发送失败: 400' },
+      { iris: 'tok', type: 'dialog', kind: 'confirm', text: 'proceed?' },
+      { iris: 'tok', type: 'dialog', kind: 'prompt', text: 'name?' },
+    ],
+    'each name must reach the shell as its own kind, in call order',
+  )
+  assert.equal(confirmed, false, 'confirm answers what a browser without modals answers')
+  assert.equal(answered, null, 'prompt answers what a browser without modals answers')
+
+  // And the direction the dialog assertions cannot see: the first Tavern
+  // Helper name must still reach the first Tavern Helper member. With the
+  // values left where "appended last" put them, this name would answer the
+  // member three places later — `getTavernHelperVersion`'s string, not a table.
+  // The snapshot's own variables table is what a correct pairing answers with.
+  const variables = (scope.globals()['getVariables'] as () => unknown)()
+  assert.deepEqual(variables, { 好感度: 32 }, 'the first helper name still reaches its own member')
 })
 
 test('window, self and globalThis are the same object a card can rely on', () => {
@@ -401,6 +495,130 @@ test('the three formerly-unbridged parent globals reach the same objects as the 
  * the test back alongside it — the distinction it protects (unbuilt is not
  * forbidden, and a card author debugging needs the right one) still matters.
  */
+
+test('the parent window event surface subscribes on the same bus as eventSource', () => {
+  /*
+   * Upstream's parent is a real window, so `window.top.addEventListener` is the
+   * browser's own bus and a dispatch anywhere on the page is heard. Here the
+   * stand-in routes onto the frame's EventBus — the same one `eventSource`
+   * wraps — because two buses would split "subscribe through the parent, emit
+   * through `eventEmit`" the way the eventSource bridging note describes. The
+   * projector card registers `MvuFloatingBgRequest` through `window.top` and
+   * the status bar dispatches it from another frame; neither name is in any TH
+   * table, which is why this registers without the name guard.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let parent: Record<string, unknown> | undefined
+  let bare: Record<string, unknown> | undefined
+  evaluate(scope, globals => {
+    parent = globals['parent'] as Record<string, unknown>
+    bare = globals
+  })
+
+  const heard: unknown[] = []
+  ;(parent?.['addEventListener'] as (event: string, listener: (event: unknown) => void) => void)(
+    'MvuFloatingBgRequest',
+    event => heard.push(event),
+  )
+  void (bare?.['eventEmit'] as (event: string, ...args: unknown[]) => Promise<void>)(
+    'MvuFloatingBgRequest',
+    { type: 'MvuFloatingBgRequest', detail: { action: 'show', src: 'x.png' } },
+  )
+
+  return Promise.resolve().then(() => {
+    assert.deepEqual(heard, [{ type: 'MvuFloatingBgRequest', detail: { action: 'show', src: 'x.png' } }])
+  })
+})
+
+test('parent.removeEventListener removes what addEventListener registered', () => {
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let parent: Record<string, unknown> | undefined
+  let emit: ((event: string, ...args: unknown[]) => Promise<void>) | undefined
+  const heard: string[] = []
+  evaluate(scope, globals => {
+    parent = globals['parent'] as Record<string, unknown>
+    emit = globals['eventEmit'] as (event: string, ...args: unknown[]) => Promise<void>
+  })
+
+  const add = parent?.['addEventListener'] as (event: string, listener: (event: unknown) => void) => void
+  const remove = parent?.['removeEventListener'] as (
+    event: string,
+    listener: (event: unknown) => void,
+  ) => void
+  const listener = (): void => {
+    heard.push('fired')
+  }
+  add('MvuFloatingBgRequest', listener)
+  remove('MvuFloatingBgRequest', listener)
+  void emit?.('MvuFloatingBgRequest')
+
+  return Promise.resolve().then(() => {
+    assert.deepEqual(heard, [], 'a removed listener was still called')
+  })
+})
+
+test('parent.dispatchEvent posts a winevent carrying the type and the detail', () => {
+  /*
+   * The dispatch cannot deliver into a sibling frame itself — no opaque origin
+   * can reach one — so it travels to the shell, which rebroadcasts to every
+   * frame of the card. What this frame owes the shell is the event's own two
+   * facts, named as the protocol names them.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    const dispatch = parent['dispatchEvent'] as (event: unknown) => boolean
+    assert.equal(dispatch({ type: 'MvuFloatingBgRequest', detail: { action: 'hide' } }), true)
+  })
+
+  const sent = scope.posted.find(message => message.type === 'winevent')
+  assert.ok(sent !== undefined, 'a dispatch never reached the shell')
+  assert.deepEqual(
+    sent,
+    { iris: 'tok', type: 'winevent', event: 'MvuFloatingBgRequest', detail: { action: 'hide' } },
+  )
+})
+
+test('parent.dispatchEvent without a type is refused by name', () => {
+  // A null or typeless argument is a card bug, and the refusal should say which
+  // member refused rather than dying as `Cannot read properties of undefined`.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  let caught: unknown
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    try {
+      ;(parent['dispatchEvent'] as (event: unknown) => boolean)({})
+      caught = undefined
+    } catch (error: unknown) {
+      caught = error
+    }
+  })
+
+  assert.ok(caught instanceof UnsupportedApiError)
+  assert.match((caught as Error).message, /parent\.dispatchEvent/u)
+})
+
+test('the window event surface is read-only on the parent, like its native namesakes', () => {
+  // On a real window these are host-implemented and unwritable; a card that
+  // overwrites `parent.addEventListener` would be redefining the page itself.
+  const scope = realm()
+  let caught: unknown
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    try {
+      parent['addEventListener'] = () => undefined
+    } catch (error: unknown) {
+      caught = error
+    }
+  })
+
+  assert.ok(caught instanceof UnsupportedApiError)
+})
+
 
 test('an unpublished parent member yields undefined and is reported, not thrown', () => {
   /*
@@ -670,6 +888,41 @@ test('`in` and a read agree about an unbuilt member', () => {
   })
 })
 
+test('a seeded frame answers a parse-time snapshot read with no context push at all', () => {
+  /*
+   * The timing invariant the srcdoc's seed position exists for, asserted on the
+   * consuming side. A message frame's inline card script runs while the
+   * document is still parsing, and the pushed `context` message cannot arrive
+   * yet — the runner sends it only after the frame reports ready, a full
+   * postMessage round trip later. 新·架空政治经济模拟器's status bar calls
+   * `getAllVariables()` exactly there, and with the seed unread the call was
+   * refused by name and the panel shipped dead.
+   *
+   * No `context` message is sent in this test at all: with the seed in place
+   * the first answer must be the floor's own truth, not a refusal. The seed
+   * making the call answer is what "the window is closed" means.
+   */
+  const scope = realm({
+    interfaceFrame: true,
+    seeded: snapshot({
+      variableLayers: { global: {}, character: {}, script: {}, chat: { hp: 5 } },
+    }),
+  })
+
+  let answer: unknown = 'unset'
+  let threw: string | undefined
+  evaluate(scope, globals => {
+    try {
+      answer = (globals['getAllVariables'] as () => unknown)()
+    } catch (error: unknown) {
+      threw = String(error instanceof Error ? error.message : error).slice(0, 120)
+    }
+  })
+
+  assert.equal(threw, undefined, `a parse-time read was refused: ${threw ?? ''}`)
+  assert.deepEqual(answer, { hp: 5 }, 'the seed was not the snapshot the call answered from')
+})
+
 test('the bridged globals are published, and the window aliases are not', () => {
   // Module code cannot be handed shadowed parameters, so in module mode the
   // published globals are the only bridge — which is how upstream does it too: a
@@ -689,6 +942,13 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'triggerSlash',
     'getScriptId',
     'EjsTemplate',
+    // The same-origin fetch bridge, published so imported bundles find it.
+    'fetch',
+    // The dialog trio, published like every bridged name so a module reaches
+    // the bridges too.
+    'alert',
+    'confirm',
+    'prompt',
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
@@ -710,6 +970,7 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'updateScriptButtonsWith',
     'getCurrentMessageId',
     'getChatMessages',
+    'getWorldbookNames',
     'getCharWorldbookNames',
     'getLorebookSettings',
     'injectPrompts',
@@ -723,8 +984,29 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'getWorldbook',
     'replaceWorldbook',
     'updateWorldbookWith',
+    // The chat-book and creation family, added for the card that mints a chat
+    // world book at runtime and appends entries to it while playing.
+    // (`getWorldbookNames` itself is listed above, where the page-globals merge
+    // placed it.)
+    'getGlobalWorldbookNames',
+    'getChatWorldbookName',
+    'rebindChatWorldbook',
+    'rebindGlobalWorldbooks',
+    'createWorldbook',
+    'getOrCreateChatWorldbook',
+    'createWorldbookEntries',
     'swipeTo',
+    // The chat-patch member, bare like upstream's injected iframe API, with
+    // the append and delete arms that share its route.
+    'setChatMessages',
+    'createChatMessages',
+    'deleteChatMessages',
     'generate',
+    // The caller-ordered generate, now on the bare surface where a card's
+    // script reads it. It was documented in this file's mapping table and never
+    // published — a bare `generateRaw(...)` was a ReferenceError inside the
+    // card's own catch, which reads to its player as "the plugin is missing".
+    'generateRaw',
     'substitudeMacros',
     'eventOn',
     'eventOnce',
@@ -743,7 +1025,89 @@ test('the bridged globals are published, and the window aliases are not', () => 
     // it is reported like anything else — rather than leaving co-located scripts
     // to fail on a preamble whose lookup does not exist.
     '__iris_script__',
+    // The shadowed window, for the preamble's `const window`: a module cannot
+    // be handed the shadow as a parameter and `top` cannot be published onto
+    // the real window, so it rides its own name.
+    '__iris_window__',
+    // The coordination pair, bare. A card's scripts reach these through the
+    // preamble, but the interface markup a script frame carries (神隐挑战's
+    // overlay renders into this very body) reads them as bare globals, and it
+    // opens with `typeof waitGlobalInitialized === 'undefined'` — upstream's
+    // predefine.js answers that in every iframe, so this surface does too.
+    'initializeGlobal',
+    'waitGlobalInitialized',
   ])
+})
+
+test('an interface frame’s bare SillyTavern answers once the context lands, not never', () => {
+  /*
+   * The interface install publishes the surface **before** any context can have
+   * arrived, and `resolveValues()` answered `undefined` for the two
+   * context-dependent names at that moment — an answer `defineProperty` then
+   * froze onto the window. Bare `SillyTavern` in interface markup therefore
+   * read absent forever, which is the exact answer "this host is not SillyTavern"
+   * that a plugin self-check fails on; the parent spelling was never wrong,
+   * because `parent.SillyTavern` answers live. So the context handler
+   * re-publishes the two names when they first have an answer, and the bare
+   * spelling agrees with the parent spelling from then on — checked here
+   * against the parent proxy, which is a source this list does not share.
+   */
+  const scope = realm({ interfaceFrame: true })
+  assert.equal(scope.publishedValue('SillyTavern'), undefined, 'published before the context arrived')
+  // The install-time parent proxy, captured before the re-publish narrows this
+  // test's recording of the published bag: the real frame defines properties
+  // additively, but the recorded snapshot here is whole-list.
+  const parent = scope.publishedValue('parent') as Record<string, unknown>
+
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  const bare = scope.publishedValue('SillyTavern')
+  assert.notEqual(bare, undefined, 'still undefined after the context landed')
+  assert.equal(bare, parent['SillyTavern'], 'bare and parent spellings disagree')
+
+  // `extension_settings` under the same rule, and re-published per snapshot:
+  // the settings proxy is rebuilt for every context message, and a stale one
+  // under the bare name would take a card's write to a dead object.
+  const first = scope.publishedValue('extension_settings')
+  assert.notEqual(first, undefined, 'extension_settings stayed absent after the context landed')
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'next' }) })
+  assert.notEqual(
+    scope.publishedValue('extension_settings'),
+    first,
+    'extension_settings was not re-published on the next snapshot',
+  )
+})
+
+test('an interface frame publishes the Tavern Helper surface bare', () => {
+  /*
+   * Upstream injects the Tavern Helper API into every message iframe as plain
+   * globals, so a message frame's own inline script reaches
+   * `setChatMessages(...)` bare. Namespaced-only here meant the measured card's
+   * start button clicked, ran, and died on a ReferenceError its own try/catch
+   * swallowed — the player saw a button that does nothing. The bare spellings
+   * must be the *same objects* the `parent.TavernHelper` spelling hands out:
+   * one surface, two ways to reach it.
+   */
+  const scope = realm({ interfaceFrame: true })
+  const parent = scope.publishedValue('parent') as Record<string, unknown>
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  const namespaced = parent['TavernHelper'] as Record<string, unknown>
+  assert.notEqual(namespaced, undefined, 'the parent spelling of the surface was absent')
+  for (const name of ['triggerSlash', 'setChatMessages', 'getChatMessages', 'eventOn']) {
+    assert.equal(
+      scope.publishedNames().includes(name),
+      true,
+      `the bare name ${name} stayed absent, so a card's own script cannot call it`,
+    )
+    assert.equal(
+      scope.publishedValue(name),
+      (namespaced as Record<string, unknown>)[name],
+      `the bare ${name} disagrees with the parent.TavernHelper spelling`,
+    )
+  }
+  // And the namespace itself is reachable bare too, matching the parent's copy.
+  assert.deepEqual(scope.publishedValue('TavernHelper'), namespaced)
 })
 
 test('a module body reports ran only after it has loaded', async () => {
@@ -825,6 +1189,180 @@ test('triggerSlash returns something awaitable', () => {
   })
 
   assert.ok(returned instanceof Promise)
+})
+
+/*
+ * The same-origin fetch bridge. The measured casualty it exists for:
+ * MagVarUpdate's bundle — imported by every MVU card — opens with
+ * `fetch('/version')`, which under `connect-src 'none'` was refused with a
+ * banner naming Iris's own host.
+ */
+
+/** Let the bridge's promise callbacks run. */
+const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
+
+test('a same-origin relative fetch rides the bridge and returns the content', async () => {
+  const scope = realm()
+  let response: Response | undefined
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/version').then(
+      answered => {
+        response = answered
+      },
+    )
+  })
+
+  const sent = scope.posted.find(message => message.type === 'fetch')
+  assert.ok(sent?.type === 'fetch', 'the request never went to the shell')
+  assert.equal(sent.url, 'http://127.0.0.1:8791/version', 'the card must not be asked to resolve it')
+  assert.deepEqual(scope.nativeFetches(), [], 'the native fetch would be refused by CSP again')
+
+  scope.send({
+    iris: 'tok',
+    type: 'fetch:ok',
+    id: sent.id,
+    content: '{"pkgVersion":"1.12.2"}',
+    status: 200,
+    contentType: 'application/json',
+  })
+  await settle()
+
+  assert.ok(response instanceof Response, 'the promise never resolved')
+  assert.equal(response.status, 200)
+  assert.equal(response.ok, true)
+  assert.equal(response.headers.get('content-type'), 'application/json')
+  assert.equal(await response.text(), '{"pkgVersion":"1.12.2"}', 'a real Response, so .json() works')
+})
+
+test('a fetch answer without status or type still reads as a plain 200', () => {
+  // The remote-dependency path predates the two fields and sends neither.
+  const scope = realm()
+  let response: Response | undefined
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/anything').then(
+      answered => {
+        response = answered
+      },
+    )
+  })
+  const sent = scope.posted.find(message => message.type === 'fetch')
+  assert.ok(sent?.type === 'fetch')
+  scope.send({ iris: 'tok', type: 'fetch:ok', id: sent.id, content: 'body' })
+  return Promise.resolve().then(async () => {
+    assert.equal(response?.status, 200)
+    assert.equal(await response?.text(), 'body')
+  })
+})
+
+test('a cross-origin fetch is left native, where CSP refuses and reports it', () => {
+  // Not bridging is the policy: the shell must not become a proxy for whatever
+  // host a card names. The native request is what trips `securitypolicyviolation`
+  // and produces the blocked report the shell displays.
+  const scope = realm()
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)(
+      'https://cdn.jsdelivr.net/npm/vue',
+    )
+  })
+
+  assert.equal(scope.posted.some(message => message.type === 'fetch'), false)
+  assert.equal(scope.nativeFetches().length, 1)
+  assert.equal(scope.nativeFetches()[0]?.input, 'https://cdn.jsdelivr.net/npm/vue')
+})
+
+test('a POST to our own origin is not bridged', () => {
+  /*
+   * GET is retrieval; a POST with the user's credentials attached could be a
+   * state-changing call to Iris itself. Upstream cards fetch their own server's
+   * endpoints that way, and here the refusal is honest: the endpoint does not
+   * exist, and the banner says so, instead of the shell executing the call.
+   */
+  const scope = realm()
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (i: string, init?: unknown) => Promise<Response>)(
+      '/api/chats/export',
+      { method: 'POST', body: '{"format":"jsonl"}' },
+    )
+  })
+
+  assert.equal(scope.posted.some(message => message.type === 'fetch'), false)
+  assert.equal(scope.nativeFetches().length, 1)
+})
+
+test('a request with headers is not bridged, because the wire carries none', () => {
+  // A bridge that quietly dropped a card's headers would answer a different
+  // request than the one it made; going native keeps the refusal truthful.
+  const scope = realm()
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (i: string, init?: unknown) => Promise<Response>)('/version', {
+      headers: { accept: 'application/json' },
+    })
+  })
+
+  assert.equal(scope.posted.some(message => message.type === 'fetch'), false)
+  assert.equal(scope.nativeFetches().length, 1)
+})
+
+test('an absolute URL on the shell origin rides the bridge too', () => {
+  const scope = realm()
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)(
+      'http://127.0.0.1:8791/api/thing',
+    )
+  })
+
+  const sent = scope.posted.find(message => message.type === 'fetch')
+  assert.ok(sent?.type === 'fetch')
+  assert.equal(sent.url, 'http://127.0.0.1:8791/api/thing')
+})
+
+test('a refused ride rejects the way a network failure would', async () => {
+  const scope = realm()
+  let failure: unknown
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/gone').catch(
+      error => {
+        failure = error
+      },
+    )
+  })
+
+  const sent = scope.posted.find(message => message.type === 'fetch')
+  assert.ok(sent?.type === 'fetch')
+  scope.send({ iris: 'tok', type: 'fetch:error', id: sent.id, message: 'HTTP 404' })
+  await settle()
+
+  assert.ok(failure instanceof Error)
+  assert.match((failure as Error).message, /404/)
+})
+
+test('a bodyless empty-status answer is still a Response', async () => {
+  // 204 forbids a body; building one would make the Response constructor throw
+  // inside the frame instead of answering the card.
+  const scope = realm()
+  let response: Response | undefined
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/done').then(
+      answered => {
+        response = answered
+      },
+    )
+  })
+
+  const sent = scope.posted.find(message => message.type === 'fetch')
+  assert.ok(sent?.type === 'fetch')
+  scope.send({ iris: 'tok', type: 'fetch:ok', id: sent.id, content: '', status: 204 })
+  await settle()
+
+  assert.equal(response?.status, 204)
+  assert.equal(await response?.text(), '')
+})
+
+test('the fetch bridge is published for module code as well', () => {
+  // Imported bundles read the window, not a parameter — the bridge only exists
+  // for them if publishing puts it there.
+  const scope = realm({ interfaceFrame: true })
+  assert.equal(typeof scope.publishedValue('fetch'), 'function')
 })
 
 test('the actions are reachable both directly and through getContext', () => {
@@ -3349,4 +3887,65 @@ test('its contentDocument is the virtual document, not null', () => {
     n => (n as { tagName?: string }).tagName === 'IFRAME',
   ) as { contentDocument: unknown }
   assert.equal(node.contentDocument, parentDoc)
+})
+
+test('an interface frame holds an Mvu surface, so the measured wait resolves', async () => {
+  /*
+   * The failure this closes, measured on 哈人冰恋世界: its status bar opens with
+   * `await waitGlobalInitialized('Mvu')` and draws its three panels only after.
+   * Upstream that wait ends because the MVU bundle publishes onto the shared
+   * host page and the interface iframe reads it through `predefine.js`'s live
+   * getter (`window.Mvu`, "只是为了兼容性") and hears `global_Mvu_initialized`
+   * on the page's event source. Across an opaque origin neither road exists —
+   * the bundle publishes into the *script* frame's bag — so the wait never
+   * resolved and the frame rendered its frame and never a single number.
+   *
+   * Iris cannot hand over the bundle's live object, but the bundle itself is a
+   * thin delegation: measured in the published artifact,
+   * `getMvuData` is `function(e){return getVariables(e)}` and `replaceMvuData`
+   * is `function(e,t){return replaceVariables(e,t)}` — the members this frame
+   * already has, with this frame's own floor semantics — and `events` is a
+   * constant table. So the surface is provided from those, and the wait
+   * resolves against it.
+   */
+  const scope = realm({ interfaceFrame: true })
+
+  const mvu = scope.publishedValue('Mvu') as Record<string, unknown>
+  assert.notEqual(mvu, undefined, 'no Mvu was published to the markup')
+  assert.equal(
+    (mvu['events'] as Record<string, string>)['VARIABLE_UPDATE_ENDED'],
+    'mag_variable_update_ended',
+    'the event constants drifted from the names the cards subscribe to',
+  )
+  assert.equal(typeof mvu['getMvuData'], 'function')
+  assert.equal(typeof mvu['replaceMvuData'], 'function')
+
+  // The measured shape of every status bar: wait first, then read.
+  const wait = scope.publishedValue('waitGlobalInitialized') as (name: string) => Promise<void>
+  await wait('Mvu')
+  assert.ok(true, 'the wait resolved — pre-fix this promise never settles')
+
+  // "并使之在当前 iframe 中可用": the wait also makes the name readable, and it
+  // reads the same surface the markup sees.
+  assert.equal(scope.forwarded('Mvu'), mvu)
+})
+
+test('a script frame is left alone: no stand-in where the real bundle runs', () => {
+  /*
+   * The stand-in exists for frames that can never see the bundle. A *script*
+   * frame is where the bundle itself runs and publishes the real `Mvu` via
+   * `_.set(window.parent, 'Mvu', …)`; pre-seeding the name there would hand the
+   * bundle's siblings a facade where they expect the live provider, and the
+   * cohabitation tests above pin that path. So the surface is
+   * interface-frames-only.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  assert.equal(
+    scope.publishedNames().includes('Mvu'),
+    false,
+    'a script frame was given a stand-in for a global its own bundle provides',
+  )
 })

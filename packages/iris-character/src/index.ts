@@ -18,6 +18,7 @@ export {
   decodeTextChunk,
   encodeCardPng,
   encodeTextChunk,
+  mutateCardPng,
   parsePngChunks,
   readCardChunks,
   serializePngChunks,

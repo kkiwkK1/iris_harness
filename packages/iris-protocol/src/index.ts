@@ -47,18 +47,33 @@ export {
 } from './rpc.ts'
 
 export type {
+  BackupPreview,
+  BackupPreviewFloor,
+  BackupReason,
+  BackupSummary,
+  ChatSearchHit,
+  ChatSearchMatch,
   ChatSummary,
   ChatView,
   CharacterSummary,
   ConnectionProfile,
+  ConnectionTestError,
+  ConnectionTestErrorCode,
   DebugReport,
   ReportGrade,
+  ContinuePostfix,
   GenerationSettings,
   InsertionStrategy,
   LorebookSettings,
   MessageView,
+  PersonaView,
+  PresetManagerView,
+  PresetPromptView,
+  PresetSummary,
   PromptItemEntry,
   PromptItemization,
+  ReasoningEffort,
+  RegexScriptView,
   ScriptChatMessage,
   ScriptContext,
   ScriptPromptPosition,
@@ -67,7 +82,14 @@ export type {
   ViewRole,
   WorldbookEntry,
   WorldbookPosition,
+  WorldbookSettingsView,
 } from './views.ts'
+
+export {
+  PROVIDER_PRESETS,
+  providerPreset,
+  type ProviderPreset,
+} from './providers.ts'
 
 /**
  * The client-side facade both halves agree on.

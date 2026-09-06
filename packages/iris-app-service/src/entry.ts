@@ -19,8 +19,9 @@
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { CharacterCard } from '@iris/character'
 import { listCandidates, selectedCandidate } from '@iris/chat'
-import type { TimedEffectState } from '@iris/lorebook'
+import type { TimedEffect, TimedEffectState } from '@iris/lorebook'
 import { expandHelperMacros } from '@iris/compat-tavernhelper'
+import { createMacroContext, createMemoryVariableStore, expandMacros, type MacroMessage, type MemoryVariableStore, type TokenBudget } from '@iris/macro'
 import { applyCommands, formatYamlBlock, loadInitVars, scanDialects, type MvuData } from '@iris/mvu'
 import { extractScripts } from '@iris/script'
 
@@ -40,8 +41,8 @@ import { scriptIdOf } from './script-variables.ts'
 
 import { busy } from './errors.ts'
 import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
-import { scriptsOf, substituteFor } from './regex.ts'
-import { textOf, toChatView, type Names, type PendingTurn } from './views.ts'
+import { scriptsOf } from './regex.ts'
+import { projectMessages, textOf, toChatView, type Names, type PendingTurn } from './views.ts'
 
 /** Iris's own header block inside a SillyTavern chat file. */
 export interface IrisChatMeta {
@@ -119,6 +120,86 @@ export function readMeta(header: SillyTavernChatHeader): IrisChatMeta {
  */
 function isMvuData(value: unknown): value is MvuData {
   return typeof value === 'object' && value !== null && 'stat_data' in value
+}
+
+/** The shape one sticky or cooldown window takes in `chat_metadata.timedWorldInfo`. */
+interface StoredTimedEffect {
+  hash: number
+  start: number
+  end: number
+  protected: boolean
+}
+
+/**
+ * Whether a value reads as one stored timed-effect window.
+ *
+ * Structural, not exact: upstream's own reader deletes entries whose value is
+ * "not an object" and accepts everything else, trusting the file it wrote. This
+ * checks the fields the engine will actually do arithmetic on, because a
+ * window carrying `start: "three"` would poison a comparison rather than throw.
+ * @param value - the candidate.
+ * @returns true when the shape is usable.
+ */
+function isStoredTimedEffect(value: unknown): value is StoredTimedEffect {
+  if (typeof value !== 'object' || value === null) return false
+  const row = value as Record<string, unknown>
+  return typeof row['hash'] === 'number'
+    && typeof row['start'] === 'number'
+    && typeof row['end'] === 'number'
+    && typeof row['protected'] === 'boolean'
+}
+
+/**
+ * Read the persisted sticky and cooldown windows out of a chat header.
+ *
+ * Upstream keeps these in `chat_metadata.timedWorldInfo` — regular chat
+ * metadata, saved with the chat file — keyed by `"<world>.<uid>"`, with the
+ * entry hash, the chat length the window opened at, and the chat length it
+ * closes at. Reading the same key and the same shape is what makes a window
+ * survive a host restart the way it survives anything else in SillyTavern, and
+ * what makes the key legible if a chat ever moves between the two programs.
+ * (The hashes themselves are Iris's and are not ST's; a chat arriving from
+ * upstream carries windows that match no Iris entry, and the engine's own
+ * rule for that — keep the window until it would have expired, then drop it —
+ * is the gentlest possible landing.)
+ * @param metadata - the chat header's metadata block.
+ * @returns the windows, or undefined when none are stored.
+ */
+export function readTimedEffects(metadata: Record<string, unknown>): TimedEffectState | undefined {
+  const stored = metadata['timedWorldInfo']
+  if (typeof stored !== 'object' || stored === null) return undefined
+  const raw = stored as Record<string, unknown>
+
+  const readWindows = (kind: 'sticky' | 'cooldown'): Record<string, TimedEffect> => {
+    const out: Record<string, TimedEffect> = {}
+    const table = raw[kind]
+    if (typeof table !== 'object' || table === null) return out
+    for (const [key, value] of Object.entries(table as Record<string, unknown>)) {
+      if (!isStoredTimedEffect(value)) continue
+      out[key] = value
+    }
+    return out
+  }
+
+  const sticky = readWindows('sticky')
+  const cooldown = readWindows('cooldown')
+  if (Object.keys(sticky).length === 0 && Object.keys(cooldown).length === 0) return undefined
+  return { sticky, cooldown }
+}
+
+/**
+ * Write the timed-effect windows into a chat header's metadata.
+ *
+ * The mirror of {@link readTimedEffects}, and the write half of why the
+ * windows survive: the engine returns fresh state every scan, the caller hands
+ * it here beside the live field, and the next `save` puts it on disk. The same
+ * key upstream uses, so the metadata a card script reads (`chatMetadata` in the
+ * snapshot) shows the windows exactly as upstream's would.
+ * @param metadata - the chat header's metadata block, mutated in place.
+ * @param state - the engine's returned windows.
+ */
+export function writeTimedEffects(metadata: Record<string, unknown>, state: TimedEffectState): void {
+  metadata['timedWorldInfo'] = structuredClone(state)
 }
 
 /**
@@ -255,9 +336,42 @@ export class ChatEntry {
    */
   readonly itemizations = new Map<number, PromptItemization>()
 
+  /**
+   * World-info outlet prompts by name, as the last scan produced them.
+   *
+   * Upstream keeps the activated outlet buckets in `extension_prompts` and
+   * `{{outlet::key}}` reads them back from there, so a macro's answer is
+   * "whatever the newest scan that filled this store produced". The host assigns
+   * this through the prompt builder's sink between the scan and the expansion of
+   * the preset's own text, which is the same order upstream's
+   * `setExtensionPrompt` runs in. In memory, like every other live-scan product.
+   */
+  outletPrompts: Record<string, string> = {}
+  /**
+   * Index of the first message the last real assembly kept — what
+   * `{{firstIncludedMessageId}}` answers.
+   *
+   * Upstream reads `chat_metadata.lastInContextMessageId`, written by the
+   * previous generation's budget trim, so the value is one generation stale by
+   * design and unset before the first one. Same shape here: assigned after a
+   * real turn's assembly, never by a preview, and in memory only.
+   */
+  firstIncludedMessageId: number | undefined
+  /**
+   * The token budget the `{{maxContext}}` family reports.
+   *
+   * Assigned by the host per generation from the same settings the assembler
+   * runs under — the context window, and the reply budget (`maxTokens` when
+   * configured, else the assembly reserve). Absent until then, which renders
+   * the three macros empty rather than pretending a route that is not there.
+   */
+  tokenBudget: TokenBudget | undefined
+
   #initVars: MvuData | undefined
   #initialVariables: Record<string, unknown> | undefined
   #scripts: RegexScript[] | undefined
+  /** The global regex tier this chat opened with; replaced by `setGlobalScripts`. */
+  #globalScripts: readonly RegexScript[]
   /** Storage for the `script` scope; outlives `rebuild`, so it is held here. */
   readonly #scriptScope: ScopeBackend
   /** Storage for the `global` scope; outlives `rebuild`, so it is held here. */
@@ -271,6 +385,26 @@ export class ChatEntry {
    */
   readonly unsupportedScopes = new Set<string>()
   #substitute: MacroSubstitute | undefined
+  /** The active persona description, read at expansion time; see the constructor input. */
+  #persona: (() => string) | undefined
+  /**
+   * The macro tier's one variable store, created on first use and held.
+   *
+   * Because the substitute rebuilds its context per call (the floors and the
+   * outlet store change every turn; the store must not), the store it hands that
+   * context is this one — a preset's `{{setvar}}` prompts and the `{{getvar}}`
+   * prompt that reads them back stay in one table inside a single assembly.
+   */
+  #macroVariables: MemoryVariableStore | undefined
+  /**
+   * The floor view macros read, cached.
+   *
+   * Built from the same projection the UI renders, and invalidated at the three
+   * places the conversation can change under it: `rebuild` (edits, deletes,
+   * imports), and the two `pending` transitions (a turn starting and settling
+   * both change what the newest floor is).
+   */
+  #macroChat: MacroMessage[] | undefined
   #abort: AbortController | undefined
   /** Row identities, one per chat-file line, plus one spare for a streaming row. */
   #keys: string[] = []
@@ -305,12 +439,38 @@ export class ChatEntry {
     globalScope?: ScopeBackend
     /** The chosen world book; see the field of the same name. */
     worldbook?: ResolvedWorldbook
+    /**
+     * The active persona description, read at expansion time.
+     *
+     * A function rather than a value because the user can switch personas while
+     * the host runs, and a snapshot taken when the chat opened would serve the
+     * old one. Absent means no persona, which is what `{{persona}}` expanded to
+     * before a persona store existed.
+     */
+    persona?: () => string
+    /**
+     * The profile's global regex scripts, as they stand at open time.
+     *
+     * A snapshot rather than a live provider because the getter below is
+     * synchronous and feeds three directions; {@link setGlobalScripts} is how a
+     * change reaches entries that are already open.
+     */
+    globalScripts?: readonly RegexScript[]
   }) {
     this.chatId = input.chatId
     this.header = input.header
     this.session = input.session
     this.card = input.card
     this.worldbook = input.worldbook
+    this.#persona = input.persona
+    this.#globalScripts = input.globalScripts ?? []
+    // Sticky and cooldown windows outlive the process in upstream: they live in
+    // `chat_metadata.timedWorldInfo`, which is saved with the chat file. Restored
+    // here rather than by the caller because every construction path — open,
+    // branch, import — reads the same header, and a window that resets because a
+    // host restarted would otherwise let a sticky entry lapse (or a cooled entry
+    // fire) silently.
+    this.timedEffects = readTimedEffects(input.header.chat_metadata)
     // Assigned before the first `#makeStore`, and held, because `rebuild` makes
     // a new store: a backend created inside `#makeStore` would drop every script
     // table the moment a message was edited.
@@ -340,8 +500,21 @@ export class ChatEntry {
    * work proportional to the square of the conversation.
    */
   get scripts(): readonly RegexScript[] {
-    this.#scripts ??= scriptsOf(this.card)
+    this.#scripts ??= scriptsOf(this.card, this.#globalScripts)
     return this.#scripts
+  }
+
+  /**
+   * Replace the global tier and drop the composed list.
+   *
+   * This is how a `regex.set` reaches chats that are already open: the snapshot
+   * each entry composed at open time is otherwise a fact about the past, and a
+   * script the user just switched off would keep rewriting every page until the
+   * chat happened to be reopened.
+   */
+  setGlobalScripts(scripts: readonly RegexScript[]): void {
+    this.#globalScripts = scripts
+    this.#scripts = undefined
   }
 
   /**
@@ -361,8 +534,11 @@ export class ChatEntry {
   /**
    * The macro expander this chat's scripts resolve their patterns with.
    *
-   * Built once per chat because it closes over the speaker names, which is all
-   * a script pattern can reference.
+   * Built once per chat, but the context under it is rebuilt per call: the
+   * speaker names are fixed, while the floors, the outlet buckets and the token
+   * budget all change from turn to turn and a cached context would serve
+   * last turn's answer. Only the variable store is held across calls — see
+   * {@link #macroVariables} for why it must be one table, not one per call.
    */
   get substitute(): MacroSubstitute {
     // Composed, not replaced: SillyTavern's own macros first, then Tavern
@@ -374,12 +550,11 @@ export class ChatEntry {
     // The trees are read at call time rather than captured, because they change
     // every turn and this getter is resolved once.
     if (this.#substitute === undefined) {
-      // No variable store is supplied, and that is measured rather than
-      // overlooked. `createMacroContext` then makes one in-memory store, and
-      // because this getter caches its expander, **that one store is shared by
-      // every expansion in this chat** — which is what a preset needs: its
-      // `{{setvar}}` prompts run before the `{{getvar}}` prompt that reads them
-      // back, inside one assembly.
+      // The one store is held on the entry (`#macroVariables`) and supplied to
+      // every per-call context, so **it is shared by every expansion in this
+      // chat** — which is what a preset needs: its `{{setvar}}` prompts run
+      // before the `{{getvar}}` prompt that reads them back, inside one
+      // assembly.
       //
       // Binding it to the chat's persistent scopes was tried and reverted. It
       // was not needed (the preset works without it, verified end to end) and it
@@ -389,9 +564,31 @@ export class ChatEntry {
       // survive a restart and is invisible to a card reading
       // `getVariables({type: 'chat'})`. Nothing in the corpus depends on either,
       // so the side effect was the only certain consequence.
-      const tavern = substituteFor(this.names)
+      const variables = this.#macroVariables ??= createMemoryVariableStore()
+      const { character, user } = this.names
       this.#substitute = (text, options) => {
-        const expanded = tavern(text, options)
+        const macros = createMacroContext({
+          char: character,
+          user,
+          // The active persona description, what upstream's `{{persona}}`
+          // expands to (`script.js:3353`, the persona row of the macro
+          // environment, which trims: `persona_description?.trim()`). Read at
+          // expansion time, so a switch reaches the next expansion of this chat
+          // without reopening it.
+          persona: this.#persona?.().trim() ?? '',
+          variables,
+          chat: this.macroChat,
+          // Same lifetime as upstream's `extension_prompts` round-trip: the
+          // newest scan's buckets, read back wherever a template asks.
+          outlet: key => this.outletPrompts[key] ?? '',
+          ...this.firstIncludedMessageId === undefined
+            ? {}
+            : { firstIncludedMessageId: this.firstIncludedMessageId },
+          ...this.tokenBudget === undefined ? {} : { tokenBudget: this.tokenBudget },
+        })
+        const expanded = expandMacros(text, macros, options?.postProcess === undefined
+          ? {}
+          : { postProcess: options.postProcess })
         // `postProcess` marks the regex-pattern path, where every expanded value
         // is escaped before being read as syntax. A variable macro there would
         // put an unescaped YAML block into a pattern, so it is left alone: the
@@ -423,6 +620,35 @@ export class ChatEntry {
       }
     }
     return this.#substitute
+  }
+
+  /**
+   * The conversation as macros see it: one row per chat-file line, in file
+   * order, carrying each assistant line's candidate count and selection — the
+   * `swipes`/`swipe_id` pair the swipe macros answer from.
+   *
+   * Deliberately the same walk that builds the UI's view (`projectMessages`):
+   * one projection owns the turn-to-floor mapping, so a macro's `{{lastMessage}}`
+   * and the surface's bottom row can never disagree about which floor is last.
+   * The streaming row is left out: upstream's last-message macros skip a swipe
+   * in progress (`getLastMessageId`'s `exclude_swipe_in_propress` default), and
+   * a row still being generated is exactly that — the newest *settled* floor is
+   * what `{{lastMessage}}` and the swipe pair answer from. Display-side regex
+   * scripts are not applied either: macros see the stored text, which is what
+   * the prompt sees too.
+   */
+  get macroChat(): readonly MacroMessage[] {
+    if (this.#macroChat === undefined) {
+      this.#macroChat = projectMessages(this.session, this.names, { keys: this.#keys })
+        .filter(view => view.streaming !== true)
+        .map(view => ({
+          role: view.role,
+          content: view.text,
+          name: view.name,
+          ...(view.swipes === undefined ? {} : { swipes: view.swipes.count, swipeId: view.swipes.index }),
+        }))
+    }
+    return this.#macroChat
   }
 
   /**
@@ -590,6 +816,9 @@ export class ChatEntry {
   begin(turn: number): AbortSignal {
     if (this.#abort !== undefined) throw busy('that chat is already generating')
     this.#abort = new AbortController()
+    // The streaming row becomes the newest floor for macros too, exactly as the
+    // growing message is the newest line upstream.
+    this.#macroChat = undefined
     this.pending = { turn, text: '', reasoning: '' }
     return this.#abort.signal
   }
@@ -597,6 +826,9 @@ export class ChatEntry {
   /** Release the chat after a generation ends, however it ended. */
   finish(): void {
     this.#abort = undefined
+    // The settled candidates (or their absence after an abort) change the newest
+    // floor's swipe pair; the next expansion must re-walk the log.
+    this.#macroChat = undefined
     this.pending = undefined
   }
 
@@ -683,6 +915,19 @@ export class ChatEntry {
       })()
     if (own.length > 0 && !seen.has(ownName)) books.push({ name: ownName, entries: own })
 
+    // The host-stored extras, after the primary. MVU's own list reads
+    // `[...selected_global_lorebooks, primary, ...additional]`
+    // (`initvar/variable_init.ts:230`) — the additional bindings have a named
+    // position in it, so a book the user bound to this character through the
+    // host seeds variables exactly as it would upstream. Same skip rules as
+    // above: a name already folded (an extra that duplicates the primary or a
+    // global) contributes once, and an empty book leaves no row.
+    for (const book of chosen?.additional ?? []) {
+      if (seen.has(book.world) || book.entries.length === 0) continue
+      seen.add(book.world)
+      books.push({ name: book.world, entries: book.entries })
+    }
+
     if (books.length === 0) {
       this.#initVars = EMPTY_MVU
       return this.#initVars
@@ -758,6 +1003,9 @@ export class ChatEntry {
    */
   rebuild(lines: SillyTavernMessage[], sourceOf: (index: number) => number | undefined): void {
     const before = this.#snapshotVariables()
+    // The floor projection is a view of the old log; every macro that reads it
+    // after this point must see the rebuilt one.
+    this.#macroChat = undefined
 
     // Row identities travel the same mapping as the variables, and for the same
     // reason: the rebuilt log cannot say which of its lines used to be which.

@@ -178,12 +178,32 @@ export interface PartialWorldbookEntry {
   groupWeight?: number | undefined
   caseSensitive?: boolean | null | undefined
   matchWholeWords?: boolean | null | undefined
+  outletName?: string | undefined
   matchPersonaDescription?: boolean | undefined
   matchCharacterDescription?: boolean | undefined
   matchCharacterPersonality?: boolean | undefined
   matchCharacterDepthPrompt?: boolean | undefined
   matchScenario?: boolean | undefined
   matchCreatorNotes?: boolean | undefined
+  /**
+   * The stored shape's remaining fields, added with the shell's entry editor.
+   * Before these, a whole-book save rebuilt every row from a field list that
+   * could not name them: an automation binding, a per-entry group-scoring
+   * override, a budget exemption, a character filter or a generation-trigger
+   * filter was dropped by the very act of saving the book it lived in. Each is
+   * optional, and {@link fromWorldbookEntry} defaults each exactly as it
+   * defaults its own fields, so callers that never heard of them are unmoved.
+   */
+  automationId?: string | undefined
+  useGroupScoring?: boolean | null | undefined
+  ignoreBudget?: boolean | undefined
+  useProbability?: boolean | undefined
+  triggers?: readonly string[] | undefined
+  characterFilter?: {
+    isExclude: boolean
+    names: readonly string[]
+    tags: readonly string[]
+  } | undefined
 }
 
 /**
@@ -257,12 +277,29 @@ export function toWorldbookEntry(entry: LorebookEntry): WorldbookEntry {
     groupWeight: entry.groupWeight,
     caseSensitive: entry.caseSensitive,
     matchWholeWords: entry.matchWholeWords,
+    outletName: entry.outletName,
     matchPersonaDescription: entry.matchPersonaDescription,
     matchCharacterDescription: entry.matchCharacterDescription,
     matchCharacterPersonality: entry.matchCharacterPersonality,
     matchCharacterDepthPrompt: entry.matchCharacterDepthPrompt,
     matchScenario: entry.matchScenario,
     matchCreatorNotes: entry.matchCreatorNotes,
+    // The raw flag, not the resolved one `probability` carries: an entry that
+    // does not use probability reads `useProbability: false, probability: 100`
+    // here, and a caller writing the book back needs the flag to put the two
+    // fields back the way the file had them. The collection fields below fall
+    // back rather than reach a caller as `undefined` — the same rule
+    // `position` and `role` follow for a file a newer SillyTavern wrote.
+    useProbability: entry.useProbability === false ? false : true,
+    ignoreBudget: entry.ignoreBudget === true,
+    automationId: typeof entry.automationId === 'string' ? entry.automationId : '',
+    useGroupScoring: typeof entry.useGroupScoring === 'boolean' ? entry.useGroupScoring : null,
+    triggers: Array.isArray(entry.triggers) ? entry.triggers.map(String) : [],
+    characterFilter: {
+      isExclude: entry.characterFilter?.isExclude === true,
+      names: Array.isArray(entry.characterFilter?.names) ? entry.characterFilter.names.map(String) : [],
+      tags: Array.isArray(entry.characterFilter?.tags) ? entry.characterFilter.tags.map(String) : [],
+    },
   }
 }
 
@@ -490,6 +527,25 @@ export interface ResolvedWorldbook {
   /** The character's book name, for attribution on each of its entries. */
   world: string
   /**
+   * Books the user bound to this character **through the host**, on top of the
+   * card's own binding.
+   *
+   * Upstream's `world_info.charLore[<file name>].extraBooks`, folded into the
+   * same search as the primary binding (`getCharacterLore`,
+   * `world-info.js:4363`: `worldsToSearch` is the card's `extensions.world`
+   * **plus** the stored extras, one Set). Each book keeps its own name here for
+   * the same reason the global list does — `getwi(name, …)` matches on it — and
+   * in binding order, which is the order the user chose.
+   *
+   * This is a **second channel that is not the embedded/named pair**: the
+   * never-combine ruling above governs what the *card itself* contributes, and
+   * stays absolute. An extra book is the user naming a book for this character
+   * in this installation — the same kind of act as a global selection, just
+   * scoped to one character — and upstream combines it with the primary
+   * exactly as explicitly.
+   */
+  additional: { world: string, entries: LorebookEntry[] }[]
+  /**
    * Globally selected books, which apply to every character.
    *
    * A **third source, added to** the character's rather than chosen between —
@@ -537,8 +593,18 @@ export interface ResolvedWorldbook {
  *    and 153 entries that would otherwise go silent.
  * 3. **Never both.** See above.
  *
+ * 4. **Plus the books the user bound through the host.** `extraBooks` —
+ *    upstream's `world_info.charLore[<file name>].extraBooks` — join the
+ *    primary in one search set (`world-info.js:4376`), after it, in stored
+ *    order. Rules 1–3 still govern the primary alone; an extra book is the
+ *    user's own act, not a second reading of the card.
+ *
  * @param card - the character being played.
  * @param store - the named books, when the host has them.
+ * @param globalSelect - the globally selected book names.
+ * @param materialised - the named book this host materialised from the card's
+ *   embedded copy, when it did; wins over the card's own binding.
+ * @param extraBooks - the character's additional bindings, in stored order.
  * @returns the chosen entries and where they came from.
  */
 export async function resolveCardWorldbook(
@@ -546,6 +612,7 @@ export async function resolveCardWorldbook(
   store: WorldbookStore | undefined,
   globalSelect: readonly string[] = [],
   materialised?: string,
+  extraBooks: readonly string[] = [],
 ): Promise<ResolvedWorldbook> {
   const fallbackName = card?.data.name ?? 'character book'
   // The materialised binding wins over the card's own `extensions.world`: it is
@@ -568,6 +635,31 @@ export async function resolveCardWorldbook(
     }
   }
 
+  // The additional bindings, read once per chat open like every other source.
+  // Upstream builds one Set with the primary, so a name bound as an extra that
+  // *is* the primary contributes nothing twice; the same Set is reproduced by
+  // the seen-list below, first occurrence winning.
+  const additional: { world: string, entries: LorebookEntry[] }[] = []
+  const seen = new Set<string>(bound !== null ? [bound] : [])
+  for (const name of extraBooks) {
+    if (seen.has(name)) continue
+    seen.add(name)
+    // The per-book guard upstream applies inside `getCharacterLore`
+    // (`world-info.js:4387`): a book already active globally is skipped from
+    // the character's search — "already activated in global world info!" —
+    // whether it arrived as the primary binding or as an extra one.
+    if (globalSelect.includes(name)) continue
+    if (store === undefined) continue
+    try {
+      const book = await store.read(name)
+      additional.push({ world: name, entries: Object.values(book.entries) })
+    } catch {
+      // A dangling extra — bound, then the file deleted. Upstream's loop
+      // `continue`s on a failed `loadWorldInfo`; so does this. The binding
+      // itself is still reported by `worldbook.charNames`.
+    }
+  }
+
   // Upstream's dedup, and it is not optional: `world-info.js:4387` skips a
   // character's book when it is *already* active globally, with the comment
   // "is already activated in global world info! Skipping...". Without it the one
@@ -575,13 +667,13 @@ export async function resolveCardWorldbook(
   // which is the duplication failure this module already exists to avoid, in a
   // second place.
   if (bound !== null && globalSelect.includes(bound)) {
-    return { entries: [], source: 'none', world: bound, global }
+    return { entries: [], source: 'none', world: bound, additional, global }
   }
 
   if (bound !== null && store !== undefined) {
     try {
       const book = await store.read(bound)
-      return { entries: Object.values(book.entries), source: 'named', world: bound, global }
+      return { entries: Object.values(book.entries), source: 'named', world: bound, additional, global }
     } catch {
       // A binding with no file behind it, or a file this build cannot parse.
       // Falls through to the embedded book rather than refusing: rule 2 exists
@@ -597,7 +689,7 @@ export async function resolveCardWorldbook(
   // to paper over. Materialisation happens on the import and open paths, before
   // this runs; by the time resolution asks, an embedded book is already a named
   // one. See `materialise.ts` and `EMBEDDED-BOOK-MATERIALISATION.md`.
-  return { entries: [], source: 'none', world: fallbackName, global }
+  return { entries: [], source: 'none', world: fallbackName, additional, global }
 }
 
 /**
@@ -614,9 +706,12 @@ export async function resolveCardWorldbook(
  *    not "keep everything and change nothing": it turns every entry in the book
  *    constant. This is copied rather than corrected, because a card may depend
  *    on it and correcting it is what would break them.
- * 2. **`useProbability` is always written `true`.** Reading resolves it away
+ * 2. **`useProbability` defaults to `true`.** Reading resolves it away
  *    (`useProbability ? probability : 100`), so a round trip stores the flag
- *    differently while leaving the effective probability the same.
+ *    differently while leaving the effective probability the same. Since the
+ *    view began reporting the raw flag, a caller may also send `false`
+ *    explicitly — that is taken verbatim; only the *absent* case is upstream's
+ *    `true`.
  *
  * Anyone reaching to "fix" either of these should note that both are load-
  * bearing compatibility, not oversights — and that this paragraph is the thing
@@ -656,9 +751,16 @@ export function fromWorldbookEntry(
 
     content: entry.content ?? '',
 
-    // See asymmetry 2 above.
-    useProbability: true,
+    // See asymmetry 2 above: absent stays `true` — but a caller that read the
+    // view (which now reports the raw flag) and sends `useProbability: false`
+    // is putting a stored flag back, and that answer is taken verbatim.
+    useProbability: entry.useProbability ?? true,
     probability: entry.probability ?? 100,
+
+    // Kept in the stored row: the outlet macro answers from the scan's bucket,
+    // and an outlet name lost in a materialisation is an outlet that can never
+    // fire again.
+    outletName: entry.outletName ?? '',
 
     excludeRecursion: entry.recursion?.prevent_incoming ?? false,
     preventRecursion: entry.recursion?.prevent_outgoing ?? false,
@@ -666,6 +768,23 @@ export function fromWorldbookEntry(
     sticky: entry.effect?.sticky ?? null,
     cooldown: entry.effect?.cooldown ?? null,
     delay: entry.effect?.delay ?? null,
+
+    // The stored shape's remaining fields, each at the same default its read
+    // side resolves an absent field to — so a caller that never sends them
+    // writes a row indistinguishable from the one this wrote before they
+    // existed, and a caller that read a whole book and sends it back whole
+    // loses none of them.
+    ignoreBudget: entry.ignoreBudget ?? false,
+    automationId: entry.automationId ?? '',
+    useGroupScoring: entry.useGroupScoring ?? null,
+    triggers: [...entry.triggers ?? []],
+    characterFilter: entry.characterFilter !== undefined
+      ? {
+          isExclude: entry.characterFilter.isExclude,
+          names: [...entry.characterFilter.names],
+          tags: [...entry.characterFilter.tags],
+        }
+      : { isExclude: false, names: [], tags: [] },
 
     // The caller's own implicit keys win over the defaults spread above.
     ...pickImplicit(entry),

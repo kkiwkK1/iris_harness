@@ -275,6 +275,46 @@ test('a lone /send is refused rather than quietly generating', async (t) => {
   )
 })
 
+test('a lone /trigger replies to the newest line, as the send button does', async (t) => {
+  const { handlers, chats, settled } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  // The measured call shape (新·架空政治经济模拟器's 建国控制台): a card
+  // appends its own user line — which appends *without* generating, by design —
+  // then asks for the reply with `/trigger` alone.
+  await handlers['script.createChatMessages']({
+    chatId,
+    messages: [{ name: 'Traveller', is_user: true, mes: '请回复：连接正常。' }],
+  })
+  const { result } = await handlers['script.slash']({ chatId, command: '/trigger' })
+  await settled()
+
+  assert.equal(result, '')
+  const view = (await handlers['chat.open']({ chatId })).view
+  assert.equal(view.messages[1]?.role, 'user')
+  assert.equal(view.messages[1]?.text, '请回复：连接正常。')
+  // The reply landed on the turn that user line opened — not as a new turn,
+  // and not as a second swipe of the greeting.
+  assert.equal(view.messages[2]?.role, 'assistant')
+  assert.equal(view.messages[2]?.text, 'A reply.')
+  assert.equal(view.messages[2]?.turn, view.messages[1]?.turn)
+  assert.equal(chats.cached(chatId)?.generating, false)
+})
+
+test('a /trigger while a generation is already running is refused as busy', async (t) => {
+  const { handlers, settled } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  void handlers['chat.send']({ chatId, text: 'first' })
+  await assert.rejects(
+    () => handlers['script.slash']({ chatId, command: '/trigger' }),
+    (error: unknown) => (error as { code?: string }).code === 'busy',
+  )
+  await settled()
+})
+
 test('an unimplemented command is refused by name', async (t) => {
   const { handlers } = await fixture(t)
   const created = await handlers['chat.create']({ characterId: 'aria' })
@@ -374,6 +414,47 @@ test('swipeTo addresses a message the way a card does', async (t) => {
     () => handlers['script.swipeTo']({ chatId, messageId: 2, swipeIndex: 7 }),
     (error: unknown) => (error as { code?: string }).code === 'invalid-request',
   )
+})
+
+test('swipeTo still answers for the greeting after the chat has moved on', async (t) => {
+  /*
+   * The measured card's opening-menu button addresses message 0 on a chat that
+   * already has floors after it — `setChatMessages([{ message_id: 0,
+   * swipe_id: 1 }])` lands here long after turn 1 exists. Refusing that because
+   * turn 0 was "settled" was the SYSTEM START button that silently did nothing:
+   * the card catches the rejection and logs it to its own console, so the user
+   * saw a hint that never turned into a switch.
+   */
+  const { handlers, dir, settled } = await fixture(t, ['And then?'])
+  await writeFile(join(dir, 'characters', 'menu.json'), JSON.stringify({
+    spec: 'chara_card_v2',
+    spec_version: '2.0',
+    data: {
+      name: 'Menu', description: '', personality: '', scenario: '',
+      first_mes: '<开局>', mes_example: '', creator_notes: '',
+      system_prompt: '', post_history_instructions: '',
+      alternate_greetings: ['<介绍>', '<自定义>'],
+      tags: [], creator: '', character_version: '1', extensions: {},
+    },
+  }), 'utf8')
+
+  const created = await handlers['chat.create']({ characterId: 'menu' })
+  const chatId = created.view.chatId
+  await handlers['chat.send']({ chatId, text: 'Hello?' })
+  await settled()
+
+  // Three floors: the greeting, the user's line, the reply. Turn 0 is not the
+  // last turn any more — the exact shape the old guard refused.
+  const before = (await handlers['chat.open']({ chatId })).view
+  assert.equal(before.messages.length, 3)
+  assert.equal(before.messages[0]?.text, '<开局>')
+
+  const { view } = await handlers['script.swipeTo']({ chatId, messageId: 0, swipeIndex: 1 })
+  assert.equal(view.messages[0]?.text, '<介绍>')
+  // The later floors stay exactly where they were: one reply per turn, in order.
+  assert.equal(view.messages.length, 3)
+  assert.equal(view.messages[1]?.text, 'Hello?')
+  assert.equal(view.messages[2]?.text, 'And then?')
 })
 
 test('getVariables reads back what each scope holds, and reads an empty scope as empty', async (t) => {

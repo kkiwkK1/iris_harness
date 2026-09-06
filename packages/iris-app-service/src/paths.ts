@@ -190,6 +190,28 @@ export interface ProfilePaths {
    * empty the other.
    */
   connections: string
+  /**
+   * Preset files, one per preset.
+   *
+   * Upstream's own directory name for them is `OpenAI Settings`, which is
+   * both a misnomer here (they are Chat Completion prompt presets) and a name
+   * that collides with this host's `settings.json` in a reader's mind. The
+   * files inside keep the exact names they had there, though — that is what an
+   * import preserves.
+   */
+  presets: string
+  /**
+   * The user's personas: who `{{user}}` is, one file per profile.
+   *
+   * Its own file rather than a section of `settings.json` for the same reason
+   * the connections are — settings are what a chat is using now, this is who
+   * the user says they are, and resetting one must not empty the other.
+   * Upstream keeps the equivalent in `power_user` inside its own
+   * `settings.json`; the split is Iris's, the semantics are upstream's.
+   */
+  personas: string
+  /** Which characters this profile has starred, by character id. */
+  favorites: string
 }
 
 /**
@@ -226,5 +248,8 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     cardStorage: join(root, 'card-storage.json'),
     scriptBundles: join(root, 'script-bundles'),
     connections: join(root, 'connections.json'),
+    presets: join(root, 'presets'),
+    personas: join(root, 'personas.json'),
+    favorites: join(root, 'favorites.json'),
   }
 }

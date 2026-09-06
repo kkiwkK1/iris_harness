@@ -35,6 +35,15 @@ export interface MacroMessage {
   readonly name?: string
   /** Epoch milliseconds the message was sent; drives `{{idleDuration}}`. */
   readonly sendDate?: number
+  /**
+   * How many alternate generations the message carries, when it carries any —
+   * SillyTavern's `swipes.length`. Absent on a row with no candidates, which is
+   * what makes `{{lastSwipeId}}` render empty when the newest floor is a user
+   * message.
+   */
+  readonly swipes?: number
+  /** Zero-based index of the selected candidate; only meaningful beside {@link swipes}. */
+  readonly swipeId?: number
 }
 
 /**
@@ -227,9 +236,49 @@ export interface MacroContext {
    * creation-time id, never the file name.
    */
   readonly chatId?: string
+  /**
+   * Reader for the world-info outlet prompts: `{{outlet::key}}`.
+   *
+   * Upstream keeps the activated outlet entries in `extension_prompts` under
+   * `inject_ids.CUSTOM_WI_OUTLET(key)` and has the macro read them back, so the
+   * value a macro sees is whatever the last world-info scan wrote. Iris keeps
+   * the same shape of lifetime — the reader is wired by the assembler once its
+   * scan has produced the outlet buckets — and returns `''` for a key with no
+   * bucket, exactly as `getOutletPrompt` does. Absent means the caller has no
+   * scan at all, and every outlet renders empty.
+   */
+  readonly outlet?: (key: string) => string
+  /**
+   * Index of the first message that fit into the last assembled context —
+   * `{{firstIncludedMessageId}}`.
+   *
+   * Upstream reads `chat_metadata.lastInContextMessageId`, which the previous
+   * generation's budget trim wrote; until a generation has run it is unset and
+   * the macro renders empty. Iris carries the same value the same way: the host
+   * stores what its last assembly dropped, and an absent field renders empty.
+   */
+  readonly firstIncludedMessageId?: number
+  /**
+   * The generation budget the macros that report token limits read:
+   * `{{maxContext}}`, `{{maxResponse}}` and `{{maxPrompt}}`.
+   *
+   * Upstream reads its per-backend settings getters; the honest Iris equivalent
+   * is the budget the assembler itself runs under. Absent means no route is
+   * configured, and the three macros render empty rather than pretending zero —
+   * unlike upstream, which answers `0` from an unconfigured backend.
+   */
+  readonly tokenBudget?: TokenBudget
   readonly variables: MacroVariableStore
   readonly clock: MacroClock
   readonly random: MacroRandom
+}
+
+/** The token budgets `{{maxContext}}` and friends report. */
+export interface TokenBudget {
+  /** Total context window in tokens; `{{maxContext}}`. */
+  readonly context: number
+  /** Tokens reserved for the model's reply; `{{maxResponse}}`. */
+  readonly response: number
 }
 
 /** {@link MacroContext} with everything defaultable left out. */

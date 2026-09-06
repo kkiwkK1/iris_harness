@@ -8,9 +8,12 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { IrisEvent, RpcMethod } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
+import { BackupStore } from '../src/backups.ts'
 import { ChatStore } from '../src/chats.ts'
 import { ExtensionSettingsStore } from '../src/context.ts'
 import { CharacterLibrary } from '../src/library.ts'
+import { PresetStore } from '../src/presets.ts'
+import { PersonaStore } from '../src/persona.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { ScriptVariableStore } from '../src/script-variables.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
@@ -72,9 +75,18 @@ interface Fixture {
   handlers: Handlers
   chats: ChatStore
   chatId: string
+  /** One snapshot that exists, so the `backup.*` reads perform actual reads. */
+  backupId: string
   dir: string
   /** The script-variable store, whose writes are queued rather than awaited. */
   scriptVariables: ScriptVariableStore
+}
+
+/** One stored, active persona, so the persona reads land on real state. */
+async function seedPersona(path: string): Promise<PersonaStore> {
+  const store = new PersonaStore(path)
+  await store.upsert({ name: 'Wanderer', description: 'A hooded traveller.', active: true })
+  return store
 }
 
 async function fixture(t: TestContext): Promise<Fixture> {
@@ -89,10 +101,17 @@ async function fixture(t: TestContext): Promise<Fixture> {
   await writeFile(join(dir, 'worlds', 'Eldoria.json'), JSON.stringify({
     entries: { 1: { uid: 1, key: ['tower'], comment: 'Tower', content: 'Maps.', displayIndex: 0 } },
   }), 'utf8')
+  // A real preset in the library, so the `preset.*` reads below perform actual
+  // reads rather than refusing their way past the check.
+  await mkdir(join(dir, 'presets'), { recursive: true })
+  await writeFile(join(dir, 'presets', 'Sample.json'), JSON.stringify({
+    prompts: [{ identifier: 'main', name: 'Main', marker: true }],
+  }), 'utf8')
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const scriptVariables = new ScriptVariableStore(join(dir, 'script-variables.json'))
   const chats = new ChatStore(join(dir, 'chats'), library, scriptVariables)
+  const backups = new BackupStore(join(dir, 'chats'))
   let ends = 0
   const stream: StreamFn = async function* (_options: GenerateOptions): AsyncIterable<StreamChunk> {
     const text = "Noted. _.set('count', 1);"
@@ -107,6 +126,12 @@ async function fixture(t: TestContext): Promise<Fixture> {
     scripts: new ScriptPolicyStore(join(dir, 'script-policy.json')),
     extensionSettings: new ExtensionSettingsStore(join(dir, 'extension-settings.json')),
     worldbooks: new WorldbookStore(join(dir, 'worlds')),
+    presets: new PresetStore(join(dir, 'presets')),
+    // A persona on disk, so the `persona.*` reads below perform actual reads —
+    // `persona.get` with no id resolves the active persona — rather than
+    // refusing their way past the check.
+    personas: await seedPersona(join(dir, 'personas.json')),
+    backups,
     broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
     userName: 'Traveller',
   }).handlers()
@@ -118,7 +143,12 @@ async function fixture(t: TestContext): Promise<Fixture> {
   await handlers['chat.send']({ chatId, text: 'Where are the maps?' })
   while (ends < 1) await new Promise(resolve => setTimeout(resolve, 1))
 
-  return { handlers, chats, chatId, dir, scriptVariables }
+  // One snapshot on disk, so the `backup.*` reads below read rather than
+  // refuse their way past the check — the same rule the book and the persona
+  // above follow.
+  const seeded = await backups.snapshot(chatId, 'cleanup')
+
+  return { handlers, chats, chatId, backupId: seeded.backupId, dir, scriptVariables }
 }
 
 /** Everything observable about a conversation and its store. */
@@ -186,9 +216,23 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   { method: 'settings.get', params: fixed => ({ chatId: fixed.chatId }) },
   { method: 'connection.list', params: () => ({}) },
   { method: 'character.list', params: () => ({}) },
+  { method: 'persona.list', params: () => ({}) },
+  { method: 'persona.get', params: () => ({}) },
   { method: 'worldbook.names', params: () => ({}) },
   { method: 'worldbook.get', params: () => ({ name: 'Eldoria' }) },
   { method: 'worldbook.charNames', params: () => ({ characterId: 'aria' }) },
+  { method: 'preset.list', params: () => ({}) },
+  { method: 'preset.view', params: () => ({}) },
+  { method: 'preset.read', params: () => ({ name: 'Sample' }) },
+  // A read of the effective settings: it must answer what a scan would run
+  // with, and write nothing — an earlier sibling of this seam (the sampler's
+  // `settings.get`) is exactly where a silent write once hid.
+  { method: 'worldbook.settings', params: () => ({}) },
+  { method: 'regex.list', params: () => ({}) },
+  // A listing and a preview of the snapshot seeded above: reads off the
+  // snapshot's own bytes, which must not so much as re-date it.
+  { method: 'backup.list', params: () => ({}) },
+  { method: 'backup.preview', params: fixed => ({ backupId: fixed.backupId }) },
 ]
 
 for (const { method, params } of READS) {

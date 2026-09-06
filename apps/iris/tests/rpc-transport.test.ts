@@ -192,6 +192,10 @@ const PROBES: Record<string, unknown> = {
   'chat.open': { chatId: 'no-such-chat' },
   'chat.delete': { chatId: 'no-such-chat' },
   'chat.rename': { chatId: 'no-such-chat', title: 'x' },
+  // The scan reads the profile's chat directory, which the probe host has
+  // created empty: the honest answer is no hits, and it proves registration.
+  'chat.search': { query: 'x' },
+  'chat.answerCleanup': { chatId: 'no-such-chat', answer: 'clean' },
   'chat.send': { chatId: 'no-such-chat', text: 'x' },
   'chat.regenerate': { chatId: 'no-such-chat' },
   'chat.abort': { chatId: 'no-such-chat' },
@@ -199,8 +203,24 @@ const PROBES: Record<string, unknown> = {
   'chat.editMessage': { chatId: 'no-such-chat', id: 0, text: 'x' },
   'chat.deleteMessage': { chatId: 'no-such-chat', id: 0 },
   'chat.branch': { chatId: 'no-such-chat', id: 0 },
+  // The import probe names a card that is not in the library: reachability is
+  // the property, and the not-found answer proves the handler ran.
+  'chat.import': { filename: 'probe.jsonl', content: 'e30=', characterId: 'no-such-card' },
+  'chat.export': { chatId: 'no-such-chat' },
+  // The snapshot arms answer from a host whose profile has a snapshot store and
+  // no snapshots: `list` answers empty, and the other three name what is not
+  // there — the not-found and the named-confirm refusal both prove the handler
+  // ran. Reachability is the property, not success.
+  'backup.list': {},
+  'backup.preview': { backupId: 'no-such-card/no-such-chat/20260101-000000-000-f1-save-chat.jsonl' },
+  'backup.restore': {
+    backupId: 'no-such-card/no-such-chat/20260101-000000-000-f1-save-chat.jsonl',
+    confirm: 'no such conversation',
+  },
+  'backup.delete': { backupId: 'no-such-card/no-such-chat/20260101-000000-000-f1-save-chat.jsonl' },
   'prompt.itemize': { chatId: 'no-such-chat' },
   'script.slash': { chatId: 'no-such-chat', command: '/send hi|/trigger' },
+  'script.runEnded': { chatId: 'no-such-chat', runId: 'probe-run' },
   'script.getVariables': { chatId: 'no-such-chat', scope: 'chat' },
   'script.setVariables': { chatId: 'no-such-chat', scope: 'chat', op: 'replace', variables: {} },
   'script.swipeTo': { chatId: 'no-such-chat', messageId: 0, swipeIndex: 0 },
@@ -208,11 +228,49 @@ const PROBES: Record<string, unknown> = {
   'connection.save': { provider: 'default', model: 'mock-model' },
   'connection.delete': { id: 'no-such-profile' },
   'connection.activate': { id: 'no-such-profile' },
+  // A profile that does not exist answers not-found, which proves the handler
+  // ran; the probe's verdict-on-failure shape is the connections suite's business.
+  'connection.test': { profileId: 'no-such-profile' },
   'character.list': {},
   'character.import': { filename: 'x.json', content: 'e30=' },
   'character.delete': { characterId: 'no-such-card' },
+  // The manager arms name a card that is not in the library: the not-found
+  // answer proves the handler ran, the same reachability verdict the other
+  // character probes answer.
+  'character.duplicate': { characterId: 'no-such-card' },
+  'character.rename': { characterId: 'no-such-card', name: 'probe' },
+  'character.export': { characterId: 'no-such-card', format: 'json' },
+  'character.setTags': { characterId: 'no-such-card', tags: ['probe'] },
+  'character.favorite': { characterId: 'no-such-card', favorite: true },
   'settings.get': {},
   'settings.set': { settings: {} },
+  // Preset arms answer from a host whose library is empty or absent: a
+  // not-found or unsupported answer still proves the handler is registered.
+  'preset.list': {},
+  'preset.select': { name: 'no-such-preset' },
+  'preset.view': {},
+  'preset.setEnabled': { id: 'no-such-prompt', enabled: true },
+  'preset.move': { id: 'no-such-prompt', index: 0 },
+  'preset.upsertPrompt': { prompt: { name: 'probe' } },
+  'preset.removePrompt': { id: 'no-such-prompt' },
+  'preset.save': { name: 'probe-preset' },
+  'preset.delete': { name: 'no-such-preset' },
+  'preset.read': { name: 'no-such-preset' },
+  'preset.import': {},
+  // Empty JSON object: parses, is not a preset, and the named refusal proves
+  // the handler ran — the same reachability verdict the other arms answer.
+  'preset.importFile': { filename: 'probe.json', content: 'e30=' },
+  // The persona group. `list` answers from the probe host's own (empty)
+  // store; `set` writes one; a `get` and a `delete` for a persona that does
+  // not exist answer absent/not-found, which proves the handler ran.
+  'persona.list': {},
+  'persona.set': { name: 'probe-persona', description: 'a persona the probe wrote', active: true },
+  'persona.get': { id: 'no-such-persona' },
+  'persona.delete': { id: 'no-such-persona' },
+  // The global regex tier answers from a host with or without the store: an
+  // unsupported refusal still proves the handler is registered.
+  'regex.list': {},
+  'regex.set': { scripts: [] },
   'script.list': { characterId: 'no-such-card' },
   'script.setEnabled': { characterId: 'no-such-card', scriptId: 'x', enabled: true },
   'script.body': { characterId: 'no-such-card', scriptId: 'x' },
@@ -243,8 +301,16 @@ const PROBES: Record<string, unknown> = {
   'worldbook.load': { name: '' },
   'worldbook.charNames': { characterId: 'no-such-character' },
   'worldbook.replace': { name: 'no-such-book', entries: [] },
+  // Refused with not-found on the probe host (no store) — reachability, not success.
+  'worldbook.create': { name: 'no-such-book' },
+  'worldbook.bindChat': { chatId: 'no-such-chat', name: 'no-such-book' },
+  // Empty list: no book existence to check, and the unknown character answers
+  // not-found — which proves the handler ran, like the probes above it.
+  'worldbook.setCharBooks': { characterId: 'no-such-character', names: [] },
   'worldbook.globalSelect': {},
   'worldbook.setGlobalSelect': { names: [] },
+  'worldbook.settings': {},
+  'worldbook.setSettings': {},
   // Empty params: the cursor and the limit are both optional, and reading
   // from the oldest held record is the page's first call.
   'debug.reports': {},
@@ -382,6 +448,58 @@ test('a reused character id inherits no answer the user gave about the card befo
     false,
     'a new card inherited an answer given about another card',
   )
+})
+
+/**
+ * The secret-storage boundary, asserted on real frames.
+ *
+ * A connection profile's key is stored host-side — that is the deliberate
+ * design — but the **wire** must behave as if it did not exist: no read, no
+ * listing, no echo of any field a save accepted. Asserted on the parsed JSON
+ * of an HTTP response rather than on handler return values, because the frame
+ * is the thing a hostile or careless reader gets.
+ */
+test('a saved key never crosses the wire back, only its mask does', async () => {
+  const key = 'sk-iris-transport-secret-a1b2'
+
+  const saved = await client.call('connection.save', {
+    provider: 'deepseek',
+    model: 'deepseek-v4-flash',
+    baseURL: 'https://api.deepseek.test/v1',
+    apiKey: key,
+  })
+  const profile = saved.profiles.find(row => row.provider === 'deepseek')
+  assert.ok(profile !== undefined, 'the profile was saved')
+
+  const response = await fetch(`${origin}/iris/rpc`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'mask', method: 'connection.list', params: {} }),
+  })
+  const frame = await response.json() as { ok: boolean, result?: unknown }
+  assert.equal(frame.ok, true)
+  const body = JSON.stringify(frame.result)
+  assert.equal(body.includes(key), false, 'the listing carries the key')
+  assert.equal(body.includes('sk-iris-transport-secret'), false, 'the listing carries part of the key')
+
+  const listed = frame.result as { profiles: { id: string, hasKey?: boolean, keyTail?: string }[] }
+  const read = listed.profiles.find(row => row.id === profile.id)
+  assert.ok(read !== undefined)
+  assert.equal(read.hasKey, true)
+  assert.equal(read.keyTail, 'a1b2')
+
+  // And the boundary is the wire's, not the handler's: an update that does
+  // not send the key leaves it armed, which only the store can see.
+  const updated = await client.call('connection.save', {
+    id: profile.id,
+    provider: 'deepseek',
+    model: 'deepseek-reasoner',
+    baseURL: 'https://api.deepseek.test/v1',
+  })
+  assert.equal(updated.profiles.find(row => row.id === profile.id)?.hasKey, true)
+
+  // Clean up, so the rest of the suite sees the profile list it started with.
+  await client.call('connection.delete', { id: profile.id })
 })
 
 /**

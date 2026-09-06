@@ -47,6 +47,8 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
   const disposed: string[] = []
   /** Snapshots pushed into the frame after it was built. */
   const refreshed: ScriptContext[] = []
+  /** Cards that were told to re-read their viewport. */
+  const resized: string[] = []
   const failures: ScriptRunState[] = []
   let latest: readonly ScriptRunState[] = []
 
@@ -64,6 +66,7 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
         element: { id: 'card-frame', isConnected: false } as never,
         emit: () => undefined,
         refreshContext: context => refreshed.push(context),
+        resize: () => resized.push('card-frame'),
         dispose: () => disposed.push('card-frame'),
       }
     },
@@ -88,6 +91,7 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
     attached,
     disposed,
     refreshed,
+    resized,
     failures,
     states: () => latest,
   }
@@ -177,6 +181,29 @@ test('disposing tears down every frame that did start', async () => {
   running.dispose()
 
   assert.deepEqual(bench.disposed, ['card-frame'], 'one frame holds the card, so one teardown')
+})
+
+test('a viewport re-push reaches every frame the set started', async () => {
+  /*
+   * The overlay frames' boxes belong to the shell's layout, not to a window,
+   * so the shell needs a door to re-tell them their viewport when the reading
+   * column changes shape with no window event. The door must be on the *set*
+   * (this is what the shell holds), and it must forward to every card — the
+   * first cut called `resize` on the set and reached nothing, which surfaced
+   * as a `TypeError` from the surface's own observer and a viewport that
+   * quietly stopped updating.
+   */
+  const bench = harness()
+  const running = startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+  assert.deepEqual(bench.resized, [], 'no push before anyone asks')
+
+  running.resize()
+  assert.deepEqual(bench.resized, ['card-frame'], 'the set forwards to its card')
+
+  running.dispose()
+  running.resize()
+  assert.deepEqual(bench.resized, ['card-frame'], 'a disposed set is silence')
 })
 
 test('a card whose grants cannot be resolved reports against the card, not a script', async () => {
@@ -294,6 +321,7 @@ test('a frame that did report ready is never called silent', async () => {
         element: { id: 'card-frame', isConnected: true } as never,
         emit: () => undefined,
         refreshContext: () => undefined,
+        resize: () => undefined,
         dispose: () => undefined,
       }
     },
@@ -487,6 +515,7 @@ test('a report that belongs to the frame rather than a script still arrives', as
         element: { id: 'card-frame', isConnected: true } as never,
         emit: () => undefined,
         refreshContext: () => undefined,
+        resize: () => undefined,
         dispose: () => undefined,
       }
     },
@@ -508,6 +537,7 @@ test('an outcome naming a script this card does not have is still dropped', asyn
         element: { id: 'card-frame', isConnected: true } as never,
         emit: () => undefined,
         refreshContext: () => undefined,
+        resize: () => undefined,
         dispose: () => undefined,
       }
     },

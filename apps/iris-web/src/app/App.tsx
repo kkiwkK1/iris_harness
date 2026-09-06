@@ -1,10 +1,12 @@
 /**
  * The Iris shell.
  *
- * Holds the three things that are genuinely global — the theme, the drop target
- * for character cards, and which of the two overlays is open — and nothing else.
- * Chat state lives in the store; reading preferences live on the device. Keeping
- * those three concerns apart is what makes the shell small enough to read.
+ * Holds the things that are genuinely global — the drop target for character
+ * cards, which of the two overlays is open, the reading preferences, and the
+ * user.css slot's lifetime — and nothing else. The theme lives in its own
+ * module store (`theme/theme.ts`), which applies the document the moment the
+ * choice changes; chat state lives in the store. Keeping those concerns apart
+ * is what makes the shell small enough to read.
  *
  * @module iris-web/app/App
  */
@@ -15,13 +17,12 @@ import type { ReactElement } from 'react'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import {
   applyReading,
-  applyTheme,
   loadReading,
-  loadTheme,
   watchSystemTheme,
+  getThemeChoice,
   type ReadingPrefs,
-  type ThemeChoice,
 } from '../theme/theme.ts'
+import { installUserCssSlot } from '../slots/user-css.ts'
 import { ChatPane } from './ChatPane.tsx'
 import { SettingsDrawer } from './SettingsDrawer.tsx'
 import { Masthead } from './Masthead.tsx'
@@ -31,6 +32,7 @@ import { ConsentAsk } from './ConsentAsk.tsx'
 import { CleanupOffer } from './CleanupOffer.tsx'
 import { StatePanel } from './StatePanel.tsx'
 import { toBase64 } from './format.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 import '../theme/tokens.css'
 import '../theme/bridge.css'
@@ -46,26 +48,31 @@ export function App(): ReactElement {
   const actions = useIrisActions()
   const notice = useIris(state => state.notice)
   const connected = useIris(state => state.connected)
+  // Subscribed so a language switch re-renders the shell's own words. The
+  // language itself lives in the i18n module, like the theme lives in its own:
+  // per-device, not store state.
+  useLanguage()
 
-  const [theme, setThemeState] = useState<ThemeChoice>(loadTheme)
   const [reading, setReadingState] = useState<ReadingPrefs>(loadReading)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
   const [dropping, setDropping] = useState(false)
   const dragDepth = useRef(0)
 
-  // Apply on mount as well as on change: the stored preference has to reach the
-  // document before the first paint of prose, not after it.
-  useEffect(() => {
-    applyTheme(theme)
-  }, [theme])
+  // The theme needs no shell state: it lives in its own module store, applies
+  // the document the moment it is set, and the pre-paint script in
+  // `index.html` already put the stored choice on the attribute before this
+  // bundle ran. Reading still rides through here because its setter owns the
+  // document writes.
   useEffect(() => {
     applyReading(reading)
   }, [reading])
 
-  const themeRef = useRef(theme)
-  themeRef.current = theme
-  useEffect(() => watchSystemTheme(() => themeRef.current), [])
+  // Keep a `system` choice in step with the OS, and mount the user.css slot
+  // for as long as the shell lives — its disposer takes the style element
+  // back, leaving nothing behind.
+  useEffect(() => watchSystemTheme(getThemeChoice), [])
+  useEffect(() => installUserCssSlot(), [])
 
   useEffect(() => {
     void actions.boot()
@@ -89,6 +96,8 @@ export function App(): ReactElement {
   return (
     <div
       className="iris-shell"
+      // The drawer is a pure overlay (panels.css): the page beneath never
+      // reacts to it, so the shell carries no drawer-open modifier at all.
       // Card import is a whole-window drop rather than a small target: a reader
       // dragging a card off their desktop should not have to aim.
       onDragEnter={event => {
@@ -115,7 +124,7 @@ export function App(): ReactElement {
       <main className="iris-main">
         {connected ? null : (
           <div className="iris-notice iris-notice--error" role="status">
-            Not connected to the Iris host. Nothing you write will be sent.
+            {t('notConnected')}
           </div>
         )}
         {/*
@@ -138,7 +147,7 @@ export function App(): ReactElement {
             <button
               type="button"
               className="iris-notice__dismiss"
-              aria-label="Dismiss"
+              aria-label={t('dismiss')}
               onClick={() => actions.dismissNotice()}
             >
               ✕
@@ -152,19 +161,31 @@ export function App(): ReactElement {
               onOpenSettings={() => setSettingsOpen(true)}
               onToggleNav={() => setNavOpen(!navOpen)}
             />
-            <ChatPane />
+            {/*
+              The reading column's card stage.
+
+              This wrapper is the rectangle a card's overlay interface is
+              confined to: `CardScriptFrames`'s surface is `position:absolute;
+              inset:0` inside it, so the browser derives the box from the
+              layout — masthead and sidebar stay outside it and stay reachable,
+              and there is no measured copy of the geometry to fall out of sync
+              with the real one. ChatPane lives in the same wrapper so the two
+              fill the sheet exactly as they did when they were its direct
+              children; the wrapper is a plain flex column with `position` set,
+              nothing more.
+
+              The foreground chat's card scripts still render outside `ChatPane`
+              itself, as they always have: a re-render of the conversation must
+              not be able to restart a card.
+            */}
+            <div className="iris-card-stage">
+              <ChatPane />
+              <CardScriptFrames />
+            </div>
           </div>
           <StatePanel />
         </div>
       </main>
-
-      {/*
-        The foreground chat's card scripts. Renders nothing — card UI inside a
-        message is a separate piece — but it lives here rather than inside
-        `ChatPane` so a re-render of the conversation cannot restart a card.
-      */}
-      <CardScriptFrames />
-
       {/*
         The host's cleaning offer, at the top level rather than inside the
         drawer or the sheet: it is a modal question about deleting the open
@@ -177,16 +198,14 @@ export function App(): ReactElement {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         control={{
-          theme,
           reading,
-          setTheme: setThemeState,
           setReading: setReadingState,
         }}
       />
 
       {dropping ? (
         <div className="iris-drop" role="status">
-          Drop a character card — PNG, JSON or .charx — to add it to the library.
+          {t('dropCard')}
         </div>
       ) : null}
 

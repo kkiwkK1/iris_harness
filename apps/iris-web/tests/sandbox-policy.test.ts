@@ -223,3 +223,30 @@ test('a forwarded event needs a name and an argument list', () => {
   )
   assert.equal(parseToFrame('tok', { iris: 'tok', type: 'event', args: [] }), undefined)
 })
+
+test('a window event dispatch carries its name and optional detail', () => {
+  // The frame→shell half of the page event target: the dispatch itself cannot
+  // reach a sibling frame, so what crosses is the event's own two facts.
+  assert.deepEqual(
+    parseFromFrame('tok', {
+      iris: 'tok',
+      type: 'winevent',
+      event: 'MvuFloatingBgRequest',
+      detail: { action: 'show', src: 'a.png' },
+    }),
+    {
+      iris: 'tok',
+      type: 'winevent',
+      event: 'MvuFloatingBgRequest',
+      detail: { action: 'show', src: 'a.png' },
+    },
+  )
+  // A detail-less dispatch is a real shape — `new CustomEvent('x')` — and stays
+  // a real one rather than being answered with `detail: undefined`.
+  assert.deepEqual(
+    parseFromFrame('tok', { iris: 'tok', type: 'winevent', event: 'x' }),
+    { iris: 'tok', type: 'winevent', event: 'x' },
+  )
+  assert.equal(parseFromFrame('tok', { iris: 'tok', type: 'winevent', event: '' }), undefined)
+  assert.equal(parseFromFrame('tok', { iris: 'tok', type: 'winevent' }), undefined)
+})

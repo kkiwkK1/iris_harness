@@ -36,6 +36,7 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { classForReport, collapseRuns } from './host-report-rows.ts'
 import { useIris, useIrisStore } from '../client/provider.tsx'
 import { actionsOf } from '../client/store.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /** A local time, to the second. Reports arrive as epoch milliseconds. */
 function timeOf(at: number): string {
@@ -60,6 +61,9 @@ export function HostReports(): ReactElement {
   const kinds = useIris(state => state.hostReportKinds)
   const loading = useIris(state => state.hostReportsLoading)
   const [hidden, setHidden] = useState<readonly string[]>([])
+  // Subscribed so a language switch re-renders the panel's own words. The
+  // report bodies stay as the host wrote them — quoted evidence, not copy.
+  useLanguage()
 
   /*
    * The kinds offered are the union of what the host says it holds and what the
@@ -82,7 +86,7 @@ export function HostReports(): ReactElement {
   return (
     <section className="iris-reports">
       <div className="iris-reports__head">
-        <span className="iris-field__label">Host reports</span>
+        <span className="iris-field__label">{t('hostReports')}</span>
         {/*
           The drawer's own control, not a new one. A debug read that invents its
           own button styling is a second visual language in a panel that already
@@ -97,7 +101,7 @@ export function HostReports(): ReactElement {
             void actionsOf(store).loadHostReports()
           }}
         >
-          {loading ? 'Reading…' : reports === undefined ? 'Read' : 'Read again'}
+          {loading ? t('reportsReading') : reports === undefined ? t('reportsRead') : t('reportsReadAgain')}
         </Button>
       </div>
 
@@ -128,12 +132,10 @@ export function HostReports(): ReactElement {
         identically — and the second one is evidence, so it has to be sayable.
       */}
       {reports === undefined ? (
-        <p className="iris-field__note">Not read yet.</p>
+        <p className="iris-field__note">{t('reportsNotRead')}</p>
       ) : shown.length === 0 ? (
         <p className="iris-field__note">
-          {reports.length === 0
-            ? 'The host has reported nothing.'
-            : 'Every fetched report is filtered out.'}
+          {reports.length === 0 ? t('reportsEmpty') : t('reportsAllFiltered')}
         </p>
       ) : (
         <ol className="iris-reports__list">
@@ -160,7 +162,7 @@ export function HostReports(): ReactElement {
               */}
               {report.stack !== undefined && report.stack !== '' && (
                 <details className="iris-reports__stack">
-                  <summary>stack</summary>
+                  <summary>{t('stackSummary')}</summary>
                   <pre>{report.stack}</pre>
                 </details>
               )}
@@ -177,8 +179,7 @@ export function HostReports(): ReactElement {
       */}
       {dropped > 0 && (
         <p className="iris-field__note">
-          {dropped} older {dropped === 1 ? 'report' : 'reports'} were dropped before the oldest
-          shown.
+          {dropped === 1 ? t('reportsDroppedOne') : t('reportsDropped', { n: dropped })}
         </p>
       )}
     </section>

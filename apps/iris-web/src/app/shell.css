@@ -110,6 +110,37 @@
   padding: 6px 8px 16px;
 }
 
+/*
+ * The chats tab's content filter. Full width of the list, quiet until used.
+ *
+ * No `width: 100%`: the box is a block with inline margins, and a 100% width
+ * *plus* those margins overflowed the list by exactly the margin pair — which
+ * is where the sidebar's stray horizontal scrollbar came from. A block fills
+ * the space left over on its own.
+ */
+.iris-search {
+  display: block;
+  box-sizing: border-box;
+  margin: 2px 4px 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink);
+  background: var(--iris-bg-sunken);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  min-width: 0;
+}
+
+.iris-search:focus {
+  outline: none;
+  border-color: var(--iris-accent);
+}
+
+.iris-search::placeholder {
+  color: var(--iris-ink-faint);
+}
+
 .iris-row {
   display: block;
   width: 100%;
@@ -150,9 +181,31 @@
   font-weight: 600;
 }
 
+/*
+ * A branch sitting under the conversation it left. The indent carries the
+ * relationship; the marker makes it legible when titles run long enough to
+ * start at different depths.
+ */
+.iris-row__branch {
+  color: var(--iris-ink-faint);
+}
+
 .iris-row__meta {
   display: block;
   margin-top: 3px;
+}
+
+/* A content hit's evidence: the matched text, clamped to two lines. */
+.iris-row__snippet {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 3px;
+  font-size: var(--iris-meta-size);
+  line-height: 1.4;
+  color: var(--iris-ink-tertiary);
+  overflow-wrap: anywhere;
 }
 
 .iris-row__tags {
@@ -169,6 +222,40 @@
   border: var(--iris-hairline) solid var(--iris-rule);
   border-radius: 999px;
   padding: 1px 7px 2px;
+}
+
+/*
+ * The library's filter and sort row. Two selects share one line; each keeps
+ * the search box's quiet field styling so the row reads as part of the list
+ * rather than as a toolbar bolted above it.
+ */
+.iris-library-tools {
+  display: flex;
+  gap: 6px;
+  margin: 2px 4px 8px;
+}
+
+.iris-library-tools .iris-search {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+}
+
+/*
+ * The star that prefixes a character's name. Unstarred it is a whisper — the
+ * outline glyph in the faintest ink — so a library where nothing is starred
+ * does not grow a column of decoration; starred it takes the accent, because
+ * the rows the user marked are the ones a scanning eye is looking for.
+ */
+.iris-star {
+  margin-right: 5px;
+  font-size: 0.92em;
+  color: var(--iris-ink-faint);
+}
+
+.iris-star--on {
+  color: var(--iris-accent);
 }
 
 /*
@@ -228,10 +315,70 @@
   border-inline: var(--iris-hairline) solid var(--iris-rule);
 }
 
+/*
+ * The box a card's overlay interface is confined to.
+ *
+ * The overlay surface (`useCardScripts.tsx`) is `position:absolute; inset:0`
+ * inside this wrapper, so **the layout, not a measurement, is the source of
+ * truth** for where a card's interface may appear: below the masthead, right
+ * of the sidebar, inside the sheet. A window resize, a notice appearing, a
+ * pane toggling — the rectangle follows all of them with no code, which is
+ * the property a measured fixed-position copy could never have.
+ *
+ * Positioned, because `inset:0` needs a containing block that is this wrapper
+ * and not the shell. A flex column with `min-height:0` because it takes the
+ * sheet's remaining height and hands it to ChatPane exactly as the sheet's own
+ * flex layout did when ChatPane was a direct child.
+ */
+.iris-card-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
 @media (min-width: 1360px) {
   .iris-stage {
-    grid-template-columns: minmax(0, var(--iris-sheet)) var(--iris-aside);
+    /*
+     * Desk, sheet, aside. The aside is the flexible track, floored at its 260px
+     * token: where the window is ample the two flanks come out equal and the
+     * sheet sits centred between the sidebar's edge and the window's — the
+     * ruling the whole shell answers to. Where the window is merely wide, the
+     * floor holds the margin legible and the sheet takes what remains: it sits
+     * against the sidebar with no naked desk on either side, which is the same
+     * arrangement the sub-1360px window already showed.
+     */
+    grid-template-columns: minmax(0, 1fr) minmax(0, var(--iris-sheet)) minmax(var(--iris-aside), 1fr);
   }
+
+  /*
+   * The stage has two children, so each names its track: the sheet takes the
+   * middle one (its own 1040px measure at most) and the aside takes the right,
+   * leaving the desk to the left — the flanks balance, and the aside reaches
+   * the stage's right edge by construction rather than by a measured margin.
+   */
+  .iris-sheet {
+    grid-column: 2;
+  }
+
+  .iris-aside {
+    grid-column: 3;
+  }
+
+  /*
+   * The settings drawer is a **pure overlay** — nothing on this page may react
+   * to it. The earlier ruling re-wrapped the stage while the drawer was open
+   * (padding-right, a single centred track, the aside stood down), and the user
+   * measured the cost directly: opening the drawer shifted the scroll position
+   * and deformed the page. The drawer's own geometry is fixed and independent
+   * of the layer beneath it, so open and close are now invisible to the
+   * stage: same scrollTop, same sheet rect, aside merely covered while the
+   * drawer is up. This block is a deliberate no-op left here so the ruling has
+   * an address; any future rule under `.iris-shell--drawer-open` must re-justify
+   * itself against that measurement.
+   */
 }
 
 .iris-nav-toggle {

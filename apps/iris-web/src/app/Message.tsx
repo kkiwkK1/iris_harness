@@ -14,17 +14,23 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 
+import { MessageActions } from './MessageActions.tsx'
 import { MessageInterfaces } from './MessageInterfaces.tsx'
 import type { MessageView } from '@iris/protocol'
 
 import { Slot } from '../slots/Slot.tsx'
 import { Reasoning } from './Reasoning.tsx'
 import { VariantRail } from './VariantRail.tsx'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /** What a message row can do, supplied by the pane that owns the chat. */
 export interface MessageHandlers {
   onSwipe: (turn: number, index: number) => void
   onRegenerate: () => void
+  /** Write on from the newest reply; the result rejoins that floor. */
+  onContinue: () => void
+  /** Have the model write the user's next line instead of a reply. */
+  onImpersonate: () => void
   onEdit: (id: number, text: string) => void
   onDelete: (id: number) => void
   onNotify: (text: string) => void
@@ -51,6 +57,8 @@ export function Message({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(message.text)
   const field = useRef<HTMLTextAreaElement>(null)
+  // Subscribed so a language switch re-renders the row's actions.
+  useLanguage()
 
   useEffect(() => {
     if (editing) field.current?.focus()
@@ -81,6 +89,13 @@ export function Message({
             onSelect={index => handlers.onSwipe(turn, index)}
           />
         ) : null}
+        {/*
+          The floor's number (upstream's `mesIDDisplay_enabled`, which the
+          measured profile turned on). Rendered whenever there is a floor to
+          name; the reading preference decides whether it shows, so toggling it
+          never remounts a row.
+        */}
+        <span className="iris-msg__floor" aria-hidden="true">#{message.id}</span>
       </div>
 
       <div className="iris-msg__body">
@@ -104,10 +119,10 @@ export function Message({
             />
             <div className="iris-actions iris-actions--shown">
               <button type="button" className="iris-act" onClick={commit}>
-                Save
+                {t('save')}
               </button>
               <button type="button" className="iris-act" onClick={() => setEditing(false)}>
-                Cancel
+                {t('cancel')}
               </button>
             </div>
           </>
@@ -132,7 +147,7 @@ export function Message({
               ) : (
                 message.text
               )}
-              {streaming ? <span className="iris-caret" aria-label="Generating" /> : null}
+              {streaming ? <span className="iris-caret" aria-label={t('generatingAria')} /> : null}
             </div>
             <Slot name="iris.message.footer" owner={{ message, streaming }} />
 
@@ -142,36 +157,58 @@ export function Message({
                 className="iris-act"
                 onClick={() => {
                   void writeClipboard(message.text)
-                  handlers.onNotify('Copied.')
+                  handlers.onNotify(t('copied'))
                 }}
               >
-                Copy
+                {t('copy')}
               </button>
               <button type="button" className="iris-act" onClick={beginEdit}>
-                Edit
+                {t('edit')}
               </button>
               {message.role === 'assistant' && turn !== undefined ? (
                 <button type="button" className="iris-act" onClick={() => handlers.onExplain(turn)}>
-                  Prompt
+                  {t('promptButton')}
                 </button>
               ) : null}
               {canRegenerate ? (
-                <button
-                  type="button"
-                  className="iris-act iris-act--primary"
-                  onClick={handlers.onRegenerate}
-                >
-                  Regenerate
-                </button>
+                <>
+                  {/*
+                    The two generation kinds that act on this floor without
+                    replacing it: a continue writes on from THIS reading (the
+                    result rejoins it as a new one), and an impersonation has
+                    the model write the reader's next line. Both live beside
+                    regenerate because they answer the same question — what
+                    happens next — just from different seats.
+                  */}
+                  <button type="button" className="iris-act" onClick={handlers.onContinue}>
+                    {t('continueWriting')}
+                  </button>
+                  <button type="button" className="iris-act" onClick={handlers.onImpersonate}>
+                    {t('speakForMe')}
+                  </button>
+                  <button
+                    type="button"
+                    className="iris-act iris-act--primary"
+                    onClick={handlers.onRegenerate}
+                  >
+                    {t('regenerate')}
+                  </button>
+                </>
               ) : null}
               <button
                 type="button"
                 className="iris-act iris-act--danger"
                 onClick={() => handlers.onDelete(message.id)}
               >
-                Delete
+                {t('delete')}
               </button>
-              <Slot name="iris.message.actions" owner={{ message, streaming }} />
+              {/*
+                Provider-contributed actions (the `iris.message.actions`
+                seam), folded into one menu so the row's layout does not
+                depend on how many providers are installed. Renders nothing —
+                literally nothing, no wrapper — when none are.
+              */}
+              <MessageActions message={message} streaming={streaming} notify={handlers.onNotify} />
             </div>
           </>
         )}

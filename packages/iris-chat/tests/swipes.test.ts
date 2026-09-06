@@ -100,7 +100,7 @@ test('a candidate index outside the swipe list is refused', () => {
   assert.throws(() => selectCandidate(session, 0, 3), SwipeError)
 })
 
-test('swipes of a turn that already has a successor are settled', () => {
+test('swiping an earlier turn switches its reading and leaves later turns in place', () => {
   const session = chatWithPrompt()
   appendCandidate(session, { turn: 0, step: 0, message: reply('A') })
   appendCandidate(session, { turn: 0, step: 0, message: reply('B') })
@@ -115,11 +115,20 @@ test('swipes of a turn that already has a successor are settled', () => {
   )
   appendCandidate(session, { turn: 1, step: 0, message: reply('C') })
 
-  assert.throws(() => selectCandidate(session, 0, 0), SwipeError)
-  // The newest turn is still swipeable.
+  // Upstream semantics: any floor's swipes can still be switched, successors or
+  // not — a card's opening-menu button addresses turn 0 on a chat that has
+  // moved on, and refusing that was a button that silently did nothing.
+  const chosen = selectCandidate(session, 0, 0)
+  assert.equal(chosen.index, 0)
+  assert.equal(selectedCandidate(session, 0)?.index, 0)
+  // The model still sees one reply per turn, in order — turn 0 shows the chosen
+  // reading, and nothing after it moved.
+  assert.deepEqual(modelView(session), ['Hello?', 'A', 'And then?', 'C'])
+
+  // The newer turn is still swipeable after the earlier switch.
   appendCandidate(session, { turn: 1, step: 0, message: reply('D') })
   assert.equal(selectCandidate(session, 1, 0).index, 0)
-  assert.deepEqual(modelView(session), ['Hello?', 'B', 'And then?', 'C'])
+  assert.deepEqual(modelView(session), ['Hello?', 'A', 'And then?', 'C'])
 })
 
 test('candidates are tracked per turn', () => {

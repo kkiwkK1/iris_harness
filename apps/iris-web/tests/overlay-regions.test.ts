@@ -4,6 +4,10 @@
  * @module iris-web/tests/overlay-regions
  */
 
+import { join, dirname } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -159,4 +163,37 @@ test('the path a real card shape produces is short', () => {
     at(340, 780.3, 44, 44),
   ])
   assert.ok(path.length < 60, `${String(path.length)} characters: ${path}`)
+})
+
+test('the reporter survives a frame Chrome refuses to paint', () => {
+  /*
+   * The shell attaches the frame with the zero-area clip this reporter exists
+   * to replace, and Chrome skips rendering a frame whose clip paints nothing:
+   * no paint runs, so the frame's `requestAnimationFrame` never fires, so no
+   * measurement is asked for, so the clip stays zero-area. Measured end to end
+   * on a real card — the shell running its own animation frames at 120 fps
+   * beside a frame whose count was zero, its interface fully mounted and laid
+   * out inside, and the screen showing the chat through it.
+   *
+   * `reportRegions` lives in the frame entry, where there is no unit harness,
+   * so — as with the height guards in `message-frames.test.ts` — the property
+   * is pinned against the source: the schedule must arm a timer beside the
+   * animation frame, and the timer must run `send` only while the animation
+   * frame it rescues has not. The interval matches the height reporter's
+   * non-`rAF` fallback, and the reason is the same sentence in both places.
+   */
+  const entry = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
+    'utf8',
+  )
+  const schedule = entry.slice(entry.indexOf('const schedule = (): void => {'), entry.indexOf('Both observers, for the two ways'))
+
+  assert.match(schedule, /requestAnimationFrame\(send\)/u, 'the batching path is gone')
+  assert.match(schedule, /setTimeout\(send, 0\)/u, 'the hidden-tab path is gone')
+  assert.match(
+    schedule,
+    /if \(scheduled\) send\(\)/u,
+    'the rescue timer is gone — a zero-area clip then seals its own silence forever',
+  )
+  assert.match(schedule, /, 500\)/u, 'the rescue interval no longer matches the height fallback')
 })

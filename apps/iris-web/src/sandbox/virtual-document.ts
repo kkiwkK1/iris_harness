@@ -10,8 +10,14 @@
  * ten truthfully grants nothing a frame cannot already read off its own
  * `window.screen`.
  *
- * Everything else throws, naming the member. See `errors.ts` for why that is not
- * negotiable.
+ * Every **provided** member keeps that shape. For an **unprovided** name the
+ * policy is the parent proxy's: a read yields `undefined` and is reported once
+ * by name, a write is stored in the card's own data bag and reported once, and
+ * nothing here pretends to be a capability the frame does not have. The
+ * distinction that decides it is the same one the read-answer split below drew:
+ * a library hanging private data on the document object is not a request for
+ * page access, and upstream's own document answers those reads with
+ * `undefined`.
  *
  * @module iris-web/sandbox/virtual-document
  */
@@ -56,6 +62,18 @@ export interface DocumentState {
 export interface VirtualDocumentSource {
   /** The card's own container element. */
   container: ScopedRoot
+  /**
+   * The frame's own `<head>`, as a real element.
+   *
+   * The same kind of thing `body` is: this frame's document is the card's own
+   * page, and a `<style>` or `<link>` appended here styles that page and
+   * nothing else. Cards reaching for it are the mirror of the two measured
+   * `body` mount sites — a script that finishes mounting its markup and then
+   * injects its own stylesheet through `document.head`. Optional so a realm
+   * without a head refuses the member by name, as it does for any other member
+   * it does not carry.
+   */
+  head?: unknown
   /**
    * The real viewport size, read on every access rather than captured, so a card
    * that lays itself out on resize sees the new number.
@@ -170,8 +188,25 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
     )
   }
 
+  /*
+   * The data bag: names a card or its libraries hung on the document, and the
+   * one-note-per-name record shared by the read and write halves, so a name
+   * arriving as data first and read back later costs one line instead of two.
+   */
+  const expandos = new Map<string, unknown>()
+  const saidAboutData = new Set<string>()
+
   const members: Record<string, unknown> = {
     body: source.container,
+    /*
+     * Present alongside `body` when the realm has one. It sits here rather than
+     * in the fixed table below because a missing head must refuse by name —
+     * the same treatment every other member the realm did not hand over gets —
+     * rather than answer with `undefined`, which a card reading
+     * `document.head.appendChild` would take for "no head yet" and fail on a
+     * line later with nothing pointing here.
+     */
+    ...(source.head === undefined ? {} : { head: source.head }),
     documentElement: element,
 
     getElementById: (id: string): unknown => {
@@ -288,6 +323,15 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
     // `'BackCompat'` would be a lie: the srcdoc carries a doctype.
     compatMode: 'CSS1Compat',
     /*
+     * `9` is `Node.DOCUMENT_NODE`, and a document is always a document. Measured
+     * on the 开场白2.0.1 component (哈人冰恋世界 and 绿茵好莱坞 carry the same
+     * script): it duck-types with `document.nodeType`, and the refusal graded a
+     * pure read as a script failure — the same shape 银麒赎世's `readyState` read
+     * was, and the reason the reads-answer policy exists. A constant a frame
+     * cannot get wrong is not a capability this sandbox needs to withhold.
+     */
+    nodeType: 9,
+    /*
      * `''` rather than the shell's referrer, on the same reasoning as `URL`:
      * this frame was not navigated to from anywhere, and naming the shell would
      * hand a card a fact about the page it is isolated from.
@@ -304,26 +348,84 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
       // absent. Named members follow the policy exactly.
       if (typeof property === 'symbol') return undefined
       if (Object.hasOwn(members, property)) return members[property]
-      throw new UnsupportedApiError(
-        `document.${property}`,
-        'The sandbox provides body, documentElement, the three scoped lookups and the three node factories.',
-      )
+      if (expandos.has(property)) return expandos.get(property)
+      /*
+       * An unprovided name yields `undefined` and is reported once — the parent
+       * proxy's policy, adopted here for the same measured reason. The refusal
+       * this replaces was right about naming and wrong about the mechanism:
+       * libraries hang private data slots on the document object (`jQuery35…`
+       * is the one that arrived, from `$(parent.document)` in the 开场白2.0.1
+       * component), and their idiom is read-with-default — `var value =
+       * owner[this.expando]; if (!value) …` — so a throw killed the library
+       * three steps from the read, attributed to code that did nothing wrong.
+       * Upstream's document answers `undefined`; so does this one now, and
+       * unlike upstream it says which name was missing.
+       */
+      // Once per name, whatever half said it: a read that already reported, or
+      // a write that announced a slot, is not reported again by this path.
+      if (!saidAboutData.has(property)) {
+        saidAboutData.add(property)
+        source.report?.(
+          `a card read document.${property}, which this stand-in does not provide`
+          + ' — it returned undefined, which is not a statement that a real document has no such member',
+          false,
+        )
+      }
+      return undefined
     },
-    set(_target, property): boolean {
-      // Every write is refused, including to the members that exist: `body` is
-      // the container the shell owns, and letting a card replace it would hand
-      // it the one thing the sandbox is built to keep.
+
+    set(_target, property, value): boolean {
+      // Writes to the members that exist stay refused — `body` is the container
+      // the shell owns, and letting a card replace it would hand it the one
+      // thing the sandbox is built to keep.
+      if (typeof property !== 'symbol' && Object.hasOwn(members, property)) {
+        throw new ReadOnlyApiError(`document.${String(property)}`)
+      }
+      if (typeof property === 'symbol') {
+        throw new ReadOnlyApiError('document[symbol]')
+      }
+      /*
+       * A write to an unprovided name is **data**, not a capability request:
+       * this is the other half of the library idiom above — after reading its
+       * expando and finding nothing, jQuery writes the cache onto the document.
+       * Stored in a bag only the bag's readers can see, and said once, because
+       * a document that silently accepted capabilities would be worse than one
+       * that silently accepted data.
+       */
+      const name = String(property)
+      expandos.set(name, value)
+      if (!saidAboutData.has(name)) {
+        saidAboutData.add(name)
+        source.report?.(
+          `a card stored data on the document stand-in under "${name.slice(0, 80)}"`
+          + ' — the slot is the card\u2019s own, and dies with the frame',
+          false,
+        )
+      }
+      return true
+    },
+    deleteProperty(_target, property): boolean {
+      if (typeof property === 'string' && expandos.has(property)) {
+        expandos.delete(property)
+        return true
+      }
       throw new ReadOnlyApiError(`document.${String(property)}`)
     },
     has(_target, property): boolean {
-      return typeof property === 'string' && Object.hasOwn(members, property)
+      return typeof property === 'string' && (Object.hasOwn(members, property) || expandos.has(property))
     },
     ownKeys(): string[] {
-      return Object.keys(members)
+      return [...Object.keys(members), ...expandos.keys()]
     },
     getOwnPropertyDescriptor(_target, property): PropertyDescriptor | undefined {
-      if (typeof property !== 'string' || !Object.hasOwn(members, property)) return undefined
-      return { value: members[property], writable: false, enumerable: true, configurable: true }
+      if (typeof property !== 'string') return undefined
+      if (Object.hasOwn(members, property)) {
+        return { value: members[property], writable: false, enumerable: true, configurable: true }
+      }
+      if (expandos.has(property)) {
+        return { value: expandos.get(property), writable: true, enumerable: true, configurable: true }
+      }
+      return undefined
     },
   })
 
@@ -333,6 +435,7 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
 /** Every member the virtual document answers, for the settings panel to report. */
 export const VIRTUAL_DOCUMENT_MEMBERS = [
   'body',
+  'head',
   'documentElement.clientWidth',
   'documentElement.clientHeight',
   'getElementById',

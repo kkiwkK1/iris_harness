@@ -38,6 +38,7 @@
 import type { ReactElement } from 'react'
 
 import { railMode, stepReading } from './rail.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * Render the rail for one message.
@@ -58,12 +59,15 @@ export function VariantRail({
   interactive: boolean
   onSelect: (index: number) => void
 }): ReactElement | null {
+  // Subscribed so a language switch re-renders the rail's labels. First, before
+  // any early return: hook order must not depend on the rail's mode.
+  useLanguage()
   const mode = railMode(count)
   if (mode === 'hidden') return null
 
   const label = interactive
-    ? `${count} readings of this reply`
-    : `${count} readings were generated for this reply; the current one is ${index + 1}`
+    ? t('railReadings', { count })
+    : t('railRecord', { count, index: index + 1 })
 
   if (!interactive) {
     return (
@@ -90,7 +94,7 @@ export function VariantRail({
         <button
           type="button"
           className="iris-rail__step"
-          aria-label="Earlier reading"
+          aria-label={t('railEarlier')}
           disabled={earlier === undefined}
           onClick={() => {
             if (earlier !== undefined) onSelect(earlier)
@@ -106,7 +110,7 @@ export function VariantRail({
         <button
           type="button"
           className="iris-rail__step"
-          aria-label="Later reading"
+          aria-label={t('railLater')}
           disabled={later === undefined}
           onClick={() => {
             if (later !== undefined) onSelect(later)
@@ -126,7 +130,7 @@ export function VariantRail({
           type="button"
           className="iris-rail__tick"
           aria-current={at === index}
-          aria-label={`Reading ${at + 1} of ${count}`}
+          aria-label={t('railReadingOf', { index: at + 1, count })}
           onClick={() => onSelect(at)}
         />
       ))}

@@ -9,6 +9,12 @@
  *    what is embedded in a PNG. Nothing ships that format standalone, and
  *    nothing embeds the other one, so an importer that only handles one of them
  *    fails on roughly half of real assets.
+ *  - `convertAgnaiMemoryBook` / `convertRisuLorebook` / `convertNovelLorebook`
+ *    take the three foreign dialects ST's importer recognizes, and
+ *    `convertLorebookDialect` is the file-feature dispatch that picks between
+ *    them. A dialect file is not parseable as an ST book (`entries` is an
+ *    array of differently-named fields, or `data`), so conversion has to
+ *    happen first.
  *
  * Normalization fills every missing field with ST's template default, mirroring
  * `addMissingWorldInfoFields`. That makes the output a superset of the input,
@@ -202,6 +208,15 @@ export function createEntry(overrides: Partial<LorebookEntry> & { uid: number })
  */
 export function normalizeEntry(raw: unknown, uid: number): LorebookEntry {
   const source = isRecord(raw) ? raw : {}
+  // The extensions block is a second, upstream-canonical home for the scan
+  // fields: the conversion table (`world-info.js:2601-2639`) reads each of them
+  // from `extensions.<snake_case>` when a saved book is loaded for scanning,
+  // and ST's own writer nests them there. A top-level camelCase value wins when
+  // present — some writers hoist it — but a stored book that carries the flag
+  // in `extensions` only, which is every book on the measured install, must
+  // still be read.
+  const extensions = isRecord(source['extensions']) ? source['extensions'] : {}
+  const read = (top: string, nested: string): unknown => source[top] ?? extensions[nested]
   const defaults = entryDefaults()
 
   return {
@@ -212,42 +227,42 @@ export function normalizeEntry(raw: unknown, uid: number): LorebookEntry {
     comment: asString(source['comment'], defaults.comment),
     content: asString(source['content'], defaults.content),
     constant: asBoolean(source['constant'], defaults.constant),
-    vectorized: asBoolean(source['vectorized'], defaults.vectorized),
+    vectorized: asBoolean(read('vectorized', 'vectorized'), defaults.vectorized),
     selective: asBoolean(source['selective'], defaults.selective),
     selectiveLogic: asNumber(source['selectiveLogic'], defaults.selectiveLogic),
     order: asNumber(source['order'], defaults.order),
-    position: asNumber(source['position'], defaults.position),
+    position: asNumber(read('position', 'position'), defaults.position),
     disable: asBoolean(source['disable'], defaults.disable),
     excludeRecursion: asBoolean(source['excludeRecursion'], defaults.excludeRecursion),
     preventRecursion: asBoolean(source['preventRecursion'], defaults.preventRecursion),
     delayUntilRecursion: asRecursionDelay(source['delayUntilRecursion']),
-    probability: asNumber(source['probability'], defaults.probability),
+    probability: asNumber(read('probability', 'probability'), defaults.probability),
     useProbability: asBoolean(source['useProbability'], defaults.useProbability),
-    depth: asNumber(source['depth'], defaults.depth),
+    depth: asNumber(read('depth', 'depth'), defaults.depth),
     group: asString(source['group'], defaults.group),
     groupOverride: asBoolean(source['groupOverride'], defaults.groupOverride),
     groupWeight: asNumber(source['groupWeight'], defaults.groupWeight),
-    scanDepth: asNullableNumber(source['scanDepth']),
-    caseSensitive: asNullableBoolean(source['caseSensitive']),
-    matchWholeWords: asNullableBoolean(source['matchWholeWords']),
-    useGroupScoring: asNullableBoolean(source['useGroupScoring']),
-    automationId: asString(source['automationId'], defaults.automationId),
-    role: asNumber(source['role'], defaults.role),
-    sticky: asNullableNumber(source['sticky']),
-    cooldown: asNullableNumber(source['cooldown']),
-    delay: asNullableNumber(source['delay']),
+    scanDepth: asNullableNumber(read('scanDepth', 'scan_depth')),
+    caseSensitive: asNullableBoolean(read('caseSensitive', 'case_sensitive')),
+    matchWholeWords: asNullableBoolean(read('matchWholeWords', 'match_whole_words')),
+    useGroupScoring: asNullableBoolean(read('useGroupScoring', 'use_group_scoring')),
+    automationId: asString(read('automationId', 'automation_id'), defaults.automationId),
+    role: asNumber(read('role', 'role'), defaults.role),
+    sticky: asNullableNumber(read('sticky', 'sticky')),
+    cooldown: asNullableNumber(read('cooldown', 'cooldown')),
+    delay: asNullableNumber(read('delay', 'delay')),
     displayIndex: asNumber(source['displayIndex'], uid),
     characterFilter: asCharacterFilter(source['characterFilter']),
-    ignoreBudget: asBoolean(source['ignoreBudget'], defaults.ignoreBudget),
+    ignoreBudget: asBoolean(read('ignoreBudget', 'ignore_budget'), defaults.ignoreBudget),
     outletName: asString(source['outletName'], defaults.outletName),
-    triggers: asStringArray(source['triggers']),
+    triggers: asStringArray(read('triggers', 'triggers')),
     addMemo: asBoolean(source['addMemo'], defaults.addMemo),
-    matchPersonaDescription: asBoolean(source['matchPersonaDescription'], false),
-    matchCharacterDescription: asBoolean(source['matchCharacterDescription'], false),
-    matchCharacterPersonality: asBoolean(source['matchCharacterPersonality'], false),
-    matchCharacterDepthPrompt: asBoolean(source['matchCharacterDepthPrompt'], false),
-    matchScenario: asBoolean(source['matchScenario'], false),
-    matchCreatorNotes: asBoolean(source['matchCreatorNotes'], false),
+    matchPersonaDescription: asBoolean(read('matchPersonaDescription', 'match_persona_description'), false),
+    matchCharacterDescription: asBoolean(read('matchCharacterDescription', 'match_character_description'), false),
+    matchCharacterPersonality: asBoolean(read('matchCharacterPersonality', 'match_character_personality'), false),
+    matchCharacterDepthPrompt: asBoolean(read('matchCharacterDepthPrompt', 'match_character_depth_prompt'), false),
+    matchScenario: asBoolean(read('matchScenario', 'match_scenario'), false),
+    matchCreatorNotes: asBoolean(read('matchCreatorNotes', 'match_creator_notes'), false),
   }
 }
 
@@ -386,6 +401,207 @@ export function fromCharacterBook(book: unknown): Lorebook {
 
   const { entries: _discarded, ...bookLevel } = book
   return { ...bookLevel, entries }
+}
+
+/**
+ * The `entries`-style array a dialect book carries, or a named error.
+ *
+ * ST's converters call `.forEach` straight off the input and let the TypeError
+ * abort the import with "Error parsing file"; here the same refusal is a
+ * {@link LorebookParseError} with a message that names the dialect.
+ */
+function dialectEntryList(book: unknown, field: string, message: string): unknown[] {
+  const rawEntries = isRecord(book) ? book[field] : undefined
+  if (!Array.isArray(rawEntries)) throw new LorebookParseError(message)
+  return rawEntries
+}
+
+/**
+ * Convert an Agnai memory book (`{ kind: 'memory', entries: [...] }`).
+ *
+ * A field-for-field transcription of ST's `convertAgnaiMemoryBook`
+ * (`world-info.js:5358`):
+ *
+ * | Agnai           | LorebookEntry                          |
+ * | --------------- | -------------------------------------- |
+ * | `keywords`      | `key`                                  |
+ * | `name`          | `comment`, and `addMemo` when non-empty |
+ * | `entry`         | `content`                              |
+ * | `weight`        | `order`                                |
+ * | `enabled`       | `disable` (inverted — absent means disabled) |
+ * | *(array index)* | `uid`, `displayIndex`, the `entries` key |
+ *
+ * ST writes the mapped fields over `newWorldInfoEntryTemplate` and lets
+ * `addMissingWorldInfoFields` fill the rest at load time; routing the mapping
+ * through {@link normalizeEntry} is that same composition in one step. Fields
+ * the mapping consumes (`keywords`, `weight`, ...) are dropped, exactly as ST
+ * drops them — the template literal it builds has no place for them.
+ * @param inputObj - parsed JSON of the `.json` file.
+ * @returns a normalized book in the ST shape.
+ * @throws LorebookParseError when `entries` is not an array.
+ */
+export function convertAgnaiMemoryBook(inputObj: unknown): Lorebook {
+  const rawEntries = dialectEntryList(
+    inputObj, 'entries', 'an Agnai memory book must have an "entries" array',
+  )
+
+  const entries: Record<string, LorebookEntry> = {}
+  rawEntries.forEach((raw: unknown, index: number) => {
+    const source = isRecord(raw) ? raw : {}
+    const name = asString(source['name'], '')
+
+    const entry = normalizeEntry({
+      uid: index,
+      key: asStringArray(source['keywords']),
+      comment: name,
+      content: asString(source['entry'], ''),
+      // Agnai weights are small integers; ST maps them onto `order` as-is.
+      order: asNumber(source['weight'], DEFAULT_ORDER),
+      // `!entry.enabled`: an entry without the flag is disabled, not enabled.
+      disable: !asBoolean(source['enabled'], false),
+      // The template default is `selective: true`; this dialect writes false.
+      selective: false,
+      addMemo: name !== '',
+      displayIndex: index,
+    }, index)
+    entries[String(entry.uid)] = entry
+  })
+
+  return { entries }
+}
+
+/**
+ * Convert a Risu lorebook (`{ type: 'risu', data: [...] }`).
+ *
+ * A field-for-field transcription of ST's `convertRisuLorebook`
+ * (`world-info.js:5403`):
+ *
+ * | Risu                | LorebookEntry            |
+ * | ------------------- | ------------------------ |
+ * | `key`               | `key` (split on commas)  |
+ * | `secondkey`         | `keysecondary` (split on commas) |
+ * | `comment`           | `comment`                |
+ * | `content`           | `content`                |
+ * | `alwaysActive`      | `constant`               |
+ * | `selective`         | `selective` (absent means the template's `true`) |
+ * | `insertorder`       | `order`                  |
+ * | `activationPercent` | `probability`            |
+ * | *(array index)*     | `uid`, `displayIndex`, the `entries` key |
+ *
+ * Risu is the one dialect whose entries are disabled-inclusive (`disable` is
+ * written as a constant `false`) and always memo'd (`addMemo: true`).
+ * `useProbability` deserves a note: ST writes `activationPercent ?? true`, so
+ * it can never come out false, and when the percent is present it writes the
+ * *number* — a truthy placeholder the boolean `useProbability` slot cannot
+ * carry. The 0% case keeps its meaning through `probability: 0`, which the
+ * activation roll rejects on its own, so coercing the placeholder to `true`
+ * changes no outcome.
+ * @param inputObj - parsed JSON of the `.json` file.
+ * @returns a normalized book in the ST shape.
+ * @throws LorebookParseError when `data` is not an array.
+ */
+export function convertRisuLorebook(inputObj: unknown): Lorebook {
+  const rawEntries = dialectEntryList(
+    inputObj, 'data', 'a Risu lorebook must have a "data" array',
+  )
+
+  const entries: Record<string, LorebookEntry> = {}
+  rawEntries.forEach((raw: unknown, index: number) => {
+    const source = isRecord(raw) ? raw : {}
+
+    const entry = normalizeEntry({
+      uid: index,
+      // Risu stores keys as one comma-separated string, unlike every other dialect.
+      key: asStringArray(source['key']),
+      keysecondary: asStringArray(source['secondkey']),
+      comment: asString(source['comment'], ''),
+      content: asString(source['content'], ''),
+      constant: asBoolean(source['alwaysActive'], false),
+      selective: asBoolean(source['selective'], true),
+      order: asNumber(source['insertorder'], DEFAULT_ORDER),
+      probability: asNumber(source['activationPercent'], 100),
+      useProbability: asBoolean(source['activationPercent'], true),
+      addMemo: true,
+      displayIndex: index,
+    }, index)
+    entries[String(entry.uid)] = entry
+  })
+
+  return { entries }
+}
+
+/**
+ * Convert a NovelAI lorebook (`{ lorebookVersion: ..., entries: [...] }`).
+ *
+ * A field-for-field transcription of ST's `convertNovelLorebook`
+ * (`world-info.js:5448`):
+ *
+ * | NovelAI                          | LorebookEntry          |
+ * | -------------------------------- | ---------------------- |
+ * | `keys`                           | `key`                  |
+ * | `displayName`                    | `comment` (`|| ''`), and `addMemo` when a non-blank string |
+ * | `text`                           | `content`              |
+ * | `contextConfig.budgetPriority`   | `order`                |
+ * | `enabled`                        | `disable` (inverted — absent means disabled) |
+ * | *(array index)*                  | `uid`, `displayIndex`, the `entries` key |
+ *
+ * The `order` fallback is 0, not the template's 100: NovelAI orders by token
+ * budget priority, where 0 is a legitimate bottom-of-the-pile priority an
+ * author can set on purpose, and ST preserves it rather than substituting the
+ * default.
+ * @param inputObj - parsed JSON of the `.json` file.
+ * @returns a normalized book in the ST shape.
+ * @throws LorebookParseError when `entries` is not an array.
+ */
+export function convertNovelLorebook(inputObj: unknown): Lorebook {
+  const rawEntries = dialectEntryList(
+    inputObj, 'entries', 'a NovelAI lorebook must have an "entries" array',
+  )
+
+  const entries: Record<string, LorebookEntry> = {}
+  rawEntries.forEach((raw: unknown, index: number) => {
+    const source = isRecord(raw) ? raw : {}
+    const contextConfig = isRecord(source['contextConfig']) ? source['contextConfig'] : {}
+    const displayName = source['displayName']
+
+    const entry = normalizeEntry({
+      uid: index,
+      key: asStringArray(source['keys']),
+      comment: asString(displayName, ''),
+      content: asString(source['text'], ''),
+      order: asNumber(contextConfig['budgetPriority'], 0),
+      // `!entry.enabled`: an entry without the flag is disabled, not enabled.
+      disable: !asBoolean(source['enabled'], false),
+      // The template default is `selective: true`; this dialect writes false.
+      selective: false,
+      // ST tests `displayName !== undefined && displayName.trim() !== ''` —
+      // blank-but-present names show as the comment yet tick no memo box.
+      addMemo: typeof displayName === 'string' && displayName.trim() !== '',
+      displayIndex: index,
+    }, index)
+    entries[String(entry.uid)] = entry
+  })
+
+  return { entries }
+}
+
+/**
+ * Convert whichever foreign dialect `raw` is, or report that it is none.
+ *
+ * The dispatch mirrors ST's importer (`world-info.js:5754-5772`), which
+ * recognizes a file by a feature no ST book carries: `lorebookVersion`
+ * (NovelAI), `kind: 'memory'` (Agnai), `type: 'risu'` (Risu). Checked in ST's
+ * order, first match wins.
+ * @param raw - parsed JSON of an imported file.
+ * @returns the converted book, or `null` when the file is not a known dialect
+ *   and the caller should fall back to {@link parseLorebook}.
+ */
+export function convertLorebookDialect(raw: unknown): Lorebook | null {
+  if (!isRecord(raw)) return null
+  if (raw['lorebookVersion'] !== undefined) return convertNovelLorebook(raw)
+  if (raw['kind'] === 'memory') return convertAgnaiMemoryBook(raw)
+  if (raw['type'] === 'risu') return convertRisuLorebook(raw)
+  return null
 }
 
 /**

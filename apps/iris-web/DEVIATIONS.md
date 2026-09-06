@@ -845,3 +845,729 @@ an interruption.
 anything a user would miss — it is bounded by `keep`, so this is arguable — or a
 user saying the notice is noise. Both are about the *notice*, not about the
 record: the durable line stays either way.
+
+## 19. Same-origin fetches answer through a bridge with a narrower shape
+
+**Kind:** deliberate improvement — it closes a compatibility gap (`fetch('/version')`
+died under `connect-src 'none'` with a banner naming Iris's own host) at a
+deliberately reduced fidelity.
+
+**Upstream.** `fetch` is the page's own. Card scripts run same-origin with
+SillyTavern, so any method works, request headers ride along, bodies go out,
+responses stream, and the user's cookies are attached because the browser
+attaches them — there is no policy between a bundle and its server.
+
+**Iris.** Same-origin **GET and HEAD** requests are carried to the shell on the
+`fetch` message and fetched by the shell page with its own credentials; the
+frame hands the card a real `Response` carrying the body, status and content
+type. Everything else — any other method, any request with a body or headers,
+any foreign origin — takes the native path, where CSP refuses it and the
+refusal is reported as it always was. `XMLHttpRequest` is not bridged at all.
+
+**What it costs.** Measured against the corpus: MVU's bundle POSTs to
+`/api/backends/chat-completions/status` and `/api/chats/export` — upstream
+server endpoints — and those still arrive at a refusal instead of a response.
+The bundle wraps them in its own `catch`, so the cost is the degraded answer,
+not a dead card; a banner shows when the path is exercised, which is honest
+(the endpoint does not exist here) rather than a bridge pretending otherwise.
+Responses are buffered text, so there is no streaming and no `arrayBuffer`, and
+an `AbortSignal` passed to the bridged call does not reach the shell's fetch —
+a card that aborts a same-origin request sees it complete anyway.
+
+**What would overturn it.** A measured card that cannot render without a
+same-origin POST answering, or that awaits a same-origin response as a stream.
+That reopens the question the GET-only rule exists to defer — what a bridged
+POST to Iris's own routes may do with the user's credentials — and it is a
+design decision to make, not a shim to widen.
+
+## 20. `document.head` is the card frame's head, not the page's
+
+**Kind:** deliberate improvement — closes the gap where 灭仇家满门之后's
+script read `document.head` after mounting and died on the refusal.
+
+**Upstream.** A card script's `document` *is* the page's document, so
+`document.head` is the app's `<head>` and a `<style>` appended there restyles
+the whole SillyTavern UI — cards do this to re-theme the page around
+themselves.
+
+**Iris** answers with the head of the card's **own frame document**, a real
+element like the container `body` is. Injections land, render, and style every
+pixel the card owns — and nothing else, because the card's page is the frame.
+
+**What it costs.** A card that injected page-level styles upstream now styles
+only itself; a theme that used to leak past the card's boundary stops leaking.
+That leak was never reproducible here — a cross-origin frame cannot restyle the
+shell — so the cost is a difference in *what the card believes it changed*, not
+a lost visual effect. Writes to the member itself (`document.head = …`) stay
+refused like every other write.
+
+**What would overturn it.** A measured card whose interface visibly depends on
+styling something outside its own frame — that would be a request for the
+document grant, which exists for exactly this and is decided per card by the
+user.
+---
+
+## 21. Interface frames are handed an `Mvu` surface built on their own facade
+
+**Kind:** deliberate improvement (closing a measured compatibility gap).
+
+**Upstream.** A card's MVU bundle runs in a *script* iframe and publishes itself
+onto the shared host page: `_.set(window.parent, 'Mvu', …)` — and a script
+iframe's parent **is** the page. An interface iframe reaches the same live
+object two ways, both in upstream's own injection: `predefine.js` defines
+`window.Mvu` as a getter to `_.get(window.parent, 'Mvu')` (its own comment:
+"只是为了兼容性"), and `waitGlobalInitialized('Mvu')` resolves through the page's
+event source when the bundle emits `global_Mvu_initialized`.
+
+**Iris.** Each frame is an opaque origin with its own virtual parent and its own
+event bus, so the bundle's publication stays in the script frame and no message
+frame can ever see it. Measured consequence (哈人冰恋世界 v2.0.1, and the same
+shape in 尸变纪元 and 绿茵好莱坞): every one of their status bars opens with
+`await waitGlobalInitialized('Mvu')` and draws its panels only afterwards — the
+wait never resolved, and the frame rendered its chassis with no number in it.
+
+A live object cannot cross the wall, so Iris provides the surface the bundle
+itself delegates to, built on the interface frame's **own** Tavern Helper:
+`Mvu.events` is the constant table Iris already carries, and `Mvu.getMvuData` /
+`Mvu.replaceMvuData` are the frame's own `getVariables` / `replaceVariables`.
+That is not a guess about the bundle's semantics — the published artifact reads
+`getMvuData:function(e){return getVariables(e)}`,
+`replaceMvuData:function(e,t){return replaceVariables(e,t)}`. A display panel
+therefore works fully, with its own floor's variables; the bundle's schema-driven
+update machinery stays where it runs, in the script frame. Published
+interface-frames-only, into both the window globals and the virtual parent bag
+the wait polls; a later real publication replaces the entry, and script frames —
+where the real bundle runs — get nothing.
+
+**What it costs.** A status bar's *edit* path that round-trips through the bundle
+(`Mvu.replaceMvuData`) now writes through the frame's facade instead of the
+bundle's schema pipeline: the write lands, but the bundle's zod validation and
+its `*_for_zod` event pair do not run. The display path — what a reader sees —
+is unaffected.
+
+**What would overturn it.** A cross-frame published-global bridge (the shell
+brokering calls into the script frame's live objects) would make the stand-in
+redundant; or a status bar observed to depend on bundle-only members beyond the
+two measured delegations.
+
+---
+
+## 22. The shell speaks `mag_variable_update_ended` into message frames
+
+**Kind:** deliberate improvement, and the twin of §3.
+
+**Upstream.** The MVU bundle emits `mag_variable_update_ended` on the page's
+shared event source, and every iframe's `eventOn` subscription is bridged to
+that source — so a status bar redraws when the variables it draws change, no
+matter which frame the bundle ran in.
+
+**Iris.** The bundle runs in the script frame, whose bus is private. A message
+frame that subscribes (all three measured status bars do) would wait forever, so
+the shell emits the name into **message frames** on exactly the host events that
+assign a view — `chat.updated` and `stream.end`, the same two that already
+refresh the frames' snapshots. Script frames are deliberately **not** spoken to:
+their bundle emits the event itself, and a shell copy would deliver every update
+twice — the same ground §3 covers for the host side.
+
+**What it costs.** A card whose interface listens for that name redraws on every
+view-assigning event even when its variables did not change; the redraw is a
+read of an in-memory snapshot, not a round trip.
+
+**What would overturn it.** Evidence that a message frame hosts its own MVU
+emitter (then the shell copy would double-fire there too), or a frame-side
+bridge of the script frame's event bus (§21's overturn condition).
+
+---
+
+## 23. The height reporter treats its own applied height as silence, not as a
+sizing event
+
+**Kind:** deliberate improvement (fixing a self-inflicted loop), with one named
+narrowing.
+
+**Upstream.** `adjust_iframe_height.js` measures and writes
+`frameElement.style.height` synchronously, same-origin. A measurement that comes
+back equal to the frame's height is written back again; writing the same value
+is a no-op, no observer fires, and the loop is a fixed point by construction.
+
+**Iris.** The height crosses an origin as a message, and Iris added a second
+message — `sizing`, "asking me how tall my content is has no answer" — which
+upstream does not have. The first rule set announced `sizing` whenever a
+measurement equalled the viewport, and the shell answered by *removing* the
+applied height; the content then overflowed again, a real height was reported
+(which re-armed the announcement), the shell applied it, the next measurement
+equalled the viewport again — a closed message loop flipping the frame between
+its content height and the CSS fallback on every animation frame. Measured
+against four real cards' shapes (content 900 in a 60vh slot with a 100vh
+fallback; content 1450 likewise): the pre-fix write-back series never
+terminates — `height 900 / sizing / height 900 / sizing / …` past 40 steps, the
+box alternating 900 → 1000 → 900 — which is the "右侧和下侧疯狂闪烁" report.
+Post-fix the same series is one write-back and silence.
+
+**The rule now:** a measurement equal to the viewport **and** equal to the
+height this frame itself asked for is the echo of the frame's own write; it is
+silence, and it flips no state. The single `sizing` announcement is preserved
+for every state the frame did not create — unmeasurable from the start, or a
+viewport that is not what we asked for.
+
+**What it costs — stated, not hidden.** A card that becomes unmeasurable
+*after* having reported a real height (a measurable screen followed by one that
+clips its own overflow in a descendant) measures exactly its applied viewport,
+which no ruler can distinguish from the echo (`informsShell`'s original
+finding). That frame now keeps its last real height instead of escalating to a
+full screen. The alternative — escalating on echoes — is the flicker loop, and
+it hits every card whose height was ever successfully applied; the trade narrows
+a rare transition rather than breaking the common case.
+
+**What would overturn it.** A discriminator between "content fits what we
+applied" and "content is now clipped and pinned" that is not gameable by a
+continuously-mutating card — e.g. the shell reporting which of its writes
+landed, or a frame-side overflow probe that survives descendant clipping.
+
+---
+
+## 24. A card with no script pack renders its message interfaces unasked
+
+**Kind:** deliberate improvement, and the closing of a dead-end the gate and
+the question built together.
+
+**Upstream.** There is no consent step for a message interface: the card's own
+embedded markup arrives with the card, and rendering it is what "installed the
+card" means.
+
+**Iris.** Message interfaces are gated on script consent, and script consent is
+solicited exactly once — by `ConsentAsk`, which renders nothing for a card
+whose script list is empty ("a card with no scripts is not a decision"). A
+script-less card is therefore **never asked**, and an interface gate that
+demanded an answer anyway stranded its greeting forever: measured on a real
+card whose greeting is a 30 KB HTML document — frame claimed, shell healthy,
+and no iframe in the row, with no sentence anywhere saying why. The two halves
+each matched their own spec; the gap lived between them.
+
+**The rule now:** `interfacesMayBuild` — consent answers `allowed`, or the
+state is `unasked` **and** the card carries no scripts, the one state where
+waiting is a wait nothing can end. Every other state keeps Iris's rule:
+`unknown` is still in flight, `unasked` with scripts waits for the question,
+`declined` is an answer.
+
+**What it costs.** A script-less card's embedded interface scripts run without
+an explicit yes. That is upstream's own default, and the scripts in question
+are part of the message the user installed — not a separate pack the consent
+question was built to judge.
+
+**What would overturn it.** A surface that puts the question to script-less
+cards whose messages carry interfaces (then the widening folds back into
+`mayRun`), or evidence that a card ships an empty script pack as a marker with
+meaning beyond "nothing to run".
+
+---
+
+## 25. Bare HTML in a message renders as a sandbox frame, not as escaped source
+
+**Kind:** compatibility gap, closed — with one deliberate twist.
+
+**Upstream.** Message HTML is sanitized in place (`messageFormatting`: DOMPurify
+over the whole rendered message), so a card's bare `<div>`/`<style>` fragment —
+no fence anywhere — renders as the panel the card author wrote. The measured
+population is large: 936 fragment floors across the corpus carry line-initial
+block tags with no fence, and cards like 尸变纪元 ship their MVU status widget
+exactly that way.
+
+**Iris** renders message text through `MarkdownText`, which disables raw HTML by
+design — so until this change the two claimers of the message-frame pipeline
+covered only **fenced** blocks (`claimFrontendBlocks`), and a bare widget arrived
+on the reading surface as escaped source text. `splitHtmlRegions` (the
+936-floor-spec split in `app/html-regions.ts`) existed but had no consumer.
+
+**The wiring** (`claimMessageSurfaces` in `sandbox/frontend-blocks.ts`): one
+claim list per message, fenced blocks and bare regions together, in source
+order, consumed by all three surfaces that count or render instances — the
+frame budget's plan, the frame controller, and the row's prose splice. Regions
+run through the fence pipeline's own frame path (same `runCard`, same CSP and
+opaque origin, same `planFrames` budget and count gate, same height sync), not
+through a second renderer.
+
+**The twist, and why it is not the INLINE-HTML.md plan.** That document's
+recommendation is a sanitizer-based **inline** path (§三: "加一条内联渲染路，不是
+给 frame 路加一个片段模式"), and this wiring deliberately does not follow it: the
+task ordered the frame path, and the frame path is the stronger floor for the
+same compatibility target — a bare region can carry a `<script>`, which the
+inline path must strip (fragment gains no script capability, by ruling) but the
+frame runs inside the existing wall. What is lost is upstream's styling
+continuity: a bare panel renders in a frame that breaks out of the measure,
+like every interface, rather than inside the message's own flow. Measured on
+the acceptance fixtures: the widget renders with its own `<style>` intact inside
+the frame, 898px wide, height-synced.
+
+**Composition rule, because two grammars now describe one text:** fence-first.
+The region split runs only on the prose between fences, so a fence body's
+line-initial tags never open a region and nothing is claimed twice; unclaimed
+fences are excluded too (their tags would frame while the fence markers leaked
+into the prose); indented blocks are *not* excluded, because a region can only
+open at up to three leading spaces while card markup is routinely indented
+deeper behind blank lines — excluding them would carve real panels in half. A
+region that still reaches into a claimed indented block loses to the claim and
+falls back to the renderer.
+
+**The unclosed region is reported, not silent.** The split's fallback (rest of
+the gap becomes HTML) puts a note on the durable card-report channel
+(`addCardReport`, channel `interface`); the store's one-entry-per-fact dedupe
+keeps a card with the flaw on many floors at one line.
+
+**What it costs.** Every bare region is now a frame candidate, so the frame
+budget spends on both populations from one pool — intended (there is no second,
+quieter accounting), and bounded by the same count gate. And a prose sentence
+that happens to *open* with a line-initial block tag mid-sentence-flow is now a
+frame: the split's own measurements (936 floors, blank lines inside regions
+normal, 66% multi-region) are the evidence the rule fits cards, and the
+unclosed-region report is the tripwire when a card does not.
+
+**What would overturn it.** A card whose narrative regularly begins lines with
+CommonMark type-6 tags as *prose* (none in the corpus — that is the split's
+specification), or an interface that must style its surrounding message text
+(impossible from a frame; would reopen the inline path as a separate, ruled
+piece of work).
+## 26. A card's overlay surface is confined to the reading column
+
+**Kind:** deliberate improvement, on an explicit product ruling — and the
+sharpest divergence from upstream in this file, because it takes a capability
+cards have upstream and does not give it back.
+
+**Upstream.** A card's script frame *is* the host page: its `$` is the page's,
+its `.appendTo('body')` lands on SillyTavern's body, and a card that wants the
+whole window takes the whole window — navigation, sidebar, send box and all.
+`clearChat()` does not touch the body layer, so the takeover also outlives the
+conversation. Nothing upstream bounds a card's interface, because nothing
+upstream needs to.
+
+**Iris.** The reader ruled that a card must never be able to take the
+interface hostage: **Iris's navigation is always reachable.** The overlay
+surface (`.iris-overlay-surface`) is therefore no longer `position:fixed;
+inset:0` over the viewport; it is `position:absolute; inset:0` inside
+`.iris-card-stage`, the reading column's own container in `App.tsx` — the
+region below the masthead and right of the sidebar. The rectangle is the
+layout's, not a measurement's: nothing is computed, cached or re-measured, so
+it cannot fall out of sync with the real column at any window size.
+
+The mechanism follows the box, because the box *is* the card's viewport:
+
+- the frame fills the surface with `width/height:100%`, so the card's
+  `100dvh` / `100svh` / `position:fixed` ladder (the full-screen forum class,
+  `OVERLAY-HOST.md` §一) resolves against the column, not the window;
+- the viewport metrics published to the card — the `viewport` message at
+  `ready` and on resizes, which `--TH-viewport-height` is built from — are
+  read off that same element (`overlay-surface.ts`), ending the two-sources
+  regime where a frame could lay out at 1449px against a window the shell
+  believed was 1218px;
+- a `ResizeObserver` on the surface re-publishes them whenever the box changes
+  for any reason, because the runner's window-`resize` listener cannot see a
+  notice appearing or a pane toggling — layout changes with no window event
+  that still reshape the frame.
+
+And because geometry alone is not a guarantee a reader can bet on, Iris adds
+its own way back: a small collapse control above the surface
+(`.iris-overlay-toggle`, `z` = the surface's layer + 5), shown exactly while a
+frame is attached, toggling the surface's `visibility`. `visibility`, never
+`display:none` — a display change is observable from inside the frame (zeros
+from every measurement, a `--TH-viewport-height` that describes nothing),
+while a visibility change keeps the box laid out and the numbers true. The
+control binds no key: a card's own ESC (V1.5.4's page declares it exits its
+fullscreen) and Iris's escape must not fight over the keyboard, so the
+guaranteed exit is a click.
+
+**What it costs.** A card designed against the whole window now lays out
+against the reading column, which is narrower — a full-screen forum gets a
+column, and a card that positions floating chrome near the window's edges
+finds the edges closer. That is the product ruling, accepted. Second, the
+layering facts that were true of the old full-viewport surface stay true of
+the smaller one: the settings drawer (z 30) and the small-screen sidebar
+(z 20) sit below the overlay (40), so while a card's interface is up the way
+back is the collapse control, the masthead, or switching chats in the sidebar
+— which is outside the surface on every screen size. Third, the recorded
+upstream limitation survives unchanged: a card that reads the viewport once
+and stores pixel positions keeps them; Iris re-tells it on every box change
+and fires `resize` in-frame, but nothing can move pixels a card already
+computed.
+
+**What would overturn it.** A product decision that cards may own the whole
+window again, or a measured card that is genuinely unusable at column width
+and cannot be operated collapsed — that would argue for widening the stage,
+not for removing the toggle.
+
+---
+
+## 27. The bare `SillyTavern` / `extension_settings` spellings answer from the
+context snapshot, and say nothing until it lands
+
+**Kind:** deliberate improvement over a frozen absence; still narrower than
+upstream.
+
+**Upstream.** The `SillyTavern` global exists on the host page before any iframe
+is created, so every spelling — `SillyTavern`, `window.parent.SillyTavern` —
+answers truthfully from the first line a card runs.
+
+**Iris.** An interface frame publishes its surface at install, which is before
+the context message can arrive, so the install-time `resolveValues()` answers
+`undefined` for both names and `defineProperty` freezes that onto the window.
+Since the plugin-detection round this was a **failure shape**, not a nuance: the
+bare spelling in interface markup read absent forever, and the corpus's
+self-checks (`if (window.parent.SillyTavern)` has a bare-spelling twin in the
+same scripts) took it for "the host is not SillyTavern". The context handler now
+re-publishes the two names into interface frames on every snapshot, so the bare
+spelling agrees with the live parent spelling from the moment an answer exists.
+
+**What it costs.** Between install and the first context message the bare names
+answer `undefined` where upstream would answer an object — a card probing
+during that window takes its own fallback path, which is what upstream cards do
+on any page where the host has not finished booting. Per snapshot the answer is
+a fresh settings proxy, matching the run path's per-evaluation semantics rather
+than upstream's one-live-object model; the trade is recorded in the
+snapshot-sharing deviation and is the same one `generate()` already accepted.
+
+**What would overturn it.** Publishing context-dependent members as live
+getters from install would close the boot-window gap entirely; it needs a
+second publish channel (getter descriptors alongside value descriptors) and was
+judged not worth it while every measured card reads these names after the
+context has settled.
+
+---
+
+## 28. `generateRaw` leaves world-info environment names out of the prompt
+
+**Kind:** compatibility gap.
+
+**Upstream.** `generateRaw({ordered_prompts})` resolves every environment name
+against the generation context — `world_info_before` / `world_info_after`
+expand to the activated world info, `persona_description` to the user persona,
+`char_description` to the card's — and sends the composed prompt.
+
+**Iris.** The member exists (it was documented in the surface's mapping table
+and never implemented, which made a bare `generateRaw(...)` a `ReferenceError`
+inside the card's own catch — 神隐挑战's engine reported "questionnaire failed"
+and its player read that as a missing plugin). The composition carries what the
+caller literally hands over: literal `{role, content}` messages, `user_input`
+at its marker, and environment names from `overrides`. Names the frame cannot
+resolve — `world_info_before` / `world_info_after` without an override, and any
+unknown environment name — are skipped and reported by name through the gap
+channel.
+
+**What it costs.** A raw generation ordered with world-info names produces text
+with no world info in it, where upstream would have activated entries inlined.
+Measured callers in the corpus (神隐挑战's 游戏引擎, 13 sites) override the
+persona and carry their own scene context in system messages, so the measured
+cost is nil; an unmeasured card relying on world-info activation would see
+thinner generations and at least a report naming why.
+
+**What would overturn it.** A host-side raw-generation contract that accepts
+resolved world-info text (the assembling `generate` already assembles world
+info inside the host), at which point the frame can resolve the two names the
+way upstream does instead of skipping them.
+
+## 29. The virtual document answers unknown names instead of refusing them
+
+**Kind:** policy change, in the direction the surface had already moved.
+
+**What it was.** An unprovided `parent.document.<name>` read threw
+`UnsupportedApiError` naming the member, and every write was refused. The throw
+cost the 开场白2.0.1 component (哈人冰恋世界 / 绿茵好莱坞 carry the same script)
+its initialisation one step past the world-book assertion this task fixed:
+`$(parent.document)` hands jQuery the stand-in, and jQuery's first act is
+reading its private expando slot off the document
+(`document['jQuery3510…']`, read-with-default), then writing the cache back.
+The read threw, `init` died inside `errorCatched`, and the panel showed a
+script failure for a library idiom.
+
+**What it is now.** The parent proxy's unpublished-name policy, applied here:
+an unknown read yields `undefined` and is reported once by name ("it returned
+undefined, which is not a statement that a real document has no such member");
+an unknown write lands in a per-frame data bag and is reported once
+("the slot is the card's own, and dies with the frame"); writes to **provided**
+members (`body`, `head`, …) keep the read-only refusal. `nodeType` staying `9`
+is what makes `acceptData` take the stand-in, so the existing constant was
+already half of this.
+
+**What it costs.** A card probing a capability by reading it
+(`document.cookie`) now gets `undefined` plus a deduplicated report where it
+used to get a throw; the report still names the member, but the failure moves
+from the read to wherever the card consumes the `undefined`. No corpus card is
+known to read an unprovided document member for its value — the measured
+unknown-name traffic is library data, which is the case this exists to serve.
+
+## 30. Interface frames' inline scripts still see the real `top`
+
+**Kind:** known remaining gap, unchanged by this task.
+
+**Upstream.** Every frame of a card is same-origin with the page, so
+`window.top.addEventListener` / `window.top.dispatchEvent` /
+`window.top.mvuCurrentFloatingBg = …` work natively from markup as well as from
+scripts.
+
+**Iris.** `top` is `[LegacyUnforgeable]` — an own, non-configurable accessor —
+so `publishGlobals` cannot put the virtual parent there (the frame's `globals`
+report answers `refused: [top]`; `parent` is `[Replaceable]` and takes the
+publish). Card **modules** now receive the shadow as a lexical `const window`
+(preamble), which is what fixed the projector's boot; interface frames run
+**inline** markup, which has no preamble, so a message frame's
+`window.top.…` still reaches the real cross-origin top and throws. Measured
+use: 状态栏v2.0's `broadcastFloatingBg` — click-driven ("设为悬浮背景"
+buttons), so it produces no chat-opening notice, and its behaviour is exactly
+what it was before this task. A fix means rewriting inline card scripts in
+srcdoc, which is a mechanism this task deliberately did not build.
+
+## 31. A message frame's inlined snapshot is read at install, so its surfaces exist before the push
+
+**Kind:** timing consequence, recorded because it changes when a report can
+appear rather than what any member answers.
+
+**What changed.** The seed script now precedes the bootstrap (see
+`srcdoc.ts`), so `installSandbox` consumes `__iris_context__` during the
+bootstrap instead of finding nothing. A consequence the seed's original author
+intended but the old ordering silently denied: an **interface** frame's
+install-time surface publication (`SillyTavern`, `extension_settings`, the
+whole member view) now answers from a real snapshot at install, where it used
+to publish `undefined` and wait for the pushed `context` message to re-publish.
+The push still happens on `ready` and still carries refreshes; nothing reads
+the seed after install, and frame-entry deletes the global so no stale copy
+survives for a card to find.
+
+**What it costs.** A plugin-detection probe in interface markup that
+previously reported "not SillyTavern" during the boot window and corrected
+itself a round trip later now answers correctly on the first read. The
+corrected-self behaviour is gone; nothing in the corpus depended on the wrong
+first answer. If a future mechanism needs to distinguish "seeded" from
+"pushed", the frame currently cannot tell them apart — the seed is deleted on
+consumption precisely so it cannot become a second, stale source.
+
+## 32. The frames' zod chains `prefault()` through the inner schema's methods
+
+**Kind:** compatibility layer over the served library, in the direction cards
+were written.
+
+**Upstream.** Tavern Helper bundles its own zod (4.9.x by `version:` in its
+dist) and publishes it as `globalThis.z`; frames take `window.parent.z`. The
+same chain that breaks here breaks there — `.prefault()` returns a
+`ZodPrefault`, whose type carries none of the inner schema's methods — so the
+upstream truth for `z.coerce.number().prefault(0).min(0)` is itself a
+`TypeError`. The corpus says the chain is nevertheless a living idiom:
+全职高手's variable-structure script is written entirely in it (158 `prefault`
+sites, 5 chained), while the other four `prefault`-using cards call it only at
+a chain's tail, where nothing follows and nothing breaks. A card that never ran
+upstream is not evidence about upstream; it is evidence about what its author
+believed `z` did — and under "every family must run as it does in ST", a
+believed API the host can honour for the whole family is the mechanism to
+implement.
+
+**Iris.** The preset bundle installs a forwarding view before publishing `z`:
+each classic schema prototype that owns `prefault` returns, instead of the bare
+wrapper, a proxy that answers the wrapper's own members and forwards anything
+else to the wrapped inner schema, re-applying the same prefault value to the
+result. `prefault(0).min(0)` therefore composes as
+`prefault(inner.min(0), 0)` — parse semantics identical to the author's left-
+to-right reading, chainable, and safe to embed inside objects, records and
+arrays. A contradictory chain (`prefault(0).min(1)` with no input) still
+refuses; nothing clamps, because a clamp would be an approximate answer wearing
+a schema's clothes. The install is deduplicated by prototype identity and runs
+exactly once (the preset evaluates once per origin); `check-preset`'s `z` probe
+now runs the measured chain against the built artifact, so a bundler change
+that silently dropped the install fails the build instead of failing a card.
+
+**What it costs.** A card probing the wrapper's *type* shape (`instanceof
+ZodPrefault` on a chained result) sees the proxy, whose `Symbol.hasInstance`
+target is unchanged, but a `getPrototypeOf`-sensitive walker would observe a
+Proxy where it expects a plain object. No measured helper does this: `mvu_zod`
+wraps the card's schema in `z.object(...)` (untouched — the wrapper sits
+inside), `safeParse`s it, and reads `_zod.def`, all of which the proxy forwards.
+If zod later makes `prefault` chain natively, the break-guard in
+`tests/zod-compat.test.ts` fails on its first assertion and names the removal.
+
+## 33. The state margin's "this round" is measured against the last snapshot this session witnessed, not against "the previous floor"
+
+**Kind:** deliberate constraint — the task asked for the previous floor's
+variables; the protocol does not carry them, and the protocol was not to be
+touched.
+
+**What changed.** The brief read "diff the current floor against the previous
+one" (`chat_message.variables` is stored per floor, so the host could answer
+it). But `chat.open` — the one channel the panel is allowed to keep reading —
+carries only the **newest** turn's table. Rather than widen the protocol, the
+panel diffs the snapshots it has already been handed: consecutive views are
+consecutive floors whenever variables moved, which is the same comparison in
+every case the reader can witness. The baseline is kept per chat in
+`sessionStorage` (`iris.state.lastTree.<chatId>`), so the diff also survives a
+page reload and a stream whose end landed while the event socket was cycling —
+the two ordinary ways a long reading session loses the moment. On first sight
+in a session the chat starts unmarked.
+
+**What it costs.** Two genuine turns completing inside 90 seconds read as one
+round — the tally sums them, which is arguably "everything since you looked".
+A change that landed while *no* page was watching is invisible until the next
+witnessed change; the panel never claims a diff it did not see. A browser
+reopened tomorrow starts clean: `sessionStorage`, not `localStorage`, on
+purpose — yesterday's news is not this round. `diffStats` itself is a pure
+function over two trees (`state-panel.ts`), so if the protocol ever carries
+floor tables, the same function answers the original brief with a different
+caller. Along the way `sameValue` grew an equality the first live diff
+needed: an **empty array re-created under a new identity is not a change** —
+the host re-materialises tables wholesale, and `Object.is` on two fresh `[]`
+reported every empty list as moved.
+
+## 34. A branch renders open down to depth 1, folded below it — and the `toggle` event no longer gets to vote on what the reader did
+
+**Kind:** interpretation of the brief, plus a measured bug in the obvious
+implementation.
+
+**What changed.** "各分支默认折叠只留顶层" is realised as: depth 0 (the
+variable table's own shape) renders open, everything below folds behind a
+count badge — `政局 14` is countable without being shown, which is the point.
+The bug: `<details>` fires `toggle` whenever its state changes, **including
+when this panel changes the `open` attribute** — a chat switch, a search
+forcing hits open. Treating those echoes as reader input wrote one chat's
+forced-open paths into another chat's fold memory (observed live: a chat that
+was merely *visited* grew a `localStorage` record). Each tree level now keeps
+the `open` value it last rendered per path and drops any event that agrees
+with it — a real click always flips the DOM to the opposite of what was
+rendered.
+
+**What it costs.** A reader click that lands inside the millisecond window
+between a store-driven re-render and its `toggle` dispatch can be swallowed —
+the same window the old code raced unprotected; a second click folds it. The
+rendered-open map is per mounted tree level, so nothing survives a branch
+unmounting.
+
+## 35. Long values clamp to two lines with the full text on hover, instead of wrapping without bound
+
+**Kind:** deliberate reversal of this file's own earlier rule.
+
+**What changed.** The margin previously argued (in `StatePanel.tsx`'s header)
+that a long value should wrap the way prose wraps, because a 260px column that
+scrolls sideways cannot show both ends of a line. Real MVU trees settled it:
+values are frequently 20–40 character policy sentences, and unbounded wrapping
+was half of the "information too much" complaint the rebuild answers. Stacked
+values now clamp at two lines (`-webkit-line-clamp`), keep the prose face, and
+carry the full text as `title` — truncation with the whole value one hover
+away, and still no horizontal scrollbar anywhere.
+
+**What it costs.** A reader who wants the whole sentence without hovering must
+click nothing — it is not expandable, only hoverable. If touch-only reading
+ever matters here, the hover needs a tap affordance.
+
+## 36. The notice log now merges an identical notice into a counted row, inside a short window
+
+**Kind:** deliberate reversal of a recorded decision, on new evidence.
+
+**What changed.** `NoticeLog` refused dedup on the argument that "the same
+sentence arriving twice is two events — that something recurred is usually the
+finding". The reconnect schedule refuted the absolute form: during a host
+restart it raises `the Iris event socket failed` every few seconds, and the
+log filled with identical rows — one outage, four entries, no more information
+per entry than the first. The store's `raise` now merges an identical neighbour
+inside `NOTICE_DEDUP_WINDOW_MS` (10s — longer than any backoff step) into one
+row carrying `×N`; the bar still re-announces on every recurrence (fresh
+`seq`). Transport errors — the one species the client survives on its own —
+are tagged at the source (`notifyTransportError`) and marked **resolved** when
+the connection returns, dimmed in the log with a self-healed badge, plus one
+`reconnected` line; an outage that logged nothing announces nothing.
+
+**What it costs.** Two genuine occurrences of the same sentence inside ten
+seconds read as one row with `×2` — the recurrence is still on the record, as
+the count, but the per-event timestamps are gone. At the window's edge (the
+backoff ceiling is exactly 10s) a long outage can still open a second row;
+both carry counts, and the reconnected line closes them together.
+
+## 37. One scrollbar, defined once in the token layer, imposed on every surface with `*`
+
+**Kind:** deliberate globality.
+
+**What changed.** Scrollbars were whatever each scroll container inherited —
+which meant thick native grey bars in the reading column, the sidebar, the
+state margin and the drawer, on a page whose whole grammar is hairlines. The
+tokens now define `--iris-scrollbar` / `--iris-scrollbar-strong` (resting grey
+below the rules in contrast; hover deepens), and the token layer itself sets
+`scrollbar-width: thin` + `scrollbar-color` on `*` alongside the
+`::-webkit-scrollbar` capsule (8px hit area, 2px transparent border, 999px
+radius, transparent track). Both mechanisms, because Chromium 121+ prefers the
+standard pair and then *ignores* the webkit rules: current Chromium loses the
+hover state (the standard property cannot express one), older WebKit gets the
+full capsule. The dsh primitives' scrollbar aliases now point at the same
+tokens.
+
+**What it costs.** `*` reaches every surface by construction, so a panel
+cannot forget — and equally cannot opt out. Card frames' inner documents are
+their own origins and keep native scrollbars, which is out of reach by the
+same token. `scrollbar-gutter: stable` on the reading column now reserves a
+*thin* gutter: the message column's centre shifts less on first overflow than
+before, and card interfaces reading the container width see the content box,
+which already excludes the gutter.
+
+
+## 38. An interface frame's fault raises an error notice beside its graded report
+
+**Kind:** channel completion — the same event now reaches the same two channels
+the script-frame side has always used.
+
+**What changed.** `MessageInterfaces`' host passed `onError` to
+`addCardReport` alone; the fault was on record in the card panel and **silent
+everywhere else**. The script-frame host (`useCardScripts`'s `onFailure`) has
+always done both — a graded report as the record and a `notify('error', …)` as
+the immediate signal — and an interface frame's uncaught error is the same
+species of event. It now raises the notice too. This was the measured cause of
+"the card errored and the notice panel is empty": on the interface-rendering
+cards (the corpus's dominant families put the card's generation-time code in
+markup), every frame fault after the move into message frames stopped short of
+the one panel that answers "what did this session say".
+
+**What it costs.** A burst of interface faults now interrupts the notice bar
+where it used to be quiet everywhere but the scripts panel. The store's dedup
+window (§36, and the recurrence identity of §39) collapses a burst of the same
+fault into one counted row, and distinct faults were never the kind of quiet a
+reader was served by.
+
+## 39. The notice log's recurrence identity blanks per-run addresses
+
+**Kind:** dedup identity, widened no further than the noise goes.
+
+**What changed.** `repeatsLatestNotice` compared exact text. A card's scripts
+evaluate from a fresh blob URL on every run and the frame's error reports quote
+it with a stack position, so the *same* bug arrived as a different sentence
+each run and exact-text dedup collapsed nothing — measured: three re-opens of
+one faulty card read as three separate rows. The identity is now
+`noticeRecurrenceKey(text)`: `blob:` references (positions included) blanked,
+every other byte compared. The merged row carries the **newest** occurrence's
+verbatim text, matching its `at`.
+
+**What it costs.** Two failures that differ only in which run they happened in
+read as one counted row rather than two rows. Two failures that say anything
+differently about the cause are still two rows; the first and only occurrence
+of anything is still a row of its own — the blanking applies to addresses and
+nothing else.
+
+## 40. The composer shares the reading column's centre line — lane, box, and inset
+
+**Kind:** geometry parity, stated in CSS rather than measured by hand.
+
+**What changed.** Three silent offsets put the composer's midline 19px right of
+the message prose's (measured on HEAD at 1920×1080 and 1366×768): the field's
+`width: 100%` resolved as **content** width, so the textarea overflowed
+`__inner` by its own padding plus border (+14px at centre); the reading
+surface's `scrollbar-gutter: stable` centred the column in a box the composer
+did not reserve (+5px); and the narrow-window stylesheet zeroed the composer's
+gutter inset while the prose kept its marginalia track (+17px at ≤880px, until
+then masked by the first bug's opposite sign). Now: the field is
+`box-sizing: border-box`; `.iris-composer` reserves the same lane
+(`overflow-y: auto; scrollbar-gutter: stable; min-height: max-content` — the
+reservation needs a scroll container, and the min-height hands back the
+automatic minimum a scroll container loses, so a short window cannot squash
+the composer into an internal scroller); the narrow override is gone, so the
+inner inset is `var(--iris-gutter)` at every width, mirroring `.iris-msg`'s
+marginalia track. The asymmetric `padding-left` itself stays: the prose starts
+one gutter in from the column's content edge, and the field starts one gutter
+in from the composer's — the two centres coincide exactly. Measured after:
+0.00px at 1920×1080, 1366×768 and 800×700, with the lane reserved
+(`stable`) so a scrollbar's appearance moves neither centre.
+
+**What it costs.** The composer is a scroll container; its lane is reserved
+even on the empty surface, and the field is inset by the gutter on narrow
+windows where it used to run full width — under the prose, which is the
+point. The lane's width is the UA's thin scrollbar, not a token, so the
+*reserved* amount is not project-owned; the *parity* is, because both
+surfaces ask the same question of the same browser.

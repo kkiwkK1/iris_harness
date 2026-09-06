@@ -16,6 +16,7 @@ import type { ReactElement } from 'react'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { buttonEventName } from '../sandbox/button-event.ts'
 import { emitToCard } from './card-bus.ts'
+import { FRAME_BAND_VARIABLE, frameBandPixels } from './frame-fit.ts'
 import { FrameBudgetProvider, type BudgetedFloor } from './FrameBudget.tsx'
 import { Composer } from './Composer.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
@@ -23,6 +24,7 @@ import { PromptPanel } from './PromptPanel.tsx'
 import { groupByTurn, lastReplyId, swipeTarget, withStream } from './project.ts'
 import { DEFAULT_WINDOW, grow, readingWindow } from './reading-window.ts'
 import { stepReading } from './rail.ts'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * Render the conversation pane.
@@ -34,6 +36,8 @@ export function ChatPane(): ReactElement {
   const chatId = useIris(state => state.chatId)
   const booting = useIris(state => state.booting)
   const actions = useIrisActions()
+  // Subscribed so a language switch re-renders the pane's own words.
+  useLanguage()
 
   const generating = stream !== undefined
   const all = useMemo(() => withStream(view, stream), [view, stream])
@@ -80,7 +84,9 @@ export function ChatPane(): ReactElement {
   // that turn". Both go to the same panel, which is why one piece of state
   // carries the distinction rather than two booleans that could disagree.
   const [explaining, setExplaining] = useState<{ turn: number | undefined } | undefined>(undefined)
-  const scroller = useRef<HTMLDivElement>(null)
+  // Mutable (`| null`) because the attach callback below writes it: React 19
+  // types a ref created with a non-null initial value as read-only.
+  const scroller = useRef<HTMLDivElement | null>(null)
   const pinned = useRef(true)
   /** The load-more control, so a press can ask whether it was on screen. */
   const more = useRef<HTMLButtonElement>(null)
@@ -104,6 +110,43 @@ export function ChatPane(): ReactElement {
     const node = scroller.current
     if (node !== null) node.scrollTop = node.scrollHeight
   }, [chatId])
+
+  /*
+   * Publish the visible band the message frames may fill.
+   *
+   * A card interface is clamped to this number (`reading.css` clamps the frame
+   * with `max-height: var(--iris-app-frame-height)`), so the clamp is only ever
+   * as true as this measurement. A window resize reshapes the scroller without
+   * any React state changing, and so does a panel opening beside it — nothing
+   * that re-renders this component — which is why this is an observer on the
+   * box rather than a render-time read: the value must stay true in exactly the
+   * moments nothing else is watching.
+   *
+   * **A ref callback, not a mount effect.** The reading view renders in two
+   * shapes — no chat open, then chat open — and React reworks the tree between
+   * them: measured, the effect form ran while `scroller.current` was still null
+   * and its dependencies never changed again, so the band was never published
+   * and the clamp spent its life on the `100vh` fallback. A ref callback is
+   * invoked at commit for exactly the element it is attached to, so there is no
+   * state in which the box exists unobserved.
+   *
+   * `frameBandPixels` refuses to hand back zero, so a transient zero-height
+   * reading (a tab being laid out) cannot clamp every frame to nothing.
+   */
+  const observer = useRef<ResizeObserver | undefined>(undefined)
+  const attachScroller = useCallback((node: HTMLDivElement | null) => {
+    scroller.current = node
+    observer.current?.disconnect()
+    if (node === null) return
+    const publish = (): void => {
+      const band = frameBandPixels(node.clientHeight, window.innerHeight)
+      if (band > 0) node.style.setProperty(FRAME_BAND_VARIABLE, `${band}px`)
+    }
+    publish()
+    const next = new ResizeObserver(publish)
+    next.observe(node)
+    observer.current = next
+  }, [])
 
   const target = swipeTarget(messages)
   useEffect(() => {
@@ -143,6 +186,8 @@ export function ChatPane(): ReactElement {
     () => ({
       onSwipe: (turn, index) => void actions.swipe(turn, index),
       onRegenerate: () => void actions.regenerate(),
+      onContinue: () => void actions.continueReply(),
+      onImpersonate: () => void actions.impersonate(),
       onEdit: (id, text) => void actions.editMessage(id, text),
       onDelete: id => void actions.deleteMessage(id),
       onNotify: text => actions.notify('info', text),
@@ -156,10 +201,10 @@ export function ChatPane(): ReactElement {
       <div className="iris-scroll">
         <div className="iris-empty">
           <p className="iris-empty__line">
-            {booting ? 'Opening your last conversation…' : 'Nothing open yet.'}
+            {booting ? t('openingLastChat') : t('nothingOpen')}
           </p>
           {booting ? null : (
-            <p className="iris-empty__hint">Pick a character in the sidebar to begin a conversation.</p>
+            <p className="iris-empty__hint">{t('pickCharacterHint')}</p>
           )}
         </div>
       </div>
@@ -168,7 +213,7 @@ export function ChatPane(): ReactElement {
 
   return (
     <>
-      <div className="iris-scroll" ref={scroller} onScroll={onScroll}>
+      <div className="iris-scroll" ref={attachScroller} onScroll={onScroll}>
         <div className="iris-column">
           {window_.hidden === 0 ? null : (
             <button
@@ -210,16 +255,16 @@ export function ChatPane(): ReactElement {
                 })
               }}
             >
-              {`Show ${String(Math.min(DEFAULT_WINDOW, window_.hidden))} earlier`}
+              {t('showEarlier', { n: Math.min(DEFAULT_WINDOW, window_.hidden) })}
               <span className="iris-more__count">
-                {`${String(window_.hidden)} above`}
+                {t('hiddenAbove', { n: window_.hidden })}
               </span>
             </button>
           )}
           {messages.length === 0 ? (
             <div className="iris-empty">
-              <p className="iris-empty__line">The page is blank.</p>
-              <p className="iris-empty__hint">Write the first line and {view.title} will answer.</p>
+              <p className="iris-empty__line">{t('pageBlank')}</p>
+              <p className="iris-empty__hint">{t('writeFirstLine', { title: view.title })}</p>
             </div>
           ) : (
             /*

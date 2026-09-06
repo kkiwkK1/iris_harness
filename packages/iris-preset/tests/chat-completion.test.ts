@@ -224,3 +224,63 @@ test('every real preset resolves to its enabled prompts, not to file order', { s
 
   assert.ok(checked >= 5, `only checked ${String(checked)} presets`)
 })
+
+test('an empty or absent trigger list joins every generation', () => {
+  const body = preset()
+  body.prompts = [
+    ...body.prompts,
+    { identifier: 'noTrigger', role: 'system', content: 'no list.' },
+    { identifier: 'emptyTrigger', role: 'system', content: 'empty list.', injection_trigger: [] },
+  ]
+  // BEFORE the history marker: post-history items are the one group a continue
+  // drops by position, and these tests are about the trigger lists.
+  const order = body.prompt_order?.[0]?.order ?? []
+  const historyAt = order.findIndex(entry => entry.identifier === 'chatHistory')
+  order.splice(historyAt, 0, { identifier: 'noTrigger', enabled: true }, { identifier: 'emptyTrigger', enabled: true })
+
+  for (const generationType of ['normal', 'continue', 'impersonate']) {
+    const ids = resolvePreset(body, { markers: MARKERS, generationType }).map(entry => entry.id)
+    assert.ok(ids.includes('noTrigger'), `absent list dropped for ${generationType}`)
+    assert.ok(ids.includes('emptyTrigger'), `empty list dropped for ${generationType}`)
+  }
+})
+
+test('a populated trigger list joins only the generation types it names', () => {
+  const body = preset()
+  body.prompts = [
+    ...body.prompts,
+    { identifier: 'onlyImpersonate', role: 'system', content: 'impersonation only.', injection_trigger: ['impersonate'] },
+    { identifier: 'caseOdd', role: 'system', content: 'case-insensitive.', injection_trigger: ['Continue'] },
+  ]
+  const order = body.prompt_order?.[0]?.order ?? []
+  const historyAt = order.findIndex(entry => entry.identifier === 'chatHistory')
+  order.splice(historyAt, 0, { identifier: 'onlyImpersonate', enabled: true }, { identifier: 'caseOdd', enabled: true })
+
+  const normal = resolvePreset(body, { markers: MARKERS }).map(entry => entry.id)
+  assert.ok(normal.includes('onlyImpersonate') === false, 'an impersonate-only prompt joined a normal send')
+  assert.ok(normal.includes('caseOdd') === false, 'a continue-only prompt joined a normal send')
+
+  const impersonate = resolvePreset(body, { markers: MARKERS, generationType: 'impersonate' }).map(entry => entry.id)
+  assert.ok(impersonate.includes('onlyImpersonate'), 'the trigger did not fire for its own type')
+
+  const carry = resolvePreset(body, { markers: MARKERS, generationType: 'continue' }).map(entry => entry.id)
+  assert.ok(carry.includes('caseOdd'), 'the trigger match is case-insensitive, as upstream normalises the type')
+})
+
+test('a continue drops the post-history section entirely', () => {
+  // Upstream keeps post-history instructions on a continue and splices the
+  // continued message past them; here the section is the thing the request
+  // must NOT close with — wrap-up instruction is exactly wrong when the model
+  // is asked to write on. The plan (B2) rules the divergence, this test pins it.
+  const normal = resolvePreset(preset(), { markers: MARKERS })
+  const carry = resolvePreset(preset(), { markers: MARKERS, generationType: 'continue' })
+
+  assert.ok(normal.some(entry => entry.id === 'jailbreak'), 'the pre-condition went missing')
+  assert.ok(carry.some(entry => entry.id === 'jailbreak') === false, 'the post-history section survived a continue')
+  assert.ok(carry.some(entry => entry.id === 'main'), 'the continue kept the pre-history section')
+})
+
+test('an impersonate keeps the post-history section', () => {
+  const voices = resolvePreset(preset(), { markers: MARKERS, generationType: 'impersonate' })
+  assert.ok(voices.some(entry => entry.id === 'jailbreak'), 'impersonation lost the post-history section')
+})

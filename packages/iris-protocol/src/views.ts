@@ -78,6 +78,42 @@ export interface ChatSummary {
   parentChatId?: string
 }
 
+/**
+ * One floor a search matched, and where it sits.
+ *
+ * `messageId` is the chat-file line index minus the header — the same number a
+ * card script sees and `chat.open`'s views use — so a hit names a floor the
+ * reader can act on, not a byte offset into a file.
+ */
+export interface ChatSearchMatch {
+  /** The floor whose text matched. */
+  messageId: number
+  /** The floor's speaker, so a hit can say who said it. */
+  name: string
+  /** True when the floor is the user's own line. */
+  isUser: boolean
+  /** Text clipped around the first match, for a row that shows why it hit. */
+  snippet: string
+}
+
+/**
+ * One conversation a search found, with its floors.
+ *
+ * The identity fields mirror `ChatSummary` so a list can render a hit the same
+ * way it renders a row; a hit without at least one match is never sent.
+ */
+export interface ChatSearchHit {
+  chatId: string
+  title: string
+  characterId?: string
+  /** Unix epoch milliseconds of the last activity, as `ChatSummary` carries it. */
+  updatedAt: number
+  messageCount: number
+  parentChatId?: string
+  /** The floors that matched, in file order, at most the requested limit. */
+  matches: ChatSearchMatch[]
+}
+
 /** A character in the library. */
 export interface CharacterSummary {
   characterId: string
@@ -86,6 +122,16 @@ export interface CharacterSummary {
   avatarUrl?: string
   tags: string[]
   creator?: string
+  /**
+   * The card file's last modification, Unix epoch milliseconds.
+   *
+   * A rename or a tag edit touches the file, so this is "when the character
+   * last changed" and not "when it arrived" — which is what a sort by
+   * recency has to mean to match the user's expectation of it.
+   */
+  updatedAt?: number
+  /** Whether the profile has starred this character. Absent means not starred. */
+  favorite?: boolean
   /**
    * The card's own data, carried **only for the character being played**.
    *
@@ -301,6 +347,22 @@ export interface ScriptContext {
    */
   charWorldbooks?: { primary: string | null, additional: string[] }
   /**
+   * Every world book the host knows, by name.
+   *
+   * The synchronous source for TavernHelper's `getWorldbookNames()`, which
+   * upstream answers with `klona(world_names)` — no promise. A book the host
+   * seeded from a card's embedded copy is a real book upstream (it lives in
+   * ST's `world_names` the moment it is written), so it has to be a real name
+   * here: a card that names its own book in an existence assertion must find it.
+   *
+   * Names only, and refreshed with the snapshot like `charWorldbooks` beside
+   * which it sits — the same freshness argument, and the same "names cost
+   * nothing" shape. `getChatWorldbookName()` applies the same list as the
+   * existence guard on `chat_metadata.world_info`, exactly as upstream's
+   * `getChatLorebook` honours the key only while `world_names` holds it.
+   */
+  worldbookNames?: string[]
+  /**
    * Each script's buttons, by script id — **unfiltered**.
    *
    * `getScriptButtons()` is synchronous upstream
@@ -507,14 +569,117 @@ export interface ConnectionProfile {
   preset?: string
   /** Sampling overrides applied when this profile is activated. */
   sampling?: Partial<GenerationSettings>
+  /**
+   * The endpoint this profile generates through, when it carries one of its
+   * own. Absent means the profile rides the host's configured route as it was
+   * before profiles carried endpoints — those still work exactly as they did.
+   */
+  baseURL?: string
+  /**
+   * Whether a key is stored for this profile. **The key itself is never on
+   * the wire** — a read answers with this flag and, when the key is long
+   * enough not to be given away by it, its last four characters, so the user
+   * can tell which key of theirs this is without the interface ever holding
+   * one to show.
+   */
+  hasKey?: boolean
+  /** The stored key's last four characters, when there is a key and it is long enough to show them. */
+  keyTail?: string
+  /** The header the key is sent in, when not the OpenAI-compatible default. */
+  apiKeyHeader?: string
 }
 
-/** The model route and sampling a chat is running with. */
+/**
+ * Why a `connection.test` probe said no, named.
+ *
+ * Each code is a different next step for the person in front of the form, so
+ * they are kept apart rather than folded into one "failed": a missing key is
+ * fixed in this form, a 401 means the key typed is wrong or expired, a
+ * timeout points at the network or the endpoint's own serve, and the rest
+ * mean the thing reached is not speaking the OpenAI-compatible dialect the
+ * probe assumes.
+ */
+export type ConnectionTestErrorCode =
+  /** The endpoint is known to need a key and none was available to send. */
+  | 'missing-key'
+  /** The endpoint answered 401/403 — the key sent does not open it. */
+  | 'unauthorized'
+  /** The endpoint did not answer within the probe's budget. */
+  | 'timeout'
+  /** The request never reached an endpoint — DNS, refused, reset. */
+  | 'network'
+  /** The endpoint answered, with a status that is not one of the named kinds. */
+  | 'http-error'
+  /** The endpoint answered 200, but not with a model list the probe can read. */
+  | 'bad-response'
+  /** A saved profile was probed that carries no endpoint of its own. */
+  | 'no-endpoint'
+
+/** The named failure half of a `connection.test` result. */
+export interface ConnectionTestError {
+  code: ConnectionTestErrorCode
+  /** Human-readable detail. Safe to show; must not carry a credential. */
+  message: string
+}
+
+/**
+ * One user persona, as the persona panel lists it.
+ *
+ * `position` uses upstream's own words (`parsePersonaPosition`,
+ * `personas.js:1963`): the description either rides the `personaDescription`
+ * prompt slot (`inprompt`), sits a fixed number of turns from the end of the
+ * conversation (`atdepth`), or is held out of the prompt entirely (`none`) —
+ * where it still reaches the world-info scan, exactly as upstream's scan data
+ * carries it regardless of position.
+ */
+export interface PersonaView {
+  id: string
+  /** The persona's name — upstream keeps it beside the avatar file it is keyed by. */
+  name: string
+  description: string
+  position: 'inprompt' | 'atdepth' | 'none'
+  /** Turns from the end of the conversation, when `position` is `atdepth`. */
+  depth?: number
+  /** The injection's role, when `position` is `atdepth`. */
+  role?: 'system' | 'user' | 'assistant'
+}
+
+/**
+ * How much reasoning a reasoning model should spend on a reply.
+ *
+ * Upstream's own value set (`reasoning_effort_types`, openai.js:237), sent as
+ * the request body's `reasoning_effort`. `'auto'` is the upstream default and
+ * means "let the provider decide", which this host expresses by **sending no
+ * field at all** — see `@iris/llm-openai-compat`.
+ */
+export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'min' | 'max'
+
+/**
+ * What separates a continued reply from the text it writes on from, in the
+ * four spellings upstream's own radio group offers (`continue_postfix_types`,
+ * openai.js:211). `'space'` is upstream's default; the words name the literal
+ * separators (`''`, `' '`, `'\n'`, `'\n\n'`), which the host maps at the
+ * consumer.
+ */
+export type ContinuePostfix = 'none' | 'space' | 'newline' | 'double'
+
+/** The model route, budget, sampling and reply shaping a chat is running with. */
 export interface GenerationSettings {
   provider: string
   model: string
   temperature?: number
   maxTokens?: number
+  /**
+   * The context window in tokens — upstream's `openai_max_context`.
+   *
+   * Preset-scoped like everything here: a real preset is tuned for one window
+   * (measured on this machine's install: 4095, 655 350, 1 000 000, 2 000 000),
+   * and assembling against a different one silently trims a different part of
+   * the conversation. Absent falls back to the host composition's value.
+   */
+  contextWindow?: number
+  /** How hard a reasoning model thinks, upstream's `reasoning_effort`. */
+  reasoningEffort?: ReasoningEffort
   topP?: number
   topK?: number
   minP?: number
@@ -523,6 +688,100 @@ export interface GenerationSettings {
   presencePenalty?: number
   seed?: number
   stop?: string[]
+  /**
+   * Cut a finished reply back to its last complete sentence — upstream's
+   * `power_user.trim_sentences` ("trim incomplete sentences"), applied to the
+   * text the model produced. Absent means off, which is upstream's default:
+   * most models end their replies cleanly and the cut only ever removes text.
+   */
+  trimSentences?: boolean
+  /**
+   * The separator between a reply and its continuation — upstream's
+   * `continue_postfix`, applied when a continue assembles its request.
+   * Absent means `'space'`, upstream's default; on every OpenAI-compatible
+   * route upstream applies this and so does this host, which has no other
+   * route.
+   */
+  continuePostfix?: ContinuePostfix
+  /**
+   * Merge consecutive system-role messages into one — upstream's
+   * `squash_system_messages`. Some providers take a system message in the
+   * middle of a conversation badly; depth injections and card scripts make
+   * adjacent system messages possible here, and this is the one control over
+   * whether they ride as they were assembled. Absent means off, upstream's
+   * default.
+   */
+  squashSystemMessages?: boolean
+}
+
+/**
+ * One prompt of the active preset, as the prompt manager shows it.
+ *
+ * Field names are camelCased projections of the file's own (`injection_depth`
+ * → `injectionDepth`): the manager edits live state, not the file shape, and
+ * the file shape rides verbatim in `@iris/preset` for whoever needs it.
+ */
+export interface PresetPromptView {
+  id: string
+  /** Display name; absent for the built-in markers upstream leaves unnamed. */
+  name?: string
+  role?: string
+  /** Whether this prompt contributes to the assembled request. */
+  enabled: boolean
+  /** A slot the host fills with live data; carries no editable text. */
+  marker?: boolean
+  /** A built-in prompt upstream refuses to delete. */
+  systemPrompt?: boolean
+  /** `'relative'` follows the list order; `'absolute'` pins a chat depth. */
+  injectionPosition?: 'relative' | 'absolute'
+  injectionDepth?: number
+  injectionOrder?: number
+  /** A card may not replace this prompt's content with its own. */
+  forbidOverrides?: boolean
+  /** Whether the manager allows toggling this prompt at all. */
+  toggleable: boolean
+}
+
+/** The prompt manager's state: the active preset and its ordered prompts. */
+export interface PresetManagerView {
+  /** The active preset's name, when it is one from the library. */
+  name?: string
+  prompts: PresetPromptView[]
+}
+
+/** One preset file in the profile's library, by name. */
+export interface PresetSummary {
+  name: string
+}
+
+/**
+ * One global regex script, in the shape SillyTavern stores under
+ * `extension_settings.regex` and exports as a `regex-*.json` file.
+ *
+ * The known fields are spelled out so the shell can render a row without
+ * guessing; the index signature is the actual contract. Upstream's script
+ * objects are open — extensions and shared decks add keys this host has never
+ * heard of — and a list → set → disk round trip must hand them back untouched,
+ * or an import from an install would arrive complete and quietly degrade. The
+ * engine's reading of these fields is `@iris/regex`'s `RegexScript`.
+ */
+export interface RegexScriptView {
+  id?: string
+  /** Required, the same gate upstream's importer applies ("No script name provided."). */
+  scriptName: string
+  /** Pattern, either bare or in `/pattern/flags` form. */
+  findRegex: string
+  replaceString: string
+  trimStrings?: string[]
+  placement?: number[]
+  disabled?: boolean
+  markdownOnly?: boolean
+  promptOnly?: boolean
+  runOnEdit?: boolean
+  substituteRegex?: number
+  minDepth?: number | null
+  maxDepth?: number | null
+  [key: string]: unknown
 }
 
 /** Where a world book entry is inserted, by TavernHelper's name for it. */
@@ -612,12 +871,39 @@ export interface WorldbookEntry {
   groupWeight: number
   caseSensitive: boolean | null
   matchWholeWords: boolean | null
+  /**
+   * The entry's world-info outlet, when it has one: an `outlet`-positioned
+   * entry is parked under this name by the scan and rendered only where a
+   * template asks for `{{outlet::name}}`. Empty when the entry has none.
+   */
+  outletName: string
   matchPersonaDescription: boolean
   matchCharacterDescription: boolean
   matchCharacterPersonality: boolean
   matchCharacterDepthPrompt: boolean
   matchScenario: boolean
   matchCreatorNotes: boolean
+  /**
+   * Identifier an automation (quick reply, STscript) can key off. Empty when
+   * the entry carries none.
+   *
+   * Added with the shell's entry editor: a field the stored shape carries and
+   * the editor has to show was missing from this view, and a book round-tripped
+   * through a save silently blanked every automation binding it had. The four
+   * fields below it are the same story — each is on disk, each was unreadable
+   * here, and each was dropped by a write that could not carry it.
+   */
+  automationId: string
+  /** Per-entry group-scoring override; `null` defers to the global setting. */
+  useGroupScoring: boolean | null
+  /** Bypass the token budget for this entry. */
+  ignoreBudget: boolean
+  /** Whether `probability` is rolled at all; `false` means the entry always fires. */
+  useProbability: boolean
+  /** Generation types this entry may fire on; empty means all of them. */
+  triggers: string[]
+  /** Restrict the entry to (or, with `isExclude`, away from) characters and tags. */
+  characterFilter: { isExclude: boolean, names: string[], tags: string[] }
 }
 
 /**
@@ -692,4 +978,129 @@ export interface LorebookSettings {
   match_whole_words: boolean
   use_group_scoring: boolean
   overflow_alert: boolean
+}
+
+/**
+ * The world-info settings as this host stores and runs them, on the wire.
+ *
+ * This is the host's own vocabulary — the stored field names, camelCase, one
+ * meaning each — rather than TavernHelper's snake_case table above, and the
+ * deliberate difference is the point: {@link LorebookSettings} exists to be
+ * byte-compatible with what a card reads by name, while this exists to be
+ * settable by the host's own panel without dragging the compatibility table's
+ * misleading names (`max_depth`, `context_percentage`) into a UI that would
+ * have to explain them.
+ *
+ * Every field is effective, never absent: the host merges stored values over
+ * SillyTavern's shipped defaults before answering, so a client reading this
+ * sees exactly what the next scan will run with.
+ */
+export interface WorldbookSettingsView {
+  /** `world_info_depth` — how many messages back a scan reads. */
+  scanDepth: number
+  /** `world_info_budget` — a percentage of the context window. */
+  budgetPercent: number
+  /** `world_info_budget_cap` — an absolute token ceiling; `0` disables. */
+  budgetCap: number
+  /** `world_info_min_activations` — keep widening the scan until this many fire. */
+  minActivations: number
+  /** `world_info_min_activations_depth_max` — how far that widening may reach. */
+  minActivationsDepthMax: number
+  /** `world_info_max_recursion_steps` — hard cap on scan loop iterations. */
+  maxRecursionSteps: number
+  /** How the global and character books interleave. */
+  insertionStrategy: InsertionStrategy
+  /** Whether activated content is scanned for further matches. */
+  recursive: boolean
+  /** Default case sensitivity for entries that defer. */
+  caseSensitive: boolean
+  /** Default whole-word matching for entries that defer. */
+  matchWholeWords: boolean
+  /** Default inclusion-group resolution by key-match score. */
+  useGroupScoring: boolean
+}
+
+/**
+ * Why a snapshot of a conversation exists.
+ *
+ * The host records the reason **in the snapshot's file name**, so a folder
+ * listing is self-describing and a sidecar index has nothing to drift from.
+ * Each value names the dangerous operation the copy was taken in front of.
+ */
+export type BackupReason =
+  /** The cleanup sweep's explicit "back up and clean" answer. */
+  | 'cleanup'
+  /** One floor was about to be removed (`chat.deleteMessage`). */
+  | 'delete-message'
+  /** Several floors were about to be removed by a card's replay batch. */
+  | 'delete-messages'
+  /** An import was about to write over an existing conversation file. */
+  | 'import-overwrite'
+  /** A restore was about to write a snapshot back over the live conversation. */
+  | 'pre-restore'
+  /** A card was about to rewrite floors in place (`script.setChatMessages`). */
+  | 'rewrite-messages'
+
+/**
+ * One stored snapshot of a conversation.
+ *
+ * `backupId` is the path **relative to the profile's backups root** — the
+ * handle every other backup method takes. It is built from validated ids, so
+ * it is safe to echo back, and it never leaks an absolute host path.
+ */
+export interface BackupSummary {
+  backupId: string
+  /** The conversation the snapshot was taken of. */
+  chatId: string
+  /** The card the conversation was played with, when it had one. */
+  characterId?: string
+  /**
+   * When the snapshot was taken, parsed from the file name's stamp.
+   *
+   * Unix epoch milliseconds. `0` when the name carries no readable stamp — a
+   * file dropped in by hand is still listable, it just sorts as oldest.
+   */
+  createdAt: number
+  /** Floors carried, header line excluded — recorded in the name at snapshot time. */
+  messageCount: number
+  /** File size in bytes. */
+  bytes: number
+  /** What the host was about to do, when the name says. */
+  reason?: BackupReason
+}
+
+/** One floor of a snapshot, as the read-only preview shows it. */
+export interface BackupPreviewFloor {
+  /** The floor's index in the snapshot, the same number a card script would see. */
+  messageId: number
+  /** The floor's speaker. */
+  name: string
+  /** True when the floor is the user's own line. */
+  isUser: boolean
+  /** The floor's text, clipped — a preview, not a re-render. */
+  text: string
+}
+
+/**
+ * A read-only look into one snapshot: the header's facts and the first floors.
+ *
+ * Everything here comes off the snapshot's own bytes, so what a reader sees is
+ * what a restore would write back — not a summary the host computed at
+ * snapshot time and could have gone stale.
+ */
+export interface BackupPreview {
+  /** The snapshot itself, as the list carries it. */
+  backup: BackupSummary
+  /** The conversation's title, as the snapshot's header records it. */
+  title: string
+  /** Who the user was in that conversation, when the header says. */
+  userName?: string
+  /** Who the character was, when the header says. */
+  characterName?: string
+  /** The header's own `create_date`, verbatim, when it carries one. */
+  createDate?: string
+  /** The first floors, in file order. */
+  floors: BackupPreviewFloor[]
+  /** How many floors the snapshot holds in full. */
+  totalFloors: number
 }

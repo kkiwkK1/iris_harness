@@ -24,6 +24,7 @@ import {
   describeConsentAsk,
   consentState,
   mayRun,
+  interfacesMayBuild,
   shouldAsk,
   totalBytes,
 } from '../src/sandbox/consent.ts'
@@ -225,4 +226,27 @@ test('a card with no scripts produces no question at all', () => {
    * the case that looks like nothing is happening.
    */
   assert.equal(describeConsentAsk(consentFigures([]), bytes), undefined)
+})
+
+test('a card that is never asked still renders its interfaces', () => {
+  /*
+   * The counterpart of the test above. `ConsentAsk` renders nothing for a card
+   * with no scripts, and nothing else ever puts the question — so a gate that
+   * demanded an answer anyway would strand that card's greeting behind a
+   * silence no user action can break. Measured, not imagined: a real card whose
+   * greeting is a 30 KB HTML document produced a claimed frame, a healthy
+   * shell, and no iframe in the row, with no sentence anywhere saying why.
+   *
+   * `unasked` with scripts still waits — the question exists there, and the
+   * answer has to be the user's. `unknown` waits in every case: it is the
+   * round trip, not a state to decide in. `declined` is an answer.
+   */
+  assert.equal(interfacesMayBuild('unasked', 0), true)
+  assert.equal(interfacesMayBuild('unasked', 3), false)
+  assert.equal(interfacesMayBuild('unknown', 0), false)
+  assert.equal(interfacesMayBuild('unknown', 3), false)
+  assert.equal(interfacesMayBuild('declined', 0), false, 'a decline is an answer, even to nothing')
+  assert.equal(interfacesMayBuild('declined', 3), false)
+  assert.equal(interfacesMayBuild('allowed', 0), true)
+  assert.equal(interfacesMayBuild('allowed', 3), true)
 })

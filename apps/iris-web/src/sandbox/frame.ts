@@ -19,14 +19,16 @@ import { UnsupportedApiError } from './errors.ts'
 import { topFrame } from './failure-attribution.ts'
 import { UNBRIDGED_GLOBALS } from './policy.ts'
 import type { FromFrame, ToFrame } from './protocol.ts'
+import { sameOriginTarget } from './same-origin.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isOnSillyTavernSurface } from './card-api.ts'
 import type { MemberTable } from './members-contract.ts'
 import { MEMBER_KINDS, SHARED_ORIGINAL, identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
-import { SCRIPT_REGISTRY, withPreamble } from './preamble.ts'
-import { EventBus, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
+import { SCRIPT_REGISTRY, WINDOW_GLOBAL, withPreamble } from './preamble.ts'
+import { EventBus, MVU_EVENTS, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
+import type { Listener } from '@iris/compat-tavernhelper-core'
 import type { ScriptContext } from '@iris/protocol'
 
 /** What the frame-side code needs from its realm. */
@@ -35,6 +37,16 @@ export interface FrameEnv {
   token: string
   /** The frame's own body — which is the card's container, and what `parent.document.body` yields. */
   container: ScopedRoot
+  /**
+   * The frame's own `<head>` — what `parent.document.head` answers.
+   *
+   * A real element, like `body` is a real element: this is the card's own
+   * document, and appending a `<style>` or a `<link>` to its head is the same
+   * class of write appending markup to the container is. Optional because every
+   * realm here is injected; a frame without one simply refuses the member by
+   * name, as it does for every other member it does not carry.
+   */
+  head?: unknown
   /** The frame's own document, for node construction. */
   factory: NodeFactory
   /** The real window of this frame, proxied through for everything not overridden. */
@@ -204,6 +216,20 @@ export interface FrameEnv {
    * Optional so a test can install without a DOM.
    */
   applyViewport?: (size: { width: number, height: number }) => void
+  /**
+   * The URL relative paths in this frame resolve against: `document.baseURI`.
+   *
+   * For a srcdoc frame that is the shell page's URL — the same base the browser
+   * resolves a card's `fetch('/x')` against, which is why the fetch bridge
+   * resolves with it rather than with an origin alone: a root-relative path and
+   * a page-relative one both land where the card meant them to. Its origin is
+   * what counts as "ours".
+   *
+   * Optional so a test can install without one; the bridge then treats every
+   * request as not-ours and passes it through untouched, which is the safe
+   * direction for a bridge that is missing its premise.
+   */
+  baseUrl?: string
 }
 
 /** A running frame's handle. */
@@ -374,6 +400,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
 
   const virtualDocument = createVirtualDocument({
     container: env.container,
+    ...(env.head === undefined ? {} : { head: env.head }),
     viewport: readViewport,
     factory: env.factory,
     anchors,
@@ -457,6 +484,31 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
 
   let extensionSettings: Record<string, unknown> | undefined
 
+  /*
+   * The save side of the settings report, one channel with the proxied write.
+   *
+   * Built once per frame so a card holding the function across reads — and
+   * MVU's store does exactly that, capturing it in a Vue watch — always holds
+   * the same object. The debounce length is upstream's
+   * `debounce_timeout.relaxed` (`public/scripts/constants.js:14`), which is
+   * the constant `DEFAULT_SAVE_EDIT_TIMEOUT` is defined from.
+   */
+  const postSettingsForSave = (): void => {
+    env.post({ iris: env.token, type: 'settings', settings: { ...(extensionSettings ?? {}) } })
+  }
+  const saveSettingsNow = (): void => {
+    postSettingsForSave()
+  }
+  const SAVE_SETTINGS_DEBOUNCE_MS = 1_000
+  let saveSettingsTimer: ReturnType<typeof setTimeout> | undefined
+  const saveSettingsDebouncedFn = (): void => {
+    if (saveSettingsTimer !== undefined) clearTimeout(saveSettingsTimer)
+    saveSettingsTimer = setTimeout(() => {
+      saveSettingsTimer = undefined
+      postSettingsForSave()
+    }, SAVE_SETTINGS_DEBOUNCE_MS)
+  }
+
   /**
    * `SillyTavern`, as a card sees it.
    *
@@ -477,6 +529,33 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       }
       if (property === 'getContext') return () => sillyTavern
       if (property === 'extensionSettings') return extensionSettings
+
+      /*
+       * The settings saves, upstream's own pair (`public/script.js:469`):
+       *
+       *   saveSettingsDebounced = debounce(saveSettings, debounce_timeout.relaxed)
+       *
+       * What they must answer is "the settings this card just wrote will be
+       * persisted", and the persisted thing a frame owns here is its
+       * **extension settings partition** — the object `extensionSettings`
+       * hands out, whose proxied writes already report themselves. So a save
+       * rides that same report: the shell hears it exactly as it hears a
+       * proxied write, and one store action carries both to the host. Nothing
+       * else this frame could reach is upstream's `settings.json`, and
+       * inventing a wider save would claim a persistence Iris cannot do.
+       *
+       * Measured in every MVU-bearing card of the corpus: the bundle's
+       * settings store calls `SillyTavern.saveSettingsDebounced()` on each
+       * mutation, and an absent member threw `TypeError` inside its watch
+       * callback once per frame boot. `saveSettings` is carried for the same
+       * class of caller — upstream declares both, and a bundle that wants its
+       * write on disk *now* calls the immediate one.
+       *
+       * Both ignore their arguments: upstream's `loopCounter` is recursion
+       * bookkeeping for its own retry, not a caller's option.
+       */
+      if (property === 'saveSettings') return saveSettingsNow
+      if (property === 'saveSettingsDebounced') return saveSettingsDebouncedFn
 
       /*
        * The bus, reachable through `getContext()` as well as through `parent`.
@@ -800,6 +879,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         property === 'extensionSettings' ||
         property === 'eventSource' ||
         property === 'event_types' ||
+        // The save pair answers `get` above; `in` has to agree with it, which is
+        // the same get/has consistency the rest of this trap exists to keep.
+        property === 'saveSettings' ||
+        property === 'saveSettingsDebounced' ||
         // Built here rather than routed to the host, so `isCardMethod` does not
         // know about it and a card feature-testing with `in` would be told no.
         property === 'updateChatMetadata' ||
@@ -846,7 +929,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     property === 'extension_settings' ||
     property === 'TavernHelper' ||
     property === 'eventSource' ||
-    property === 'event_types'
+    property === 'event_types' ||
+    // The window event-target surface: on a real parent these are native and
+    // unwritable, so the stand-in keeps the same read-only shape.
+    property === 'addEventListener' ||
+    property === 'removeEventListener' ||
+    property === 'dispatchEvent'
 
   const virtualParent = new Proxy(Object.create(null) as object, {
     get(_target, property): unknown {
@@ -869,6 +957,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (property === 'TavernHelper') return tavernHelper['TavernHelper']
       if (property === 'eventSource') return eventSource
       if (property === 'event_types') return TAVERN_EVENTS
+      /*
+       * The window event-target surface, on the same bus as `eventSource`. A
+       * `getTopWindow()` helper that returned the real top used to answer these
+       * reads with a cross-origin SecurityError; falling through to the
+       * unpublished-name path would answer `undefined` and move the same failure
+       * into a `TypeError` one line later. Both are worse than routing.
+       */
+      if (property === 'addEventListener') return parentEventTarget.addEventListener
+      if (property === 'removeEventListener') return parentEventTarget.removeEventListener
+      if (property === 'dispatchEvent') return parentEventTarget.dispatchEvent
 
       // Published by one of this card's scripts. Checked after the bridged
       /*
@@ -1001,6 +1099,9 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         property === 'TavernHelper' ||
         property === 'eventSource' ||
         property === 'event_types' ||
+        property === 'addEventListener' ||
+        property === 'removeEventListener' ||
+        property === 'dispatchEvent' ||
         ((property === 'SillyTavern' || property === 'extension_settings') && context !== undefined)
       )
     },
@@ -1164,12 +1265,149 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     })
   }
 
+  /*
+   * The card-dialog bridge.
+   *
+   * This frame's sandbox never carries `allow-modals`, so the browser turns
+   * `alert`, `confirm` and `prompt` into **silent no-ops** — a card that
+   * reports its own failure through `alert("发送失败: …")` reports nothing,
+   * and the reader sees a button that "does nothing". That is exactly the
+   * swallowed failure the notice panel exists for, so the three names are
+   * shadowed with bridges: the text travels to the shell on its own message
+   * and lands in the panel, visible.
+   *
+   * The two that upstream answers *synchronously* cannot keep that contract
+   * across a message boundary, and pretending otherwise would write the
+   * reader's answers for them: `confirm` answers `false` and `prompt` answers
+   * `null` — the same values a no-modal sandbox answers — while the panel
+   * records what the card asked, so "the card needed an answer Iris cannot
+   * give" is on the record instead of being indistinguishable from a bug.
+   */
+  const cardDialog = (kind: 'alert' | 'confirm' | 'prompt', text: string): void => {
+    env.post({ iris: env.token, type: 'dialog', kind, text })
+  }
+  const bridgedDialogs: Record<string, unknown> = {
+    alert: (text: unknown): undefined => {
+      cardDialog('alert', String(text ?? ''))
+      return undefined
+    },
+    confirm: (text: unknown): boolean => {
+      cardDialog('confirm', String(text ?? ''))
+      return false
+    },
+    prompt: (text: unknown): null => {
+      cardDialog('prompt', String(text ?? ''))
+      return null
+    },
+  }
+
   const triggerSlash = (command: unknown): Promise<string> => {
     const id = `s${(nextSlash += 1)}`
     return new Promise<string>((resolve, reject) => {
       pendingSlash.set(id, { resolve, reject })
       env.post({ iris: env.token, type: 'slash', id, command: String(command) })
     })
+  }
+
+  /*
+   * The frame-side half of the same-origin fetch bridge.
+   *
+   * Upstream's card scripts run same-origin with SillyTavern, so a bundle's
+   * `fetch('/version')` is an ordinary request to the page's own server. Here
+   * the same path resolves to Iris's origin and `connect-src` refuses it — the
+   * refusal is what produced the standing banner on every MVU card. The bridge
+   * carries such a request to the shell on the `fetch` message that already
+   * exists for remote dependencies, and the shell fetches it with its own
+   * credentials. CSP is untouched: the bridged request never leaves from here,
+   * and anything not same-origin goes to the native fetch below, where CSP
+   * refuses exactly what it refused before.
+   *
+   * Only retrieval is bridged. GET and HEAD without a body or request headers
+   * ride the message; a POST — which on Iris's own origin could be a state-
+   * changing call to Iris itself, with the user's credentials attached — goes
+   * native and is refused and reported like any other closed-directive request.
+   */
+  let nextFetch = 0
+  const pendingFetch = new Map<string, { resolve: (response: Response) => void, reject: (why: Error) => void }>()
+
+  /*
+   * The native fetch, captured at install.
+   *
+   * `fetch` is among the published globals, so after publishing a read off the
+   * window finds the bridge — and a bridge that reached its own published name
+   * for the passthrough path would recurse into itself for every request it
+   * declines. Capturing before any publish is the only way the non-same-origin
+   * path stays native.
+   */
+  const nativeFetchValue = (env.realWindow as unknown as Record<string, unknown>)['fetch']
+  const nativeFetch = typeof nativeFetchValue === 'function'
+    ? (nativeFetchValue as (input: unknown, init?: unknown) => Promise<Response>).bind(env.realWindow)
+    : undefined
+
+  /**
+   * The `Response` a card sees for a bridged request.
+   *
+   * A real `Response`, so `res.ok`, `res.status`, `res.json()` and
+   * `res.headers.get('content-type')` all answer as the native object would —
+   * a bundle's `.then(e => e.json())` must not learn the bridge's shape instead
+   * of the fetch shape it was written against.
+   * @param message - the shell's answer.
+   * @returns the response.
+   */
+  const bridgedResponse = (message: Extract<ToFrame, { type: 'fetch:ok' }>): Response => {
+    const status = message.status ?? 200
+    // A body on these statuses makes the Response constructor throw; the shell
+    // cannot have carried content for one anyway.
+    const body = status === 204 || status === 205 || status === 304 ? null : message.content
+    return new Response(body, {
+      status,
+      ...(message.contentType === undefined
+        ? {}
+        : { headers: { 'content-type': message.contentType } }),
+    })
+  }
+
+  /**
+   * Bridge a request when it is a same-origin retrieval, else leave it native.
+   * @param input - what the card passed as the fetch input.
+   * @param init - what the card passed as the fetch init.
+   * @returns the bridged promise, or undefined when this request is not the
+   *   bridge's business and the caller must go native.
+   */
+  const rideFor = (input: unknown, init: unknown): Promise<Response> | undefined => {
+    const specifier = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.href
+        : // A `Request` carries its own method, headers and body; unwrapping
+          // all of that duplicates the object it wraps, so it stays native.
+          undefined
+    if (specifier === undefined || env.baseUrl === undefined) return undefined
+    const options = (init ?? {}) as Record<string, unknown>
+    if (options['body'] !== undefined || options['headers'] !== undefined) return undefined
+    const method = (typeof options['method'] === 'string' ? options['method'] : 'GET').toUpperCase()
+    if (method !== 'GET' && method !== 'HEAD') return undefined
+    const origin = new URL(env.baseUrl).origin
+    const target = sameOriginTarget(specifier, env.baseUrl, origin)
+    if (target === undefined) return undefined
+    const id = `f${(nextFetch += 1)}`
+    return new Promise<Response>((resolve, reject) => {
+      pendingFetch.set(id, { resolve, reject })
+      // The resolved absolute URL travels, not the specifier: the shell
+      // re-checks origin before honouring, and resolving twice against two
+      // bases could disagree about a page-relative path.
+      env.post({ iris: env.token, type: 'fetch', id, url: target })
+    })
+  }
+
+  /** The `fetch` a card sees: bridge where it applies, native everywhere else. */
+  const fetchBridge = (input: unknown, init?: unknown): Promise<Response> => {
+    const bridged = rideFor(input, init)
+    if (bridged !== undefined) return bridged
+    if (nativeFetch === undefined) {
+      return Promise.reject(new Error(`fetch(${String(input)}): this frame has no native fetch`))
+    }
+    return nativeFetch(input, init)
   }
 
   /**
@@ -1210,6 +1448,61 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    */
   const events = new EventBus()
   const eventSource = env.members.createEventSource(events)
+
+  /**
+   * The parent window's native event-target surface.
+   *
+   * Upstream's `parent` is the ST page — a real window, so
+   * `window.top.addEventListener('X', fn)` and `window.top.dispatchEvent(new
+   * CustomEvent('X', {detail}))` work because same-origin windows work. A card
+   * that reaches for one of those here must not fall through to the **real**
+   * cross-origin parent, where the browser answers every read with a
+   * SecurityError; the projector card's boot died on exactly that read. These
+   * three route onto {@link events} — the same bus `eventSource` wraps — so
+   * "subscribe through the parent, emit through `eventEmit`" and its reverse
+   * stay one bus, not two.
+   *
+   * Cross-frame delivery rides the shell: a `dispatchEvent` posts a `winevent`,
+   * and the shell rebroadcasts it to every frame of the card as an ordinary
+   * `event` message, which the frame emits on this same bus. The listener
+   * receives one argument shaped like the event that was dispatched —
+   * `{type, detail}` — because that is what the DOM contract hands a
+   * `CustomEvent` reader; the projector reads exactly `ev.detail`.
+   */
+  const parentEventTarget = {
+    /**
+     * No TH name guard here, on purpose: TH events come from a fixed table, and
+     * a DOM event name is whatever the card dispatched — the projector's
+     * `MvuFloatingBgRequest` is in no table and must still be heard.
+     */
+    addEventListener: (event: string, listener: Listener): void => {
+      events.eventOn(String(event), listener)
+    },
+    removeEventListener: (event: string, listener: Listener): void => {
+      events.eventRemoveListener(String(event), listener)
+    },
+    /**
+     * `true` unconditionally, unlike the DOM's "was preventDefault called":
+     * nothing here can answer that, and the measured callers ignore the answer.
+     */
+    dispatchEvent: (event: unknown): boolean => {
+      const type = (event as { type?: unknown } | null | undefined)?.type
+      if (typeof type !== 'string' || type.length === 0) {
+        throw new UnsupportedApiError(
+          'parent.dispatchEvent',
+          'The event needs a string `type`.',
+        )
+      }
+      const detail = (event as { detail?: unknown }).detail
+      env.post({
+        iris: env.token,
+        type: 'winevent',
+        event: type,
+        ...(detail === undefined ? {} : { detail }),
+      })
+      return true
+    },
+  }
 
   /**
    * How long a wait may run before it is worth *saying* it is still waiting.
@@ -1607,6 +1900,26 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * finished at both the names upstream offers it under.
      */
     'EjsTemplate',
+    /*
+     * The same-origin fetch bridge, on the same two routes every bridged
+     * global takes: a parameter in classic mode and a published property of
+     * the window in module mode — the second is the one imported bundles read,
+     * since a bundle's bare `fetch` resolves against the window it runs in.
+     * Replacing the name is the point: a bridged request is one CSP would
+     * refuse, so no card can observe the difference except by seeing a refused
+     * request answer instead.
+     */
+    'fetch',
+    /*
+     * The dialog trio, bridged for the same reason `fetch` is: the sandbox's
+     * own answer is a silent no-op (`allow-modals` is never granted), which
+     * turns a card's chosen failure channel into a swallowed one. Shadowing
+     * the names makes `alert` visible in the notice panel and makes `confirm`
+     * and `prompt` say — in the same panel — that they answered "cancel".
+     */
+    'alert',
+    'confirm',
+    'prompt',
   ] as const
 
   /**
@@ -1698,6 +2011,24 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * `EjsTemplate` above without this line did exactly that.
      */
     ejsTemplate,
+    /*
+     * The bridge goes last, appended together with its `core` entry, so no
+     * index above had to move for it.
+     */
+    fetchBridge,
+    /*
+     * The dialog bridges sit at `core`'s tail — immediately after `fetch` — so
+     * their values belong here, before the `helperNames` spread: the zip
+     * against `shadowed` is positional, and `core`'s last three names are
+     * indexes 11–13 of the bound list, ahead of every Tavern Helper name.
+     * Placing them after the spread (where "appended last" would put them)
+     * hands `alert` the first helper's function and slides every other binding
+     * three places along — the same silent shift the hazard note above
+     * describes, which is why this ordering is pinned by a test.
+     */
+    bridgedDialogs['alert'],
+    bridgedDialogs['confirm'],
+    bridgedDialogs['prompt'],
     ...helperNames.map(name => sharedCopy(name, tavernHelper[name])),
   ]
 
@@ -1721,6 +2052,14 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       pendingSlash.delete(message.id)
       if (message.type === 'slash:ok') waiting.resolve(message.result)
       // Rejected with a real Error so a card's `.catch` sees what upstream's would.
+      else waiting.reject(new Error(message.message))
+      return
+    }
+    if (message.type === 'fetch:ok' || message.type === 'fetch:error') {
+      const waiting = pendingFetch.get(message.id)
+      if (waiting === undefined) return
+      pendingFetch.delete(message.id)
+      if (message.type === 'fetch:ok') waiting.resolve(bridgedResponse(message))
       else waiting.reject(new Error(message.message))
       return
     }
@@ -1787,6 +2126,46 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         else reportGap(text)
       })
       extensionSettings = settingsProxy({ ...message.context.extensionSettings })
+      /*
+       * An interface frame published its surface at install, when neither of
+       * these had an answer — the install-time `resolveValues()` handed
+       * `undefined` for both, and `defineProperty` froze that answer onto the
+       * window. Every card idiom of the shape
+       * `if (window.parent.SillyTavern) …` has a bare-spelling twin, and the
+       * bare spelling in interface markup read **absent forever** — the answer
+       * "the host is not SillyTavern", which is the plugin-detection failure
+       * this frame exists not to cause. So the two names are published again
+       * now that they have one, on the same channel and with the same
+       * per-snapshot semantics the run path already has: `resolveValues()` is
+       * re-read per evaluation there, and this is the interface frame's
+       * evaluation. `parent.SillyTavern` answers live (line ~942); from this
+       * moment the bare spelling and it agree.
+       */
+      if (env.interfaceFrame === true) {
+        env.publishGlobals?.([
+          ['SillyTavern', sillyTavern],
+          ['extension_settings', extensionSettings],
+          /*
+           * The Tavern Helper surface, published **bare**.
+           *
+           * Upstream injects this same surface into every message iframe as
+           * plain globals — a message frame's own inline script reaches
+           * `setChatMessages(...)` or `triggerSlash(...)` bare, without the
+           * `parent.` prefix a card *script* needs. An interface frame that
+           * kept these namespaced-only answered every bare spelling with a
+           * ReferenceError inside the card's own try/catch: the measured card's
+           * start button clicked, ran, and did nothing, and its guard
+           * (`typeof triggerSlash === 'function'`) silently skipped the second
+           * half of its work.
+           *
+           * These are the same objects `parent.TavernHelper.*` already hands
+           * out — this publish adds the spellings, not a second surface.
+           */
+          ...Object.entries(tavernHelper).map(
+            ([name, value]) => [name, value] as [string, unknown],
+          ),
+        ])
+      }
       return
     }
     if (message.type !== 'run') return
@@ -1901,6 +2280,33 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
          * has not already given away.
          */
         [SCRIPT_REGISTRY, (id: unknown) => viewFor(typeof id === 'string' ? id : undefined)],
+        /*
+         * The shadowed window, for the preamble's `const window`.
+         *
+         * A module cannot be handed the shadow as a parameter and `top` cannot
+         * be published onto the real window (see the filter above — the browser
+         * refuses it), so the shadow rides its own published name and the
+         * preamble's one lexical line binds it. Published before evaluation, as
+         * everything else here is, so the binding is never `undefined`.
+         */
+        [WINDOW_GLOBAL, windowShadow],
+        /*
+         * The coordination pair, published **bare** alongside everything else.
+         *
+         * A card's scripts reach these through the preamble's per-script
+         * bindings, so they were the one member group a script frame's window
+         * lacked — and the corpus puts interface markup *inside script frames*:
+         * 神隐挑战's overlay renders its own Vue app into this frame's body,
+         * and that app's inline code opens with
+         * `typeof waitGlobalInitialized === 'undefined'` before it will connect.
+         * Upstream has no such hole: `predefine.js` carries the same member set
+         * into every iframe, so any `<script>` anywhere in a frame reads the
+         * pair as a bare global. Bound to no script, for the same reason the
+         * interface install below binds its copy to none — the id only says who
+         * is waiting, and inline markup genuinely is nobody; a card script that
+         * wants its own id on the report keeps using the preamble binding.
+         */
+        ...Object.entries(coordination(undefined)),
       ])
 
       /*
@@ -1985,6 +2391,15 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   if (env.interfaceFrame === true) {
     try {
       const values = resolveValues()
+      /*
+       * Built once and published twice — see the entry below for why it exists
+       * and what it is.
+       */
+      const mvu = {
+        events: MVU_EVENTS,
+        getMvuData: tavernHelper['getVariables'],
+        replaceMvuData: tavernHelper['replaceVariables'],
+      }
       env.publishGlobals?.([
         ...shadowed
           .map((name, at) => [name, values[at]] as [string, unknown])
@@ -2012,7 +2427,58 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
          * genuinely is nobody.
          */
         ...Object.entries(coordination(undefined)),
+        /*
+         * `Mvu`, as an interface frame can actually have it.
+         *
+         * Upstream, a card's MVU bundle runs in a *script* iframe and publishes
+         * itself onto the **shared host page** (`_.set(window.parent, 'Mvu', …)`
+         * — and the script iframe's parent is the page). An interface iframe
+         * reaches the same object two ways, both measured in upstream's own
+         * injection: `predefine.js` defines `window.Mvu` as a live getter to
+         * `_.get(window.parent, 'Mvu')` ("只是为了兼容性"), and
+         * `waitGlobalInitialized('Mvu')` hears the bundle's
+         * `global_Mvu_initialized` through the page's event source. Either way
+         * the interface frame ends up holding the bundle's methods and constants.
+         *
+         * None of that crosses an opaque origin. Each Iris frame has its own
+         * virtual parent and its own event bus, so the bundle's publication stays
+         * in the script frame and an interface frame's
+         * `await waitGlobalInitialized('Mvu')` waited forever — three measured
+         * status-bar interfaces (尸变纪元, 绿茵好莱坞, 哈人冰恋世界) draw their
+         * panels only after that await, so they rendered their frames and never
+         * populated a single number.
+         *
+         * A live object cannot cross the wall at all, so this is not the bundle —
+         * it is the surface the bundle itself delegates to, built on **this
+         * frame's own** Tavern Helper. Measured in the published bundle:
+         * `getMvuData` is `function(e){return getVariables(e)}` and
+         * `replaceMvuData` is `function(e,t){return replaceVariables(e,t)}` —
+         * thin renames of the very members this frame already has, with this
+         * frame's floor-anchored semantics, which is exactly what an interface
+         * reading its own floor wants. `events` is the same constant table
+         * (`mag_variable_update_ended` and friends) Iris already carries for the
+         * event guard. A status bar that *displays* therefore works fully; the
+         * bundle's schema-driven update machinery stays where it runs, in the
+         * script frame.
+         *
+         * Published into **both** bags: `publishGlobals` for the bare name the
+         * markup reads, `publishName` for the virtual parent whose
+         * `waitGlobalInitialized` polls it — the wait resolves the moment the
+         * frame comes up, which is upstream's shape too, since the page-side
+         * getter exists whether or not the bundle got there first.
+         *
+         * A card (or a future Iris change) publishing a real `Mvu` over this
+         * simply replaces the bag entry; nothing here is privileged.
+         */
+        [
+          'Mvu',
+          mvu,
+        ],
       ])
+      // The virtual-parent half, so `waitGlobalInitialized('Mvu')` — which polls
+      // that bag, not the window — resolves instead of waiting on a publication
+      // that, in this frame, has no other route to happen.
+      publishName('Mvu', mvu)
       env.provideStorage?.(cardStorage)
       env.provideToastr?.(say)
       env.reportMissingGlobals?.(EXPECTED_GLOBALS)

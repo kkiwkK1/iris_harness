@@ -268,17 +268,33 @@ would break them.
 
 ## 6. What is not implemented
 
-- **Creating a book.** Upstream's `createWorldbook`, `createOrReplaceWorldbook`,
-  `deleteWorldbook` and `createWorldbookEntries` exist and are called by no
-  corpus card. That zero was originally written without a measurement behind it;
-  it has since been measured, by **bare member name** across 47 card scripts in
-  19 cards — no `TavernHelper.` anchor, because a path-anchored pattern cannot
-  see `window.parent.TavernHelper.x` or `getContext().x`, and its output for a
-  member it cannot see is `0`, which reads as "unused" rather than "unsearched".
-  Scope caveat: 47 card scripts is a **narrower source set** than the 121 sources
-  (card scripts, rendered interface blocks, sample card) used for the census
-  numbers elsewhere in this document, so this zero is weaker than one taken
-  there.
+*Updated 2026-09-04 (任务 L): the chat book is no longer in this list — §2d's
+chat-book source is now implemented end to end. `chat_metadata.world_info` is
+read fresh at every assembly (`service.ts` `#chatLore`), the binding is writable
+through `worldbook.bindChat`, and the frame's `getChatWorldbookName` /
+`getOrCreateChatWorldbook` / `createWorldbookEntries` / `getWorldbookNames`
+family is live. The scan-order claim in §2d is now transcribed literally, per
+strategy, in `prompt.ts` `scanEntriesOf`. The world-info scan knobs
+(`world_info_depth`, budget and cap, recursion, matching, strategy) are real
+stored settings wired to the engine, the card-facing table and the panel —
+see `src/worldbook-settings.ts` and `DEVIATIONS.md` (任务 L section) for the
+three behaviour corrections this introduced.*
+
+- **`createOrReplaceWorldbook`, `deleteWorldbook`, `deleteWorldbookEntries`.**
+  Upstream's remaining write family. The host arm the first one needs
+  (`worldbook.create`, create-only, reports existence as `false`) exists; the
+  composed members are called by no corpus card. That zero was originally
+  written without a measurement behind it; it has since been measured, by **bare
+  member name** across 47 card scripts in 19 cards — no `TavernHelper.` anchor,
+  because a path-anchored pattern cannot see `window.parent.TavernHelper.x` or
+  `getContext().x`, and its output for a member it cannot see is `0`, which
+  reads as "unused" rather than "unsearched". Scope caveat: 47 card scripts is a
+  **narrower source set** than the 121 sources (card scripts, rendered interface
+  blocks, sample card) used for the census numbers elsewhere in this document,
+  so this zero is weaker than one taken there. (The measurement predates V1.5.4's
+  arrival; that card is why `getOrCreateChatWorldbook` and
+  `createWorldbookEntries` are now built, and why 2.png's `getWorldbookNames`
+  is.)
 - **`charLore` extra books.** `CharWorldbookNames.additional` is always empty:
   the measured installation has a `world_info` section — under
   `world_info_settings`, not at the top level — and it carries `globalSelect`

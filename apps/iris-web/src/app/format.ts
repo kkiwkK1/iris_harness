@@ -7,24 +7,30 @@
  * @module iris-web/app/format
  */
 
+import type { Language } from './i18n/strings.ts'
+import { translate } from './i18n/strings.ts'
+
 /**
  * Describe when something last happened, in as few characters as possible.
  *
  * Relative rather than absolute: in a sidebar the useful question is "how stale
  * is this", and a wall-clock time forces the reader to do the subtraction.
+ * English by default so the `node --test` suites read the source language;
+ * components pass the interface language through.
  * @param at - Unix epoch milliseconds.
  * @param now - the current time, injectable so this is testable.
+ * @param lang - the language to read the units in.
  * @returns a short relative stamp.
  */
-export function since(at: number, now: number = Date.now()): string {
+export function since(at: number, now: number = Date.now(), lang: Language = 'en'): string {
   const seconds = Math.max(0, Math.round((now - at) / 1000))
-  if (seconds < 60) return 'just now'
+  if (seconds < 60) return translate(lang, 'justNow')
   const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 60) return translate(lang, 'minutesAgo', { n: minutes })
   const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return translate(lang, 'hoursAgo', { n: hours })
   const days = Math.round(hours / 24)
-  if (days < 30) return `${days}d ago`
+  if (days < 30) return translate(lang, 'daysAgo', { n: days })
   return new Date(at).toLocaleDateString()
 }
 
@@ -76,10 +82,22 @@ export async function toBase64(file: File): Promise<string> {
  * @param bytes - the size.
  * @returns a short human size.
  */
-export function describeBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return 'unknown size'
-  if (bytes === 0) return 'empty'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} kB`
+/**
+ * Describe a script's size.
+ *
+ * Rounded hard and never below a kilobyte's precision: the number exists so a
+ * reader can tell "a few lines someone wrote" from "a megabyte of compiled
+ * output", and a byte count spelled out in full invites a precision that
+ * decision does not need. `0` is reported as such, because a zero-byte script is
+ * a real thing in the corpus and hiding it would make an empty row unexplainable.
+ * @param bytes - the size.
+ * @param lang - the language for the words around the units.
+ * @returns a short human size.
+ */
+export function describeBytes(bytes: number, lang: Language = 'en'): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return translate(lang, 'unknownSize')
+  if (bytes === 0) return translate(lang, 'sizeEmpty')
+  if (bytes < 1024) return `${String(bytes)} B`
+  if (bytes < 1024 * 1024) return `${String(Math.round(bytes / 1024))} kB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }

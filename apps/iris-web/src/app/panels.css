@@ -14,16 +14,51 @@
   border-top: var(--iris-hairline) solid var(--iris-rule);
   padding: 13px 20px 18px;
   background: var(--iris-bg-page);
+  /*
+   * Reserve the same scrollbar lane the reading surface above reserves
+   * (`reading.css`, `scrollbar-gutter: stable` on `.iris-scroll`), so the
+   * composer's centring box is the reading column's: without this, the
+   * scroller's lane made the message column sit half a scrollbar left of
+   * the composer's centre line, and the two midlines disagreed by that
+   * half for no reason a reader could see. Same property, so the parity is
+   * exact whatever the platform draws — a real lane here, nothing where
+   * scrollbars overlay. `overflow-y:auto` is what makes the box a scroll
+   * container (the property has no effect on a non-scrolling box); it never
+   * scrolls in practice, and `min-height` hands back the automatic minimum a
+   * scroll container otherwise loses — without it a short window would be
+   * allowed to squash the composer into an internal scroller, which is a
+   * narrow-window regression the reading surface never had.
+   */
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  min-height: max-content;
 }
 
 .iris-composer__inner {
   max-width: var(--iris-column-max);
   margin: 0 auto;
+  /*
+   * The margin column, not an inset: the message prose starts one gutter in
+   * from the reading column's content edge (`.iris-msg`'s 46px marginalia
+   * track), and the composer's field lines up under it. The right side
+   * deliberately has no twin — the prose ends at the column's padding, and
+   * so does the field. The 23px-asymmetric *centre* of this box is shared
+   * with the prose's, which is what the midline check measures.
+   */
   padding-left: var(--iris-gutter);
 }
 
 .iris-composer__field {
   display: block;
+  /*
+   * Stated, because a `textarea` is a replaced-ish form control whose
+   * `width: 100%` otherwise resolves as content width — the padding and
+   * hairline then push the real box past its container's right edge, and
+   * the field's midline sat ~14px right of the box it lives in. Measured:
+   * with the default `content-box` the field overflowed `__inner` by
+   * exactly its padding plus border on every viewport.
+   */
+  box-sizing: border-box;
   width: 100%;
   resize: none;
   max-height: 40vh;
@@ -75,7 +110,10 @@
   z-index: 30;
   display: flex;
   flex-direction: column;
-  width: min(392px, 92vw);
+  /* The token, not a literal: the drawer's one width decision, shared with
+     nothing — the page beneath is a pure overlay floor that never reacts to
+     the drawer opening or closing (shell.css). */
+  width: var(--iris-drawer-w);
   background: var(--iris-bg-page);
   border-left: var(--iris-hairline) solid var(--iris-rule);
   box-shadow: var(--iris-shadow);
@@ -103,6 +141,9 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* A fixed-width drawer has no horizontal story: a 2px ghost overflow (a
+     hairline-border field at 100% width) read as a second scrollbar. */
+  overflow-x: hidden;
   padding: 4px 18px 32px;
 }
 
@@ -116,6 +157,172 @@
 
 .iris-section__head {
   margin-bottom: 12px;
+}
+
+/*
+ * A folded card. The head is one row — chevron, name, and the values in force
+ * — and the body rides below it. Collapsed, the drawer reads as a table of
+ * contents; the summary line is what keeps "collapsed" from meaning "hidden".
+ */
+.iris-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.iris-card__head:hover .iris-card__title {
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-card__chevron {
+  transition: transform var(--iris-fast) var(--iris-ease);
+}
+
+.iris-card__chevron--open {
+  transform: rotate(90deg);
+}
+
+.iris-card__title {
+  white-space: nowrap;
+}
+
+.iris-card__summary {
+  overflow: hidden;
+  color: var(--iris-ink-faint);
+  font-size: var(--iris-label-size);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-card__body[hidden] {
+  display: none;
+}
+
+/*
+ * The general card's transfer row and its report list, plus the credential
+ * heading — a label, because the statement under it is prose, not a form.
+ */
+.iris-about__transfer {
+  display: flex;
+  gap: 8px;
+  padding: 7px 0;
+}
+
+.iris-about__report {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--iris-ink-secondary);
+}
+
+.iris-about__credential-head {
+  margin: 14px 0 2px;
+}
+
+/* ---------------------------------------------------------------- appearance */
+
+/*
+ * The appearance card's swatch row. Each swatch is painted from the theme's
+ * own token table (inline styles from `presets.ts`), so preview and page are
+ * the same numbers; the classes here only do the geometry — a desk, a sheet
+ * on it, two lines of prose, and the one accent tick.
+ */
+.iris-appearance__themes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.iris-appearance__swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 8px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius-lg);
+  cursor: pointer;
+  font: inherit;
+}
+
+.iris-appearance__swatch:focus-visible {
+  outline: 2px solid var(--iris-accent);
+  outline-offset: 2px;
+}
+
+/* Chosen is a ring in the accent, not a fill: the swatch's own colours are
+   the content, and tinting them would misrepresent the theme. */
+.iris-appearance__swatch[aria-pressed='true'] {
+  outline: 2px solid var(--iris-accent);
+  outline-offset: 1px;
+}
+
+.iris-appearance__sheet {
+  display: block;
+  padding: 7px 8px 9px;
+  border: 1px solid;
+  border-radius: var(--iris-radius);
+}
+
+.iris-appearance__line {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  margin-bottom: 4px;
+  opacity: 0.85;
+}
+
+.iris-appearance__line--short {
+  width: 62%;
+  margin-bottom: 6px;
+}
+
+.iris-appearance__tick {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.iris-appearance__name {
+  padding-top: 6px;
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-secondary);
+}
+
+/*
+ * The user.css editor. Mono, because it is code; raised, because it is a
+ * sheet on the drawer; and resizable, because a stylesheet grows downward.
+ */
+.iris-usercss__editor {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  padding: 8px 10px;
+  font-family: var(--iris-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.iris-usercss__editor::placeholder {
+  color: var(--iris-ink-faint);
+}
+
+.iris-usercss__editor:focus-visible {
+  outline: none;
+  border-color: var(--iris-accent-quiet);
+  box-shadow: 0 0 0 3px var(--iris-accent-wash);
 }
 
 .iris-field {
@@ -304,9 +511,14 @@
     padding-inline: 12px;
   }
 
-  .iris-composer__inner {
-    padding-left: 0;
-  }
+  /*
+   * Deliberately **not** overridden to 0 here, though it once was. The prose
+   * keeps its marginalia track at this width (`--iris-gutter: 34px` below),
+   * so its centre sits half a gutter right of the column's — and a composer
+   * inset with no twin put the two midlines 17px apart, measured at
+   * 800×700. Inheriting the base `padding-left: var(--iris-gutter)` keeps
+   * the field under the prose, exactly as on the wide layout.
+   */
 
   :root {
     --iris-gutter: 34px;
@@ -483,8 +695,21 @@
   }
 }
 
+/*
+ * The margin's content column.
+ *
+ * The aside is anchored to the SHEET's right edge, not to its track's start
+ * and not to the window: the inner box is capped and left-aligned, so the
+ * annotations sit a fixed 24px from the page they annotate and never drift
+ * or float when the window widens — anchored but not pinned to the glass,
+ * with the rest of the track left as the desk's breathing room to the right
+ * edge. The track itself is floored at the aside token (shell.css) so the
+ * margin never collapses below legibility.
+ */
 .iris-aside__inner {
-  padding: 26px 22px 40px 24px;
+  max-width: calc(var(--iris-aside) + 92px);
+  padding: 26px 32px 40px 24px;
+  box-sizing: border-box;
 }
 
 .iris-aside__head {
@@ -504,30 +729,36 @@
  * Set as an index rather than as a data structure: keys ranged left in the
  * annotation sans, values ranged right, one hairline per entry, and nesting shown
  * by indentation under a rule instead of by braces. No colour distinguishes a
- * kind — the previous panel used a syntax-highlighted tree, and red and purple
+ * *kind* — the previous panel used a syntax-highlighted tree, and red and purple
  * string literals beside a serif reading surface announced that this column
- * belonged to a different program.
+ * belonged to a different program. Colour does distinguish **what moved this
+ * round**, because that is information the reader asked for, not type lore.
  */
 
 .iris-var {
   margin: 0;
 }
 
+/* Compact rows: a 34-item section is only countable if a screenful holds some. */
 .iris-var__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  column-gap: 12px;
-  padding: 4px 0;
+  column-gap: 10px;
+  padding: 3px 0;
   border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
 }
 
 /*
- * A value too long to tally takes its own line.
+ * A value too long to tally takes its own line, clamped.
  *
  * Ranged right is what makes an index scannable, and it is exactly wrong for a
  * sentence: in a 260px column a set-right paragraph squeezes its key to two
- * characters a line. The component decides which of the two a value is.
+ * characters a line. The component decides which of the two a value is. The
+ * clamp replaces the old free wrap — an unbounded paragraph value was the
+ * "information too much" this panel was rebuilt against — and the full text
+ * stays one hover away, which is where a reader looks for it and *not* the
+ * horizontal scrollbar this refuses to become.
  */
 .iris-var__row--stacked {
   grid-template-columns: minmax(0, 1fr);
@@ -560,8 +791,12 @@
   overflow-wrap: anywhere;
 }
 
-/* At this length the value is a note, so it is set in the note face. */
+/* At this length the value is a note, so it is set in the note face and clamped. */
 .iris-var__row--stacked .iris-var__value {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   font-family: var(--iris-font-prose);
   font-size: 12.5px;
   line-height: 1.5;
@@ -569,11 +804,18 @@
   text-align: left;
 }
 
+/*
+ * Numbers are tallies, so they take the mono face — digits that agree in width
+ * run down the right edge as a column worth scanning.
+ */
 .iris-var__value--numeric {
+  font-family: var(--iris-font-mono);
   font-variant-numeric: tabular-nums;
 }
 
-.iris-var__value--absent {
+/* Absent, and present-but-saying-nothing (a literal `未知`), both dim. */
+.iris-var__value--absent,
+.iris-var__value--faint {
   color: var(--iris-ink-faint);
 }
 
@@ -581,7 +823,7 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 5px 0;
+  padding: 4px 0;
   border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
   cursor: default;
   /* Both are needed: the standard property and WebKit's older pseudo-element. */
@@ -645,6 +887,127 @@
   margin-left: 6px;
   padding-left: 11px;
   border-left: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+/*
+ * What moved this round. Two badges, spent as rarely as the accent itself: a
+ * row with no mark is the overwhelmingly common case, and the marks only work
+ * because they are scarce.
+ */
+.iris-var__delta {
+  flex: none;
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  line-height: 1.6;
+  vertical-align: 1px;
+}
+
+.iris-var__delta--new {
+  color: var(--iris-accent);
+  background: var(--iris-accent-wash);
+}
+
+/* A change hovers with the old reading; the amber says "different", not "bad". */
+.iris-var__delta--chg {
+  color: var(--iris-warn);
+  background: color-mix(in srgb, var(--iris-warn) 12%, transparent);
+}
+
+/* ------------------------------------------------- state margin: the tools */
+
+/*
+ * Search, fold, and the diff switch — one quiet stack under the heading. The
+ * box reuses the sidebar's `.iris-search` shape so the two filters on this page
+ * read as the same instrument.
+ */
+.iris-var__tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* Full width of the tools, without the sidebar copy's inline margins. */
+.iris-var__search {
+  margin: 0;
+}
+
+.iris-var__toolrow {
+  display: flex;
+  gap: 4px;
+}
+
+.iris-var__tool {
+  flex: 1;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--iris-ink-tertiary);
+  background: none;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.iris-var__tool:hover:not(:disabled) {
+  color: var(--iris-ink-secondary);
+  background: var(--iris-bg-sunken);
+}
+
+.iris-var__tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The diff switch holds its state visually: pressed is a wash, not a shadow. */
+.iris-var__tool--toggle[aria-pressed='true'] {
+  color: var(--iris-accent);
+  background: var(--iris-accent-wash);
+  border-color: var(--iris-accent-quiet);
+}
+
+/*
+ * The round's tally, always symbolic so it scans like a scoreboard: + added,
+ * ~ changed, − removed. The words live in the aria-label, where they belong.
+ */
+.iris-var__diffmeta {
+  margin: 0;
+  font-family: var(--iris-font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-var__diffadd {
+  color: var(--iris-accent);
+}
+
+.iris-var__diffchg {
+  color: var(--iris-warn);
+}
+
+.iris-var__diffrem {
+  color: var(--iris-ink-faint);
+}
+
+/*
+ * Removals, under the diff view. The rows are dimmed throughout: this section
+ * is an obituary, not an index, and it must never compete with the live tree
+ * above it.
+ */
+.iris-var__removed {
+  margin-top: 14px;
+}
+
+.iris-var__removedhead {
+  margin: 0 0 4px;
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  text-transform: uppercase;
+  color: var(--iris-ink-tertiary);
 }
 
 /* ------------------------------------------------------- sandbox probe (dev) */
@@ -918,6 +1281,14 @@
 }
 
 /*
+ * A probe's verdict is news, and a failed one is the kind a reader acts on:
+ * it takes the danger token rather than the quiet of a note.
+ */
+.iris-conn__test-error {
+  color: var(--iris-danger);
+}
+
+/*
  * The card-script button bar, above the composer.
  *
  * Upstream borrows QuickReply's classes so its buttons look like that
@@ -929,8 +1300,46 @@
 .iris-buttons {
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
   gap: 6px;
   padding: 0 0 10px;
+}
+
+/*
+ * The fold control. Quieter than the card buttons it unfolds — no box at all,
+ * just the annotation voice with a chevron — because it is the one piece of
+ * the bar Iris ships rather than something a card added, and chrome that
+ * shouts would bury the controls it exists to reveal. `flex-basis: 100%`
+ * keeps the folded state to a single slim line: the buttons, when they show,
+ * wrap onto their own rows beneath it.
+ */
+.iris-buttons__toggle {
+  flex-basis: 100%;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--iris-font-ui);
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  color: var(--iris-ink-tertiary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.iris-buttons__toggle:hover {
+  color: var(--iris-ink-secondary);
+}
+
+.iris-buttons__toggle:focus-visible {
+  outline: 2px solid var(--iris-accent);
+  outline-offset: 2px;
+}
+
+.iris-buttons__chevron {
+  font-size: 0.9em;
 }
 
 .iris-buttons__button {
@@ -1095,6 +1504,49 @@
   background: var(--iris-scrim);
 }
 
+/*
+ * Iris's collapse toggle for a card's overlay interface.
+ *
+ * The one guaranteed way back from a card that has taken the reading column:
+ * a click on a control above the overlay surface's layer. Its `z` is the
+ * surface's own variable plus five, so the two can never be reordered by
+ * tuning one of them and forgetting the other — and both stay under the
+ * cleaning offer (60), which must top everything.
+ *
+ * `position:absolute` inside `.iris-card-stage`: the control hugs the reading
+ * column's top-right corner wherever the layout puts it, and never strays over
+ * the sidebar or the masthead — the navigation it exists to keep reachable.
+ * It is a real button, so keyboard focus and Enter/Space reach it the way a
+ * pointer does; no key is bound, because the card's own ESC (its fullscreen
+ * exit) and Iris's escape must not fight over the keyboard.
+ */
+.iris-overlay-toggle {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: calc(var(--iris-overlay-z, 40) + 5);
+  padding: 4px 11px 5px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: 999px;
+  background: var(--iris-bg-page);
+  color: var(--iris-ink-tertiary);
+  font: inherit;
+  font-size: var(--iris-label-size);
+  letter-spacing: var(--iris-label-tracking);
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: var(--iris-shadow);
+}
+
+.iris-overlay-toggle:hover {
+  color: var(--iris-ink);
+}
+
+.iris-overlay-toggle[aria-pressed='true'] {
+  color: var(--iris-ink-secondary);
+  border-color: var(--iris-accent-quiet);
+}
+
 .iris-cleanup__panel {
   display: grid;
   gap: 10px;
@@ -1138,6 +1590,31 @@
   gap: 6px;
 }
 
+/* How many identical arrivals one row stands for. Quiet: the count is metadata
+   about the row, not part of what was said. */
+.iris-notices__times {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--iris-ink-tertiary);
+}
+
+/* A transport outage that the connection has since closed. Dimmed but kept —
+   the row is evidence, not an alarm — and named as healed so its faintness
+   reads as resolved rather than as decoration. */
+.iris-notices__row--resolved .iris-reports__message {
+  color: var(--iris-ink-faint);
+}
+
+.iris-notices__healed {
+  margin-left: 6px;
+  font-size: 10.5px;
+  color: var(--iris-ink-faint);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: 999px;
+  padding: 0 7px 1px;
+}
+
 /* How many identical reports a row stands for. Tabular so a column of them
    lines up, and quiet: the count is metadata about the row rather than part of
    what the host said. */
@@ -1162,4 +1639,561 @@
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+}
+
+/* ------------------------------------------------------------------ presets */
+
+/*
+ * A preset row, like a connection row: the name is the identity, and the
+ * actions ride beside it rather than under it. The active row is marked the
+ * same way connections are — an accent edge — so "which one is running" has
+ * one answer with one shape across the drawer.
+ */
+.iris-preset {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-left: 2px solid transparent;
+  padding-left: 8px;
+}
+
+.iris-preset[aria-current='true'] {
+  border-left-color: var(--iris-accent);
+  background: var(--iris-accent-wash);
+}
+
+.iris-preset__name {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink);
+  overflow-wrap: anywhere;
+}
+
+.iris-preset__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+/* A small labelled chip: “active”, “slot”, “system”, a role. */
+.iris-preset__badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  font-family: var(--iris-font-ui);
+  font-size: 10px;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-preset__active {
+  font-family: var(--iris-font-mono);
+  color: var(--iris-ink);
+  overflow-wrap: anywhere;
+}
+
+.iris-preset__import {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+/* Why a name did not come over. Host-worded, so it is not translated here. */
+.iris-preset__report {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--iris-ink-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.iris-preset__head {
+  margin: 14px 0 4px;
+}
+
+/*
+ * Real presets carry dozens of prompts; the list scrolls inside the section so
+ * the reader keeps their place in the drawer while reordering.
+ */
+.iris-preset__prompts {
+  max-height: 40vh;
+  overflow-y: auto;
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-preset__prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-preset__toggle {
+  flex: none;
+  accent-color: var(--iris-accent);
+}
+
+.iris-preset__prompt-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.iris-preset__prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+/*
+ * A global regex row, the preset prompt row's grammar: a toggle, the name with
+ * its badges, and the actions beside it. Same spacing, same hairlines — the
+ * two lists sit one above the other in the drawer, and matching them is what
+ * makes that read as one drawer rather than two bolted together.
+ */
+.iris-regex__list {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.iris-regex__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-regex__toggle {
+  flex: none;
+  accent-color: var(--iris-accent);
+}
+
+.iris-regex__name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.iris-regex__badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  font-family: var(--iris-font-ui);
+  font-size: 10px;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-regex__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.iris-regex__import {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+/*
+ * A backup row, the regex row's grammar again — time and size where the
+ * script's name goes, the snapshot reason as its badge, and the three actions
+ * beside it. The preview and the named-confirmation box open under the row
+ * they belong to, indented by the row's own left edge, so a reader never has
+ * to guess which snapshot a dialog is about.
+ */
+.iris-backup__list {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.iris-backup__group {
+  padding: 6px 0 2px;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+}
+
+.iris-backup__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-backup__when {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.iris-backup__detail {
+  flex: none;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-tertiary);
+  white-space: nowrap;
+}
+
+.iris-backup__badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  font-family: var(--iris-font-ui);
+  font-size: 10px;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-backup__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.iris-backup__panel {
+  margin: 4px 0 8px;
+  padding: 8px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.iris-backup__floor {
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+  overflow-wrap: anywhere;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+  padding-bottom: 4px;
+}
+
+.iris-backup__floor-name {
+  color: var(--iris-ink-tertiary);
+  margin-right: 6px;
+}
+
+.iris-backup__confirm-input {
+  width: 100%;
+}
+
+/* -------------------------------------------------- world book entry editor */
+
+/* A horizontal row of small controls; the toolbar and the inline pairs in the
+   entry form share it, because both are "several related things, one line". */
+.iris-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.iris-inline__pair {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--iris-ink-secondary);
+}
+
+.iris-wi-toggles .iris-field {
+  padding: 2px 0;
+}
+
+/* Two-to-three narrow columns of small fields; timed effects and the per-entry
+   overrides use it to keep the form from running one control per line. */
+.iris-wi-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0 16px;
+}
+
+.iris-field--tight {
+  padding: 4px 0;
+}
+
+.iris-select {
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  max-width: 100%;
+}
+
+.iris-select:focus-visible {
+  outline: none;
+  border-color: var(--iris-accent-quiet);
+  box-shadow: 0 0 0 3px var(--iris-accent-wash);
+}
+
+.iris-num {
+  width: 88px;
+}
+
+.iris-textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  padding: 8px 10px;
+  /* Monospace because the file stores exactly these bytes; a proportional face
+     invites "tidying" that would survive into every future prompt. */
+  font-family: var(--iris-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.iris-textarea:focus-visible {
+  outline: none;
+  border-color: var(--iris-accent-quiet);
+  box-shadow: 0 0 0 3px var(--iris-accent-wash);
+}
+
+/* Keys as tags. */
+.iris-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  background: var(--iris-bg-raised);
+  padding: 6px 8px;
+}
+
+.iris-tags__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--iris-accent-wash);
+  color: var(--iris-ink);
+  border-radius: 999px;
+  padding: 2px 4px 2px 9px;
+  font-size: 12px;
+}
+
+.iris-tags__x {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--iris-ink-tertiary);
+  padding: 2px 5px;
+  border-radius: 999px;
+}
+
+.iris-tags__x:hover {
+  color: var(--iris-danger);
+}
+
+.iris-tags__input {
+  flex: 1;
+  min-width: 140px;
+  background: none;
+  border: 0;
+  color: var(--iris-ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.iris-tags__input:focus-visible {
+  outline: none;
+}
+
+/* The editor block and its toolbar. */
+.iris-wi-editor {
+  margin-top: 6px;
+  border-top: var(--iris-hairline) solid var(--iris-rule);
+  padding-top: 10px;
+}
+
+.iris-wi-picker {
+  max-width: 100%;
+}
+
+.iris-wi-unsaved {
+  margin: 8px 0 0;
+  padding: 7px 10px;
+  border-radius: var(--iris-radius);
+  background: var(--iris-danger-wash);
+  color: var(--iris-danger);
+  font-size: 12.5px;
+}
+
+.iris-wi-confirm {
+  margin: 8px 0 0;
+  padding: 9px 10px;
+  border: var(--iris-hairline) solid var(--iris-danger);
+  border-radius: var(--iris-radius);
+  font-size: 12.5px;
+}
+
+.iris-wi-confirm p {
+  margin: 0 0 7px;
+}
+
+.iris-wi-toolbar {
+  margin-top: 10px;
+}
+
+.iris-wi-filter {
+  flex: 1;
+  min-width: 160px;
+  max-width: 340px;
+}
+
+.iris-wi-count {
+  font-size: 11.5px;
+  color: var(--iris-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The entry list. */
+.iris-wi-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.iris-entry {
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  background: var(--iris-bg-raised);
+}
+
+.iris-entry--changed {
+  border-color: var(--iris-accent-quiet);
+}
+
+.iris-entry__head {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.iris-entry__toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: var(--iris-ink);
+  padding: 2px 0;
+}
+
+.iris-entry__switch {
+  align-self: center;
+}
+
+.iris-entry__dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.iris-entry__dot--normal {
+  /* Upstream's status dots are emoji in a select; these are their nearest
+     steady colours. Literal because the token sheet has no "ok" green — the
+     theme system (T2b) can promote them when it wants to. */
+  background: #3fa34d;
+}
+
+.iris-entry__dot--constant {
+  background: var(--iris-accent);
+}
+
+.iris-entry__dot--vectorized {
+  background: #8e6fc7;
+}
+
+.iris-entry__dot--off {
+  background: none;
+  border: var(--iris-hairline) solid var(--iris-rule);
+}
+
+.iris-entry__title {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.iris-entry__hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--iris-ink-faint);
+}
+
+.iris-entry__badges {
+  flex: none;
+  display: inline-flex;
+  gap: 5px;
+}
+
+.iris-entry__badge {
+  font-size: 10.5px;
+  color: var(--iris-ink-tertiary);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-entry__badge--off {
+  color: var(--iris-danger);
+  border-color: var(--iris-danger);
+}
+
+.iris-entry__badge--changed {
+  color: var(--iris-accent);
+  border-color: var(--iris-accent-quiet);
+}
+
+.iris-entry__editor {
+  border-top: var(--iris-hairline) solid var(--iris-rule);
+  padding: 4px 12px 10px;
 }

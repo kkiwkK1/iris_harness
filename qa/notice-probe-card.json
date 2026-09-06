@@ -1,0 +1,40 @@
+{
+  "spec": "chara_card_v2",
+  "spec_version": "2.0",
+  "data": {
+    "name": "NoticeProbe",
+    "description": "QA probe card for the notice panel. Not a roleplay card: its scripts and its interface fail on purpose.",
+    "personality": "",
+    "scenario": "",
+    "first_mes": "This card fails on purpose so the notice panel can be verified. The interface below is part of the probe.\n\n```html\n<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"><title>probe</title></head>\n<body>\n  <p id=\"probe\">probe interface mounted</p>\n  <script>\n    // Unsupported member: the interface frame's error channel.\n    getCharData();\n  </script>\n</body>\n</html>\n```",
+    "mes_example": "",
+    "creator_notes": "dev/fix-notice-center acceptance probe",
+    "system_prompt": "",
+    "post_history_instructions": "",
+    "alternate_greetings": [],
+    "tags": ["qa-probe"],
+    "creator": "iris-qa",
+    "character_version": "1.1",
+    "extensions": {
+      "talkativeness": "0.5",
+      "fav": false,
+      "world": "",
+      "tavern_helper": {
+        "scripts": [
+          {
+            "id": "probe-throw",
+            "name": "probe-throw",
+            "enabled": true,
+            "content": "// Top-level throw: exercises the script frame's `threw` phase.\nthrow new Error('probe: uncaught failure for the notice panel');"
+          },
+          {
+            "id": "probe-refused",
+            "name": "probe-refused",
+            "enabled": true,
+            "content": "// Unsupported member: exercises the `refused` phase (UnsupportedApiError).\nconst before = getCharData;\nvoid before;\nthrow new Error('probe: should have been refused before this line');"
+          }
+        ]
+      }
+    }
+  }
+}

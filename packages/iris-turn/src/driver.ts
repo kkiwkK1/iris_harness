@@ -18,6 +18,7 @@ import {
   BlockAssembler,
   createAssistantMessage,
   createUserMessage,
+  type AssistantMessage,
   type GenerateOptions,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
@@ -37,8 +38,13 @@ export interface TurnDriverOptions {
    * Build this turn's prompt contributions. Called fresh for every generation,
    * so world-info activation and variable state reflect the turn being written
    * rather than the one before it.
+   *
+   * May be async: the chat-bound world book is read from disk per generation,
+   * because it is the one body of world info a card writes during play, and a
+   * caller that awaited it once at construction would serve a book frozen at
+   * chat-open time.
    */
-  contributions: (session: Session) => readonly Contribution[]
+  contributions: (session: Session) => readonly Contribution[] | Promise<readonly Contribution[]>
   /** Turn the durable log into the conversation the model should see. */
   history: (session: Session) => readonly HistoryEntry[]
   budget: Budget
@@ -47,6 +53,16 @@ export interface TurnDriverOptions {
   temperature?: number
   maxTokens?: number
   stop?: string[]
+  /**
+   * Merge consecutive system-role messages of the assembled request into one,
+   * joining their text with a blank line — upstream's `squash_system_messages`.
+   *
+   * Depth injections and card scripts can sit beside each other with the same
+   * role; a provider that takes a mid-conversation system message badly gets
+   * one merged message instead. Off by default: the request rides exactly as
+   * it was assembled.
+   */
+  squashSystemMessages?: boolean
 }
 
 /** Progress reported while a candidate is being generated. */
@@ -91,23 +107,98 @@ export class TurnDriver {
    * @param session - the chat log.
    * @param turn - the turn to attach the candidate to.
    * @param events - streaming callbacks and cancellation.
+   * @param extend - what makes this call a continue rather than a reroll: the
+   *   text the candidate opens with, and a message pinned after the assembled
+   *   conversation (upstream's continue nudge).
    * @returns the recorded candidate.
    * @throws {TurnError} when the provider ends the stream with a failure.
    */
-  async #generate(session: Session, turn: number, events: GenerateEvents = {}): Promise<Candidate> {
+  async #generate(
+    session: Session,
+    turn: number,
+    events: GenerateEvents = {},
+    extend: { seed?: string, tail?: PipelineMessage, postfix?: string } = {},
+  ): Promise<Candidate> {
+    const run = await this.#run(session, turn, events, extend.tail, extend.postfix)
+    const seed = extend.seed
+    // A continue's candidate is the joined text, not the continuation alone:
+    // the swipe list of this turn is what the file exports, and SillyTavern's
+    // continue edits the message in place — here the same outcome is a new
+    // candidate that opens with what was already showing, which keeps every
+    // earlier reading swipable.
+    const content = seed === undefined
+      ? run.blocks
+      : joinedWithSeed(run.blocks, seed)
+    return appendCandidate(session, {
+      turn,
+      step: 0,
+      message: createAssistantMessage({ content, source: run.source }),
+    })
+  }  /**
+   * One model call, streamed and recorded chunk by chunk, without writing a
+   * candidate.
+   * @param session - the chat log the chunks are journalled to.
+   * @param turn - the turn the chunks belong to, for the journal.
+   * @param events - streaming callbacks and cancellation.
+   * @param tail - a message appended after the assembled conversation.
+   * @param postfix - the separator a continue rides on the text being continued
+   *   (upstream appends `continue_postfix` to `cyclePrompt`, script.js:4917).
+   *   Absent leaves the request alone — only a continue has one.
+   * @returns the content blocks, the message source they imply, and the visible
+   *   text.
+   * @throws {TurnError} when the provider ends the stream with a failure.
+   */
+  async #run(
+    session: Session,
+    turn: number,
+    events: GenerateEvents,
+    tail?: PipelineMessage,
+    postfix?: string,
+  ): Promise<{
+    blocks: AssistantMessage['content']
+    source: Parameters<typeof createAssistantMessage>[0]['source']
+    text: string
+  }> {
     const options = this.#options
     const request = assemble({
-      contributions: options.contributions(session),
+      contributions: await options.contributions(session),
       history: options.history(session),
       budget: options.budget,
     })
+    // The tail rides outside `assemble` because it has to be the request's LAST
+    // message whatever depth injections the contributions carry — depth 0 lands
+    // after the newest history entry, and a nudge that sat behind an injection
+    // would not be the thing the model reads last.
+    // The squash runs at the assembled level, where roles still exist, and the
+    // tail is exempt: it is pinned as the request's LAST message, and a nudge
+    // merged into a neighbouring system message would no longer be the thing
+    // the model reads before it writes.
+    const base = options.squashSystemMessages === true ? squashSystemRuns(request.messages) : request.messages
+    // The continue's separator rides on the request too, not only on the
+    // recorded composite: upstream appends `continue_postfix` to the text being
+    // continued before the prompt is built (`cyclePrompt`, script.js:4917-4921),
+    // because the model needs the same boundary it is expected to write from.
+    // Same guard as upstream: text already ending in a space is left alone, so
+    // a space separator cannot stack. The continued floor is the last assistant
+    // message — a nudge, when one rides, sits after it and is not touched.
+    if (postfix !== undefined && postfix.length > 0) {
+      for (let index = base.length - 1; index >= 0; index -= 1) {
+        const message = base[index] as PipelineMessage
+        if (message.role !== 'assistant') continue
+        if (!message.text.endsWith(' ')) message.text += postfix
+        break
+      }
+    }
+    const messages = tail === undefined
+      ? base.map(toMessage)
+      : [...base.map(toMessage), toMessage(tail)]
 
     const assembler = new BlockAssembler()
     for await (const chunk of options.stream({
       provider: options.provider,
       model: options.model,
       system: request.system,
-      messages: request.messages.map(toMessage),
+      messages,
       ...options.temperature === undefined ? {} : { temperature: options.temperature },
       ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
       ...options.stop === undefined ? {} : { stop: options.stop },
@@ -132,18 +223,17 @@ export class TurnDriver {
     // is typed as a bare Message: a candidate is specifically model-produced,
     // and carrying the adapter's replay state keeps the turn re-playable.
     const replayState = assembler.replayState
-    return appendCandidate(session, {
-      turn,
-      step: 0,
-      message: createAssistantMessage({
-        content: assembler.blocks(),
-        source: {
-          provider: options.provider,
-          model: options.model,
-          ...replayState === undefined ? {} : { replayState },
-        },
-      }),
-    })
+    const blocks = assembler.blocks()
+    const text = blocks.filter(block => block.type === 'text').map(block => block.text).join('')
+    return {
+      blocks,
+      source: {
+        provider: options.provider,
+        model: options.model,
+        ...replayState === undefined ? {} : { replayState },
+      },
+      text,
+    }
   }
 
   /**
@@ -187,6 +277,101 @@ export class TurnDriver {
     const turn = lastTurn(session)
     if (turn < 0) throw new TurnError('there is no turn to regenerate')
     return this.#generate(session, turn, events)
+  }
+
+  /**
+   * Write on from the newest reply, as its own author.
+   *
+   * The result is a new candidate on the SAME turn whose text opens with the
+   * reading being continued, so the conversation keeps one floor and every
+   * earlier reading stays swipable — SillyTavern's continue edits the message
+   * in place, and the candidate it would have overwritten survives here as an
+   * alternate.
+   * @param session - the chat log.
+   * @param events - streaming callbacks and cancellation.
+   * @param nudge - the instruction that closes the request, after the whole
+   *   conversation (upstream's continue nudge). Absent sends the request
+   *   without one.
+   * @param postfix - the separator between the reading and the continuation,
+   *   as `continue_postfix` spells it (upstream applies it on every OpenAI
+   *   route, `script.js:4917-4921`). Absent keeps the seed bare — the caller
+   *   resolving the setting's default is the one that knows it.
+   * @returns the recorded candidate, carrying seed plus continuation.
+   * @throws {TurnError} when the newest turn has no reply to continue.
+   */
+  async continueTurn(
+    session: Session,
+    events: GenerateEvents = {},
+    nudge?: string,
+    postfix?: string,
+  ): Promise<Candidate> {
+    const turn = lastTurn(session)
+    if (turn < 0) throw new TurnError('there is no turn to continue')
+    const seed = selectedCandidate(session, turn)
+    if (seed === undefined) {
+      throw new TurnError('the newest turn has no reply to continue')
+    }
+    const seedText = seed.message.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('')
+    return this.#generate(session, turn, events, {
+      seed: postfix === undefined || postfix.length === 0 || seedText.endsWith(' ')
+        ? seedText
+        : seedText + postfix,
+      ...postfix === undefined || postfix.length === 0 ? {} : { postfix },
+      ...nudge === undefined ? {} : { tail: { role: 'user' as const, text: nudge } },
+    })
+  }
+
+  /**
+   * Write the user's next line instead of the character's.
+   *
+   * Upstream's impersonate: one generation from `{{user}}`'s perspective that
+   * becomes a user message — never an assistant candidate, and never the start
+   * of a fresh exchange. The generation runs against the conversation as it
+   * stands, because the line being written cannot be part of its own context;
+   * the turn only opens once there is text to put in it, so a failed
+   * impersonation opens nothing.
+   * @param session - the chat log.
+   * @param events - streaming callbacks and cancellation.
+   * @param instruction - the instruction that closes the request (upstream's
+   *   impersonation prompt, with `{{user}}`/`{{char}}` already expanded).
+   * @returns the text the user line was written with.
+   * @throws {TurnError} when the provider ends the stream with a failure.
+   */
+  async impersonate(session: Session, events: GenerateEvents = {}, instruction?: string): Promise<string> {
+    // The chunk journal needs a turn number, but the turn must not exist before
+    // there is a line to own it — journalled under `lastTurn + 1` they are
+    // `assistant/chunk` records only, which no projection reads as a message.
+    const turn = lastTurn(session) + 1
+    const run = await this.#run(session, turn, events,
+      instruction === undefined ? undefined : { role: 'user' as const, text: instruction })
+    this.recordImpersonation(session, run.text)
+    return run.text
+  }
+
+  /**
+   * Record an impersonated line as a user message opening a new turn.
+   *
+   * Split from {@link impersonate} so the abort path can land a partial line
+   * with exactly the same shape a completed one has.
+   * @param session - the chat log.
+   * @param text - the line to record.
+   * @returns the turn the line opened.
+   */
+  recordImpersonation(session: Session, text: string): number {
+    const turn = lastTurn(session) + 1
+    session.append('turn/start', { turn })
+    session.append('step/start', { turn, step: 0 })
+    session.append(
+      'user/message',
+      createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }),
+      { surfaceOp: 'append' },
+    )
+    session.append('step/end', { turn, step: 0 })
+    session.append('turn/end', { turn, reason: { kind: 'completed' } })
+    return turn
   }
 
   /**
@@ -235,4 +420,50 @@ function toMessage(message: PipelineMessage) {
   // System-placed depth injections ride as user-role content: the system slot
   // is already spoken for, and providers vary on mid-conversation system turns.
   return createUserMessage({ content: [{ type: 'text', text: message.text }], source: { kind: 'user' } })
+}
+
+/**
+ * Merge consecutive system-role messages of the assembled conversation.
+ *
+ * Upstream's `squash_system_messages`, transcribed: only adjacent system
+ * messages merge, their text joining with a blank line, so the conversation's
+ * shape otherwise survives. The system *prompt* is already one string here
+ * (`assemble` renders it) — this is for the mid-conversation injections the
+ * assembly places as their own messages.
+ * @param messages - the assembled conversation, oldest first.
+ * @returns the conversation with adjacent system runs collapsed.
+ */
+function squashSystemRuns(messages: readonly PipelineMessage[]): PipelineMessage[] {
+  const squashed: PipelineMessage[] = []
+  for (const message of messages) {
+    const previous = squashed.at(-1)
+    if (message.role === 'system' && previous?.role === 'system') {
+      previous.text = `${previous.text}\n\n${message.text}`
+      continue
+    }
+    squashed.push({ ...message })
+  }
+  return squashed
+}
+
+/**
+ * Prepend a continue's seed to a generation's content blocks.
+ *
+ * The seed joins the FIRST text block, so a continuation that carries reasoning
+ * keeps that reasoning on its own blocks ahead of the joined text; a generation
+ * with no text at all still yields the seed alone, because a continue whose
+ * reading came back unchanged is a valid — if disappointing — outcome.
+ * @param blocks - the generation's content blocks.
+ * @param seed - the text being continued.
+ * @returns content blocks opening with the seed.
+ */
+function joinedWithSeed(blocks: AssistantMessage['content'], seed: string): AssistantMessage['content'] {
+  let placed = false
+  const joined = blocks.map(block => {
+    if (placed || block.type !== 'text') return block
+    placed = true
+    return { ...block, text: seed + block.text }
+  })
+  if (placed) return joined
+  return [...joined, { type: 'text' as const, text: seed }]
 }

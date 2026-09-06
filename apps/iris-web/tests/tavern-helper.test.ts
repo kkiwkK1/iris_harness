@@ -112,6 +112,146 @@ test('resolveRange agrees with the host, case for case', () => {
   assert.deepEqual(resolveRange(0, 0), [], 'an empty chat names nothing')
 })
 
+/** The member under test, typed off the surface bag. */
+function setChatMessages(
+  scope: { api: Record<string, unknown> },
+): (messages: readonly Record<string, unknown>[]) => Promise<void> {
+  return scope.api['setChatMessages'] as (messages: readonly Record<string, unknown>[]) => Promise<void>
+}
+
+test('setChatMessages routes each patch field to the arm that owns it', async () => {
+  /*
+   * The measured card starts its whole game through
+   * `setChatMessages([{ message_id: 0, swipe_id: 1 }])` — a swipe patch, and
+   * the swipe arm is where it has to land. A text patch lands on the rewrite
+   * arm the journal replay uses. Both routable, neither invented.
+   */
+  const swipe = surface()
+  await setChatMessages(swipe)([{ message_id: 0, swipe_id: 1 }])
+  assert.deepEqual(swipe.calls, [
+    { method: 'swipeTo', params: { messageId: 0, swipeIndex: 1 } },
+  ])
+
+  const text = surface()
+  await setChatMessages(text)([{ message_id: 2, message: ' rewritten ' }])
+  assert.deepEqual(text.calls, [
+    { method: 'setChatMessages', params: { messages: [{ messageId: 2, message: ' rewritten ' }] } },
+  ])
+})
+
+test('setChatMessages names the fields it could not carry', async () => {
+  /*
+   * A patch carrying `data` must not be readable as one that applied. The
+   * carried fields still run; the uncarrried ones are named once, on the gap
+   * channel, because the card carried on.
+   */
+  const scope = surface()
+  await setChatMessages(scope)([
+    { message_id: 0, swipe_id: 1 },
+    { message_id: 1, data: { hp: 5 } },
+  ])
+  assert.equal(scope.calls.length, 1, 'the uncarrried patch was applied anyway')
+  assert.match(scope.gaps.join(' '), /data/)
+
+  // And a carried field must not smuggle an uncarrried one past the report.
+  const mixed = surface()
+  await setChatMessages(mixed)([{ message_id: 0, message: 'x', data: 1 }])
+  assert.equal(mixed.calls.length, 1)
+  assert.match(mixed.gaps.join(' '), /data/)
+})
+
+test('setChatMessages refuses a patch without a readable message_id', async () => {
+  const scope = surface()
+  await assert.rejects(
+    () => setChatMessages(scope)([{ swipe_id: 1 }]),
+    /message_id/,
+    'a patch naming no floor would silently do nothing',
+  )
+})
+
+test('createChatMessages maps roles onto the wire rows the host arm takes', async () => {
+  /*
+   * The 建国控制台's chain: `createChatMessages([{ role: 'user', message }])`
+   * bare, then `/trigger`. The member has to answer that bare call — upstream
+   * flattens it onto the window — and translate `role` into the storage
+   * vocabulary the host arm stores: the chat's own speaker names, `is_user`,
+   * and the narrator flag for `system`.
+   */
+  const calls = surface({
+    // The chat already holds three floors, so the answer view carries six and
+    // the created ids are the tail — what a real host answer looks like.
+    answers: {
+      createChatMessages: {
+        view: { messages: [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }] },
+      },
+    },
+  })
+  const create = calls.api['createChatMessages'] as (
+    messages: readonly Record<string, unknown>[],
+    options?: Record<string, unknown>,
+  ) => Promise<number[]>
+  const ids = await create([
+    { role: 'user', message: '<PolSimInit>…</PolSimInit>' },
+    { role: 'assistant', message: 'Established.' },
+    { role: 'system', message: '(narrator)' },
+  ])
+  assert.deepEqual(calls.calls, [
+    {
+      method: 'createChatMessages',
+      params: {
+        messages: [
+          { name: 'You', is_user: true, mes: '<PolSimInit>…</PolSimInit>' },
+          { name: 'Her', is_user: false, mes: 'Established.' },
+          { name: 'Her', is_user: false, mes: '(narrator)', is_system: true },
+        ],
+      },
+    },
+  ])
+  // Upstream answers with the ids the floors landed at — here the tail after
+  // the three floors the snapshot already had.
+  assert.deepEqual(ids, [3, 4, 5])
+})
+
+test('createChatMessages carries insert_at and reports the landed ids', async () => {
+  const calls = surface({
+    // The host answers with the whole view, so the ids come from where the
+    // floors actually landed rather than from what the caller guessed.
+    answers: {
+      createChatMessages: { view: { messages: [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }] } },
+    },
+  })
+  const create = calls.api['createChatMessages'] as (
+    messages: readonly Record<string, unknown>[],
+    options?: Record<string, unknown>,
+  ) => Promise<number[]>
+  const ids = await create(
+    [{ role: 'user', message: 'inserted' }, { role: 'user', message: 'inserted too' }],
+    { insert_at: 1 },
+  )
+  assert.equal(calls.calls[0]?.params['insertAt'], 1)
+  assert.deepEqual(ids, [1, 2])
+})
+
+test('createChatMessages refuses a row it could not write, by name', async () => {
+  const scope = surface()
+  const create = scope.api['createChatMessages'] as (
+    messages: readonly Record<string, unknown>[],
+  ) => Promise<number[]>
+  await assert.rejects(() => create([{ role: 'user' }]), /message/)
+  await assert.rejects(() => create([{ role: 'narrator', message: 'x' }]), /role/)
+})
+
+test('deleteChatMessages sends the ids whole and answers with them', async () => {
+  const scope = surface()
+  const remove = scope.api['deleteChatMessages'] as (ids: number | number[]) => Promise<number[]>
+  assert.deepEqual(await remove([2, 0]), [2, 0])
+  assert.deepEqual(await remove(1), [1])
+  assert.deepEqual(scope.calls, [
+    { method: 'deleteChatMessages', params: { messageIds: [2, 0] } },
+    { method: 'deleteChatMessages', params: { messageIds: [1] } },
+  ])
+})
+
 test('a span may carry negative bounds on either side', () => {
   // The separator and the sign are the same character, which is the whole
   // reason this is scanned rather than split.
@@ -1215,6 +1355,79 @@ test('upstream’s max_chat_history is mapped, and "all" is spelled as absent', 
     max_chat_history: 'all',
   })
   assert.equal('maxHistory' in (all.calls[0]?.params ?? {}), false)
+})
+
+test('generateRaw composes the caller’s order, and says what it had to leave out', async () => {
+  /*
+   * This member was documented in the surface's own mapping table and never
+   * implemented — a bare `generateRaw(...)` in a card script was a
+   * `ReferenceError` inside the script's own catch, and the card reported the
+   * questionnaire as failed, which its player reads as "the plugin is not
+   * installed". Measured shape is 神隐挑战's: the object form with
+   * `ordered_prompts` mixing environment names and literal system messages.
+   */
+  const { api, calls, gaps } = surface({
+    answers: { generateRaw: { text: 'raw reply' } },
+  })
+  const generateRaw = api['generateRaw'] as (config: unknown) => Promise<unknown>
+
+  const answer = await generateRaw({
+    user_input: '开帖',
+    should_silence: true,
+    overrides: { persona_description: '扮演测试者' },
+    ordered_prompts: [
+      'world_info_before',
+      { role: 'system', content: '你是论坛引擎' },
+      'persona_description',
+      'world_info_after',
+      { role: 'user', content: '前置语境' },
+      'user_input',
+    ],
+  })
+
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.method, 'generateRaw', 'the raw member rides the raw host method')
+  assert.equal(answer, 'raw reply')
+  // System messages ride the system field; everything else lands in the prompt
+  // in the order the caller wrote, with `user_input` placed at its marker.
+  assert.equal(calls[0]?.params['systemPrompt'], '你是论坛引擎')
+  assert.equal(calls[0]?.params['prompt'], '扮演测试者\n\n前置语境\n\n开帖')
+
+  // The environment names this frame cannot resolve are skipped and named —
+  // silently dropping one would read as "the model ignored that part".
+  assert.equal(gaps.length, 1)
+  assert.match(gaps[0] ?? '', /world_info_before, world_info_after/)
+})
+
+test('generateRaw uses an override before the snapshot, and the bare string form', async () => {
+  const { api, calls, gaps } = surface({ answers: { generateRaw: { text: 'x' } } })
+  const generateRaw = api['generateRaw'] as (config: unknown) => Promise<unknown>
+
+  // `persona_description` resolves from overrides — 神隐挑战 overrides it on
+  // every site; the snapshot carries no persona text of its own.
+  await generateRaw({
+    user_input: 'hi',
+    overrides: { persona_description: '扮演你' },
+    ordered_prompts: ['persona_description', 'user_input'],
+  })
+  assert.equal(calls[0]?.params['prompt'], '扮演你\n\nhi')
+  assert.deepEqual(gaps, [], 'an overridden name is not a gap')
+
+  // No order given: upstream sends the user input alone.
+  await generateRaw({ user_input: 'just this' })
+  assert.equal(calls[1]?.params['prompt'], 'just this')
+  assert.equal('systemPrompt' in (calls[1]?.params ?? {}), false)
+})
+
+test('generateRaw refuses an empty composition by name, not with a host contract error', async () => {
+  const { api } = surface({ answers: { generateRaw: { text: 'x' } } })
+  const generateRaw = api['generateRaw'] as (config: unknown) => Promise<unknown>
+
+  // A caller ordering only names this frame skips would send nothing.
+  await assert.rejects(
+    () => generateRaw({ user_input: 'hi', ordered_prompts: ['world_info_before'] }),
+    /composed prompt is empty/,
+  )
 })
 
 test('a streaming request is answered whole, and says so', async () => {

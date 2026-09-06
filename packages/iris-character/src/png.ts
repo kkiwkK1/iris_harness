@@ -319,6 +319,79 @@ export function decodeCardPng(png: Uint8Array): CharacterCard {
 }
 
 /**
+ * Rewrite the card JSON inside a PNG, touching nothing else.
+ *
+ * **Surgical, deliberately — this is upstream's own export mechanism.**
+ * `characters.js` `router.post('/export')` reads the `chara` chunk's JSON with
+ * `mutateJsonString(rawData, unsetPrivateFields)` and writes the result back
+ * through `write()`: the image, the ancillary chunks and every card field the
+ * mutator left alone survive byte-for-key. Re-encoding the whole card through
+ * the normaliser instead would *work* and still be a worse answer — the
+ * normaliser's contract is that unknown keys survive, but its output is a
+ * freshly generated file shape (V1 mirrors regenerated, `json_data` dropped),
+ * and a manager operation — rename, tags — has no business reformatting a card
+ * it did not create.
+ *
+ * Every card-bearing chunk is mutated through the same function: `chara` and
+ * `ccv3` carry the same body under two spec stamps, and letting only one see
+ * the change would make the answer depend on which chunk a later reader trusts.
+ * @param png - the whole PNG file.
+ * @param mutate - applied to each card chunk's parsed JSON; returns the JSON
+ *   to write back. The input record is owned by the caller.
+ * @returns a new PNG. The input is not modified.
+ * @throws {PngError} when the file is not a readable PNG or carries no card.
+ */
+export function mutateCardPng(
+  png: Uint8Array,
+  mutate: (card: Record<string, unknown>) => Record<string, unknown>,
+): Uint8Array {
+  // Refused up front, with the reader's own message, so a card-less image
+  // cannot slide through a rename as a silent no-op: the caller would report
+  // success and the list would keep showing the old name.
+  const found = readCardChunks(png)
+  if (found.ccv3 === undefined && found.chara === undefined) {
+    throw new PngError('this PNG carries no character card: no "ccv3" or "chara" tEXt chunk')
+  }
+
+  const chunks = parsePngChunks(png).map(chunk => {
+    if (chunk.type !== 'tEXt') return chunk
+    const text = decodeTextChunk(chunk.data)
+    const keyword = text?.keyword.toLowerCase()
+    if (text === undefined || (keyword !== 'chara' && keyword !== 'ccv3')) return chunk
+
+    let raw: unknown
+    try {
+      raw = JSON.parse(new TextDecoder().decode(base64Decode(text.text)))
+    } catch (cause) {
+      throw new PngError('the character card chunk is not base64 JSON', { cause })
+    }
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new PngError('the character card chunk does not contain a JSON object')
+    }
+
+    const mutated = mutate(raw as Record<string, unknown>)
+    const keywordBytes = latin1Encode(text.keyword)
+    const data = new Uint8Array(keywordBytes.length + 1)
+    data.set(keywordBytes, 0)
+    return {
+      type: 'tEXt',
+      // The value is base64 — ASCII — so Latin-1 encoding it is exact.
+      data: withTextValue(data, latin1Encode(base64Encode(new TextEncoder().encode(JSON.stringify(mutated))))),
+    }
+  })
+
+  return serializePngChunks(chunks)
+}
+
+/** Splice an encoded value behind an already-written `keyword\0` prefix. */
+function withTextValue(prefix: Uint8Array, value: Uint8Array): Uint8Array {
+  const data = new Uint8Array(prefix.length + value.length)
+  data.set(prefix, 0)
+  data.set(value, prefix.length)
+  return data
+}
+
+/**
  * Write a character card into a PNG, replacing any card already in it.
  *
  * Both chunks are written: `chara` holds the V2 body for readers that predate

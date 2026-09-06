@@ -150,9 +150,9 @@ export interface ActivationSettings {
   /**
    * Default whole-word matching.
    *
-   * ST ships this `false`. Iris defaults it `true`: substring keys are the
-   * usual cause of a book firing on fragments of unrelated words, and the
-   * per-entry `matchWholeWords` override still takes precedence.
+   * ST ships this `false` — substring matching is what the community's books
+   * are written against, and the per-entry `matchWholeWords` override still
+   * takes precedence when an entry opts into boundaries.
    */
   matchWholeWords: boolean
   /** Default for resolving an inclusion group by key-match score instead of by weight. */
@@ -263,7 +263,17 @@ export interface ActivationResult {
   loops: number
 }
 
-/** ST's shipped defaults, except `matchWholeWords`; see {@link ActivationSettings}. */
+/**
+ * ST's shipped defaults (`world-info.js:69-82`), all of them.
+ *
+ * `matchWholeWords` used to be flipped to `true` here as an Iris house default
+ * while the card-facing `getLorebookSettings()` still reported upstream's
+ * `false` — one engine scanning substring, one surface describing the opposite,
+ * and a book tuned on SillyTavern under-firing with nothing reporting why. The
+ * stored world-info settings are what the host runs on now, so the engine's
+ * fallback default and the reported default have to be the same reading of the
+ * same setting, and the one that counts is ST's.
+ */
 export const defaultActivationSettings: ActivationSettings = {
   scanDepth: 2,
   minActivations: 0,
@@ -271,7 +281,7 @@ export const defaultActivationSettings: ActivationSettings = {
   recursive: false,
   maxRecursionSteps: 0,
   caseSensitive: false,
-  matchWholeWords: true,
+  matchWholeWords: false,
   useGroupScoring: false,
 }
 

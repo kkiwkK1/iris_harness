@@ -3,6 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- An empty icon, on purpose: without a declared one every load requests
+         /favicon.ico, the host 404s it, and the failure lands in the console
+         beside the reports that matter. Measured during the six-card QA run:
+         one 404 per page load, on every card. -->
+    <link rel="icon" href="data:," />
     <title>Iris</title>
     <meta name="color-scheme" content="dark light" />
     <script>
@@ -21,10 +26,21 @@
         } catch (error) {
           stored = null
         }
+        var root = document.documentElement
+        // A named theme wins; anything else (absent, `system`, an unknown word
+        // from another build) follows the OS. The named themes' grounds are
+        // duplicated here on purpose — this runs before tokens.css exists, so
+        // it cannot read a custom property, and the palette tables in
+        // theme/presets.ts must keep agreeing with these literals.
+        if (stored === 'parchment') {
+          root.setAttribute('data-iris-theme', 'parchment')
+          root.style.backgroundColor = '#f4eede'
+          root.style.colorScheme = 'light'
+          return
+        }
         var dark =
           stored === 'dark' ||
           (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-        var root = document.documentElement
         root.setAttribute('data-iris-theme', dark ? 'dark' : 'light')
         root.style.backgroundColor = dark ? '#12171d' : '#f5f6f7'
         root.style.colorScheme = dark ? 'dark' : 'light'

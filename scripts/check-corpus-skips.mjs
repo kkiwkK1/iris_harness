@@ -45,9 +45,15 @@ import { spawn } from 'node:child_process'
  * both build their own book, so neither could catch a real card arriving in the
  * disk's uid-keyed shape; 24 → 25 with the schema-insert acceptance case, which
  * checks the `extensible` and `template` rules are reached by real inserts
- * rather than only by fixtures.
+ * rather than only by fixtures; 25 → 26 for the chat-search acceptance case,
+ * which copies the real 677-floor corpus chat into a scratch profile to check
+ * the fragment hit is located and the scan meets the one-second line. Checked
+ * against the merge-base before moving it: dev/iris-exploration @ daceaf0
+ * already rehearsed at 26 against this file's 25 — the preset-library merge
+ * (5aafc56) added a gated test without a bump — so this branch's one new gated
+ * test lands the true count at 27, not 26.
  */
-const EXPECTED_SKIPPED = 25
+const EXPECTED_SKIPPED = 27
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 

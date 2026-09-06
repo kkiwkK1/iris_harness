@@ -28,13 +28,18 @@ import {
   type SandboxAssets,
 } from '../sandbox/asset-manifest.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
+import { interfacesMayBuild } from '../sandbox/consent.ts'
+import { MVU_UPDATE_ENDED_EVENT } from '../sandbox/tavern-helper.ts'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 
-import { claimFrontendBlocks, splitAroundInterfaces } from '../sandbox/frontend-blocks.ts'
+import { claimMessageSurfaces, splitAroundInterfaces } from '../sandbox/frontend-blocks.ts'
 import { describeInterface, type InterfaceState } from '../sandbox/message-frames.ts'
 import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
+import { broadcastWindowEvent } from './window-events.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
+import { useLanguage, t } from './i18n/use-language.ts'
+import { getLanguage } from './i18n/language.ts'
 
 /**
  * This build's bootstrap and asset URLs, fetched at most once per page.
@@ -122,7 +127,13 @@ export function MessageInterfaces({
   >(undefined)
 
   useEffect(() => {
-    if (characterId === undefined || consent !== 'allowed') {
+    /*
+     * `declined` and `unknown` leave before the round trip. `declined` is an
+     * answer; `unknown` is still in flight, and building against it would race
+     * the answer it is waiting for. `unasked` goes on deliberately: the scripts
+     * list decides whether it is final, and only the round trip knows that.
+     */
+    if (characterId === undefined || consent === 'declined' || consent === 'unknown') {
       setReady(undefined)
       return undefined
     }
@@ -142,6 +153,15 @@ export function MessageInterfaces({
           actionsOf(store).resolveScripts(characterId),
           actionsOf(store).scriptContext(chatId, characterId),
         ])
+        /*
+         * The consent gate, now that the round trip knows how big the question
+         * is. An unasked card carrying scripts waits for `ConsentAsk`'s answer
+         * — the state change re-runs this effect — but an unasked card with
+         * **no** scripts is never asked, so waiting here would be a wait that
+         * nothing can ever end; `interfacesMayBuild` is where that case is
+         * named and decided.
+         */
+        if (!interfacesMayBuild(consent, grants.scripts.length)) return
         /*
          * No snapshot, no frames. A card interface reads its variables in the
          * first line it runs, and seeding it with an invented empty context
@@ -177,7 +197,7 @@ export function MessageInterfaces({
    */
   const { refusedInstances, gate, open } = useFloorGate(floor)
 
-  const states = useMessageInterfaces({
+  const { states, swapping } = useMessageInterfaces({
     floor,
     text,
     refusedInstances,
@@ -188,6 +208,7 @@ export function MessageInterfaces({
       if (current === undefined || chatId === undefined) {
         throw new Error('a message frame was started before its build assets resolved')
       }
+      let painted = false
       const card = runCard(
         {
           bootstrap: current.bootstrap,
@@ -214,21 +235,86 @@ export function MessageInterfaces({
           onSlash: async command => actionsOf(store).runSlash(command),
           onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
           /*
+           * The dialog bridge, with the same wording and split the script
+           * frame uses: the sandbox answers `alert` with silence, and a
+           * console button that reports its own failure through `alert` was
+           * invisible to the reader. An alert is a fault on both channels; a
+           * confirm or a prompt is a note that names what was asked and that
+           * it was answered "cancel"/"nothing".
+           */
+          onDialog: (kind, text) => {
+            actionsOf(store).addCardReport(
+              kind === 'alert'
+                ? text
+                : `a card asked ${kind}("${text}") — answered ${kind === 'confirm' ? '"cancel"' : 'nothing'}`,
+              { channel: 'dialog', grade: kind === 'alert' ? 'fault' : 'note' },
+            )
+            actionsOf(store).notify(kind === 'alert' ? 'error' : 'info', text)
+          },
+          /*
            * A fault: an interface frame reporting an error is the one channel
            * here that always describes something broken. The channel is a
            * **label**, not a prefix — see `CardReport.channel`.
+           *
+           * **Both channels, the same split the script frame uses.** The graded
+           * report is the durable record; the notice is the immediate signal,
+           * and it is how the fault reaches the drawer's notice log. This used
+           * to stop at the report list — which left the whole class of
+           * interface-frame failures (and on the interface-rendering cards,
+           * that is where a card's generation-time code lives) absent from the
+           * notice panel entirely: the one panel that answers "what did this
+           * session say" stayed empty while the error was on record in a list
+           * the reader has to know to look for. The store's dedup window
+           * collapses a burst into a count.
            */
-          onError: message => actionsOf(store).addCardReport(message, {
-            grade: 'fault',
-            channel: 'interface',
-          }),
+          onError: message => {
+            actionsOf(store).addCardReport(message, {
+              grade: 'fault',
+              channel: 'interface',
+            })
+            actionsOf(store).notify('error', message)
+          },
           onBlocked: (host, directive, detail, covered) => {
             const refusal = describeRefusal(host, directive, detail, covered)
             actionsOf(store).addCardReport(refusal.text, { grade: refusal.grade })
             if (refusal.notify) actionsOf(store).notify('info', refusal.text)
           },
           onNote: note => actionsOf(store).addCardReport(note),
+          /*
+           * A dispatch on the page window this interface sees, fanned out to the
+           * card's other frames — a status bar that broadcasts on the page and a
+           * projector that listens on it live in different frames, and only the
+           * shell can stand between them.
+           */
+          onWindowEvent: (event, detail) => {
+            broadcastWindowEvent(event, detail)
+          },
           onReady: input.onReady,
+          /*
+           * The first real height is the frame saying "something is laid out on
+           * screen" — the one honest reveal signal. `ready` cannot be it: an
+           * interface frame announces ready when its bootstrap finishes, and
+           * its markup parses after that, so revealing there trades one blank
+           * for another. Once, because a card that relayouts keeps posting.
+           */
+          onHeight: () => {
+            if (painted) return
+            painted = true
+            input.onPainted()
+          },
+          /*
+           * The frame's own words for why it never came up, named the moment
+           * they arrive. The bootstrap cannot report `ready` after a throw —
+           * its channel exists to speak that error — so this is the only path
+           * that turns "the handshake broke" from eight seconds of timed-out
+           * silence into a reason a reader can act on. The row carries it as
+           * the `never-started` detail; the report list keeps a copy, where
+           * failures survive the message scrolling away.
+           */
+          onBootstrapError: message => {
+            input.onBootstrapError(message)
+            actionsOf(store).addCardReport(message, { grade: 'fault', channel: 'interface' })
+          },
         },
         document,
       )
@@ -236,16 +322,25 @@ export function MessageInterfaces({
        * `refreshContext` is forwarded rather than dropped. An interface is a
        * status panel: it draws the variables, so a write from a later floor
        * leaves it showing a turn-old number while looking perfectly healthy.
+       *
+       * `emit` rides along: the panel's own redraw trigger is
+       * `eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, …)`, a subscription on the
+       * frame's own bus, and without a speaker on this side it would never fire
+       * — the panel would keep its first frame's numbers for as long as it
+       * lived. See the `watchContext` note below for when the shell speaks.
        */
       return {
         element: card.element,
         refreshContext: next => {
           card.refreshContext(next as ScriptContext)
         },
+        emit: (event, args) => {
+          card.emit(event, [...args])
+        },
         dispose: card.dispose,
       }
     },
-    watchContext: push =>
+    watchContext: (push, emit) =>
       tapHostEvents(store, event => {
         /*
          * Two events, not one. A reply that just finished generating settles
@@ -270,6 +365,19 @@ export function MessageInterfaces({
            */
           if (next !== undefined) push(next)
         })
+        /*
+         * And the redraw trigger, so the pushed snapshot is actually *read*.
+         * The measured status bars draw once after `waitGlobalInitialized` and
+         * then only inside an `eventOn(Mvu.events.VARIABLE_UPDATE_ENDED)`
+         * listener; upstream that event is the MVU bundle's, heard through the
+         * page's shared event source. Iris's bundle lives in the script frame,
+         * so the shell says the name into the message frames on exactly the
+         * events that carry a new view — the same rule the refresh above
+         * follows, for the same reason. Script frames are deliberately not
+         * spoken to: their bundle emits the event itself, and a shell copy
+         * would deliver every update twice.
+         */
+        emit(MVU_UPDATE_ENDED_EVENT, [])
       }),
 
     attach: frame => {
@@ -293,7 +401,7 @@ export function MessageInterfaces({
    * Upstream replaces — it hides the `<pre>` and puts the iframe where it was. The
    * first cut of this appended frames after the whole message, and on the sample
    * card that meant scrolling past 360 KiB of source to reach the interface that
-   * source describes. There is no `<pre>` to hide here, because `MarkdownText` only
+   * replaced part of it. There is no `<pre>` to hide here, because `MarkdownText` only
    * makes one if we hand it the text — so the fix is to hand it the text without
    * the claimed spans.
    */
@@ -305,7 +413,35 @@ export function MessageInterfaces({
    * interface rebuilt per token is not a feature, and a half-arrived block shown
    * as source is honest about what has come so far.
    */
-  const blocks = streaming ? [] : claimFrontendBlocks(text)
+  const { blocks, refused } = streaming
+    ? { blocks: [], refused: [] as readonly string[] }
+    : claimMessageSurfaces(text)
+
+  /*
+   * An unclosed region is reported, not swallowed.
+   *
+   * The split's fallback treats everything after a never-closed tag as HTML,
+   * which is the rendering the card intended — but the card author whose
+   * narrative vanished below the panel needs the cause on record, and a note
+   * that exists only in a source file nobody reads is silence with extra steps.
+   * This is the same durable channel the frames report through, and the store
+   * keeps one entry per distinct fact, so a card with the flaw on many floors
+   * is one line, not one per floor.
+   *
+   * Fired from an effect rather than during render — a report is a side effect
+   * — and keyed on the joined text, so a re-render that did not re-derive the
+   * claim does not re-report it. Deliberately independent of consent and of the
+   * build assets: the note describes the message text, which is on screen either
+   * way, so a declined card still gets its markup fault named.
+   */
+  const refusedNote = refused.join('\n')
+  useEffect(() => {
+    if (refusedNote === '') return
+    for (const note of refusedNote.split('\n')) {
+      actionsOf(store).addCardReport(note, { channel: 'interface' })
+    }
+  }, [refusedNote, store])
+
   if (blocks.length === 0) return <MarkdownText text={text} streaming={streaming} />
 
   const segments = splitAroundInterfaces(text, blocks)
@@ -328,6 +464,7 @@ export function MessageInterfaces({
             key={`i-${segment.instance}`}
             instance={segment.instance}
             state={byInstance.get(segment.instance)}
+            pendingSwap={swapping}
             adopt={node => slots.current.set(segment.instance, node)}
             onOpen={() => {
               open(segment.instance)
@@ -345,20 +482,25 @@ export function MessageInterfaces({
  * The frame is moved into this slot rather than created by it: the controller
  * owns construction and teardown, and a component that built its own frame would
  * be a second place deciding how a frame is made.
- * @param props - the instance, its state, and how to register the slot.
+ * @param props - the instance, its state, how to register the slot, and
+ *   whether a parked predecessor is on screen while this frame boots.
  * @returns the slot element.
  */
 function InterfaceSlot({
   instance,
   state,
+  pendingSwap,
   adopt,
   onOpen,
 }: {
   instance: number
   state: InterfaceState | undefined
+  pendingSwap: boolean
   adopt: (node: HTMLDivElement | null) => void
   onOpen: () => void
 }): ReactElement {
+  // Subscribed so a language switch re-renders the slot's words.
+  useLanguage()
   return (
     <div className="iris-interfaces__slot" data-instance={instance}>
       <div ref={adopt} />
@@ -374,19 +516,19 @@ function InterfaceSlot({
          * the prose — noise that also reads as the card having broken.
          */
         <p className="iris-interfaces__over">
-          <span className="iris-interfaces__state">{describeInterface(state)}</span>
+          <span className="iris-interfaces__state">{describeInterface(state, getLanguage())}</span>
           <button type="button" className="iris-interfaces__open" onClick={onOpen}>
-            Render this one
+            {t('renderThisOne')}
           </button>
         </p>
-      ) : state === undefined || state.phase === 'live' ? null : (
+      ) : state === undefined || state.phase === 'live' ? null : pendingSwap && state.phase === 'claimed' ? null : (
         /*
          * Only when it is not live. A working interface is its own evidence — it
          * is on screen — and a caption under every one would be noise. A frame
          * that never started has nothing to show, so this line is all a reader
          * gets.
          */
-        <p className="iris-interfaces__state">{describeInterface(state)}</p>
+        <p className="iris-interfaces__state">{describeInterface(state, getLanguage())}</p>
       )}
     </div>
   )

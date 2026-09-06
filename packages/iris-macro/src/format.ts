@@ -135,11 +135,29 @@ const DAYS_PER_YEAR = 146097 / 400
  * moment's defaults (`ss:44 s:45 m:45 h:22 d:26 M:11`) applied in moment's own
  * order, where each unit is rounded from the whole duration rather than from
  * the remainder of the previous one.
- * @param milliseconds - elapsed time; negative values are treated as zero.
+ * @param milliseconds - elapsed time; negative values are treated as zero
+ *   unless `suffix` asks for moment's signed phrasing.
+ * @param suffix - render moment's `humanize(true)` form instead: the sign
+ *   becomes a direction, `"in 3 hours"` for a non-negative duration and
+ *   `"3 hours ago"` for a negative one. `{{timeDiff}}` needs this, because its
+ *   whole answer is the direction the two arguments differ in.
  * @returns an English phrase such as `"a few seconds"` or `"3 days"`.
  */
-export function humanizeDuration(milliseconds: number): string {
-  const elapsed = Math.max(0, milliseconds)
+export function humanizeDuration(milliseconds: number, suffix = false): string {
+  // moment answers an invalid duration with its smallest bucket rather than an
+  // error, and `{{timeDiff}}` inherits that: two unparsable arguments produce
+  // "a few seconds", not a failure.
+  if (Number.isNaN(milliseconds)) return 'a few seconds'
+  // Suffix mode buckets the magnitude and reads the direction off the sign,
+  // exactly as moment does; unsuffixed callers keep the clamp, because
+  // "how long ago" has no answer for a clock in the future.
+  const phrase = humanize(suffix ? Math.abs(milliseconds) : Math.max(0, milliseconds))
+  if (!suffix) return phrase
+  return milliseconds < 0 ? `${phrase} ago` : `in ${phrase}`
+}
+
+/** The unsuffixed bucket phrase for a non-negative duration. */
+function humanize(elapsed: number): string {
   const seconds = Math.round(elapsed / SECOND)
   if (seconds <= 44) return 'a few seconds'
 

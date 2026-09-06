@@ -358,3 +358,125 @@ test('{{reverse}} works on code points, not code units', () => {
   assert.equal(expand('{{reverse:abc}}'), 'cba')
   assert.equal(expand('{{reverse::a🌙b}}'), 'b🌙a')
 })
+
+// --- floor addressing (B4) -------------------------------------------------
+
+const SWIPED_CHAT = [
+  { role: 'user', content: 'Where are we?' },
+  { role: 'assistant', content: 'The archive.', swipes: 3, swipeId: 1 },
+  { role: 'user', content: 'Show me the map.' },
+  { role: 'assistant', content: 'She unrolls it.', swipes: 2, swipeId: 0 },
+] as const
+
+test('the swipe pair reads the newest floor, 1-based as upstream', () => {
+  const { expand } = fixture({ chat: SWIPED_CHAT })
+
+  assert.equal(expand('{{lastSwipeId}}'), '2')
+  assert.equal(expand('{{currentSwipeId}}'), '1')
+})
+
+test('a newest floor without candidates leaves the swipe pair empty', () => {
+  const { expand } = fixture({ chat: [SWIPED_CHAT[2]] })
+
+  assert.equal(expand('[{{lastSwipeId}}][{{currentSwipeId}}]'), '[][]')
+  assert.equal(expand('[{{lastSwipeId}}]'), '[]', 'an empty chat is empty, not zero')
+})
+
+test('the context-boundary pair: firstIncluded from the host, firstDisplayed from the log', () => {
+  const { expand } = fixture({ chat: SWIPED_CHAT })
+
+  // Before any generation has run, upstream's metadata has no value yet.
+  assert.equal(expand('{{firstIncludedMessageId}}'), '')
+  const wired = fixture({ chat: SWIPED_CHAT, firstIncludedMessageId: 5 })
+  assert.equal(wired.expand('{{firstIncludedMessageId}}'), '5')
+
+  // The shell mounts every floor, so the first displayed one is floor 0 —
+  // exactly what upstream's DOM read answers.
+  assert.equal(expand('{{firstDisplayedMessageId}}'), '0')
+})
+
+test('firstDisplayedMessageId on an empty chat renders as empty', () => {
+  const { expand } = fixture({ chat: [] })
+
+  assert.equal(expand('[{{firstDisplayedMessageId}}]'), '[]')
+})
+
+// --- timeDiff (B4) ---------------------------------------------------------
+
+test('{{timeDiff}} humanizes the signed difference between two times', () => {
+  const { expand } = fixture()
+
+  assert.equal(expand('{{timeDiff::2023-01-01 15:00:00::2023-01-01 12:00:00}}'), 'in 3 hours')
+  assert.equal(expand('{{timeDiff::2023-01-01 12:00:00::2023-01-01 15:00:00}}'), '3 hours ago')
+  assert.equal(expand('{{ timeDiff :: 2023-01-02 :: 2023-01-01 }}'), 'in a day')
+})
+
+test('{{timeDiff}} with fewer than two times stays standing', () => {
+  const { expand } = fixture()
+
+  assert.equal(expand('a {{timeDiff}} b'), 'a {{timeDiff}} b')
+  assert.equal(expand('a {{timeDiff::2023-01-01}} b'), 'a {{timeDiff::2023-01-01}} b')
+})
+
+// --- outlet (B4) -----------------------------------------------------------
+
+test('{{outlet::key}} reads the outlet the scan produced', () => {
+  const seen: string[] = []
+  const { expand } = fixture({
+    outlet: key => {
+      seen.push(key)
+      return key === 'achievements' ? 'She has earned three.' : ''
+    },
+  })
+
+  assert.equal(expand('{{outlet::achievements}}'), 'She has earned three.')
+  assert.equal(expand('{{outlet:: achievements }}'), 'She has earned three.', 'the key is trimmed before the lookup')
+  assert.deepEqual(seen, ['achievements', 'achievements'])
+  assert.equal(expand('{{outlet::unknown}}'), '', 'a key with no bucket is empty, as upstream')
+})
+
+test('{{outlet}} with no reader renders empty, and bare stays standing', () => {
+  const { expand } = fixture()
+
+  assert.equal(expand('x{{outlet::key}}y'), 'xy')
+  assert.equal(expand('a {{outlet}} b'), 'a {{outlet}} b', 'no key is no macro, as upstream')
+})
+
+// --- token budget (B4) -----------------------------------------------------
+
+test('the budget macros report the assembler budget', () => {
+  const { expand } = fixture({ tokenBudget: { context: 8192, response: 1024 } })
+
+  assert.equal(expand('{{maxContext}}|{{maxContextTokens}}'), '8192|8192')
+  assert.equal(expand('{{maxResponse}}|{{maxResponseTokens}}'), '1024|1024')
+  assert.equal(expand('{{maxPrompt}}|{{maxPromptTokens}}'), '7168|7168')
+})
+
+test('the budget macros render empty when no route is configured', () => {
+  const { expand } = fixture()
+
+  assert.equal(expand('[{{maxContext}}][{{maxResponse}}][{{maxPrompt}}]'), '[][][]')
+})
+
+// --- the two engine invariants, restated for the B4 macros -----------------
+
+test('{{noop}} is empty no matter what it carries, and emits nothing to rescan', () => {
+  const { expand, variables } = fixture()
+
+  assert.equal(expand('a{{noop}}b'), 'ab')
+  // The argument is expanded (inner-first) and then dropped whole: whatever a
+  // card hides inside a noop must never surface, let alone execute.
+  assert.equal(expand('a{{noop::{{char}}}}b'), 'ab')
+  assert.equal(expand('{{noop}}'), '')
+  assert.equal(variables.local.size, 0)
+})
+
+test('{{reverse}} can spell a macro and the engine must not run it', () => {
+  const { expand, variables } = fixture()
+  // A value whose reversal reads as `{{char}}`: a rescanning engine would
+  // substitute the name here, and the whole advantage Iris keeps is that it
+  // does not — the reversed text is data, however inconvenient its spelling.
+  variables.set('local', 'payload', '}}rahc{{')
+
+  assert.equal(expand('{{reverse::{{getvar::payload}}}}'), '{{char}}')
+})

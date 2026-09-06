@@ -91,7 +91,7 @@ export type HeightSignal =
  * two halves used to live apart: `informsShell` refused the echo, and a boolean
  * in the frame entry decided whether the refusal had already been announced.
  * Apart, they missed the case that matters most.
- *
+
  * **A card can stop being measurable and start again.** These cards switch
  * screens; one screen clips its overflow and the next does not. So:
  *
@@ -103,18 +103,46 @@ export type HeightSignal =
  * - unmeasurable and already announced → silence. Repeating it is a log, and the
  *   shell's answer has not changed.
  *
+ * **A measurement equal to the height the shell already applied for us is
+ * neither of those — it is our own write coming back, and it says nothing.**
+ * `informsShell` refuses it as a height, and the refusal used to fall through to
+ * the `sizing` announcement, which the shell answers by *removing* the applied
+ * height — whereupon the content overflows again, a real height is reported
+ * (re-arming the announcement), the shell applies it, the next measurement
+ * equals the viewport again… Measured on four real cards, that closed loop
+ * flips the frame between its content height and the CSS fallback on every
+ * animation frame, forever: the reading column's scrollbar toggles and the
+ * interface's right and bottom edges flicker without end. The state is a fixed
+ * point of the loop itself, so it carries no news and earns only silence — and
+ * crucially it flips no state: `announced` is left exactly as it was, so a
+ * measurement that arrives while the viewport is *not* what we asked for can
+ * still announce once.
+ *
  * @param measured - the content height this frame read.
  * @param viewport - the frame's own viewport height.
  * @param announced - whether the frame has already said it cannot be measured.
+ * @param applied - the height this frame most recently asked the shell to
+ *   apply, or `undefined` while nothing of ours is applied (before the first
+ *   report, or after a `sizing` announcement removed it). Omitted by callers
+ *   that have no shell to echo off — the answer is then exactly the three-
+ *   argument form's.
  * @returns what to say.
  */
 export function heightSignal(
   measured: number,
   viewport: number,
   announced: boolean,
+  applied?: number,
 ): HeightSignal {
   if (!Number.isFinite(measured) || measured <= 0) return { kind: 'silent' }
   if (informsShell(measured, viewport)) return { kind: 'height', pixels: measured }
+  if (
+    applied !== undefined
+    && Number.isFinite(applied)
+    && Math.abs(applied - viewport) <= OVERFLOW_SLACK_PX
+  ) {
+    return { kind: 'silent' }
+  }
   return announced ? { kind: 'silent' } : { kind: 'sizing' }
 }
 

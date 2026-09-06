@@ -65,6 +65,68 @@ test('body is the card container itself, not the host body', () => {
   assert.equal(doc['body'], container)
 })
 
+test('head is the frame document head itself', () => {
+  /*
+   * The card that asked: 灭仇家满门之后 schedules code that reads
+   * `document.head` after mounting, and the refusal killed the whole script
+   * for a member this frame genuinely has. Like `body`, it is answered by
+   * identity: the head of the card's **own** frame document, handed over as a
+   * real element because appending a `<style>` to it styles that document and
+   * nothing else.
+   */
+  const head = { tagName: 'HEAD' }
+  const { doc } = source({ head })
+  assert.equal(doc['head'], head)
+})
+
+test('a style appended to head lands in the frame document', () => {
+  /*
+   * The measured use is injection: `document.head.append(style)`. The stub
+   * records rather than lays out — "the browser applies it" is a property of
+   * the real element this member hands over, which is the same guarantee
+   * `body`'s real container already makes for markup.
+   */
+  const inserted: unknown[] = []
+  const head = { tagName: 'HEAD', append: (node: unknown) => inserted.push(node) }
+  const { doc } = source({ head })
+
+  const create = doc['createElement'] as (tag: string) => unknown
+  const style = create('style')
+  ;(doc['head'] as { append: (node: unknown) => void }).append(style)
+
+  assert.deepEqual(inserted, [style], 'the injection never reached the head')
+})
+
+test('a frame without a head answers undefined and names the gap', () => {
+  // Absent is still not silent: a card reading `document.head.appendChild`
+  // against a missing member gets `undefined` — upstream's own answer for a
+  // name a document does not carry — and a report naming what was missing, so
+  // the failure a line later still traces back to a policy decision rather
+  // than to nothing.
+  const notes: string[] = []
+  const { doc } = source({ report: (message, failed) => {
+    if (!failed) notes.push(message)
+  } })
+
+  assert.equal('head' in doc, false)
+  assert.equal(doc['head'], undefined)
+  assert.match(notes.join(' '), /document\.head/)
+})
+
+test('adding head widens nothing else', () => {
+  // The answer surface is the policy; a member added to the answer side must
+  // not quietly move any other provided name onto the data side, and assigning
+  // `head` itself stays a refusal like every other write to a provided member.
+  const head = { tagName: 'HEAD' }
+  const { doc } = source({ head })
+
+  assert.equal(doc['cookie'], undefined, 'an unprovided read yields, per the data-slot policy')
+  assert.equal(doc['write'], undefined)
+  assert.throws(() => {
+    doc['head'] = { tagName: 'HEAD' }
+  }, ReadOnlyApiError)
+})
+
 test('lookups are scoped to the container', () => {
   const { doc, selectors } = source()
   const query = doc['querySelector'] as (selector: string) => unknown
@@ -113,22 +175,44 @@ test('node factories are real, because an unattached node has no authority', () 
   assert.deepEqual((doc['createDocumentFragment'] as () => unknown)(), { fragment: true })
 })
 
-test('an unprovided member throws and names itself', () => {
-  // The core of the policy. `undefined` would be indistinguishable from "not
-  // found", so a card would take a policy decision for a missing element and
-  // fail later somewhere unrelated.
-  const { doc } = source()
+test('an unprovided member answers undefined, names itself once, and stores data', () => {
+  /*
+   * The core of the data-slot policy. `undefined` is upstream's own answer for
+   * a name a document does not carry, and the report keeps the naming the old
+   * throw provided — once per name, because a library polling a private slot
+   * must not turn one gap into a stream.
+   *
+   * The write half is what makes the read half honest: a library that reads its
+   * expando, finds nothing, and writes the cache onto the document (`jQuery35…`
+   * from `$(parent.document)`, measured in the 开场白2.0.1 component) needs
+   * that slot to come back — a throw here killed the library three steps from
+   * a read it is entitled to make. The bag is the card's own; no capability
+   * rides in on it.
+   */
+  const notes: string[] = []
+  const { doc } = source({ report: (message, failed) => {
+    if (!failed) notes.push(message)
+  } })
 
-  assert.throws(() => doc['cookie'], UnsupportedApiError)
-  assert.throws(
-    () => doc['cookie'],
-    (error: unknown) => {
-      assert.ok(error instanceof UnsupportedApiError)
-      assert.equal(error.member, 'document.cookie')
-      assert.match(error.message, /document\.cookie/)
-      return true
-    },
-  )
+  assert.equal(doc['cookie'], undefined)
+  assert.equal(doc['cookie'], undefined, 'a second read must not report again')
+  assert.equal(notes.filter(note => note.includes('document.cookie')).length, 1)
+
+  const cache = { events: {} }
+  doc['jQuery3510279613227334472251'] = cache
+  assert.equal(doc['jQuery3510279613227334472251'], cache, 'a stored slot did not read back')
+  assert.equal('jQuery3510279613227334472251' in doc, true)
+  assert.deepEqual(Object.getOwnPropertyDescriptor(doc, 'jQuery3510279613227334472251')?.value, cache)
+
+  // One line for the read that missed, one for the data that landed — not one
+  // per access.
+  assert.equal(notes.filter(note => note.includes('jQuery3510279613227334472251')).length, 1)
+  assert.ok(notes.join(' ').includes('stored data'))
+
+  // A slot can go away, the way `$.removeData` and teardown expect.
+  const deleted = delete (doc as Record<string, unknown>)['jQuery3510279613227334472251']
+  assert.equal(deleted, true)
+  assert.equal(doc['jQuery3510279613227334472251'], undefined)
 })
 
 test('reaching past the two measurements names the full path', () => {
@@ -170,9 +254,12 @@ test('symbol reads are absent rather than refused', () => {
 
 test('membership probes answer instead of throwing', () => {
   // `'body' in doc` is a question about the policy, not a request for access.
-  const { doc } = source()
+  // The realm hands over a head, as a real frame's does, so the enumeration is
+  // the surface a card actually sees.
+  const { doc } = source({ head: { tagName: 'HEAD' } })
 
   assert.equal('body' in doc, true)
+  assert.equal('head' in doc, true)
   assert.equal('cookie' in doc, false)
   /*
    * The read-only status members are here too, and they are the second half of
@@ -197,7 +284,9 @@ test('membership probes answer instead of throwing', () => {
     'documentURI',
     'getElementById',
     'getElementsByTagName',
+    'head',
     'hidden',
+    'nodeType',
     'querySelector',
     'querySelectorAll',
     'readyState',
@@ -229,13 +318,21 @@ test('a status read answers rather than killing the script that asked', () => {
   assert.equal(bag['readyState'], 'complete')
   assert.equal(bag['characterSet'], 'UTF-8')
   assert.equal(bag['compatMode'], 'CSS1Compat')
+  // `9` is DOCUMENT_NODE, and duck-typing with it is how the 开场白2.0.1
+  // component (哈人冰恋世界 / 绿茵好莱坞) recognises a document. The refusal
+  // graded that pure read as a script failure; a constant answers instead.
+  assert.equal(bag['nodeType'], 9)
   // The frame's own URL, deliberately not the shell's: a card deciding which
   // host it is on must not be told it is the shell.
   assert.equal(bag['URL'], 'about:srcdoc')
   assert.equal(bag['referrer'], '')
 
-  // And the members that are still refused are still refused, so the split is a
-  // split rather than a general opening.
-  assert.throws(() => bag['cookie'], /document\.cookie/)
-  assert.throws(() => bag['write'], /document\.write/)
+  // And the writes to provided members are still refused, so the split is a
+  // split rather than a general opening; the unprovided names answer per the
+  // data-slot policy instead of throwing.
+  assert.equal(bag['cookie'], undefined)
+  assert.equal(bag['write'], undefined)
+  assert.throws(() => {
+    bag['title'] = 'x'
+  }, ReadOnlyApiError)
 })

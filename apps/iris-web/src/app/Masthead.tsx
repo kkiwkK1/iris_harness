@@ -20,6 +20,7 @@ import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
+import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * Render the masthead.
@@ -40,6 +41,8 @@ export function Masthead({
   const characters = useIris(state => state.characters)
   const transport = useIris(state => state.transport)
   const origin = useIris(state => state.dataOrigin)
+  // Subscribed so a language switch re-renders every word the head shows.
+  useLanguage()
 
   const character = characters.find(row => row.characterId === view?.characterId)
   // Turns rather than messages: a turn is the unit the reader thinks in, and the
@@ -52,7 +55,7 @@ export function Masthead({
         <button
           type="button"
           className="iris-act iris-nav-toggle"
-          aria-label="Show conversations"
+          aria-label={t('showConversations')}
           onClick={onToggleNav}
         >
           ☰
@@ -60,13 +63,13 @@ export function Masthead({
         <ChatTitle />
         <span className="iris-masthead__spacer" />
         <Button variant="ghost" size="sm" onClick={onOpenSettings}>
-          Settings
+          {t('settings')}
         </Button>
       </div>
       {transport === 'fake' ? (
         /*
           Said permanently, and only in this direction.
-          
+
           An observer once checked that the host served this app and that its RPC
           answered — both true — and concluded the page was showing real data,
           while seeded character names sat on screen for two days. "This is
@@ -74,8 +77,7 @@ export function Masthead({
           opposite is the expectation and needs no decoration.
         */
         <p className="iris-masthead__stub">
-          Seeded data — this page is not talking to a host. Add{' '}
-          <code>?transport=rpc</code> to use one.
+          {t('seededNotice')} <code>?transport=rpc</code>
           {/*
             And **where** the data came from, which is the half of this sentence
             that was missing. `dataOrigin` has been in the store since the field
@@ -88,16 +90,16 @@ export function Masthead({
             (`transport`) is what makes the omission easy to miss, because the
             sentence reads complete without it.
           */}
-          {' '}Source: <code>{origin}</code>.
+          {' '}{t('seededNoticeSource')} <code>{origin}</code>.
         </p>
       ) : null}
       {view === undefined ? null : (
         <p className="iris-masthead__meta iris-meta">
           {[
             character?.name,
-            turns === 0 ? 'not started' : `${turns} ${turns === 1 ? 'turn' : 'turns'}`,
+            turns === 0 ? t('notStarted') : turns === 1 ? t('oneTurn') : t('turns', { n: turns }),
             settings?.model,
-            generating ? 'writing…' : undefined,
+            generating ? t('writingNow') : undefined,
           ]
             .filter(part => part !== undefined && part !== '')
             .join('  ·  ')}
@@ -119,6 +121,8 @@ function ChatTitle(): ReactElement | null {
   const actions = useIrisActions()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  // Subscribed: the title input's accessible name is copy too.
+  useLanguage()
 
   if (view === undefined) return null
 
@@ -128,7 +132,7 @@ function ChatTitle(): ReactElement | null {
         className="iris-text iris-title-input"
         autoFocus
         value={draft}
-        aria-label="Conversation title"
+        aria-label={t('conversationTitle')}
         onChange={event => setDraft(event.target.value)}
         onBlur={() => setEditing(false)}
         onKeyDown={event => {
@@ -147,7 +151,7 @@ function ChatTitle(): ReactElement | null {
     <button
       type="button"
       className="iris-masthead__title iris-title-button"
-      title="Rename this conversation"
+      title={t('renameConversation')}
       onClick={() => {
         setDraft(view.title)
         setEditing(true)

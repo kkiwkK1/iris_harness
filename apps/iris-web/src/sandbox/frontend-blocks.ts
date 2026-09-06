@@ -29,6 +29,8 @@
  * @module iris-web/sandbox/frontend-blocks
  */
 
+import { splitHtmlRegions } from '../app/html-regions.ts'
+
 /** What upstream looks for, verbatim (`src/util/is_frontend.ts:1-3`). */
 const MARKERS: readonly string[] = ['html>', '<head>', '<body']
 
@@ -36,7 +38,7 @@ const MARKERS: readonly string[] = ['html>', '<head>', '<body']
 const NEWLINE = String.fromCharCode(10)
 
 /** How a block was written. Recorded for diagnostics, never for the decision. */
-export type BlockKind = 'fenced' | 'indented'
+export type BlockKind = 'fenced' | 'indented' | 'bare-html'
 
 /** One claimed block. */
 export interface FrontendBlock {
@@ -69,17 +71,43 @@ export function frontendMarker(body: string): string | undefined {
 }
 
 /**
- * Find every code block in a message and claim the ones that look like interfaces.
+ * Every fenced or indented code block in a message, claimed or not.
+ *
+ * The scanner `claimFrontendBlocks` runs, kept whole so the bare-HTML composer
+ * below sees the same spans the fence pipeline sees — one line-walk over the
+ * message, not two that could disagree about where a block begins.
+ *
+ * An unclaimed span is still a span: its body did not read as a front end, but
+ * it is still code to the renderer, which is a fact the bare-HTML split has to
+ * respect (see `claimMessageSurfaces`).
+ */
+interface ScannedCodeBlock {
+  /** Offset of the block's first character in the message source. */
+  start: number
+  /** Offset just past the block's last character. */
+  end: number
+  /** The block's body — what a frame would run. */
+  body: string
+  kind: BlockKind
+  info?: string
+  /** Whether the body read as a front end. */
+  claimed: boolean
+  /** Which marker matched, when claimed. */
+  matched?: string
+}
+
+/**
+ * Find every code block in a message and mark the ones that look like interfaces.
  *
  * Scanned line by line with string operations rather than matched with a pattern,
  * for the reason recorded across this package: escapes here have been eaten in
  * transit repeatedly, and a collapsed one still parses while matching nothing.
  *
  * @param source - the message text, as stored.
- * @returns the claimed blocks, in source order.
+ * @returns every code block, in source order, with its claim verdict.
  */
-export function claimFrontendBlocks(source: string): FrontendBlock[] {
-  const claimed: FrontendBlock[] = []
+function scanCodeBlocks(source: string): ScannedCodeBlock[] {
+  const scanned: ScannedCodeBlock[] = []
   const lines = source.split(NEWLINE)
 
   /** Offset of the first character of `lines[at]`. */
@@ -109,16 +137,15 @@ export function claimFrontendBlocks(source: string): FrontendBlock[] {
 
       const body = lines.slice(bodyFrom, to).join(NEWLINE)
       const marker = frontendMarker(body)
-      if (marker !== undefined) {
-        claimed.push({
-          start: offsets[at] ?? 0,
-          end: to < lines.length ? (offsets[to] ?? source.length) + (lines[to] ?? '').length : source.length,
-          body,
-          kind: 'fenced',
-          ...(fence.info === '' ? {} : { info: fence.info }),
-          matched: marker,
-        })
-      }
+      scanned.push({
+        start: offsets[at] ?? 0,
+        end: to < lines.length ? (offsets[to] ?? source.length) + (lines[to] ?? '').length : source.length,
+        body,
+        kind: 'fenced',
+        ...(fence.info === '' ? {} : { info: fence.info }),
+        claimed: marker !== undefined,
+        ...(marker === undefined ? {} : { matched: marker }),
+      })
       at = to + 1
       continue
     }
@@ -147,15 +174,14 @@ export function claimFrontendBlocks(source: string): FrontendBlock[] {
         .map(entry => stripIndent(entry))
         .join(NEWLINE)
       const marker = frontendMarker(body)
-      if (marker !== undefined) {
-        claimed.push({
-          start: offsets[at] ?? 0,
-          end: (offsets[lastContent] ?? 0) + (lines[lastContent] ?? '').length,
-          body,
-          kind: 'indented',
-          matched: marker,
-        })
-      }
+      scanned.push({
+        start: offsets[at] ?? 0,
+        end: (offsets[lastContent] ?? 0) + (lines[lastContent] ?? '').length,
+        body,
+        kind: 'indented',
+        claimed: marker !== undefined,
+        ...(marker === undefined ? {} : { matched: marker }),
+      })
       at = to
       continue
     }
@@ -163,7 +189,146 @@ export function claimFrontendBlocks(source: string): FrontendBlock[] {
     at += 1
   }
 
-  return claimed
+  return scanned
+}
+
+/**
+ * Find every code block in a message and claim the ones that look like interfaces.
+ *
+ * The claim verdict is the fence pipeline's own predicate, unchanged; this
+ * wrapper only keeps the verdict's shape the callers have always had.
+ *
+ * @param source - the message text, as stored.
+ * @returns the claimed blocks, in source order.
+ */
+export function claimFrontendBlocks(source: string): FrontendBlock[] {
+  return scanCodeBlocks(source)
+    .filter(block => block.claimed)
+    .map(block => ({
+      start: block.start,
+      end: block.end,
+      body: block.body,
+      kind: block.kind,
+      ...(block.info === undefined ? {} : { info: block.info }),
+      matched: block.matched ?? '',
+    }))
+}
+
+/** What claiming found in one message: every frameable surface, and the notes. */
+export interface ClaimedSurfaces {
+  /**
+   * Claimed fenced blocks and bare HTML regions, in source order.
+   *
+   * One list, because the instance number a frame is addressed by has to mean
+   * the same thing at every place that counts or renders one: the budget plans
+   * over this list, the controller runs it, and the row splices it into the
+   * prose. Three claimers with different lists would renumber each other's
+   * frames.
+   */
+  blocks: FrontendBlock[]
+  /**
+   * Notes from the HTML-region split — an unclosed region, reported rather
+   * than swallowed. Empty when every region closed.
+   */
+  refused: readonly string[]
+}
+
+/**
+ * Claim every frameable surface of a message: fenced blocks **and** bare HTML.
+ *
+ * The message-frame pipeline until now claimed only code blocks — the shape a
+ * card author marks explicitly. Cards also write HTML **without** any fence
+ * (upstream renders message HTML in place, so they can): a status widget that
+ * is a bare `<div>` arrived as escaped source text on the reading surface. The
+ * split that names those spans is `splitHtmlRegions`, measured against the
+ * 936-floor fragment corpus; this is where it stops having no consumers.
+ *
+ * **Composition order is the whole design, and it is fence-first.** The two
+ * claimers describe the same text with different grammars, so one has to win
+ * where they overlap, and the fence does:
+ *
+ * - The split runs only on the prose **between fences**, so a fence body's
+ *   line-initial tags are never read as bare HTML — a claimed block is not
+ *   double-claimed, and an ordinary code sample inside a fence stays code.
+ * - Unclaimed fences (a body without the three markers) are excluded too.
+ *   Their tags cannot open regions without also stranding the fence markers
+ *   themselves in the prose, which would trade rendered source for leaked
+ *   backticks. Upstream shows such a block as source as well.
+ * - Indented blocks are **not** excluded. Their lines carry four or more
+ *   leading spaces and a region can only open at up to three (the split is
+ *   CommonMark's own boundary), so no region begins inside one — while a
+ *   widget's own deep-indented lines behind blank lines *are* CommonMark
+ *   indented blocks, and excluding them would carve real panels in half.
+ *   The one clash this can still produce — a claimed indented block inside
+ *   what would otherwise be a region — resolves to the claimed block, and the
+ *   overlapped region falls back to the renderer, which is the behaviour the
+ *   message had before this pipeline existed.
+ *
+ * @param source - the message text, after display regex.
+ * @returns the claimed surfaces, in source order, with any split notes.
+ */
+export function claimMessageSurfaces(source: string): ClaimedSurfaces {
+  const scanned = scanCodeBlocks(source)
+  const claimed = claimFrontendBlocks(source)
+
+  const regions: FrontendBlock[] = []
+  const notes: string[] = []
+
+  // Fences — claimed or not — bound the prose the split may read. `cursor`
+  // walks the source and collects one split per gap between them.
+  let cursor = 0
+  for (const span of scanned) {
+    if (span.kind !== 'fenced') continue
+    if (span.start > cursor) collectRegions(source, cursor, span.start, regions, notes)
+    if (span.end > cursor) cursor = span.end
+  }
+  if (cursor < source.length) collectRegions(source, cursor, source.length, regions, notes)
+
+  /*
+   * A claimed code block outranks a region that reaches into it — the fence
+   * pipeline's claims are the incumbent behaviour, and a region loses to one
+   * rather than framing half a panel beside it. Claims and regions are each
+   * internally disjoint, so dropping the clashing regions leaves one
+   * non-overlapping list in source order.
+   */
+  const safe = regions.filter(region =>
+    !claimed.some(block => region.start < block.end && block.start < region.end)
+  )
+  const blocks = [...claimed, ...safe].sort((left, right) => left.start - right.start)
+
+  return { blocks, refused: notes }
+}
+
+/**
+ * Run the HTML-region split over one gap between fences, in place.
+ *
+ * @param source - the whole message, so regions come back in source offsets.
+ * @param from - gap start, inclusive.
+ * @param to - gap end, exclusive.
+ * @param out - where claimed regions accumulate.
+ * @param notes - where the split's unclosed-region notes accumulate.
+ */
+function collectRegions(
+  source: string,
+  from: number,
+  to: number,
+  out: FrontendBlock[],
+  notes: string[],
+): void {
+  const split = splitHtmlRegions(source.slice(from, to))
+  for (const note of split.refused) notes.push(note)
+  for (const region of split.regions) {
+    if (region.kind !== 'html') continue
+    out.push({
+      start: from + region.start,
+      end: from + region.end,
+      body: region.text,
+      kind: 'bare-html',
+      // Why it was claimed, in the same shape the fence pipeline reports: the
+      // line-initial tag that opened the region.
+      matched: /^ {0,3}<[a-zA-Z][a-zA-Z0-9-]*/.exec(region.text)?.[0] ?? '<',
+    })
+  }
 }
 
 /** A fence's character and width, plus whatever followed it on the line. */

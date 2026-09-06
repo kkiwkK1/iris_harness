@@ -21,9 +21,13 @@ test('matching is case-insensitive by default and exact when asked', () => {
   }
 })
 
-test('whole-word matching refuses a key buried inside a longer word', () => {
-  assert.equal(matchKey('concatenate', 'cat'), false)
+test('matching defaults to substring; a whole-word boundary is the opt-in', () => {
+  // ST ships `world_info_match_whole_words: false`, and the community's books
+  // are tuned against substring keys — so the plain call here is the behaviour
+  // those books were written against.
+  assert.equal(matchKey('concatenate', 'cat'), true)
   assert.equal(matchKey('concatenate', 'cat', { matchWholeWords: false }), true)
+  assert.equal(matchKey('concatenate', 'cat', { matchWholeWords: true }), false)
 })
 
 test('punctuation counts as a word boundary', () => {

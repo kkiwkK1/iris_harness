@@ -19,6 +19,7 @@ import type { ScriptContext } from '@iris/protocol'
 
 import { frameSandbox } from './policy.ts'
 import { mintToken, parseFromFrame, type FromFrame, type ToFrame } from './protocol.ts'
+import { sameOriginTarget } from './same-origin.ts'
 import { buildSrcdoc } from './srcdoc.ts'
 import { rewriteViewportUnits } from './viewport-units.ts'
 import { rewriteBundleImports } from './bundle-proxy.ts'
@@ -93,6 +94,16 @@ export interface RunnerHost {
    */
   onSlash: (command: string) => Promise<string>
   /**
+   * The card showed one of the blocking dialogs (`alert`/`confirm`/`prompt`).
+   *
+   * The frame's sandbox never carries `allow-modals`, so the browser itself
+   * would answer all three with silence — and a card that reports its own
+   * failure through `alert` would report nothing, leaving the reader with a
+   * control that "does nothing". The shell puts the text where failures are
+   * read: the notice bar and the card's durable report list.
+   */
+  onDialog: (kind: 'alert' | 'confirm' | 'prompt', text: string) => void
+  /**
    * The card invoked one of its facade's actions.
    *
    * The shell decides whether a named action may run. The frame is the untrusted
@@ -120,6 +131,16 @@ export interface RunnerHost {
    * and catches clicks over its own box, which is correct already.
    */
   onRegions?: (clip: string, detail?: string) => void
+  /**
+   * A card dispatched an event onto the page window it sees.
+   *
+   * Required for a frame whose card may dispatch; optional because the shell
+   * hosts frames whose cards never do. The implementation fans the event out to
+   * every frame of the card — this one included — so a listener registered
+   * through `parent.addEventListener` in one frame hears a dispatch made in
+   * another, which is the whole of what a page-wide event target means.
+   */
+  onWindowEvent?: (event: string, detail: unknown) => void
   /**
    * Something the frame observed that is not a failure.
    *
@@ -240,6 +261,20 @@ export interface RunningCard {
    * text that was already stale.
    */
   refreshContext: (context: ScriptContext) => void
+  /**
+   * Re-read the host viewport and push it, exactly as a window resize would.
+   *
+   * The frame's viewport is the box the shell put the frame in, and a window
+   * `resize` is not the only thing that changes that box: the overlay surface
+   * is laid out inside the reading column, so a layout change above it — a
+   * notice appearing, a panel opening — reshapes the frame with no window event
+   * at all. The shell watches the surface element and calls this when the
+   * element's box moves; the dedup on the far side (`applyViewport`'s
+   * changed-check) makes a no-op push cost one message and nothing more.
+   *
+   * A no-op once disposed, like every other door into the frame.
+   */
+  resize: () => void
   /** Remove the frame and every listener it needed. Idempotent. */
   dispose: () => void
 }
@@ -386,6 +421,38 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     handle(message)
   }
 
+  /**
+   * Answer a frame's `fetch` request.
+   *
+   * Two routes, split by who is being asked. A request aimed at Iris's own
+   * origin — which any relative path resolves to, since a srcdoc frame inherits
+   * the shell page's base — is fetched by this page with its own credentials:
+   * the same-origin bridge (`SANDBOX.md`), which lets an upstream-frequent
+   * `fetch('/version')` answer without widening `connect-src` by a character.
+   * The origin check runs **here**, not only in the frame, because the frame is
+   * the untrusted side and the shell is what actually holds the credentials;
+   * `host.fetch` stays the enforcement for everything else, allowlisted remote
+   * dependencies included.
+   * @param message - the frame's request, carrying the URL it resolved.
+   * @returns the body and the response facts worth carrying back.
+   */
+  const ride = (
+    message: Extract<FromFrame, { type: 'fetch' }>,
+  ): Promise<{ content: string, status?: number, contentType?: string }> => {
+    const target = sameOriginTarget(message.url, view.location.href, view.location.origin)
+    if (target === undefined) {
+      return host.fetch(message.url).then(content => ({ content }))
+    }
+    return view.fetch(target).then(async response => {
+      const contentType = response.headers.get('content-type')
+      return {
+        content: await response.text(),
+        status: response.status,
+        ...(contentType === null || contentType === '' ? {} : { contentType }),
+      }
+    })
+  }
+
   const handle = (message: FromFrame): void => {
     switch (message.type) {
       case 'bootstrap-error':
@@ -522,6 +589,15 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
             })
           })
         return
+      case 'dialog':
+        /*
+         * Required, not optional: the whole reason the bridge exists is that a
+         * card's `alert` used to land in a browser no-op bucket, and a host
+         * without a panel would rebuild exactly that silence one message type
+         * later.
+         */
+        host.onDialog(message.kind, message.text)
+        return
       case 'error':
         host.onError(message.message, message.member, message.scriptId)
         return
@@ -535,6 +611,9 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
          */
         host.onRegions?.(message.clip, message.detail)
         return
+      case 'winevent':
+        host.onWindowEvent?.(message.event, message.detail)
+        return
       case 'blocked':
         host.onBlocked(message.host, message.directive, message.detail, message.covered)
         return
@@ -542,10 +621,16 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         host.onNote?.(message.message)
         return
       case 'fetch':
-        void host
-          .fetch(message.url)
-          .then(content => {
-            post({ iris: token, type: 'fetch:ok', id: message.id, content })
+        void ride(message)
+          .then(result => {
+            post({
+              iris: token,
+              type: 'fetch:ok',
+              id: message.id,
+              content: result.content,
+              ...(result.status === undefined ? {} : { status: result.status }),
+              ...(result.contentType === undefined ? {} : { contentType: result.contentType }),
+            })
           })
           .catch((error: unknown) => {
             post({
@@ -610,6 +695,10 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
       current = next
       if (!ready) return
       post({ iris: token, type: 'context', context: current })
+    },
+    resize: () => {
+      if (disposed) return
+      onResize()
     },
     dispose: () => {
       if (disposed) return

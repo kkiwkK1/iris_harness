@@ -163,9 +163,25 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   getChatMessages: 'shared',
   getSwipes: 'shared',
   swipeTo: 'shared',
+  /*
+   * Upstream's chat-patch member. It addresses floors by index — a fact of the
+   * chat, not of whichever script asked — so it shares the surface, like the
+   * read and the swipe beside it.
+   */
+  setChatMessages: 'shared',
+  /*
+   * Upstream's chat append and delete, over the same route as the patch above:
+   * both address the chat file by index (rows to append, ids to remove), so the
+   * answer belongs to the chat, not to whichever script asked.
+   */
+  createChatMessages: 'shared',
+  deleteChatMessages: 'shared',
   // A world book belongs to the card, not to whichever script asked for it, so
   // two scripts reading the same book must see the same entries.
   getWorldbook: 'shared',
+  // The host's whole name list: one answer for every script, and a clone per
+  // call so one reader's sort cannot reach the next.
+  getWorldbookNames: 'shared',
   // A binding belongs to the card; every script of it sees the same answer.
   getCharWorldbookNames: 'shared',
   /*
@@ -176,7 +192,26 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
    */
   replaceWorldbook: 'shared',
   updateWorldbookWith: 'shared',
+  /*
+   * The chat-book and creation family, shared for the same reason the reads and
+   * writes above are: a book, a binding and the name list all belong to the
+   * card's installation, and two scripts of one card asking must see — and
+   * write — the same one. None carries a scope or a script id.
+   */
+  getGlobalWorldbookNames: 'shared',
+  rebindGlobalWorldbooks: 'shared',
+  getChatWorldbookName: 'shared',
+  rebindChatWorldbook: 'shared',
+  getOrCreateChatWorldbook: 'shared',
+  createWorldbook: 'shared',
+  createWorldbookEntries: 'shared',
   generate: 'shared',
+  /**
+   * The caller-ordered generate. `shared` for the same reason `generate` is:
+   * every input is the caller's argument and the answer is the model's text —
+   * nothing about which script asks changes what it does.
+   */
+  generateRaw: 'shared',
   triggerSlash: 'shared',
   substitudeMacros: 'shared',
   iframe_events: 'shared',

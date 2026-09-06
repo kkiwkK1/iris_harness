@@ -14,6 +14,8 @@
 import {
   parseRequest,
   type CharacterSummary,
+  type ChatSearchHit,
+  type ChatSearchMatch,
   type ChatSummary,
   type GenerationSettings,
   type IrisClient,
@@ -36,7 +38,7 @@ import {
 } from './connections.ts'
 import { mergeSettings } from './settings.ts'
 import { DEFAULT_SETTINGS, seedCharacters, seedChats } from './seed.ts'
-import { toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
+import { selected, toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
 
 /**
  * Scripts the fake reports for every character.
@@ -242,13 +244,70 @@ class InMemoryClient implements FakeClient {
         return { chats: this.#summaries() }
       }
 
+      case 'chat.search': {
+        // The host's scan over the fake's log: the selected candidate's text is
+        // what a reader sees, so it is what a search answers from.
+        const { query, caseSensitive, limit } = params as RpcRequest<'chat.search'>
+        const needle = query.trim()
+        if (needle.length === 0) throw new FakeRpcError('invalid-request', 'the search query is empty')
+        const foldedNeedle = caseSensitive === true ? needle : needle.toLowerCase()
+        const cap = limit ?? 5
+        const hits = this.#chats
+          .map((chat): ChatSearchHit | undefined => {
+            const matches: ChatSearchMatch[] = []
+            for (const [id, message] of chat.messages.entries()) {
+              if (matches.length >= cap) break
+              const text = selected(message).text
+              const at = caseSensitive === true
+                ? text.indexOf(needle)
+                : text.toLowerCase().indexOf(foldedNeedle)
+              if (at < 0) continue
+              matches.push({
+                messageId: id,
+                name: message.name,
+                isUser: message.role === 'user',
+                snippet: text.slice(Math.max(0, at - 48), Math.min(text.length, at + 96)),
+              })
+            }
+            if (matches.length === 0) return undefined
+            return { ...toChatSummary(chat), matches }
+          })
+          .filter((hit): hit is ChatSearchHit => hit !== undefined)
+          .sort((left, right) => right.updatedAt - left.updatedAt)
+        return { hits }
+      }
+
       case 'chat.send': {
-        const { chatId, text } = params as RpcRequest<'chat.send'>
+        const { chatId, kind, text } = params as RpcRequest<'chat.send'>
         const chat = this.#require(chatId)
         if (this.#streams.has(chatId)) throw new FakeRpcError('busy', 'this chat is already generating')
 
+        // A continue grows the newest reply by one more reading that opens with
+        // the current one, so the reader's floor count does not move; an
+        // impersonation writes the user's next line and no reply at all.
+        if (kind === 'continue') {
+          const at = this.#lastAssistantIndex(chat)
+          if (at === -1) throw new FakeRpcError('not-found', 'this chat has no reply to continue')
+          const message = chat.messages[at] as FakeMessage
+          const seed = selected(message).text
+          message.candidates.push({ text: seed })
+          message.index = message.candidates.length - 1
+          chat.updatedAt = Date.now()
+          this.#beginTurn(chat, message.turn, at, message.index, seed)
+          return { turn: message.turn }
+        }
+
+        if (kind === 'impersonate') {
+          const turn = this.#nextTurn(chat)
+          chat.messages.push({ role: 'user', name: 'You', candidates: [{ text: '' }], index: 0, turn })
+          chat.updatedAt = Date.now()
+          const at = chat.messages.length - 1
+          this.#beginTurn(chat, turn, at, 0, '', 'user', 'You')
+          return { turn }
+        }
+
         const turn = this.#nextTurn(chat)
-        chat.messages.push({ role: 'user', name: 'You', candidates: [{ text }], index: 0, turn })
+        chat.messages.push({ role: 'user', name: 'You', candidates: [{ text: text as string }], index: 0, turn })
         chat.updatedAt = Date.now()
         // Push the user's own message before the stream opens. The composer
         // clears on the response, and a UI that had to wait for `stream.end` to
@@ -414,6 +473,15 @@ class InMemoryClient implements FakeClient {
         else this.#require(chatId).settings = { ...result.settings }
         return result
       }
+
+      case 'connection.test':
+        // Refused, not modelled: the one thing this method exists to do is put
+        // a request on a real network, and faking a latency or an error code
+        // would let a connection form teach the interface a verdict no
+        // endpoint ever gave. An interface developed against the fake sees
+        // this refusal in dev, where its absence of a real probe is visible —
+        // not against a host, where it would be a lie.
+        throw new FakeRpcError('unsupported', 'the fake client cannot reach a real endpoint; run against a host to test a connection')
 
       case 'prompt.itemize': {
         const { chatId, turn } = params as RpcRequest<'prompt.itemize'>
@@ -810,6 +878,88 @@ class InMemoryClient implements FakeClient {
         throw new FakeRpcError('not-found', `no world book named ${name}`)
       }
 
+      case 'worldbook.settings': {
+        /*
+         * Answered, not refused: the effective settings of a host that has never
+         * stored any ARE these defaults — SillyTavern's shipped values
+         * (`world-info.js:69-82`), which is what the real host merges over an
+         * empty section. Inventing nothing: a fresh install genuinely scans with
+         * these numbers. Pinned to `worldbook-settings.ts` by
+         * `fake-worldbook-settings.test.ts`, so the two tables cannot drift.
+         */
+        return {
+          settings: {
+            scanDepth: 2,
+            budgetPercent: 25,
+            budgetCap: 0,
+            minActivations: 0,
+            minActivationsDepthMax: 0,
+            maxRecursionSteps: 0,
+            insertionStrategy: 'character_first',
+            recursive: false,
+            caseSensitive: false,
+            matchWholeWords: false,
+            useGroupScoring: false,
+          },
+        }
+      }
+
+      case 'worldbook.setSettings': {
+        /*
+         * Refused, on the writes-have-nowhere-to-land line: this client keeps no
+         * settings file, so accepting a patch would answer `{settings}` with the
+         * unchanged defaults — a success that is byte-identical to having done
+         * nothing, the exact shape `worldbook.setGlobalSelect` is refused for.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          'the fake client has no world-info settings store, so a settings patch cannot land',
+        )
+      }
+
+      case 'worldbook.create': {
+        const { name } = params as RpcRequest<'worldbook.create'>
+        /*
+         * Refused like `worldbook.replace`: a creation this client accepted
+         * would answer `{created: true}` with no file behind it, and a card's
+         * next `getWorldbook` — honestly refused here — would fail on a book it
+         * was told exists.
+         */
+        throw new FakeRpcError('not-found', `no world book store, so "${name}" cannot be created`)
+      }
+
+      case 'worldbook.bindChat': {
+        const { name } = params as RpcRequest<'worldbook.bindChat'>
+        /*
+         * Refused. The binding's whole effect is on the next prompt assembly,
+         * and this client assembles no prompts — accepting it would report a
+         * chat whose world info changed when nothing downstream could reflect
+         * that, the apparent-persist failure this package refuses along.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client models no chat world book binding (asked to bind ${name === null ? 'null' : `'${name}'`})`,
+        )
+      }
+
+      case 'worldbook.setCharBooks': {
+        const { characterId, names } = params as RpcRequest<'worldbook.setCharBooks'>
+        /*
+         * Refused, for the same reason `worldbook.bindChat` is: the write's
+         * whole effect is on what the next scan admits, and this client runs no
+         * scan and keeps no `charLore` store. Accepting it would let a card
+         * believe a character now plays with an extra book that no read here
+         * can ever confirm — `worldbook.charNames` above answers
+         * `additional: []` unconditionally, so the apparent persist would be
+         * contradicted by the very next read.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client models no character world book bindings (asked to bind ${String(names.length)}`
+          + ` book(s) to '${characterId}')`,
+        )
+      }
+
       case 'script.replaceScriptButtons': {
         /*
          * Refused, and the reason is specific rather than "not built yet".
@@ -914,12 +1064,78 @@ class InMemoryClient implements FakeClient {
       // client has none to sweep, and pretending otherwise would let a caller
       // believe a deletion happened.
       // A run only exists inside a real frame, so a fake client has none to end.
+      // The preset library is host-side files (`OpenAI Settings`-shaped, one
+      // preset per file); a fake has no filesystem to keep them in, so a seeded
+      // page refuses rather than answering from an imaginary library — the same
+      // honesty `storage.*` is refused with.
       case 'script.runEnded':
+      // Chat files are host-side; a fake has no store to copy them into or
+      // out of, so the migration arms refuse rather than pretend.
+      case 'chat.import':
+      case 'chat.export':
       case 'chat.answerCleanup':
       case 'storage.set':
       case 'storage.remove':
-      case 'storage.clear': {
+      case 'storage.clear':
+      case 'preset.list':
+      case 'preset.select':
+      case 'preset.view':
+      case 'preset.setEnabled':
+      case 'preset.move':
+      case 'preset.upsertPrompt':
+      case 'preset.removePrompt':
+      case 'preset.save':
+      case 'preset.delete':
+      case 'preset.read':
+      case 'preset.import':
+      case 'preset.importFile':
+      // The global regex list is profile state on the host's disk; a fake has
+      // none, and an imaginary list would let a panel believe an import landed.
+      case 'regex.list':
+      case 'regex.set':
+      // The character manager writes host-side files: a rename or a tag edit
+      // rewrites a card on disk, a duplicate copies one, an export reads one
+      // out, and a star lands in the profile's favorites file. The fake has no
+      // filesystem, and the one thing worse than refusing is a panel that
+      // believes a rename landed while the list keeps showing the old name —
+      // the next `character.list` would contradict it. The seeded summaries
+      // above stay read-only, exactly as `preset.*` stays refused.
+      case 'character.duplicate':
+      case 'character.rename':
+      case 'character.export':
+      case 'character.setTags':
+      case 'character.favorite':
+      // Snapshots are files under the host's profile, taken before operations
+      // this client does not perform — it never deletes a floor to a file, so
+      // it would never have anything to list, preview, restore or delete. An
+      // empty list in particular would read as "protected, nothing yet" about
+      // a store that does not exist, which is the all-clear-without-a-host
+      // lie `debug.reports` is refused for.
+      case 'backup.list':
+      case 'backup.preview':
+      case 'backup.restore':
+      case 'backup.delete': {
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
+      }
+
+      case 'persona.list':
+      case 'persona.get':
+      case 'persona.set':
+      case 'persona.delete': {
+        /*
+         * Refused as a group, and the refusal is the honest answer rather than a
+         * stand-in for one. A persona's whole effect is on prompt assembly — the
+         * `personaDescription` slot, the depth injection, the `{{persona}}`
+         * macro and the world-info scan data — and this client assembles no
+         * prompts. Answering `persona.list` with an empty list would read as
+         * "configured, none yet" and invite building a panel whose every write
+         * lands nowhere; answering `persona.get` with an invented description
+         * would be worse. A host that has one shows the real state.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client keeps no persona store, so ${method} has nothing true to answer with`,
+        )
       }
 
       default: {
@@ -1039,8 +1255,20 @@ class InMemoryClient implements FakeClient {
    * Timer-driven rather than an async loop, for two reasons: `chat.abort` gets
    * something concrete to cancel, and a test can run the whole thing at zero
    * delay without the ordering shifting under it.
+   *
+   * `seed` opens the buffer with existing text (a continue), and `role`/`name`
+   * say who the arriving text belongs to (an impersonation) — both forwarded
+   * exactly the way the host forwards its own.
    */
-  #beginTurn(chat: FakeChat, turn: number, messageIndex: number, candidate: number): void {
+  #beginTurn(
+    chat: FakeChat,
+    turn: number,
+    messageIndex: number,
+    candidate: number,
+    seed = '',
+    role?: 'user',
+    name?: string,
+  ): void {
     const chatId = chat.chatId
     const stream: Streaming = { turn, messageIndex, timers: [], aborted: false }
     this.#streams.set(chatId, stream)
@@ -1053,7 +1281,11 @@ class InMemoryClient implements FakeClient {
       // The fake's own identity for the row, announced the way the host
       // announces its own. Deliberately not made to resemble the host's: a
       // consumer that works against both can only be relying on the frame.
-      this.#emit({ type: 'stream.start', chatId, turn, key: `a${String(turn)}` })
+      this.#emit({
+        type: 'stream.start', chatId, turn, key: `a${String(turn)}`,
+        ...seed === '' ? {} : { seed },
+        ...role === undefined ? {} : { role, name: name ?? '' },
+      })
     })
 
     // Reasoning arrives first and on its own channel, which is the order a real

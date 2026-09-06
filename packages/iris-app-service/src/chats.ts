@@ -10,7 +10,8 @@
  * @module @iris/app-service/chats
  */
 
-import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import type { CharacterCard } from '@iris/character'
@@ -20,15 +21,19 @@ import {
   formatChatFile,
   parseChatFile,
   importChat,
+  type SillyTavernChat,
   type SillyTavernChatHeader,
+  type SillyTavernMessage,
 } from '@iris/persistence'
-import type { ChatSummary } from '@iris/protocol'
+import type { ChatSearchHit, ChatSearchMatch, ChatSummary } from '@iris/protocol'
+import type { RegexScript } from '@iris/regex'
 import type { ScopeBackend, Variables } from '@iris/variables'
 
+import { BackupStore } from './backups.ts'
 import { ChatEntry, createSession, readMeta } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
-import { backupsDir, fileFor, toId, uniqueId } from './paths.ts'
+import { fileFor, isSafeId, toId, uniqueId } from './paths.ts'
 import { resolveCardWorldbook, WorldbookStore } from './worldbooks.ts'
 import type { ScriptVariableStore } from './script-variables.ts'
 
@@ -98,12 +103,53 @@ export class ChatStore {
   readonly #bookFor:
     | ((characterId: string | undefined, card: CharacterCard | undefined) => Promise<string | undefined>)
     | undefined
+  /**
+   * The active persona description, read when a chat's macros expand.
+   *
+   * The same function is shared by every entry this store builds, so a persona
+   * switch reaches every conversation at its next expansion without any of
+   * them being reopened.
+   */
+  readonly #persona: (() => string) | undefined
+  /**
+   * The additional books bound to a character through the host, read when a
+   * chat opens.
+   *
+   * Upstream's `world_info.charLore[<file name>].extraBooks`. The same shape as
+   * `#globalSelect` for the same reason: the bindings are something the user
+   * edits while the host runs, and a snapshot taken at construction would leave
+   * every chat opened afterwards resolving against the old ones. A re-open is
+   * the moment the new list reaches a conversation, exactly as a changed
+   * global selection is.
+   */
+  readonly #charBooks: ((characterId: string) => readonly string[]) | undefined
+  /**
+   * The profile's global regex scripts, read fresh each time a chat opens.
+   *
+   * The same shape as `#globalSelect`: the list is something the user edits
+   * while the host runs, and a snapshot taken here would outlive the edit. Read
+   * once per open rather than per message because the scripts getter is
+   * synchronous and feeds three directions; `refreshGlobalRegex` is the path a
+   * `regex.set` takes to reach chats that are already open.
+   */
+  readonly #globalRegex: (() => Promise<readonly RegexScript[]>) | undefined
+  /**
+   * Where the pre-change copies live.
+   *
+   * Always present: a store without a snapshot directory would make the
+   * dangerous-operation protections a matter of which caller remembered to
+   * pass one. The parameter stays so a composition can share one store — and
+   * its retention setting — between this store and the service's handlers.
+   */
+  readonly #backups: BackupStore
 
   /**
    * @param dir - the folder holding chat files.
    * @param library - where the cards live, for reopening a chat's character.
    * @param scriptVariables - where the `script` scope persists. Absent keeps it
    *   in memory, which is what a host with nowhere to store it should do.
+   * @param backups - the snapshot store. Absent builds one on this store's own
+   *   directory with the default retention.
    */
   constructor(
     dir: string,
@@ -113,6 +159,10 @@ export class ChatStore {
     worldbooks?: WorldbookStore,
     globalSelect?: () => readonly string[],
     bookFor?: (characterId: string | undefined, card: CharacterCard | undefined) => Promise<string | undefined>,
+    persona?: () => string,
+    globalRegex?: () => Promise<readonly RegexScript[]>,
+    charBooks?: (characterId: string) => readonly string[],
+    backups?: BackupStore,
   ) {
     this.#dir = dir
     this.#library = library
@@ -121,6 +171,10 @@ export class ChatStore {
     this.#worldbooks = worldbooks
     this.#bookFor = bookFor
     this.#globalSelect = globalSelect
+    this.#persona = persona
+    this.#globalRegex = globalRegex
+    this.#charBooks = charBooks
+    this.#backups = backups ?? new BackupStore(dir)
   }
 
   /**
@@ -137,6 +191,11 @@ export class ChatStore {
     const store = this.#scriptVariables
     if (store === undefined || characterId === undefined) return undefined
     return store.backendFor(await store.open(characterId, card))
+  }
+
+  /** The global regex tier as it stands right now; absent when there is no store. */
+  async #globals(): Promise<readonly RegexScript[]> {
+    return await this.#globalRegex?.() ?? []
   }
 
   /** Create the folder if this is a first run. */
@@ -182,6 +241,75 @@ export class ChatStore {
   }
 
   /**
+   * Search every stored conversation's floor text.
+   *
+   * **A linear scan of the chat files, no index.** The files are the truth —
+   * every write goes through `save` — so the answer they give directly is the
+   * answer an index would need invalidation on every write to maintain, and
+   * the corpus's largest conversation (677 floors, 19 MiB) reads and searches
+   * in a fraction of the one-second line this has to meet. Each line is
+   * case-folded and substring-checked **before** it is parsed; only a line the
+   * cheap check flagged pays for a `JSON.parse`, and only a hit that survives
+   * into a floor's `mes` is reported — a match against the line's other keys
+   * (a speaker's name, a date, a variable table) is not a hit.
+   *
+   * Open conversations are read from disk like the rest, not from their live
+   * entries: the two can differ only inside a card's uncommitted replay batch,
+   * and a search that sees the committed conversation is the honest answer.
+   * @param query - the fragment to find. Blank after trimming is refused.
+   * @param options - case sensitivity (default false) and the per-chat cap on
+   *   reported matches (default {@link DEFAULT_SEARCH_MATCH_LIMIT}).
+   * @returns chats with at least one matching floor, newest activity first.
+   *   A file that cannot be read or parsed is skipped, exactly as `list` does.
+   * @throws {AppError} `invalid-request` when the query is empty.
+   */
+  async search(
+    query: string,
+    options?: { caseSensitive?: boolean, limit?: number },
+  ): Promise<ChatSearchHit[]> {
+    const needle = query.trim()
+    if (needle.length === 0) throw invalid('the search query is empty')
+    const caseSensitive = options?.caseSensitive ?? false
+    const limit = options?.limit ?? DEFAULT_SEARCH_MATCH_LIMIT
+    // One fold of the needle, not one per line.
+    const folded = caseSensitive ? needle : needle.toLowerCase()
+
+    const hits: ChatSearchHit[] = []
+    for (const chatId of await this.ids()) {
+      let text: string
+      try {
+        text = await readFile(fileFor(this.#dir, chatId, '.jsonl'), 'utf8')
+      } catch {
+        continue
+      }
+      const hit = searchChatText(chatId, text, folded, { caseSensitive, limit })
+      if (hit !== undefined) hits.push(hit)
+    }
+    // The sidebar list's order, so a search reads as the list, filtered.
+    return hits.sort((left, right) => right.updatedAt - left.updatedAt)
+  }
+
+  /**
+   * Re-read the global regex tier and hand it to every live conversation.
+   *
+   * Called after a `regex.set`: the store's list is what the next open would
+   * compose from, but a chat left open across the edit is still running on the
+   * snapshot it took, and SillyTavern's answer to that is `reloadCurrentChat()` —
+   * the reader sees the new text, not the text the old list produced.
+   * @returns the ids of the live conversations that were refreshed.
+   */
+  async refreshGlobalRegex(): Promise<string[]> {
+    if (this.#globalRegex === undefined) return []
+    const scripts = await this.#globalRegex()
+    const ids: string[] = []
+    for (const [chatId, entry] of this.#entries) {
+      entry.setGlobalScripts(scripts)
+      ids.push(chatId)
+    }
+    return ids
+  }
+
+  /**
    * Open a conversation, loading it if it is not already live.
    * @param chatId - the id from the request.
    * @returns the live entry.
@@ -209,12 +337,15 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(meta.characterId, card)
     const entry = new ChatEntry({
       chatId, header: file.header, session, card,
+      globalScripts: await this.#globals(),
       worldbook: await resolveCardWorldbook(
         card, this.#worldbooks, this.#globalSelect?.() ?? [],
         await this.#bookFor?.(meta.characterId, card),
+        meta.characterId === undefined ? [] : this.#charBooks?.(meta.characterId) ?? [],
       ),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
+      ...this.#persona === undefined ? {} : { persona: this.#persona },
     })
     // The log carries the conversation; the variables ride alongside it and
     // have to be put back explicitly.
@@ -255,12 +386,15 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(characterId, card)
     const entry = new ChatEntry({
       chatId, header, session, card,
+      globalScripts: await this.#globals(),
       worldbook: await resolveCardWorldbook(
         card, this.#worldbooks, this.#globalSelect?.() ?? [],
         await this.#bookFor?.(characterId, card),
+        this.#charBooks?.(characterId) ?? [],
       ),
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
+      ...this.#persona === undefined ? {} : { persona: this.#persona },
     })
     seedGreeting(entry, card, { user: userName, char: name })
     seedInitialVariables(entry)
@@ -348,12 +482,14 @@ export class ChatStore {
     const scriptScope = await this.#scriptScope(parentMeta.characterId, parent.card)
     const child = new ChatEntry({
       chatId: childId, header, session, card: parent.card,
+      globalScripts: await this.#globals(),
       // Reused rather than re-resolved: a branch plays the same character from
       // the same books, and a second resolution could disagree with its parent
       // if a book changed on disk in between.
       ...parent.worldbook === undefined ? {} : { worldbook: parent.worldbook },
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
+      ...this.#persona === undefined ? {} : { persona: this.#persona },
     })
     child.hydrateVariables(lines)
 
@@ -369,6 +505,107 @@ export class ChatStore {
     await this.save(parent)
 
     return child
+  }
+
+  /**
+   * Copy a SillyTavern chat file into this profile, as `/api/chats/import` does.
+   *
+   * The whole file is read and checked **before anything is written**, so a
+   * refusal never leaves a half-imported conversation behind: the parse and the
+   * shape check both name what they found instead of what they expected. The
+   * original filename survives as the chat's id whenever it can — a branch's
+   * `chat_metadata.main_chat` names the parent's file stem, so keeping stems is
+   * what keeps imported families linked once they are here (and `list` does
+   * that linking from the field itself, so import order never matters).
+   *
+   * What Iris adds goes in the header's own `iris` block, exactly as `create`
+   * does; every SillyTavern field, `main_chat` included, is kept verbatim so an
+   * export can put the file back.
+   * @param filename - the file's name, whose stem becomes the chat id when safe.
+   * @param base64 - the file's bytes.
+   * @param characterId - the character this conversation is played with.
+   * @returns the new conversation's summary.
+   * @throws {AppError} `not-found` for an unknown character, `invalid-request`
+   *   with a named reason for anything that is not a SillyTavern chat file.
+   */
+  async importFile(filename: string, base64: string, characterId: string): Promise<ChatSummary> {
+    // The owner is resolved first: a chat recorded against a card that is not
+    // in the library would open with the wrong books or none, and the user
+    // asked for this one by name.
+    await this.#library.ref(characterId)
+
+    const chat = parseImportedChat(filename, base64)
+    await this.ensure()
+
+    const stem = filename.replace(/\.jsonl$/iu, '')
+    // A stem the filesystem cannot hold (a `:` in it, say) still imports under
+    // a flattened id: the conversation matters more than its name, and the
+    // branch links survive because titles match on the stem either way.
+    const base = isSafeId(stem) ? stem : toId(stem)
+    const taken = new Set(await this.ids())
+    const chatId = uniqueId(base, candidate => taken.has(candidate))
+
+    // A file this host exported comes back carrying its own `iris` block. The
+    // conversation's identity is re-minted here — chat ids belong to this
+    // store — and a carried `parentChatId` is deliberately dropped, because a
+    // stale id from another store must never link a chat it does not name:
+    // lineage re-derives from `chat_metadata.main_chat`, which is always
+    // verbatim. But the title the user saw and when the conversation was last
+    // active are facts about the conversation, so they survive the round trip
+    // instead of resetting to the file stem and the arrival time.
+    const carried = chat.header['iris'] !== undefined
+    const prior = readMeta(chat.header)
+    const updatedAt = carried && prior.updatedAt !== 0
+      ? prior.updatedAt
+      : parseCreateDate(typeof chat.header.create_date === 'string' ? chat.header.create_date : '') ?? Date.now()
+    const title = carried && prior.title.length > 0 ? prior.title : stem
+
+    chat.header['iris'] = {
+      chatId,
+      characterId,
+      title,
+      updatedAt,
+    }
+
+    const target = fileFor(this.#dir, chatId, '.jsonl')
+    // **Import overwrite is the one dangerous operation that cannot happen
+    // today** — `uniqueId` above mints a fresh id whenever the stem is taken —
+    // and the guard is here anyway, because the mechanism's promise is about
+    // the operation, not about today's id arithmetic: if minting ever changes,
+    // the conversation that was there is copied aside first, not lost.
+    if (existsSync(target)) {
+      await this.#backups.snapshot(chatId, 'import-overwrite', characterId)
+    }
+    await writeFile(target, formatChatFile(chat), 'utf8')
+    return {
+      chatId,
+      title,
+      characterId,
+      updatedAt,
+      messageCount: chat.messages.length,
+    }
+  }
+
+  /**
+   * One conversation as SillyTavern's own JSONL, for `/api/chats/export`'s half
+   * of the migration.
+   *
+   * Through `toFile`, not a second writer: the projection every save already
+   * uses, with the carried-through fields and the original key order that the
+   * round-trip tests hold. The header keeps its `iris` block — SillyTavern
+   * ignores unknown header keys, and stripping it here would be a third answer
+   * to "what does this chat look like on disk".
+   * @param chatId - the conversation to take out.
+   * @returns the text and the file name to save it as — the chat's id, which is
+   *   the name a branch's `main_chat` addresses its parent by.
+   * @throws {AppError} `not-found` when no such chat is stored.
+   */
+  async exportFile(chatId: string): Promise<{ filename: string, content: string }> {
+    const entry = await this.open(chatId)
+    return {
+      filename: `${chatId}.jsonl`,
+      content: formatChatFile(entry.toFile()),
+    }
   }
 
   /**
@@ -390,24 +627,37 @@ export class ChatStore {
    * still find is what makes it so. A download that the browser refused, or that
    * went to a folder nobody remembers, is a backup only in the moment it was
    * offered.
+   *
+   * Through the snapshot store, so the copy lands where every other pre-change
+   * copy lands — `backups/<character>/<chat>/`, named with when and why — and
+   * the backup card lists it beside the rest instead of the store growing a
+   * second, invisible layout. Retention applies to it like to the rest.
    * @param chatId - the conversation to copy.
    * @returns the path written.
    * @throws {AppError} `not-found` when no such chat is stored.
    */
   async backup(chatId: string): Promise<string> {
-    const source = fileFor(this.#dir, chatId, '.jsonl')
-    const dir = backupsDir(this.#dir)
-    await mkdir(dir, { recursive: true })
-    // The instant is in the name: a second backup must not overwrite the first,
-    // and the one being replaced is exactly the one worth keeping.
-    const stamp = new Date().toISOString().replaceAll(/[:.]/gu, '-')
-    const target = fileFor(dir, `${chatId}-${stamp}`, '.jsonl')
-    try {
-      await copyFile(source, target)
-    } catch (cause: unknown) {
-      throw notFound(`no chat "${chatId}" to back up: ${String(cause)}`)
-    }
-    return target
+    const entry = await this.open(chatId)
+    const saved = await this.#backups.snapshot(chatId, 'cleanup', entry.meta.characterId)
+    return this.#backups.locate(saved.backupId)
+  }
+
+  /**
+   * Write an exact stored text back as a conversation's file.
+   *
+   * The restore arm's write half, and deliberately the only way in: the bytes
+   * go back **verbatim** — the whole point of a snapshot is that the
+   * conversation comes back as it went into the copy, floor for floor, not
+   * re-projected through today's writer. A live entry is dropped first, so the
+   * next open re-reads the disk instead of answering from the version the
+   * restore just replaced.
+   * @param chatId - the conversation to write.
+   * @param text - the snapshot's whole text.
+   */
+  async restoreFile(chatId: string, text: string): Promise<void> {
+    this.#entries.delete(chatId)
+    await this.ensure()
+    await writeFile(fileFor(this.#dir, chatId, '.jsonl'), text, 'utf8')
   }
 
   /**
@@ -591,4 +841,199 @@ export function branchTitle(parentTitle: string, taken: (title: string) => boole
     const candidate = `${base} - Branch #${String(index)}`
     if (!taken(candidate)) return candidate
   }
+}
+
+/** Matches reported per chat when the caller did not ask for a cap. */
+export const DEFAULT_SEARCH_MATCH_LIMIT = 5
+
+/** Snippet: floors of context shown before the match, and after its end. */
+const SNIPPET_BEFORE = 48
+const SNIPPET_AFTER = 96
+
+/**
+ * Scan one chat file's text for floors containing the needle.
+ *
+ * The needle arrives already case-folded when the search is insensitive, and
+ * each line is folded with it, so a 19 MiB file costs one substring pass and
+ * `JSON.parse` only on the handful of lines the pass flags. A flagged line
+ * still has to prove the match lives in its floor text — `mes` — because the
+ * line is JSON and everything it carries (the speaker's name, `send_date`, a
+ * floor's variable table) otherwise counts as content, which it is not.
+ * @param chatId - the file's stem, which is the conversation's id.
+ * @param text - the whole file.
+ * @param needle - the (already folded) fragment to find.
+ * @param caseSensitive - whether the needle is literal.
+ * @param limit - the most matches to report.
+ * @returns the hit, or undefined when no floor matches.
+ */
+export function searchChatText(
+  chatId: string,
+  text: string,
+  needle: string,
+  options: { caseSensitive: boolean, limit: number },
+): ChatSearchHit | undefined {
+  const { caseSensitive, limit } = options
+  const lines = text.split('\n').filter(line => line.trim().length > 0)
+  if (lines.length < 2) return undefined
+
+  let header: SillyTavernChatHeader
+  try {
+    header = JSON.parse(lines[0] ?? '{}') as SillyTavernChatHeader
+  } catch {
+    return undefined
+  }
+  const meta = readMeta(header)
+
+  const matches: ChatSearchMatch[] = []
+  for (let index = 1; index < lines.length; index += 1) {
+    if (matches.length >= limit) break
+    const line = lines[index] ?? ''
+    const folded = caseSensitive ? line : line.toLowerCase()
+    if (folded.includes(needle) === false) continue
+
+    let floor: SillyTavernMessage
+    try {
+      floor = JSON.parse(line) as SillyTavernMessage
+    } catch {
+      continue
+    }
+    // Upstream's own search skips system floors; so does this. A hidden
+    // narrator line is storage, not something a reader is looking for.
+    if (floor.is_system === true) continue
+    const mes = typeof floor.mes === 'string' ? floor.mes : ''
+    const at = caseSensitive ? mes.indexOf(needle) : mes.toLowerCase().indexOf(needle)
+    if (at < 0) continue
+    matches.push({
+      messageId: index - 1,
+      name: floor.name,
+      isUser: floor.is_user === true,
+      snippet: clipSnippet(mes, at),
+    })
+  }
+
+  if (matches.length === 0) return undefined
+  return {
+    chatId,
+    title: meta.title,
+    ...meta.characterId === undefined ? {} : { characterId: meta.characterId },
+    updatedAt: meta.updatedAt,
+    messageCount: lines.length - 1,
+    ...meta.parentChatId === undefined ? {} : { parentChatId: meta.parentChatId },
+    matches,
+  }
+}
+
+/**
+ * Text around a match, for a row that shows why it hit.
+ * @param text - the floor's whole text.
+ * @param at - where the match starts.
+ * @returns up to {@link SNIPPET_BEFORE} characters before the match and
+ *   {@link SNIPPET_AFTER} from its start, ellipsised only where cut.
+ */
+export function clipSnippet(text: string, at: number): string {
+  const start = Math.max(0, at - SNIPPET_BEFORE)
+  const end = Math.min(text.length, at + SNIPPET_AFTER)
+  return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '')
+}
+
+/**
+ * SillyTavern's `create_date` spelling, read back as a moment.
+ *
+ * The field is user-facing text upstream, not a timestamp, so this is a parse
+ * of the one format every real file carries — measured over the 31 chats on
+ * this machine — and not a general date reader. An unparseable or absent value
+ * returns `undefined`, which the caller replaces with the arrival time: a chat
+ * with no date still has to sort somewhere.
+ * @param when - e.g. `2026-01-18 @05h53m21s771ms`.
+ * @returns Unix epoch milliseconds, or undefined.
+ */
+export function parseCreateDate(when: string): number | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2}) @(\d{2})h(\d{2})m(\d{2})s(\d{3})?ms$/u.exec(when.trim())
+  if (match === null) return undefined
+  const [year, month, day, hour, minute, second, ms] = match.slice(1).map(part => Number(part))
+  // Local time, because that is how `formatCreateDate` wrote it: the same field
+  // read and written in the same zone, or every round trip would shift it.
+  const moment = new Date(
+    year ?? 1970, (month ?? 1) - 1, day ?? 1, hour ?? 0, minute ?? 0, second ?? 0, ms ?? 0,
+  )
+  return Number.isNaN(moment.getTime()) ? undefined : moment.getTime()
+}
+
+/**
+ * Decode an uploaded chat file to text, refusing what is not base64.
+ * @param base64 - the payload, as a browser file read produces it.
+ * @param filename - the file's name, for the refusal to name.
+ * @returns the file's text, byte-order mark stripped.
+ * @throws {AppError} `invalid-request` when the payload is not base64.
+ */
+function decodeChatFile(base64: string, filename: string): string {
+  // `Buffer.from` ignores what it cannot read, so the alphabet is checked
+  // first: without this, a truncated or mis-encoded upload decodes to silence
+  // and then fails as a JSON error pointing somewhere else entirely.
+  if (!/^[A-Za-z0-9+/=\s]*$/u.test(base64)) {
+    throw invalid(`"${filename}" is not a base64-encoded file`)
+  }
+  let text: string
+  try {
+    text = Buffer.from(base64, 'base64').toString('utf8')
+  } catch {
+    throw invalid(`"${filename}" is not a base64-encoded file`)
+  }
+  // A mark is metadata a text editor added, not content; JSON.parse would read
+  // it as a syntax error on the header's first byte.
+  return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text
+}
+
+/**
+ * Read and check an uploaded chat file, **before anything is written**.
+ *
+ * Upstream's import (`chats.js:604`) accepts several chat dialects and renames
+ * what it takes in; this is deliberately the stricter single-format arm the
+ * migration path needs. Every rule below was measured against the 31 real
+ * chats on this machine — all of which pass — so what it refuses is a file
+ * that is not a SillyTavern chat, never one that is. The refusal names the
+ * finding, because "import failed" is how a user ends up debugging the wrong
+ * end of the pipe.
+ * @param filename - the file's name, for the refusals to name.
+ * @param base64 - the file's bytes.
+ * @returns the parsed file.
+ * @throws {AppError} `invalid-request` naming what the file is missing.
+ */
+export function parseImportedChat(filename: string, base64: string): SillyTavernChat {
+  const text = decodeChatFile(base64, filename)
+  let chat: SillyTavernChat
+  try {
+    chat = parseChatFile(text)
+  } catch (cause: unknown) {
+    throw invalid(`"${filename}" is not a SillyTavern chat file: ${
+      cause instanceof Error ? cause.message : String(cause)}`)
+  }
+
+  const header = chat.header as Record<string, unknown>
+  for (const key of ['user_name', 'character_name'] as const) {
+    if (typeof header[key] !== 'string') {
+      throw invalid(`"${filename}" is not a SillyTavern chat file: the header has no "${key}" string`)
+    }
+  }
+  if (typeof header['chat_metadata'] !== 'object' || header['chat_metadata'] === null) {
+    throw invalid(`"${filename}" is not a SillyTavern chat file: the header has no "chat_metadata" object`)
+  }
+  if (header['create_date'] !== undefined && typeof header['create_date'] !== 'string') {
+    throw invalid(`"${filename}" is not a SillyTavern chat file: the header's "create_date" is not a string`)
+  }
+
+  for (const [index, line] of chat.messages.entries()) {
+    const row = line as unknown
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+      throw invalid(`"${filename}" is not a SillyTavern chat file: message ${String(index + 1)} is not an object`)
+    }
+    const message = row as Record<string, unknown>
+    if (typeof message['mes'] !== 'string') {
+      throw invalid(`"${filename}" is not a SillyTavern chat file: message ${String(index + 1)} has no "mes" text`)
+    }
+    if (typeof message['is_user'] !== 'boolean') {
+      throw invalid(`"${filename}" is not a SillyTavern chat file: message ${String(index + 1)} has no "is_user" flag`)
+    }
+  }
+  return chat
 }

@@ -137,6 +137,9 @@ importers:
       '@iris/compat-tavernhelper':
         specifier: workspace:*
         version: link:../iris-compat-tavernhelper
+      '@iris/llm-openai-compat':
+        specifier: workspace:*
+        version: link:../iris-llm-openai-compat
       '@iris/lorebook':
         specifier: workspace:*
         version: link:../iris-lorebook

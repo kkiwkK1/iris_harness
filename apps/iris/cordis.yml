@@ -83,6 +83,11 @@
     userName: !!js process.env.IRIS_USER_NAME ?? 'User'
     contextWindow: !!js Number(process.env.IRIS_CONTEXT_WINDOW ?? 32768)
     presetPath: !!js process.env.IRIS_PRESET
+    # The SillyTavern **profile** directory (`…/data/<user>`, never the install
+    # root) that preset import reads from and book materialisation consults.
+    # Read-only, and refused at boot if it overlaps dataDir. Unset by default,
+    # and never guessed — without it the import row does not exist.
+    sillyTavernDir: !!js process.env.IRIS_ST_DIR
     # Trims the five MVU variable keys off older floors, matching SillyTavern,
     # whose own cleanup ships enabled and has already run over every long chat
     # in a real install. **It deletes those keys and nothing restores them** —
@@ -101,6 +106,11 @@
     # filesystem writes and no host objects in reach, but containment is not a
     # reason to opt someone in. Set IRIS_TEMPLATES=1 to turn it on.
     templates: !!js process.env.IRIS_TEMPLATES === '1'
+    # Conversation snapshots kept per chat before the oldest is deleted. The
+    # host snapshots a conversation before deleting a message from it, before a
+    # card's replay batch becomes the stored file, and before a restore writes
+    # over it. Upstream keeps 50 by default.
+    backupKeep: !!js Number(process.env.IRIS_BACKUP_KEEP ?? 50)
 
 # The built interface, served from the same origin as the transport — which is
 # what keeps the page out of CORS entirely. Disabled when there is no build, so

@@ -9,6 +9,7 @@ import {
   decodeTextChunk,
   encodeCardPng,
   encodeTextChunk,
+  mutateCardPng,
   normalizeCard,
   parsePngChunks,
   readCardChunks,
@@ -241,4 +242,48 @@ test('a truncated PNG is reported rather than read past', () => {
   const png = blankPng()
 
   assert.throws(() => parsePngChunks(png.subarray(0, png.length - 6)), /truncated|no IEND/)
+})
+
+test('mutateCardPng rewrites every card chunk and no other chunk', () => {
+  // Both chunks carry the same body under two stamps — the shape ST's own
+  // exporter writes, and the shape a manager operation (rename, tags) meets.
+  const body = {
+    spec: 'chara_card_v2',
+    spec_version: '2.0',
+    data: { name: '络络', description: 'd', extensions: { world: '络络世界' } },
+    name: '络络',
+  }
+  const png = blankPng([
+    encodeTextChunk('chara', payload(body)),
+    encodeTextChunk('ccv3', payload(body)),
+    encodeTextChunk('Comment', payload({ untouched: true })),
+  ])
+
+  const mutated = mutateCardPng(png, card => {
+    card['name'] = '络络二号'
+    const data = card['data'] as Record<string, unknown>
+    data['name'] = '络络二号'
+    return card
+  })
+
+  const chunks = readCardChunks(mutated)
+  for (const raw of [chunks.chara, chunks.ccv3]) {
+    assert.ok(raw !== undefined)
+    const card = JSON.parse(Buffer.from(raw, 'base64').toString('utf8')) as Record<string, unknown>
+    assert.equal(card['name'], '络络二号', 'one chunk saw the change and the other did not')
+    assert.deepEqual(card['data'] && (card['data'] as Record<string, unknown>)['extensions'], { world: '络络世界' })
+  }
+  // A comment chunk that is *also* JSON is not a card chunk, and must not be
+  // mutated just because it parses.
+  const comment = parsePngChunks(mutated)
+    .filter(chunk => chunk.type === 'tEXt')
+    .map(chunk => decodeTextChunk(chunk.data))
+    .find(text => text?.keyword === 'Comment')
+  assert.deepEqual(JSON.parse(Buffer.from(comment?.text ?? '', 'base64').toString('utf8')), { untouched: true })
+  // The image is exactly what it was.
+  assert.deepEqual(decodeCardPng(mutated).data.name, '络络二号')
+})
+
+test('mutateCardPng refuses a PNG that carries no card', () => {
+  assert.throws(() => mutateCardPng(blankPng(), card => card), /no "ccv3" or "chara"|no character card/)
 })

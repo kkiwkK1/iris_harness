@@ -34,7 +34,7 @@ import type {
 } from '@iris/protocol'
 
 import { buttonEventName } from './button-event.ts'
-import { UnsupportedApiError } from './errors.ts'
+import { UnsupportedApiError } from './errors.ts'
 
 /**
  * The events a **started** generation is announced under.
@@ -74,6 +74,23 @@ import { UnsupportedApiError } from './errors.ts'
  * @returns the bus events to emit, in order.
  */
 export const STARTED_EVENTS: readonly string[] = ['js_generation_started', 'generation_started']
+
+/**
+ * The one MVU event the shell speaks into **message** frames.
+ *
+ * An interface is a status panel that redraws when the variables it draws
+ * change, and every measured status bar subscribes to this name
+ * (`eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, …)`). Upstream the name arrives
+ * because the MVU bundle emits it on the page's shared event source and every
+ * iframe's subscription is bridged to that source. Here the bundle runs in the
+ * script frame and each message frame has its own bus, so the shell emits the
+ * name itself on the same host events that refresh the frames' snapshots.
+ *
+ * Only into message frames. A script frame runs the bundle, which emits the
+ * event itself — a shell copy there would deliver every update twice, which is
+ * the same ground DEVIATIONS §3 already covers for the host side.
+ */
+export const MVU_UPDATE_ENDED_EVENT: string = MVU_EVENTS.VARIABLE_UPDATE_ENDED
 
 /**
  * Every name a settled generation can arrive under.
@@ -887,6 +904,27 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     const answer = await host.call('getWorldbook', { name })
     const entries = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
     return entries.map(entry => reviveWorldbookKeys(entry))
+  }
+
+  /**
+   * The create and rebind arms, as locals.
+   *
+   * Both the members below and `getOrCreateChatWorldbook` — which composes the
+   * two — go through these, so "how a book is created" and "how a chat is bound"
+   * are decided once. A member that reached a sibling through `this` would break
+   * the first time the object was destructured or spread, which is how cards
+   * routinely import these APIs.
+   */
+  const createBook = async (name: string, entries: readonly unknown[] = []): Promise<boolean> => {
+    const answer = await host.call('createWorldbook', {
+      name,
+      entries: entries.map(entry => flattenWorldbookEntry(entry)),
+    })
+    return (answer as { created?: boolean } | undefined)?.created === true
+  }
+
+  const bindChatBook = async (name: string | null): Promise<void> => {
+    await host.call('rebindChatWorldbook', { name })
   }
 
   /**
@@ -1711,6 +1749,32 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       })
     },
     /**
+     * Every world book the host knows, by name.
+     *
+     * **Synchronous, because upstream is.** `getWorldbookNames(): string[]` is
+     * `klona(world_names)` upstream (`JS-Slash-Runner/src/function/worldbook.ts:23`)
+     * — the page's own list, no promise — and the measured caller calls it
+     * bare and tests the result in the same statement:
+     * `names.includes('…')`. Behind an RPC that call site would read
+     * `undefined.includes`, throw, and report the host's book as missing — the
+     * exact misdiagnosis this member exists not to cause. So it answers from the
+     * pushed snapshot (`worldbookNames`), the way `getCharWorldbookNames` and
+     * `getLorebookSettings` already do.
+     *
+     * A book the host seeded from a card's embedded copy is a real name here, as
+     * it is a real name in upstream's `world_names`: the snapshot is built from
+     * the same store `worldbook.names` answers from.
+     *
+     * Cloned on the way out, for the reason its two sibling members are: this
+     * surface is shared between a card's scripts, and an array handed out by
+     * reference is one a card can mutate under the next reader.
+     * @returns every known book name, in the host's order.
+     */
+    getWorldbookNames: (): string[] => {
+      const names = snapshot('getWorldbookNames').worldbookNames
+      return [...(names ?? [])]
+    },
+    /**
      * Which world books this card is bound to.
      *
      * **Synchronous, and that is the whole design constraint.** Upstream declares
@@ -2172,10 +2236,343 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       const stored = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
       return stored.map(entry => reviveWorldbookKeys(entry))
     },
+    /*
+     * The chat-book and creation family below answers one measured fact:
+     * 神隐挑战 V1.5.4 mints a chat world book at runtime and appends entries to
+     * it (`getOrCreateChatWorldbook` then `createWorldbookEntries`), and 2.png
+     * calls `getWorldbookNames` — answered beside `getCharWorldbookNames`
+     * above. Before this family existed those calls hit nothing, and a card
+     * whose game engine writes its own lore played with a world that could
+     * never grow.
+     */
+
+    /**
+     * The globally selected books.
+     *
+     * Synchronous upstream, so it reads the snapshot's `lorebookSettings` — the
+     * same table `getLorebookSettings()` hands out, whose
+     * `selected_global_lorebooks` is this answer. Absent settings mean a host
+     * that shipped no table, and `[]` is that installation's truth rather than
+     * an invented empty selection.
+     */
+    getGlobalWorldbookNames: (): string[] => {
+      const settings = snapshot('getGlobalWorldbookNames').lorebookSettings
+      return [...(settings?.selected_global_lorebooks ?? [])]
+    },
+
+    /**
+     * The name of the chat's own book, or null.
+     *
+     * Reads `chat_metadata.world_info` from the snapshot and applies the same
+     * existence guard upstream's getter does (`lorebook.ts:317`): the key is
+     * honoured only while the named file exists, and a dangling key reads as
+     * unbound rather than as an error. Upstream also unsets the dangling key it
+     * finds; that write needs a round trip, so this member only refuses to
+     * report it — the next `getOrCreateChatWorldbook` minting a book will not
+     * collide, because the host's create refuses existing names.
+     * @param chatName - upstream's parameter; only `'current'` is served.
+     */
+    getChatWorldbookName: (chatName?: string): string | null => {
+      if (chatName !== 'current') {
+        throw new UnsupportedApiError(
+          'getChatWorldbookName',
+          'Iris only supports \'current\'; a named-chat query needs a synchronous'
+          + ' host read that is not available in a frame.',
+        )
+      }
+      const context = snapshot('getChatWorldbookName')
+      const bound = context.chatMetadata['world_info']
+      if (typeof bound !== 'string' || bound === '') return null
+      return (context.worldbookNames ?? []).includes(bound) ? bound : null
+    },
+
+    /**
+     * Bind — or, with null, unbind — the chat's own book.
+     *
+     * The host refuses a name with no file behind it, which is upstream's
+     * `setChatLorebook` behaviour (`lorebook.ts:331`): a dangling binding would
+     * make every later scan silently skip the chat book.
+     */
+    rebindChatWorldbook: async (chatName: 'current', worldbookName: string | null): Promise<void> => {
+      if (chatName !== 'current') {
+        throw new UnsupportedApiError(
+          'rebindChatWorldbook',
+          'Iris only supports \'current\'; the chat that is open is the one this frame can name.',
+        )
+      }
+      await bindChatBook(worldbookName)
+    },
+
+    /**
+     * Choose the books injected into every chat.
+     *
+     * Upstream writes `world_info.globalSelect` through the settings and saves
+     * debounced; this crosses to the host arm of the same name. Chats already
+     * open keep the selection they resolved with — the host's ruling, which this
+     * member inherits rather than softens.
+     */
+    rebindGlobalWorldbooks: async (worldbookNames: string[]): Promise<void> => {
+      await host.call('rebindGlobalWorldbooks', { names: [...worldbookNames] })
+    },
+
+    /**
+     * Create a book that does not exist yet, reporting rather than throwing.
+     *
+     * Upstream's `createWorldbook` answers `false` for "already there" — the
+     * get-or-create idiom treats that as a normal outcome. The `entries` may be
+     * omitted, which is what the chat-book path wants: a file to bind before
+     * any entry exists to put in it.
+     */
+    createWorldbook: async (name: string, entries: readonly unknown[] = []): Promise<boolean> =>
+      createBook(name, entries),
+
+    /**
+     * The chat's own book, minted when there is none.
+     *
+     * Upstream's `getOrCreateChatLorebook` (`lorebook.ts:339`), step for step:
+     * an existing binding returns as-is; a caller-supplied name must be free;
+     * otherwise the name is minted as `Chat Book <chatId>` with every
+     * non-alphanumeric run collapsed to one underscore and the whole thing cut
+     * at 64 characters — upstream's exact recipe, because the name is stored in
+     * chat metadata and a differently-minted name would simply never match the
+     * one a card went looking for.
+     * @param chatName - upstream's parameter; only `'current'` is served.
+     * @param worldbookName - the name to create when none is bound.
+     * @returns the bound book's name.
+     */
+    getOrCreateChatWorldbook: async (chatName: 'current', worldbookName?: string): Promise<string> => {
+      if (chatName !== 'current') {
+        throw new UnsupportedApiError(
+          'getOrCreateChatWorldbook',
+          'Iris only supports \'current\'; the chat that is open is the one this frame can name.',
+        )
+      }
+      const context = snapshot('getOrCreateChatWorldbook')
+      const bound = context.chatMetadata['world_info']
+      if (typeof bound === 'string' && bound !== '' && (context.worldbookNames ?? []).includes(bound)) {
+        return bound
+      }
+
+      const minted = worldbookName === undefined
+      const name = worldbookName
+        ?? `Chat Book ${context.chatId}`
+          .replace(/[^a-z0-9]/gi, '_')
+          .replace(/_{2,}/g, '_')
+          .substring(0, 64)
+
+      const created = await createBook(name)
+      if (!created) {
+        // Upstream throws this case for a caller-supplied name
+        // (`lorebook.ts:348`). A minted name colliding is possible too — two
+        // chats can sanitize to the same 64 characters — and upstream's
+        // `createNewWorldInfo` refuses it no less; the message is the same
+        // either way, with the name in it so the card can pick another.
+        throw new Error(
+          `getOrCreateChatWorldbook: the world book '${name}' already exists`
+          + (minted ? ' (name minted from the chat id; pass an explicit worldbook_name to choose your own)' : ''),
+        )
+      }
+      await bindChatBook(name)
+      return name
+    },
+
+    /**
+     * Append entries to a book, and say which ones landed.
+     *
+     * Upstream's `createWorldbookEntries` is `updateWorldbookWith` plus a slice:
+     * read, remember the length, append, write whole, and return the re-read
+     * tail. The tail comes from the **re-read**, not from the caller's array —
+     * the host fills in uids and renumbers `displayIndex`, so the entries as
+     * stored are the only ones worth reporting.
+     * @param name - the book's name; it must already exist, as upstream requires.
+     * @param newEntries - the entries to append; only `uid` is required on each.
+     * @param _options - upstream's `{ render }`, accepted and ignored.
+     * @returns the whole book as stored, and the newly added tail.
+     */
+    createWorldbookEntries: async (
+      name: string,
+      newEntries: readonly unknown[],
+      _options?: { render?: 'debounced' | 'immediate' },
+    ): Promise<{ worldbook: CardWorldbookEntry[], new_entries: CardWorldbookEntry[] }> => {
+      const current = await readWorldbook(name)
+      const sliceStart = current.length
+      const answer = await host.call('replaceWorldbook', {
+        name,
+        entries: [...current, ...newEntries].map(entry => flattenWorldbookEntry(entry)),
+      })
+      const stored = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
+      const worldbook = stored.map(entry => reviveWorldbookKeys(entry))
+      return { worldbook, new_entries: worldbook.slice(sliceStart) }
+    },
+
     swipeTo: async (messageId: number, swipeId: number) =>
       // `swipeIndex` on the wire; upstream's parameter is `swipeId`. Renamed at
       // the boundary rather than in either half's own vocabulary.
       host.call('swipeTo', { messageId, swipeIndex: swipeId }),
+
+    /**
+     * Upstream's chat-patch member, and the one a message frame's own button
+     * most often calls — the measured card starts its whole game through
+     * `setChatMessages([{ message_id: 0, swipe_id: 1 }])`.
+     *
+     * Two of upstream's patch fields are carried, each to the arm that owns it:
+     * `swipe_id` moves a floor to another of its swipes, and `message` rewrites
+     * a floor's text through the same wire call the journal replay uses.
+     * Anything else a patch may carry (`data`, `variables`, `role`, …) is
+     * **named once per call and not silently dropped**: a patch that
+     * half-applied must not be readable as one that applied.
+     *
+     * Accepted and ignored: upstream's second argument (the `group_id` /
+     * `chat_id` chat selector and the `refresh` repaint hint). This frame
+     * answers for its own chat, and the host repaints every attached page
+     * itself.
+     * @param messages - upstream's patch list; `message_id` required per item.
+     * @param _options - upstream's chat selector and refresh hint.
+     * @returns nothing.
+     */
+    setChatMessages: async (
+      messages: readonly Record<string, unknown>[],
+      _options?: Record<string, unknown>,
+    ): Promise<void> => {
+      let unsupported: string[] | undefined
+      for (const patch of messages) {
+        const messageId = patch['message_id']
+        if (typeof messageId !== 'number' || !Number.isInteger(messageId) || messageId < 0) {
+          throw new UnsupportedApiError(
+            'setChatMessages([...])',
+            'every patch needs a numeric `message_id`, and one item had none Iris could read',
+          )
+        }
+        const swipe = patch['swipe_id']
+        const message = patch['message']
+        // Collected whichever arm runs: a patch that carries a carried field
+        // *and* an uncarrried one must not use the carried arm to slip the
+        // other past the report.
+        const carried = Object.keys(patch).filter(
+          name => name !== 'message_id' && name !== 'swipe_id' && name !== 'message',
+        )
+        unsupported = [...unsupported ?? [], ...carried]
+        if (typeof message === 'string') {
+          // The text arm. A patch carrying both a text and a `swipe_id` would,
+          // upstream, rewrite the floor as shown in *that* swipe; this host
+          // addresses text by floor alone, so the pair is refused rather than
+          // applied to whichever swipe happens to be showing.
+          if (typeof swipe === 'number') {
+            throw new UnsupportedApiError(
+              'setChatMessages([{ message_id, message, swipe_id }])',
+              'a patch carrying both a text and a `swipe_id` is not answerable here —'
+                + ' swipe first, then send the text as a second patch',
+            )
+          }
+          await host.call('setChatMessages', { messages: [{ messageId, message }] })
+          continue
+        }
+        if (typeof swipe === 'number') {
+          await host.call('swipeTo', { messageId, swipeIndex: swipe })
+          continue
+        }
+      }
+      if (unsupported !== undefined && unsupported.length > 0) {
+        host.reportGap(
+          `a card patched setChatMessages with fields Iris does not carry`
+            + ` (${[...new Set(unsupported)].join(', ')}); every such field was skipped, not applied`,
+        )
+      }
+    },
+
+    /**
+     * Upstream's chat-append member — and until now a name the surface
+     * declared but never answered, which is the one shape this surface cannot
+     * carry: a card guards with `typeof createChatMessages === 'undefined'`,
+     * so the gap never threw; the card silently took its "not in a Tavern"
+     * branch, and the console button that should have written variables and
+     * sent an initialization message did nothing at all (measured: 新·架空
+     * 政治经济模拟器's 建国控制台). A missing member that a `typeof` probe
+     * cannot see is worse than a throwing one — it is the swallowed failure
+     * the panel exists for.
+     *
+     * Upstream appends floors to the chat file, one per `{role, message}`:
+     * `user` becomes the reader's line, `assistant` the character's, and
+     * `system` a narrator line (`is_system`). Upstream then repaints; this
+     * host announces the changed chat itself (`script.createChatMessages`
+     * answers with the view and every attached page hears it). What it does
+     * NOT do is generate — upstream leaves the turn for the caller to trigger,
+     * and the measured card follows the append with `triggerSlash('/trigger')`.
+     * Accepted and ignored: `refresh` (the host repaints every page) and
+     * `type` (`'one_off'` only ever accompanied chat-history edits this host
+     * answers through the same arm).
+     * @param messages - `{role, message}` rows, in order.
+     * @param options - upstream's `insert_at` position (absent appends).
+     * @returns the ids the floors landed at, upstream's own answer shape.
+     */
+    createChatMessages: async (
+      messages: readonly Record<string, unknown>[],
+      options?: Record<string, unknown>,
+    ): Promise<number[]> => {
+      const names = snapshot('createChatMessages')
+      if (messages.length === 0) return []
+      const before = chatOf('createChatMessages').length
+      const insertAt = options?.['insert_at']
+      const wire = messages.map(row => {
+        const role = row['role']
+        const message = row['message']
+        if (typeof message !== 'string') {
+          throw new UnsupportedApiError(
+            'createChatMessages([{ role, message }])',
+            'every row needs a string `message`, and one had none Iris could write',
+          )
+        }
+        if (role !== 'user' && role !== 'assistant' && role !== 'system') {
+          throw new UnsupportedApiError(
+            'createChatMessages([{ role, message }])',
+            `the role ${String(role)} is not one upstream defines (user, assistant, system)`,
+          )
+        }
+        return {
+          // `name` rides the chat's own speaker table, which is exactly how
+          // upstream defaults it (`name1`/`name2`).
+          name: role === 'user' ? names.name1 : names.name2,
+          is_user: role === 'user',
+          mes: message,
+          ...role === 'system' ? { is_system: true } : {},
+        }
+      })
+      const answer = await host.call('createChatMessages', {
+        messages: wire,
+        ...typeof insertAt === 'number' ? { insertAt } : {},
+      })
+      // The host answers with the whole view, so the ids come from where the
+      // floors actually landed rather than from what the caller guessed.
+      const view = (answer as { view?: { messages?: { id: number }[] } } | undefined)?.view
+      const total = view?.messages?.length ?? before + wire.length
+      const at = typeof insertAt === 'number'
+        ? Math.min(Math.max(insertAt < 0 ? total + insertAt : insertAt, 0), total)
+        : total - wire.length
+      return Array.from({ length: wire.length }, (_unused, index) => at + index)
+    },
+
+    /**
+     * Upstream's chat-delete member, over the same arm the journal replay
+     * uses. Takes one id or a list; upstream removes in one pass against the
+     * caller's snapshot, and so does the host arm (`script.deleteChatMessages`
+     * resolves the batch against one array — the two orderings agree for a
+     * caller holding the whole set).
+     * @param messageIds - an id or a list of ids, as upstream takes them.
+     * @returns the ids that were removed.
+     */
+    deleteChatMessages: async (messageIds: number | readonly number[]): Promise<number[]> => {
+      const ids = Array.isArray(messageIds) ? [...messageIds] : [messageIds]
+      for (const id of ids) {
+        if (typeof id !== 'number' || !Number.isInteger(id) || id < 0) {
+          throw new UnsupportedApiError(
+            'deleteChatMessages(ids)',
+            'every id must be a non-negative integer message id',
+          )
+        }
+      }
+      await host.call('deleteChatMessages', { messageIds: ids })
+      return ids
+    },
 
     // ── host capabilities that were already asynchronous ─────────────────
     /**
@@ -2243,6 +2640,135 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
         // Upstream's `'all'` and an absent value mean the same thing, and the
         // contract spells it as absent.
         ...(typeof maxHistory === 'number' ? { maxHistory } : {}),
+      })
+      return (answer as { text?: unknown } | undefined)?.text
+    },
+
+    /**
+     * Upstream's **caller-ordered** generate — and until now a name that was
+     * documented here and never implemented, which is the one failure shape
+     * this surface cannot carry: a card's bare `generateRaw(...)` threw
+     * `ReferenceError` on the first call, inside a handler that catches and
+     * reports "questionnaire failed", and the card told its player the host
+     * lacked the plugin. Measured in 神隐挑战's 游戏引擎 at 13 call sites, every
+     * one the object form:
+     *
+     *   generateRaw({ user_input, should_silence, overrides, ordered_prompts })
+     *
+     * `ordered_prompts` is the member's whole point — the caller, not the
+     * preset, decides what the model sees. Upstream resolves each entry in
+     * order; entries are environment names or literal `{role, content}`. The
+     * same composition, over Iris's two-field raw method (`prompt` +
+     * `systemPrompt`):
+     *
+     * - `user_input` — a string, or a role-message list, placed where the
+     *   `user_input` name appears in the order.
+     * - `persona_description`, `char_description`, `char_personality`,
+     *   `scenario_description` — the override from `overrides` when the caller
+     *   supplies one (神隐挑战 overrides the persona on every site); the
+     *   snapshot carries no persona text of its own, so without an override the
+     *   name is skipped and **said**.
+     * - `world_info_before`, `world_info_after` — world-info assembly is the
+     *   *assembling* generate's job upstream too; the raw method sends only
+     *   what it is handed. Skipped and said, once per call.
+     * - `{role, content}` — `system` rides the host's system field; `user` and
+     *   `assistant` ride the prompt in order.
+     * - any other name — skipped and said. An unknown environment name silently
+     *   dropped would read as "the model ignored that part", which is the
+     *   quietest kind of wrong.
+     *
+     * `should_silence` needs no carrying: upstream's flag keeps a raw
+     * generation out of the chat log, and Iris's raw method never writes a
+     * floor in the first place. `max_response_token` and `header_version` are
+     * accepted and unused, as no corpus call passes them.
+     * @param config - upstream's `GenerateRawArgs` object.
+     * @returns the generated text.
+     */
+    generateRaw: async (config: Record<string, unknown>): Promise<unknown> => {
+      const chatId = snapshot('generateRaw').chatId
+      if (chatId === undefined) {
+        throw new UnsupportedApiError(
+          'generateRaw()',
+          'This frame has no chat to generate into; its snapshot carries no chat id.',
+        )
+      }
+
+      const userInput = config['user_input']
+      const overrides =
+        typeof config['overrides'] === 'object' && config['overrides'] !== null
+          ? (config['overrides'] as Record<string, unknown>)
+          : {}
+      const ordered = Array.isArray(config['ordered_prompts']) ? config['ordered_prompts'] : undefined
+
+      /** The prompt side, in the order the caller wrote it. */
+      const promptParts: string[] = []
+      const systemParts: string[] = []
+      const skipped: string[] = []
+      const contentOf = (entry: unknown): string | undefined =>
+        typeof entry === 'object' && entry !== null && typeof (entry as Record<string, unknown>)['content'] === 'string'
+          ? ((entry as Record<string, unknown>)['content'] as string)
+          : undefined
+      const pushUserInput = (value: unknown): void => {
+        if (typeof value === 'string') {
+          promptParts.push(value)
+          return
+        }
+        // Upstream also accepts role messages here; fold them in order.
+        if (Array.isArray(value)) for (const entry of value) promptParts.push(contentOf(entry) ?? '')
+      }
+      const envOf = (name: string): string | undefined => {
+        const override = overrides[name]
+        if (typeof override === 'string') return override
+        skipped.push(name)
+        return undefined
+      }
+
+      if (ordered !== undefined) {
+        for (const entry of ordered) {
+          if (typeof entry === 'string') {
+            if (entry === 'user_input') pushUserInput(userInput)
+            else {
+              const env = envOf(entry)
+              if (env !== undefined) promptParts.push(env)
+            }
+            continue
+          }
+          const role = typeof entry === 'object' && entry !== null ? (entry as Record<string, unknown>)['role'] : undefined
+          const content = contentOf(entry)
+          if (content === undefined) continue
+          if (role === 'system') systemParts.push(content)
+          else promptParts.push(content)
+        }
+      } else {
+        // No order given: upstream sends the user input alone.
+        pushUserInput(userInput)
+      }
+
+      if (skipped.length > 0) {
+        host.reportGap(
+          'a card ordered generateRaw with environment prompt(s) this frame does not carry '
+          + `(${[...new Set(skipped)].join(', ')}), so those parts were left out of what the model saw`,
+        )
+      }
+      if (Array.isArray(config['injects']) && config['injects'].length > 0) {
+        host.reportGap(
+          'a card passed injects to generateRaw — in-chat injection depth/order is not carried, '
+          + 'so those parts were left out of what the model saw',
+        )
+      }
+
+      const prompt = promptParts.filter(part => part !== '').join('\n\n')
+      if (prompt === '') {
+        throw new UnsupportedApiError(
+          'generateRaw({...})',
+          'The composed prompt is empty; there is nothing to send the model.',
+        )
+      }
+      const systemPrompt = systemParts.join('\n\n')
+      const answer = await host.call('generateRaw', {
+        chatId,
+        prompt,
+        ...(systemPrompt === '' ? {} : { systemPrompt }),
       })
       return (answer as { text?: unknown } | undefined)?.text
     },

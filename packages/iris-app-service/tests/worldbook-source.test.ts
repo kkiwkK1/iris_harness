@@ -161,7 +161,7 @@ test('a materialised binding outranks the name written on the card', async () =>
 test('a card with no books at all resolves to nothing, not to an error', async () => {
   const store = await storeWith({})
   const resolved = await resolveCardWorldbook(cardWith({}), store)
-  assert.deepEqual(resolved, { entries: [], source: 'none', world: 'Aria', global: [] })
+  assert.deepEqual(resolved, { entries: [], source: 'none', world: 'Aria', additional: [], global: [] })
 
   // A host with no store has nowhere to materialise into and therefore no
   // world-info channel at all. It answers empty rather than throwing on every

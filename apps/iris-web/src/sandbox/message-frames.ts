@@ -44,13 +44,15 @@
  * @module iris-web/sandbox/message-frames
  */
 import type { FrontendBlock } from './frontend-blocks.ts'
+import type { Language } from '../app/i18n/strings.ts'
+import { translate } from '../app/i18n/strings.ts'
 
 
 /** Where one interface has got to. */
 export type InterfacePhase =
   /** Claimed, no frame yet. */
   | 'claimed'
-  /** The frame answered `ready`; its markup has parsed. */
+  /** The frame answered `ready`; the channel to it is up. */
   | 'live'
   /** The frame never became ready. */
   | 'never-started'
@@ -120,6 +122,17 @@ export interface StartedInterface {
    * the protocol, and it never looks inside a snapshot — it only forwards one.
    */
   refreshContext: (context: unknown) => void
+  /**
+   * Deliver one host event into the frame's bus.
+   *
+   * An interface is a status panel that redraws when the variables it draws
+   * change, and the corpus's panels redraw on `eventOn(Mvu.events.
+   * VARIABLE_UPDATE_ENDED, …)` — a name the shell must speak into this frame,
+   * because the MVU bundle that would emit it upstream sits in the *script*
+   * frame and its bus is this frame's neither. Typed loosely for the same
+   * reason `refreshContext` is: this controller forwards, it does not interpret.
+   */
+  emit: (event: string, args: readonly unknown[]) => void
   dispose: () => void
 }
 
@@ -140,6 +153,22 @@ export interface MessageFramesEnv {
     floor: number
     instance: number
     onReady: () => void
+    /**
+     * The frame's bootstrap died before it could speak.
+     *
+     * A bootstrap that throws reports `bootstrap-error` and then has nothing
+     * left to be ready **with** — so without this, the only answer the
+     * controller could give was the timeout's generic guess, eight seconds of
+     * silence after the real reason had already arrived and been dropped. The
+     * message is the frame's own words for what killed it; it becomes the
+     * `never-started` detail verbatim.
+     */
+    onBootstrapError: (message: string) => void
+    /**
+     * The frame laid out real content for the first time. Once per frame; see
+     * `MessageFramesEnv.onPainted` for why this and not `ready`.
+     */
+    onPainted: () => void
   }) => StartedInterface
   /**
    * Put the frame into the document.
@@ -150,6 +179,20 @@ export interface MessageFramesEnv {
    */
   attach: (frame: { element: { isConnected?: unknown }, floor: number, instance: number }) => void
   onState: (states: readonly InterfaceState[]) => void
+  /**
+   * One frame has laid out real content for the first time.
+   *
+   * The frame's own height report is the signal: it posts only once
+   * `body.scrollHeight` is a positive number, which is the first moment there
+   * is something on screen to look at. `ready` cannot play this role — an
+   * interface frame announces ready when its bootstrap is done, and its markup
+   * parses **after** that (the libraries sit between them) — so a caller that
+   * reveals frames at ready reveals a white rectangle. Optional, because the
+   * only present consumer is the reading view's swap, and a caller that does
+   * not care should not have to wire a no-op.
+   * @param instance - the instance whose frame laid out.
+   */
+  onPainted?: (instance: number) => void
   /** How long a frame may take to become ready before silence is a finding. */
   readyTimeoutMs?: number
   /**
@@ -183,6 +226,15 @@ export interface RunningInterfaces {
    * panel’s own drawn state with it.
    */
   refresh: (context: unknown) => void
+  /**
+   * Deliver one host event into every frame of this message.
+   *
+   * The counterpart of `refresh`: the snapshot keeps the panel's *data* current,
+   * and the event tells the panel that now is the time to re-read it. Upstream's
+   * message frames hear card-ecosystem events through the page's shared event
+   * source; here each frame has its own bus, so the shell is the speaker.
+   */
+  emit: (event: string, args: readonly unknown[]) => void
   dispose: () => void
 }
 
@@ -244,11 +296,20 @@ export function runMessageInterfaces(
       return
     }
 
+    const painted = new Set<number>()
     const started = env.start({
       markup: block.body,
       floor,
       instance,
       onReady: () => move(instance, { phase: 'live' }),
+      onBootstrapError: message => move(instance, { phase: 'never-started', detail: message }),
+      onPainted: () => {
+        // Once per frame: a card that relayouts keeps posting heights, and the
+        // swap cares only about the first.
+        if (painted.has(instance) || env.onPainted === undefined) return
+        painted.add(instance)
+        env.onPainted(instance)
+      },
     })
     running.push(started)
 
@@ -283,6 +344,11 @@ export function runMessageInterfaces(
       for (const card of running) card.refreshContext(context)
     },
 
+    emit: (event, args) => {
+      if (disposed) return
+      for (const card of running) card.emit(event, args)
+    },
+
     dispose: () => {
       disposed = true
       for (const timer of timers) clearTimeout(timer)
@@ -301,21 +367,27 @@ export function runMessageInterfaces(
 /**
  * One line for a reader, per interface.
  *
+ * English by default so `node --test` reads the source language; the slot
+ * passes the interface language through. The `never-started` detail is quoted
+ * evidence from the frame and is not rewritten.
  * @param state - the interface's state.
+ * @param lang - the language for the sentence.
  * @returns the sentence to show.
  */
-export function describeInterface(state: InterfaceState): string {
+export function describeInterface(state: InterfaceState, lang: Language = 'en'): string {
   switch (state.phase) {
     case 'claimed':
-      return 'starting…'
+      return translate(lang, 'ifaceStarting')
     case 'live':
       // Deliberately not "rendered". The frame's markup parsed; whether the card
       // drew anything is its own business and not observable from here.
-      return `live (${Math.round(state.bytes / 1024)} KB of markup)`
+      return translate(lang, 'ifaceLive', { kb: Math.round(state.bytes / 1024) })
     case 'never-started':
-      return `never started: ${state.detail ?? 'no reason given'}`
+      return state.detail === undefined
+        ? translate(lang, 'ifaceNeverStartedNoReason')
+        : translate(lang, 'ifaceNeverStarted', { detail: state.detail })
     case 'closed':
-      return 'closed with its message'
+      return translate(lang, 'ifaceClosed')
     case 'over-budget':
       /*
        * Three things, because a placeholder that says fewer is worse than none.
@@ -328,8 +400,6 @@ export function describeInterface(state: InterfaceState): string {
        * 3. **what to do** — and the button beside this line is the answer, which
        *    is why this text does not end in an apology.
        */
-      return `interface not rendered — the reading view's frame budget is spent (${String(
-        Math.round(state.bytes / 1024),
-      )} KB of markup)`
+      return translate(lang, 'ifaceOverBudget', { kb: Math.round(state.bytes / 1024) })
   }
 }

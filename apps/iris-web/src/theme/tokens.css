@@ -114,6 +114,14 @@
   --iris-sheet: 1040px;
   --iris-aside: 260px;
 
+  /*
+   * The settings drawer's width, written once because two surfaces consume it:
+   * the drawer itself, and — while it is open — the stage's right inset, which
+   * re-centres the sheet in the region the drawer leaves visible. A literal in
+   * each place would drift by exactly the amount the centring is off.
+   */
+  --iris-drawer-w: min(392px, 92vw);
+
   /* ---------------------------------------------------------------- rhythm */
 
   --iris-gutter: 46px;
@@ -149,6 +157,25 @@
   --iris-ease: cubic-bezier(0.2, 0, 0.2, 1);
   --iris-fast: 90ms;
   --iris-slip: 150ms;
+
+  /* ------------------------------------------------------------- scrollbar */
+
+  /*
+   * One scrollbar, everywhere.
+   *
+   * Every scrollable surface on this page — the reading column, the sidebar,
+   * the STATE margin, the settings drawer, the reports — draws the same
+   * scrollbar, and it is defined here once rather than per panel, because a
+   * scrollbar that differs between two panels reads as two programs sharing a
+   * window. The figure is a very slim rounded capsule that sits quietly at
+   * rest and darkens only when the reader reaches for it.
+   *
+   * Two tokens, theme-defined below: the resting grey sits deliberately below
+   * the rules in contrast (a scrollbar is chrome for moving, not a line for
+   * reading), and the hover tone is the rule-strong grey so the affordance
+   * arrives exactly when the hand is on it.
+   */
+  --iris-scrollbar-size: 8px;
 }
 
 /* ---------------------------------------------------------------- palette */
@@ -214,6 +241,14 @@
   /* Behind a modal question. Lighter here than in the dark theme: the same
      alpha over a pale page reads as fog rather than as depth. */
   --iris-scrim: rgb(20 26 32 / 28%);
+
+  /* The resting grey sits below the rules in contrast on purpose — chrome for
+     moving, not a line for reading — and the hover tone is the rule-strong
+     grey, so the affordance arrives with the hand. Kept beside the other
+     palette tokens (not up in the structural block) because both move with
+     the theme: the dark and parchment blocks override exactly this pair. */
+  --iris-scrollbar: #cdd4d9;
+  --iris-scrollbar-strong: #a9b4bd;
   color-scheme: light;
 }
 
@@ -254,5 +289,117 @@
   --iris-code-inline: #1e262e;
   --iris-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 10px 30px rgb(0 0 0 / 46%);
   --iris-scrim: rgb(0 0 0 / 52%);
+
+  /* Quiet enough to sit on the raised ground, legible enough to find. */
+  --iris-scrollbar: #2c3540;
+  --iris-scrollbar-strong: #46545f;
   color-scheme: dark;
+}
+
+:root[data-iris-theme='parchment'] {
+  /*
+   * The third built-in, and the warm pole of the set: aged paper under the
+   * same lamp. Where light is a proof sheet and dark is the small hours,
+   * parchment is a well-read page — a warm ground, umber ink, and the accent
+   * kept as an iron-gall green so the one-accent rule survives the century
+   * skip.
+   *
+   * Every value here is measured, not tasted, and the same floors hold: ink
+   * `#33291a` reads 12.3:1 on the page, secondary ink `#5f5033` 6.8:1 (both
+   * past the 4.5:1 text floor), the tick `#8a7a55` 3.6:1 (past the 3:1
+   * non-text floor), and the accent 5.4:1, clearly louder than the tick. The
+   * token tables in `theme/presets.ts` carry these same numbers — the two
+   * statements are held together by `theme-presets.test.ts`, because
+   * duplication without a check is drift wearing a comment.
+   */
+  --iris-bg-base: #e7dfca;
+  --iris-bg-page: #f4eede;
+  --iris-bg-raised: #fbf7ec;
+  --iris-bg-sunken: #eae2cd;
+  --iris-bg-mask: rgb(53 42 26 / 38%);
+
+  --iris-rule: #d9cfb4;
+  --iris-rule-strong: #c3b593;
+  --iris-rule-faint: #e7dfc8;
+
+  --iris-tick: #8a7a55;
+
+  --iris-ink: #33291a;
+  --iris-ink-secondary: #5f5033;
+  --iris-ink-tertiary: #857452;
+  --iris-ink-faint: #a4946f;
+  --iris-ink-inverted: #f4eede;
+
+  --iris-accent: #416a45;
+  --iris-accent-quiet: #6d9673;
+  --iris-accent-wash: rgb(65 106 69 / 10%);
+  --iris-danger: #a4472f;
+  --iris-danger-wash: rgb(164 71 47 / 10%);
+  --iris-warn: #7d5c1e;
+
+  --iris-code-bg: #ece4cf;
+  --iris-code-inline: #e7dec6;
+  --iris-shadow: 0 1px 2px rgb(53 42 26 / 8%), 0 8px 24px rgb(53 42 26 / 12%);
+  --iris-scrim: rgb(40 30 15 / 30%);
+
+  /* Below the rules in contrast, like every other theme's bar: chrome for
+     moving, not a line for reading — but the theme's own pair, so the bar
+     follows the paper the way the task-O acceptance asks. */
+  --iris-scrollbar: #cfc2a4;
+  --iris-scrollbar-strong: #a99a76;
+  color-scheme: light;
+}
+
+/*
+ * The scrollbar, drawn once for every surface that scrolls.
+ *
+ * Both mechanisms, because they are not redundant:
+ *
+ * - `::-webkit-scrollbar` (below) gives the slim capsule with a hover state —
+ *   the full treatment — on WebKit and on Chromium before 121.
+ * - `scrollbar-width: thin` + `scrollbar-color` are the standard properties,
+ *   which Chromium 121+ prefers; when it sees them it draws its own thin bar
+ *   in the given colours and *ignores* the webkit rules. The standard pair
+ *   cannot express a hover, so on current Chromium the bar stays at its
+ *   resting grey — the quiet state is the one that must be right.
+ *
+ * Universal selectors, deliberately: the point of the token layer is that no
+ * panel can forget, and one more thick native grey bar anywhere would undo
+ * the whole rule. Card frames' inner documents are their own origins and out
+ * of reach.
+ */
+*,
+*::before,
+*::after {
+  scrollbar-width: thin;
+  scrollbar-color: var(--iris-scrollbar) transparent;
+}
+
+::-webkit-scrollbar {
+  width: var(--iris-scrollbar-size);
+  height: var(--iris-scrollbar-size);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/*
+ * The capsule: a rounded thumb inset by a transparent border, so the visible
+ * bar is slimmer than the hit area — easy to grab, quiet to look at.
+ */
+::-webkit-scrollbar-thumb {
+  background: var(--iris-scrollbar);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--iris-scrollbar-strong);
+  background-clip: padding-box;
 }

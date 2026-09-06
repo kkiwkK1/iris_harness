@@ -19,7 +19,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import type { CharacterSummary, ScriptContext } from '@iris/protocol'
+import type { CharacterSummary, RegexScriptView, ScriptContext } from '@iris/protocol'
 import { extractScripts } from '@iris/script'
 
 import type { SillyTavernMessage } from '@iris/persistence'
@@ -30,6 +30,7 @@ import type { ScopeBackend } from '@iris/variables'
 import type { ChatEntry } from './entry.ts'
 import { lorebookSettings } from './lorebook-settings.ts'
 import { invalid } from './errors.ts'
+import type { WorldbookSettings } from './worldbook-settings.ts'
 import { charWorldbookNames } from './worldbooks.ts'
 
 // The wire type is used directly rather than mirrored. A parallel shape would
@@ -244,6 +245,38 @@ export function buildCardContext(
     scriptButtons?: Record<string, { name: string, visible: boolean }[]>
     /** Globally selected book names, for the lorebook settings snapshot. */
     globalSelect?: readonly string[]
+    /**
+     * Every named book this installation has, for `getWorldbookNames` and the
+     * existence guard `getChatWorldbookName` applies to
+     * `chat_metadata.world_info`.
+     *
+     * Read by the caller rather than here: this function is synchronous and the
+     * store is not. Absent means the host has no world-info store, which is the
+     * same "no books" an empty list answers — the frame cannot tell the two
+     * apart and upstream's `world_names` would not let it, either.
+     */
+    worldbookNames?: readonly string[]
+    /**
+     * The chat character's additional book bindings, for
+     * `getCharWorldbookNames` — upstream's `world_info.charLore` row.
+     *
+     * Read by the caller for the same freshness-and-sync reasons as
+     * `worldbookNames`: the store is async, this function is not, and a
+     * rebind must reach the next snapshot rather than the next chat open. Keyed
+     * by the chat's own character (the caller reads it off the entry), because
+     * the snapshot describes this chat even when the asking script names
+     * another card.
+     */
+    charBooks?: readonly string[]
+    /**
+     * The stored world-info settings, for the same snapshot.
+     *
+     * Passed separately from `globalSelect` because the two live in different
+     * places upstream — the selection under `world_info.globalSelect`, the scan
+     * knobs beside the sampler settings — and merged over defaults here, so a
+     * field the user never touched still answers with ST's value.
+     */
+    worldbookSettings?: Partial<WorldbookSettings>
     /** The profile's shared card storage, key to value. */
     storage?: Record<string, string>
     /** Reports a growth alarm; see {@link variableLayersOf}. */
@@ -273,13 +306,20 @@ export function buildCardContext(
     variableLayers: variableLayersOf(entry, extras.onReport),
     // Refreshed with the rest of the snapshot rather than resolved once at open
     // time, because a card may rebind its book mid-chat and the frame answers
-    // `getCharWorldbookNames('current')` from this field.
-    charWorldbooks: charWorldbookNames(entry.card),
+    // `getCharWorldbookNames('current')` from this field. The extras are the
+    // host-stored `charLore` row for this chat's character — read by the
+    // caller, since this function is synchronous and the store is not.
+    charWorldbooks: charWorldbookNames(entry.card, extras.charBooks ?? []),
+    // Beside `charWorldbooks` for the same freshness reason, and copied because
+    // the array travels into a frame a card can sort in place: `getWorldbookNames()`
+    // and `getChatWorldbookName()` are synchronous upstream, and only a value
+    // already in hand satisfies a caller that does not await.
+    worldbookNames: [...(extras.worldbookNames ?? [])],
     scriptButtons: scriptButtonsOf(entry, extras.scriptButtons),
     // In the snapshot rather than behind a call, because `getLorebookSettings()`
     // is synchronous upstream — MVU invokes it both with and without `await`,
     // and only a value already in hand satisfies both.
-    lorebookSettings: lorebookSettings(extras.globalSelect ?? []),
+    lorebookSettings: lorebookSettings(extras.globalSelect ?? [], extras.worldbookSettings),
     // Values only. Which card wrote a key is the host's bookkeeping — a frame
     // has no use for it, and the snapshot is already the expensive part of
     // every turn.
@@ -303,7 +343,7 @@ export function commitChatMetadata(entry: ChatEntry, next: Record<string, unknow
 }
 
 /** What one card has stored under `extension_settings`. */
-type Partitions = Record<string, Record<string, unknown>>
+type Partitions = Record<string, unknown>
 
 /**
  * `extension_settings`, partitioned per card.
@@ -320,6 +360,17 @@ type Partitions = Record<string, Record<string, unknown>>
  * key cannot collide with a character however a card is named.
  */
 const GLOBAL_SECTION = '.variables'
+
+/**
+ * Where the global regex scripts sit among the per-card partitions.
+ *
+ * The same leading-dot trick, and for the same load-bearing reason: upstream
+ * keeps the list at `extension_settings.regex` in its `settings.json`
+ * (`extensions/regex/engine.js:110`), so the value lives at the isomorphic path
+ * here — the partition named `.regex` holds the array itself, as upstream's key
+ * does — and no character id can ever collide with it.
+ */
+const REGEX_SECTION = '.regex'
 
 export class ExtensionSettingsStore {
   readonly #path: string
@@ -387,13 +438,54 @@ export class ExtensionSettingsStore {
   }
 
   /**
+   * The user's global regex scripts, in run order.
+   *
+   * Returned **verbatim** — unknown keys and all — because the list is the
+   * migration path: a script exported from a SillyTavern install and imported
+   * here has to survive a round trip through this store with every field it
+   * arrived with, or the export half of that cycle would silently strip it.
+   * The shape is the wire's own ({@link RegexScriptView}), because this list is
+   * a wire surface twice over: it arrives through `regex.set` and leaves
+   * through `regex.list` unchanged.
+   * @returns the scripts; empty when none have ever been stored.
+   */
+  async globalRegex(): Promise<RegexScriptView[]> {
+    await this.#load()
+    const section = this.#partitions[REGEX_SECTION]
+    return Array.isArray(section) ? structuredClone(section) as RegexScriptView[] : []
+  }
+
+  /**
+   * Replace the global regex scripts, in run order.
+   *
+   * Whole-list replacement, matching what a set means upstream: the panel edits
+   * an array and the array is what persists (`saveScriptsByType` assigns the
+   * list outright). Order is data here — it is the run order inside the tier.
+   * @param scripts - the whole list.
+   * @throws {AppError} `invalid-request` when it cannot be stored losslessly.
+   */
+  async setGlobalRegex(scripts: readonly RegexScriptView[]): Promise<void> {
+    const list = scripts.map(script => ({ ...script }))
+    assertStorable(list, 'global regex scripts')
+    await this.#load()
+    this.#partitions[REGEX_SECTION] = list
+    await mkdir(dirname(this.#path), { recursive: true })
+    await writeFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}\n`, 'utf8')
+  }
+
+  /**
    * One card's settings.
    * @param characterId - whose partition.
    * @returns a detached copy; writes go through {@link set}.
    */
   async get(characterId: string): Promise<Record<string, unknown>> {
     await this.#load()
-    return structuredClone(this.#partitions[characterId] ?? {})
+    const partition = this.#partitions[characterId]
+    return structuredClone(
+      typeof partition === 'object' && partition !== null && !Array.isArray(partition)
+        ? partition
+        : {},
+    ) as Record<string, unknown>
   }
 
   /**

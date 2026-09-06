@@ -15,7 +15,121 @@
 
 import { z } from 'zod'
 
-import type { ChatSummary, ChatView, CharacterSummary, ConnectionProfile, DebugReport, GenerationSettings, PromptItemization, ScriptContext, ScriptView, WorldbookEntry } from './views.ts'
+import type { BackupPreview, BackupSummary, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView } from './views.ts'
+
+/**
+ * A partial card-facing entry, as the book-writing methods accept it.
+ *
+ * Shared by `worldbook.replace` and `worldbook.create`: both build a stored
+ * book from the same shape, and a second copy of an eight-nested-field schema
+ * is exactly how the two halves drift.
+ */
+const worldbookEntriesPatch = z.array(z.object({
+  uid: z.number().int().min(0),
+  name: z.string().max(500).optional(),
+  enabled: z.boolean().optional(),
+  strategy: z.object({
+    type: z.enum(['constant', 'vectorized', 'selective']).optional(),
+    /**
+     * Keys as **strings**, never as revived `RegExp` objects.
+     *
+     * This is the return leg of a round trip, and it is the half that gets
+     * forgotten. `worldbook.get` hands a card `RegExp` objects for its
+     * regex-shaped keys; the most natural way to write an update is to
+     * change one field and hand the entry straight back, so what arrives
+     * here is whatever `get` produced. A `RegExp` does not survive JSON —
+     * it serializes to `{}` — and this schema rejects it outright, which
+     * fails a card that did nothing wrong.
+     *
+     * So whoever revived them un-revives them before crossing:
+     * `String(re)` yields `/pattern/flags`, exactly the shape
+     * `parseRegexFromString` reads. The frame does this in
+     * `flattenKeys`.
+     *
+     * Both lists, for the same reason `keys_secondary` is revived on the
+     * way out — see `WorldbookEntry` in `views.ts`.
+     */
+    keys: z.array(z.string().max(1000)).max(200).optional(),
+    keys_secondary: z.object({
+      logic: z.enum(['and_any', 'not_all', 'not_any', 'and_all']).optional(),
+      /** Strings, like `keys` above — the same un-revival applies. */
+      keys: z.array(z.string().max(1000)).max(200).optional(),
+    }).optional(),
+    scan_depth: z.union([z.number().int(), z.literal('same_as_global')]).optional(),
+  }).optional(),
+  position: z.object({
+    type: z.enum([
+      'before_character_definition', 'after_character_definition',
+      'before_example_messages', 'after_example_messages',
+      'before_author_note', 'after_author_note', 'at_depth', 'outlet',
+    ]).optional(),
+    role: z.enum(['system', 'user', 'assistant']).optional(),
+    depth: z.number().int().optional(),
+    order: z.number().int().optional(),
+  }).optional(),
+  content: z.string().max(200_000).optional(),
+  probability: z.number().int().min(0).max(100).optional(),
+  recursion: z.object({
+    prevent_incoming: z.boolean().optional(),
+    prevent_outgoing: z.boolean().optional(),
+    delay_until: z.number().int().nullable().optional(),
+  }).optional(),
+  effect: z.object({
+    sticky: z.number().int().nullable().optional(),
+    cooldown: z.number().int().nullable().optional(),
+    delay: z.number().int().nullable().optional(),
+  }).optional(),
+  addMemo: z.boolean().optional(),
+  group: z.string().max(200).optional(),
+  groupOverride: z.boolean().optional(),
+  groupWeight: z.number().int().optional(),
+  caseSensitive: z.boolean().nullable().optional(),
+  matchWholeWords: z.boolean().nullable().optional(),
+  /**
+   * The write legs of the fields `WorldbookEntry` reads out, added with the
+   * shell's entry editor. Each is optional, and each defaults exactly as this
+   * host's stored writer always defaulted — so a caller that never heard of
+   * them writes the same book it always did, and the extension serves a caller
+   * that read a whole book and is putting it back whole. `outletName` was
+   * already on the stored writer and the read view; it was only ever missing
+   * here, which made an outlet name the one field a round trip could read and
+   * not write.
+   */
+  outletName: z.string().max(200).optional(),
+  automationId: z.string().max(200).optional(),
+  useGroupScoring: z.boolean().nullable().optional(),
+  ignoreBudget: z.boolean().optional(),
+  useProbability: z.boolean().optional(),
+  triggers: z.array(z.string().max(60)).max(12).optional(),
+  characterFilter: z.object({
+    isExclude: z.boolean(),
+    names: z.array(z.string().max(200)).max(100),
+    tags: z.array(z.string().max(200)).max(100),
+  }).optional(),
+  matchPersonaDescription: z.boolean().optional(),
+  matchCharacterDescription: z.boolean().optional(),
+  matchCharacterPersonality: z.boolean().optional(),
+  matchCharacterDepthPrompt: z.boolean().optional(),
+  matchScenario: z.boolean().optional(),
+  matchCreatorNotes: z.boolean().optional(),
+})).max(2000)
+
+/**
+ * One global regex script as the wire carries it.
+ *
+ * Loose on purpose, and only here: the storage contract for this list is
+ * verbatim — an export file's unknown keys must survive the round trip — so
+ * this is the one request body that may carry fields nobody declared. The three
+ * required fields are the ones upstream's own importer insists on (`scriptName`
+ * — "No script name provided." — plus the two the engine reads on every run);
+ * the size caps keep a pasted file from being a memory request, and sit far
+ * above anything a real script carries.
+ */
+const regexScriptRequest = z.looseObject({
+  scriptName: z.string().min(1).max(300),
+  findRegex: z.string().max(100_000),
+  replaceString: z.string().max(100_000),
+})
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
@@ -24,6 +138,25 @@ export const requestSchemas = {
   'chat.open': z.object({ chatId: z.string().min(1) }),
   'chat.delete': z.object({ chatId: z.string().min(1) }),
   'chat.rename': z.object({ chatId: z.string().min(1), title: z.string().max(200) }),
+  /**
+   * Find conversations by a fragment of floor text.
+   *
+   * Upstream's `POST /api/chats/search` (`chats.js:874`) plus the "Previous
+   * Chats" filter that calls it. The scan is linear over the profile's chat
+   * files — no index — because the corpus's largest conversation (677 floors,
+   * 19 MiB) reads and searches in a fraction of the one-second line, and an
+   * index would add invalidation on every write to answer the same question
+   * the files already answer. Hits name the chat and the floor, so a caller
+   * can open one and know where inside it the text lives.
+   */
+  'chat.search': z.object({
+    /** The fragment to find, matched against each floor's stored text (`mes`). */
+    query: z.string().min(1).max(200),
+    /** Default false, like upstream's filter: a name is typed as it is remembered. */
+    caseSensitive: z.boolean().optional(),
+    /** Matches reported per chat, when a caller wants fewer than the default. */
+    limit: z.number().int().positive().max(20).optional(),
+  }),
   /**
    * Answer the one-time offer to clean a chat that has never been cleaned.
    *
@@ -46,11 +179,38 @@ export const requestSchemas = {
     answer: z.enum(['clean', 'never', 'backup-and-clean']),
   }),
 
+  /**
+   * Open a generation.
+   *
+   * `kind` selects what is generated, in SillyTavern's vocabulary. Absent (or
+   * `'send'`) is the ordinary exchange: `text` becomes a user line and a reply
+   * is generated after it. `'continue'` writes on from the newest reply — its
+   * result rejoins that floor as a new reading, every earlier reading
+   * preserved — and takes no text. `'impersonate'` writes the user's next line
+   * instead of a reply, and takes no text either: the model IS the author of
+   * the user side here.
+   */
   'chat.send': z.object({
     chatId: z.string().min(1),
+    kind: z.enum(['send', 'continue', 'impersonate']).optional(),
     // Bounded because it lands in a prompt; an unbounded field is a way to
     // burn someone's tokens from a page they were tricked into opening.
-    text: z.string().min(1).max(32_000),
+    // Required for `send` and refused for the other two kinds — a continue
+    // carries no input, and text sent with an impersonation has no defined
+    // meaning to be quietly dropped.
+    text: z.string().min(1).max(32_000).optional(),
+  }).superRefine((value, ctx) => {
+    const wantsText = value.kind === undefined || value.kind === 'send'
+    if (wantsText && value.text === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['text'], message: 'a send needs text' })
+    }
+    if (!wantsText && value.text !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['text'],
+        message: `a "${value.kind}" takes no text; the newest floor or the model supplies the words`,
+      })
+    }
   }),
   'chat.regenerate': z.object({ chatId: z.string().min(1) }),
   'chat.abort': z.object({ chatId: z.string().min(1) }),
@@ -214,12 +374,47 @@ export const requestSchemas = {
     model: z.string().min(1),
     preset: z.string().max(255).optional(),
     sampling: z.record(z.string(), z.unknown()).optional(),
+    /**
+     * The endpoint this profile generates through. Absent on a **new** profile
+     * means it rides the host's configured route; absent on a **replacement**
+     * drops the stored one, like every non-secret field.
+     */
+    baseURL: z.string().max(2000).optional(),
+    /**
+     * The key to store, **write-only**: no read ever returns it, so the form
+     * has nothing to pre-fill and must not pretend otherwise.
+     *
+     * Absent keeps the stored key — the only field that merges, because a
+     * caller editing a label cannot re-send what it was never shown. Empty
+     * string clears it. Non-empty replaces it.
+     */
+    apiKey: z.string().max(2000).optional(),
+    /** The header the key is sent in. Absent means the OpenAI-compatible `Authorization: Bearer`. */
+    apiKeyHeader: z.string().max(200).optional(),
   }),
   'connection.delete': z.object({ id: z.string().min(1) }),
   /** Apply a profile: globally, or to one chat when `chatId` is given. */
   'connection.activate': z.object({
     id: z.string().min(1),
     chatId: z.string().min(1).optional(),
+  }),
+  /**
+   * Probe an endpoint the way a model list would be fetched, and say what
+   * happened in words a form can show.
+   *
+   * Either a saved profile (`profileId`) or unsaved form values (`baseURL`,
+   * with the key as typed). The two share one schema rather than two methods:
+   * the question is the same — can this endpoint serve me — and the caller's
+   * distinction of "saved or not" is not worth a second method to guess at.
+   */
+  'connection.test': z.object({
+    profileId: z.string().min(1).optional(),
+    baseURL: z.string().max(2000).optional(),
+    /** The key as typed in the form. Never logged, never echoed back. */
+    apiKey: z.string().max(2000).optional(),
+    apiKeyHeader: z.string().max(200).optional(),
+    /** Which provider preset the form is testing, so a known-to-need-a-key endpoint says so by name. */
+    preset: z.string().max(200).optional(),
   }),
 
   'prompt.itemize': z.object({
@@ -233,6 +428,51 @@ export const requestSchemas = {
     swipeId: z.number().int().min(0).optional(),
   }),
 
+  /**
+   * Copy a SillyTavern chat file into this profile.
+   *
+   * Upstream's `/api/chats/import` (`chats.js:604`) — the migration path for a
+   * user whose history lives in an install. The file crosses as base64 because
+   * that is how a browser file upload already reaches `character.import`; the
+   * bytes go in untouched, and everything below is reading, not conversion.
+   *
+   * **The owning character is asked for, not inferred.** Upstream hangs import
+   * off a character's own chat-management panel, so the file's `character_name`
+   * and the character it lands under can disagree there too. The id is recorded
+   * in the file's `iris` block — where the card, the scripts and the books come
+   * from when the chat opens — while the header's own names stay verbatim, so
+   * an exported file still reads as the file it was.
+   *
+   * **One file per call, all-or-nothing.** Upstream also accepts several other
+   * chat dialects (Kobold Lite, CAI, oobabooga, Agnai, Risu) and renames what
+   * it imports; this arm takes SillyTavern JSONL only and refuses everything
+   * else **before anything is written**, with the reason named. A file that
+   * half-imported would be worse than a file refused.
+   */
+  'chat.import': z.object({
+    /** The file's name, whose stem becomes the chat's id when it is a safe one. */
+    filename: z.string().min(1).max(255),
+    /** Base64 of the JSONL file, exactly as it left SillyTavern. */
+    content: z.string().min(1),
+    /** The character this conversation is played with. */
+    characterId: z.string().min(1),
+  }),
+  /**
+   * One conversation as SillyTavern's own JSONL.
+   *
+   * The reverse leg of `chat.import`, and the same promise the storage layer
+   * was built on: a chat taken out of Iris is a chat SillyTavern can read. The
+   * text is produced by the same projection every save uses — the one with the
+   * key-order round-trip tests — not a second exporter.
+   *
+   * The bytes travel as a response for the browser to save locally. Nothing
+   * lands on the host's disk, because an export the user cannot find is a
+   * backup only in the moment it was offered.
+   */
+  'chat.export': z.object({
+    chatId: z.string().min(1),
+  }),
+
   'character.list': z.object({}),
   'character.import': z.object({
     filename: z.string().min(1).max(255),
@@ -240,6 +480,56 @@ export const requestSchemas = {
     content: z.string().min(1),
   }),
   'character.delete': z.object({ characterId: z.string().min(1) }),
+
+  /**
+   * Manager operations on one card in the library.
+   *
+   * **Rename is in-place.** Upstream's `/api/characters/rename` writes the new
+   * name into the card *and* moves the file, because upstream's ids are avatar
+   * filenames and its chats live in per-character folders. Iris's ids are
+   * load-bearing far beyond the filename — the worldbook binding table, every
+   * chat header, the script policy and the favorites are keyed by them — so
+   * the display name changes and the id does not. The binding is untouched
+   * either way: `extensions.world` is a book *name*, used verbatim, and never
+   * derived from the character's (see `@iris/app-service/worldbooks`).
+   *
+   * **Duplicate copies the file bytes verbatim** — upstream's `copyFileSync` —
+   * under a fresh id minted the way imports mint them. Chats are not copied.
+   * The card's binding row is copied with it, so the duplicate resolves to the
+   * *same* named book its source binds, which is exactly what sharing one
+   * `extensions.world` name means upstream; minting the duplicate a second
+   * book of its own would be a divergence a user could only discover as two
+   * world infos that drift.
+   *
+   * **Export strips the private fields upstream strips** (`unsetPrivateFields`:
+   * `fav` in both spellings, and the last-open-chat pointer `chat`) and
+   * otherwise sends the card as stored — a PNG goes out as a PNG with its card
+   * chunks rewritten in place, a `.json` card as pretty-printed JSON.
+   */
+  'character.duplicate': z.object({ characterId: z.string().min(1) }),
+  'character.rename': z.object({
+    characterId: z.string().min(1),
+    /** The new display name, verbatim. Empty is refused. */
+    name: z.string().min(1).max(255),
+  }),
+  'character.export': z.object({
+    characterId: z.string().min(1),
+    format: z.enum(['png', 'json']),
+  }),
+  /** Replace the card's whole tag list — the add/remove/edit of a tag editor. */
+  'character.setTags': z.object({
+    characterId: z.string().min(1),
+    tags: z.array(z.string().min(1).max(120)).max(100),
+  }),
+  /**
+   * Star or unstar a character. **Profile-level, deliberately not the card's
+   * `fav`**: a star is this user's reading preference, and Iris's standing rule
+   * is that runtime state does not go into shared card files.
+   */
+  'character.favorite': z.object({
+    characterId: z.string().min(1),
+    favorite: z.boolean(),
+  }),
 
   'settings.get': z.object({ chatId: z.string().min(1).optional() }),
   /**
@@ -255,6 +545,138 @@ export const requestSchemas = {
     chatId: z.string().min(1).optional(),
     settings: z.record(z.string(), z.unknown()),
   }),
+
+  /**
+   * The preset library and the prompt manager.
+   *
+   * The prompt manager's state (which prompts, in what order, which enabled)
+   * is the active preset's, live: a switch re-seeds it from the file, and the
+   * mutations below write through to the persisted state the assembler reads.
+   * Upstream keeps the same two layers — preset files are snapshots, the
+   * manager edits `oai_settings` on top — and this reproduces the mechanism.
+   */
+  'preset.list': z.object({}),
+  /** Make a library preset the active one and apply what it carries. */
+  'preset.select': z.object({ name: z.string().min(1).max(255) }),
+  /** The prompt manager's current state. */
+  'preset.view': z.object({}),
+  /** Toggle one prompt of the active ordering, where upstream allows it. */
+  'preset.setEnabled': z.object({ id: z.string().min(1), enabled: z.boolean() }),
+  /** Move one prompt within the active ordering. */
+  'preset.move': z.object({ id: z.string().min(1), index: z.number().int().min(0) }),
+  /**
+   * Create or edit one prompt of the active preset.
+   *
+   * An absent `identifier` creates one (upstream mints a UUID); an `id` the
+   * preset does not carry creates with that identifier, which is how a preset
+   * gains a prompt an extension or a card expects to find.
+   */
+  'preset.upsertPrompt': z.object({
+    prompt: z.object({
+      identifier: z.string().min(1).max(120).optional(),
+      name: z.string().max(500).optional(),
+      role: z.enum(['system', 'user', 'assistant']).optional(),
+      content: z.string().max(1_000_000).optional(),
+      marker: z.boolean().optional(),
+      system_prompt: z.boolean().optional(),
+      forbid_overrides: z.boolean().optional(),
+      injection_position: z.enum(['relative', 'absolute']).optional(),
+      injection_depth: z.number().int().min(0).max(1000).optional(),
+      injection_order: z.number().int().optional(),
+    }),
+  }),
+  /** Remove one non-system prompt from the active preset. */
+  'preset.removePrompt': z.object({ id: z.string().min(1) }),
+  /** Persist the active state as a named preset in the library (upsert). */
+  'preset.save': z.object({ name: z.string().min(1).max(255) }),
+  /** Delete a preset from the library. */
+  'preset.delete': z.object({ name: z.string().min(1).max(255) }),
+  /** Read one preset's file body — what an export downloads. */
+  'preset.read': z.object({ name: z.string().min(1).max(255) }),
+  /**
+   * Copy presets from the configured SillyTavern install, read-only.
+   *
+   * Names are file stems; absent means every preset the install has. Also the
+   * listing for an import picker: the response carries what the install offers.
+   */
+  'preset.import': z.object({ names: z.array(z.string().min(1).max(255)).optional() }),
+  /**
+   * Import one hand-carried preset file — upstream's import button.
+   *
+   * Upstream splits the work: the browser reads the picked file, derives the
+   * preset's name from the filename minus its last extension and refuses what
+   * does not parse (`openai.js` `onPresetImportFileChange`), then posts to
+   * `/api/presets/save` (`presets.js`), which sanitizes the name and writes the
+   * body four-space indented. Nothing on that path converts a foreign format —
+   * parseable JSON goes in as it is. This arm takes the whole file and answers
+   * one outcome, so the naming of refusals stays the host's job and the same
+   * code path's. The content crosses as base64 because that is how a browser
+   * file upload already reaches `character.import`.
+   */
+  'preset.importFile': z.object({
+    /** The file's name, extension included; the stem becomes the preset's name. */
+    filename: z.string().min(1).max(255),
+    /** Base64 of the `.json` file, exactly as it left the disk. */
+    content: z.string().min(1),
+  }),
+
+  /**
+   * The user's personas — who `{{user}}` is, in upstream's
+   * `power_user.persona_descriptions` sense, one per named persona with the
+   * active one standing in for upstream's selected avatar.
+   *
+   * `position` takes upstream's own words (`parsePersonaPosition`,
+   * `personas.js:1963`). The `topan` / `bottoman` words are deliberately
+   * absent from the enum: they merge the description into an author's note
+   * this host does not assemble, and accepting them would store a position
+   * nothing can act on.
+   */
+  'persona.list': z.object({}),
+  /**
+   * One persona, or the active one. Absent `id` reads the active persona —
+   * `undefined` in the answer means no persona is active, which is the
+   * every-install default and not an error.
+   */
+  'persona.get': z.object({ id: z.string().min(1).optional() }),
+  /**
+   * Create a persona (absent `id`) or edit one (present `id`), and optionally
+   * make it active in the same call. An absent `description` keeps whatever is
+   * stored, so a rename does not blank the text it was never shown.
+   */
+  'persona.set': z.object({
+    id: z.string().min(1).optional(),
+    name: z.string().min(1).max(255),
+    description: z.string().max(1_000_000).optional(),
+    position: z.enum(['inprompt', 'atdepth', 'none']).optional(),
+    depth: z.number().int().min(0).max(1000).optional(),
+    role: z.enum(['system', 'user', 'assistant']).optional(),
+    active: z.boolean().optional(),
+  }),
+  /** Remove a persona; removing the active one clears the activation. */
+  'persona.delete': z.object({ id: z.string().min(1) }),
+
+  /**
+   * The profile's global regex scripts — upstream's `extension_settings.regex`
+   * tier (`extensions/regex/engine.js:110`), the one every chat runs before any
+   * card's own.
+   *
+   * The list arrives loose (`regexScriptRequest` below) because the storage
+   * contract is verbatim: whatever an export file carried, the panel shows and
+   * the host keeps. The run order inside the tier is the array order, the same
+   * order upstream's drag handler persists.
+   */
+  'regex.list': z.object({}),
+  /**
+   * Replace the whole global list.
+   *
+   * One whole-list primitive rather than per-row verbs — the same shape
+   * `worldbook.replace` chose — so toggle, delete, reorder and import are all
+   * the panel doing a read-modify-write over what `regex.list` last showed. A
+   * script arriving without an `id` is given one (upstream's importer mints a
+   * UUID for every import); an id already on a script is kept, which is what
+   * makes a toggle a rewrite of the same script rather than a new one.
+   */
+  'regex.set': z.object({ scripts: z.array(regexScriptRequest).max(1000) }),
 
   /** Every script a character's card carries, enabled or not. */
   'script.list': z.object({ characterId: z.string().min(1) }),
@@ -828,74 +1250,133 @@ export const requestSchemas = {
   }),
   'worldbook.replace': z.object({
     name: z.string().min(1).max(120),
-    entries: z.array(z.object({
-      uid: z.number().int().min(0),
-      name: z.string().max(500).optional(),
-      enabled: z.boolean().optional(),
-      strategy: z.object({
-        type: z.enum(['constant', 'vectorized', 'selective']).optional(),
-        /**
-         * Keys as **strings**, never as revived `RegExp` objects.
-         *
-         * This is the return leg of a round trip, and it is the half that gets
-         * forgotten. `worldbook.get` hands a card `RegExp` objects for its
-         * regex-shaped keys; the most natural way to write an update is to
-         * change one field and hand the entry straight back, so what arrives
-         * here is whatever `get` produced. A `RegExp` does not survive JSON —
-         * it serializes to `{}` — and this schema rejects it outright, which
-         * fails a card that did nothing wrong.
-         *
-         * So whoever revived them un-revives them before crossing:
-         * `String(re)` yields `/pattern/flags`, exactly the shape
-         * `parseRegexFromString` reads. The frame does this in
-         * `flattenKeys`.
-         *
-         * Both lists, for the same reason `keys_secondary` is revived on the
-         * way out — see `WorldbookEntry` in `views.ts`.
-         */
-        keys: z.array(z.string().max(1000)).max(200).optional(),
-        keys_secondary: z.object({
-          logic: z.enum(['and_any', 'not_all', 'not_any', 'and_all']).optional(),
-          /** Strings, like `keys` above — the same un-revival applies. */
-          keys: z.array(z.string().max(1000)).max(200).optional(),
-        }).optional(),
-        scan_depth: z.union([z.number().int(), z.literal('same_as_global')]).optional(),
-      }).optional(),
-      position: z.object({
-        type: z.enum([
-          'before_character_definition', 'after_character_definition',
-          'before_example_messages', 'after_example_messages',
-          'before_author_note', 'after_author_note', 'at_depth', 'outlet',
-        ]).optional(),
-        role: z.enum(['system', 'user', 'assistant']).optional(),
-        depth: z.number().int().optional(),
-        order: z.number().int().optional(),
-      }).optional(),
-      content: z.string().max(200_000).optional(),
-      probability: z.number().int().min(0).max(100).optional(),
-      recursion: z.object({
-        prevent_incoming: z.boolean().optional(),
-        prevent_outgoing: z.boolean().optional(),
-        delay_until: z.number().int().nullable().optional(),
-      }).optional(),
-      effect: z.object({
-        sticky: z.number().int().nullable().optional(),
-        cooldown: z.number().int().nullable().optional(),
-        delay: z.number().int().nullable().optional(),
-      }).optional(),
-      addMemo: z.boolean().optional(),
-      group: z.string().max(200).optional(),
-      groupOverride: z.boolean().optional(),
-      groupWeight: z.number().int().optional(),
-      caseSensitive: z.boolean().nullable().optional(),
-      matchWholeWords: z.boolean().nullable().optional(),
-      matchPersonaDescription: z.boolean().optional(),
-      matchCharacterDescription: z.boolean().optional(),
-      matchCharacterPersonality: z.boolean().optional(),
-      matchCharacterDepthPrompt: z.boolean().optional(),
-      matchScenario: z.boolean().optional(),
-      matchCreatorNotes: z.boolean().optional(),
-    })).max(2000),
+    entries: worldbookEntriesPatch,
+  }),
+  /**
+   * Create a book that does not exist yet.
+   *
+   * Upstream's `createWorldbook` reports existence with `false` rather than an
+   * error — "already there" is a normal outcome of the get-or-create patterns
+   * cards write, and an exception would turn a race between two scripts into a
+   * card-facing failure. `entries` is optional and defaults to empty, which is
+   * what `getOrCreateChatWorldbook` wants: a file to bind before any entry
+   * exists to put in it.
+   */
+  'worldbook.create': z.object({
+    name: z.string().min(1).max(120),
+    entries: worldbookEntriesPatch.optional(),
+  }),
+  /**
+   * Bind (or unbind) a chat's own world book.
+   *
+   * `chat_metadata.world_info` — upstream's `setChatLorebook` — holds a book
+   * **name**, and the name must resolve: binding a book with no file behind it
+   * would make every later scan silently skip it, which reads as a book that
+   * activates nothing. `null` clears the binding, which is how upstream's
+   * own reader behaves when the key names a deleted file.
+   */
+  'worldbook.bindChat': z.object({
+    chatId: z.string().min(1),
+    name: z.string().min(1).max(120).nullable(),
+  }),
+  /**
+   * Replace one character's **additional** book bindings.
+   *
+   * Upstream's `world_info.charLore` — the row keyed by the character's file
+   * name whose `extraBooks` join the card's own binding in
+   * `getCharacterLore` (`world-info.js:4376`). Iris' `characterId` is that same
+   * file stem, so it keys the row directly.
+   *
+   * A whole-list write, matching upstream's `updateAuxBooks`: the caller sends
+   * the complete next list in the order to keep; duplicates collapse to their
+   * first occurrence; and **an empty list removes the row entirely** — upstream
+   * splices the `charLore` entry when the last book is unbound
+   * (`world-info.js:6044`), so unbinding leaves no residual key. The primary
+   * binding is deliberately out of reach here: it lives on the card, and the
+   * card file is shared between installations.
+   *
+   * Every name must resolve to a stored book — a binding with no file behind it
+   * makes every later scan silently skip it, which reads as a book that
+   * activates nothing (the same rule `worldbook.bindChat` applies).
+   */
+  'worldbook.setCharBooks': z.object({
+    characterId: z.string().min(1),
+    /** The complete additional list, in the order to keep. Empty unbinds all. */
+    names: z.array(z.string().min(1).max(120)).max(100),
+  }),
+  /**
+   * Read and write the scan knobs: scan depth, budget, recursion, matching.
+   *
+   * Their own pair of methods rather than fields of `settings.set` for the same
+   * reason `globalSelect` is: the sampler patch is merged per chat and
+   * range-checked as numbers, while these are installation-wide, semantically
+   * mixed, and default-valued — a field the user has never set still answers
+   * with SillyTavern's shipped value, because that is what the scan actually
+   * runs.
+   */
+  'worldbook.settings': z.object({}),
+  'worldbook.setSettings': z.object({
+    scanDepth: z.number().int().min(0).max(1000).optional(),
+    budgetPercent: z.number().int().min(0).max(100).optional(),
+    budgetCap: z.number().int().min(0).optional(),
+    minActivations: z.number().int().min(0).max(1000).optional(),
+    minActivationsDepthMax: z.number().int().min(0).max(1000).optional(),
+    maxRecursionSteps: z.number().int().min(0).max(1000).optional(),
+    insertionStrategy: z.enum(['evenly', 'character_first', 'global_first']).optional(),
+    recursive: z.boolean().optional(),
+    caseSensitive: z.boolean().optional(),
+    matchWholeWords: z.boolean().optional(),
+    useGroupScoring: z.boolean().optional(),
+  }),
+
+  /**
+   * The profile's conversation snapshots, newest first.
+   *
+   * Upstream's `GET /api/backups/chat/get` (`endpoints/backups.js`), narrowed
+   * to what a restore point needs: when it was taken, how many floors it holds,
+   * how big it is, and **why the host took it** — a list of copies without the
+   * reasons is a list a reader cannot trust, because "which of these was made
+   * before the thing I want to undo" is the only question one asks of it.
+   * Absent `chatId` lists the whole profile.
+   */
+  'backup.list': z.object({
+    /** Only this conversation's snapshots, when given. */
+    chatId: z.string().min(1).max(120).optional(),
+  }),
+  /**
+   * Read the head of one snapshot.
+   *
+   * A restore is an overwrite, and confirming an overwrite sight-unseen is how
+   * the wrong snapshot gets written over the right conversation. The preview is
+   * read off the snapshot's own bytes — what it shows is what a restore writes.
+   */
+  'backup.preview': z.object({
+    /** The snapshot's handle, as `backup.list` carried it. */
+    backupId: z.string().min(1).max(400),
+    /** How many floors to show. Default is a head, not the whole file. */
+    floors: z.number().int().min(1).max(50).optional(),
+  }),
+  /**
+   * Write a snapshot back over its conversation.
+   *
+   * **`confirm` is the conversation's title, typed.** This is the one backup
+   * method that destroys something — the live file — so it refuses to run on a
+   * bare click: the caller must send the name the interface showed them, and a
+   * mismatch is refused by name. The check lives here and not only in the page,
+   * because the page is the untrusted side and an RPC that asks the host to
+   * overwrite a conversation should carry its own proof of intent.
+   *
+   * Before anything is written, the **current** file is snapshotted too — a
+   * restore that goes wrong must itself be restorable.
+   */
+  'backup.restore': z.object({
+    backupId: z.string().min(1).max(400),
+    /** The conversation's title as the reader typed it; compared against the snapshot's header. */
+    confirm: z.string().max(200),
+  }),
+  /** Remove one snapshot. The live conversation is never touched by this. */
+  'backup.delete': z.object({
+    backupId: z.string().min(1).max(400),
   }),
 } as const
 
@@ -912,6 +1393,14 @@ export interface RpcResponseMap {
   'chat.open': { view: ChatView }
   'chat.delete': Record<string, never>
   'chat.rename': { chats: ChatSummary[] }
+  /**
+   * Chats with at least one matching floor, newest activity first.
+   *
+   * **No hit is never padded.** An empty array is the answer for "nothing in
+   * this profile says that", and a caller that keeps showing a previous list
+   * when it receives one is lying to its reader.
+   */
+  'chat.search': { hits: ChatSearchHit[] }
   /**
    * What the answer did.
    *
@@ -937,6 +1426,16 @@ export interface RpcResponseMap {
   'chat.deleteMessage': { view: ChatView }
   /** The new branch, already open, plus the refreshed list it now appears in. */
   'chat.branch': { view: ChatView, chats: ChatSummary[] }
+  /** The conversation as stored, summary-shaped — the sidebar's own currency. */
+  'chat.import': { chat: ChatSummary }
+  /**
+   * The JSONL text and the file name to save it under.
+   *
+   * The name is the chat's id, which is the name SillyTavern's own branch
+   * fields (`chat_metadata.main_chat`) address it by — so a branch exported
+   * with its parent still links up after a re-import on either host.
+   */
+  'chat.export': { filename: string, content: string }
   'prompt.itemize': { itemization: PromptItemization }
 
   /** The stored table, so a card sees what its write actually produced. */
@@ -968,18 +1467,91 @@ export interface RpcResponseMap {
   'worldbook.replace': { entries: WorldbookEntry[] }
   'worldbook.globalSelect': { names: string[] }
   'worldbook.setGlobalSelect': { names: string[] }
+  /** `created` is false when the book already existed — upstream's boolean, not an error. */
+  'worldbook.create': { created: boolean }
+  /** The binding as it now stands, read back from the chat header. */
+  'worldbook.bindChat': { name: string | null }
+  /** The character's full binding, read back after the write. */
+  'worldbook.setCharBooks': { primary: string | null, additional: string[] }
+  'worldbook.settings': { settings: WorldbookSettingsView }
+  'worldbook.setSettings': { settings: WorldbookSettingsView }
+
+  /** Newest first, so the snapshot a reader is looking for is the first one. */
+  'backup.list': { backups: BackupSummary[] }
+  'backup.preview': { preview: BackupPreview }
+  /**
+   * The conversation as it now stands, plus the snapshot the **previous**
+   * version was saved as before the restore wrote over it.
+   *
+   * `previous` is absent when there was no live file to snapshot — restoring
+   * into the hole a deletion left is a normal use, and there is nothing to
+   * protect where nothing survives.
+   */
+  'backup.restore': { chat: ChatSummary, previous?: BackupSummary }
+  'backup.delete': Record<string, never>
 
   'connection.list': { profiles: ConnectionProfile[], activeId?: string }
   'connection.save': { profiles: ConnectionProfile[], activeId?: string }
   'connection.delete': { profiles: ConnectionProfile[], activeId?: string }
   'connection.activate': { settings: GenerationSettings, activeId: string }
+  /**
+   * The probe's verdict, said in full even when it failed.
+   *
+   * A failed probe is a **result, not an error**: the method answered, and the
+   * answer is "no, and here is the named reason" — so a form can render it
+   * without a try/catch and the transport stays out of the story. `latencyMs`
+   * is present either way, because "how long until it said no" is itself a
+   * diagnosis.
+   */
+  'connection.test': {
+    ok: boolean
+    latencyMs: number
+    /** Model ids from `GET /models`, in the endpoint's own order, when the probe succeeded. */
+    models?: string[]
+    error?: ConnectionTestError
+  }
 
   'character.list': { characters: CharacterSummary[] }
   'character.import': { character: CharacterSummary }
   'character.delete': Record<string, never>
+  'character.duplicate': { character: CharacterSummary }
+  'character.rename': { character: CharacterSummary }
+  /** The card's bytes as base64, named for the download a browser saves. */
+  'character.export': { filename: string, content: string }
+  'character.setTags': { character: CharacterSummary }
+  /** The star's new state, echoed so a caller need not diff the list. */
+  'character.favorite': { characterId: string, favorite: boolean }
 
   'settings.get': { settings: GenerationSettings }
   'settings.set': { settings: GenerationSettings }
+
+  'preset.list': { presets: PresetSummary[], active?: string, install?: string[] }
+  'preset.select': { presets: PresetSummary[], active: string, manager: PresetManagerView }
+  'preset.view': { manager: PresetManagerView }
+  'preset.setEnabled': { manager: PresetManagerView }
+  'preset.move': { manager: PresetManagerView }
+  'preset.upsertPrompt': { manager: PresetManagerView }
+  'preset.removePrompt': { manager: PresetManagerView }
+  'preset.save': { presets: PresetSummary[], active: string }
+  'preset.delete': { presets: PresetSummary[], active?: string }
+  'preset.read': { name: string, preset: Record<string, unknown> }
+  'preset.import': { imported: string[], skipped: { name: string, reason: string }[], presets: PresetSummary[] }
+  'preset.importFile': {
+    outcome:
+      | { name: string, imported: true, overwritten: boolean, sensitive: readonly string[] }
+      | { name: string, imported: false, reason: 'invalid-json' | 'not-a-preset' | 'unusable-name' }
+    presets: PresetSummary[]
+  }
+
+  'persona.list': { personas: PersonaView[], activeId?: string }
+  /** `persona` is absent when the id is unknown or nothing is active — not an error. */
+  'persona.get': { persona?: PersonaView }
+  'persona.set': { personas: PersonaView[], activeId?: string }
+  'persona.delete': { personas: PersonaView[], activeId?: string }
+
+  /** The global tier as stored, in run order — so a writer sees what survived. */
+  'regex.list': { scripts: RegexScriptView[] }
+  'regex.set': { scripts: RegexScriptView[] }
 
   /**
    * What a card contains, and what the user has decided about it.

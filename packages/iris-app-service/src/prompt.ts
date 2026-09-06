@@ -18,15 +18,36 @@ import {
   activateEntries,
   fromCharacterBook,
   promptRole,
+  type ActivationSettings,
+  type LorebookEntry,
+  type PositionBuckets,
   type PreparedEntry,
   type ScanEntry,
   type TimedEffectState,
 } from '@iris/lorebook'
 
+import type { InsertionStrategy } from '@iris/protocol'
 import type { ResolvedWorldbook } from './worldbooks.ts'
-import { createMacroContext, expandMacros } from '@iris/macro'
+import type { ActivePersona } from './persona.ts'
+import { createMacroContext, expandMacros, type MacroMessage } from '@iris/macro'
 import type { Contribution, HistoryEntry, Role, TokenCounter } from '@iris/pipeline'
 import { resolvePreset, type ChatCompletionPreset, type MarkerSources, type PromptItem } from '@iris/preset'
+
+/**
+ * One chat-bound book's entries, tagged with its name.
+ *
+ * Upstream's `chatLore` (`world-info.js:4430`): `chat_metadata.world_info`
+ * holds a **book name**, and the book is loaded fresh at every scan — which is
+ * the point of the source. A chat book is the one body of world info a card
+ * writes *during play* (`getOrCreateChatWorldbook`), so a resolution taken when
+ * the chat opened would miss every entry the card added since.
+ */
+export interface ChatLoreBook {
+  /** The book's name, as `chat_metadata.world_info` spells it. */
+  world: string
+  /** Its entries, normalized. */
+  entries: LorebookEntry[]
+}
 
 /**
  * The preset used when the composition names none.
@@ -57,6 +78,50 @@ export const DEFAULT_PRESET: ChatCompletionPreset = {
   ],
 }
 
+/**
+ * The format strings a preset may carry, and what they default to.
+ *
+ * Upstream defaults (`openai.js:106-113`): `wi_format` is `'{0}'`, so world
+ * info joins with no wrapper; `scenario_format` and `personality_format` are
+ * the bare macros, so the Chat Completion path sends raw scenario and
+ * personality text. Real presets do override them — measured on this machine's
+ * install: `[Circumstances and context of the dialogue: {{scenario}}]` — and a
+ * preset that does is sending the model a different prompt than the bare
+ * fields would produce.
+ */
+const DEFAULT_WI_FORMAT = '{0}'
+const DEFAULT_SCENARIO_FORMAT = '{{scenario}}'
+const DEFAULT_PERSONALITY_FORMAT = '{{personality}}'
+
+/**
+ * Read one format string off a preset, falling back to upstream's default.
+ * @param preset - the preset file.
+ * @param key - the file's snake_case key.
+ * @param fallback - the upstream default.
+ * @returns the format string.
+ */
+function formatOf(preset: ChatCompletionPreset, key: string, fallback: string): string {
+  const value = preset[key]
+  return typeof value === 'string' && value.length > 0 ? value : fallback
+}
+
+/**
+ * Fill a preset's world-info wrapper, upstream's `formatWorldInfo`.
+ *
+ * The `{0}` placeholder is `stringFormat`, not a macro, and gets no expansion
+ * pass of its own — macros in a `wi_format` ride through to the general
+ * expansion below, exactly as they do upstream, where the world info block is
+ * formatted before prompts are parameter-substituted.
+ * @param value - the joined entries; empty stays empty.
+ * @param format - the preset's `wi_format`.
+ * @returns the wrapped block.
+ */
+function formatWorldInfo(value: string, format: string): string {
+  if (value.length === 0) return ''
+  if (format.trim().length === 0) return value
+  return format.replace('{0}', value)
+}
+
 /** Everything one assembly needs that is not the conversation itself. */
 export interface PromptInput {
   /** The character being played, or absent for a chat with no card. */
@@ -84,6 +149,36 @@ export interface PromptInput {
   /** Sticky and cooldown windows carried from the previous turn. */
   timedEffects?: TimedEffectState
   /**
+   * The chat-bound book's entries, read fresh per assembly by the caller.
+   *
+   * Upstream assembles `[...chatLore, ...personaLore, ...rest]` — chat lore
+   * first, ahead of the strategy ordering — so these entries compete for budget
+   * before everything else. Absent means the chat binds no book, which is the
+   * normal state.
+   */
+  chatLore?: readonly ChatLoreBook[]
+  /**
+   * The scan knobs, from the stored world-info settings.
+   *
+   * Absent fields take the engine's defaults, which are ST's shipped values —
+   * so an absent argument is the same answer a fresh installation gives, and a
+   * caller that has settings passes them through untouched.
+   */
+  activationSettings?: Partial<ActivationSettings>
+  /**
+   * How the global and character books interleave, from the same stored
+   * settings. Defaults to `character_first`, which is both ST's shipped value
+   * and the measured installation's.
+   */
+  insertionStrategy?: InsertionStrategy
+  /**
+   * The generation type this prompt is assembled for, in upstream's vocabulary
+   * (`'normal'`, `'continue'`, `'impersonate'`, …). Passed to the preset
+   * resolver, where it drives the `injection_trigger` filter and the rule that
+   * a continue carries no post-history section. Absent means `'normal'`.
+   */
+  generationType?: string
+  /**
    * The chat's own macro expander, replacing the one built here.
    *
    * Supplied so that Tavern Helper's `{{get_*_variable::}}` and
@@ -97,6 +192,35 @@ export interface PromptInput {
    * test) still gets `{{char}}` and `{{user}}`.
    */
   substitute?: (text: string) => string
+  /**
+   * The conversation as macros see it, oldest first: `{{lastMessage}}` and the
+   * floor-addressing family read this when no chat expander was supplied.
+   *
+   * Optional, because the usual caller passes `substitute` — a live chat's
+   * expander already sees the floors — and this keeps a card-only caller honest
+   * rather than inventing an empty conversation for it.
+   */
+  chat?: readonly MacroMessage[]
+  /**
+   * Receives the world-info outlet buckets once the scan has filled them.
+   *
+   * Upstream parks the activated outlet entries in `extension_prompts` and every
+   * later `{{outlet::key}}` reads them back from there; the sink is that store's
+   * seam. Called after the scan and before the preset's own text is expanded, so
+   * a preset prompt asking for an outlet sees this turn's buckets — which is
+   * upstream's order too (`setExtensionPrompt` runs before the prompt is
+   * rendered). World-info content expanding *during* the scan still sees the
+   * previous buckets, which is also upstream's order.
+   */
+  outletSink?: (outlets: Record<string, string>) => void
+  /**
+   * The active user persona, resolved over upstream's defaults by the caller
+   * (`PersonaStore.active`). Absent — no persona, or an empty description — is
+   * the state every install starts in, and it assembles the identical prompt:
+   * the marker stays empty, the scan data carries an empty persona description,
+   * and `{{persona}}` expands to nothing, exactly as before a store existed.
+   */
+  persona?: ActivePersona
 }
 
 /** The assembled policy for one generation. */
@@ -116,57 +240,142 @@ function roleOf(value: number): Role {
 }
 
 /**
- * Flatten a card's book into the scan list.
+ * Flatten every open book into the scan list, in upstream's order.
  *
- * The engine takes the order as given and only re-sorts by `order` when it
- * buckets the winners, so the caller's ordering is what breaks activation ties.
- * Descending `order` puts the entries an author weighted highest in front,
- * which is the behaviour an author expects from the field they set.
+ * A transcription of `getSortedEntries` (`world-info.js:4478`) rather than an
+ * interpretation of it, because order is behaviour twice over: it breaks
+ * activation ties, and it decides who reaches the budget first.
+ *
+ * The rules, in order:
+ *
+ * 1. **Chat lore first, unconditionally** — upstream's own comment says so
+ *    (`world-info.js:4512`). A chat book's entries compete for budget ahead of
+ *    every other source.
+ * 2. Then the strategy result, and the strategy orders **only** the global and
+ *    character books. `character_first` sorts each group separately and
+ *    concatenates, so *every* character entry precedes *every* global one
+ *    however their `order` fields compare; `evenly` and `global_first` sort the
+ *    concatenation, where ties go to whichever source was concatenated first.
+ * 3. Ties inside a sort keep insertion order — the sort is stable and upstream
+ *    adds no tiebreak. The `uid` tiebreak an earlier version appended here was
+ *    a tidiness the upstream does not have.
+ *
+ * The per-source dedup guards travel with their sources (`getChatLore` and
+ * `getCharacterLore`, `world-info.js:4380-4449`): a chat book already globally
+ * selected is skipped, and a character book is skipped when it is globally
+ * selected **or** is the chat's book. The character guard is **per book**,
+ * because upstream's `getCharacterLore` walks one `worldsToSearch` set — the
+ * primary binding plus the host-stored extras — and tests each name against the
+ * global and chat selections on its own turn through the loop. A host-stored
+ * extra that names the chat's book loses; the primary's loss does not take the
+ * extras down with it. Persona lore is absent — Iris has no persona store yet —
+ * so its guard has nothing to guard.
  * @param card - the character whose book to read.
- * @returns scan entries, or an empty list when the card ships no book.
+ * @param chosen - the resolved named/embedded book plus the global selection.
+ * @param chatLore - the chat-bound book's entries, read fresh by the caller.
+ * @param strategy - the stored insertion strategy.
+ * @returns scan entries, or an empty list when nothing is open.
  */
-export function scanEntriesOf(card: CharacterCard | undefined, chosen?: ResolvedWorldbook): ScanEntry[] {
-  let entries: ScanEntry[]
-  if (chosen !== undefined) {
-    // Character's own book first, then the globally selected ones. That is
-    // upstream's `character_first` strategy (`world_info_character_strategy`),
-    // which is the value the measured installation carries. Each book keeps its
-    // own name, because `getwi(name, …)` matches on it and a globally selected
-    // book is not the character's.
-    //
-    // **`ChatEntry.initVars` builds the same list in the opposite order, and
-    // that is not a typo in either place.** Prompt assembly is character-first
-    // by the installation's strategy setting; `[InitVar]` seeding is global-first
-    // because MVU's `getEnabledLorebookList` hardcodes
-    // `[...selected_global_lorebooks, primary, ...additional]`
-    // (`MagVarUpdate/src/function/initvar/variable_init.ts:230`), so a global
-    // book's declaration folds first and the character's wins on overlap. Two
-    // upstream decisions, made in different code for different reasons.
-    // Reconciling them would look like tidying and would change behaviour.
-    entries = [
-      ...chosen.entries.map(entry => ({ ...entry, world: chosen.world })),
-      ...chosen.global.flatMap(book => book.entries.map(entry => ({ ...entry, world: book.world }))),
-    ]
-  } else {
-    // No resolver: the embedded book, which is what a caller with no world book
-    // store can see. A host always passes `chosen`.
+export function scanEntriesOf(
+  card: CharacterCard | undefined,
+  chosen?: ResolvedWorldbook,
+  chatLore: readonly ChatLoreBook[] = [],
+  strategy: InsertionStrategy = 'character_first',
+): ScanEntry[] {
+  // Without a resolver this is the embedded book, which is what a caller with
+  // no world book store can see. A host always passes `chosen`.
+  const embedded = (): { entries: ScanEntry[], world: string } => {
     const book = card?.data.character_book
-    if (book === undefined) return []
+    if (book === undefined) return { entries: [], world: card?.data.name ?? 'character book' }
     try {
       const world = card?.data.name ?? 'character book'
-      entries = Object.values(fromCharacterBook(book).entries).map(entry => ({ ...entry, world }))
+      return { entries: Object.values(fromCharacterBook(book).entries).map(entry => ({ ...entry, world })) , world }
     } catch {
       // A book Iris cannot read is a reason to play the character without it,
       // not a reason to refuse the chat.
-      return []
+      return { entries: [], world: card?.data.name ?? 'character book' }
     }
   }
-  return entries.sort((a, b) => b.order - a.order || a.uid - b.uid)
+
+  const characterEntries: ScanEntry[] = chosen !== undefined
+    ? chosen.entries.map(entry => ({ ...entry, world: chosen.world }))
+    : embedded().entries
+  const characterWorld = chosen !== undefined ? chosen.world : (card?.data.name ?? 'character book')
+  const globalEntries: ScanEntry[] = chosen !== undefined
+    ? chosen.global.flatMap(book => book.entries.map(entry => ({ ...entry, world: book.world })))
+    : []
+
+  // The dedup guards, each cutting its own source exactly as its upstream
+  // getter does. A chat book already globally selected is skipped here — that
+  // is `getChatLore`'s guard; a character book that is globally selected or *is*
+  // the chat's book never reaches the sort at all, which is `getCharacterLore`'s
+  // (`world-info.js:4387-4396`). The character guard is per book: the primary's
+  // world is tested on its own, and each host-stored extra on its own, because
+  // upstream walks one search set name by name. A source that loses its guard
+  // contributes no entries, rather than contributing entries that lose their
+  // `world` tag.
+  const globalNames = new Set(chosen?.global.map(book => book.world) ?? [])
+  const chatNames = new Set(chatLore.map(book => book.world))
+  const chatBooks = chatLore.filter(book => !globalNames.has(book.world))
+  const primaryAdmitted = !globalNames.has(characterWorld) && !chatNames.has(characterWorld)
+  // The host-stored extras (`charLore.extraBooks`), after the primary, in the
+  // order the user bound them — upstream's Set preserves insertion order, so
+  // the extras follow the primary in the search and in the scan list.
+  const additionalEntries: ScanEntry[] = (chosen?.additional ?? [])
+    .filter(book => !globalNames.has(book.world) && !chatNames.has(book.world))
+    .flatMap(book => book.entries.map(entry => ({ ...entry, world: book.world })))
+  const characterEntriesAdmitted: ScanEntry[] = [
+    ...(primaryAdmitted ? characterEntries : []),
+    ...additionalEntries,
+  ]
+
+  // `sortFn` upstream: descending `order`, stable, no tiebreak. Array sort is
+  // stable in every runtime this runs on.
+  const byOrder = (a: ScanEntry, b: ScanEntry): number => b.order - a.order
+
+  // The strategy switch, spelled exactly as upstream's (`world-info.js:4496`):
+  // which arrays are sorted *before* concatenation is the whole difference
+  // between the three values.
+  let ordered: ScanEntry[]
+  switch (strategy) {
+    case 'character_first':
+      ordered = [...characterEntriesAdmitted].sort(byOrder).concat([...globalEntries].sort(byOrder))
+      break
+    case 'global_first':
+      ordered = [...globalEntries].sort(byOrder).concat([...characterEntriesAdmitted].sort(byOrder))
+      break
+    case 'evenly':
+    default:
+      // Upstream's default branch also logs an error and falls back here, for
+      // any strategy value it does not know.
+      ordered = [...globalEntries, ...characterEntriesAdmitted].sort(byOrder)
+      break
+  }
+
+  // Chat lore always goes first, then persona lore, then the rest
+  // (`world-info.js:4513`). Persona lore: no persona store yet.
+  const chatEntries = chatBooks.flatMap(book => book.entries.map(entry => ({ ...entry, world: book.world })))
+  return [...chatEntries.sort(byOrder), ...ordered]
 }
 
 /** Join a bucket's entries into one block of prompt text. */
 function joinEntries(entries: readonly PreparedEntry[]): string {
   return entries.map(entry => entry.content).filter(text => text.trim().length > 0).join('\n')
+}
+
+/**
+ * One outlet bucket per key, joined as upstream joins them onto the prompt.
+ *
+ * `script.js` writes each outlet's activated entries with `value.join('\n')`;
+ * {@link joinEntries} is that join, plus the drop-empty rule every other bucket
+ * applies, so an entry that rendered to nothing leaves no blank line behind.
+ * @param buckets - the scan's outlet buckets, keyed by `outletName`.
+ * @returns the prompt-ready text per key.
+ */
+function outletPromptsOf(buckets: PositionBuckets['outlets']): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(buckets).map(([key, entries]) => [key, joinEntries(entries)]),
+  )
 }
 
 /**
@@ -208,35 +417,86 @@ export function applyCardOverrides(
  * @returns the contributions, the timed-effect state to carry forward, and what fired.
  */
 export function buildPrompt(input: PromptInput): PromptResult {
-  const macros = createMacroContext({ char: input.characterName, user: input.userName })
+  const data = input.card?.data
+  // Rebound after the scan, because the outlets do not exist until it has run:
+  // expansions before that (world-info content) read the previous buckets,
+  // expansions after (the preset's own text) read this turn's. That is the same
+  // order upstream's `extension_prompts` round-trip produces.
+  let outlets: Record<string, string> = {}
+  const macros = createMacroContext({
+    char: input.characterName,
+    user: input.userName,
+    // The persona description, what upstream's `{{persona}}` expands to —
+    // the *description*, never the name (`script.js:3352`, the persona row of
+    // the macro environment, which trims: `persona_description?.trim()`). Empty
+    // when no persona is active, which is also what the macro expanded to
+    // before a persona store existed, so the default is unchanged. The slot and
+    // the depth injection below keep the stored text verbatim — upstream only
+    // trims the macro read.
+    persona: input.persona?.description.trim() ?? '',
+    // The card fields, so a preset's format strings can say `{{scenario}}` or
+    // `{{personality}}` — which is what upstream's own defaults do, and what
+    // real presets copy. Without them the format would degrade to its own
+    // braces, a worse prompt than no format at all.
+    character: {
+      ...data?.description === undefined ? {} : { description: data.description },
+      ...data?.personality === undefined ? {} : { personality: data.personality },
+      ...data?.scenario === undefined ? {} : { scenario: data.scenario },
+    },
+    ...(input.chat === undefined ? {} : { chat: input.chat }),
+    outlet: key => outlets[key] ?? '',
+  })
   const expand = input.substitute ?? ((text: string): string => expandMacros(text, macros))
 
   const scan = activateEntries({
-    entries: scanEntriesOf(input.card, input.worldbook),
+    entries: scanEntriesOf(input.card, input.worldbook, input.chatLore, input.insertionStrategy),
     // The engine wants the conversation newest-first, the order ST scans in.
     chat: [...input.history].reverse().map(entry => entry.text),
     budget: input.worldInfoBudget,
     countTokens: input.count,
     substituteMacros: expand,
+    // The stored scan knobs, resolved over defaults by the caller. Absent
+    // fields fall back to ST's shipped values inside the engine.
+    ...input.activationSettings === undefined ? {} : { settings: input.activationSettings },
     ...input.timedEffects === undefined ? {} : { timedEffects: input.timedEffects },
     globalScanData: {
-      characterDescription: input.card?.data.description ?? '',
-      characterPersonality: input.card?.data.personality ?? '',
+      // The persona description joins the scan **regardless of position** —
+      // upstream fills `globalScanData.personaDescription` from the active
+      // persona unconditionally (`script.js:4568`), so a `matchPersonaDescription`
+      // entry fires on it even at `none`, where the prompt itself never shows it.
+      personaDescription: input.persona?.description ?? '',
+      characterDescription: data?.description ?? '',
+      characterPersonality: data?.personality ?? '',
     },
   })
+  outlets = outletPromptsOf(scan.buckets.outlets)
+  input.outletSink?.(outlets)
 
-  const data = input.card?.data
+  // The preset's own wrappers, applied the way upstream applies them
+  // (`preparePromptsForChatCompletion` + `formatWorldInfo`): a format that
+  // carries macros is expanded once, here. Expanded with the local context —
+  // not the chat's — because a chat's expander carries no card fields, and the
+  // whole point of these formats is naming them.
+  const wiFormat = formatOf(input.preset, 'wi_format', DEFAULT_WI_FORMAT)
+  const scenarioFormat = expandMacros(formatOf(input.preset, 'scenario_format', DEFAULT_SCENARIO_FORMAT), macros)
+  const personalityFormat = expandMacros(formatOf(input.preset, 'personality_format', DEFAULT_PERSONALITY_FORMAT), macros)
+  const scenario = data?.scenario ?? ''
+  const personality = data?.personality ?? ''
+
   const markers: MarkerSources = {
-    // `wi_format` defaults to a bare `{0}` upstream, so activated entries are
-    // concatenated with no wrapper. Verified against ST 1.18.0's openai.js.
-    worldInfoBefore: joinEntries(scan.buckets.before),
-    worldInfoAfter: joinEntries(scan.buckets.after),
+    worldInfoBefore: formatWorldInfo(joinEntries(scan.buckets.before), wiFormat),
+    worldInfoAfter: formatWorldInfo(joinEntries(scan.buckets.after), wiFormat),
+    // The persona's IN_PROMPT position is exactly upstream's Chat Completion
+    // rule (`openai.js:1424`): a system prompt at the `personaDescription`
+    // slot, only when the description exists **and** the position is IN_PROMPT.
+    // Every other position leaves the marker empty here — `atdepth` injects
+    // below, `none` keeps the text out of the prompt entirely.
+    personaDescription: input.persona?.position === 'inprompt' ? input.persona.description : '',
     charDescription: data?.description ?? '',
-    // `personality_format` and `scenario_format` also default to bare
-    // substitutions on the Chat Completion path — the "{{char}}'s personality:"
-    // prefixes belong to the text-completion story string, not here.
-    charPersonality: data?.personality ?? '',
-    scenario: data?.scenario ?? '',
+    // Empty fields stay empty whatever the format says: upstream's `scenario
+    // &&` guard means a format string never manufactures content from nothing.
+    charPersonality: personality === '' ? '' : personalityFormat,
+    scenario: scenario === '' ? '' : scenarioFormat,
     dialogueExamples: [
       joinEntries(scan.buckets.emTop),
       data?.mes_example ?? '',
@@ -248,7 +508,10 @@ export function buildPrompt(input: PromptInput): PromptResult {
   // prompt text uses `{{char}}` as freely as a card's description does, so
   // expanding only the marker sources would leave the instruction that actually
   // shapes the reply talking about a character named "{{char}}".
-  const contributions = resolvePreset(applyCardOverrides(input.preset, input.card), { markers })
+  const contributions = resolvePreset(applyCardOverrides(input.preset, input.card), {
+    markers,
+    ...input.generationType === undefined ? {} : { generationType: input.generationType },
+  })
     .map(contribution => ({ ...contribution, text: expand(contribution.text) }))
 
   // The author's-note buckets have no note of their own to sit around yet, so
@@ -278,6 +541,20 @@ export function buildPrompt(input: PromptInput): PromptResult {
       label: `World Info (depth ${String(bucket.depth)})`,
       placement: { kind: 'depth', depth: bucket.depth, role: roleOf(bucket.role), order: 0 },
       text,
+    })
+  }
+
+  // The persona's AT_DEPTH position — upstream's `addPersonaDescriptionExtensionPrompt`
+  // (`script.js:3163`): the description as an IN_CHAT extension prompt at
+  // `persona_description_depth` (default 2) and `persona_description_role`
+  // (default system). Same shape as the card's note below, which is why it
+  // rides the same depth placement.
+  if (input.persona?.position === 'atdepth') {
+    contributions.push({
+      id: 'persona.depthPrompt',
+      label: 'Persona Description',
+      placement: { kind: 'depth', depth: input.persona.depth, role: input.persona.role, order: 1 },
+      text: expand(input.persona.description),
     })
   }
 

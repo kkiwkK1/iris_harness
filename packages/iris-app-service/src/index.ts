@@ -19,7 +19,9 @@ import { existsSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { ChatCompletionPreset } from '@iris/preset'
+import { OpenAiCompatAdapter } from '@iris/llm-openai-compat'
 
+import { BackupStore, DEFAULT_BACKUP_KEEP } from './backups.ts'
 import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
@@ -30,9 +32,12 @@ import { DiagnosticBuffer } from './diagnostics.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import { IrisAppService } from './service.ts'
-import { ConnectionStore } from './connections.ts'
+import { ConnectionStore, routeOf } from './connections.ts'
+import { PersonaStore } from './persona.ts'
+import { FavoriteStore } from './favorites.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
+import { PresetStore } from './presets.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
 import { WorldbookStore } from './worldbooks.ts'
 import { openGlobalScope } from './context.ts'
@@ -43,8 +48,19 @@ import { ScriptPolicyStore } from './scripts.ts'
 import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
 
+export {
+  BackupStore,
+  DEFAULT_BACKUP_KEEP,
+  NO_CHARACTER,
+  backupStamp,
+  parseBackupStamp,
+  rotateBackups,
+  type BackupIntent,
+  type BackupStoreOptions,
+} from './backups.ts'
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
-export { ConnectionStore, summarize, type ProfileInput } from './connections.ts'
+export { ConnectionStore, keyTailOf, summarize, routeOf, type ProfileInput } from './connections.ts'
+export type { ConnectionEndpoint } from './service.ts'
 export {
   assertStorable,
   buildCardContext,
@@ -54,6 +70,7 @@ export {
 } from './context.ts'
 export { ChatEntry, lineTurns, metadataBackend, readMeta, type IrisChatMeta } from './entry.ts'
 export { AppError, busy, invalid, notFound } from './errors.ts'
+export { FavoriteStore } from './favorites.ts'
 export { CharacterLibrary, type CardFileRef } from './library.ts'
 export {
   DEFAULT_PROFILE,
@@ -84,6 +101,14 @@ export {
   type ReportPage,
 } from './diagnostics.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
+export {
+  DEFAULT_PERSONA_DEPTH,
+  DEFAULT_PERSONA_ROLE,
+  PersonaStore,
+  type ActivePersona,
+  type PersonaInput,
+  type PersonaPosition,
+} from './persona.ts'
 export { ScriptCache, cacheKey, nodeFetch, type CacheFailure, type FetchLike, type ScriptCacheOptions } from './script-cache.ts'
 export { ScriptPolicyStore } from './scripts.ts'
 export { ScriptVariableStore, scriptIdOf } from './script-variables.ts'
@@ -211,6 +236,17 @@ export interface Config {
    * @default 2000
    */
   templateDeadlineMs?: number
+  /**
+   * Conversation snapshots kept per chat before the oldest is deleted.
+   *
+   * The retention for the copies the host takes before deleting messages, before
+   * a card's replay batch becomes the stored file, and before a restore writes
+   * over a conversation. Upstream keeps 50 by default (`backups.common
+   * .numberOfBackups`); the floor is 1, because a retention of zero would turn
+   * every protected operation into the loss it was meant to prevent.
+   * @default 50
+   */
+  backupKeep?: number
 }
 
 /** Runtime schema for the application row. */
@@ -231,10 +267,11 @@ export const Config: z<Config> = z.object({
   webDistIndex: z.string(),
   sandboxPath: z.string().default('/sandbox'),
   templates: z.boolean().default(false),
-  pruneVariables: z.boolean().default(true),
+  pruneVariables: z.boolean().default(false),
   pruneSnapshotInterval: z.natural().default(50),
   pruneKeepRecent: z.natural().default(20),
   templateDeadlineMs: z.natural().default(2000),
+  backupKeep: z.natural().default(DEFAULT_BACKUP_KEEP),
 })
 
 /**
@@ -301,7 +338,11 @@ async function serveAvatar(
   }
 
   res.writeHead(200, {
-    'content-type': file.extension === '.png' ? 'image/png' : 'application/json; charset=utf-8',
+    'content-type': file.extension === '.png'
+      ? 'image/png'
+      : file.extension === '.jpg' || file.extension === '.jpeg'
+        ? 'image/jpeg'
+        : 'application/json; charset=utf-8',
     'content-length': file.data.byteLength,
     // Re-importing a card reuses its id, so a cached avatar can go stale;
     // revalidation costs one conditional request and never shows the old face.
@@ -413,12 +454,35 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return done?.name
   }
 
+  // The pre-change copies: beside the chats they protect, one store shared by
+  // the chat store (whose own backup arm writes through it) and the service
+  // (whose dangerous-operation guards and backup.* methods read it).
+  const backups = new BackupStore(paths.chats, {
+    keep: config.backupKeep ?? DEFAULT_BACKUP_KEEP,
+    onError: error => { ctx.logger.warn(`backups: ${error.message}`) },
+  })
+
   const chats = new ChatStore(
     paths.chats, library, scriptVariables, globalScope, worldbooks,
     // Read through a closure rather than captured: the selection is a setting
     // the user can change at runtime, and a value read here would freeze it.
     () => settings.globalSelect(),
     bookFor,
+    // The active persona description, read at expansion time — the same
+    // closure reaches every chat, so a switch lands at the next expansion
+    // without reopening anything. The store is primed below, before the first
+    // chat can open, so the closure answers from memory.
+    () => personas.activeSync() ?? '',
+    // Same rule, same reason: the global regex list is edited at runtime, and
+    // each open composes from whatever it says right now.
+    () => extensionSettingsStore.globalRegex(),
+    // The per-character extra bindings — upstream's `world_info.charLore`.
+    // Edited at runtime like the two above, so the closure rather than a
+    // captured value; a chat re-open is when a rebind reaches a conversation.
+    characterId => settings.charBooks(characterId),
+    // The snapshot store, shared with the service below — one retention
+    // setting, one directory layout, wherever a copy is taken from.
+    backups,
   )
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset
@@ -432,6 +496,66 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const scriptButtons = new ScriptButtonStore(
     paths.scriptButtons, error => { ctx.logger.warn(error.message) })
   const connections = new ConnectionStore(paths.connections)
+  // The user's personas — who `{{user}}` is. Its own file, like the
+  // connections beside it, for the same owner-separation reason.
+  const personas = new PersonaStore(paths.personas)
+  // The characters this profile has starred. Profile-level rather than the
+  // card's `fav`, on the standing rule that runtime state stays out of shared
+  // card files — an exported card carries no trace of the stars it earned here.
+  const favorites = new FavoriteStore(paths.favorites)
+  // Runtime adapter installs, one per provider route this plugin has claimed.
+  //
+  // `connection.activate` and boot-time restoration both come through here: a
+  // profile carrying its own endpoint needs an adapter that can see that
+  // endpoint and its key, and the composition's own registration — route
+  // `default` — belongs to the `llm-openai-compat` row, which this runtime
+  // neither owns nor may displace. Replacing a route we installed before is
+  // how two profiles of one provider take turns; the in-flight stream of the
+  // old one keeps its adapter object and finishes untouched.
+  //
+  // Each install is wrapped in its own `ctx.effect` (the same shape the
+  // `llm-openai-compat` row uses), so the disposer is owned by this fiber:
+  // unloading the app plugin takes its runtime adapters with it, and a
+  // remount re-runs the boot restoration below — a hot reload can no longer
+  // leave a stale `conn/<id>` route behind to trip `DUPLICATE_ADAPTER`. The
+  // map is only the replacement index, not the lifetime owner.
+  const installed = new Map<string, () => void>()
+  const installConnection = (route: string, endpoint: { baseURL: string, apiKey?: string, apiKeyHeader?: string }): void => {
+    installed.get(route)?.()
+    installed.set(route, ctx.effect(
+      () => ctx.llm.registerAdapter([route], new OpenAiCompatAdapter({
+        provider: route,
+        displayName: route,
+        baseURL: endpoint.baseURL,
+        ...endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey },
+        ...endpoint.apiKeyHeader === undefined ? {} : { apiKeyHeader: endpoint.apiKeyHeader },
+        models: [],
+      })),
+      `irisApp: adapter ${route}`,
+    ))
+  }
+  // The last activated profile comes back the same way after a restart: its
+  // adapter is in place before any handler can be reached, because a
+  // persisted route (`conn/<id>` or the preset id) in `settings.json` is a
+  // promise the registry has to be able to keep on the first turn.
+  const storedActive = await (async () => {
+    const listed = await connections.list()
+    if (listed.activeId === undefined) return undefined
+    try {
+      return await connections.get(listed.activeId)
+    } catch {
+      // The active id points at a profile that was removed out-of-band; the
+      // list itself clears it on the next write.
+      return undefined
+    }
+  })()
+  if (storedActive?.baseURL !== undefined && storedActive.baseURL.length > 0) {
+    installConnection(routeOf(storedActive), {
+      baseURL: storedActive.baseURL,
+      ...storedActive.apiKey === undefined ? {} : { apiKey: storedActive.apiKey },
+      ...storedActive.apiKeyHeader === undefined ? {} : { apiKeyHeader: storedActive.apiKeyHeader },
+    })
+  }
   // Shared across the profile, matching upstream's one `localStorage` per
   // origin. Not partitioned per card, and deliberately not forgotten when a
   // card is deleted — see `character.delete`.
@@ -447,6 +571,22 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // been used should leave nothing behind, and both stores already tolerate a
   // directory that does not exist yet.
   await settings.load()
+  // Primed before any chat can open, so the persona closure the chats carry
+  // answers from memory instead of racing a file read inside a macro.
+  await personas.prime()
+
+  // The profile's preset library — the files a switch reads and an import
+  // fills. Beside the installation, like every other store here.
+  const presets = new PresetStore(paths.presets)
+
+  // What the host assembles with at boot: a selection the user made in a
+  // previous run outranks the composition's file, because that is what
+  // persisting the choice means — a restart that snapped back to `presetPath`
+  // would make the picker a preference the host forgets. Absent (nothing ever
+  // switched or edited), the configured file stands, so a config-driven host
+  // stays config-driven.
+  const storedPreset = settings.presetBody()
+  const storedPresetName = settings.presetName()
 
   const service = new IrisAppService({
     stream: options => ctx.llm.stream(options),
@@ -458,8 +598,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     scriptButtons,
     worldbooks,
     connections,
+    personas,
+    favorites,
+    worldbookBindings,
+    installConnection,
     scriptVariables,
-    preset: await loadPreset(config.presetPath),
+    backups,
+    preset: storedPreset ?? await loadPreset(config.presetPath),
+    ...storedPresetName === undefined ? {} : { presetName: storedPresetName },
+    presets,
+    ...config.sillyTavernDir === undefined ? {} : { sillyTavernDir: config.sillyTavernDir },
     broadcast: event => { ctx.irisRpc.broadcast(event) },
     diagnostics,
     cardStorage,
@@ -507,6 +655,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.open', handlers['chat.open']),
       ctx.irisRpc.register('chat.delete', handlers['chat.delete']),
       ctx.irisRpc.register('chat.rename', handlers['chat.rename']),
+      ctx.irisRpc.register('chat.search', handlers['chat.search']),
       ctx.irisRpc.register('chat.answerCleanup', handlers['chat.answerCleanup']),
       ctx.irisRpc.register('chat.send', handlers['chat.send']),
       ctx.irisRpc.register('chat.regenerate', handlers['chat.regenerate']),
@@ -515,6 +664,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.editMessage', handlers['chat.editMessage']),
       ctx.irisRpc.register('chat.deleteMessage', handlers['chat.deleteMessage']),
       ctx.irisRpc.register('chat.branch', handlers['chat.branch']),
+      ctx.irisRpc.register('chat.import', handlers['chat.import']),
+      ctx.irisRpc.register('chat.export', handlers['chat.export']),
+      ctx.irisRpc.register('backup.list', handlers['backup.list']),
+      ctx.irisRpc.register('backup.preview', handlers['backup.preview']),
+      ctx.irisRpc.register('backup.restore', handlers['backup.restore']),
+      ctx.irisRpc.register('backup.delete', handlers['backup.delete']),
       ctx.irisRpc.register('prompt.itemize', handlers['prompt.itemize']),
       ctx.irisRpc.register('script.getVariables', handlers['script.getVariables']),
       ctx.irisRpc.register('script.setVariables', handlers['script.setVariables']),
@@ -524,11 +679,35 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('connection.save', handlers['connection.save']),
       ctx.irisRpc.register('connection.delete', handlers['connection.delete']),
       ctx.irisRpc.register('connection.activate', handlers['connection.activate']),
+      ctx.irisRpc.register('connection.test', handlers['connection.test']),
       ctx.irisRpc.register('character.list', handlers['character.list']),
       ctx.irisRpc.register('character.import', handlers['character.import']),
       ctx.irisRpc.register('character.delete', handlers['character.delete']),
+      ctx.irisRpc.register('character.duplicate', handlers['character.duplicate']),
+      ctx.irisRpc.register('character.rename', handlers['character.rename']),
+      ctx.irisRpc.register('character.export', handlers['character.export']),
+      ctx.irisRpc.register('character.setTags', handlers['character.setTags']),
+      ctx.irisRpc.register('character.favorite', handlers['character.favorite']),
       ctx.irisRpc.register('settings.get', handlers['settings.get']),
       ctx.irisRpc.register('settings.set', handlers['settings.set']),
+      ctx.irisRpc.register('persona.list', handlers['persona.list']),
+      ctx.irisRpc.register('persona.get', handlers['persona.get']),
+      ctx.irisRpc.register('persona.set', handlers['persona.set']),
+      ctx.irisRpc.register('persona.delete', handlers['persona.delete']),
+      ctx.irisRpc.register('preset.list', handlers['preset.list']),
+      ctx.irisRpc.register('preset.select', handlers['preset.select']),
+      ctx.irisRpc.register('preset.view', handlers['preset.view']),
+      ctx.irisRpc.register('preset.setEnabled', handlers['preset.setEnabled']),
+      ctx.irisRpc.register('preset.move', handlers['preset.move']),
+      ctx.irisRpc.register('preset.upsertPrompt', handlers['preset.upsertPrompt']),
+      ctx.irisRpc.register('preset.removePrompt', handlers['preset.removePrompt']),
+      ctx.irisRpc.register('preset.save', handlers['preset.save']),
+      ctx.irisRpc.register('preset.delete', handlers['preset.delete']),
+      ctx.irisRpc.register('preset.read', handlers['preset.read']),
+      ctx.irisRpc.register('preset.import', handlers['preset.import']),
+      ctx.irisRpc.register('preset.importFile', handlers['preset.importFile']),
+      ctx.irisRpc.register('regex.list', handlers['regex.list']),
+      ctx.irisRpc.register('regex.set', handlers['regex.set']),
       ctx.irisRpc.register('script.list', handlers['script.list']),
       ctx.irisRpc.register('script.setEnabled', handlers['script.setEnabled']),
       ctx.irisRpc.register('script.body', handlers['script.body']),
@@ -554,8 +733,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('worldbook.load', handlers['worldbook.load']),
       ctx.irisRpc.register('worldbook.charNames', handlers['worldbook.charNames']),
       ctx.irisRpc.register('worldbook.replace', handlers['worldbook.replace']),
+      ctx.irisRpc.register('worldbook.create', handlers['worldbook.create']),
       ctx.irisRpc.register('worldbook.globalSelect', handlers['worldbook.globalSelect']),
       ctx.irisRpc.register('worldbook.setGlobalSelect', handlers['worldbook.setGlobalSelect']),
+      ctx.irisRpc.register('worldbook.bindChat', handlers['worldbook.bindChat']),
+      ctx.irisRpc.register('worldbook.setCharBooks', handlers['worldbook.setCharBooks']),
+      ctx.irisRpc.register('worldbook.settings', handlers['worldbook.settings']),
+      ctx.irisRpc.register('worldbook.setSettings', handlers['worldbook.setSettings']),
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()

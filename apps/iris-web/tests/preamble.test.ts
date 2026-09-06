@@ -13,7 +13,7 @@ import { strict as assert } from 'node:assert'
 import test from 'node:test'
 
 import { identityMembers } from '../src/sandbox/identity.ts'
-import { PREAMBLE_LINES, preambleFor, withPreamble } from '../src/sandbox/preamble.ts'
+import { PREAMBLE_LINES, WINDOW_GLOBAL, preambleFor, withPreamble } from '../src/sandbox/preamble.ts'
 
 test('the preamble binds every identity-bearing member', () => {
   // Derived from the classification rather than restated, so a member promoted
@@ -23,6 +23,23 @@ test('the preamble binds every identity-bearing member', () => {
   for (const member of identityMembers()) {
     assert.ok(line.includes(member), `${member} is identity-bearing but is not bound per script`)
   }
+})
+
+test('the preamble shadows window with the published shadow, in the same line', () => {
+  /*
+   * A module cannot be handed the shadow as a parameter and `top` cannot be
+   * published onto the real window, so the shadow rides a published name and a
+   * lexical binding. Reading it off `globalThis` — not a bare identifier —
+   * because a bare `__iris_window__` that somehow never got published would
+   * throw a ReferenceError and stop the whole body, where a `globalThis` read
+   * yields undefined and fails where the card uses it.
+   */
+  const line = preambleFor('card-1')
+
+  assert.ok(
+    line.includes(`const window=globalThis.${WINDOW_GLOBAL}`),
+    'the module window is not the shadow a classic body receives as a parameter',
+  )
 })
 
 test('the preamble is exactly one line', () => {

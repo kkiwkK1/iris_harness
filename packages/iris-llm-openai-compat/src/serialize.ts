@@ -24,6 +24,14 @@ export interface IrisSampling {
   frequencyPenalty?: number
   presencePenalty?: number
   seed?: number
+  /**
+   * Upstream's `reasoning_effort`, verbatim (`openai.js:2756` sends the
+   * setting straight into the body). `'auto'` never reaches the wire: it is
+   * upstream's client-side "let the provider decide", and providers disagree
+   * about the literal word — sending nothing is the one spelling every
+   * OpenAI-compatible endpoint agrees on.
+   */
+  reasoningEffort?: string
 }
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -88,6 +96,20 @@ export function serializeRequest(options: GenerateOptions): Record<string, unkno
     ...sampling.repetitionPenalty !== undefined ? { repetition_penalty: sampling.repetitionPenalty } : {},
     ...sampling.frequencyPenalty !== undefined ? { frequency_penalty: sampling.frequencyPenalty } : {},
     ...sampling.presencePenalty !== undefined ? { presence_penalty: sampling.presencePenalty } : {},
-    ...sampling.seed !== undefined ? { seed: sampling.seed } : {},
+    /*
+     * A **negative seed is upstream's "random"**, not a value: SillyTavern
+     * stores `-1` in the settings a preset ships (`seed: -1` is every real
+     * preset's default) and its `openai.js` sends the field only when the
+     * number is non-negative. Sent verbatim, the sentinel is a wire error —
+     * an endpoint that types `seed` as u64 (measured: DeepSeek answers 400
+     * `seed: invalid value: integer -1, expected u64`) refuses the whole
+     * request, so every generation dies before the model is ever asked.
+     * Dropped here, at the one place that knows the wire, the same way
+     * `reasoningEffort: 'auto'` below never reaches it.
+     */
+    ...sampling.seed !== undefined && sampling.seed >= 0 ? { seed: sampling.seed } : {},
+    ...sampling.reasoningEffort !== undefined && sampling.reasoningEffort !== 'auto'
+      ? { reasoning_effort: sampling.reasoningEffort }
+      : {},
   }
 }

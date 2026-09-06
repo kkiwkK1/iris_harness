@@ -1040,6 +1040,119 @@ someone wants that mode, and not before.
 
 ---
 
+## 18. An image with no card inside imports as an empty character
+
+**The rule:** a PNG that parses but carries no `chara`/`ccv3` chunk (the corpus
+shape: an SD generation whose only text chunk is `parameters`) and any JPEG
+with a valid SOI marker import as **empty characters** — every field blank, the
+picture itself the avatar, the id and display name minted from the filename.
+`packages/iris-app-service/src/library.ts` (`decode`) is the single place the
+rule lives; the avatar route gained `image/jpeg` and the web picker gained
+`.jpg,.jpeg` in its `accept` list, both consequences of the same row.
+
+**Upstream does not do this on the import path — both shapes are refused
+there, and that was verified against the install, not remembered.** Live probe
+of `E:/sillyTavern/SillyTavern` (1.18.0, `51ad27fb8`, no plugins installed),
+driving `/api/characters/import` exactly as the client does:
+
+| corpus file | upstream's answer |
+| --- | --- |
+| `00004-4209168235_1.png` | `200 {"error":true}` — the client toastr reads *"The file is likely invalid or corrupted. / Could not import character"* |
+| `00043-409781020.png` | `200 {"error":true}` — same |
+| `liwy.jpg` | never reaches the server: `importCharacter`'s extension gate (`json, png, yaml, yml, charx, byaf`) drops it **silently**; forced through anyway, the server answers `{"error":true}` (`Unsupported format`) |
+| the six real cards | imported, named from the card — the listing matches Iris's field for field |
+
+The PNG half comes from `src/character-card-parser.js`: `read()` throws
+`'No PNG metadata.'` once `textChunks` holds no `ccv3`/`chara` keyword — a
+`parameters` chunk keeps it off the *first* throw but not the second. The JPEG
+half is the client gate at `public/script.js` (`importCharacter`), mirrored by
+the server's `formatImportFunctions` map, which has no `jpg` arm.
+
+**So why accept? The one upstream surface that does take these files.** ST's
+character creator uploads any image as the avatar (multer takes whatever the
+browser posts; Jimp re-encodes it to a 400x600 PNG), producing exactly what this
+row produces: a character with empty fields whose picture is the image. The
+user's acceptance claim — *all nine corpus files open as characters in my
+SillyTavern* — is that surface seen from the front; the task set the bar as the
+user's observed behaviour, and this row implements it on the import path rather
+than asking the user to learn a second door.
+
+**What the divergence costs, measured:**
+
+- **Interop with ST's own folder.** Neither shape survives a round trip through
+  ST's characters directory: `/api/characters/all` reads only `*.png` (the
+  `.jpg` is invisible) and its `processCharacter` throws on the card-less PNG
+  (filtered out of the listing). The bytes are stored as they arrived and can be
+  copied back out, but an ST install will not *list* them. A user who needs ST
+  to see the character re-saves it from either side's editor, which stamps a
+  card into the image.
+- **A nameless `.json` is accepted where upstream refuses.** Upstream's
+  `importFromJson` returns nothing for a JSON without `name`/`spec`/`char_name`;
+  `normalizeCard` lifts it to the same empty body the images get. Left as is:
+  it is the same empty-character rule one door earlier, and refusing it would
+  split one rule into two extensions. Revisit only with a corpus file that
+  makes the laxness cost something.
+
+**What stays a named rejection — the floor did not move for anything upstream
+also refuses:** non-image, non-JSON extensions (`.webp`, `.gif`, `.txt`…),
+a PNG that fails to parse (bad signature, truncated chunk, CRC mismatch), a
+card chunk that is not base64 JSON, `.charx` (still `unsupported`), and bytes
+that are not a JPEG at all despite the name. `import-images.test.ts` pins each
+arm; the two accepting arms were mutation-tested (remove the empty-card rule or
+the extension, watch them go red) so the green is not self-confirming.
+
+**What would overturn this row:** an upstream release that accepts these files
+at the import endpoint with a *different* presentation (say, a name from
+elsewhere than the filename, or a refusal for SOI-less JPEGs) — then the row
+should be re-read against that release, not defended against it.
+
+---
+
+## 19. The global regex layer: the global tier is carried; the preset tier and the allow-gate are not
+
+**Upstream.** `extensions/regex/engine.js` composes three tiers and runs them in
+`SCRIPT_TYPES` order — global, then the character's, then the preset's
+(`getScriptsByType`: global reads `extension_settings.regex ?? []`, scoped reads
+`characters[this_chid].data.extensions.regex_scripts`, preset reads the active
+preset file's own `regex_scripts` field). Two gates ride beside them
+(`getRegexedString`, `allowedOnly: true`): a character's scripts run only when
+its avatar is in `extension_settings.character_allowed_regex`, and a preset's
+only when its name is in `preset_allowed_regex[apiId]`.
+
+**Iris.** The profile's global list is stored verbatim at the isomorphic path
+(`extension-settings.json`, partition `.regex`) and composed in front of the
+card's own on all three directions — storage, display, prompt. Two deliberate
+gaps:
+
+- **The preset tier is reserved, not carried.** Upstream writes preset-scoped
+  scripts into the preset file; this host's preset library is read-only copies
+  (§13 names the read-only install pattern the library keeps to), so there is
+  nowhere the tier could live and nothing a panel could edit. `orderScripts`
+  already orders the tier, so wiring it later is passing one more list in, not
+  reworking call sites.
+- **No allow-gate.** Upstream needs `character_allowed_regex` because card
+  scripts are untrusted code; this host asks once per card before running any
+  script at all (the `scriptsAllowed` consent), which answers the same question
+  one level up. Reproducing the regex-specific gate under that consent would
+  mean a granted card whose regex silently does nothing until a second,
+  better-hidden toggle is found.
+
+**What it costs, measured on this machine's install** (`data/default-user`):
+`extension_settings.regex` holds **0 scripts**; `character_allowed_regex` is
+**empty**; of the 1 preset file, **0** carry `regex_scripts`. So for this
+install: the global tier changes nothing until a user imports into it, the
+preset tier has nothing to carry, and the missing gate is the difference
+between the two MVU cards' regex working (here) and never running at all
+(upstream, as configured). A user moving an install that *uses* the gate would
+see card regex switch on — the consent ask is where they would see it named.
+
+**What would overturn this row.** A preset file carrying `regex_scripts` that
+a user expects to fire, or a card whose scripts a user wants runnable only
+after a per-feature allow — then the tier gets its storage and the gate gets
+re-examined against the consent flow, in that order.
+
+---
+
 # Upstream bugs, deliberately not reproduced
 
 A third column, and the reasoning in it differs from both neighbours. The
@@ -1154,7 +1267,56 @@ flag.** If the repetition becomes a real annoyance the answer is the feature
 upstream actually has — ask the question, and record the reply under upstream’s
 own key.
 
+## Generation kinds: a continue closes with the nudge, not the wrap-up
+
+`chat.send` grew `kind: 'continue' | 'impersonate'` (the implementation plan's
+B2), and three readings of upstream's continue/impersonate are deliberately
+ours. Upstream source for all three: `public/scripts/openai.js` and
+`public/scripts/PromptManager.js` at tag `1.18.0`.
+
+**A continue drops the post-history section entirely.** Upstream keeps
+post-history instructions in a continue's prompt and splices the continued
+message past them (`openai.js:898` moves the last message plus the nudge to the
+end of the assembled prompt). Here the section is omitted instead
+(`resolvePreset` refuses everything after the history marker for
+`generationType: 'continue'`): its content is wrap-up instruction — telling the
+model how to *finish* a reply is exactly wrong when the request asks it to
+write on from one. Anyone diffing the two prompts side by side will see the
+difference; the preset's `injection_trigger` lists still apply first, so an
+item excluded by trigger on a normal send is not resurrected by this rule.
+
+**The continue result is a new reading, not an in-place edit.** Upstream's
+continue appends the model's words to `chat[last].mes` and rewrites the current
+swipe entry. Here the joined text (seed + continuation) is appended as a new
+candidate of the same turn, so every earlier reading stays swipable — the
+acceptance for B2 names swipe history as the thing to keep, and an in-place
+rewrite would spend it. The file projection is identical in shape
+(`swipes[]` grows by one, `swipe_id` points at the joined reading).
+
+**An impersonation records nothing and stores verbatim.** The generated text
+becomes a user line — no variable table is written for its turn (a user line
+carries no variable consequences, the same rule a typed message lives under;
+upstream's MVU processes impersonated text like any other message, so a card
+that expected a user-side fold will not see one here), the chat's
+storage-direction regex does not run on it (those scripts shape what the *user
+typed*), and no `assistant/chunk` journal is kept for the generation, because
+the text is not an assistant message and never replays as one. A partial
+impersonation kept on abort becomes the partial user line; a provider failure
+keeps nothing at all, because half a sentence in the user's mouth is not a
+reply the user can retry.
+
+Two upstream affordances are absent rather than changed: the nudge and the
+impersonation prompt are the shipped defaults (`openai.js:104-110`), because
+this host has no settings surface for them yet — `{{lastChatMessage}}` in the
+nudge is still substituted, so lifting them into settings later is additive.
+And a continue on a chat whose newest line is a user line (an exchange that
+never got its reply) is refused by name, where upstream would continue the
+user's text: the log can only extend a turn through candidates, which are
+assistant messages, and replying-as-the-character to a continue request would
+have looked identical from the outside while being a different operation.
+
 ## Host
+
 
 **Injection order inside a group is the keys' lexicographic order.**
 Upstream walks `Object.keys(extension_prompts).sort()` (`script.js:3249`), so
@@ -1246,3 +1408,38 @@ reports that the floor was pruned rather than answering a bare empty table.
 a faithful reproduction — upstream stores a table per message and would answer
 with the user row's own. It is listed here only as the contrast: the two look
 alike from a bug report, and they belong in opposite columns.
+
+
+## 世界书机制补全（2026-09-04，任务 L）——三处向 ST 真值回归的修正，一处实测发现
+
+本节记录的是**对本仓既有行为的修正**，不是对上游的偏离；写在这里是因为三处都改变了
+已经跑过的路径上的可观察行为，读旧日志的人需要知道分界线。
+
+**一、扫描默认 `matchWholeWords` 从 `true` 改回 ST 的 `false`。** 引擎
+（`defaultActivationSettings`）与直呼 `matchKey` 的缺省曾是 `true`，而卡面
+`getLorebookSettings()` 一直报上游默认 `false`——同一台机器上两层对同一个设置给出
+相反答案，书是按 ST 调的，条目在此静默欠触发。现在存档设置是唯一真值，引擎、卡面、
+面板三方读同一张表，缺省与上游一致（`world-info.js:69-82`）。**行为变化**：以前靠
+整词边界挡住的误触发会回来，这是上游行为，不是回归。
+
+**二、世界书扫描设置成为真实存储。** 此前引擎跑死缺省、卡面报上游缺省、面板不存在，
+`world_info_budget_cap` 完全不生效（预算恒为 contextWindow × 25% 的硬编码份额）。
+现在 `settings.json` 的 `worldbooks` 节持有全部扫描旋钮，经 `worldbook.settings` /
+`worldbook.setSettings` 读写，`computeBudget` 落预算与上限。**顺带修掉一个存储缺陷**：
+`SettingsStore.load()` 重建文件态时丢弃 `worldbooks` 节，全局选择只在进程内存里活着，
+一次重启即静默清空——`tests/worldbook-settings.test.ts` 钉住。
+
+**三、插入顺序按 `getSortedEntries` 全量对齐。** 旧实现把角色书与全局书拼成一张表后
+做**单次** `order` 降序排序（外加 uid 决胜）——既不是 `character_first` 也不是
+`evenly`，是任何上游值都产不出的第三种顺序：全局书里 order 更高的条目会插到角色条目前面。
+现按上游三分支逐一转写：`character_first`/`global_first` 先组内排序再拼接（整组相续），
+`evenly` 拼接后排序（并列归先拼接的一方，上游数组顺序是全局在前），去掉 uid 决胜改用
+稳定排序。同书内并列的次序来自文件的键序，与上游读 `Object.keys` 的次序一致。
+
+**实测发现（未改，待裁）：新近一条用户消息在本卡上不进扫描窗。** 哈人冰恋世界
+（107 条目书）实测：首条用户消息含关键词（如「历史」）时不触发，第二条用户消息进入
+后（关键词落到深度 ≥1）触发正常。成因不是激活引擎——同一本书、同一个键直呼引擎
+2 条即中——而是 `#history` 先跑卡面 prompt 正则再给扫描（既定裁决「扫描不匹配正则
+即将剥掉的块」），而该卡的 prompt 正则恰好把最新一条用户输入从提示词里剥掉（其玩法
+就是首楼输入被界面吃掉）。ST 扫的是未过正则的原文，此处是 Iris 既有的投影裁决在此卡
+上的可见代价；是否改为「世界书扫原文」属跨任务裁定，未动。

@@ -43,7 +43,16 @@ export async function startMockProvider(): Promise<MockProvider> {
       response.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
-        'connection': 'keep-alive',
+        /*
+         * `close`, not `keep-alive`. The connection ends with the response, so
+         * no socket of this test double outlives the tests: a runner asked to
+         * force-exit then finds nothing mid-teardown. (Keep-alive here held
+         * three undici sockets open past the last test, and `process.exit()`
+         * amid their close tripped libuv's closing-handle assert on Windows —
+         * 0xC0000409 — which marked the file failed after every test in it had
+         * passed.)
+         */
+        'connection': 'close',
       })
       // Reasoning first, then visible text in several deltas, then usage.
       response.write(frame({ choices: [{ delta: { reasoning_content: 'weighing the reply' } }] }))
