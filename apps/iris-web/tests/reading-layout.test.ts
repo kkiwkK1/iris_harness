@@ -109,3 +109,46 @@ test('the recorded rail is legible, not merely present', () => {
   // Text, so a text-weight ink. `--iris-ink-faint` was 2.80:1.
   assert.match(count, /color:\s*var\(--iris-ink-tertiary\)/, 'the recorded count is back to a faint ink')
 })
+
+test('marginalia keeps a stacking position above the interface breakout', () => {
+  /*
+   * An interface slot escapes the reading measure with negative inline margins
+   * and reclaims the air beside the prose — air that includes the margin column,
+   * where the variant rail and the floor number live. The frame is opaque (a
+   * card paints its own background) and later in the DOM, so without a stacking
+   * position here it painted **over** the rail: measured at 240px² of rail
+   * hidden under a card interface on a real card, with nothing reporting a
+   * fault. The repair is exactly this stacking position — the box never moves,
+   * the breakout keeps its width, and the marginalia keep their layer — and it
+   * is two declarations, which is why it can disappear in a refactor with no
+   * test failing and no screenshot taken.
+   *
+   * Verified live over CDP (qa/measure-z3-occlusion.mjs): with these in place,
+   * `elementFromPoint` at the rail's own box answers the rail's children even
+   * where the frame's rectangle overlaps it; without them it answered IFRAME.
+   */
+  const margin = block('.iris-msg__margin')
+  assert.ok(margin !== undefined, '.iris-msg__margin rule is missing')
+  assert.match(margin, /position:\s*relative/, 'the margin column has no stacking position — the rail paints under interface frames again')
+  assert.match(margin, /z-index:\s*1/, 'the margin column lost its layer above the breakout')
+
+  // The turn ordinal rides the same margin and needs the same answer: it sits
+  // on the turn rule in the air the breakout reclaims.
+  const ordinal = block('.iris-turn__ordinal')
+  assert.ok(ordinal !== undefined, '.iris-turn__ordinal rule is missing')
+  assert.match(ordinal, /z-index:\s*1/, 'the turn ordinal paints under interface frames again')
+})
+
+test('the interface frame is clamped to the band and the band has a fallback', () => {
+  /*
+   * The publisher (`ChatPane`, via `frame-fit.ts`) is only half of the clamp's
+   * truth; the other half is the fallback that covers the gap before the
+   * publisher's first write lands. `var()` with no definition is invalid at
+   * computed-value time and `height` reverts to `auto` — **150px**, the
+   * collapsed frame that nearly shipped once when the token was left behind in
+   * `tokens.css`. The rule names the variable, so the default must outlive any
+   * commit order.
+   */
+  const tokens = readFileSync(fileURLToPath(new URL('../src/theme/tokens.css', import.meta.url)), 'utf8')
+  assert.match(tokens, /--iris-app-frame-height:\s*100vh/, 'the band variable has no default — an unbuilt publisher collapses every frame to 150px')
+})
