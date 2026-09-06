@@ -14,14 +14,15 @@
 //                                          leaks, and screenshot.
 //
 // Two properties of the render pass, because both are easy to lose:
-//   - the card-report list is read as a DELTA, and against TWO baselines: one at
-//     boot and one immediately before the target row is clicked. Those rows never
+//   - the card-report list is read as a DELTA, against a baseline taken once the
+//     list has gone QUIET (1.5 s without a new row, 15 s cap). Those rows never
 //     expire and are cleared only when the CHARACTER changes, and both fixture
 //     chats are the same card — so presence alone cannot tell this chat's report
-//     from the other chat's leftovers. The pre-click baseline is what the
-//     judgement subtracts; the gap between the two is reported as
-//     `arrivedBeforeClick`, because the chat the page opened by itself keeps
-//     reporting well past the boot window and that traffic is not this chat's.
+//     from the other chat's leftovers. The chat the page opens by itself keeps
+//     reporting well past the boot window, and that traffic is not this chat's:
+//     it is subtracted, and counted separately as `arrivedBeforeSettle`.
+//     `settled` says whether the wait ever got its quiet moment; a run that hit
+//     the cap has a time-based delta again, and must be read as one.
 //   - every reading prints the observation window it was taken at. All the
 //     judgements here are negatives, and a negative without its window cannot
 //     be reviewed by the next reader.
@@ -244,27 +245,60 @@ if (mode === 'render') {
     const tabbed = await evaluate(clickTabExpr('chats'))
 
     /*
-     * The second baseline, taken **immediately before the target row is
-     * clicked** — this is the one the judgement subtracts.
+     * The judgement baseline, taken once the report list has gone **quiet**.
      *
-     * The boot baseline above is not enough, and the first run showed why: the
-     * page opens the most recent chat on its own, and that chat's frames keep
-     * reporting long past the 7 s mark. Twenty-five rows of `height sources`,
-     * `libraries cost`, `parent.Mvu`, MVU `toastr.info` — frame start-up
-     * traffic, which a statically edited floor cannot produce — landed in what
-     * was labelled "added this run".
+     * Two earlier shapes and why each failed, because the difference is the
+     * whole lesson:
      *
-     * So `addedThisRun` used to mean **"rows that appeared after 7 s"**, not
-     * **"rows this chat reported"**. Better than the old `includes()` over the
-     * whole page, and still not attributed to the chat under test.
+     *  - **boot baseline alone (7 s).** The page opens the most recent chat by
+     *    itself and that chat's frames keep reporting well past 7 s. Twenty-five
+     *    rows of `height sources` / `libraries cost` / `parent.Mvu` / MVU
+     *    `toastr.info` — start-up traffic a statically edited floor cannot
+     *    produce — landed in what was labelled "added this run". So the number
+     *    meant *"rows that appeared after 7 s"*, not *"rows this chat reported"*.
+     *  - **a second baseline taken just before the click.** It named the right
+     *    variable and sampled it at the wrong moment: clicking a tab costs about
+     *    ten milliseconds, so the second read was the same instant as the first
+     *    and `arrivedBeforeSettle` came back empty on both fixtures. The run that
+     *    *looked* fixed (25 rows down to 6) was luck — the boot chat had simply
+     *    finished by 7 s that time, which the two baselines being 3 rows apart on
+     *    one run and 29 on another says out loud.
      *
-     * Both baselines are kept, and their difference is reported as
-     * `arrivedBeforeClick`: that number is the boot chat still talking, and it
-     * belongs in the reading rather than folded into it. When the two baselines
-     * differ a lot, the run is saying "the page was busy when I started".
+     * So the wait is on the thing that actually has to finish: the list not
+     * growing for `quietMs`. `settled` and `settleWaitedMs` ride the reading,
+     * because a run that hit the cap did **not** get a quiet baseline and its
+     * delta is back to being time-based — the reader has to be able to see that
+     * rather than infer it.
      */
-    const clickBaseline = await evaluate(READ_REPORTS)
-    console.log('reports baseline (pre-click):', JSON.stringify({ observedAtMs: since(), rows: clickBaseline?.rows?.length ?? null }))
+    const SETTLE = { quietMs: 1500, maxMs: 15_000, pollMs: 250 }
+    const settleReports = async () => {
+      const startedAt = Date.now()
+      let snapshot = await evaluate(READ_REPORTS)
+      let count = snapshot?.rows?.length ?? 0
+      let lastChangeAt = Date.now()
+      while (Date.now() - startedAt < SETTLE.maxMs) {
+        await delay(SETTLE.pollMs)
+        snapshot = await evaluate(READ_REPORTS)
+        const next = snapshot?.rows?.length ?? 0
+        if (next !== count) {
+          count = next
+          lastChangeAt = Date.now()
+        }
+        if (Date.now() - lastChangeAt >= SETTLE.quietMs) {
+          return { snapshot, settled: true, waitedMs: Date.now() - startedAt }
+        }
+      }
+      return { snapshot, settled: false, waitedMs: Date.now() - startedAt }
+    }
+    const settle = await settleReports()
+    const clickBaseline = settle.snapshot
+    console.log('reports baseline (settled):', JSON.stringify({
+      observedAtMs: since(),
+      settled: settle.settled,
+      settleWaitedMs: settle.waitedMs,
+      quietMs: SETTLE.quietMs,
+      rows: clickBaseline?.rows?.length ?? null,
+    }))
 
     const opened = tabbed?.error !== undefined ? tabbed : await evaluate(`(() => {
       const wanted = ${JSON.stringify(target)}
@@ -342,7 +376,7 @@ if (mode === 'render') {
     // busy the page already was.
     const seenAtBoot = new Set(bootRows.map(row => row.text))
     const seenAtClick = new Set(clickRows.map(row => row.text))
-    const arrivedBeforeClick = clickRows.filter(row => !seenAtBoot.has(row.text))
+    const arrivedBeforeSettle = clickRows.filter(row => !seenAtBoot.has(row.text))
     const added = afterRows.filter(row => !seenAtClick.has(row.text))
     const neverClosed = added.find(row => row.text.includes('never closed'))
     console.log('reports:', JSON.stringify({
@@ -354,7 +388,7 @@ if (mode === 'render') {
       baselineCardPresent: bootBaseline?.cardPresent === true,
       cardPresent: after?.cardPresent === true,
       bootBaselineRows: bootRows.length,
-      clickBaselineRows: clickRows.length,
+      settledBaselineRows: clickRows.length,
       rowsNow: afterRows.length,
       /*
        * The boot chat still talking, kept out of the judgement and reported on
@@ -362,7 +396,9 @@ if (mode === 'render') {
        * page was busy when this one started, which is the fact that used to be
        * folded into `addedThisRun` and read as this chat's own output.
        */
-      arrivedBeforeClick: arrivedBeforeClick.map(row => row.text.slice(0, 100)),
+      settled: settle.settled,
+      settleWaitedMs: settle.waitedMs,
+      arrivedBeforeSettle: arrivedBeforeSettle.map(row => row.text.slice(0, 100)),
       addedThisRun: added.map(row => ({ channel: row.channel, fault: row.fault, text: row.text.slice(0, 140) })),
       // The judgement: this run ADDED the row, measured from the moment the
       // target row was clicked. "The words are somewhere on the page" cannot
@@ -377,7 +413,7 @@ if (mode === 'render') {
       // negative: in the boot baseline it was standing before this run touched
       // anything; arriving between the baselines means the boot chat said it.
       neverClosedAtBoot: bootRows.some(row => row.text.includes('never closed')),
-      neverClosedArrivedBeforeClick: arrivedBeforeClick.some(row => row.text.includes('never closed')),
+      neverClosedArrivedBeforeSettle: arrivedBeforeSettle.some(row => row.text.includes('never closed')),
     }, null, 1))
 
     const shot = await send('Page.captureScreenshot', { format: 'jpeg', quality: 55 })
