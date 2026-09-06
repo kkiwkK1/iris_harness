@@ -1,11 +1,21 @@
 /*
- * The shell: sidebar, reading column, composer, drawer.
+ * The shell: sidebar, reading area, variable margin, drawer.
  *
- * The one structural decision everything else follows from: the reading column
- * is capped at a book measure and centred, and nothing is allowed to reflow it.
- * That is why the settings drawer overlays the page instead of squeezing it —
- * re-wrapping a page of prose while someone drags a temperature slider is
- * disorienting in a way no amount of animation smoothing fixes.
+ * The one structural decision everything else follows from, and it **replaces**
+ * the one that used to be here: the reading area takes whatever the sidebar, the
+ * variable margin and the settings drawer leave, and prose, a card's interface
+ * and the composer are all that width. Nothing is centred on a bounded sheet any
+ * more and nothing is capped at a book measure.
+ *
+ * What that costs, and why it is paid: on a wide window, opening the settings
+ * drawer now re-wraps the page. The previous ruling forbade exactly that — a
+ * measurement showed the drawer shifting the scroll position and deforming the
+ * page — and 「梅花」 overturns it (canvas.json: 设置抽屉占一列,把阅读区挤窄,不再
+ * overlay + 遮罩), because the alternative it was protecting left a dead channel
+ * beside the prose at every window width and put the drawer on top of a card's
+ * own interface. Below 1200px the drawer stays the sliding overlay it always
+ * was, because a 392px track there leaves no page to narrow; `panels.css` has
+ * the arithmetic. The drawer keeps its rung on the z ladder in both forms.
  */
 
 .iris-shell {
@@ -43,6 +53,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ------------------------------------------------------------------- marks */
+
+/*
+ * Every drawn mark (`app/marks.tsx`) is inline-level and must not be stretched
+ * by the flex or grid row it lands in — a blossom that becomes an ellipse is
+ * the one failure this whole family has.
+ */
+.iris-mark {
+  display: block;
+  flex: none;
+  align-self: center;
+}
+
 /* ----------------------------------------------------------------- sidebar */
 
 .iris-sidebar {
@@ -55,7 +78,7 @@
 .iris-brand {
   display: flex;
   align-items: baseline;
-  gap: 9px;
+  gap: 10px;
   padding: 20px 20px 18px;
 }
 
@@ -66,16 +89,13 @@
   color: var(--iris-ink);
 }
 
-.iris-brand__mark {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--iris-accent);
-  margin-bottom: 4px;
-}
-
+/*
+ * The tabs sit inset from the sidebar's edges, so their rule reads as a rule
+ * under two words rather than as a second border across the whole panel.
+ */
 .iris-tabs {
   display: flex;
+  margin: 0 20px;
   border-bottom: var(--iris-hairline) solid var(--iris-rule);
 }
 
@@ -90,6 +110,7 @@
   font: inherit;
   font-size: var(--iris-ui-size);
   color: var(--iris-ink-tertiary);
+  text-align: center;
   transition: color var(--iris-fast) var(--iris-ease);
 }
 
@@ -97,9 +118,15 @@
   color: var(--iris-ink-secondary);
 }
 
+/*
+ * Selected is the ink plus the plum underline, and **not** a weight step.
+ * `tokens.css` measured 幼圆's synthesis: 600 and 700 are the identical bitmap,
+ * so a `font-weight: 600` here changed the Latin and left every Chinese title
+ * exactly as it was — a distinction that appears on some rows and not others,
+ * which reads as a bug rather than as a system.
+ */
 .iris-tab[aria-selected='true'] {
   color: var(--iris-ink);
-  font-weight: 600;
   border-bottom-color: var(--iris-accent);
 }
 
@@ -107,11 +134,16 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px 8px 16px;
+  /* Asymmetric: the rows' selected well runs to the panel's left edge, so the
+     left inset is the 8px the artboards draw and the right is the 10px that
+     keeps a title off the border. */
+  padding: 12px 10px 12px 8px;
 }
 
 /*
- * The chats tab's content filter. Full width of the list, quiet until used.
+ * A filter box, in either list. Paper on the desk rather than a well cut into
+ * it: the artboards give every field the page's own ground with one hairline,
+ * which is what stops a sidebar full of fields from reading as a form.
  *
  * No `width: 100%`: the box is a block with inline margins, and a 100% width
  * *plus* those margins overflowed the list by exactly the margin pair — which
@@ -122,13 +154,13 @@
   display: block;
   box-sizing: border-box;
   margin: 2px 4px 8px;
-  padding: 6px 10px;
+  padding: 7px 10px;
   font: inherit;
   font-size: var(--iris-ui-size);
   color: var(--iris-ink);
-  background: var(--iris-bg-sunken);
+  background: var(--iris-bg-page);
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: var(--iris-radius);
+  border-radius: var(--iris-radius-field);
   min-width: 0;
 }
 
@@ -151,6 +183,8 @@
      was previously carried by a tint so faint it read as a rendering artefact. */
   border-left: 2px solid transparent;
   padding: 8px 12px 9px 10px;
+  /* Square against the panel edge, rounded away from it — the well and the
+     wash are one shape running out of the sidebar's border. */
   border-radius: 0 var(--iris-radius) var(--iris-radius) 0;
   cursor: pointer;
   font: inherit;
@@ -175,10 +209,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.iris-row[aria-current='true'] .iris-row__title {
-  font-weight: 600;
 }
 
 /*
@@ -218,39 +248,102 @@
 .iris-tag {
   font-size: 10.5px;
   letter-spacing: 0.03em;
-  color: var(--iris-ink-faint);
+  color: var(--iris-ink-tertiary);
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: 999px;
-  padding: 1px 7px 2px;
+  border-radius: var(--iris-radius-pill);
+  padding: 2px 8px 3px;
+}
+
+/* ------------------------------------------------------- the library's list */
+
+/*
+ * A library row is a portrait, a name, its tags and a star — four things on one
+ * line, so the row shape the chat list uses (title over meta) cannot carry it.
+ * The row button becomes a two-column grid: the avatar, then everything else.
+ */
+.iris-row--character {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.iris-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--iris-radius);
+  object-fit: cover;
+  background: var(--iris-rule);
+  border: var(--iris-hairline) solid var(--iris-rule-strong);
 }
 
 /*
- * The library's filter and sort row. Two selects share one line; each keeps
- * the search box's quiet field styling so the row reads as part of the list
- * rather than as a toolbar bolted above it.
+ * A card with no avatar gets its initial rather than a broken-image glyph — a
+ * library is scanned by shape, and an empty square in the column where every
+ * other row has a face reads as a load that failed.
  */
-.iris-library-tools {
+.iris-avatar--letter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--iris-font-prose);
+  font-size: 15px;
+  color: var(--iris-ink-tertiary);
+  background: var(--iris-bg-sunken);
+}
+
+.iris-row__lines {
+  min-width: 0;
+}
+
+/*
+ * The library's sort row: three capsules, one pressed.
+ *
+ * Capsules rather than the `<select>` this replaces, because the three orders
+ * are the whole set — a menu that must be opened to see three words costs a
+ * click to learn nothing. The tag filter that shared that row is gone: the
+ * search box above filters names *and* tags, which is what the artboards'
+ * 「搜索角色或标签」 promises.
+ */
+.iris-sorts {
   display: flex;
   gap: 6px;
-  margin: 2px 4px 8px;
+  margin: 0 4px 10px;
 }
 
-.iris-library-tools .iris-search {
-  margin: 0;
-  flex: 1;
-  min-width: 0;
-  padding: 5px 8px;
+.iris-sort {
+  padding: 3px 9px 4px;
+  background: none;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius-pill);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-tertiary);
+  transition:
+    color var(--iris-fast) var(--iris-ease),
+    border-color var(--iris-fast) var(--iris-ease);
+}
+
+.iris-sort:hover {
+  color: var(--iris-ink-secondary);
+  border-color: var(--iris-rule-strong);
+}
+
+.iris-sort[aria-pressed='true'] {
+  color: var(--iris-accent);
+  border-color: var(--iris-accent);
 }
 
 /*
- * The star that prefixes a character's name. Unstarred it is a whisper — the
- * outline glyph in the faintest ink — so a library where nothing is starred
- * does not grow a column of decoration; starred it takes the accent, because
- * the rows the user marked are the ones a scanning eye is looking for.
+ * The star that marks a favourite. Unstarred it is a whisper — the outline
+ * glyph in the faintest ink — so a library where nothing is starred does not
+ * grow a column of decoration; starred it takes the accent, because the rows
+ * the user marked are the ones a scanning eye is looking for.
  */
 .iris-star {
-  margin-right: 5px;
-  font-size: 0.92em;
+  align-self: center;
+  font-size: 1.05em;
   color: var(--iris-ink-faint);
 }
 
@@ -265,7 +358,7 @@
  */
 .iris-sidebar__foot {
   border-top: var(--iris-hairline) solid var(--iris-rule);
-  padding: 12px;
+  padding: 14px 20px 18px;
 }
 
 .iris-sidebar__foot button {
@@ -280,39 +373,54 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  /* The desk. Deliberately the darker of the two grounds, so the sheet on top
-     of it reads as a sheet. */
-  background: var(--iris-bg-base);
+  /* The paper. It used to be the darker desk with a bounded sheet on top; under
+     「梅花」 the reading area *is* the paper, edge to edge, and the desk survives
+     only in the sidebar. */
+  background: var(--iris-bg-page);
 }
 
 /*
- * The stage accounts for a wide window.
+ * Three tracks: the reading area, the variable margin, the settings drawer.
  *
- * The reading column must NOT grow — 30 characters a line is right and widening
- * it would undo the thing that works. But 1000px of unexplained emptiness reads
- * as a page that failed to load. So the column keeps its measure and sits on a
- * bounded sheet, and the emptiness becomes the desk around it: the same
- * proof-sheet-under-a-lamp figure the palette is built on, made literal.
- *
- * Past 1360px the desk earns a second column instead of more void — the chat's
- * own variables, which is real content the protocol already carries.
+ * `auto` for the two flanks rather than fixed widths, so each one's own rule
+ * decides how wide it is — 236px or the 36px rail for the margin; the drawer's
+ * token, or nothing at all when it is closed or is still the overlay form — and
+ * this file needs no modifier class per state. The reading track is
+ * `minmax(0, 1fr)`: it absorbs every change and the prose re-wraps, which is the
+ * whole ruling. A flank with no item in it collapses to zero on its own, which
+ * is why the same three tracks are correct at every width.
  */
 .iris-stage {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, var(--iris-sheet));
-  justify-content: center;
-  gap: 0;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+/*
+ * `hidden` has to be honoured explicitly, and this is not defensive: the UA
+ * stylesheet's `[hidden] { display: none }` is an author-level loss against the
+ * `display: flex` below, so without this rule the attribute `App.tsx` sets to
+ * park the conversation while the library shows would do **nothing** — the two
+ * pages would render on top of each other in one grid track.
+ */
+.iris-sheet[hidden] {
+  display: none;
 }
 
 .iris-sheet {
+  grid-column: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
   background: var(--iris-bg-page);
-  border-inline: var(--iris-hairline) solid var(--iris-rule);
+  /*
+   * No `border-inline`. The sidebar's own `border-right` and the margin's
+   * `border-left` already draw both of this column's edges, and a border here
+   * put two hairlines against each other on the left with a pixel of paper
+   * between them.
+   */
 }
 
 /*
@@ -321,9 +429,11 @@
  * The overlay surface (`useCardScripts.tsx`) is `position:absolute; inset:0`
  * inside this wrapper, so **the layout, not a measurement, is the source of
  * truth** for where a card's interface may appear: below the masthead, right
- * of the sidebar, inside the sheet. A window resize, a notice appearing, a
- * pane toggling — the rectangle follows all of them with no code, which is
- * the property a measured fixed-position copy could never have.
+ * of the sidebar, left of the margin and the drawer. A window resize, a notice
+ * appearing, the drawer opening — the rectangle follows all of them with no
+ * code, which is the property a measured fixed-position copy could never have,
+ * and it is now also why the drawer can never cover a card: the card's own box
+ * shrank out from under it.
  *
  * Positioned, because `inset:0` needs a containing block that is this wrapper
  * and not the shell. A flex column with `min-height:0` because it takes the
@@ -337,48 +447,6 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
-}
-
-@media (min-width: 1360px) {
-  .iris-stage {
-    /*
-     * Desk, sheet, aside. The aside is the flexible track, floored at its 260px
-     * token: where the window is ample the two flanks come out equal and the
-     * sheet sits centred between the sidebar's edge and the window's — the
-     * ruling the whole shell answers to. Where the window is merely wide, the
-     * floor holds the margin legible and the sheet takes what remains: it sits
-     * against the sidebar with no naked desk on either side, which is the same
-     * arrangement the sub-1360px window already showed.
-     */
-    grid-template-columns: minmax(0, 1fr) minmax(0, var(--iris-sheet)) minmax(var(--iris-aside), 1fr);
-  }
-
-  /*
-   * The stage has two children, so each names its track: the sheet takes the
-   * middle one (its own 1040px measure at most) and the aside takes the right,
-   * leaving the desk to the left — the flanks balance, and the aside reaches
-   * the stage's right edge by construction rather than by a measured margin.
-   */
-  .iris-sheet {
-    grid-column: 2;
-  }
-
-  .iris-aside {
-    grid-column: 3;
-  }
-
-  /*
-   * The settings drawer is a **pure overlay** — nothing on this page may react
-   * to it. The earlier ruling re-wrapped the stage while the drawer was open
-   * (padding-right, a single centred track, the aside stood down), and the user
-   * measured the cost directly: opening the drawer shifted the scroll position
-   * and deformed the page. The drawer's own geometry is fixed and independent
-   * of the layer beneath it, so open and close are now invisible to the
-   * stage: same scrollTop, same sheet rect, aside merely covered while the
-   * drawer is up. This block is a deliberate no-op left here so the ruling has
-   * an address; any future rule under `.iris-shell--drawer-open` must re-justify
-   * itself against that measurement.
-   */
 }
 
 .iris-nav-toggle {
@@ -408,7 +476,9 @@
 .iris-scrim {
   position: fixed;
   inset: 0;
-  /* One step under the sidebar it dismisses; the ladder is in `theme/tokens.css`. */
+  /* One step under the sidebar it dismisses; the ladder is in `theme/tokens.css`.
+     The settings drawer no longer has one of these — it is a column now, and a
+     column does not need dismissing by tapping past it. */
   z-index: var(--iris-scrim-z);
 }
 
@@ -430,11 +500,17 @@
 
 /*
  * Printed on the paper, not floating above it. Also where the conversation's
- * facts live — the character, how many turns in, which model is answering — none
- * of which had anywhere to be before.
+ * facts live — the character, how many turns in, which model is answering, how
+ * many of the card's scripts are running — none of which had anywhere to be
+ * before.
+ *
+ * The 46px inset is the reading column's own flank (`--iris-gutter`), so the
+ * title starts on the same vertical as the prose below it. It used to be a
+ * centred box capped at the book measure with a gutter of padding inside it;
+ * with the measure gone, the inset *is* the alignment.
  */
 .iris-masthead {
-  padding: 22px 20px 16px;
+  padding: 22px var(--iris-gutter) 16px;
   border-bottom: var(--iris-hairline) solid var(--iris-rule);
 }
 
@@ -442,9 +518,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  max-width: var(--iris-column-max);
-  margin: 0 auto;
-  padding-left: var(--iris-gutter);
 }
 
 .iris-masthead__spacer {
@@ -460,17 +533,16 @@
   white-space: nowrap;
 }
 
+/*
+ * The meta line is a caption, not a readout: 11px in the annotation ink, with
+ * the tracking the artboards give it. It carries the `iris-meta` class too, for
+ * the tabular figures — this rule only overrides the colour, because
+ * `--iris-ink-faint` is 2.5:1 on the new paper and this is text.
+ */
 .iris-masthead__meta {
-  max-width: var(--iris-column-max);
-  margin: 5px auto 0;
-  padding-left: var(--iris-gutter);
-}
-
-@media (max-width: 880px) {
-  .iris-masthead__row,
-  .iris-masthead__meta {
-    padding-left: 0;
-  }
+  margin: 5px 0 0;
+  color: var(--iris-ink-tertiary);
+  letter-spacing: 0.02em;
 }
 
 /*
@@ -481,9 +553,7 @@
  * because that is where the reader looks to learn what they are reading.
  */
 .iris-masthead__stub {
-  max-width: var(--iris-column-max);
-  margin: 6px auto 0;
-  padding-left: var(--iris-gutter);
+  margin: 6px 0 0;
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--iris-warn);
@@ -494,8 +564,134 @@
   font-size: 0.95em;
 }
 
-@media (max-width: 880px) {
-  .iris-masthead__stub {
-    padding-left: 0;
-  }
+/* ----------------------------------------------------------- character page */
+
+/*
+ * The library's other half: one character, opened rather than started.
+ *
+ * A row click used to create a conversation immediately, which made the library
+ * a launcher with no way to look at a card first. The page is where the card's
+ * facts are, and 「开始新对话」 is one button on it.
+ */
+.iris-face {
+  /* The reading area's own track, because that is the space it replaces — the
+     two are grid siblings, not one nested in the other (`App.tsx`). */
+  grid-column: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  position: relative;
+  background: var(--iris-bg-page);
+}
+
+/* The one large decoration on the product, and it is behind everything: the
+   head's own content sits in the branch's lower half. */
+.iris-bough {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: min(1040px, 100%);
+  height: 200px;
+  pointer-events: none;
+}
+
+.iris-face__head {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 22px;
+  padding: 96px var(--iris-gutter) 22px;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule);
+}
+
+.iris-face__portrait {
+  width: 116px;
+  height: 116px;
+  border-radius: var(--iris-radius-lg);
+  flex: none;
+  object-fit: cover;
+  background: var(--iris-bg-sunken);
+  border: var(--iris-hairline) solid var(--iris-rule-strong);
+}
+
+.iris-face__portrait.iris-avatar--letter {
+  font-size: 44px;
+}
+
+.iris-face__lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.iris-face__name {
+  font-family: var(--iris-font-prose);
+  font-size: var(--iris-size-brand);
+  color: var(--iris-ink);
+}
+
+.iris-face__by {
+  font-size: 12px;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-face__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.iris-face__actions {
+  display: flex;
+  gap: 8px;
+  align-self: flex-start;
+}
+
+/*
+ * The facts, in columns divided by hairlines rather than boxed.
+ *
+ * `auto-fit` rather than the artboards' fixed three: only some of the three are
+ * knowable for an arbitrary character (`Library.tsx` says which, and why the
+ * missing ones are absent rather than invented), so the row has to read as
+ * finished at one column, at two and at three.
+ */
+.iris-face__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  padding: 0 var(--iris-gutter);
+}
+
+.iris-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 22px;
+  border-right: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+/* The first column starts on the page's own margin and the last one ends on it,
+   so the hairlines divide the row rather than fencing it. */
+.iris-fact:first-child {
+  padding-left: 0;
+}
+
+.iris-fact:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+
+.iris-fact__head {
+  margin: 0;
+}
+
+.iris-fact__value {
+  font-size: var(--iris-size-row);
+  color: var(--iris-ink);
+}
+
+.iris-fact__note {
+  font-size: 12px;
+  color: var(--iris-ink-secondary);
 }

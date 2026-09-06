@@ -1,10 +1,17 @@
 /**
  * Where the reader writes their part.
  *
- * One field, one hairline, and the send affordance as text rather than as a
- * coloured circle — this sits under a page of prose, and a saturated button
- * would be the loudest thing on the screen. It grows with the draft up to a
- * cap, because a reader writing three paragraphs of scene should see them.
+ * **The one place 「梅花」 lets the hand off the brake** (canvas.json: 这一屏唯一
+ * 放开手的地方). A branch crosses the top edge in place of a hairline, the paper
+ * is dyed 藕粉 downward, the writing surface is a sheet laid on it with a plum
+ * blossom sealed into its corner, and the send key is a plum stamp. Everything
+ * decorative on this page is here or over the character page; the rest of Iris
+ * is 1px rules.
+ *
+ * It grows with the draft up to a cap, because a reader writing three paragraphs
+ * of scene should see them. Under the field, two capsules say what is in force —
+ * the prompt and the model — which is the pair of facts a reader checks before
+ * pressing send and which previously lived only behind the settings drawer.
  *
  * @module iris-web/app/Composer
  */
@@ -16,6 +23,7 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useIris } from '../client/provider.tsx'
 import type { ResolvedButton } from './script-buttons.ts'
 import { Slot } from '../slots/Slot.tsx'
+import { PlumBlossom, PlumBranch } from './marks.tsx'
 import { ScriptButtons } from './ScriptButtons.tsx'
 import { registerComposer } from './composer-bus.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
@@ -59,6 +67,15 @@ export function Composer({
    * more prop through that path is one more chance to hold a stale copy.
    */
   const scripts = useIris(state => state.scripts)
+  /*
+   * What the two capsules report. Both may be absent and both are rendered only
+   * when they are not: `activePreset` is loaded by the preset panel rather than
+   * at boot (`client/store.ts`), so a reader who has never opened that panel has
+   * no preset name to show — and 「提示词 · —」 would be a capsule reporting that
+   * the interface does not know, which is worse than one fewer capsule.
+   */
+  const model = useIris(state => state.settings?.model)
+  const preset = useIris(state => state.activePreset)
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
   // Subscribed so a language switch re-renders the composer's words.
@@ -123,6 +140,11 @@ export function Composer({
 
   return (
     <div className="iris-composer">
+      {/* The branch across the top edge, in place of the hairline. Outside
+          `__inner` because `__inner` is the scroll container that reserves the
+          scrollbar lane, and a scroll container clips what crosses its edge —
+          `panels.css` says so where the two rules live. */}
+      <PlumBranch />
       <div className="iris-composer__inner">
         {/*
           * Above the field, which is where upstream puts it — it prepends its bar
@@ -130,43 +152,63 @@ export function Composer({
           * lines up with the field's own left edge instead of the panel's.
           */}
         <ScriptButtons scripts={scripts} onPress={onPressButton} />
-        <textarea
-          ref={field}
-          className="iris-composer__field"
-          rows={1}
-          value={draft}
-          placeholder={generating ? t('irisWriting') : t('writeYourPart')}
-          aria-label={t('yourMessage')}
-          onChange={event => setDraft(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault()
-              submit()
-            }
-          }}
-        />
-        <div className="iris-composer__row">
-          <Slot name="iris.composer.actions" owner={{ chatId, generating }} />
-          {/* Beside the composer because that is where "what will be sent" lives.
-              The per-turn record hangs off each message instead. */}
-          <button type="button" className="iris-act" onClick={onPreviewPrompt}>
-            {t('promptButton')}
-          </button>
-          <span className="iris-composer__hint">
-            {t('composerHint')}
-          </span>
+        <div className="iris-composer__write">
+          {/*
+            The writing surface. The textarea has no border or ground of its own
+            any more — this box draws the paper, the corner and the focus ring
+            (`:focus-within`, so no JavaScript has to know the field exists) —
+            which is what lets the blossom sit *inside* the sheet rather than
+            beside it.
+          */}
+          <div className="iris-composer__sheet">
+            <span className="iris-composer__seal">
+              {/* The centre dot takes the raised paper it sits on, not white:
+                  under 墨 a white dot would be a hole in the mark. */}
+              <PlumBlossom size={18} on="var(--iris-bg-raised)" />
+            </span>
+            <textarea
+              ref={field}
+              className="iris-composer__field"
+              rows={1}
+              value={draft}
+              placeholder={generating ? t('irisWriting') : t('writeYourPart')}
+              aria-label={t('yourMessage')}
+              onChange={event => setDraft(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault()
+                  submit()
+                }
+              }}
+            />
+          </div>
           {generating ? (
-            <Button variant="outline" size="sm" onClick={onStop}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="iris-composer__send iris-composer__send--idle"
+              onClick={onStop}
+            >
               {t('stop')}
             </Button>
           ) : (
-            // Quiet until there is something to send, saturated once there is.
-            // A permanently-disabled primary button was the first thing on the
-            // page and it read as broken; this way the single saturated element
-            // in the interface appears exactly when it has a job.
+            /*
+             * The stamp. Still the primitives' `Button` under the paint, and
+             * still quiet-then-saturated: a permanently-disabled primary button
+             * was once the first thing on the page and read as broken, so the
+             * one saturated element in the interface appears exactly when it has
+             * a job. The artboards draw it saturated beside an empty field;
+             * `panels.css` records that divergence and why the older rule wins.
+             *
+             * `icon` puts the arrow above the word, because the button is a flex
+             * *column* here — the component's own `.icon` span is the slot, so
+             * the geometry comes from CSS and no markup is duplicated.
+             */
             <Button
               variant={empty ? 'outline' : 'primary'}
               size="sm"
+              className={`iris-composer__send iris-composer__send--${empty ? 'idle' : 'ready'}`}
+              icon={<SendArrow />}
               onClick={submit}
               disabled={empty}
             >
@@ -174,7 +216,55 @@ export function Composer({
             </Button>
           )}
         </div>
+        <div className="iris-composer__row">
+          {/*
+            What is in force, as two readouts. The prompt capsule is a button
+            because pressing it answers the question the capsule raises — the
+            breakdown of what would actually be sent. The per-turn record hangs
+            off each message instead.
+          */}
+          <button
+            type="button"
+            className="iris-composer__pill iris-composer__pill--action"
+            onClick={onPreviewPrompt}
+          >
+            {preset === undefined ? t('promptButton') : `${t('promptButton')} · ${preset}`}
+          </button>
+          {model === undefined || model === '' ? null : (
+            <span className="iris-composer__pill" title={model}>{model}</span>
+          )}
+          <Slot name="iris.composer.actions" owner={{ chatId, generating }} />
+          <span className="iris-composer__hint">
+            {t('composerHint')}
+          </span>
+        </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * The stamp's arrow.
+ *
+ * Not in `marks.tsx`: that module is the 「梅花」 decoration, and this is an icon
+ * — the difference is that a reader is meant to read this one.
+ * @returns the arrow.
+ */
+function SendArrow(): ReactElement {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M2.5 8h9M8 4.5 11.5 8 8 11.5" />
+    </svg>
   )
 }

@@ -117,6 +117,16 @@
 | additional matching sources | 额外匹配来源（角色描述/角色性格/情景/用户人格描述/角色小贴士/创作者注释） |
 | unsaved changes | 未保存的修改 |
 
+任务（前端方案「梅花」，`dev/post-merge-followups`）追加与改写：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `Masthead.tsx` | 副行的「N 个脚本在运行」，取自 run states 而非脚本清单 | `scriptsRunning` |
+| `Sidebar.tsx` 角色库 | 搜索框（名字＋标签）与三枚排序胶囊、搜索空态。**取代**原来的标签 `<select>`：`filterByTag` `allTags` `libraryFilteredEmpty` 三键已删除，搜索框覆盖了标签过滤 | `librarySearchAria librarySearchPlaceholder librarySearchEmpty sortByAria sortByName sortByUpdated sortByFavorite` |
+| `CharacterPage.tsx` | 角色页：aria、「开始新对话」、三栏事实（对话/标签/卡片文件）的标题与取值句、未选角色时的提示 | `characterPageAria startNewChat faceConversations faceNoConversations faceOneConversation faceOpenCount faceLatest faceTags faceNoTags faceTagCount faceCardFile faceUpdated faceUpdatedUnknown faceCreator facePickHint` |
+| `StatePanel.tsx` | 变量栏收起/展开的按钮标题。`stateHead` 由「状态 / State」改写为「变量 / Variables」——canvas.json 把这一栏定为宿主自己的变量管理器 | `stateCollapse stateExpand`（`stateHead` 改写） |
+| `AppearanceCard.tsx` | 三套主题改名「雪 / 墨 / 宣」（en: Snow / Ink / Xuan paper）。**id 不动**：`light` / `dark` / `parchment` 是存量用户 `localStorage` 里的值 | `themeLight themeDark themeParchment`（改写） |
+
 ## 四、持久化决策（同 `language.ts` 文档）
 
 `localStorage` 键 `iris.language`，与 `iris.theme` / `iris.reading` 同一处、同一套

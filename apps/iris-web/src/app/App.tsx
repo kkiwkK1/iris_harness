@@ -24,9 +24,11 @@ import {
 } from '../theme/theme.ts'
 import { installUserCssSlot } from '../slots/user-css.ts'
 import { ChatPane } from './ChatPane.tsx'
+import { CharacterPage } from './CharacterPage.tsx'
 import { SettingsDrawer } from './SettingsDrawer.tsx'
 import { Masthead } from './Masthead.tsx'
 import { Sidebar } from './Sidebar.tsx'
+import type { SidebarTab } from './Sidebar.tsx'
 import { CardScriptFrames } from './useCardScripts.tsx'
 import { ConsentAsk } from './ConsentAsk.tsx'
 import { CleanupOffer } from './CleanupOffer.tsx'
@@ -56,6 +58,17 @@ export function App(): ReactElement {
   const [reading, setReadingState] = useState<ReadingPrefs>(loadReading)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
+  /*
+   * Which list the sidebar shows, and which character's page is open.
+   *
+   * Held here rather than in `Sidebar` because under 「梅花」 the tab governs the
+   * **main area** as well: 阅读 shows the conversation, 角色库 shows a character's
+   * page (`Library.dc.html`). `face` is the chosen character, kept across a tab
+   * switch so going back to the library returns to the card the reader was
+   * looking at.
+   */
+  const [tab, setTab] = useState<SidebarTab>('chats')
+  const [face, setFace] = useState<string | undefined>(undefined)
   const [dropping, setDropping] = useState(false)
   const dragDepth = useRef(0)
 
@@ -96,8 +109,10 @@ export function App(): ReactElement {
   return (
     <div
       className="iris-shell"
-      // The drawer is a pure overlay (panels.css): the page beneath never
-      // reacts to it, so the shell carries no drawer-open modifier at all.
+      // No drawer-open modifier on the shell, still — but for a new reason. The
+      // drawer used to be a pure overlay nothing reacted to; it is now a grid
+      // track, and a track that appears is the whole reaction. Nothing has to be
+      // told about it.
       // Card import is a whole-window drop rather than a small target: a reader
       // dragging a card off their desktop should not have to aim.
       onDragEnter={event => {
@@ -119,7 +134,15 @@ export function App(): ReactElement {
         void importFiles([...event.dataTransfer.files])
       }}
     >
-      <Sidebar open={navOpen} />
+      <Sidebar
+        open={navOpen}
+        tab={tab}
+        onTab={setTab}
+        face={face}
+        onFace={characterId => {
+          setFace(characterId)
+        }}
+      />
 
       <main className="iris-main">
         {connected ? null : (
@@ -156,7 +179,26 @@ export function App(): ReactElement {
         )}
 
         <div className="iris-stage">
-          <div className="iris-sheet">
+          {/*
+            The library tab shows a character's page in the reading area's own
+            track, so the two are siblings rather than one nested in the other.
+          */}
+          {tab === 'characters' ? <CharacterPage characterId={face} /> : null}
+          {/*
+            **Hidden, never unmounted.** `CardScriptFrames` lives inside this
+            subtree, and unmounting it would tear down every running card script
+            — a tab switch is navigation, not a reason to restart a card that has
+            been listening for twenty floors. `hidden` takes the boxes out of
+            layout and out of the accessibility tree while React keeps the tree,
+            so the `<iframe>` elements are never detached and their documents
+            keep running.
+
+            One consequence, recorded rather than fixed: while it is hidden the
+            reading scroller has no height, so the frame band ChatPane publishes
+            would be zero — `frameBandPixels` already refuses to hand back zero,
+            for exactly this class of transient reading.
+          */}
+          <div className="iris-sheet" hidden={tab === 'characters'}>
             <Masthead
               onOpenSettings={() => setSettingsOpen(true)}
               onToggleNav={() => setNavOpen(!navOpen)}
@@ -183,7 +225,28 @@ export function App(): ReactElement {
               <CardScriptFrames />
             </div>
           </div>
-          <StatePanel />
+          {/*
+            The variable margin belongs to the conversation, so it stands down
+            while the library is showing — a column of one chat's variables
+            beside another character's card page is two subjects in one window.
+          */}
+          {tab === 'characters' ? null : <StatePanel />}
+          {/*
+            The settings drawer is the stage's third track now, not an overlay on
+            the page: opening it narrows the reading area and the prose re-wraps
+            (canvas.json: 占一列 392px 把阅读区挤窄,不再 overlay + 遮罩). It has to
+            live inside the grid to be a track at all, which is why it moved out
+            of the shell's top level — where it sat because it was `position:
+            fixed` and needed no ancestor.
+          */}
+          <SettingsDrawer
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            control={{
+              reading,
+              setReading: setReadingState,
+            }}
+          />
         </div>
       </main>
       {/*
@@ -193,15 +256,6 @@ export function App(): ReactElement {
         Renders nothing until the host actually asks.
       */}
       <CleanupOffer />
-
-      <SettingsDrawer
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        control={{
-          reading,
-          setReading: setReadingState,
-        }}
-      />
 
       {dropping ? (
         <div className="iris-drop" role="status">
