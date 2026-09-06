@@ -20,9 +20,15 @@ import { fileURLToPath } from 'node:url'
 
 import { startMockProvider } from '../apps/iris/tests/mock-provider.ts'
 
-const PORT = 8815
+// Spawns its own host, so the port is the one it listens on; still a variable so
+// two QA runs on one machine cannot collide.
+const PORT = Number(process.env.IRIS_PORT ?? 8815)
 const BOOK = '啊不吃'
 const BASE = `http://127.0.0.1:${String(PORT)}`
+// The operator's SillyTavern checkout, the same variable `scripts/macro-differential.mjs`
+// reads. The book below is copied out of it, so a machine without that install
+// needs to point this somewhere rather than edit the file.
+const ST = process.env.IRIS_ST ?? 'E:/sillyTavern/SillyTavern'
 
 let seq = 0
 
@@ -83,7 +89,7 @@ await writeFile(join(dataDir, 'default-user', 'characters', 'aria.json'), ARIA, 
 // The real corpus book, copied in as-is: the entry under test is uid 4
 // (keys 踩/脚踩/践踏/踏, secondary 脸/头/身体).
 await copyFile(
-  'E:/sillyTavern/SillyTavern/data/default-user/worlds/啊不吃.json',
+  `${ST}/data/default-user/worlds/${BOOK}.json`,
   join(dataDir, 'default-user', 'worlds', `${BOOK}.json`),
 )
 // The corpus ships every entry with `match_persona_description: false` — it is

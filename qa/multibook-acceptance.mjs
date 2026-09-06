@@ -22,7 +22,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { rpc, call } from './rpc.mjs'
 
-const CARDS_DIR = process.argv[2] ?? 'D:/workspace/小项目/iris_分支/测试用卡'
+const CARDS_DIR = process.argv[2] ?? process.env.IRIS_CORPUS ?? 'D:/workspace/小项目/iris_分支/测试用卡'
 
 let failures = 0
 const check = (name, ok, detail = '') => {

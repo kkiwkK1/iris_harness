@@ -22,9 +22,13 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const BASE = 'http://127.0.0.1:8821/'
-const DEBUG_PORT = 9341
+// Every host, browser and path this script needs comes from the environment
+// with a default, so a run on another machine is a variable away rather than an
+// edit. Defaults are this script's own: the CDP port is unique per script so two
+// QA runs can overlap (9341 used to be shared by three of them).
+const CHROME = process.env.IRIS_CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8821/'
+const DEBUG_PORT = Number(process.env.CDP_PORT ?? 9342)
 const OUT = join(fileURLToPath(new URL('.', import.meta.url)), 'results')
 
 /**

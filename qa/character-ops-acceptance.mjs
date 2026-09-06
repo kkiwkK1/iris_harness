@@ -29,9 +29,13 @@ import { Buffer } from 'node:buffer'
 
 import { readCardChunks } from '../packages/iris-character/src/index.ts'
 
-const PORT = 8812
+// This script spawns its own host, so the port is the one it listens on rather
+// than one it must find something at; it is still a variable, because two QA
+// runs on one machine must not fight over it.
+const PORT = Number(process.env.IRIS_PORT ?? 8812)
 const BASE = `http://127.0.0.1:${String(PORT)}`
-const CARD_SOURCE = 'D:/workspace/小项目/iris_分支/测试用卡/1_5.png'
+const CORPUS = process.env.IRIS_CORPUS ?? 'D:/workspace/小项目/iris_分支/测试用卡'
+const CARD_SOURCE = `${CORPUS}/1_5.png`
 const CARD_FILE = '哈人冰恋 1_5.png'
 const BOUND_BOOK = '哈人冰恋世界v2.0'
 

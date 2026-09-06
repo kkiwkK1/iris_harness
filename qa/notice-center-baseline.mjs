@@ -14,15 +14,26 @@
  *    card's errors consecutive.
  */
 import { spawn } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const BASE = 'http://127.0.0.1:8824/'
-const DEBUG_PORT = 9341
-const OUT_DIR = 'D:/workspace/小项目/iris_分支/wt-notice-center/qa/shots-notice-center'
+const CHROME = process.env.IRIS_CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8824/'
+const DEBUG_PORT = Number(process.env.CDP_PORT ?? 9343)
+/*
+ * Output beside the script, like every other QA script.
+ *
+ * This pointed at `iris_分支/wt-notice-center/qa/shots-notice-center` — a
+ * worktree that only ever existed on one machine. Everything this run produced
+ * (shots and the report JSON) went there, so on any other checkout the script
+ * died at its first screenshot with nothing to show for the ten minutes before
+ * it.
+ */
+const OUT_DIR = fileURLToPath(new URL('./results/notice-center/', import.meta.url))
+mkdirSync(OUT_DIR, { recursive: true })
 
 const require = createRequire(import.meta.url)
 const wsPath = new URL('../node_modules/.pnpm/ws@8.21.3/node_modules/ws/index.js', import.meta.url).href

@@ -7,8 +7,8 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 
-const BASE = process.argv[2] ?? 'http://127.0.0.1:8814'
-const CDP_PORT = 9341
+const BASE = process.argv[2] ?? process.env.IRIS_BASE ?? 'http://127.0.0.1:8814'
+const CDP_PORT = Number(process.env.CDP_PORT ?? 9341)
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
 const outDir = new URL('./results/r-cards/', import.meta.url)
 mkdirSync(outDir, { recursive: true })

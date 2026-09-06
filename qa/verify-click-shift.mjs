@@ -16,10 +16,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+const CHROME = process.env.IRIS_CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8825/'
-const DEBUG_PORT = Number(process.env.CHROME_DEBUG_PORT ?? 9338)
-const CARD = 'D:/workspace/小项目/iris_分支/测试用卡/v0.5NSFW.png'
+// `CDP_PORT` is the name the other QA scripts use; `CHROME_DEBUG_PORT` still
+// answers so an existing invocation of this one keeps working.
+const DEBUG_PORT = Number(process.env.CDP_PORT ?? process.env.CHROME_DEBUG_PORT ?? 9338)
+const CORPUS = process.env.IRIS_CORPUS ?? 'D:/workspace/小项目/iris_分支/测试用卡'
+const CARD = `${CORPUS}/v0.5NSFW.png`
 
 const require = createRequire(import.meta.url)
 const wsPath = new URL('../node_modules/.pnpm/ws@8.21.3/node_modules/ws/index.js', import.meta.url).href
