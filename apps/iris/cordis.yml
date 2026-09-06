@@ -88,13 +88,16 @@
     # Read-only, and refused at boot if it overlaps dataDir. Unset by default,
     # and never guessed — without it the import row does not exist.
     sillyTavernDir: !!js process.env.IRIS_ST_DIR
-    # Trims the five MVU variable keys off older floors, matching SillyTavern,
-    # whose own cleanup ships enabled and has already run over every long chat
-    # in a real install. **It deletes those keys and nothing restores them** —
-    # upstream can replay state forward from a snapshot and this host cannot, so
-    # a trimmed floor here keeps only a report naming the nearest intact one.
-    # Set to false to keep every floor whole and let a long chat grow linearly.
-    pruneVariables: !!js process.env.IRIS_PRUNE_VARIABLES !== "false"
+    # `pruneVariables` is deliberately **not** a row here. The sweep trims the
+    # five MVU variable keys off older floors and nothing restores them —
+    # upstream can replay state forward from a snapshot and this host cannot —
+    # so the schema's default is `false` (an opt-out, never a silent opt-in;
+    # `notes/packages/iris-app-service/DEVIATIONS.md` §8 and its correction).
+    # This file used to carry `!!js process.env.IRIS_PRUNE_VARIABLES !== "false"`,
+    # which turned the sweep back on for anyone who had not heard of that
+    # variable and made the schema default unreachable from the product
+    # composition. `apps/iris/tests/composition.test.ts` parses this file and
+    # holds the line. To opt in, add `pruneVariables: true` to this row.
     # The same value the frontend row takes. Given here too so the sandbox's own
     # artifacts (bootstrap.js, preset.js) can be served with a CORS header: the
     # card frame that loads them is an opaque origin, and the plugin serving the
