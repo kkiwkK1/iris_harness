@@ -12,6 +12,14 @@ ST 的功能面规模：14 个内置扩展、43 组 API 端点、约 290 个斜�
 
 ## 当前状态（2026-09-02 深夜，本节替代文末旧"建议顺序"与本节自身的上一版）
 
+**2026-09-06 合并**:用户的 `dev/iris-exploration`(84 提交,起点 575c659,自带 ACTION-PLAN / QA-REPORT / ST-COMPARE / IMPLEMENTATION-CHECKLIST 与 qa/**)
+以 `b50c354` 合入 main;冲突仅 frame-budget(取 48 KiB)与 overlay-regions.test(两边都留)。dev 已修的:V1.5.4 覆盖层空白的真因
+(`acb85bf`:零面积 clip 的帧 Chrome 不绘制 → 帧内 rAF 永不触发 → 测量从未被发起;修法 rAF 旁 500ms 救援定时器)、
+覆盖表面限于阅读列(`16a07b9`)、高度回声与接口帧 Mvu(`999dbdf`)、同源 fetch 桥(`f22c0b7`)、ready 握手(`1cbe515`)、消息帧限高(`ea98fc4`)。
+main 相对 dev 独有的只有 overlay 测量仪器 + OVERLAY-CARDS §六之五。dev 的状态账在 IMPLEMENTATION-CHECKLIST.md / ACTION-PLAN.md,
+本文件下述条目凡与之重叠者以那两份为准;`ST-COMPARE.md` 基线是 `3cf858d`,引用须带坐标。合并后待收:ACTION-PLAN §二 五项、
+qa/** 判别力四条(D/A/C/E)、frame-entry 两条 500ms 的源码断言、dev 声称的上游事实正读复核。构建:bootstrap-b46bb40c / members-75a59bef / index-BU8bF8D-。
+
 **已完成**（每项都在真卡/真语料上验收过）：Tier 0 全部——卡片脚本沙箱（共居 realm、
 虚拟 parent、按卡授权、自动运行，实际位置 `apps/iris-web/src/sandbox/`）✅；正则脚本
 （引擎 + 提示词/显示两向接线）✅；EJS 模板（子进程围栏、差分 195/196）✅。Tier 1——
