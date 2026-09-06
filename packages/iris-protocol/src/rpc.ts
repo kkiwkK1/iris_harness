@@ -431,7 +431,8 @@ export const requestSchemas = {
   /**
    * Copy a SillyTavern chat file into this profile.
    *
-   * Upstream's `/api/chats/import` (`chats.js:604`) — the migration path for a
+   * Upstream's `/api/chats/import` ([ST 1.18.0] `src/endpoints/chats.js:696`;
+   * `:604`, which this used to cite, is `/export`) — the migration path for a
    * user whose history lives in an install. The file crosses as base64 because
    * that is how a browser file upload already reaches `character.import`; the
    * bytes go in untouched, and everything below is reading, not conversion.
@@ -476,7 +477,14 @@ export const requestSchemas = {
   'character.list': z.object({}),
   'character.import': z.object({
     filename: z.string().min(1).max(255),
-    /** Base64 of a PNG card, a `.json` card, or a `.charx`. */
+    /**
+     * Base64 of the card file. Which extensions are accepted is decided in one
+     * place — `EXTENSIONS` in `@iris/app-service`'s `library.ts` (`.png`,
+     * `.jpg`, `.jpeg`, `.json`; `.charx` is refused by name as unsupported) —
+     * and not repeated here: this comment used to say "a PNG, a `.json` or a
+     * `.charx`", which omitted the JPEGs the library takes and promised the one
+     * format it refuses.
+     */
     content: z.string().min(1),
   }),
   'character.delete': z.object({ characterId: z.string().min(1) }),

@@ -987,7 +987,8 @@ function decodeChatFile(base64: string, filename: string): string {
 /**
  * Read and check an uploaded chat file, **before anything is written**.
  *
- * Upstream's import (`chats.js:604`) accepts several chat dialects and renames
+ * Upstream's import ([ST 1.18.0] `src/endpoints/chats.js:696`; `:604` is
+ * `/export`) accepts several chat dialects and renames
  * what it takes in; this is deliberately the stricter single-format arm the
  * migration path needs. Every rule below was measured against the 31 real
  * chats on this machine — all of which pass — so what it refuses is a file
