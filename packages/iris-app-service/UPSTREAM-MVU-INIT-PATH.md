@@ -58,6 +58,75 @@ export function getLorebookSettings(): LorebookSettings {
 - **`context_percentage` 的源是 `world_info_budget`**。上游那个字段名叫 budget，
   值是**百分比**；真正的字节上限叫 `budget_cap`。**两个 budget，一个是比例一个是绝对值。**
 
+### 附：这 13 个 `world_info_*` 的上游默认值（正读，2026-09-06）
+
+**证据等级升级。**上面那张表原先只映射字段**名**，没有值；`match_whole_words` 的默认
+此前只以**转述**形式存在（另一支的文档声称 `world-info.js:69-82` 为 `false`）。下面是
+我们自己在 `E:/sillyTavern/SillyTavern`（`package.json` `"version": "1.18.0"`）上
+**正读**的结果，行号是这个装机上的行号。
+
+模块初值全在一个连续块里，`[ST] world-info.js:69-82`，逐条打出来（METHODS §十九
+「凡是『某类有 N 个』，把那 N 个逐条打出来看一眼」）：
+
+| 行 | 变量 | 出厂初值 | 本机 `settings.json` |
+| --- | --- | --- | --- |
+| 69 | `world_info_depth` | 2 | 2 |
+| 70 | `world_info_min_activations` | 0 | 0 |
+| 71 | `world_info_min_activations_depth_max` | 0 | 0 |
+| 73 | `world_info_budget` | **25** | **100** ⚠ |
+| 74 | `world_info_include_names` | **true** | **false** ⚠ |
+| 75 | `world_info_recursive` | **false** | **true** ⚠ |
+| 76 | `world_info_overflow_alert` | false | false |
+| 77 | `world_info_case_sensitive` | false | false |
+| 78 | **`world_info_match_whole_words`** | **false** | false |
+| 79 | `world_info_use_group_scoring` | false | false |
+| 80 | `world_info_character_strategy` | `insertion_strategy.character_first` = **1** | 1 |
+| 81 | `world_info_budget_cap` | 0 | 0 |
+| 82 | `world_info_max_recursion_steps` | 0 | 0 |
+
+策略枚举在 `[ST] world-info.js:27-31`：`evenly: 0`、`character_first: 1`、`global_first: 2`。
+
+**三条要点：**
+
+1. **「默认」在这里有两层，而这个文件里它们恰好一致。**模块初值（`:69-82`）与「设置里
+   没有这个键时的结果」是同一个值，因为 loader 逐字段写成
+   `if (settings.X !== undefined) X = Boolean(settings.X)`（`match_whole_words` 在
+   `:934-935`，同族逐条排在 `:920-940` 区间），**键缺失就保留模块初值，没有第二套默认表**。
+   所以这一次 `key-missing` 与 `false` 同解——**但这是读出来的，不是从省略推出来的**。
+2. **这台机器改过三个**：`budget` 25→**100**（四倍）、`include_names` true→false、
+   `recursive` false→**true**。**「schema 默认值答不了这台机器改没改」（METHODS §十九
+   的清单）在这里一次命中三条**，其中 budget 那条会让任何按 25% 做的预算估算差四倍。
+3. **逐条覆盖用 `??`，不是 `||`**：`entry.matchWholeWords ?? world_info_match_whole_words`
+   （`:347`）、`entry.caseSensitive ?? world_info_case_sensitive`（`:269`）。
+   **条目上显式写 `false` 会被尊重，只有 `null`/`undefined` 才落到全局值。**
+
+4. **⚠ 顺带查出一条与本仓注释相反的事实：`world_info_include_names` 不是死的。**
+   `packages/iris-app-service/src/worldbook-settings.ts:14-17` 的注释写着它
+   「verified dead in ST 1.18.0's Chat Completion path (exported, set, never read
+   while building the prompt)」。**正读结果是它有且只有一个功能性读点**——
+   `[ST] script.js:4565`：
+
+   ```js
+   const chatForWI = coreChat.map(x => world_info_include_names ? `${x.name}: ${x.mes}` : x.mes).reverse();
+   ```
+
+   下一步 `:4576` 就把 `chatForWI` 交给 `getWorldInfoPrompt(chatForWI, …)`。这一段在
+   `Generate()` 函数体的顶层（四空格缩进，`:4400`–`:4580` 之间没有 `main_api == 'openai'`
+   的分支把它罩住），**CC 路径照走**。全仓其余命中都是声明/映射/loader/UI 绑定
+   （`world-info.js:74, 802, 828, 926-927, 979, 6143-6144`），没有第二个消费点。
+
+   **它决定的是扫描缓冲里带不带 `名字: ` 前缀**，也就是「键里含说话人名字的条目会不会
+   命中」——不进最终提示词的文本，但改变哪些条目进。而**本机把它改成了 `false`**（出厂
+   `true`），所以在这台机器上按名字写键的条目不会命中，在出厂设置的机器上会。
+   *（只报事实与位置：那条注释在 `iris-app-service` 域，我不改。）*
+
+**我们这一侧（main @ `b50c354`）的对账**：`packages/iris-lorebook/src/activate.ts:284` 的
+`defaultActivationSettings.matchWholeWords` 现在是 `false`；`:610` 的回退写法
+`entry.matchWholeWords ?? settings.matchWholeWords` 与上游 `:347` 同构；`:266-275` 的注释
+记着它曾被翻成 `true` 当作本仓的 house default，而卡面 `getLorebookSettings()` 一直报
+上游的 `false`。`packages/iris-lorebook/src/matching.ts:84` 直呼时的独立缺省也是 `?? false`。
+**三处与上游一致，本条无待改项。**
+
 ### MVU 在哪调、拿它决定什么
 
 ```
