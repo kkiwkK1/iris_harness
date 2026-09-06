@@ -114,6 +114,7 @@ function harness(host?: Partial<RunnerHost>): {
       fetch: async () => '',
       onSettings: () => undefined,
       onSlash: async () => '',
+      onDialog: () => undefined,
       onCall: async () => undefined,
       onError: () => undefined,
       onBlocked: () => undefined,

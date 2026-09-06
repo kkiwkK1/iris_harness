@@ -275,6 +275,46 @@ test('a lone /send is refused rather than quietly generating', async (t) => {
   )
 })
 
+test('a lone /trigger replies to the newest line, as the send button does', async (t) => {
+  const { handlers, chats, settled } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  // The measured call shape (新·架空政治经济模拟器's 建国控制台): a card
+  // appends its own user line — which appends *without* generating, by design —
+  // then asks for the reply with `/trigger` alone.
+  await handlers['script.createChatMessages']({
+    chatId,
+    messages: [{ name: 'Traveller', is_user: true, mes: '请回复：连接正常。' }],
+  })
+  const { result } = await handlers['script.slash']({ chatId, command: '/trigger' })
+  await settled()
+
+  assert.equal(result, '')
+  const view = (await handlers['chat.open']({ chatId })).view
+  assert.equal(view.messages[1]?.role, 'user')
+  assert.equal(view.messages[1]?.text, '请回复：连接正常。')
+  // The reply landed on the turn that user line opened — not as a new turn,
+  // and not as a second swipe of the greeting.
+  assert.equal(view.messages[2]?.role, 'assistant')
+  assert.equal(view.messages[2]?.text, 'A reply.')
+  assert.equal(view.messages[2]?.turn, view.messages[1]?.turn)
+  assert.equal(chats.cached(chatId)?.generating, false)
+})
+
+test('a /trigger while a generation is already running is refused as busy', async (t) => {
+  const { handlers, settled } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  void handlers['chat.send']({ chatId, text: 'first' })
+  await assert.rejects(
+    () => handlers['script.slash']({ chatId, command: '/trigger' }),
+    (error: unknown) => (error as { code?: string }).code === 'busy',
+  )
+  await settled()
+})
+
 test('an unimplemented command is refused by name', async (t) => {
   const { handlers } = await fixture(t)
   const created = await handlers['chat.create']({ characterId: 'aria' })

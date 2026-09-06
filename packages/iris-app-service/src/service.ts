@@ -1183,7 +1183,21 @@ export class IrisAppService {
         const commands = parseSlashCommands(command)
         const names = commands.map(entry => entry.name)
 
-        // The corpus's only pattern, and the only one with a meaning Iris can
+        // A lone `/trigger` is upstream's "make the model answer the chat now"
+        // (`/trigger`, script.js: "Clicks the send button"): reply to whatever
+        // the newest line is. Measured call site: a card that has just landed
+        // its own user line — `createChatMessages` appends without generating,
+        // by design — then asks for the reply with this command. A reroll of
+        // the newest turn is the one Iris word for that: a turn whose newest
+        // line is a user message has no candidate yet, so `regenerate` writes
+        // its first; a turn that already has one gets the next swipe, which is
+        // what pressing send on an AI-last chat does upstream too.
+        if (names.length === 1 && names[0] === 'trigger') {
+          await this.#start(chatId, { kind: 'regenerate' })
+          return { result: '' }
+        }
+
+        // The corpus's other pattern, and the only one with a meaning Iris can
         // honour exactly. A lone `/send` means "insert without generating", and
         // treating it as this pair would start a generation the card explicitly
         // did not ask for — spending the user's tokens. Doing more silently is
@@ -1191,7 +1205,7 @@ export class IrisAppService {
         if (names.length !== 2 || names[0] !== 'send' || names[1] !== 'trigger') {
           throw new AppError(
             'unsupported',
-            `only "/send <text>|/trigger" is supported; got "${names.map(name => `/${name}`).join('|')}". `
+            `only "/trigger" and "/send <text>|/trigger" are supported; got "${names.map(name => `/${name}`).join('|')}". `
             + 'A lone /send would need a method that inserts without generating, which does not exist yet.',
           )
         }

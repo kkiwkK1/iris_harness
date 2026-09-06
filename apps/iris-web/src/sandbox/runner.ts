@@ -94,6 +94,16 @@ export interface RunnerHost {
    */
   onSlash: (command: string) => Promise<string>
   /**
+   * The card showed one of the blocking dialogs (`alert`/`confirm`/`prompt`).
+   *
+   * The frame's sandbox never carries `allow-modals`, so the browser itself
+   * would answer all three with silence — and a card that reports its own
+   * failure through `alert` would report nothing, leaving the reader with a
+   * control that "does nothing". The shell puts the text where failures are
+   * read: the notice bar and the card's durable report list.
+   */
+  onDialog: (kind: 'alert' | 'confirm' | 'prompt', text: string) => void
+  /**
    * The card invoked one of its facade's actions.
    *
    * The shell decides whether a named action may run. The frame is the untrusted
@@ -578,6 +588,15 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
               message: error instanceof Error ? error.message : String(error),
             })
           })
+        return
+      case 'dialog':
+        /*
+         * Required, not optional: the whole reason the bridge exists is that a
+         * card's `alert` used to land in a browser no-op bucket, and a host
+         * without a panel would rebuild exactly that silence one message type
+         * later.
+         */
+        host.onDialog(message.kind, message.text)
         return
       case 'error':
         host.onError(message.message, message.member, message.scriptId)

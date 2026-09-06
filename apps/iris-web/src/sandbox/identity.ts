@@ -169,6 +169,13 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
    * read and the swipe beside it.
    */
   setChatMessages: 'shared',
+  /*
+   * Upstream's chat append and delete, over the same route as the patch above:
+   * both address the chat file by index (rows to append, ids to remove), so the
+   * answer belongs to the chat, not to whichever script asked.
+   */
+  createChatMessages: 'shared',
+  deleteChatMessages: 'shared',
   // A world book belongs to the card, not to whichever script asked for it, so
   // two scripts reading the same book must see the same entries.
   getWorldbook: 'shared',

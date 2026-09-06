@@ -39,6 +39,8 @@ export interface HarnessState {
   globals?: string
   /** Slash commands the card invoked, raw. */
   slash: string[]
+  /** Dialogs the card showed (`alert`/`confirm`/`prompt`), as the bridge carried them. */
+  dialog: string[]
   /**
    * The identity handed to the running body, as `getScriptId()` will answer it.
    *
@@ -56,7 +58,7 @@ export interface HarnessState {
   lastRun?: RunOutcome
 }
 
-const FRESH: HarnessState = { status: 'idle', errors: [], blocked: [], slash: [] }
+const FRESH: HarnessState = { status: 'idle', errors: [], blocked: [], slash: [], dialog: [] }
 
 /**
  * The record lives on `globalThis`, not in this module's scope.
@@ -131,7 +133,7 @@ export function setHarness(patch: Partial<HarnessState> | ((before: HarnessState
 export function resetObservations(status: string): void {
   const here = slot()
   const kept = here.state.lastRun
-  here.state = { status, errors: [], blocked: [], slash: [], ...(kept === undefined ? {} : { lastRun: kept }) }
+  here.state = { status, errors: [], blocked: [], slash: [], dialog: [], ...(kept === undefined ? {} : { lastRun: kept }) }
   for (const listener of [...here.listeners]) listener()
 }
 

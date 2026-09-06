@@ -317,6 +317,25 @@ export function CardScriptFrames(): ReactElement {
               onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
               onSlash: async command => actionsOf(store).runSlash(command),
               /*
+               * The dialog bridge. The sandbox never carries `allow-modals`, so
+               * the browser's own answer to all three dialogs is silence —
+               * which is how a card's `alert("发送失败: …")` became a button
+               * that "does nothing". Now the text reaches the panel: an `alert`
+               * as a fault the reader actually sees, and a `confirm`/`prompt`
+               * as a note saying what was asked and that it was answered
+               * "cancel"/"nothing" — the same answers the no-modal sandbox
+               * gave, on the record instead of swallowed.
+               */
+              onDialog: (kind, text) => {
+                actionsOf(store).addCardReport(
+                  kind === 'alert'
+                    ? text
+                    : `a card asked ${kind}("${text}") — answered ${kind === 'confirm' ? '"cancel"' : 'nothing'}`,
+                  { channel: 'dialog', grade: kind === 'alert' ? 'fault' : 'note' },
+                )
+                actionsOf(store).notify(kind === 'alert' ? 'error' : 'info', text)
+              },
+              /*
                * A settings report is the card's extension settings partition —
                * the whole object, posted on every proxied write and on
                * `SillyTavern.saveSettings[Debounced]`. Dropped here, every

@@ -221,6 +221,16 @@ export type FromFrame =
    * disposes.
    */
   | { iris: string, type: 'call', id: string, method: string, params: unknown }
+  /**
+   * The card showed one of the blocking dialogs.
+   *
+   * The sandbox never carries `allow-modals`, so the browser answers `alert`
+   * with silence — a card's chosen failure channel, swallowed. The frame
+   * shadows the three names with bridges that post here instead; the shell
+   * puts the text in the notice panel, where a failure a card meant to show
+   * actually shows.
+   */
+  | { iris: string, type: 'dialog', kind: 'alert' | 'confirm' | 'prompt', text: string }
   /** The card's content changed height; the shell sizes the frame to it. */
   | { iris: string, type: 'height', pixels: number }
   /**
@@ -513,6 +523,13 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
       return typeof command === 'string' && typeof id === 'string'
         ? { iris: token, type: 'slash', id, command: command.slice(0, 32_000) }
         : undefined
+    }
+    case 'dialog': {
+      const kind = message['kind']
+      const text = message['text']
+      if (kind !== 'alert' && kind !== 'confirm' && kind !== 'prompt') return undefined
+      if (typeof text !== 'string') return undefined
+      return { iris: token, type: 'dialog', kind, text: text.slice(0, 2000) }
     }
     case 'fetch':
       return typeof message['id'] === 'string' && typeof message['url'] === 'string'

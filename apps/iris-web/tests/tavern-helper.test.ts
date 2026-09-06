@@ -169,6 +169,89 @@ test('setChatMessages refuses a patch without a readable message_id', async () =
   )
 })
 
+test('createChatMessages maps roles onto the wire rows the host arm takes', async () => {
+  /*
+   * The 建国控制台's chain: `createChatMessages([{ role: 'user', message }])`
+   * bare, then `/trigger`. The member has to answer that bare call — upstream
+   * flattens it onto the window — and translate `role` into the storage
+   * vocabulary the host arm stores: the chat's own speaker names, `is_user`,
+   * and the narrator flag for `system`.
+   */
+  const calls = surface({
+    // The chat already holds three floors, so the answer view carries six and
+    // the created ids are the tail — what a real host answer looks like.
+    answers: {
+      createChatMessages: {
+        view: { messages: [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }] },
+      },
+    },
+  })
+  const create = calls.api['createChatMessages'] as (
+    messages: readonly Record<string, unknown>[],
+    options?: Record<string, unknown>,
+  ) => Promise<number[]>
+  const ids = await create([
+    { role: 'user', message: '<PolSimInit>…</PolSimInit>' },
+    { role: 'assistant', message: 'Established.' },
+    { role: 'system', message: '(narrator)' },
+  ])
+  assert.deepEqual(calls.calls, [
+    {
+      method: 'createChatMessages',
+      params: {
+        messages: [
+          { name: 'You', is_user: true, mes: '<PolSimInit>…</PolSimInit>' },
+          { name: 'Her', is_user: false, mes: 'Established.' },
+          { name: 'Her', is_user: false, mes: '(narrator)', is_system: true },
+        ],
+      },
+    },
+  ])
+  // Upstream answers with the ids the floors landed at — here the tail after
+  // the three floors the snapshot already had.
+  assert.deepEqual(ids, [3, 4, 5])
+})
+
+test('createChatMessages carries insert_at and reports the landed ids', async () => {
+  const calls = surface({
+    // The host answers with the whole view, so the ids come from where the
+    // floors actually landed rather than from what the caller guessed.
+    answers: {
+      createChatMessages: { view: { messages: [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }] } },
+    },
+  })
+  const create = calls.api['createChatMessages'] as (
+    messages: readonly Record<string, unknown>[],
+    options?: Record<string, unknown>,
+  ) => Promise<number[]>
+  const ids = await create(
+    [{ role: 'user', message: 'inserted' }, { role: 'user', message: 'inserted too' }],
+    { insert_at: 1 },
+  )
+  assert.equal(calls.calls[0]?.params['insertAt'], 1)
+  assert.deepEqual(ids, [1, 2])
+})
+
+test('createChatMessages refuses a row it could not write, by name', async () => {
+  const scope = surface()
+  const create = scope.api['createChatMessages'] as (
+    messages: readonly Record<string, unknown>[],
+  ) => Promise<number[]>
+  await assert.rejects(() => create([{ role: 'user' }]), /message/)
+  await assert.rejects(() => create([{ role: 'narrator', message: 'x' }]), /role/)
+})
+
+test('deleteChatMessages sends the ids whole and answers with them', async () => {
+  const scope = surface()
+  const remove = scope.api['deleteChatMessages'] as (ids: number | number[]) => Promise<number[]>
+  assert.deepEqual(await remove([2, 0]), [2, 0])
+  assert.deepEqual(await remove(1), [1])
+  assert.deepEqual(scope.calls, [
+    { method: 'deleteChatMessages', params: { messageIds: [2, 0] } },
+    { method: 'deleteChatMessages', params: { messageIds: [1] } },
+  ])
+})
+
 test('a span may carry negative bounds on either side', () => {
   // The separator and the sign are the same character, which is the whole
   // reason this is scanned rather than split.

@@ -235,6 +235,23 @@ export function MessageInterfaces({
           onSlash: async command => actionsOf(store).runSlash(command),
           onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
           /*
+           * The dialog bridge, with the same wording and split the script
+           * frame uses: the sandbox answers `alert` with silence, and a
+           * console button that reports its own failure through `alert` was
+           * invisible to the reader. An alert is a fault on both channels; a
+           * confirm or a prompt is a note that names what was asked and that
+           * it was answered "cancel"/"nothing".
+           */
+          onDialog: (kind, text) => {
+            actionsOf(store).addCardReport(
+              kind === 'alert'
+                ? text
+                : `a card asked ${kind}("${text}") — answered ${kind === 'confirm' ? '"cancel"' : 'nothing'}`,
+              { channel: 'dialog', grade: kind === 'alert' ? 'fault' : 'note' },
+            )
+            actionsOf(store).notify(kind === 'alert' ? 'error' : 'info', text)
+          },
+          /*
            * A fault: an interface frame reporting an error is the one channel
            * here that always describes something broken. The channel is a
            * **label**, not a prefix — see `CardReport.channel`.

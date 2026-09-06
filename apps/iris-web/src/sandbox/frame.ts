@@ -1265,6 +1265,42 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     })
   }
 
+  /*
+   * The card-dialog bridge.
+   *
+   * This frame's sandbox never carries `allow-modals`, so the browser turns
+   * `alert`, `confirm` and `prompt` into **silent no-ops** — a card that
+   * reports its own failure through `alert("发送失败: …")` reports nothing,
+   * and the reader sees a button that "does nothing". That is exactly the
+   * swallowed failure the notice panel exists for, so the three names are
+   * shadowed with bridges: the text travels to the shell on its own message
+   * and lands in the panel, visible.
+   *
+   * The two that upstream answers *synchronously* cannot keep that contract
+   * across a message boundary, and pretending otherwise would write the
+   * reader's answers for them: `confirm` answers `false` and `prompt` answers
+   * `null` — the same values a no-modal sandbox answers — while the panel
+   * records what the card asked, so "the card needed an answer Iris cannot
+   * give" is on the record instead of being indistinguishable from a bug.
+   */
+  const cardDialog = (kind: 'alert' | 'confirm' | 'prompt', text: string): void => {
+    env.post({ iris: env.token, type: 'dialog', kind, text })
+  }
+  const bridgedDialogs: Record<string, unknown> = {
+    alert: (text: unknown): undefined => {
+      cardDialog('alert', String(text ?? ''))
+      return undefined
+    },
+    confirm: (text: unknown): boolean => {
+      cardDialog('confirm', String(text ?? ''))
+      return false
+    },
+    prompt: (text: unknown): null => {
+      cardDialog('prompt', String(text ?? ''))
+      return null
+    },
+  }
+
   const triggerSlash = (command: unknown): Promise<string> => {
     const id = `s${(nextSlash += 1)}`
     return new Promise<string>((resolve, reject) => {
@@ -1874,6 +1910,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * request answer instead.
      */
     'fetch',
+    /*
+     * The dialog trio, bridged for the same reason `fetch` is: the sandbox's
+     * own answer is a silent no-op (`allow-modals` is never granted), which
+     * turns a card's chosen failure channel into a swallowed one. Shadowing
+     * the names makes `alert` visible in the notice panel and makes `confirm`
+     * and `prompt` say — in the same panel — that they answered "cancel".
+     */
+    'alert',
+    'confirm',
+    'prompt',
   ] as const
 
   /**
@@ -1970,6 +2016,19 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * index above had to move for it.
      */
     fetchBridge,
+    /*
+     * The dialog bridges sit at `core`'s tail — immediately after `fetch` — so
+     * their values belong here, before the `helperNames` spread: the zip
+     * against `shadowed` is positional, and `core`'s last three names are
+     * indexes 11–13 of the bound list, ahead of every Tavern Helper name.
+     * Placing them after the spread (where "appended last" would put them)
+     * hands `alert` the first helper's function and slides every other binding
+     * three places along — the same silent shift the hazard note above
+     * describes, which is why this ordering is pinned by a test.
+     */
+    bridgedDialogs['alert'],
+    bridgedDialogs['confirm'],
+    bridgedDialogs['prompt'],
     ...helperNames.map(name => sharedCopy(name, tavernHelper[name])),
   ]
 

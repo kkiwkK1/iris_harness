@@ -93,6 +93,7 @@ function harness(host?: Partial<RunnerHost>): {
       },
       onSettings: () => undefined,
       onSlash: async () => '',
+      onDialog: () => undefined,
       onCall: async () => undefined,
       onError: () => undefined,
       onBlocked: () => undefined,

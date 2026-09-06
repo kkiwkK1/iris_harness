@@ -2480,6 +2480,100 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       }
     },
 
+    /**
+     * Upstream's chat-append member — and until now a name the surface
+     * declared but never answered, which is the one shape this surface cannot
+     * carry: a card guards with `typeof createChatMessages === 'undefined'`,
+     * so the gap never threw; the card silently took its "not in a Tavern"
+     * branch, and the console button that should have written variables and
+     * sent an initialization message did nothing at all (measured: 新·架空
+     * 政治经济模拟器's 建国控制台). A missing member that a `typeof` probe
+     * cannot see is worse than a throwing one — it is the swallowed failure
+     * the panel exists for.
+     *
+     * Upstream appends floors to the chat file, one per `{role, message}`:
+     * `user` becomes the reader's line, `assistant` the character's, and
+     * `system` a narrator line (`is_system`). Upstream then repaints; this
+     * host announces the changed chat itself (`script.createChatMessages`
+     * answers with the view and every attached page hears it). What it does
+     * NOT do is generate — upstream leaves the turn for the caller to trigger,
+     * and the measured card follows the append with `triggerSlash('/trigger')`.
+     * Accepted and ignored: `refresh` (the host repaints every page) and
+     * `type` (`'one_off'` only ever accompanied chat-history edits this host
+     * answers through the same arm).
+     * @param messages - `{role, message}` rows, in order.
+     * @param options - upstream's `insert_at` position (absent appends).
+     * @returns the ids the floors landed at, upstream's own answer shape.
+     */
+    createChatMessages: async (
+      messages: readonly Record<string, unknown>[],
+      options?: Record<string, unknown>,
+    ): Promise<number[]> => {
+      const names = snapshot('createChatMessages')
+      if (messages.length === 0) return []
+      const before = chatOf('createChatMessages').length
+      const insertAt = options?.['insert_at']
+      const wire = messages.map(row => {
+        const role = row['role']
+        const message = row['message']
+        if (typeof message !== 'string') {
+          throw new UnsupportedApiError(
+            'createChatMessages([{ role, message }])',
+            'every row needs a string `message`, and one had none Iris could write',
+          )
+        }
+        if (role !== 'user' && role !== 'assistant' && role !== 'system') {
+          throw new UnsupportedApiError(
+            'createChatMessages([{ role, message }])',
+            `the role ${String(role)} is not one upstream defines (user, assistant, system)`,
+          )
+        }
+        return {
+          // `name` rides the chat's own speaker table, which is exactly how
+          // upstream defaults it (`name1`/`name2`).
+          name: role === 'user' ? names.name1 : names.name2,
+          is_user: role === 'user',
+          mes: message,
+          ...role === 'system' ? { is_system: true } : {},
+        }
+      })
+      const answer = await host.call('createChatMessages', {
+        messages: wire,
+        ...typeof insertAt === 'number' ? { insertAt } : {},
+      })
+      // The host answers with the whole view, so the ids come from where the
+      // floors actually landed rather than from what the caller guessed.
+      const view = (answer as { view?: { messages?: { id: number }[] } } | undefined)?.view
+      const total = view?.messages?.length ?? before + wire.length
+      const at = typeof insertAt === 'number'
+        ? Math.min(Math.max(insertAt < 0 ? total + insertAt : insertAt, 0), total)
+        : total - wire.length
+      return Array.from({ length: wire.length }, (_unused, index) => at + index)
+    },
+
+    /**
+     * Upstream's chat-delete member, over the same arm the journal replay
+     * uses. Takes one id or a list; upstream removes in one pass against the
+     * caller's snapshot, and so does the host arm (`script.deleteChatMessages`
+     * resolves the batch against one array — the two orderings agree for a
+     * caller holding the whole set).
+     * @param messageIds - an id or a list of ids, as upstream takes them.
+     * @returns the ids that were removed.
+     */
+    deleteChatMessages: async (messageIds: number | readonly number[]): Promise<number[]> => {
+      const ids = Array.isArray(messageIds) ? [...messageIds] : [messageIds]
+      for (const id of ids) {
+        if (typeof id !== 'number' || !Number.isInteger(id) || id < 0) {
+          throw new UnsupportedApiError(
+            'deleteChatMessages(ids)',
+            'every id must be a non-negative integer message id',
+          )
+        }
+      }
+      await host.call('deleteChatMessages', { messageIds: ids })
+      return ids
+    },
+
     // ── host capabilities that were already asynchronous ─────────────────
     /**
      * Upstream has **two** generate functions, and this is the assembling one.

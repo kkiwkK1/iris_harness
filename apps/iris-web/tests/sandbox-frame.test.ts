@@ -260,6 +260,17 @@ test('exactly the outward-reaching names are shadowed', () => {
     'EjsTemplate',
     // The same-origin fetch bridge, which replaces the name outright.
     'fetch',
+    /*
+     * The dialog trio, bridged for the same reason `fetch` is: without
+     * `allow-modals` the browser answers all three with silence, which is how a
+     * card's chosen failure channel was swallowed. They sit at `core`'s tail,
+     * immediately after `fetch` — the position the values array must mirror,
+     * because the name-to-value pairing is positional (pinned by the alignment
+     * test below).
+     */
+    'alert',
+    'confirm',
+    'prompt',
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
@@ -307,8 +318,11 @@ test('exactly the outward-reaching names are shadowed', () => {
     'getOrCreateChatWorldbook',
     'createWorldbookEntries',
     'swipeTo',
-    // The chat-patch member, bare like upstream's injected iframe API.
+    // The chat-patch member, bare like upstream's injected iframe API, with
+    // the append and delete arms that share its route.
     'setChatMessages',
+    'createChatMessages',
+    'deleteChatMessages',
     'generate',
     'generateRaw',
     'substitudeMacros',
@@ -326,6 +340,48 @@ test('exactly the outward-reaching names are shadowed', () => {
     'mvu_events',
     'TavernHelper',
   ])
+})
+
+test('the dialog bridges sit at their own names, and no Tavern Helper member slid', () => {
+  /*
+   * The shadowed names pair with their values **positionally** (`new
+   * Function(...names)` fed the values in order), and the hazard note on
+   * `resolveValues` records a real incident of the silent shift. The dialog
+   * bridges were appended at `core`'s tail — immediately after `fetch`, ahead
+   * of the Tavern Helper block — so their values have to sit at the same three
+   * indexes. One round of calls tells every wrong arrangement apart: a bridge
+   * under a helper's name posts a dialog; a helper under a bridge's name posts
+   * no dialog at all.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  let confirmed: unknown
+  let answered: unknown
+  evaluate(scope, globals => {
+    ;(globals['alert'] as (text: string) => undefined)('发送失败: 400')
+    confirmed = (globals['confirm'] as (text: string) => boolean)('proceed?')
+    answered = (globals['prompt'] as (text: string) => string | null)('name?')
+  })
+
+  assert.deepEqual(
+    scope.posted.filter(message => message.type === 'dialog'),
+    [
+      { iris: 'tok', type: 'dialog', kind: 'alert', text: '发送失败: 400' },
+      { iris: 'tok', type: 'dialog', kind: 'confirm', text: 'proceed?' },
+      { iris: 'tok', type: 'dialog', kind: 'prompt', text: 'name?' },
+    ],
+    'each name must reach the shell as its own kind, in call order',
+  )
+  assert.equal(confirmed, false, 'confirm answers what a browser without modals answers')
+  assert.equal(answered, null, 'prompt answers what a browser without modals answers')
+
+  // And the direction the dialog assertions cannot see: the first Tavern
+  // Helper name must still reach the first Tavern Helper member. With the
+  // values left where "appended last" put them, this name would answer the
+  // member three places later — `getTavernHelperVersion`'s string, not a table.
+  // The snapshot's own variables table is what a correct pairing answers with.
+  const variables = (scope.globals()['getVariables'] as () => unknown)()
+  assert.deepEqual(variables, { 好感度: 32 }, 'the first helper name still reaches its own member')
 })
 
 test('window, self and globalThis are the same object a card can rely on', () => {
@@ -888,6 +944,11 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'EjsTemplate',
     // The same-origin fetch bridge, published so imported bundles find it.
     'fetch',
+    // The dialog trio, published like every bridged name so a module reaches
+    // the bridges too.
+    'alert',
+    'confirm',
+    'prompt',
     'getVariables',
     'getAllVariables',
     'getLastMessageId',
@@ -935,8 +996,11 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'getOrCreateChatWorldbook',
     'createWorldbookEntries',
     'swipeTo',
-    // The chat-patch member, bare like upstream's injected iframe API.
+    // The chat-patch member, bare like upstream's injected iframe API, with
+    // the append and delete arms that share its route.
     'setChatMessages',
+    'createChatMessages',
+    'deleteChatMessages',
     'generate',
     // The caller-ordered generate, now on the bare surface where a card's
     // script reads it. It was documented in this file's mapping table and never
