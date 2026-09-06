@@ -1961,3 +1961,98 @@ so a chat whose user floors carry interfaces reaches the count gate sooner —
 which is the accounting working, not a regression; the measured corpus had zero
 such floors, and the report names them the moment that stops being true. A
 plain-text user floor claims nothing and renders byte-for-byte as before.
+
+---
+
+## 50. A clamped frame scrolls itself, and its boundary stops the wheel
+
+**Kind:** deliberate divergence from upstream — forced by the clamp, which
+upstream does not have.
+
+**Upstream.** No band, no clamp: Tavern Helper writes
+`frameElement.style.height` same-origin and synchronously, so a frame is always
+exactly its content's height and there is never anything past the viewport to
+reach — the injected `html,body{overflow:hidden!important}`
+(`render/iframe.ts:88-89`) costs the reader nothing. Iris clamps the frame to
+the visible band (the `max-height` band clamp in `reading.css`, task U), so a heavy interface lives its
+whole life with content past its own viewport and *somebody* has to decide how
+that content is reached. Upstream has no answer to copy because upstream has no
+question.
+
+**The change.** Two pure decisions in `frame-height.ts`, applied by
+`frame-entry.ts` to `html` and `body` inline with `!important` (the rule being
+beaten is itself `!important`, and it is upstream's line): `overflowDecision`
+turns `overflow-y` on from the **honest extent** — the largest of
+`bodyScroll`/`docScroll`/a range over the body's contents/the furthest child
+edge (`contentExtent`), because a card that pins its own body lies to
+`scrollHeight` (measured: `bodyScroll 100` against a 1069px range) — and
+`containDecision` sets `overscroll-behavior: contain` from the **scroll range
+that exists after the overflow applies**, sealing the frame's boundary so the
+wheel at its end does not drag the reading column (measured pre-fix: 68px →
+146px of page scroll over six notches). Both run on **every** measurement —
+before `heightSignal`, whose early returns (`silent`, `sizing`) used to skip
+the scroll entirely — and both are **removed when the content fits**: a
+fitting frame must chain its wheel to the page, and a leftover `overflow-y:
+auto` was measured swallowing it (neither frame nor page moved).
+
+**What it costs.** `contain` on a zero-range scroller would swallow the wheel —
+so containment binds to the post-apply range, not the extent, and a
+self-pinning card (`sizing` contract) chains exactly as before; that gate is
+the whole difference between "the frame is a scroller" and "the frame is a
+trap". And the honest extent reads a `Range` over the body on every
+measurement, not only under the diagnostics cap — one `Range`, rAF-coalesced
+like the three observers that trigger it.
+
+---
+
+## 51. The height reporter's schedule survives a frame that never paints
+
+**Kind:** robustness fix against a measured environment fault, not a behaviour
+change.
+
+**Upstream.** Irrelevant — upstream measures from inside the page
+(`adjust_iframe_height.js`'s `ResizeObserver` + rAF coalescing), and its frames
+are same-origin elements of the page's own render tree, so an animation frame
+arrives when the page renders. Iris's frames are opaque-origin children; in the
+project's own headless harness every frame of a chat sat
+`document.hidden === false` with a queued `requestAnimationFrame` that **never
+fired** (render-throttled children), so `reportHeight`'s rAF-only
+`schedule()` meant the bootstrap's one synchronous `send` — taken before the
+card's markup parsed — was also its last. A card whose interface builds its DOM
+asynchronously (政经博弈's reply interface, an async `$(fn)`) never posted a
+height, lived at the 60vh starting height, and neither the height nor the §50
+scroll decision ever ran for it.
+
+**The change.** `reportHeight`'s schedule gains the timer rescue
+`reportRegions` already carries for the same fixed point — `rAF` **and** a
+500ms `setTimeout` that fires only if the rAF never did (`send` clears
+`scheduled`), so a painting frame pays one no-op timeout per schedule. The
+interval is `reportRegions`'s, reused, not a new knob.
+
+**What it costs.** `FRAME_OVERHEAD_BYTES` moved 48 → 49 KiB
+(`frame-budget.ts`): the rescue is real code in the per-frame inlined
+bootstrap, `check-bootstrap.mjs` caught the two-byte overrun against the old
+budget, and the constant is the measurement of that artifact — raised in the
+same change that caused it, per that file's own discipline. On the merged tree
+the constant reads **50 KiB**, which is the mainline's own independent raise
+(measured 48.6 KiB there) absorbing this one; the build's `check-bootstrap`
+pass is what confirms the combined artifact still fits under it. The reading
+view's count gate degradation point moves to ≈41 frames of fixed overhead; the
+byte budget itself is untouched.
+
+**Recorded findings, deliberately not fixed here** (both card-native, both
+measured on the 政经博弈 reply chat):
+
+- An interface that clips its own overflow **inside a descendant**
+  (`docScroll == viewport == 100` against a 1025px range over its contents) is
+  unreachable from any ruler outside that descendant, and escalating to the
+  card's own clipper was rejected: the same signature — laid-out boxes past a
+  clipping ancestor — is how SPA cards park hidden screens, and flipping those
+  clippers to scrollable would scroll a card onto screens it meant to hide.
+  Upstream renders the same card equally clipped. The frame now hugs the
+  visible content (100px, height applied) instead of holding 60vh of dead air.
+- A claimed block whose markup is entirely zero-box (`bodyScroll 0`, range 0,
+  five children that lay out nothing) keeps its frame at the 60vh starting
+  height — the height path refuses zero by design (the self-reinforcing zero),
+  and upstream would render a 0px frame where Iris shows a blank band. A
+  collapse policy after the 6s blank diagnostic is the recorded shape of a fix.
