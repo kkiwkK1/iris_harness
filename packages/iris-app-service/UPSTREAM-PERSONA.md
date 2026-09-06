@@ -95,12 +95,12 @@ function parsePersonaPosition(value) {
 
 ### 出口表
 
-| # | 出口 | 位置 | 文本形态 | 门 |
-| --- | --- | --- | --- | --- |
-| 1 | **`{{persona}}` 宏 / story-string / WI 扫描缓冲** | `[ST] script.js:3353`（解析器）→ `:4404` 解构 → `:4647`、`:4568` | **`baseChatReplace(persona_description?.trim())`** | `:4647` 与 `:5308` 另加 `position === IN_PROMPT` 门；`:4568` **无门** |
-| 2 | **Chat Completion 的 `personaDescription` 槽** | `[ST] openai.js:1424-1425` | **原文** | `persona_description && position === IN_PROMPT` |
-| 3 | **深度注入（`AT_DEPTH`）** | `[ST] script.js:3164` | **原文** | `position === AT_DEPTH` |
-| 4 | **拼进作者注释（`TOP_AN` / `BOTTOM_AN`）** | `[ST] script.js:3154-3160` | **原文** | 位置命中 **且 `shouldWIAddPrompt`** |
+| # | 出口 | 位置 | **写出去时**的文本形态 | **到模型手里时** | 门 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | **`{{persona}}` 宏 / story-string / WI 扫描缓冲** | `[ST] script.js:3353`（解析器）→ `:4404` 解构 → `:4647`、`:4568` | **`baseChatReplace(persona_description?.trim())`** | 同左——**展开发生在写入时** | `:4647` 与 `:5308` 另加 `position === IN_PROMPT` 门；`:4568` **无门** |
+| 2 | **Chat Completion 的 `personaDescription` 槽** | `[ST] openai.js:1424-1425` | **原文** | **已展开、未 trim**：`openai.js:1479` 对每个 `systemPrompts` 条目调 `promptManager.preparePrompt(prompt)`，其中 `PromptManager.js:1277-1287` 走 `substituteParams(prompt.content)` | `persona_description && position === IN_PROMPT` |
+| 3 | **深度注入（`AT_DEPTH`）** | `[ST] script.js:3164` | **原文** | **已 trim、已展开**：`getExtensionPrompt` 先 `x.value.trim()`（`script.js:3259`）再 `substituteParams(values)`（`:3266-3268`） | `position === AT_DEPTH` |
+| 4 | **拼进作者注释（`TOP_AN` / `BOTTOM_AN`）** | `[ST] script.js:3154-3160` | **原文** | 同 3——它也是一条 `extension_prompt`（写进 `NOTE_MODULE_NAME`），出口同为 `getExtensionPrompt` | 位置命中 **且 `shouldWIAddPrompt`** |
 
 ### 出口 1 的链路（三个消费者共用一份文本）
 
@@ -186,11 +186,27 @@ if (power_user.persona_description_position === persona_description_positions.AT
 
 ### 一句话形式
 
-> **`persona_description` 有四个出口；只有经过 `getCharacterCardFieldsLazy()` 的那一支
-> 被 `trim()` 与宏展开处理过，另外三支发存储原文。**
-> 一个以空白开头/结尾的人格描述，在 `{{persona}}` 里是干净的，在 CC 槽和深度注入里带着空白；
-> 一个正文里写了 `{{user}}` 的人格描述，在 `{{persona}}` 里已展开，在另外三个出口里
-> **原样送到 provider**（除非下游另有展开）。
+**⚠ 这一段初版写错了方向，2026-09-06 更正（消费点由 6d 读出，行号我复核过）。**
+初版写的是「另外三支发存储原文……**原样送到 provider**」。**括号里那句
+「除非下游另有展开」正是实际情况**，而它被写成了旁注——所以整句读起来像
+「宏到不了模型」，方向反了。正确的形式是两句：
+
+> **① 到模型手里时，四支全都宏展开过。**分界不在「展开与否」，在**展开的时机**：
+> 出口 1 在**写入时**展开（`baseChatReplace` → `substituteParams`），
+> 出口 2/3/4 在**读出时**展开（`preparePrompt` / `getExtensionPrompt`）。
+>
+> **② 真正的差别是 `trim()`：出口 1、3、4 有，出口 2 没有。**
+> 一个以空白开头/结尾的人格描述，只有走 **CC 的 `personaDescription` 槽**那一支
+> 会把空白带到模型；另外三支都被裁掉。
+
+**所以「经不经过 `getCharacterCardFieldsLazy()`」仍然是一条真实的分界线**——
+它决定文本**在哪一步**被处理、以及 `collapse_newlines` 与去 `\r` 走不走
+（那两样只有 `baseChatReplace` 做，见 `script.js:3282-3293`）——
+**但它不是「宏展没展开」的分界线。**
+
+*（教训归档：这条一句话形式把「事实」和「未查的旁注」焊在同一句里，
+读者拿不到那半句的置信度。见 `METHODS.md` §八「理由句和结论句」与
+`separate-the-fact-from-the-recommendation`。）*
 
 ## 四、persona 绑定的世界书
 
@@ -275,6 +291,23 @@ if (entry.matchPersonaDescription && this.#globalScanData.personaDescription) {
 **没有一条方向相反。**修的都是位置与粒度。
 
 ## 七、未查 / 限定
+
+**已结（2026-09-06）：四个出口的消费点已读。**初版只跟到「谁把文本写出去」，
+没跟到「谁把它读回来送给模型」，于是 §三 的一句话形式方向写反了（更正见该节）。
+读出来的三条消费点，行号我逐条复核过：
+
+- **出口 2**：`[ST] openai.js:1479` 对 `systemPrompts` 的**每个**条目
+  （含 `:1425` push 的 `personaDescription`）调 `promptManager.preparePrompt(prompt)`；
+  `[ST] PromptManager.js:1277-1287` 里是 `substituteParams(prompt.content)`。
+  **展开，不 trim。**
+- **出口 3 与出口 4**：都是 `extension_prompt`，同一个出口
+  `getExtensionPrompt`——`[ST] script.js:3259` 的
+  `prompts.map(x => x.value.trim()).join(separator)`，随后 `:3266-3268` 的
+  `if (values.length) { values = substituteParams(values); }`。**先 trim 后展开。**
+- **出口 1** 的展开在写入侧（`baseChatReplace`，`script.js:3282-3293`），
+  消费点不再处理。
+
+*（这一格是 6d 顺着三支往下读出来的；本文件只复核并记录。）*
 
 1. **`persona_descriptions`（人格库，`power-user.js:288`）的写入与切换路径没读。**
    本文件只跟了「当前激活的那一份」`persona_description`。
