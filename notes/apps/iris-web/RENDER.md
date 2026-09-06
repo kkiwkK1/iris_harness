@@ -765,3 +765,73 @@ repairing can *unhide* a bare-HTML region a stray fence used to bury, which the
 claim then frames — measured on the corpus floors that fail this way, not
 assumed, and the budget repairs for the same reason it claims the combined
 list, so what it rations is what the view renders.
+
+## Added 2026-09-07: the frame scrolls itself, and the wheel stops at its edge
+
+The clamp (`frame-fit.ts`, `reading.css` `max-height`) made every heavy
+interface fit the visible band, and the frame's bootstrap already turned
+`overflow-y` on when content outran the viewport. Two measured faults remained,
+both on real cards at 1920×1080 and 1366×768, and both are decided in the frame
+(`frame-height.ts`, applied by `frame-entry.ts`):
+
+1. **The boundary dragged the page.** 尸变纪元's interface scrolled inside its
+   clamped frame to its end, and the next six wheel notches scrolled the
+   *reading column* (68px → 146px) — scroll chaining treats the frame's edge as
+   the page's. `containDecision` now seals a scroller that actually has range
+   (`overscroll-behavior: contain`, inline `!important`, on `html` **and**
+   `body`, because whichever element the card's own CSS makes the scroller, the
+   guarantee has to be on it). Decided from the **range that exists after the
+   overflow applies**, not from the content extent: a card that pinned itself
+   to its viewport never gains a document range, and a zero-range scroller
+   with `contain` would swallow the wheel without scrolling anything — the
+   exact fault a fitting frame must not have, because chaining is the only way
+   a reader scrolls past it.
+2. **The scroll decision only ran where the height signal spoke, and only
+   believed `body.scrollHeight`.** A card that pins its own body lies to that
+   ruler — measured: `bodyScroll 100` against a 1069px range over the body's
+   contents, `overflow:hidden` still in force, content unreachable. The scroll
+   answers a different question than the height (*is the content reachable*,
+   not *how tall should the shell make us*), so it now runs on **every**
+   measurement — before `heightSignal`, where the early returns cannot skip it
+   — off `contentExtent`: the largest of `bodyScroll`, `docScroll`, a range
+   over the body's contents, and the furthest child edge, with non-finite
+   rulers dropped (`Math.max` with one `NaN` is `NaN`, and one unusable ruler
+   would disarm the scroll for every card). Both decisions are **removed when
+   the content fits**: a leftover `overflow-y:auto` on a fitting frame was
+   measured swallowing the wheel over 政经博弈's interface — neither frame nor
+   page moved.
+
+3. **And the measurement itself could stop.** In the project's own headless
+   harness every sandboxed frame of a chat sat `document.hidden === false` with
+   a queued `requestAnimationFrame` that never fired — render-throttled
+   children get no animation frames. `reportHeight`'s schedule was rAF-only
+   (the `else` branch is for realms without rAF), so a card whose interface
+   builds its DOM *after* the bootstrap's one synchronous `send` — 政经博弈's
+   reply interface, an async `$(fn)` — never got a second measurement: no
+   height ever posted, the frame lived at the 60vh starting height, and with it
+   faults 1 and 2 were unreachable in principle. `reportRegions` already
+   carries the 500ms timer rescue for this fixed point; the height schedule
+   carries it now too.
+
+Measured after, on the same cards: the clamped interfaces scroll to both ends
+inside the band (`scrollTop` driven 0 → max → 0), the end-of-frame wheel leaves
+the page where it was (68px → 68px), fitting frames chain to the page so the
+conversation stays reachable, oscillation is one state over 3s on every card,
+and no frame is rebuilt (15s churn watch: 0 added, 0 removed).
+
+Two findings recorded rather than fixed, both card-native:
+
+- 政经博弈's reply interface clips its own overflow **inside a descendant**
+  (`docScroll == viewport == 100` against a 1025px range): no ruler outside
+  that descendant can scroll it, and escalating to the card's own clipper was
+  rejected because *the same signature is how SPA cards park hidden screens* —
+  神隐挑战's measured state is every ruler equal to the viewport, but a card
+  parking screens with layout-bearing boxes would read exactly like this clip.
+  Upstream shows the same card equally clipped. The frame now hugs the visible
+  100px (the height applies) instead of holding 60vh of dead air around it.
+- One claimed block of the same reply contributes markup whose every child is
+  zero-box (`bodyScroll 0`, range 0): the height path refuses zero by design
+  (the self-reinforcing zero), so the frame stays at the 60vh starting height —
+  a blank rectangle where upstream would render a 0px frame. A collapse policy
+  after the 6s blank diagnostic is the shape of a fix and is not part of this
+  change.

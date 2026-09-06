@@ -261,3 +261,102 @@ export function applyScrollCapability(
     else style.setProperty('overflow-y', wanted, 'important')
   }
 }
+
+/**
+ * Every ruler this frame can read for "how far does the content actually go",
+ * read at one moment.
+ *
+ * `bodyScroll` alone is a **liar on exactly the cards that need the scroll**:
+ * a card that pins its own `body` (or clips inside a descendant) reports a
+ * `scrollHeight` at or below its viewport while its content runs on past the
+ * frame — measured on a real card at `bodyScroll 100` against a 1069px range
+ * over the body's own contents. The range and the furthest child edge are the
+ * rulers that cannot be pinned that way, which is why the height diagnostics
+ * already carried them; the scroll decision reads them too.
+ */
+export interface ContentRulers {
+  /** `document.body.scrollHeight`. */
+  bodyScroll: number
+  /** `document.documentElement.scrollHeight`. */
+  docScroll: number
+  /** A range over the body's contents, which ignores the body's own box. */
+  rangeHeight: number
+  /** The furthest bottom edge among the body's descendants. */
+  childBottom: number
+}
+
+/**
+ * The honest content extent: the largest ruler, and no larger.
+ *
+ * **Max, not any single ruler** — each one is blind to a layout the others
+ * see. And **non-finite rulers drop out** rather than poisoning the max: a
+ * ruler a realm cannot produce comes back `NaN`, and `Math.max` with `NaN` is
+ * `NaN` — one unusable ruler would silently disarm the scroll for every card.
+ * @param rulers - the measures, read at one moment.
+ * @returns the content extent in pixels, `0` when nothing measures anything.
+ */
+export function contentExtent(rulers: ContentRulers): number {
+  let extent = 0
+  for (const value of Object.values(rulers)) {
+    if (!Number.isFinite(value)) continue
+    if (value > extent) extent = value
+  }
+  return extent
+}
+
+/**
+ * Whether the frame's document may scroll its overflowing content.
+ *
+ * `'auto'` — whatever the clamp, the band, or the card's own pinning put past
+ * the frame stays reachable. This is the same turn-on-when-needed the height
+ * path already applied; it now also fires when the height signal had nothing
+ * to say (a `sizing` frame, an echo measurement) — the scroll answers "is the
+ * content reachable", which is a different question from "how tall should the
+ * shell make us".
+ *
+ * It comes off the **honest extent**, not `bodyScroll` alone, and it is
+ * **removed when the content fits**: a frame with nothing to scroll must
+ * chain its wheel to the page (that is the only way a reader reaches the rest
+ * of the conversation past a fitting interface), which is exactly what a
+ * leftover `overflow-y: auto` from an earlier, taller layout would swallow —
+ * measured: a wheel over such a frame moved neither the frame nor the page.
+ *
+ * A frame that reports no viewport is not deciding anything yet: it is still
+ * being laid out, and the self-reinforcing zero that `frame-entry.ts` records
+ * for height applies here too.
+ * @param extent - the honest content extent (`contentExtent`).
+ * @param viewport - the frame's own viewport, `documentElement.clientHeight`.
+ * @returns the inline `overflow-y` value for `html` and `body`.
+ */
+export function overflowDecision(extent: number, viewport: number): 'auto' | '' {
+  if (!Number.isFinite(extent) || !Number.isFinite(viewport)) return ''
+  if (viewport <= 0) return ''
+  return extent > viewport + OVERFLOW_SLACK_PX ? 'auto' : ''
+}
+
+/**
+ * Whether the frame's boundary should stop the wheel.
+ *
+ * `'contain'` — measured on a real card: the frame scrolled to its end and the
+ * next wheel notch **scrolled the reading column** (68px → 146px over six
+ * notches), because scroll chaining treats the frame's boundary as the page's.
+ * A game-style interface the reader is scrolling is a scroller, and a scroller
+ * that hands its leftovers to the conversation under it reads as the page
+ * being dragged.
+ *
+ * It is decided from the **scroll range that actually exists after
+ * `overflowDecision` is applied**, not from the extent: a card that pinned
+ * itself to its viewport (the `sizing` contract — its overflow is its own
+ * business, clipped inside its own descendant) never gains a document range,
+ * and a zero-range scroller with `contain` would do the one thing this exists
+ * to prevent — swallow the wheel without scrolling anything. Reachable content
+ * gets a sealed scroller; a fitting or self-pinning frame chains, which is how
+ * the reader scrolls on past it.
+ * @param scrollRange - `scrollHeight - clientHeight` of whichever element the
+ *   overflow decision made a scroller, measured after it applied.
+ * @returns the inline `overscroll-behavior` value for `html` and `body`.
+ */
+export function containDecision(scrollRange: number): 'contain' | '' {
+  if (!Number.isFinite(scrollRange) || scrollRange <= 0) return ''
+  return scrollRange > OVERFLOW_SLACK_PX ? 'contain' : ''
+}

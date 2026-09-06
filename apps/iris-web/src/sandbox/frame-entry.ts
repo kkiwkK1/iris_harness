@@ -39,8 +39,11 @@ import { describeOverlayAttempt } from './overlay-report.ts'
 import { describeFailure, topFrame } from './failure-attribution.ts'
 import {
   applyScrollCapability,
+  containDecision,
+  contentExtent,
   describeHeightSources,
   heightSignal,
+  overflowDecision,
 } from './frame-height.ts'
 
 /**
@@ -645,6 +648,30 @@ function virtualiseNestedFrames(
   })
 }
 
+/**
+ * Write one scroll-decision property onto `html` or `body`, inline and
+ * `!important`.
+ *
+ * Inline because the rule it has to beat is `!important` — the reset's
+ * `overflow:hidden` is upstream's line, not ours to soften for everyone.
+ * Change-gated, so a still card writes nothing: this runs on every
+ * measurement, and an unconditional write would touch the style object (and
+ * dirty the mutation observer's own picture of the document) each pass.
+ * @param element - `documentElement` or `body`, the two chained scrollers.
+ * @param property - the inline property this decision owns.
+ * @param value - what the decision said; `''` removes the inline override and
+ *   hands the axis back to the reset.
+ */
+function applyScrollStyles(
+  element: HTMLElement,
+  property: 'overflow-y' | 'overscroll-behavior',
+  value: 'auto' | 'contain' | '',
+): void {
+  if (element.style.getPropertyValue(property) === value) return
+  if (value === '') element.style.removeProperty(property)
+  else element.style.setProperty(property, value, 'important')
+}
+
 function reportHeight(run: string, post: (message: FromFrame) => void): void {
   let scheduled = false
   /*
@@ -718,6 +745,76 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
     if (!Number.isFinite(pixels) || pixels <= 0) return
 
     /*
+     * The rulers, read **every** measurement — not only when a height report
+     * is due. The scroll decision below runs on its own schedule from the
+     * height signal's, and it needs the honest extent, which `bodyScroll`
+     * alone does not tell: a card that pins its own `body` reports a
+     * `scrollHeight` at or below its viewport while the range over its
+     * contents runs 969px further (measured: `bodyScroll 100` against a
+     * 1069px range). One `Range` over the body is the ruler that cannot be
+     * pinned that way, and the diagnostics line already paid for it.
+     */
+    const viewport = document.documentElement.clientHeight
+    const range = document.createRange()
+    range.selectNodeContents(document.body)
+    const bodyTop = document.body.getBoundingClientRect().top
+    let childBottom = 0
+    for (const child of document.body.children) {
+      const bottom = child.getBoundingClientRect().bottom - bodyTop
+      if (bottom > childBottom) childBottom = bottom
+    }
+    const rulers = {
+      bodyScroll: pixels,
+      docScroll: document.documentElement.scrollHeight,
+      rangeHeight: range.getBoundingClientRect().height,
+      childBottom,
+    }
+    range.detach()
+
+    /*
+     * **Whatever is past the frame's own viewport has to stay reachable — and
+     * the frame's boundary has to stop the wheel.**
+     *
+     * The reset copies upstream's `overflow:hidden!important` on `html,body`,
+     * which is safe *for upstream* because upstream writes
+     * `frameElement.style.height` same-origin and synchronously — its frame is
+     * always exactly content height, so there is never anything past the
+     * viewport to reach. Iris posts the height instead, so there is always at
+     * least one frame of lag — and, since the shell clamps the frame to the
+     * visible band (`reading.css`), a clamped interface lives its whole life
+     * with content past the viewport. `hidden` there means **gone**: not
+     * clipped with a scrollbar, simply absent, and the wheel over it does
+     * nothing because the document under the pointer has nowhere to scroll.
+     *
+     * This used to run only where the height signal said `height`, off
+     * `bodyScroll` alone — which is exactly the measurement a card that pins
+     * or clips itself lies about, so those frames kept the `hidden` and their
+     * content stayed unreachable (measured: content 1069px in a 461px frame
+     * with `overflow:hidden` still in force). The scroll answers a different
+     * question than the height — *is the content reachable*, not *how tall
+     * should the shell make us* — so it now runs on every measurement, off the
+     * largest ruler (`overflowDecision`).
+     *
+     * And when scrolling exists, `containDecision` seals the boundary:
+     * measured on a real card, a frame scrolled to its end handed every
+     * further wheel notch to the reading column (68px → 146px of page scroll
+     * over six notches). The containment is decided from the **range that
+     * actually exists after the overflow applies** — read back here, one
+     * layout flush later — because a zero-range scroller with `contain` would
+     * swallow the wheel over a card that pinned itself to its viewport, and
+     * *that* card's reader has to chain to the page to keep reading.
+     */
+    applyScrollStyles(document.documentElement, 'overflow-y', overflowDecision(contentExtent(rulers), viewport))
+    applyScrollStyles(document.body, 'overflow-y', overflowDecision(contentExtent(rulers), viewport))
+    const scrollRange = Math.max(
+      document.documentElement.scrollHeight - document.documentElement.clientHeight,
+      (document.body.scrollHeight - document.body.clientHeight) || 0,
+    )
+    const containment = containDecision(scrollRange)
+    applyScrollStyles(document.documentElement, 'overscroll-behavior', containment)
+    applyScrollStyles(document.body, 'overscroll-behavior', containment)
+
+    /*
      * **A height equal to the viewport is not reported, it is diagnosed.**
      *
      * Measured on a real card: every ruler returned exactly the frame's own
@@ -732,12 +829,7 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
      * for a content height has no answer. Once — a card cannot un-clip itself,
      * and repeating it would be a log.
      */
-    const signal = heightSignal(
-      pixels,
-      document.documentElement.clientHeight,
-      sizingReported,
-      appliedHeight,
-    )
+    const signal = heightSignal(pixels, viewport, sizingReported, appliedHeight)
     if (signal.kind === 'silent') return
     if (signal.kind === 'sizing') {
       sizingReported = true
@@ -768,28 +860,20 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
      * frame does not know" is a fault this project has now hit twice, from two
      * different causes, and both times the missing thing was **which measure
      * moved**. Capped and change-gated, so a still card is silent and a busy
-     * one cannot flood the panel.
+     * one cannot flood the panel. The rulers were read above for the scroll
+     * decision; this only formats them.
      */
     if (reportsLeft > 0) {
-      const range = document.createRange()
-      range.selectNodeContents(document.body)
-      const bodyTop = document.body.getBoundingClientRect().top
-      let childBottom = 0
-      for (const child of document.body.children) {
-        const bottom = child.getBoundingClientRect().bottom - bodyTop
-        if (bottom > childBottom) childBottom = bottom
-      }
       const line = describeHeightSources({
         resizes,
         mutations,
-        bodyScroll: pixels,
-        docScroll: document.documentElement.scrollHeight,
-        docClient: document.documentElement.clientHeight,
+        bodyScroll: rulers.bodyScroll,
+        docScroll: rulers.docScroll,
+        docClient: viewport,
         bodyRect: document.body.getBoundingClientRect().height,
-        rangeHeight: range.getBoundingClientRect().height,
-        childBottom,
+        rangeHeight: rulers.rangeHeight,
+        childBottom: rulers.childBottom,
       })
-      range.detach()
       if (line !== lastReported) {
         lastReported = line
         reportsLeft -= 1
@@ -803,6 +887,21 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
      * in `frame-height.ts` (`applyScrollCapability`), where they are testable —
      * this file is an IIFE bundle, and a decision that lives only in here can
      * only be tested through a browser.
+     *
+     * **This runs behind the honest-extent decision above, and the two can
+     * disagree in one direction.** They ask the same question
+     * (`overflowsViewport` is `overflowDecision` without the string), but this
+     * one asks it of `body.scrollHeight` alone — the ruler a self-pinning card
+     * lies to. So where the extent said `auto` and `bodyScroll` fits, this
+     * takes the scroll back off for one measurement. It does not stick: the
+     * shell applies the reported height, the frame's viewport becomes that
+     * height, and the next measurement is an echo (`heightSignal` → `silent`)
+     * that returns before reaching this line, leaving the extent's `auto` in
+     * place. Both halves are kept because both are separately tested — the
+     * decision in `frame-scroll.test.ts`, the application's four properties
+     * (`important`, the `html`/`body` pair, the change gate, viewport 0) in
+     * `frame-height.test.ts` — and collapsing them into one is a design change
+     * rather than a merge.
      */
     applyScrollCapability(
       { html: document.documentElement.style, body: document.body.style },
@@ -813,8 +912,28 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
   const schedule = (): void => {
     if (scheduled) return
     scheduled = true
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(send)
-    else setTimeout(send, 500)
+    /*
+     * **And a timer beside the `rAF`, because there is a state where `rAF`
+     * does not run at all — measured, in this project's own headless
+     * harness: every sandboxed frame of a chat sat `document.hidden === false`
+     * with a queued `requestAnimationFrame` that never fired, so a card whose
+     * interface builds its DOM *after* the bootstrap's one synchronous `send`
+     * never got a second measurement, and lived at the starting height with
+     * the reset's `overflow:hidden` still in force.** `reportRegions` already
+     * carries this exact rescue for the same class of fixed point (a frame
+     * that never paints produces no animation frame to schedule from); the
+     * height reporter needed it too. The timer is cancelled by the `rAF` path
+     * it rescues (`send` clears `scheduled`), so a painting frame pays one
+     * no-op timeout per schedule and nothing more. The interval is
+     * `reportRegions`'s, for the same reason: it bounds how long a laid-out
+     * interface stays unsized, not how fast anything animates.
+     */
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(send)
+      setTimeout(() => {
+        if (scheduled) send()
+      }, 500)
+    } else setTimeout(send, 500)
   }
 
   /*

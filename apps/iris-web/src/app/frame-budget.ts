@@ -71,6 +71,15 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * rather than a settled one. Raised with the coordinator rather than decided
  * here.
  *
+ * **Two independent lines of work moved it again, and both are here.** The
+ * height reporter's 500ms timer rescue — real code in the per-frame bootstrap,
+ * for the frame whose queued `requestAnimationFrame` never fires — was measured
+ * to take the artifact from 48 to 49 KiB, and `check-bootstrap.mjs` caught that
+ * overrun in the change that caused it. The mainline pass that read 48.6 KiB
+ * raised the constant to 50 KiB independently. The two are additive in the
+ * combined tree, so the figure here is the higher of the two ceilings and the
+ * build's own measurement is what confirms it still fits.
+ *
  * **No current figure is written here on purpose.** Two earlier versions of this
  * comment carried "as this line is written" numbers and both were stale within
  * the day — a comment cannot track a number the build recomputes. `build:sandbox`

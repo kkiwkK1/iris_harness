@@ -638,8 +638,12 @@
    * What the clamp owes the card: content taller than the clamped box must stay
    * reachable, and it is — the frame's own bootstrap turns `overflow-y` on the
    * moment its content exceeds its viewport (`frame-entry.ts`
-   * `overflowsViewport`), so a clamped interface scrolls **inside itself**,
-   * which is what a game-style screen was always supposed to do.
+   * `scrollDecision`, decided from the honest extent of every ruler rather
+   * than `body.scrollHeight` alone, which a card that pins or clips itself
+   * lies about), and holds the wheel at its own boundary with
+   * `overscroll-behavior: contain` — so a clamped interface scrolls **inside
+   * itself** without dragging the page, which is what a game-style screen was
+   * always supposed to do.
    */
   max-height: var(--iris-app-frame-height, 100vh);
   /*
