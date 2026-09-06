@@ -771,3 +771,79 @@ test('the refusal list is the same list, and keyframe names are not', () => {
   assert.match(css, /animation: moon-halo 2s linear infinite/, 'the sheet’s own reference must still match')
 })
 
+/*
+ * The user floor. The claim has always been role-blind — these fixtures are the
+ * shape that proved the *routing* was not: a console wrote its 建国档案 terminal
+ * (a bare `<div style="width: 85%">` floor, 5.8 KiB, `<details
+ * class="polsim-terminal">` with a nested variable panel) as a **user**
+ * message, and the row showed the source. The data layer made the floor a user
+ * row; the claim below is what the row would have rendered had the role not
+ * gated the pipeline.
+ */
+
+test('a user floor carrying a bare console floor claims it whole', () => {
+  const terminal = [
+    '<div style="width: 85%; margin: 0 auto;">',
+    '  <details class="polsim-terminal">',
+    '    <summary>建国档案已提交</summary>',
+    '    <div class="polsim-vars">👾变量更新</div>',
+    '  </details>',
+    '</div>',
+  ].join(NL)
+  const floor = ['（提交建国参数。）', '', terminal].join(NL)
+  const { blocks, refused } = claimMessageSurfaces(floor)
+
+  assert.deepEqual(refused, [])
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0]?.kind, 'bare-html')
+  assert.equal(blocks[0]?.body, terminal, 'the frame runs the terminal, not the floor around it')
+  assert.equal(floor.slice(blocks[0]?.start ?? 0, blocks[0]?.end ?? 0), terminal)
+
+  // And the splice: prose before, frame in place, nothing left over.
+  const segments = splitAroundInterfaces(floor, blocks)
+  assert.deepEqual(
+    segments.map(segment => segment.kind),
+    ['text', 'interface'],
+    'the narration stays prose and the terminal takes its own place',
+  )
+})
+
+test('a plain user floor claims nothing, so the row renders as it always has', () => {
+  const floor = '（外交照会已递交。）\n\n等待对方回应——第二段也没有任何行首标签。'
+  const { blocks, refused } = claimMessageSurfaces(floor)
+
+  assert.deepEqual(blocks, [])
+  assert.deepEqual(refused, [])
+})
+
+test('the row routes every role through the interface pipeline, and the role decides prose only', () => {
+  /*
+   * Read at the source because the routing is one conditional in a component,
+   * and no headless harness renders JSX. Two contracts, both load-bearing:
+   *
+   * - the body slot calls `MessageInterfaces` for **every** row and hands the
+   *   role along — a re-introduced `role === 'assistant'` gate there is the
+   *   original bug (5.8 KiB of visible source on a user floor);
+   * - inside `MessageInterfaces`, the role is consulted exactly once, for the
+   *   prose between frames. A second consultation would mean the claim, the
+   *   budget or the frame path had grown a role opinion, and the two roles had
+   *   quietly become different pipelines.
+   */
+  const stripComments = (source: string): string => source.replace(/\/\*[\s\S]*?\*\//g, '')
+
+  const row = stripComments(
+    readFileSync(fileURLToPath(new URL('../src/app/Message.tsx', import.meta.url)), 'utf8'),
+  )
+  const body = row.slice(row.indexOf('iris-msg__text'), row.indexOf('</div>', row.indexOf('iris-msg__text')))
+  assert.ok(body.includes('<MessageInterfaces'), 'the body slot must route through the pipeline')
+  assert.match(body, /role=\{message\.role\}/, 'the row must hand its role to the pipeline')
+  assert.doesNotMatch(body, /role === 'assistant'/, 'no role gate may sit in the body slot again')
+
+  const component = stripComments(
+    readFileSync(fileURLToPath(new URL('../src/app/MessageInterfaces.tsx', import.meta.url)), 'utf8'),
+  )
+  const opinions = component.match(/role === 'assistant'/g) ?? []
+  assert.equal(opinions.length, 1, 'the role decides the prose between frames, and nothing else')
+  assert.match(component, /markdownProse \? <MarkdownText/, 'assistant prose reads as markdown')
+})
+

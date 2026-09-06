@@ -179,16 +179,18 @@ export interface FrameCandidate {
   /**
    * Whether this floor is a user row.
    *
-   * Carried only so the plan can report one. [notes/apps/iris-web/WINDOWING.md §三「预算只数 AI 楼」]
+   * Carried so the plan can report one. [notes/apps/iris-web/WINDOWING.md §三「预算只数 AI 楼」]
    * measured 0 user rows among 189 rendered interface floors and noted that
    * nothing enforced it — `applyRegexScripts` treats `USER_INPUT` and
    * `AI_OUTPUT` alike.
    *
-   * In this view something does: `Message.tsx` routes only `role ===
-   * 'assistant'` through `MessageInterfaces`, so a user row has no path to a
-   * frame at all. That makes this field a second line rather than the only one —
-   * it fires if that routing ever changes, which is the change that would
-   * quietly invalidate the measurement above.
+   * That measurement is now history rather than premise: user rows route
+   * through `MessageInterfaces` like assistant rows (upstream renders message
+   * HTML wherever the floor sits, and a console can write a floor of markup
+   * onto a user row), so a user row's blocks are candidates on the same terms —
+   * the same byte charge, the same count gate, no second quieter accounting.
+   * The flag feeds the plan's report, which is how the accounting stays
+   * observable now that "user rows carry nothing" can no longer be assumed.
    */
   isUser?: boolean
 }
@@ -212,9 +214,12 @@ export interface FramePlan {
   /**
    * User rows that carried an interface, if any.
    *
-   * Empty on all measured data. Non-empty means the premise under "user rows
-   * are free" has died, and the reader of this field is the mechanism that was
-   * missing.
+   * Empty on all measured data — a fact this field turned into an account.
+   * User floors now claim and render interfaces like assistant floors and pay
+   * for them from the same pool, so a non-empty list is no longer a dead
+   * premise firing: it is the record of which on-screen frames a user floor is
+   * responsible for, and of how far the corpus has drifted from the
+   * measurement that named this field.
    */
   userInterfaces: readonly string[]
 }

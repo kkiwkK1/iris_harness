@@ -196,10 +196,29 @@ test('a user row carrying an interface is reported, not silently absorbed', () =
    * Zero user rows carried an interface across 189 measured interface floors,
    * and nothing enforces that — so this field is the mechanism that observation
    * never had. It renders normally; the report is about the accounting premise,
-   * not about the card.
+   * not about the card. User rows now route through the interface pipeline
+   * (upstream renders message HTML wherever the floor sits), so a non-empty
+   * report is expected wherever a console wrote markup onto a user floor.
    */
   assert.deepEqual([...plan.userInterfaces], [frameKey(3, 0)])
   assert.equal(plan.render.has(frameKey(3, 0)), true, 'reporting is not refusing')
+})
+
+test('a user floor pays the frame budget exactly like an assistant floor', () => {
+  /*
+   * The two roles are one pipeline and one pool. The role-blindness of the
+   * walk itself is what makes the report above accounting rather than gating:
+   * identical candidates must plan identically whatever the flag says, or a
+   * user floor's region would be a quieter frame — charged or refused by a
+   * rule nobody can see.
+   */
+  const floor = 3
+  const body = 'x'.repeat(1000)
+  const user = planFrames([{ floor, instance: 0, body, isUser: true }], fresh)
+  const assistant = planFrames([candidate(floor, 1000)], fresh)
+
+  assert.deepEqual([...user.render], [...assistant.render])
+  assert.equal(user.spent, assistant.spent)
 })
 
 test('the count gate sits below the point where overhead eats the whole budget', () => {

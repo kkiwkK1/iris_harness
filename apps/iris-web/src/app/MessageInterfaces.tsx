@@ -16,7 +16,7 @@
  */
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 
-import type { ScriptContext } from '@iris/protocol'
+import type { MessageView, ScriptContext } from '@iris/protocol'
 
 import type { MessageStyle } from './html-regions.ts'
 
@@ -91,24 +91,36 @@ function sandboxSupply(): Promise<{ assets: SandboxAssets, bootstrap: string }> 
 }
 
 /**
- * An assistant message's body, with any card interface in place of its block.
+ * A message's body, with any card interface in place of its block — whatever
+ * the row's role.
  *
  * Renders the **whole** body rather than an addition to it, because replacing a
  * block is not something that can be done from beside it: `MarkdownText` only
  * makes a `<pre>` if it is handed the text, so the only way to not show the source
  * is to not hand it over.
- * @param props - the floor, its text after display regex, and whether it is still arriving.
+ *
+ * The claim itself is role-blind — upstream renders message HTML wherever the
+ * floor sits, and a console can write a floor of markup onto a user row. What
+ * the role decides is the **prose between frames**: an assistant row's unclaimed
+ * segments read as markdown, every other row's stay the raw text that row has
+ * always shown. This is a routing component, not a policy one — the budget, the
+ * consent gate and the sandbox wall are identical on both sides of that split.
+ * @param props - the floor, its text after display regex, whether it is still
+ *   arriving, and the row's role.
  * @returns the message body.
  */
 export function MessageInterfaces({
   floor,
   text,
   streaming,
+  role,
 }: {
   floor: number
   text: string
   streaming: boolean
+  role: MessageView['role']
 }): ReactElement {
+  const markdownProse = role === 'assistant'
   const chatId = useIris(state => state.chatId)
   const characterId = useIris(state => state.view?.characterId)
   const consent = useIris(state => state.scriptsAllowed)
@@ -472,6 +484,10 @@ export function MessageInterfaces({
   }, [refusedNote, store])
 
   /*
+   * No claimed surface, no splice — the body is one piece of prose. Assistant
+   * rows read it as markdown; every other row keeps the raw text it has always
+   * shown, which is the one rendering this pipeline promises not to touch.
+   *
    * Every string that reaches `MarkdownText` goes through the unknown-markup
    * rule first, and both call sites do it, because a message with no claimed
    * block is the commoner half of the population — the card that started this
@@ -489,9 +505,15 @@ export function MessageInterfaces({
    * be, which is a louder version of the fault this change is about. The
    * segmented path below removes those spans; this one is only for a message
    * with neither.
+   *
+   * The role gate is on the fast path's **rendering**, not on its condition: a
+   * user row carrying only a `<style>` leaves this path exactly as an assistant
+   * row does, because the reason to leave is that those characters have no
+   * reader — which is true of the raw arm too, where the stylesheet would
+   * simply be printed instead of escaped.
    */
   if (blocks.length === 0 && styles.length === 0) {
-    return <MarkdownText text={unwrapUnknownTagsOutsideCode(display)} streaming={streaming} />
+    return markdownProse ? <MarkdownText text={unwrapUnknownTagsOutsideCode(display)} streaming={streaming} /> : <>{text}</>
   }
 
   /*
@@ -533,7 +555,13 @@ export function MessageInterfaces({
     <>
       {segments.map(segment =>
         segment.kind === 'text' ? (
-          <MarkdownText key={`t-${segment.text.length}-${segment.text.slice(0, 16)}`} text={segment.text} />
+          markdownProse ? (
+            <MarkdownText key={`t-${segment.text.length}-${segment.text.slice(0, 16)}`} text={segment.text} />
+          ) : (
+            // A raw string is a valid list child — React asks keys of elements,
+            // not of primitives — so the plain row needs no wrapper here.
+            segment.text
+          )
         ) : (
           <InterfaceSlot
             key={`i-${segment.instance}`}
