@@ -379,3 +379,26 @@ test('a duplicate shares its source\'s materialised book, like a shared binding 
   assert.ok(copied !== undefined, 'the duplicate was left unbound')
   assert.equal(copied.name, 'Lighthouse Lore', 'the duplicate minted its own book')
 })
+
+test('an import whose id differs from an existing card only by case does not take it', async () => {
+  // An id is a filename, and on Windows and macOS `sable.json` and `Sable.json`
+  // are the same file: minting `Sable` beside an existing `sable` would
+  // overwrite that card there and sit next to it on Linux. The library folds
+  // case when it asks what is taken, so both systems mint the same id - and it
+  // is the suffixed one.
+  const dir = await mkdtemp(join(tmpdir(), 'iris-case-'))
+  const characters = join(dir, 'characters')
+  await mkdir(characters, { recursive: true })
+  const body = JSON.stringify({ spec: 'chara_card_v3', spec_version: '3.0', data: cardBody() })
+  await writeFile(join(characters, 'sable.json'), body, 'utf8')
+  const library = new CharacterLibrary(characters, '/iris/avatar')
+
+  const imported = await library.import('Sable.json', Buffer.from(body, 'utf8').toString('base64'))
+  assert.equal(imported.characterId, 'Sable-2', 'a case-only twin of an existing id was minted as if it were free')
+  assert.deepEqual(
+    (await library.refs()).map(ref => ref.characterId).sort(),
+    ['Sable-2', 'sable'],
+    'the existing card must still be there under its own id',
+  )
+  await rm(dir, { recursive: true, force: true })
+})
