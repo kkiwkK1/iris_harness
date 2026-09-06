@@ -1044,3 +1044,161 @@ MVU 传的是纯字符串（无 `appendAtEnd`），**所以「备份并清理」
 1. **周期窗口照做。**
 2. **legacy 全量路径本批不自动做**——**只报告 + 照抄 `ignore_cleanup` 键**。
 3. **三按钮弹窗与导出备份归后续**（记 ROADMAP）。
+
+---
+
+## 附录四：脚本帧里**不 await** 就同步读 `Mvu`，在上游拿不拿得到
+
+**问题**（2026-09-06，为一条「补齐兼容 vs 我们多给」的裁决）：TavernHelper 4.9.1 的
+**脚本帧**里，一段从不 `await waitGlobalInitialized('Mvu')` 的代码同步读 `Mvu` /
+`window.Mvu`，能不能拿到对象？
+
+**口径升级**：本附录读的是**已安装的 TH 源码**
+（`E:/sillyTavern/SillyTavern/data/default-user/extensions/JS-Slash-Runner`，
+`manifest.json` / `package.json` 均为 **4.9.1**，`src/` 目录完整，不只是 `dist/`）。
+附录二里那段 `predefine.js:38-45` 的引文来自更早的一次阅读，**行号在 4.9.1 上是
+`:37-44`**，内容一致。静态读，没有运行。
+
+### 答案
+
+> **能——但只在 MVU 已经发布之后建起来的帧里，而且靠的是一个在帧启动那一刻
+> 只判一次的条件。** 上游的语义不是「总能拿到」，是
+> **「帧 bootstrap 时父页已经有 `Mvu`，就装一个活 getter；否则什么都不装」**。
+
+### ① 那个活 getter 装在哪个 window、由谁、什么时机
+
+**装在每个帧自己的 window 上**，由 `predefine.js` 在**帧 bootstrap** 时装，
+**条件是父页此刻已经有 `Mvu`**：
+
+```js
+// [TH] src/iframe/predefine.js:36-44
+// 其实应该用 waitGlobalInitialized 来等待 Mvu 初始化完毕, 这里设置 window.Mvu 只是为了兼容性
+if (_.has(window.parent, 'Mvu')) {
+  Object.defineProperty(window, 'Mvu', {
+    get: () => _.get(window.parent, 'Mvu'),
+    // Mvu 脚本自己还会 `_.set()` 自己的变量, 所以这里设置一个空 set
+    set: () => {},
+    configurable: true,
+  });
+}
+```
+
+三条要点：
+
+- **`window` 是帧自己的**（`predefine.js` 在帧内以经典脚本执行），
+  **不是** ST 页面顶层；每个帧各装一份。
+- **getter 是活的**：每次读都重新 `_.get(window.parent, 'Mvu')`，
+  所以帧拿到的永远是 ST 页面上那一个对象（附录二「单例靠共享 parent」的机制）。
+- **`if` 只在 bootstrap 求值一次。**父页当时没有 `Mvu`，
+  这个属性**根本不会被定义**——之后 MVU 再发布也不会回填这个帧。
+- 上游作者自己在注释里把它定性为**兼容性补丁**，并指明正道是 `waitGlobalInitialized`。
+
+**`Mvu` 是谁放到父页上的**：MVU 自己**也跑在一个脚本帧里**，往 `window.parent` 写：
+
+```js
+// [MVU] .reference/MagVarUpdate/src/function/global/index.ts:165-177   initGlobals()
+const stop = watch(() => store.should_enable, should_enabled => {
+    if (should_enabled) {
+        _.set(window.parent, 'Mvu', mvu);      // ← 写在 ST 页面上
+        eventEmit('global_Mvu_initialized');
+    }
+}, { immediate: true });
+```
+
+卸载时 `_.unset(window.parent, 'Mvu')`（`:180-183`）。
+**所以「父页有没有 `Mvu`」是另一个帧的运行结果**，帧与帧之间的先后决定这件事。
+
+### ② 脚本帧的 srcdoc 头有没有把父页 globals 转发进来
+
+**有，但是按名单逐个转发，而 `Mvu` 不在名单里。**没有 `with(parent)`，没有 Proxy。
+
+```js
+// [TH] src/iframe/predefine.js:1              window._ = window.parent._;
+// [TH] src/iframe/predefine.js:11-19
+let result = _(window);
+result = result.merge(_.pick(window.parent, ['EjsTemplate', 'TavernHelper', 'YAML', 'showdown', 'toastr', 'z']));
+result = result.merge(_.omit(_.get(window.parent, 'TavernHelper'), '_bind'));
+result = result.merge(...Object.entries(_.get(window.parent, 'TavernHelper')._bind)
+  .map(([key, value]) => ({ [key.replace('_', '')]: value.bind(window) })));
+result.value();
+// [TH] src/iframe/predefine.js:26-34          Object.defineProperty(window, 'SillyTavern', { get })
+```
+
+**名单是六个**：`EjsTemplate` `TavernHelper` `YAML` `showdown` `toastr` `z`，
+外加 `_`（`:1`）、TavernHelper 的成员平铺、`_bind` 成员**绑到帧的 window**、
+以及 `SillyTavern` 的自建 getter。**`Mvu` 走的是 `:37-44` 自己那个条件块。**
+
+**装载点是两个，不是一个。**第二个是 `waitGlobalInitialized` 的 `_` 版：
+
+```ts
+// [TH] src/function/global.ts:28-42   _waitGlobalInitialized(this: Window, global)
+if (_.has(window, global)) {                    // ← 这个 window 是 ST 页面（函数的模块作用域）
+  Object.defineProperty(this, global, {         // ← this 是调用方那个帧的 window
+    get: () => _.get(window, global),
+    configurable: true,
+  });
+  if (global === 'Mvu') {
+    try { await waitUntil(() => _.has(get_variables_without_clone({ type: 'message', message_id: 0 }), 'stat_data')); }
+    catch (error) { /** 只是作为保险, 忽略超时时的报错 */ }
+  }
+  return;
+}
+return new Promise(resolve => {
+  _eventOnce.call(this, `global_${global}_initialized`, async () => { /* 同上，再 resolve */ });
+});
+```
+
+对照的发布侧：
+
+```ts
+// [TH] src/function/global.ts:7-10
+export function initializeGlobal(global, value) { _.set(window, global, value); eventSource.emit(`global_${global}_initialized`); }
+```
+
+**两个装载点的差别值得记**：predefine 的 getter 读 `window.parent`，
+`_waitGlobalInitialized` 的 getter 读 ST 页面的 `window`——上游这两者是同一个对象。
+predefine 那个是 `configurable: true`，所以后来的 `defineProperty` 能覆盖它。
+**另外 `'Mvu'` 这一支还多等一件事**：0 楼的 message 变量里出现 `stat_data`
+（`waitUntil`，超时被吞）。**裸读拿到的对象没有这一层保证。**
+
+### ③ 若裸 `Mvu` 在上游能同步解析，是靠哪一层
+
+靠 ① 那个 getter，**而它成立的前提是执行顺序**：
+
+```html
+<!-- [TH] src/panel/script/iframe.ts:6-21  脚本帧的 srcdoc -->
+<head>
+${third_party}
+<script src="${parent_jquery_url}"></script>     <!-- :11 -->
+<script src="${predefine_url}"></script>          <!-- :12 -->
+…
+</head>
+<body>
+<script type="module">                            <!-- :17 -->
+${…卡的脚本正文…}
+</script>
+</body>
+```
+
+**`predefine.js` 是 `<head>` 里的经典脚本（同步、阻塞、按序），
+卡的正文是 `<body>` 里的 `type="module"`（天然 defer）**——
+**所以 predefine 一定先跑完**。界面帧同理（`src/panel/render/iframe.ts:94` 同一个
+`predefine_url`）。因此在同一个帧内，「不 await 就读」与「await 之后读」
+**看到的是同一个 getter**，不存在竞态。
+
+**竞态在帧之间**：`:37` 那个 `if` 判的是**这个帧建起来的那一刻**父页有没有 `Mvu`，
+而那由 MVU 所在的**另一个帧**何时跑到 `_.set(window.parent, 'Mvu', mvu)` 决定。
+
+**没装上时的两种失败形态不一样，照抄时要分清**：属性根本没定义 ⇒
+`window.Mvu` 读作 **`undefined`**（静默），而裸标识符 `Mvu` 抛
+**`ReferenceError`**（响亮）。同一份卡代码用哪种写法，决定它是静默降级还是当场炸。
+
+### 一句话给裁决用
+
+> 上游的行为是**「bootstrap 时若已存在则装活 getter」**，不是「总是可用」。
+> 所以「在帧启动时按父页现状装一次」是**补齐兼容**；
+> 而「无条件、任何时候都能同步拿到」**比上游更强**，属于我们多给——
+> 上游在 MVU 尚未发布时建起来的帧里，同样拿不到，且没有回填。
+> *（我们语料里那三个从不 await 的单元——魔法少女监视器 / 灭仇家气泡面板 /
+> 绿茵好莱坞状态栏——在上游能不能跑，取决于它们所在的帧是否晚于 MVU 发布；
+> **这一条我没有观测**，只能由运行时序回答。）*
