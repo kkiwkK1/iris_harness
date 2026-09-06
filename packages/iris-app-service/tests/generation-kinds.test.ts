@@ -253,13 +253,20 @@ test('an impersonate leaves the MVU pathway alone', async (t) => {
   const { turn } = await fix.handlers['chat.send']({ chatId, kind: 'impersonate' })
   await fix.settled()
 
-  // The impersonated turn owns no table at all — a user line carries no
-  // variable consequences, the same rule a typed message lives under — and the
-  // settled turn's table is untouched. Nothing for the next baseline walk to
-  // stop on early, nothing misattributed to the model's reply.
+  // The impersonated turn owns no table of its own — a user line carries no
+  // variable consequences, the same rule a typed message lives under — so
+  // reading it answers the nearest earlier settled turn's table, inherited,
+  // and the settled turns' own tables are untouched. (The inherited read used
+  // to be an error, which emptied every status surface for the user→reply
+  // window; it is the same fact under the read rule the store already applies
+  // one turn later.)
   const after = await fix.chats.open(chatId)
   assert.deepEqual(after.variables.getVariables({ type: 'message', message_id: 0 }), before)
-  assert.throws(() => after.variables.getVariables({ type: 'message', message_id: turn }))
+  assert.deepEqual(
+    after.variables.getVariables({ type: 'message', message_id: turn }),
+    after.variables.getVariables({ type: 'message', message_id: turn - 1 }),
+    'the impersonated turn reads the state it inherited, not a table of its own',
+  )
 })
 
 test('a preset prompt triggered for impersonate appears only there', async (t) => {

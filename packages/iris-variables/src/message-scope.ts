@@ -121,12 +121,17 @@ export function resolveTurn(session: Session, selector: number | 'latest' | unde
  * @returns a backend for the `message` scope.
  */
 export function sessionMessageBackend(session: Session): ScopeBackend {
-  /** The candidate a `message` selector addresses. */
-  const candidateSeqOf = (option: VariableOption): number => {
+  /** The turn a `message` selector addresses. */
+  const turnOf = (option: VariableOption): number => {
     if (option.type !== 'message') {
       throw new VariableScopeError(`the message backend cannot serve the "${option.type}" scope`)
     }
-    const turn = resolveTurn(session, option.message_id)
+    return resolveTurn(session, option.message_id)
+  }
+
+  /** The candidate a `message` selector's write attaches to. */
+  const candidateSeqOf = (option: VariableOption): number => {
+    const turn = turnOf(option)
     const candidate = selectedCandidate(session, turn)
     if (candidate === undefined) {
       throw new VariableScopeError(`turn ${turn} has no generated reply to attach variables to`)
@@ -135,13 +140,27 @@ export function sessionMessageBackend(session: Session): ScopeBackend {
   }
 
   const effective = (option: VariableOption): Variables => {
-    const seq = candidateSeqOf(option)
+    const turn = turnOf(option)
     const tables = tablesBySeq(session)
-    // This candidate's own answer wins whenever it wrote one.
-    const own = tables.get(seq)
+    // This turn's selected candidate's own answer wins whenever it wrote one.
+    const candidate = selectedCandidate(session, turn)
+    const own = candidate === undefined ? undefined : tables.get(candidate.seq)
     if (own !== undefined) return own
-    if (option.type !== 'message') return {}
-    return inheritedTable(session, resolveTurn(session, option.message_id), tables)
+    /*
+     * A candidate that wrote nothing inherits — and so does a turn with **no
+     * candidate at all**: a user line awaiting its answer, which is exactly the
+     * floor a card's `createChatMessages` append produces. The store used to
+     * refuse that read, and the refusal emptied every status surface for the
+     * whole user→reply window: `view.variables` collapsed to `undefined`, a
+     * `getVariables` over the wire answered `internal`, and a card reading
+     * `latest` there read "nothing set yet" — the one reading that makes
+     * MagVarUpdate re-initialise and write defaults over live state. The
+     * founding console's own write survived; everything that looked at it
+     * afterwards was told there was nothing. Inheritance is the same rule the
+     * backend already applies one turn later, extended to the turn that has not
+     * generated yet.
+     */
+    return inheritedTable(session, turn, tables)
   }
 
   return {

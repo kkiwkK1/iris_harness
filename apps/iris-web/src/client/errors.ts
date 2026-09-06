@@ -26,16 +26,22 @@ import { translate } from '../app/i18n/strings.ts'
  *
  * The sentences live in `app/i18n/strings.ts` so the Chinese column is held to
  * the same key set as the English one by the type system; the per-code lookup
- * is what belongs here. `provider-error` and `internal` are absent on purpose:
- * for those the host's own detail **is** the information, and `describeError`
- * passes it through unrewritten.
+ * is what belongs here. `provider-error`, `internal` **and `unsupported`** are
+ * absent on purpose: for those the host's own detail **is** the information,
+ * and `describeError` passes it through unrewritten.
+ *
+ * `unsupported` joined them after a founding-console failure reached its reader
+ * as "This build of Iris cannot do that yet." while the host's own answer said
+ * exactly which commands exist and which one arrived — the difference between a
+ * dead end and a diagnosis. Every `unsupported` raise names the capability and
+ * the reason it is not there, so the general sentence could only lose facts.
  */
 const COPY: Record<RpcError['code'], StringKey | undefined> = {
   'not-found': 'errNotFound',
   'invalid-request': 'errInvalidRequest',
   'provider-error': undefined,
   busy: 'errBusy',
-  unsupported: 'errUnsupported',
+  unsupported: undefined,
   /*
    * A card filled the shared card storage, and the shared part is what a reader
    * has to be told: the store is one profile-wide store, as `localStorage` is

@@ -59,6 +59,18 @@ test('a provider refusal keeps its own words, because those are the information'
   )
 })
 
+test('an unsupported refusal names what the host cannot do, not just that it cannot', () => {
+  // Measured on the founding console: the host's answer said which slash
+  // commands exist and which one arrived; the generic sentence said none of it,
+  // and the reader had nowhere to go.
+  const shown = describeError({
+    code: 'unsupported',
+    message: 'only "/trigger" and "/send <text>|/trigger" are supported; got "/trigger"',
+  })
+  assert.match(shown, /\/trigger/)
+  assert.doesNotMatch(shown, /cannot do that yet/)
+})
+
 test('a script size reads as an order of magnitude, not a byte count', () => {
   // The decision it informs is "a few lines someone wrote" versus "a megabyte of
   // compiled output". Both real sizes from the corpus are here.

@@ -149,12 +149,44 @@ test("'latest' and -1 address the same turn", () => {
   assert.deepEqual(store.getVariables({ type: 'message', message_id: -1 }), { n: 7 })
 })
 
-test('a turn with no reply cannot hold variables', () => {
+test('a turn with no reply still reads what the conversation carried, and holds no write', () => {
   const session = Session.create(SessionId('vars-empty'))
   session.append('turn/start', { turn: 0 })
   const store = new VariableStore({ message: sessionMessageBackend(session) })
 
-  assert.throws(() => store.getVariables({ type: 'message' }), VariableScopeError)
+  // Nothing earlier to inherit: the read answers empty, not an error.
+  assert.deepEqual(store.getVariables({ type: 'message' }), {})
+  // A write still has nowhere to go: there is no candidate to attach to.
+  assert.throws(
+    () => store.replaceVariables({ n: 1 }, { type: 'message' }),
+    VariableScopeError,
+  )
+})
+
+test('a user line awaiting its reply reads the state it was founded on', () => {
+  // The founding-console shape: a card writes its variables onto the settled
+  // reply, appends a user floor with `createChatMessages` (a new turn that has
+  // no candidate yet), and every status surface keeps reading `latest`. The
+  // window used to read as an error, which the STATE panel rendered as an
+  // empty panel — the write had survived, but nothing could see it.
+  const session = chatWithTurns(1)
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 0 })
+  session.append(
+    'user/message',
+    createUserMessage({ content: [{ type: 'text', text: 'founding decree' }], source: { kind: 'user' } }),
+    { surfaceOp: 'append' },
+  )
+  const store = new VariableStore({ message: sessionMessageBackend(session) })
+
+  store.replaceVariables({ 国名: '测试共和国' }, { type: 'message', message_id: 0 })
+
+  // Both spellings of "newest" — the panel's no-id read and a card's
+  // `message_id: 'latest'` — see the carried table until the reply lands.
+  assert.deepEqual(store.getVariables({ type: 'message' }), { 国名: '测试共和国' })
+  assert.deepEqual(store.getVariables({ type: 'message', message_id: 'latest' }), { 国名: '测试共和国' })
+  // And the appended floor by its own index reads the same, one turn on.
+  assert.deepEqual(store.getVariables({ type: 'message', message_id: 1 }), { 国名: '测试共和国' })
 })
 
 /** A log with `turns` settled turns, one candidate each. */
