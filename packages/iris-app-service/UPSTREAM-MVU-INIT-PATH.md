@@ -1202,3 +1202,166 @@ ${…卡的脚本正文…}
 > *（我们语料里那三个从不 await 的单元——魔法少女监视器 / 灭仇家气泡面板 /
 > 绿茵好莱坞状态栏——在上游能不能跑，取决于它们所在的帧是否晚于 MVU 发布；
 > **这一条我没有观测**，只能由运行时序回答。）*
+---
+
+## 附录五：上游能不能回看历史楼层的 `stat_data`
+
+**问题**（2026-09-06，为 `ACTION-PLAN.md` §二 第 4 项「状态面板只显示最新 turn 的变量」）：
+上游的变量查看面能不能回看历史楼层？入口在哪、按什么寻址、显示的是候选表还是行级表。
+
+**口径**：正读已安装的 TavernHelper **4.9.1**
+（`E:/sillyTavern/SillyTavern/data/default-user/extensions/JS-Slash-Runner`，`src/` 完整）
+与 `.reference/MagVarUpdate`。只读，没有打开 ST，没有点开任何面板——
+**以下全部是静态读，没有一条经过运行确认。**
+
+### 答案
+
+> **能。**上游有一个能按楼号回看的变量面，但它**不在 MVU 里**，在 **TavernHelper 的
+> 「变量管理器 → 消息楼层」**。它按 `message_id` 寻址、可以给一个**楼号区间**、
+> 显示的是**行级表**（那一楼**当前 swipe** 的那一格），**而且可写**。
+
+### ① 入口：TH 面板 → 工具 → 变量管理器 → 消息楼层
+
+| 层 | 位置 |
+| --- | --- |
+| TH 面板的「工具」页签 | `[TH] src/Panel.vue:116`　`{ key: 'toolbox', name: t\`工具\`, icon: 'fa-solid fa-toolbox', component: Toolbox }` |
+| 「变量管理器」按钮 → 对话框 | `[TH] src/panel/Toolbox.vue:17`（按钮）、`:72-78`（`<Dialog storage-id="variable-manager" :title="t\`变量管理器\`">`） |
+| 五个页签 | `[TH] src/panel/toolbox/VariableManager.vue:30-40`：全局 / 预设 /（有角色时）角色 / 聊天 / **消息楼层** |
+| 楼层页 | `[TH] src/panel/toolbox/variable_manager/Message.vue`（128 行）+ `MessageItem.vue`（149 行） |
+
+**MVU 自己没有变量查看面。**`.reference/MagVarUpdate/src/panel/` 的七个区块是
+Button / CharacterOverride / Cleanup / Compatibility / Notification / Update / Version
+（`Panel.vue:21-27`），**`src/panel/` 下没有任何文件提到 `stat_data`**（grep 零命中）。
+所以「MVU 的状态视图」这个东西**不存在**；查看变量在上游是 TavernHelper 的职责。
+
+### ② 寻址：楼号区间 + 一个「追踪最新」开关，负数是从末尾数
+
+```js
+// [TH] src/panel/toolbox/variable_manager/Message.vue:110-121
+const messages = computed(() => {
+  if (chat_length.value === 0) return [];
+  const range = from.value > to.value ? _.range(to.value, from.value + 1) : _.range(from.value, to.value + 1);
+  const result = sync_bottom.value ? range.toReversed() : range;
+  return result.map(value => ({
+    message_id: sync_bottom.value ? value - chat_length.value : value,   // ← 追踪模式下是负数
+  }));
+});
+```
+
+- **两个数字输入框 `from` / `to`**（`:24-33`），`min=0`、`max=chat_length - 1`，
+  中间一个 `~`，右侧常驻显示「最新楼层号: {chat.length - 1}」。
+  **初值是最后三楼**：`to = chat_length - 1`，`from = max(0, to - 2)`（`:80-81`）。
+- **`sync_bottom`（「追踪最新」/「正序显示」）**（`:19-20`、`:78`）：
+  开着时楼号写成**负数**（`value - chat_length`），也就是**相对末尾**寻址，
+  新楼到达时窗口自动跟着走（`:82-91` 的 watch 保持区间宽度不变）；
+  关掉则是绝对楼号，`to` 输入框被禁用。
+- 渲染用 `VirtList`（虚拟列表，`item-key="message_id"`），所以区间开大也不铺满 DOM。
+- 每个 `MessageItem` 自己把负数折回绝对楼号：
+  `normalized_message_id = messageId < 0 ? chatLength + messageId : messageId`
+  （`MessageItem.vue:49-51`），标题写「第 N 楼」，旁边有一个「重新渲染第 N 楼」的按钮
+  （`refreshOneMessage`，`:82-85`）。
+
+**所以 `swipe` 不是寻址的一维**：面板只传 `message_id`，没有 swipe 参数。
+
+### ③ 显示的是**行级表**——那一楼**当前 swipe** 的那一格
+
+数据来自 `getVariables({ type: 'message', message_id })`（`MessageItem.vue:87`），
+刷新时走同一族的 `get_variables_without_clone`（`:127`）：
+
+```ts
+// [TH] src/function/variables.ts:56-70   get_variables_without_clone(option)
+case 'message': {
+  const normalized_message_id =
+    option.message_id === undefined || option.message_id === 'latest' ? -1 : option.message_id;
+  if (!_.inRange(normalized_message_id, -chat.length, chat.length)) {
+    throw Error(`提供的消息楼层号 '${option.message_id}' 超出了范围 [${-chat.length}, ${chat.length})`);
+  }
+  let chat_message;
+  if (option.message_id === undefined || option.message_id === 'latest') {
+    chat_message = chat.filter(chat_message => !chat_message.is_system).at(normalized_message_id);
+  } else {
+    chat_message = chat.at(normalized_message_id);
+  }
+  return chat_message?.variables?.[chat_message?.swipe_id ?? 0] ?? {};
+}
+```
+
+**三条要点：**
+
+1. **返回的是 `variables[swipe_id]`，不是 `variables` 整个数组。**
+   `variables` 在盘上是**按 swipe 下标的数组**（附录三「逐 swipe 重建」那条），
+   而这里只取**当前选中的那一格**，缺省 `0`。
+   **所以面板给的是行级表，不是候选表**；同一楼的其它 swipe 的 `stat_data`
+   **在这个面板上看不到**，要看只能去聊天里把那一楼切到那个 swipe——
+   切完会发 `MESSAGE_SWIPED`，`MessageItem` 监听到就重读（`:52-66`）。
+2. **显式楼号与 `'latest'` 走的是两条不同的取法**：显式楼号是
+   `chat.at(id)`——**原始下标，包含 `is_system` 行**；`'latest'`/不传才先
+   `filter(m => !m.is_system)` 再 `.at(-1)`。**面板传的永远是显式楼号**
+   （追踪模式下是负数，仍走 `chat.at`），**所以它看的是含 system 行的原始下标。**
+3. **越界抛错而不是返回空**：`_.inRange(id, -chat.length, chat.length)`，
+   消息是中文原文（上面那句）。
+
+**`stat_data` 就在这个对象里**：MVU 把它写在
+`chat[i].variables[swipe].stat_data`（附录三的删法 `_.omit(chat_message.variables[i],
+'initialized_lorebooks', 'stat_data', 'display_data', 'delta_data', 'schema')` 是同一处），
+所以这个面板显示的 JSON 里 `stat_data` / `display_data` / `delta_data` 是同级的键。
+渲染用 `JsonEditor`（`MessageItem.vue:26`），带 `schemas_store.message` 的 schema。
+
+### ④ 它是**可写的**，而且写回会落盘
+
+```ts
+// [TH] src/panel/toolbox/variable_manager/MessageItem.vue:145-147
+const { ignoreUpdates } = watchIgnorable(variables, new_variables => {
+  replaceVariables(klona(new_variables), { type: 'message', message_id: props.messageId });
+});
+```
+
+```ts
+// [TH] src/function/variables.ts:130-149   replaceVariables 的 message 分支
+const chat_message = chat.at(option.message_id);
+if (!_.has(chat_message, 'variables')) {
+  _.set(chat_message, 'variables', _.times(chat_message.swipes?.length ?? 1, _.constant({})));
+}
+if (_.isPlainObject(_.get(chat_message, 'variables'))) {          // ← 旧的对象形状就地转成数组
+  _.set(chat_message, 'variables', _.range(0, chat_message.swipes?.length ?? 1).map(i => chat_message.variables[i] ?? {}));
+}
+_.set(chat_message, ['variables', _.get(chat_message, 'swipe_id', 0)], variables);
+saveChatConditionalDebounced();
+```
+
+**写也只写当前 swipe 那一格**，并 `saveChatConditionalDebounced()` 落盘。
+**所以这个面板不是只读视图，是一个历史楼层变量的编辑器。**
+
+### ⑤ 刷新节奏：2 秒轮询 + 按楼号过滤的事件，流式期间暂停
+
+- **外层**：`useIntervalFn(() => refresh_key = Symbol(), 2000)`（`Message.vue:96-98`）；
+  收到 `STREAM_TOKEN_RECEIVED` 就 `pause()`，等 `MESSAGE_RECEIVED` 再 `resume()`
+  （`:99-104`）；`CHAT_CHANGED` 强制刷一次（`:105-107`）。
+- **每个楼层项**：监听 `MESSAGE_UPDATED` / **`MESSAGE_SWIPED`** /
+  `CHARACTER_MESSAGE_RENDERED` / `USER_MESSAGE_RENDERED`，**只在事件带的楼号等于
+  自己那一楼时**才重读（`MessageItem.vue:52-66`）。
+- 重读时先 `_.isEqual` 比对，不同才写进 ref（`:126-135`），避免编辑器被无谓重建。
+
+### 一句话给裁决用
+
+> **上游没有「只能看最新一楼」这个限制**：TavernHelper 的变量管理器有一个按楼号区间
+> 回看的「消息楼层」页，可回看、可编辑、可落盘。**但它的粒度是「楼 × 当前 swipe」，
+> 不是「楼 × 全部候选」**——同一楼其它 swipe 的表在上游也看不到，
+> 除非把那一楼切过去。
+> *（另：这个面在 TavernHelper 里，不在 MVU 里；MVU 的设置面板七个区块没有一个碰
+> `stat_data`。所以按「MVU 的状态视图」去找会找不到东西。）*
+
+### 未查 / 限定
+
+1. **没有运行确认**：没有打开过这个面板，以上全部从源码读出。
+   能廉价证伪的观测是在**我们自己的实例**上开 TH 面板 → 工具 → 变量管理器 → 消息楼层，
+   把区间调到历史楼看有没有 `stat_data`。**不在用户的 ST 上做**（它是可写面板，
+   点进去就有改状态的风险）。
+2. **`VariableManager_deprecated.vue` / `variable_manager_deprecated/` 我没有读**——
+   4.9.1 里两套并存，我只读了现役那套；哪一套在用户界面上真正挂着，没有核。
+3. **`JsonEditor` 与 `schemas_store.message` 的 schema 内容没有读**，
+   所以「面板会不会对 `stat_data` 做特殊呈现」这一格没有答案；
+   从 `MessageItem.vue` 看它就是一个通用 JSON 编辑器。
+4. **`getVariables` 的 clone 语义没有在本附录复核**（附录二记过：`getVariables` 返回
+   `klona` 深拷贝，而 `get_variables_without_clone` 不拷贝）。面板初值用前者、
+   刷新用后者，这个差别对显示无影响，对「编辑器改的是不是活对象」有影响，未展开。
