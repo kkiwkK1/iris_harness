@@ -563,7 +563,20 @@
    * which is what a game-style screen was always supposed to do.
    */
   max-height: var(--iris-app-frame-height, 100vh);
-  color-scheme: normal;
+  /*
+   * **Always light, as upstream.** SillyTavern writes `color-scheme: only light`
+   * on `body` (`[ST] style.css:167`) and the TavernHelper frame documents write
+   * nothing, so an upstream frame's preferred scheme is light under every theme
+   * — the selects and scrollbars a card author saw in ST's dark theme were
+   * light ones (`notes/UPSTREAM-THEME-VARS.md` §六). This used to be `normal`,
+   * which the spec defines as "the page's scheme": with the three themes each
+   * declaring one on the root (`tokens.css`), that meant *follow the theme*,
+   * not *stay light* — a divergence that only showed in a dark or parchment
+   * theme. Ruled 2026-09-06 (overturning the earlier "leave until verified");
+   * `frame-color-scheme.test.ts` pins both frame kinds. The overlay frame gets
+   * the same value inline in `useCardScripts.tsx` `attach`.
+   */
+  color-scheme: light;
 }
 
 /*

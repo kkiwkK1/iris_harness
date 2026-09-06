@@ -394,7 +394,7 @@ export function buildSrcdoc(
      * simply not there. Copied deliberately — a card that sized itself expecting
      * no inner scrollbar would lay out differently against one.
      *
-     * It interacts with a divergence already recorded in `SANDBOX.md`: Iris
+     * It interacts with a divergence already recorded in `docs/SANDBOX.md`: Iris
      * cannot write `frameElement.style.height` across origins and posts the
      * height out instead, one frame later. So during that one frame a growing
      * interface is cut off rather than scrollable. Upstream has no such lag
@@ -404,12 +404,21 @@ export function buildSrcdoc(
      * background rules upstream also injects are **not** copied: they need the
      * user's and character's real avatar paths, which is host data a frame only
      * gets through the document grant.
+     *
+     * `color-scheme:light` on `html,body`: upstream frames are light under every
+     * theme, because ST's `body` says `only light` and the frame documents say
+     * nothing (`notes/UPSTREAM-THEME-VARS.md` §六). This used to be `inherit`,
+     * which on a root element takes the initial value `normal` — a no-op that
+     * read as a decision. The host side sets the same value on both frame
+     * elements (`reading.css`, `useCardScripts.tsx`); saying it here as well
+     * makes the frame document light on its own evidence, not only by
+     * embedding.
      */
     body === undefined
-      ? `<style>html,body{margin:0;padding:0;background:transparent;color-scheme:inherit}${NESTED_FRAME_RESET}</style>`
+      ? `<style>html,body{margin:0;padding:0;background:transparent;color-scheme:light}${NESTED_FRAME_RESET}</style>`
       : '<style>*,*::before,*::after{box-sizing:border-box}' +
         'html,body{margin:0!important;padding:0;overflow:hidden!important;max-width:100%!important;' +
-        `background:transparent;color-scheme:inherit}${NESTED_FRAME_RESET}</style>`,
+        `background:transparent;color-scheme:light}${NESTED_FRAME_RESET}</style>`,
     /*
      * A marker on the body when this frame holds a card **interface**.
      *

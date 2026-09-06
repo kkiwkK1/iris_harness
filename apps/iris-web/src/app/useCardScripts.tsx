@@ -7,7 +7,7 @@
  * rest of this project runs on and the same shape the future
  * card-UI-in-a-message pipeline will need for "this message is on screen".
  *
- * Three rules from `AUTORUN.md` are enforced here rather than downstream:
+ * Three rules from `docs/AUTORUN.md` are enforced here rather than downstream:
  *
  * - **Only an explicit yes runs anything.** `unasked` and `declined` both run
  *   nothing; they differ in what the panel shows, never in what executes.
@@ -520,6 +520,15 @@ export function CardScriptFrames(): ReactElement {
           style.setProperty('border', '0')
           style.setProperty('background', 'transparent')
           /*
+           * Light under every theme, as upstream: ST's `body` declares
+           * `color-scheme: only light` and its frame documents declare nothing,
+           * so a frame's form controls and scrollbars are light there even on
+           * the dark theme (`notes/UPSTREAM-THEME-VARS.md` §六). Without this the
+           * overlay frame inherited the page's scheme and went dark with it;
+           * `reading.css` sets the same value on message frames.
+           */
+          style.setProperty('color-scheme', 'light')
+          /*
            * **`pointer-events` is inherited**, and the surface sets `none`.
            *
            * Without this line the frame inherits `none` from its container, so
@@ -780,12 +789,12 @@ export function CardScriptFrames(): ReactElement {
    * rectangle from the layout, there is no second copy of the geometry to
    * drift, and a window resize keeps it correct with no code at all.
    *
-   * The cost is recorded in `DEVIATIONS.md` §25: a card designed against the
+   * The cost is recorded in `notes/apps/iris-web/DEVIATIONS.md` §25: a card designed against the
    * whole window now lays out against the column, which is narrower. That is
    * the product decision; the mechanism below is what makes it real:
    *
    * - the frame fills this box, so the card's `100dvh` / `position:fixed`
-   *   ladder resolves against the column (`OVERLAY-HOST.md` §一);
+   *   ladder resolves against the column (`notes/apps/iris-web/OVERLAY-HOST.md` §一);
    * - the viewport metrics published to the card are read off this same box
    *   (`overlayViewport` above), so geometry and numbers are one source;
    * - a `ResizeObserver` re-publishes them whenever the box changes for any
@@ -825,7 +834,10 @@ export function CardScriptFrames(): ReactElement {
           inset: 0,
           width: '100%',
           height: '100%',
-          // Above the shell's own layers, whose highest is 30.
+          // From the ladder in `theme/tokens.css`: above the reading column's
+          // own layers, under the settings drawer and the cleaning offer — a
+          // card's overlay is content, and the shell stays reachable above it.
+          // The fallback is for a document without the token sheet.
           zIndex: 'var(--iris-overlay-z, 40)' as unknown as number,
           // The container never catches anything; each frame's clip decides.
           pointerEvents: 'none',

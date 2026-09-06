@@ -176,6 +176,86 @@
    * arrives exactly when the hand is on it.
    */
   --iris-scrollbar-size: 8px;
+
+  /* ---------------------------------------------------------------- layers */
+
+  /*
+   * The page's stacking ladder, in one place.
+   *
+   * Every fixed or absolute layer the shell paints takes its `z-index` from
+   * here, so the order can be read on one screen instead of reconstructed from
+   * three stylesheets and a component — which is how the settings drawer came
+   * to sit at 30 under a card's overlay surface at 40 (measured 2026-09-06:
+   * drawer x=1527 w=393, surface x=577 w=1038, 88px of the drawer under the
+   * card). `layers.test.ts` holds the consumers to these names and the names to
+   * this order.
+   *
+   * The rule that orders it: **content under shell, shell under the one
+   * destructive question.** A card's overlay interface is content — the most
+   * assertive content there is, but the reader's, not Iris's — while the
+   * settings drawer, the import drop target and the small-screen sidebar are
+   * the shell: what the reader reaches for to get away from whatever the content
+   * is doing. So the drawer is above the overlay, and the cleaning offer
+   * (`.iris-cleanup`, panels.css) is above both, because it destroys data.
+   *
+   *   scrim 19 < sidebar 20 < drop 25 < overlay 40 < overlay toggle 45
+   *            < drawer 50 < cleanup 60
+   *
+   * The toggle is `overlay + 5`, computed where it is used, so it follows the
+   * surface. `reading.css` also writes `z-index: 1` twice: those order one
+   * message's marginalia against its own interface slot inside `.iris-msg` and
+   * never meet this ladder, so they are not tokens. `--iris-overlay-z` keeps
+   * its older name because `useCardScripts.tsx` and OVERLAY-HOST.md already
+   * refer to it, with 40 as the fallback.
+   */
+  --iris-scrim-z: 19;
+  --iris-sidebar-z: 20;
+  --iris-drop-z: 25;
+  --iris-overlay-z: 40;
+  --iris-drawer-z: 50;
+  --iris-cleanup-z: 60;
+
+  /* ------------------------------------------- SillyTavern variable aliases */
+
+  /*
+   * Upstream renders a message's inline HTML into the page DOM, where it sees
+   * the page's own theme variables — so a card writing
+   * `var(--SmartThemeBodyColor)` gets a colour in SillyTavern (`[ST]
+   * public/style.css:71-104` holds the defaults the theme picker overwrites;
+   * `UPSTREAM-ESM-DEPS.md` shows `body` inheriting them; `INLINE-HTML.md` §2.1
+   * is the rendering path). Iris renders the same HTML into its page too
+   * (`app/inline-html.ts`, `app/card-css.ts`) but had none of these names, so
+   * the same `var()` resolved to nothing and the declaration fell away. That is
+   * a compatibility gap by mechanism: the corpus (29 cards, read 2026-09-06)
+   * has 0 using them, and the aliases are added anyway because upstream has the
+   * mechanism and the cost is one block of names — not a per-card switch.
+   *
+   * **Only on the page root.** A card frame has none of these upstream either
+   * (its document is its own origin), so the frames are not given them; that
+   * would be an invention, not parity — a separate ledger.
+   *
+   * The theme-invariant names live here; the thirteen colours follow each
+   * palette block below. `st-theme-aliases.test.ts` holds both sets to the
+   * upstream name list.
+   */
+  --mainFontFamily: var(--iris-font-prose);
+  --monoFontFamily: var(--iris-font-mono);
+  --fontScale: 1;
+  /* Upstream: `calc(var(--fontScale) * 15px)`. The relation is kept; the base
+     is the reading size, which is what inline HTML sits inside here. */
+  --mainFontSize: calc(var(--fontScale) * var(--iris-prose-size));
+  /* Upstream: `50vw`, the chat column's width. Ours is the column's bound. */
+  --sheldWidth: var(--iris-column-max);
+  /* Upstream's unitless defaults, kept: Iris has no blur or shadow-width
+     setting to alias, and a card's `blur(var(--SmartThemeBlurStrength))`
+     should blur as it does upstream rather than lose the effect. */
+  --blurStrength: 10;
+  --shadowWidth: 2;
+  --SmartThemeBlurStrength: calc(var(--blurStrength) * 1px);
+  /* Upstream's own formula, verbatim (`style.css:86-89`): the tick is the
+     luminance inverse of the checkbox ground's channels. */
+  --SmartThemeCheckboxTickColorValue: calc(((((var(--SmartThemeCheckboxBgColorR) * 299) + (var(--SmartThemeCheckboxBgColorG) * 587) + (var(--SmartThemeCheckboxBgColorB) * 114)) / 1000) - 128) * -1000);
+  --SmartThemeCheckboxTickColor: rgb(var(--SmartThemeCheckboxTickColorValue), var(--SmartThemeCheckboxTickColorValue), var(--SmartThemeCheckboxTickColorValue));
 }
 
 /* ---------------------------------------------------------------- palette */
@@ -249,6 +329,26 @@
      the theme: the dark and parchment blocks override exactly this pair. */
   --iris-scrollbar: #cdd4d9;
   --iris-scrollbar-strong: #a9b4bd;
+
+  /* SillyTavern's colour names, aliased to this palette — the structural block
+     above says why. Nearest meaning, not nearest hue: body → ink, em → the
+     secondary ink, quote → the warm tone, the tints → the grounds those
+     surfaces sit on. The checkbox channels are the ink (#161b22) written out,
+     because upstream's checkbox ground is its body colour's channels and a
+     channel cannot be pulled out of a hex token; the test recomputes them. */
+  --SmartThemeBodyColor: var(--iris-ink);
+  --SmartThemeEmColor: var(--iris-ink-secondary);
+  --SmartThemeUnderlineColor: var(--iris-accent);
+  --SmartThemeQuoteColor: var(--iris-warn);
+  --SmartThemeBlurTintColor: var(--iris-bg-raised);
+  --SmartThemeChatTintColor: var(--iris-bg-page);
+  --SmartThemeUserMesBlurTintColor: var(--iris-bg-sunken);
+  --SmartThemeBotMesBlurTintColor: var(--iris-bg-raised);
+  --SmartThemeShadowColor: var(--iris-bg-mask);
+  --SmartThemeBorderColor: var(--iris-rule);
+  --SmartThemeCheckboxBgColorR: 22;
+  --SmartThemeCheckboxBgColorG: 27;
+  --SmartThemeCheckboxBgColorB: 34;
   color-scheme: light;
 }
 
@@ -293,6 +393,22 @@
   /* Quiet enough to sit on the raised ground, legible enough to find. */
   --iris-scrollbar: #2c3540;
   --iris-scrollbar-strong: #46545f;
+
+  /* SillyTavern aliases, same mapping as the light block; channels are this
+     theme's ink (#e6e2d9). */
+  --SmartThemeBodyColor: var(--iris-ink);
+  --SmartThemeEmColor: var(--iris-ink-secondary);
+  --SmartThemeUnderlineColor: var(--iris-accent);
+  --SmartThemeQuoteColor: var(--iris-warn);
+  --SmartThemeBlurTintColor: var(--iris-bg-raised);
+  --SmartThemeChatTintColor: var(--iris-bg-page);
+  --SmartThemeUserMesBlurTintColor: var(--iris-bg-sunken);
+  --SmartThemeBotMesBlurTintColor: var(--iris-bg-raised);
+  --SmartThemeShadowColor: var(--iris-bg-mask);
+  --SmartThemeBorderColor: var(--iris-rule);
+  --SmartThemeCheckboxBgColorR: 230;
+  --SmartThemeCheckboxBgColorG: 226;
+  --SmartThemeCheckboxBgColorB: 217;
   color-scheme: dark;
 }
 
@@ -347,6 +463,22 @@
      follows the paper the way the task-O acceptance asks. */
   --iris-scrollbar: #cfc2a4;
   --iris-scrollbar-strong: #a99a76;
+
+  /* SillyTavern aliases, same mapping as the light block; channels are this
+     theme's ink (#33291a). */
+  --SmartThemeBodyColor: var(--iris-ink);
+  --SmartThemeEmColor: var(--iris-ink-secondary);
+  --SmartThemeUnderlineColor: var(--iris-accent);
+  --SmartThemeQuoteColor: var(--iris-warn);
+  --SmartThemeBlurTintColor: var(--iris-bg-raised);
+  --SmartThemeChatTintColor: var(--iris-bg-page);
+  --SmartThemeUserMesBlurTintColor: var(--iris-bg-sunken);
+  --SmartThemeBotMesBlurTintColor: var(--iris-bg-raised);
+  --SmartThemeShadowColor: var(--iris-bg-mask);
+  --SmartThemeBorderColor: var(--iris-rule);
+  --SmartThemeCheckboxBgColorR: 51;
+  --SmartThemeCheckboxBgColorG: 41;
+  --SmartThemeCheckboxBgColorB: 26;
   color-scheme: light;
 }
 
