@@ -2685,6 +2685,7 @@ export class IrisAppService {
       outletSink: outlets => { entry.outletPrompts = outlets },
       ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
       activationSettings: activationSettingsOf(worldbookSettings),
+      includeNames: worldbookSettings.includeNames,
       insertionStrategy: worldbookSettings.insertionStrategy,
       chatLore: await this.#chatLore(entry),
       // The active persona, read per assembly — a switch must reach the next
@@ -2835,6 +2836,7 @@ export class IrisAppService {
       substitute: entry.substitute,
       ...entry.timedEffects === undefined ? {} : { timedEffects: entry.timedEffects },
       activationSettings: activationSettingsOf(worldbookSettings),
+      includeNames: worldbookSettings.includeNames,
       insertionStrategy: worldbookSettings.insertionStrategy,
       chatLore: await this.#chatLore(entry),
       // Same persona read as a real turn: the preview has to show what would

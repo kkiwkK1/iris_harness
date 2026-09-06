@@ -108,9 +108,12 @@ export function lorebookSettings(
     case_sensitive: effective.caseSensitive,
     match_whole_words: effective.matchWholeWords,
     use_group_scoring: effective.useGroupScoring,
-    // Not stored (see `worldbook-settings.ts` for why each is out), reported at
-    // the value upstream ships so a card reading either gets ST's answer.
-    include_names: UPSTREAM_DEFAULTS.include_names,
+    // Stored since the `include_names` knob was built: a card asking what the
+    // scan runs on now gets the answer the scan actually runs on, not ST's
+    // shipped default standing in for it.
+    include_names: effective.includeNames,
+    // Still not stored (see `worldbook-settings.ts`), reported at the value
+    // upstream ships so a card reading it gets ST's answer.
     overflow_alert: UPSTREAM_DEFAULTS.overflow_alert,
   }
 }

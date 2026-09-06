@@ -1016,6 +1016,13 @@ export interface WorldbookSettingsView {
   caseSensitive: boolean
   /** Default whole-word matching for entries that defer. */
   matchWholeWords: boolean
+  /**
+   * Whether the world-info scan buffer carries speaker names.
+   *
+   * Affects what the scan matches on, never what the model receives — the
+   * buffer is built for matching and discarded. ST default true.
+   */
+  includeNames: boolean
   /** Default inclusion-group resolution by key-match score. */
   useGroupScoring: boolean
 }

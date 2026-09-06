@@ -6,6 +6,10 @@ import { test } from 'node:test'
 
 import type { GenerationSettings } from '@iris/protocol'
 
+import { fromCharacterBook } from '@iris/lorebook'
+
+import { lorebookSettings } from '../src/lorebook-settings.ts'
+import { DEFAULT_PRESET, buildPrompt } from '../src/prompt.ts'
 import { SettingsStore } from '../src/settings.ts'
 import {
   DEFAULT_WORLDBOOK_SETTINGS,
@@ -136,4 +140,85 @@ test('the engine mapping carries the scan knobs and nothing else', () => {
     'caseSensitive', 'matchWholeWords', 'maxRecursionSteps', 'minActivations',
     'minActivationsDepthMax', 'recursive', 'scanDepth', 'useGroupScoring',
   ])
+})
+
+/**
+ * `include_names` decides what the scan reads.
+ *
+ * The knob went unbuilt behind a module comment reading "verified dead in ST
+ * 1.18.0's Chat Completion path". It is read at `script.js:4565`, at
+ * `Generate()`'s own top level with no `main_api` guard, on the line that
+ * builds the scan buffer. What made the claim feel checked is that it *is*
+ * true of the prompt — the buffer never reaches the model — and the two
+ * halves were one sentence.
+ *
+ * Nothing observed the gap because the reference install carries
+ * `world_info_include_names: false`, exactly the branch this host had
+ * hard-coded: the one machine that could have disagreed was configured to
+ * agree. ST's shipped default is `true`, which is where they part.
+ */
+test('a name-keyed entry fires on who spoke, only when include_names is on', () => {
+  // The discriminating sample: the key appears **nowhere in any message text**,
+  // so the entry can only fire through the speaker prefix. A key that also
+  // occurred in the text would fire either way and prove nothing — which is
+  // exactly the sample this feature would have passed while doing nothing.
+  const book = fromCharacterBook({
+    entries: [{
+      keys: ['Seraphina'],
+      content: 'Seraphina commands the northern watch.',
+      enabled: true,
+      insertion_order: 0,
+    }],
+  })
+
+  const history = [
+    { role: 'user' as const, text: 'What is the plan?', name: 'Traveller' },
+    { role: 'assistant' as const, text: 'We move at dawn.', name: 'Seraphina' },
+  ]
+
+  const fired = (includeNames: boolean): boolean => {
+    const result = buildPrompt({
+      card: undefined,
+      // `fromCharacterBook` keys entries by uid; `ResolvedWorldbook` wants the list.
+      worldbook: {
+        entries: Object.values(book.entries),
+        source: 'named',
+        world: 'book',
+        global: [],
+        additional: [],
+      },
+      preset: DEFAULT_PRESET,
+      userName: 'Traveller',
+      characterName: 'Seraphina',
+      history,
+      count: (text: string) => text.length,
+      worldInfoBudget: 10_000,
+      includeNames,
+    })
+    return JSON.stringify(result).includes('northern watch')
+  }
+
+  assert.equal(fired(true), true, 'with names on, an entry keyed on the speaker should fire')
+  assert.equal(fired(false), false, 'with names off, nothing in the text says "Seraphina"')
+})
+
+test('the stored knob reaches the defaults and the card-facing table', async () => {
+  // Default is ST's, not ours: a book tuned on a stock install was tuned
+  // against `true` (`world-info.js:74`).
+  assert.equal(DEFAULT_WORLDBOOK_SETTINGS.includeNames, true)
+  assert.equal(resolveWorldbookSettings(undefined).includeNames, true)
+
+  const store = await storeWith({
+    global: ROUTE,
+    chats: {},
+    worldbooks: { settings: { includeNames: false } },
+  })
+  assert.equal(store.worldbookSettings().includeNames, false)
+
+  // And the card-facing snapshot reports what the scan runs on, rather than
+  // upstream's default standing in for a knob nobody could set. This line was
+  // `UPSTREAM_DEFAULTS.include_names` — a constant — for as long as the knob
+  // was believed dead.
+  assert.equal(lorebookSettings([], store.worldbookSettings()).include_names, false)
+  assert.equal(lorebookSettings([], undefined).include_names, true)
 })

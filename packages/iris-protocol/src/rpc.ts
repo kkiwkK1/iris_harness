@@ -1327,6 +1327,7 @@ export const requestSchemas = {
     caseSensitive: z.boolean().optional(),
     matchWholeWords: z.boolean().optional(),
     useGroupScoring: z.boolean().optional(),
+    includeNames: z.boolean().optional(),
   }),
 
   /**

@@ -12,11 +12,32 @@
  * (`world-info.js:69-82`), because a book's author tuned their entries against
  * those numbers and a plausible house default would re-decide what fires.
  *
- * Not stored here: `include_names` — verified dead in ST 1.18.0's Chat
- * Completion path (exported, set, never read while building the prompt) — and
- * `overflow_alert`, which is a UI notice this host has no surface for yet. Both
- * keep riding the card-facing {@link LorebookSettings} table so a card reading
- * them gets the number upstream would have handed it.
+ * ~~Not stored here: `include_names` — verified dead in ST 1.18.0's Chat
+ * Completion path (exported, set, never read while building the prompt).~~
+ *
+ * **That was wrong, and it is the reason this knob went unbuilt.** It is read
+ * at `script.js:4565`, in `Generate()` at the function's own top level (brace
+ * depth 1, no `main_api` guard), on the line that builds the world-info scan
+ * buffer:
+ *
+ * ```js
+ * const chatForWI = coreChat.map(x => world_info_include_names ? `${x.name}: ${x.mes}` : x.mes).reverse();
+ * ```
+ *
+ * The Chat Completion path runs it like every other. What made "never read
+ * while building the prompt" *feel* verified is that it is true of the prompt
+ * — the buffer is for matching and never reaches the model — and the two were
+ * one sentence. `include_names` decides what the scan reads, not what is sent.
+ *
+ * Nothing observed the gap because the reference install has
+ * `world_info_settings.world_info_include_names: false`, which is exactly the
+ * branch this host had hard-coded. The one machine available to disagree was
+ * configured to agree. ST's own default is `true` (`world-info.js:74`), so a
+ * default install is where the two part.
+ *
+ * Still not stored here: `overflow_alert`, a UI notice this host has no
+ * surface for yet. It keeps riding the card-facing {@link LorebookSettings}
+ * table so a card reading it gets the number upstream would have handed it.
  *
  * @module @iris/app-service/worldbook-settings
  */
@@ -55,6 +76,15 @@ export interface WorldbookSettings {
   matchWholeWords: boolean
   /** `world_info_use_group_scoring` — resolve inclusion groups by key hits. */
   useGroupScoring: boolean
+  /**
+   * `world_info_include_names` — prefix each scanned message with its speaker.
+   *
+   * Changes what the scan *reads*, never what the model receives: the buffer
+   * is built for matching only. With it on, an entry keyed on a character's
+   * name fires on any line that character spoke; with it off, only on lines
+   * that mention the name in their text.
+   */
+  includeNames: boolean
 }
 
 /**
@@ -75,6 +105,7 @@ export const DEFAULT_WORLDBOOK_SETTINGS: WorldbookSettings = {
   caseSensitive: false,
   matchWholeWords: false,
   useGroupScoring: false,
+  includeNames: true,
 }
 
 /** Fields with an integer range; a value outside it is refused, not clamped. */
@@ -87,7 +118,7 @@ const NUMERIC_RANGES = {
   maxRecursionSteps: [0, 1000],
 } as const satisfies Partial<Record<keyof WorldbookSettings, readonly [number, number]>>
 
-const BOOLEAN_FIELDS = new Set(['recursive', 'caseSensitive', 'matchWholeWords', 'useGroupScoring'])
+const BOOLEAN_FIELDS = new Set(['recursive', 'caseSensitive', 'matchWholeWords', 'useGroupScoring', 'includeNames'])
 const STRATEGIES: readonly InsertionStrategy[] = ['evenly', 'character_first', 'global_first']
 
 /**
