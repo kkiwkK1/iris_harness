@@ -62,7 +62,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
 }
 
 test('a new chat answers the question Tavern Helper actually asks', {
-  skip: !existsSync(CARD),
+  skip: !existsSync(CARD) && `no 爱衣.png at ${CARD}; this reads that one real card — point IRIS_CORPUS at the install that has it`,
 }, async (t) => {
   const { handlers } = await fixture(t)
   const created = await handlers['chat.create']({ characterId: '爱衣' })
@@ -78,7 +78,8 @@ test('a new chat answers the question Tavern Helper actually asks', {
 })
 
 test('the seeded shape matches what SillyTavern writes, field by field', {
-  skip: !existsSync(CHATS) || !existsSync(CARD),
+  skip: (!existsSync(CHATS) || !existsSync(CARD))
+    && `needs the card ${CARD} and the chats folder ${CHATS}; point IRIS_CORPUS at the install that has them`,
 }, async (t) => {
   // What real files put on message 0, gathered at run time rather than copied
   // in: the corpus trees carry explicit content, and the repository holds
@@ -149,7 +150,7 @@ test('the seeded shape matches what SillyTavern writes, field by field', {
 })
 
 test('a chat is not given a variables table it has nothing to put in', {
-  skip: !existsSync(CARD),
+  skip: !existsSync(CARD) && `no 爱衣.png at ${CARD}; this reads that one real card — point IRIS_CORPUS at the install that has it`,
 }, async (t) => {
   const { handlers, chats, dir } = await fixture(t)
   // A card with no `[InitVar]` entry declares no starting state. Writing an
@@ -173,7 +174,7 @@ test('a chat is not given a variables table it has nothing to put in', {
 })
 
 test('an existing chat file is left exactly as it is', {
-  skip: !existsSync(CARD),
+  skip: !existsSync(CARD) && `no 爱衣.png at ${CARD}; this reads that one real card — point IRIS_CORPUS at the install that has it`,
 }, async (t) => {
   const { handlers, chats, dir } = await fixture(t)
   const created = await handlers['chat.create']({ characterId: '爱衣' })

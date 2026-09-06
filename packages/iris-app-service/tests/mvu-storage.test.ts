@@ -39,7 +39,7 @@ async function findLongChat(): Promise<string | undefined> {
 
 const LONG_CHAT = await findLongChat()
 
-test('a real conversation round-trips with every variable table intact', { skip: LONG_CHAT === undefined }, async () => {
+test('a real conversation round-trips with every variable table intact', { skip: LONG_CHAT === undefined && `no long chat under ${CHATS}; point IRIS_CORPUS at a SillyTavern install with real conversations` }, async () => {
   const original = parseChatFile(await readFile(LONG_CHAT as string, 'utf8'))
   const session = importChat(original, 'round-trip')
   const entry = new ChatEntry({ chatId: 'round-trip', header: original.header, session, card: undefined })
@@ -65,7 +65,7 @@ test('a real conversation round-trips with every variable table intact', { skip:
   assert.ok(compared > 500, `only ${String(compared)} messages carried variables to compare`)
 })
 
-test('an imported conversation keeps a table on every message that had one', { skip: LONG_CHAT === undefined }, async () => {
+test('an imported conversation keeps a table on every message that had one', { skip: LONG_CHAT === undefined && `no long chat under ${CHATS}; point IRIS_CORPUS at a SillyTavern install with real conversations` }, async () => {
   const original = parseChatFile(await readFile(LONG_CHAT as string, 'utf8'))
   const session = importChat(original, 'hydrate')
   const entry = new ChatEntry({ chatId: 'hydrate', header: original.header, session, card: undefined })

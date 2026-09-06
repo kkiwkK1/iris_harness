@@ -173,7 +173,9 @@ test('a card with no books at all resolves to nothing, not to an error', async (
 
 // ---------------------------------------------------------------- corpus facts
 
-test('choosing changes nothing for cards whose two books agree', { skip: !hasCorpus }, async () => {
+test('choosing changes nothing for cards whose two books agree', {
+  skip: !hasCorpus && `no world books at ${CORPUS}/worlds; point IRIS_CORPUS at a SillyTavern install`,
+}, async () => {
   const store = new WorldbookStore(join(CORPUS, 'worlds'))
   const dir = join(CORPUS, 'characters')
 

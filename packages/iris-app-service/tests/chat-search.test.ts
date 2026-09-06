@@ -233,7 +233,7 @@ async function writeChat(dir: string, stem: string, floors: number, marker: stri
  * A 10 MiB-scale scan stays proportional to the bytes it reads.
  *
  * **The assertion used to be `elapsed < 1000`, and that was a measurement
- * wearing a constant's clothes** (§2 of `METHODS.md`: a number with no
+ * wearing a constant's clothes** (§2 of `notes/METHODS.md`: a number with no
  * caliper). What it actually pinned was "this machine, unloaded, in 2026" —
  * so it went red at 1456 ms when a peer ran headless Chrome alongside it, on
  * an implementation that had not changed. A test that fails for something the
@@ -327,7 +327,7 @@ async function findLongChat(): Promise<string | undefined> {
 const LONG_CHAT = await findLongChat()
 
 test('the real 677-floor chat is found by a message fragment, located, and scans in proportion',
-  { skip: LONG_CHAT === undefined },
+  { skip: LONG_CHAT === undefined && `no 677-floor chat under ${CHATS}; point IRIS_CORPUS at the SillyTavern install that has it` },
   async (t) => {
     const fix = await fixture(t)
     const longChat = LONG_CHAT as string

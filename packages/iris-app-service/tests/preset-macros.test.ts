@@ -31,8 +31,18 @@ import { textOf } from '../src/views.ts'
  * read empty.
  */
 
-const SAMPLE = '测试用卡/圣座之音VoxImperialis.json'
-const SAMPLE_CARD = '测试用卡/2234924f1640f3e0.png'
+/*
+ * The sample folder is gitignored (`测试用卡/` in `.gitignore`), so this gate is
+ * absent on CI and present on a developer's machine — the same split as the
+ * SillyTavern corpus, and it gets the same treatment: a variable
+ * (`IRIS_SAMPLES`) that `scripts/check-corpus-skips.mjs` forces to a path that
+ * cannot exist, so the no-corpus rehearsal skips exactly what CI skips. Before
+ * that knob existed the rehearsal ran this test and CI did not, and the skip
+ * count it pins was one short of the run it stands in for.
+ */
+const SAMPLES = process.env['IRIS_SAMPLES'] ?? '测试用卡'
+const SAMPLE = `${SAMPLES}/圣座之音VoxImperialis.json`
+const SAMPLE_CARD = `${SAMPLES}/2234924f1640f3e0.png`
 
 /** A preset written here, so the rule does not depend on the sample to state it. */
 const MENU_PRESET: ChatCompletionPreset = {
@@ -122,7 +132,8 @@ test('a preset setvar is visible to a later prompt getvar', async (t) => {
 })
 
 test('the acceptance preset three menu choices reach the model', {
-  skip: !existsSync(SAMPLE) || !existsSync(SAMPLE_CARD),
+  skip: (!existsSync(SAMPLE) || !existsSync(SAMPLE_CARD))
+    && `needs the acceptance preset ${SAMPLE} and card ${SAMPLE_CARD}; the sample folder is gitignored — set IRIS_SAMPLES to one that has them`,
 }, async (t) => {
   // The real file: 43 prompts, 19 enabled, three `{{setvar::vox_*}}` selections
   // read back by one bridge-mode prompt. Blank sections here mean no boot token,

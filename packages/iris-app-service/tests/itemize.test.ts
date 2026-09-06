@@ -170,7 +170,8 @@ const PRESET = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/
 const REAL_CARD = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/data/default-user/characters/银麒赎世.png`
 
 test('on real data, one world-info entry is most of the prompt', {
-  skip: !existsSync(PRESET) || !existsSync(REAL_CARD),
+  skip: (!existsSync(PRESET) || !existsSync(REAL_CARD))
+    && `needs the real preset ${PRESET} and card ${REAL_CARD}; point IRIS_CORPUS at the install that has them`,
 }, async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-itemize-real-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })

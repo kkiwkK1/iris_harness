@@ -195,7 +195,9 @@ test('an absolute injection pins itself to its own depth', () => {
  */
 const PRESET_DIR = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern')}/data/default-user/OpenAI Settings`
 
-test('every real preset resolves to its enabled prompts, not to file order', { skip: !existsSync(PRESET_DIR) }, async () => {
+test('every real preset resolves to its enabled prompts, not to file order', {
+  skip: !existsSync(PRESET_DIR) && `no presets folder at ${PRESET_DIR}; point IRIS_CORPUS at a SillyTavern install`,
+}, async () => {
   const files = (await readdir(PRESET_DIR)).filter(name => name.endsWith('.json'))
   assert.ok(files.length > 0, 'no presets to read')
 

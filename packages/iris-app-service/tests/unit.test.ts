@@ -275,10 +275,18 @@ test('a book Iris cannot read plays the character without it', () => {
  * the original whitelist accepted every id Iris generates and rejected every
  * filename SillyTavern writes, so the failure was invisible from inside this
  * repo and total from outside it.
+ *
+ * Read from `IRIS_CORPUS`, not hardcoded. This was the one corpus gate that
+ * ignored the variable, so `scripts/check-corpus-skips.mjs` — which forces
+ * `IRIS_CORPUS` to a path that cannot exist — still ran it against the real
+ * install here and skipped it on CI: the rehearsal counted one fewer skip
+ * than the run it rehearses for.
  */
-const ST_ROOT = 'E:/sillyTavern/SillyTavern/data/default-user'
+const ST_ROOT = `${process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern'}/data/default-user`
 
-test('every real SillyTavern filename is a usable id', { skip: !existsSync(ST_ROOT) }, async () => {
+test('every real SillyTavern filename is a usable id', {
+  skip: !existsSync(ST_ROOT) && `no SillyTavern profile at ${ST_ROOT}; point IRIS_CORPUS at an install to run this`,
+}, async () => {
   const rejected: string[] = []
   let seen = 0
 
