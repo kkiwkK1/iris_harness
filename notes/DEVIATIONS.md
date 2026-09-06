@@ -1081,3 +1081,79 @@ got …"）——detail 正是读者需要的事实，与 `provider-error`/`inte
   稳定渲染、stream completed、面板照实显示、无新增 notice。
 - `pnpm test` 2,432 例（pass 2,427 / skip 5 corpus）全绿；根与 iris-web
   typecheck 全绿。
+
+---
+
+# DEVIATIONS — 任务 Z3：消息帧几何与遮挡修复（验证 + 加固）
+
+分支 `dev/fix-z3-occlusion`（worktree `wt-z3-occlusion`，基于主线 f1cd7ab）。验证宿主：
+`IRIS_PORT=8823 IRIS_DATA_DIR=./data node apps/iris/bin.ts`（数据为任务开始时对主线检出
+`apps/iris/data` 的整目录拷贝——这本身即最外层还原点）。装置：headless Chrome CDP，
+`qa/measure-z3-occlusion.mjs`（任务 U 脚本的扩展：帧 rect×可视带×消息行三层几何、经
+OOPIF 子会话读帧内 scrollHeight/clientHeight/滚动可达、elementFromPoint 边栏遮挡判定、
+3.5s 高度采样），1920×1080 与 1366×768 两档视口。
+
+## 实测结论：任务书三项症状在主线 HEAD 上均已修复
+
+任务书引用的用户实测（240px² 遮挡、776/1048/1847px 超高帧、高度回声）与任务 U
+（dev/fix-frame-fit，ea98fc4）修前实测完全同源；本任务在**三张点名卡**上逐项复测确认：
+
+| 卡（会话） | 帧自报高 | 实渲染高 | 可视带 | 帧内滚动 | 边栏遮挡 | 高度振荡 |
+|---|---|---|---|---|---|---|
+| 尸变纪元（新会话开局界面） | 1797px@1080 / 1847px@768 | 858 / 546（=带） | 858 / 546 | docScrollTopMax 939/1301 = 溢出全部 | rail∩frame 10408px² 但 elementFromPoint = rail 子元素（贴纸在下、命中在栏） | 1 态 |
+| 政经博弈（双帧） | 740+764@1080；755/764@768 | 740+764；546/546 | 858 / 546 | 768 档 209/218 = 溢出全部 | 该行无 rail（undefined=无对象） | 1 态 |
+| 哈人冰恋（状态栏卡） | 482px | 482（带内） | 881 / 569 | 无溢出（scrollMax=0） | 同上 | 1 态 |
+
+「帧几何全部在可视带内、帧内滚动可达全部内容、无遮挡、无回声」全部成立；修复后
+（见下）与修复前逐位相同（same-as-baseline 全 true），即重构不改任何行为。
+可视化证明：`z3-fixed-shibian-frame-bottom.png`——1847px 开局界面在 546px 帧内滚到底
+（版权声明 + SYSTEM_START 全部可见），帧恰好占满可视带。
+
+## 改动清单（行为保持的加固，非行为变更）
+
+1. **帧内滚动策略从 IIFE 中提出，成为可测单元。** `frame-entry.ts` 是 classic IIFE
+   bundle，「overflow 超阈值 ⇒ html,body 得 `overflow-y:auto !important`，否则摘除」
+   这段接线原本只活在 bundle 里，只能靠浏览器验证；`overflowsViewport`（决策）早已在
+   `frame-height.ts`，本次把**应用**也提为 `frame-height.ts` 的
+   `applyScrollCapability(surfaces, content, viewport)`，frame-entry 只负责找元素。
+   行为逐位保持（上表 same-as-baseline 全 true）。
+2. **遮挡修复的 CSS 政策带测试。** `.iris-msg__margin` 的 `position:relative;z-index:1`
+   与 `.iris-turn__ordinal` 的 `z-index:1` 是 240px² 遮挡的整个修复，且只有两行声明——
+   正是会在重构中无声消失、又没有任何测试会红的形状。`reading-layout.test.ts` 新增两条：
+   边栏 stacking 位置（注明 CDP 实测判据）、可视带变量在 `tokens.css` 的 `100vh` 兜底
+   （150px 塌缩事故的另一半）。
+3. **帧内滚动应用带测试。** `frame-height.test.ts` 新增 4 例：开滚动带 `!important`
+   （要赢过上游 reset 的 `hidden !important`）、内容收窄后两个元素都摘除、未变化不重写
+   （rAF 频率的报告不得每帧失效布局）、viewport=0 时判「无溢出」（自增强零的另一头）。
+
+## 偏离与事故记录
+
+- **会话选择偏离**：三张卡 20260903/0905 的旧会话尾部已是状态栏/连通测试楼层，重型
+  界面在**开局层**（问候语即完整游戏界面）。按任务书「编辑楼层文本即可复现」的精神，
+  以 `chat.create` 新建三个新会话（20260907-015809，尸变纪元/政经博弈/哈人冰恋各一）
+  复现用户路径「打开卡 → 开局界面」，同时旧会话照测（政经博弈旧会话双帧 740/764 与
+  任务 U 基线一致）。新会话落在 worktree 数据副本，不影响主线检出。
+- **卡名对应**：任务书「政经博弈 2.png」即本地「新架空政治经济模拟器.png」（会话标题
+  「新·架空政治经济模拟器」）；「哈人冰恋 1_5.png」即本地「哈人冰恋世界.png」；
+  「尸变纪元 v0.5NSFW.png」即「尸变纪元-v0.png」。
+- **C17 快照操作事故（已修复，盘面无损）**：`z3-rpc-probe.mjs` 首版把导出文件的第 1 行
+  （chat 元数据行）当作楼层 0 回放给 `script.setChatMessages`，把三会话楼层 0 在**宿主
+  内存中**写成空串（该 RPC 不落盘；但宿主持有打开的 entry）。发现后立即以盘上真文重放
+  恢复，并以 `chat.export` 逐字节比对磁盘（仅 `updatedAt` touch 差异，消息内容零变化），
+  三会话均 `exportMatchesDisk=true`。C17 快照在**任何操作前**取得（rewrite-messages
+  原因，三会话各一，`backup.list` 在案）；探测脚本已修正并注明行号陷阱。
+- **哈人冰恋的论坛覆盖层**（SCRIPT-DOM 族，整层压阅读列、有「收起卡片界面」逃生钮）
+  维持任务 U 裁定：设计如此，属任务 H/W 域，本任务不动、不计入遮挡。
+- **宿主**：端口 8823。首个宿主 PID 1672（本任务启动）于验证中途退出（后台任务 exit
+  127），重启后 PID 22612（后台任务管理，未按进程名/端口杀过任何进程）。
+
+## 验收对账
+
+- 三卡 × 新旧会话 × 双视口：帧高全部 = min(自报高, 可视带)；帧内 scrollMax 逐一等于
+  「帧高 − 帧视口」（内容全部可达）；elementFromPoint 判定无遮挡；3.5s 采样全部 1 态。
+- `pnpm test` 2,431 过 0 败（5 跳过为无语料跳过；含新增 reading-layout 2 例、
+  frame-height 4 例）；`pnpm typecheck` 与 iris-web `npm run typecheck` 全绿。
+- 证据：`qa/results/z3-occlusion-{baseline,fixed}-report.json`、
+  `qa/results/z3-{baseline,fixed}-*.png`、`qa/results/z3-fixed-shibian-frame-bottom.png`
+  （目录 gitignore，按惯例留档不提交）；脚本 `qa/measure-z3-occlusion.mjs`、
+  `qa/z3-rpc-probe.mjs`、`qa/z3-scroll-proof.mjs` 提交。

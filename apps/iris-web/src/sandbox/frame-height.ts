@@ -205,3 +205,59 @@ export function overflowsViewport(content: number, viewport: number): boolean {
   if (viewport <= 0) return false
   return content > viewport + OVERFLOW_SLACK_PX
 }
+
+/** The style object of one scroll-carrying element, read structurally. */
+export interface StyleSurface {
+  getPropertyValue(name: string): string
+  setProperty(name: string, value: string, priority?: string): void
+  removeProperty(name: string): void
+}
+
+/** The elements whose scrolling carries a frame's overflow: `html` and `body`. */
+export interface ScrollSurfaces {
+  html: StyleSurface
+  body: StyleSurface
+}
+
+/**
+ * Give the frame the ability to scroll its own overflow, or take it back.
+ *
+ * **Whatever is past the frame's own viewport has to stay reachable.** The
+ * injected reset copies upstream's `overflow:hidden!important` on `html,body`,
+ * which is safe *for upstream* because upstream writes
+ * `frameElement.style.height` same-origin and synchronously — its frame is
+ * always exactly content height, so there is never anything past the viewport
+ * to reach. Iris posts the height instead, so there is always at least one
+ * frame of lag, and any moment where the applied height is short of the
+ * content is a moment where `hidden` means **gone**: not clipped with a
+ * scrollbar, simply absent, and the wheel over it does nothing because the
+ * document under the pointer has nowhere to scroll. A user found exactly that:
+ * an SPA card whose screen grew, top and bottom cut off, wheel dead.
+ *
+ * Turned on only when it is needed, so a card that fits still lays out against
+ * no scrollbar, which is the reason the `hidden` was copied. `important`,
+ * because the rule it has to beat is `!important` — and it is upstream's line,
+ * not ours to soften for everyone.
+ *
+ * This moved out of the frame entry because the entry is an **IIFE bundle**:
+ * whatever lives only there is testable only through a browser. The decision
+ * (`overflowsViewport`) was already here; the *application* of the decision was
+ * the last untestable half, and a fix that flipped the wrong element on a real
+ * card would have looked identical from outside to a card that simply did not
+ * scroll. Now the entry only finds the elements and hands them over.
+ * @param surfaces - the style objects of `html` and `body`.
+ * @param content - the content height, as `body.scrollHeight` measures it.
+ * @param viewport - the frame's own viewport, `documentElement.clientHeight`.
+ */
+export function applyScrollCapability(
+  surfaces: ScrollSurfaces,
+  content: number,
+  viewport: number,
+): void {
+  const wanted = overflowsViewport(content, viewport) ? 'auto' : ''
+  for (const style of [surfaces.html, surfaces.body]) {
+    if (style.getPropertyValue('overflow-y') === wanted) continue
+    if (wanted === '') style.removeProperty('overflow-y')
+    else style.setProperty('overflow-y', wanted, 'important')
+  }
+}

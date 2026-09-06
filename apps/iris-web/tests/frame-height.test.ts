@@ -9,10 +9,12 @@ import assert from 'node:assert/strict'
 
 import {
   OVERFLOW_SLACK_PX,
+  applyScrollCapability,
   describeHeightSources,
   heightSignal,
   informsShell,
   overflowsViewport,
+  type StyleSurface,
 } from '../src/sandbox/frame-height.ts'
 
 test('content past the viewport makes the frame scrollable', () => {
@@ -197,4 +199,96 @@ test('a non-positive measurement says nothing at all', () => {
   // is evidence that this measurement is worthless.
   assert.deepEqual(heightSignal(0, 812, false), { kind: 'silent' })
   assert.deepEqual(heightSignal(Number.NaN, 812, false), { kind: 'silent' })
+})
+
+/** A style object that records what was written, like the real one reads. */
+function fakeStyle(): StyleSurface {
+  let value = ''
+  return {
+    getPropertyValue: name => (name === 'overflow-y' ? value : ''),
+    setProperty: (name, next) => {
+      if (name === 'overflow-y') value = next
+    },
+    removeProperty: name => {
+      if (name === 'overflow-y') value = ''
+    },
+  }
+}
+
+test('overflow turns the document scroller on, with the weight to beat the reset', () => {
+  /*
+   * `important` is not decoration: the injected reset copies upstream's
+   * `overflow:hidden !important` on `html,body`, and a plain `auto` would lose
+   * to it — the frame would report a height, be clamped to the band, and the
+   * content past the band would be gone exactly as before.
+   */
+  const html = fakeStyle()
+  const body = fakeStyle()
+  html.setProperty('overflow-y', 'hidden', 'important')
+  body.setProperty('overflow-y', 'hidden', 'important')
+
+  applyScrollCapability({ html, body }, 1797, 546)
+
+  assert.equal(html.getPropertyValue('overflow-y'), 'auto')
+  assert.equal(body.getPropertyValue('overflow-y'), 'auto')
+})
+
+test('content that fits takes the scroller back off', () => {
+  /*
+   * Both elements, not one: the capability is written to `html` and `body` as a
+   * pair, because the scrolling element differs by how the card's own CSS pins
+   * them — removing only one leaves the other scrolling (or clipping) against
+   * the policy's answer.
+   */
+  const html = fakeStyle()
+  const body = fakeStyle()
+  html.setProperty('overflow-y', 'auto', 'important')
+  body.setProperty('overflow-y', 'auto', 'important')
+
+  applyScrollCapability({ html, body }, 546, 546)
+
+  assert.equal(html.getPropertyValue('overflow-y'), '', 'html keeps no policy of its own')
+  assert.equal(body.getPropertyValue('overflow-y'), '', 'body keeps no policy of its own')
+})
+
+test('an unchanged capability is not rewritten', () => {
+  /*
+   * The reporter runs on every measurement — per animation frame on a busy
+   * card. Rewriting the style each time would invalidate layout for nothing;
+   * the write happens only when the answer actually changed.
+   */
+  const html = fakeStyle()
+  html.setProperty('overflow-y', 'auto', 'important')
+  let writes = 0
+  const watched: StyleSurface = {
+    getPropertyValue: name => html.getPropertyValue(name),
+    setProperty: (name, value, priority) => {
+      writes += 1
+      html.setProperty(name, value, priority)
+    },
+    removeProperty: name => {
+      writes += 1
+      html.removeProperty(name)
+    },
+  }
+
+  applyScrollCapability({ html: watched, body: fakeStyle() }, 1797, 546)
+  assert.equal(writes, 0, 'auto over auto is silence')
+})
+
+test('a viewport that does not exist yet decides nothing', () => {
+  /*
+   * The first measurement races the frame's own layout: `clientHeight` 0 must
+   * read as "no overflow" — the scroller off — rather than turning it on for
+   * every frame's first moments.
+   */
+  const html = fakeStyle()
+  const body = fakeStyle()
+  html.setProperty('overflow-y', 'auto', 'important')
+  body.setProperty('overflow-y', 'auto', 'important')
+
+  applyScrollCapability({ html, body }, 1797, 0)
+
+  assert.equal(html.getPropertyValue('overflow-y'), '')
+  assert.equal(body.getPropertyValue('overflow-y'), '')
 })

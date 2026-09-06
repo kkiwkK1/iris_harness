@@ -38,9 +38,9 @@ import { describeLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
 import { describeFailure, topFrame } from './failure-attribution.ts'
 import {
+  applyScrollCapability,
   describeHeightSources,
   heightSignal,
-  overflowsViewport,
 } from './frame-height.ts'
 
 /**
@@ -762,29 +762,6 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
     post({ iris: run, type: 'height', pixels: signal.pixels })
 
     /*
-     * **Whatever is past the frame's own viewport has to stay reachable.**
-     *
-     * The reset copies upstream's `overflow:hidden!important` on `html,body`,
-     * which is safe *for upstream* because upstream writes
-     * `frameElement.style.height` same-origin and synchronously — its frame is
-     * always exactly content height, so there is never anything past the
-     * viewport to reach. Iris posts the height instead, so there is always at
-     * least one frame of lag, and any moment where the applied height is short
-     * of the content is a moment where `hidden` means **gone**: not clipped with
-     * a scrollbar, simply absent, and the wheel over it does nothing because
-     * the document under the pointer has nowhere to scroll.
-     *
-     * A user found exactly that: an SPA card whose screen grew, top and bottom
-     * cut off, wheel dead. The height fix below stops the common case, but it
-     * cannot be the only answer — a card that pins its own height, a slow
-     * report, or any future cap puts the content out of reach again, and each
-     * would need its own fix. So the frame checks the invariant it actually
-     * cares about, on every measurement, and needs to know nothing about why.
-     *
-     * Turned on only when it is needed, so a card that fits still lays out
-     * against no scrollbar, which is the reason the `hidden` was copied.
-     */
-    /*
      * Every height this frame can see, reported when it changes.
      *
      * Diagnostic, and it stays: "the card is taller than its frame and the
@@ -820,16 +797,18 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
       }
     }
 
-    const wanted = overflowsViewport(pixels, document.documentElement.clientHeight)
-      ? 'auto'
-      : ''
-    for (const element of [document.documentElement, document.body]) {
-      // `important`, because the rule it has to beat is `!important` — and it is
-      // upstream's line, not ours to soften for everyone.
-      if (element.style.getPropertyValue('overflow-y') === wanted) continue
-      if (wanted === '') element.style.removeProperty('overflow-y')
-      else element.style.setProperty('overflow-y', wanted, 'important')
-    }
+    /*
+     * **Whatever is past the frame's own viewport has to stay reachable**, and
+     * the frame scrolls itself when it is. The policy and its application live
+     * in `frame-height.ts` (`applyScrollCapability`), where they are testable —
+     * this file is an IIFE bundle, and a decision that lives only in here can
+     * only be tested through a browser.
+     */
+    applyScrollCapability(
+      { html: document.documentElement.style, body: document.body.style },
+      pixels,
+      document.documentElement.clientHeight,
+    )
   }
   const schedule = (): void => {
     if (scheduled) return
