@@ -1157,3 +1157,49 @@ OOPIF 子会话读帧内 scrollHeight/clientHeight/滚动可达、elementFromPoi
   `qa/results/z3-{baseline,fixed}-*.png`、`qa/results/z3-fixed-shibian-frame-bottom.png`
   （目录 gitignore，按惯例留档不提交）；脚本 `qa/measure-z3-occlusion.mjs`、
   `qa/z3-rpc-probe.mjs`、`qa/z3-scroll-proof.mjs` 提交。
+
+---
+
+# DEVIATIONS — 任务 G：裸 HTML 区域接线（复验于任务 O/N/L/宽屏之后的主线基座）
+
+分支 `dev/feat-bare-html`（worktree `wt-bare-html2`，独立宿主端口 8826，PID 记录于
+`host-8826.pid`；数据目录隔离在 worktree 内）。
+
+## 分支与环境（按协调者指令，与任务书不同）
+
+任务书（旧版）写 `wt-bare-html` / `dev/fix-bare-html` / 端口 8795；协调者指令为
+`wt-bare-html2` / `dev/feat-bare-html` / 端口 8826，并要求基于最新 `dev/iris-exploration`
+重建。从指令。
+
+## 接线本体已在主线，本分支为复验与验收脚本适配
+
+- 前次任务的接线提交 3c9d2c5 已是主线祖先：`claimMessageSurfaces`
+  （`frontend-blocks.ts`）作为唯一 claim 列表，三个消费者（`FrameBudget.tsx` 的
+  planFrames 候选、`useMessageInterfaces.tsx` 的帧控制器、`MessageInterfaces.tsx`
+  的行渲染与 refused 上报）在任务 O/N/L/宽屏/zod 合入后全部存续，无旁路、无第二套
+  计数。本分支不重写接线。
+- 本分支的实际改动：`qa/bare-html-check.mjs` 适配宽屏重设计后的 UI——旧脚本按
+  `[role=tab]` 文本 `'Reading'` 与精确 `'Settings'` 按钮定位，在新 UI（默认中文、
+  聊天行为 `button.iris-row`、设置按钮双语、报告在折叠的卡片脚本节内）下失效。
+  适配后：tab/设置按钮双语匹配、按 `.iris-row__title` 定位聊天行、打开后校验
+  masthead 标题（防止量错聊天）、截图拆为阅读视图与抽屉两张。另发现报告面板为
+  按需读取（宿主报告要点"读取"；never-closed 是卡片报告，在卡片脚本节内）。
+
+## 有意为之
+
+- **refused 英文文案不入 i18n**：`strings.ts` 既有裁定——宿主/卡片诊断的正文保留
+  英文以便对照产生它的源码，面板周边文案才翻译。never-closed 注记走
+  `addCardReport`（channel `interface`），属正文。
+- **验证不花真钱**：按任务书允许，直接编辑楼层文本注入裸 HTML（de24 组件形、
+  936 楼语料碎片形、未闭合尾段），未调用 LLM。
+
+## 验收对账（8826 实机，headless Chrome，无 LLM 消耗）
+
+- G验收-裸组件（尸变纪元 v0.5NSFW）：2 个沙箱帧——裸 de24 组件 888x33、围栏告示
+  888x24，均 `sandbox=allow-scripts` 带内联高度；prose 零源码泄漏；无 never-closed。
+- G验收-碎片与未闭合：3 帧（details 888x24、组件 888x33、未闭合尾段 888x24），
+  零泄漏；抽屉卡片脚本报告列表出现具名条目 "an HTML block opened with <div> is
+  never closed — the rest of the message is treated as HTML"（channel interface）。
+- 围栏基线无回归：Lights ON 问候帧 888x654、哈人冰恋问候帧 888x482 正常渲染。
+- `pnpm test` 2,400 例全绿；根 `pnpm typecheck` 与 iris-web typecheck 全绿；
+  `npm --prefix apps/iris-web run build` 成功。

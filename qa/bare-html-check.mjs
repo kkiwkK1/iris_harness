@@ -345,6 +345,33 @@ if (mode === 'render') {
 
     await delay(WINDOW.framesBoot) // script frames boot
 
+    /*
+     * And **which** chat opened, read from the masthead once the click has
+     * settled.
+     *
+     * The refusal above only covers "no row carried that title". A row that
+     * matched and a chat that opened are two facts, and the click can land on
+     * neither (an overlay eats it) or on a neighbour (two chats of one card
+     * share a title prefix) — in both cases every reading below would describe
+     * some other chat under this one's name, which is the failure the block
+     * above exists to prevent and could not see. Same exit as never opening,
+     * because the instrument is wrong in the same way.
+     */
+    const showing = await evaluate(`(() => {
+      const title = document.querySelector('.iris-masthead__title')?.textContent ?? ''
+      return { title: title.trim(), wanted: ${JSON.stringify(target)} }
+    })()`)
+    console.log('showing:', JSON.stringify({ observedAtMs: since(), ...showing }))
+    if (!(showing?.title ?? '').includes(target)) {
+      console.error(`bare-html-check: opened ${JSON.stringify(showing?.title ?? '')}, wanted ${JSON.stringify(target)}`)
+      console.error('Nothing below would describe that chat, so nothing below was measured.')
+      clearTimeout(HARD_DEADLINE)
+      ws.close()
+      chrome.kill()
+      await delay(500)
+      process.exit(2)
+    }
+
     const reading = await evaluate(`(() => {
       const frames = [...document.querySelectorAll('.iris-interfaces__slot iframe')].map(f => {
         const box = f.getBoundingClientRect()
@@ -367,6 +394,11 @@ if (mode === 'render') {
     // The leak checks below are negatives, so they carry the window they were
     // read at: everything here was sampled once, this long after the navigate.
     console.log('reading:', JSON.stringify({ observedAtMs: since(), sinceOpenMs: WINDOW.framesBoot, ...reading }, null, 1))
+
+    const name0 = target.replace(/[^\p{L}\p{N}-]+/gu, '-')
+    // The reading view, before anything is opened over it.
+    const clean = await send('Page.captureScreenshot', { format: 'jpeg', quality: 55 })
+    writeFileSync(new URL(`./results/bare-html-${name0}-${String(WIDTH)}.jpeg`, import.meta.url), Buffer.from(clean.result?.data ?? '', 'base64'))
 
     // The refused note: open the settings drawer, where the card report list
     // lives, and read the rows — not the page's prose.
@@ -424,9 +456,10 @@ if (mode === 'render') {
       neverClosedArrivedBeforeSettle: arrivedBeforeSettle.some(row => row.text.includes('never closed')),
     }, null, 1))
 
+    // And the drawer itself, where the report line lives — kept as a second
+    // image so the reading view above stays unobstructed.
     const shot = await send('Page.captureScreenshot', { format: 'jpeg', quality: 55 })
-    const name = target.replace(/[^\p{L}\p{N}-]+/gu, '-')
-    writeFileSync(new URL(`./results/bare-html-${name}-${String(WIDTH)}.jpeg`, import.meta.url), Buffer.from(shot.result?.data ?? '', 'base64'))
+    writeFileSync(new URL(`./results/bare-html-${name0}-drawer-${String(WIDTH)}.jpeg`, import.meta.url), Buffer.from(shot.result?.data ?? '', 'base64'))
     clearTimeout(HARD_DEADLINE)
     ws.close()
   } finally {
