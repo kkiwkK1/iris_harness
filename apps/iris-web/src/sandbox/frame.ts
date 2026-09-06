@@ -168,6 +168,17 @@ export interface FrameEnv {
    */
   defineForwarding?: (name: string, read: () => unknown) => void
   /**
+   * Define a name the way upstream's `predefine.js` does, not the way a wait does.
+   *
+   * A second door rather than an option on `defineForwarding`, because the two
+   * upstream sites genuinely differ and an option would hide that difference
+   * inside a parameter. `predefine.js:36-44` writes an accessor with an **empty
+   * setter**, so a card assigning the name is silently ignored;
+   * `waitGlobalInitialized` writes a getter only, so the same assignment throws
+   * in a module's strict mode. Each door matches its own upstream.
+   */
+  definePredefined?: (name: string, read: () => unknown) => void
+  /**
    * Record a running script in the frame's own script list.
    *
    * Upstream keeps one `div[data-script-id]` per running script inside
@@ -910,6 +921,47 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * have would fail somewhere else entirely.
    */
   const published = new Map<string, unknown>()
+
+  /**
+   * Names already given a `predefine`-shaped accessor in this frame.
+   *
+   * Only to avoid redefining on every subsequent script. Deliberately **not**
+   * covered by an assertion: the property is `configurable`, so redefining it
+   * is harmless, and a mutation removing this set would turn no test red. A
+   * guard whose absence nothing can observe should say so rather than carry a
+   * test that cannot fail (METHODS §十七).
+   */
+  const predefined = new Set<string>()
+
+  /**
+   * Upstream's `predefine.js` check, at the moment this frame's analogue of a
+   * frame bootstrap happens: just before a script's body is evaluated.
+   *
+   * `predefine.js:36-44` asks `_.has(window.parent, 'Mvu')` **once**, when a
+   * script's iframe boots, and on a hit defines a live accessor on that frame's
+   * own window reading back through the parent. A miss installs nothing and is
+   * never revisited. One name, not a list — the other members ride the
+   * `_.pick` allow-list at `predefine.js:11-19`.
+   *
+   * **Why it hangs off each script rather than off frame startup.** Upstream
+   * gives every script its own iframe, so "when the frame boots" *is* "when the
+   * script starts". Iris runs all of a card's scripts in one frame, so frame
+   * startup happens once and would always miss: the thing that publishes `Mvu`
+   * is the card's own MVU script, which is a body evaluated after the frame is
+   * up. Per script is the placement that carries upstream's meaning across the
+   * structural difference.
+   *
+   * **What it deliberately does not do**: it does not backfill. A script that
+   * starts before the publisher sees no `Mvu` and keeps seeing none, which is
+   * upstream's outcome for a frame that booted early, and is the half a test
+   * pins so nobody quietly upgrades this to "always available".
+   */
+  const predefineShared = (): void => {
+    const name = 'Mvu'
+    if (predefined.has(name) || !published.has(name)) return
+    predefined.add(name)
+    env.definePredefined?.(name, () => published.get(name))
+  }
 
   /** Members the frame bridges itself, which a card may never overwrite. */
   const isBridged = (property: string): boolean =>
@@ -2335,6 +2387,13 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       // round trip to discover, one crash at a time, and the crash names the
       // symptom rather than the gap.
       env.reportMissingGlobals?.(EXPECTED_GLOBALS)
+
+      /*
+       * Last, so the check sees everything every earlier script published, and
+       * before the body, so a script that reads the bare name on its first line
+       * finds it. See `predefineShared`.
+       */
+      predefineShared()
 
       /*
        * The preamble goes on in module mode only.

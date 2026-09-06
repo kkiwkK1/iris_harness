@@ -1600,3 +1600,33 @@ for `body { font-family: "Ark Pixel 12px Prop latin", sans-serif; font-size: 8px
 
 **What would overturn it.** The stylesheet proxy landing. At that point a card's remote stylesheet loads with `style-src`/`font-src` still at `self`, this entry closes, and what replaces it is a note on what the proxy rewrites and what it does not.
 
+---
+
+## 42. `Mvu` is predefined per script, not per frame, and is never backfilled
+
+**Kind:** faithful reproduction across a structural difference — the behaviour is upstream's, the placement cannot be.
+
+**Upstream.** `predefine.js:36-44` runs at a script iframe's bootstrap and asks once whether the shared parent already holds `Mvu`. On a hit it defines a live accessor on that frame's own window (`get: () => _.get(window.parent,'Mvu')`, empty `set`, `configurable`); on a miss it installs nothing and never revisits. One name, conditionally — the other members ride the `_.pick` allow-list at `predefine.js:11-19`. The author's own comment calls it a compatibility patch and points at `waitGlobalInitialized` as the supported route.
+
+**Iris** does the same thing at a different moment, because the moment upstream uses does not exist here. Upstream gives **every script its own iframe**, so "when the frame boots" is "when the script starts". Iris runs all of a card's scripts in **one** frame, so frame bootstrap happens once — and always before the card's own MVU script, which is what publishes `Mvu`. Checking there would be a guard that can never fire. The check therefore runs immediately before **each script body** (`frame.ts`, the `run` handler): if the card's shared namespace already holds `Mvu`, install the accessor through `definePredefined`; otherwise install nothing, and do not revisit.
+
+`definePredefined` is a separate door from `defineForwarding` on purpose. The two upstream sites differ in exactly one thing: `predefine.js` writes an empty setter, so a card assigning the name is ignored; `waitGlobalInitialized` writes a getter alone, so the same assignment throws in a module's strict mode. Folding them into one door with a flag would file that difference where nobody reads it.
+
+**Why the wait path is still the thing that has to work.** `waitGlobalInitialized` is what actually installs the name for the cards that ask properly, and it is unchanged. This entry is only about the cards that never ask.
+
+**Measured: who this can reach.** Three script units in the corpus read `Mvu` and never await it. In all three, the reading unit is declared **after** its card's MVU publisher:
+
+| card | script order (publisher ▸ reader) |
+| --- | --- |
+| 魔法少女是不会败北恶堕的吧！ | `#1 [MVU变量框架]var_update` ▸ `#3 魔法少女-MVU变量维护监视器` |
+| 灭仇家满门之后，我收养了想对我复仇的孤女 | `#1 MVU` ▸ `#3 气泡面板` |
+| 绿茵好莱坞 | `#2 MVUbeta` ▸ `#3 状态栏` |
+
+**And declaration order is not the boundary — this is the part that matters.** The runner posts every `run` message in one loop without awaiting (`runner.ts`, *"Sent together rather than awaited one at a time"*), and a module body evaluates asynchronously. So when a later script's `run` is handled, the earlier MVU script has begun a dynamic import and has **not** published yet: the bundle is fetched through the host proxy, and its own `fetch('/version')` was measured arriving 3–8 s after the chat opened. For a module-mode card — which every MVU card is, since the publisher is an `import` — the check will therefore usually **miss**, and these three units keep reading `undefined`.
+
+That is inference from the runner's own comment plus those timings, **not** a direct reading of the namespace at each script's dispatch. It is cheap to settle: re-run the script-frame probe on 绿茵好莱坞 after a build and read `Object.getOwnPropertyDescriptor(window,'Mvu')` in the script frame without awaiting — `present` means the check fired, `absent` means it did not.
+
+**What it costs.** Nearly nothing today, and that is the honest summary: the mechanism is upstream's and correctly placed, and the population it currently rescues is probably empty. It is here so that the conditional exists in the right shape when something does publish early enough — a classic-mode publisher, or a future change that lets a provider settle before its siblings start.
+
+**What would overturn it.** Either half. A reading showing the check does fire for a module-mode card retires the paragraph above. A ruling that Iris should serialise a card's scripts, or publish `Mvu` into the script frame's globals unconditionally, would replace this entry with a deliberate-improvement one — both give cards more than upstream, which is why neither was taken here.
+

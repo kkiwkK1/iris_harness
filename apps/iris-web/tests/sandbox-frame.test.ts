@@ -31,6 +31,9 @@ function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext }): 
   listed: () => string[]
   /** What a forwarding global currently reads. */
   forwarded: (name: string) => unknown
+  /** What a `predefine`-shaped global reads, and whether one was installed. */
+  predefined: (name: string) => unknown
+  predefinedExists: (name: string) => boolean
   /** Nodes the sandbox appended to the container itself. */
   appended: () => unknown[]
   /** Requests the frame handed to the native fetch, exactly as passed. */
@@ -74,6 +77,7 @@ function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext }): 
   // mechanism that makes a waited-for global usable, which a harness recording
   // only published values could not see.
   const forwarded = new Map<string, () => unknown>()
+  const predefinedNames = new Map<string, () => unknown>()
   const listed: string[] = []
   let body: (globals: Record<string, unknown>) => void = () => undefined
   let asyncBody: (() => Promise<void>) | undefined
@@ -149,6 +153,12 @@ function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext }): 
     baseUrl: 'http://127.0.0.1:8791/chats/current',
     post: message => posted.push(message),
     defineForwarding: (name, read) => forwarded.set(name, read),
+    /*
+     * Its own map, not `forwarded`. The two doors differ in their setter, and a
+     * test that could not tell them apart would pass whichever one the code
+     * called — which is the whole property the predefine tests below assert.
+     */
+    definePredefined: (name, read) => predefinedNames.set(name, read),
     listScript: id => { if (id !== undefined) listed.push(id) },
     onMessage: listener => listeners.push(listener),
     evaluate: (_source, mode, names, values) => {
@@ -171,6 +181,8 @@ function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext }): 
     publishedNames: () => published,
     publishedValue: (name: string) => publishedValues[name],
     forwarded: (name: string) => forwarded.get(name)?.(),
+    predefined: (name: string) => predefinedNames.get(name)?.(),
+    predefinedExists: (name: string) => predefinedNames.has(name),
     listed: () => listed,
     realWindow: env.realWindow as unknown as Record<string, unknown>,
     /** What the sandbox put into the container, in order. */
@@ -3947,5 +3959,72 @@ test('a script frame is left alone: no stand-in where the real bundle runs', () 
     scope.publishedNames().includes('Mvu'),
     false,
     'a script frame was given a stand-in for a global its own bundle provides',
+  )
+})
+
+/*
+ * ── Upstream's `predefine.js` check, and the half of it that must not happen ──
+ *
+ * Upstream gives every script its own iframe and `predefine.js:36-44` asks once,
+ * at that iframe's boot, whether the shared parent already holds `Mvu`; a hit
+ * installs a live accessor on the frame's own window, a miss installs nothing
+ * and is never revisited. Iris runs all of a card's scripts in one frame, so the
+ * moment that carries the same meaning is "just before each script's body".
+ *
+ * The pair below is the whole ruling: a script that starts after a publisher
+ * sees the name bare, and a script that starts before one never does — no
+ * backfill, because backfilling would hand cards something upstream does not.
+ */
+
+test('a script that starts after a publisher reads the bare name', () => {
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+
+  // Script one is the provider: this is the write MVU's bundle performs.
+  const mvu = { getMvuData: () => 'live' }
+  evaluate(scope, globals => {
+    (globals['parent'] as Record<string, unknown>)['Mvu'] = mvu
+  }, 'publisher')
+
+  assert.equal(scope.predefinedExists('Mvu'), false, 'installed for the publisher, which boots before its own write')
+
+  // Script two starts afterwards, and is the one upstream's check serves.
+  evaluate(scope, () => undefined, 'consumer')
+
+  assert.equal(scope.predefinedExists('Mvu'), true, 'the later script got no bare name')
+  assert.equal(
+    scope.predefined('Mvu'),
+    mvu,
+    'the accessor does not read through to what the publisher actually published',
+  )
+  /*
+   * Through the predefine door, not the wait door. They differ in their setter,
+   * and asserting only "some accessor exists" would pass on either.
+   */
+  assert.equal(scope.forwarded('Mvu'), undefined, 'installed through the wait door instead')
+})
+
+test('a script that starts before the publisher never gets the name, not even later', () => {
+  /*
+   * The no-backfill half, and the reason it is a test rather than a comment:
+   * making the name appear once it is published is a one-line change that looks
+   * like a fix, reads like a courtesy, and quietly gives cards a guarantee
+   * upstream withholds — a frame that booted early stays without it there too.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+
+  evaluate(scope, () => undefined, 'early')
+  assert.equal(scope.predefinedExists('Mvu'), false, 'nothing had published, yet a name was installed')
+
+  // The publisher runs afterwards. The early script's window must not change.
+  evaluate(scope, globals => {
+    (globals['parent'] as Record<string, unknown>)['Mvu'] = { getMvuData: () => 'live' }
+  }, 'publisher')
+
+  assert.equal(
+    scope.predefinedExists('Mvu'),
+    false,
+    'the name was backfilled after the fact, which is more than upstream gives',
   )
 })

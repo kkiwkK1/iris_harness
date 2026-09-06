@@ -1775,6 +1775,29 @@ try {
    * and a consumer holding a copy would never notice. Configurable so a later
    * wait on the same name can redefine it.
    */
+  /**
+   * The same accessor upstream's `predefine.js` installs, empty setter included.
+   *
+   * Separate from `defineForwarding` because the setter is the difference and it
+   * is not a detail. `predefine.js:36-44` writes `set () {}`, so a card
+   * assigning the name is silently ignored; `waitGlobalInitialized` writes a
+   * getter alone, so the same assignment throws in a module's strict mode. Both
+   * are upstream, at different sites, and folding them into one door with a flag
+   * would file that difference where nobody reads it.
+   */
+  definePredefined: (name, read) => {
+    try {
+      Object.defineProperty(window, name, { get: read, set: () => {}, configurable: true })
+    } catch {
+      post({
+        iris: run,
+        type: 'error',
+        scriptId: undefined,
+        message: `could not predefine "${name}" in this frame from the card's shared namespace`,
+      })
+    }
+  },
+
   defineForwarding: (name, read) => {
     try {
       Object.defineProperty(window, name, { get: read, configurable: true })
