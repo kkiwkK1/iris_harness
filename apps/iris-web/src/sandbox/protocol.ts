@@ -27,7 +27,7 @@ export type ToFrame =
    * reads `context.chat` from 194 sites, and a card's pattern is to take the
    * whole context once and then read members off it.
    */
-  | { iris: string, type: 'context', context: ScriptContext }
+  | { iris: string, type: 'context', context: ScriptContext, floor?: number }
   /**
    * Run a script body. Sent once per frame, after the frame reports ready.
    *
@@ -284,9 +284,17 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
       // Shape-checked only as far as the frame needs: this arrives from the
       // shell, and the host already validated it. The frame's own use is to hand
       // it to a card, so what matters is that it is an object at all.
-      return typeof context === 'object' && context !== null
-        ? { iris: token, type: 'context', context: context as ScriptContext }
-        : undefined
+      if (typeof context !== 'object' || context === null) return undefined
+      // The floor the frame renders in, present only for a message frame. It is
+      // what `getCurrentMessageId()` answers; a script frame gets none and the
+      // member keeps upstream's throw.
+      const floor = message['floor']
+      return {
+        iris: token,
+        type: 'context',
+        context: context as ScriptContext,
+        ...(typeof floor === 'number' && Number.isInteger(floor) && floor >= 0 ? { floor } : {}),
+      }
     }
     case 'run': {
       const mode = message['mode']

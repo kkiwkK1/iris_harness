@@ -55,6 +55,7 @@ interface Fixture {
   handlers: Handlers
   chats: ChatStore
   extensionSettings: ExtensionSettingsStore
+  library: CharacterLibrary
   seen: GenerateOptions[]
   settled: () => Promise<void>
 }
@@ -88,6 +89,7 @@ async function fixture(t: TestContext, replies: readonly string[] = ['A reply.']
     handlers,
     chats,
     extensionSettings,
+    library,
     seen,
     settled: async () => {
       waited += 1
@@ -241,6 +243,41 @@ test('a bridge call for a chat that does not exist is not found', async (t) => {
   ]) {
     await assert.rejects(call, (error: unknown) => (error as { code?: string }).code === 'not-found')
   }
+})
+
+test('the console chain keeps its variable write across append, generate and reload', async (t) => {
+  // 建国控制台's exact chain, host-side: write the MVU layer on the floor the
+  // console renders in, append the initialisation line (no generation), ask
+  // `/trigger` — here in the argument-bearing spelling the coordinator
+  // reported — and then check the write is still there, in memory and on disk.
+  const { handlers, chats, dir, library, settled } = await fixture(t)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  const write = { 政局: { 时代: '现代' }, 自己: { 姓名: '测试者' } }
+  await handlers['script.setVariables']({
+    chatId, scope: 'message', messageId: 0, op: 'insertOrAssign', variables: write,
+  })
+
+  await handlers['script.createChatMessages']({
+    chatId,
+    messages: [{ name: 'Traveller', is_user: true, mes: '<PolSimInit>[系统指令:国家初始化]</PolSimInit>' }],
+  })
+  const { result } = await handlers['script.slash']({ chatId, command: '/trigger 初始化指令' })
+  await settled()
+  assert.equal(result, '')
+
+  // In memory: the greeting floor's layer still names what the console wrote.
+  const readBack = await handlers['script.getVariables']({ chatId, scope: 'message', messageId: 0 })
+  assert.equal((readBack.variables as Record<string, unknown>)['政局'] != null, true)
+
+  // On disk: a fresh store over the same folder reads the same layer, because
+  // `toFile` writes per-candidate tables onto assistant lines and the greeting
+  // is one. A reload that loses this is the "状态被清空" the user reported.
+  const reloaded = new ChatStore(join(dir, 'chats'), library!)
+  const reopened = await reloaded.open(chatId)
+  const layer = reopened.variables.getVariables({ type: 'message', message_id: 0 })
+  assert.deepEqual(layer, write)
 })
 
 test('a slash pipeline is parsed once, in the host', async (t) => {

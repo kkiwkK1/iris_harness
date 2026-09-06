@@ -1169,6 +1169,41 @@ test('triggerSlash exists so the probe that guards it cannot fail silently', () 
   assert.equal(scope.posted.at(-1)?.type, 'ran')
 })
 
+test('getCurrentMessageId answers the floor a message frame was built for', () => {
+  // 建国控制台 opens with `typeof getCurrentMessageId === 'function'` — true for
+  // any function, including one that only throws — then calls it to name the
+  // floor whose MVU layer it writes. A member that passes the probe and fails
+  // the call silently skips the whole write. The shell now tells the frame its
+  // floor, and the member answers with it.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot(), floor: 3 })
+
+  evaluate(scope, globals => {
+    const read = globals['getCurrentMessageId'] as () => number
+    globals['__read'] = read()
+  })
+  assert.equal(scope.globals()['__read'], 3)
+})
+
+test('getCurrentMessageId keeps the upstream throw in a script frame', () => {
+  // No `floor` on the context: a script frame is not a message iframe, and
+  // upstream throws there on purpose. The contract survives the message-frame
+  // half gaining the real answer.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    const read = globals['getCurrentMessageId'] as () => number
+    try {
+      globals['__read'] = read()
+      globals['__threw'] = false
+    } catch {
+      globals['__threw'] = true
+    }
+  })
+  assert.equal(scope.globals()['__threw'], true)
+})
+
 test('a slash command travels raw, unparsed', () => {
   // Parsing means reproducing upstream's pipe escaping, and that semantic already
   // exists once host-side. A second copy in the browser is the shape that caused

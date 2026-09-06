@@ -79,6 +79,15 @@ export interface RunnerHost {
   bundleOrigin: string
   /** The host snapshot, fetched once and pushed before the card runs. */
   context: ScriptContext
+  /**
+   * The floor this frame renders, when it is a message frame.
+   *
+   * This is what `getCurrentMessageId()` answers — upstream's "index in the
+   * chat", which a status console uses to name the floor whose MVU layer it
+   * writes. Absent for a script frame, where upstream throws and the member
+   * keeps throwing.
+   */
+  currentMessageId?: number
   /** The host page's viewport, read on demand. */
   viewport: () => { width: number, height: number }
   /** Fetch a remote dependency through the host, which enforces the allowlist. */
@@ -462,7 +471,14 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         ready = true
         host.onReady?.()
         // The order that matters. Context, then viewport, then the card.
-        post({ iris: token, type: 'context', context: current })
+        // The floor rides with the snapshot: both are "which message is this"
+        // facts, and a message frame needs its own before any card code runs.
+        post({
+          iris: token,
+          type: 'context',
+          context: current,
+          ...host.currentMessageId === undefined ? {} : { floor: host.currentMessageId },
+        })
         const size = host.viewport()
         post({ iris: token, type: 'viewport', width: size.width, height: size.height })
         // Rewritten on the way in, which is where upstream does it too: a card
@@ -694,7 +710,12 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
        */
       current = next
       if (!ready) return
-      post({ iris: token, type: 'context', context: current })
+      post({
+        iris: token,
+        type: 'context',
+        context: current,
+        ...host.currentMessageId === undefined ? {} : { floor: host.currentMessageId },
+      })
     },
     resize: () => {
       if (disposed) return
