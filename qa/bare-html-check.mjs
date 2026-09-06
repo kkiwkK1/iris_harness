@@ -29,6 +29,7 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
+import { clickTabExpr, openDrawerExpr } from './locators.mjs'
 import { BASE, call, rpc } from './rpc.mjs'
 
 const [, , mode, target, widthArg, heightArg] = process.argv
@@ -234,20 +235,44 @@ if (mode === 'render') {
     const baseline = await evaluate(READ_REPORTS)
     console.log('reports baseline:', JSON.stringify({ observedAtMs: since(), bootWindowMs: WINDOW.boot, ...baseline }))
 
-    const opened = await evaluate(`(async () => {
-      const sleep = ms => new Promise(r => setTimeout(r, ms))
+    // The tab by order and confirmation, never by its label (see qa/locators.mjs);
+    // the chat by its title, which is user data and the only handle there is.
+    const tabbed = await evaluate(clickTabExpr('chats'))
+    const opened = tabbed?.error !== undefined ? tabbed : await evaluate(`(() => {
       const wanted = ${JSON.stringify(target)}
-      const tabs = [...document.querySelectorAll('[role=tab]')]
-      const readingTab = tabs.find(b => (b.textContent ?? '').includes('Reading'))
-      if (readingTab === undefined) return { error: 'no Reading tab' }
-      readingTab.click()
-      await sleep(500)
-      const rows = [...document.querySelectorAll('button, [role=button], a, li')].filter(el => (el.textContent ?? '').includes(wanted))
-      if (rows.length === 0) return { error: 'chat row not found for ' + wanted }
+      const rows = [...document.querySelectorAll('.iris-list .iris-row')]
+        .filter(el => (el.querySelector('.iris-row__title')?.textContent ?? '').includes(wanted))
+      if (rows.length === 0) {
+        return {
+          error: 'no chat row titled ' + wanted,
+          titles: [...document.querySelectorAll('.iris-list .iris-row .iris-row__title')].map(t => (t.textContent ?? '').trim()).slice(0, 20),
+        }
+      }
       rows[0].click()
       return { clicked: rows.length }
     })()`)
-    console.log('open:', JSON.stringify({ observedAtMs: since(), ...opened }))
+    console.log('open:', JSON.stringify({ observedAtMs: since(), tab: tabbed, ...opened }))
+
+    /*
+     * Stop here when the chat did not open.
+     *
+     * Everything below measures whatever chat the page happens to be showing —
+     * on a fresh boot that is the most recent one — and labels the readings with
+     * `target`. A reading pinned to the wrong object is worse than no reading:
+     * it is wrong in a way the report cannot show. (This is not the "should this
+     * script have a pass/fail" question, which was settled as no; it is the
+     * instrument not having measured the thing it names.)
+     */
+    if (opened?.error !== undefined) {
+      console.error(`bare-html-check: never opened ${JSON.stringify(target)} — ${opened.error}`)
+      console.error('Nothing below would describe that chat, so nothing below was measured.')
+      clearTimeout(HARD_DEADLINE)
+      ws.close()
+      chrome.kill()
+      await delay(500)
+      process.exit(2)
+    }
+
     await delay(WINDOW.framesBoot) // script frames boot
 
     const reading = await evaluate(`(() => {
@@ -275,12 +300,9 @@ if (mode === 'render') {
 
     // The refused note: open the settings drawer, where the card report list
     // lives, and read the rows — not the page's prose.
-    const after = await evaluate(`(async () => {
+    const drawer = await evaluate(openDrawerExpr)
+    const after = drawer?.error !== undefined ? drawer : await evaluate(`(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms))
-      const buttons = [...document.querySelectorAll('button')]
-      const settings = buttons.find(b => (b.textContent ?? '').trim() === 'Settings')
-      if (settings === undefined) return { error: 'no Settings button' }
-      settings.click()
       await sleep(${WINDOW.drawerSettle})
       return ${READ_REPORTS}
     })()`)
@@ -293,6 +315,7 @@ if (mode === 'render') {
     console.log('reports:', JSON.stringify({
       observedAtMs: since(),
       drawerSettleMs: WINDOW.drawerSettle,
+      drawer,
       ...(after?.error === undefined ? {} : { error: after.error }),
       // A missing card and a card with nothing to say are different findings.
       baselineCardPresent: baseline?.cardPresent === true,

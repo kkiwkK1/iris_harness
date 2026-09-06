@@ -8,6 +8,7 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
+import { clickTabExpr } from './locators.mjs'
 import { BASE } from './rpc.mjs'
 
 const [, , target, widthArg, heightArg] = process.argv
@@ -67,20 +68,30 @@ try {
   await send('Page.navigate', { url: BASE })
   await delay(7000)
 
-  const opened = await evaluate(`(async () => {
-    const sleep = ms => new Promise(r => setTimeout(r, ms))
+  // The tab by order and confirmation (qa/locators.mjs), the chat by its title.
+  const tabbed = await evaluate(clickTabExpr('chats'))
+  const opened = tabbed?.error !== undefined ? tabbed : await evaluate(`(() => {
     const wanted = ${JSON.stringify(target)}
-    const tabs = [...document.querySelectorAll('[role=tab]')]
-    const readingTab = tabs.find(b => (b.textContent ?? '').includes('Reading'))
-    if (readingTab === undefined) return { error: 'no Reading tab' }
-    readingTab.click()
-    await sleep(500)
-    const rows = [...document.querySelectorAll('button, [role=button], a, li')].filter(el => (el.textContent ?? '').includes(wanted))
-    if (rows.length === 0) return { error: 'chat row not found for ' + wanted }
+    const rows = [...document.querySelectorAll('.iris-list .iris-row')]
+      .filter(el => (el.querySelector('.iris-row__title')?.textContent ?? '').includes(wanted))
+    if (rows.length === 0) {
+      return {
+        error: 'no chat row titled ' + wanted,
+        titles: [...document.querySelectorAll('.iris-list .iris-row .iris-row__title')].map(t => (t.textContent ?? '').trim()).slice(0, 20),
+      }
+    }
     rows[0].click()
     return { clicked: rows.length }
   })()`)
-  console.log('open:', JSON.stringify(opened))
+  console.log('open:', JSON.stringify({ tab: tabbed, ...opened }))
+  // Nothing below would describe `target` if the row never opened; a reading
+  // pinned to the wrong chat is worse than no reading.
+  if (opened?.error !== undefined) {
+    console.error(`render-only: never opened ${JSON.stringify(target)} — ${opened.error}`)
+    chrome.kill()
+    await delay(500)
+    process.exit(2)
+  }
   await delay(12_000) // script frames boot
 
   const series = await evaluate(`(async () => {

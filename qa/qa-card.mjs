@@ -19,6 +19,7 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
+import { clickTabExpr } from './locators.mjs'
 import { call, rpc, eventWatcher, debugReports, BASE } from './rpc.mjs'
 
 const [, , characterId, displayName, turnTextArg] = process.argv
@@ -298,21 +299,30 @@ result.browser = await withPage(async pageUrl => {
   // per-card judgement subtracts whatever the boot chat announced.
   const noticesBaseline = await page.evaluate(captureStateExpr)
 
-  const clickFlow = await page.evaluate(`(async () => {
-    const sleep = ms => new Promise(r => setTimeout(r, ms))
+  /*
+   * The tab is found by order and confirmed structurally (qa/locators.mjs); the
+   * character row is found by its name, which is user data and the only handle.
+   *
+   * It used to find the tab by `textContent.includes('Characters')`. The shell
+   * follows `navigator.language`, so on a Chinese machine the tabs read
+   * 阅读 / 角色库 and every run of this script died at
+   * `no Characters tab: 阅读|角色库` — loudly, but for every card.
+   */
+  const tabbed = await page.evaluate(clickTabExpr('characters'))
+  const clickFlow = tabbed?.error !== undefined ? tabbed : await page.evaluate(`(() => {
     const wanted = ${JSON.stringify(displayName)}
-    const tabs = [...document.querySelectorAll('[role=tab]')]
-    const charTab = tabs.find(b => (b.textContent ?? '').includes('Characters'))
-    if (charTab === undefined) return { error: 'no Characters tab: ' + tabs.map(t => t.textContent).join('|') }
-    charTab.click()
-    await sleep(500)
-    const rows = [...document.querySelectorAll('button, [role=button], a, li')]
-    const hit = rows.filter(el => (el.textContent ?? '').includes(wanted))
-    if (hit.length === 0) return { error: 'character row not found for ' + wanted }
+    const hit = [...document.querySelectorAll('.iris-list .iris-row')]
+      .filter(el => (el.querySelector('.iris-row__title')?.textContent ?? '').includes(wanted))
+    if (hit.length === 0) {
+      return {
+        error: 'no character row named ' + wanted,
+        names: [...document.querySelectorAll('.iris-list .iris-row .iris-row__title')].map(t => (t.textContent ?? '').trim()).slice(0, 20),
+      }
+    }
     hit[0].click()
     return { clicked: hit.length }
   })()`)
-  console.log('click flow:', JSON.stringify(clickFlow))
+  console.log('click flow:', JSON.stringify({ tab: tabbed, ...clickFlow }))
   if (clickFlow?.error !== undefined) throw new Error(`UI navigation failed: ${clickFlow.error}`)
   await delay(10_000) // script frames boot (V1.5.4 boots 9-12s)
 
