@@ -1019,12 +1019,12 @@ const result = await SillyTavern.callGenericPopup(
 | cancel | `doNotRemindButton` | `不再提醒` | `Do not remind me again` | `POPUP_RESULT.NEGATIVE` |
 | custom[0] | `backupAndCleanButton` | `备份并清理` | `Back up and clean` | **`2`（= `CUSTOM1`）** |
 
-**返回值来源**：[ST] `scripts/popup.js:55` 的 JSDoc——
+**返回值来源**：[ST] `public/scripts/popup.js:55` 的 JSDoc——
 「If only strings are provided, the buttons will be added with default options,
 **and their result will be in order from `2` onward**」。
 MVU 的判据写成 `result === POPUP_RESULT.CUSTOM1 || result === 2`，**两个是同一个值**。
 
-**渲染顺序**：[ST] `scripts/popup.js:73` 的 JSDoc——
+**渲染顺序**：[ST] `public/scripts/popup.js:73` 的 JSDoc——
 「by default it will be **prepended**」；实现在 `:312-315`：
 
 ```js

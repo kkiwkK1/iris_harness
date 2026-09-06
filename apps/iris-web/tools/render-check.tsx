@@ -329,7 +329,7 @@ async function main(): Promise<void> {
 
   // ------------------------------------------------------- reading window
   /*
-   * Acceptance 1 of `WINDOWING.md` §七, pinned here rather than looked at.
+   * Acceptance 1 of `notes/apps/iris-web/WINDOWING.md` §七, pinned here rather than looked at.
    *
    * The criterion is about the **DOM**: a 677-floor chat opens with 100
    * messages mounted, not 677. `reading-window.ts` is unit-tested, but that

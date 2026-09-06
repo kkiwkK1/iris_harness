@@ -1,7 +1,7 @@
 /**
  * How much frame the reading view may build, and what happens when it runs out.
  *
- * This is layer ③ of the windowing design (`WINDOWING.md` §三). Layer ② limits
+ * This is layer ③ of the windowing design (`notes/apps/iris-web/WINDOWING.md` §三). Layer ② limits
  * how many messages are mounted; this limits how much *weight* the mounted ones
  * may turn into live frames, because the two are not the same constraint: the
  * corpus's worst chat for rendered bytes fits entirely inside a 100-floor
@@ -11,7 +11,7 @@
  * stopgap for an unwindowed view. Two windows stacked would not be safer — it
  * would only give "why has this floor no interface?" two answers.
  *
- * Every figure here is a named constant citing `WINDOWING.md`, and rounded on
+ * Every figure here is a named constant citing `notes/apps/iris-web/WINDOWING.md`, and rounded on
  * purpose: the measurements behind them drift with each build, and writing the
  * exact bytes into the code makes the code stale before it is wrong.
  *
@@ -23,7 +23,7 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
 /**
  * Bytes a frame costs before its card writes anything.
  *
- * [WINDOWING.md §三「每个 frame 的固定开销」] The bootstrap, the context
+ * [notes/apps/iris-web/WINDOWING.md §三「每个 frame 的固定开销」] The bootstrap, the context
  * snapshot and the srcdoc wrapper are **inlined**, so they are paid per frame
  * with no cache. The preset and message-preset are not on this bill — they load
  * by content-hashed URL and are paid once for the page.
@@ -89,7 +89,7 @@ export const FRAME_OVERHEAD_BYTES = 50 * 1024
 /**
  * The whole reading view's frame budget.
  *
- * [RENDER.md, restated in WINDOWING.md §三] 2 MiB. The reason it exists
+ * [notes/apps/iris-web/RENDER.md, restated in notes/apps/iris-web/WINDOWING.md §三] 2 MiB. The reason it exists
  * alongside the floor count is that it has an upper bound in bytes and the
  * count does not: on this corpus the two happen to coincide (a 100-floor window
  * is about 2.1 MiB), but that is a property of this data, not of the structure.
@@ -99,7 +99,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
 /**
  * The most frames that may be live at once, whatever they weigh.
  *
- * [WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
+ * [notes/apps/iris-web/WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
  * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 41 frames the
  * fixed overhead eats the entire budget on its own and not one byte of card
  * content fits. A pure byte budget therefore degrades into "all scaffolding, no
@@ -155,7 +155,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  *
  * **This is a behaviour change and it is small in the only place it shows.**
  * Frames past the sixteenth on one screen now get a named placeholder instead
- * of a live panel, and the placeholder is openable. `WINDOWING.md` measured 189
+ * of a live panel, and the placeholder is openable. `notes/apps/iris-web/WINDOWING.md` measured 189
  * rendered interface floors across the corpus with no chat putting sixteen on
  * one screen, so no measured reading scenario reaches the gate at all.
  *
@@ -179,7 +179,7 @@ export interface FrameCandidate {
   /**
    * Whether this floor is a user row.
    *
-   * Carried only so the plan can report one. [WINDOWING.md §三「预算只数 AI 楼」]
+   * Carried only so the plan can report one. [notes/apps/iris-web/WINDOWING.md §三「预算只数 AI 楼」]
    * measured 0 user rows among 189 rendered interface floors and noted that
    * nothing enforced it — `applyRegexScripts` treats `USER_INPUT` and
    * `AI_OUTPUT` alike.
@@ -290,7 +290,7 @@ export function frameWeight(candidate: FrameCandidate): number {
  * 1. **What the reader opted into** renders unconditionally. The budget is a
  *    default, not a ceiling — the placeholder's third promise is "you can have
  *    this one", and a gate that could refuse it would make that a lie.
- * 2. **What is already rendering** keeps rendering. [WINDOWING.md §三] This is
+ * 2. **What is already rendering** keeps rendering. [notes/apps/iris-web/WINDOWING.md §三] This is
  *    the one hard invariant of the layer: loading older messages must never take
  *    a panel away from the floor the reader is looking at. Budget comes back
  *    only when the window *shrinks* and a candidate stops being offered.

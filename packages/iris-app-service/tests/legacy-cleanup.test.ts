@@ -347,7 +347,7 @@ test('the report states the whole deletion, not one path of it', async (t) => {
 test('cleanup is off by default, and the offer is still made', async (t) => {
   // **The two halves of one ruling, pinned together because they read as a
   // contradiction.** The periodic sweep now defaults OFF (`Config`'s
-  // `pruneVariables` is `false`; see `DEVIATIONS.md` §8's correction) — the
+  // `pruneVariables` is `false`; see `notes/packages/iris-app-service/DEVIATIONS.md` §8's correction) — the
   // decision is an opt-out, never a silent opt-in, because a sweep deletes
   // state nothing here restores.
   //

@@ -2,7 +2,7 @@
  * Which language the shell speaks, held outside React so anything can read it.
  *
  * **Persistence: `localStorage`, key `iris.language` — the same home and the
- * same reasoning as the theme.** `SETTINGS-IA.md` files interface-surface
+ * same reasoning as the theme.** `notes/SETTINGS-IA.md` files interface-surface
  * choices (theme / prose size / measure) under 意图 #4「屏幕上有什么」 with the
  * data source marked 界面本地 — and interface language is exactly that class:
  * it is about the shell's own surface, not about a conversation or a host, and

@@ -433,7 +433,7 @@ ST 的 prompt itemization：点开一条消息，看到这次请求里每个部�
 
 `parent.document` 那 7 处的处理，当时给了三选一，**已裁为推荐案（2 + 3）并建成**：
 默认虚拟 parent 代理，个别需要真实访问的卡按卡显式授权（GRANTS.md）。策略、实测与
-边界见 `SANDBOX.md` 与 `apps/iris-web/COHABITATION.md`。保留本节骨架是因为三个选项的
+边界见 `SANDBOX.md` 与 `notes/apps/iris-web/COHABITATION.md`。保留本节骨架是因为三个选项的
 利弊分析对将来同类裁决仍有参照价值；**但它已经不是问题,别再答一遍。**
 ## 待补的一件基础设施:`@iris/protocol` 在 web 里没有运行时链接
 

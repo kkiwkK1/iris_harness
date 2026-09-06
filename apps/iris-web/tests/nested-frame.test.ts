@@ -1,7 +1,7 @@
 /**
  * The stand-in for a nested iframe, tested against what a card measurably does.
  *
- * Every assertion here traces to a line in a real card (`TEST-CARDS.md` §7.8,
+ * Every assertion here traces to a line in a real card (`notes/TEST-CARDS.md` §7.8,
  * the overlay card's `RA` class) rather than to a plausible iframe API, because
  * that card's failure paths are all silent: `sync()` is wrapped in `catch {}`,
  * so a stand-in missing one member produces a panel that mounts, shows nothing,

@@ -10,7 +10,7 @@
  * DSH itself uses for jsdom tests.
  *
  * Three details here are load-bearing and were established by trial in phase 0
- * (spike/RESULTS.md section 6). Do not "simplify" them:
+ * (notes/spike/RESULTS.md section 6). Do not "simplify" them:
  *   1. `@deepseek-ai/dsh-client-modules/client` is not an ordinary module — its
  *      body IS a bundle registration — so it is imported DYNAMICALLY, after the
  *      facade in index.html has been installed. A static import hoists above it.

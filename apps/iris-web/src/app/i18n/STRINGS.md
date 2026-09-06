@@ -120,7 +120,7 @@
 ## 四、持久化决策（同 `language.ts` 文档）
 
 `localStorage` 键 `iris.language`，与 `iris.theme` / `iris.reading` 同一处、同一套
-safeRead/safeWrite 容错。理由：`SETTINGS-IA.md` 把「屏幕上有什么」类偏好（主题/字号/
+safeRead/safeWrite 容错。理由：`notes/SETTINGS-IA.md` 把「屏幕上有什么」类偏好（主题/字号/
 行长）标为 界面本地 🟢，语言属于同一意图；宿主 `settings.*` 是生成路由，且按对话生效，
 放语言会把 per-device 的选择做歪。默认跟随 `navigator.language`（`zh*` → 中文），
 仅当用户手动切换才落盘——不选不存，换设备仍可各自作答。

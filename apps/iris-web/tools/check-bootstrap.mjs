@@ -106,7 +106,7 @@ if (reads !== 1) {
  * not make the documentation stale.
  *
  * Which leaves the question of who notices when the drift stops being small.
- * `DEVIATIONS.md` §15 answered "run the build and read its output", and that
+ * `notes/apps/iris-web/DEVIATIONS.md` §15 answered "run the build and read its output", and that
  * is a person remembering — the weakest link a measurement can hang from. So
  * the comparison happens here, where the number is produced.
  *

@@ -45,7 +45,7 @@
    > **2026-09-06 裁**(`UPSTREAM-MVU-INIT-PATH.md` 附录五):上游 MVU **没有**状态视图,回看变量是 TavernHelper「变量管理器 → 消息楼层」的职责——按楼号区间寻址(追踪最新时用负数相对末尾)、显示**当前 swipe 的行级表**、可编辑可落盘。补齐目标即此粒度(楼号区间 × 当前 swipe);「按候选全部回看」属多给,不做。壳侧工作,排界面域队列。
 5. **webp 角色卡**：语料中已删，但 ST 支持 webp 卡；导入面是否补，随任务 E 的上游
    核实一并定。
-   > **2026-09-06 正读更正**(`packages/iris-character/UPSTREAM-IMPORT-SHAPES.md`):ST 1.18.0 的角色导入**不支持** webp(两道闸都没有,`parse()` 只有 png;webp 只能当头像图经 Jimp 转 PNG);无卡 chunk 的 png 上游**拒绝**(`No PNG metadata.`)而非收作空角色;`liwy.jpg` 不含任何卡数据且在客户端扩展名闸静默丢弃。本项按「与上游一致的具名拒绝」收口,不补导入面。
+   > **2026-09-06 正读更正**(`notes/packages/iris-character/UPSTREAM-IMPORT-SHAPES.md`):ST 1.18.0 的角色导入**不支持** webp(两道闸都没有,`parse()` 只有 png;webp 只能当头像图经 Jimp 转 PNG);无卡 chunk 的 png 上游**拒绝**(`No PNG metadata.`)而非收作空角色;`liwy.jpg` 不含任何卡数据且在客户端扩展名闸静默丢弃。本项按「与上游一致的具名拒绝」收口,不补导入面。
 6. **导入聊天的扫描前缀应读行上说话人**（2026-09-06，`include_names` 落地时记）——
    现在 `prompt.ts` 的扫描缓冲按 `role` 派生名字（`historyFromSession` 就是这么派生的），
    而上游 `script.js:4565` 用的是消息**自己存的 `name`**。一对一聊天两者一致；**从安装

@@ -5,7 +5,7 @@ what SillyTavern does, and what each difference was measured to cost. A deviatio
 with no measurement is a guess, so every entry names what it read and **what
 would overturn it**.
 
-The host keeps its own ledger at `packages/iris-app-service/DEVIATIONS.md`; this
+The host keeps its own ledger at `notes/packages/iris-app-service/DEVIATIONS.md`; this
 one covers `apps/iris-web` — the shell, the frames, and the card-facing surface
 inside them. Render-pipeline differences that need their surrounding argument are
 worked out in `RENDER.md` and referenced from here rather than restated.
@@ -1630,3 +1630,39 @@ That is inference from the runner's own comment plus those timings, **not** a di
 
 **What would overturn it.** Either half. A reading showing the check does fire for a module-mode card retires the paragraph above. A ruling that Iris should serialise a card's scripts, or publish `Mvu` into the script frame's globals unconditionally, would replace this entry with a deliberate-improvement one — both give cards more than upstream, which is why neither was taken here.
 
+
+## 43. The page root carries SillyTavern's theme variable names, aliased to Iris tokens
+
+**Kind:** compatibility gap, closed.
+
+**Upstream.** A card's HTML that is not inside a fenced full document lands in `.mes_text`, in the page's own DOM (`UPSTREAM-THEME-VARS.md` §三之二: `decodeStyleTags` scopes selectors under `.mes_text ` and rewrites class names to `custom-*`, but leaves declarations alone). Such a card can write `color: var(--SmartThemeBodyColor)` and it resolves against the sixteen `--SmartTheme*` names ST defines on `:root` (`style.css:71-89`), plus `--mainFontFamily`, `--monoFontFamily`, `--mainFontSize`, `--fontScale`, `--sheldWidth`, `--blurStrength`, `--shadowWidth`. It cannot redefine them at the root — `.mes_text :root{}` matches nothing — so the relationship is read-only.
+
+**Iris** renders the same family into its own page DOM (`inline-html.ts`, `card-css.ts`), so the same `var()` used to resolve to nothing. `theme/tokens.css` now defines every one of those names, per theme, as an alias of the Iris token with the same meaning (body → ink, quote → warn, blur tint → raised paper, and so on; the three unitless multipliers stay unitless because upstream multiplies them in `calc()`). The list is pinned by `tests/st-theme-aliases.test.ts` against §七 of the upstream note.
+
+**Measured.** 0 of 29 deduplicated corpus cards read any of these names today (§八, whole-JSON grep with a positive control). The gap is closed anyway because the mechanism is upstream's and a card family that uses it exists in the wild; the corpus is the oracle for what breaks, not for what is allowed to work.
+
+**What it costs.** Twenty-odd custom properties on `:root`, and a second name for each colour a future theme author has to keep in step — the test makes that a red build rather than a silent drift.
+
+**What would overturn it.** Nothing about the aliases themselves; the open question is the frames, which is entry 45.
+
+## 44. Card frames are `color-scheme: light`, whatever the page theme
+
+**Kind:** faithful reproduction.
+
+**Upstream.** `style.css:167` puts `color-scheme: only light` on `body`, and the TavernHelper frame documents declare nothing, so a card's frame renders its form controls and scrollbars in the light scheme on every ST theme, including the dark default (§六). A card author who styled a dark panel saw light `<select>` arrows and a light scrollbar inside it, and shipped it that way.
+
+**Iris** frames used to follow the page theme — `reading.css` said `normal`, which the spec defines as "the page's scheme", and every Iris theme declares one at the root; the overlay frame inherited the same way. Both kinds now say `light`: the slot rule, the overlay `attach`, and the two `srcdoc` resets, pinned by `tests/frame-color-scheme.test.ts`.
+
+**Open detail.** Upstream writes `only light`; Iris writes `light`. Chromium does not auto-darken under either, so no visible difference is expected, but `only` on a frame element was not verified in a browser. Recorded here so the difference is a decision and not an oversight.
+
+**What would overturn it.** A ruling that Iris frames should look native under the 墨 theme — that would move this to a deliberate improvement, with the cost that cards designed against light controls change appearance.
+
+## 45. No theme information is pushed into card frames
+
+**Kind:** deliberate improvement, declined for now.
+
+**Upstream** hands a frame exactly one variable, `--TH-viewport-height`, and nothing about colours, fonts, or dark/light (§二). Iris injects the same one variable and no more; the `--SmartTheme*` aliases of entry 43 stop at the page root, and `tests/st-theme-aliases.test.ts` asserts that `src/sandbox/**` never mentions them.
+
+**Why declined.** A bridge into the frame would give cards something upstream does not — that is the improvement ledger, and it needs a consumer. The corpus has none: the eight cards that theme themselves with variables define their own (`--bg-color`, `--main-bg`, `--bg`), and eleven hard-code colours (§八). Two cards hard-code light text on a transparent ground and are unreadable on a light host theme; they are unreadable on ST's light themes too, and a bridge they do not read would not help them.
+
+**What would reopen it.** A card that reads `--SmartTheme*` inside a fenced document, or a decision to offer card authors an Iris-specific theme contract — in which case the aliases already defined at the root are the obvious thing to mirror.

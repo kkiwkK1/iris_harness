@@ -20,7 +20,7 @@
  * bundle in question never references — while the library that actually stopped
  * it went unmentioned. A reader was handed three wrong names and no right one.
  *
- * So the prose becomes the hub, exactly as `SANDBOX.md` is for the allowlist.
+ * So the prose becomes the hub, exactly as `docs/SANDBOX.md` is for the allowlist.
  * Both statements are parsed out of the module's own documentation and required
  * to appear in the array. A future library added to the doc and forgotten in the
  * list fails here instead of eleven runs later.

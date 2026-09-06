@@ -229,7 +229,7 @@ test('a dry run writes nothing', () => {
 })
 
 test('an option this layer does not implement is refused by name', () => {
-  // `SANDBOX.md`'s rule: a refusal throws. `undefined` from a lookup is
+  // `docs/SANDBOX.md`'s rule: a refusal throws. `undefined` from a lookup is
   // indistinguishable from "not found", so a card would take a policy decision
   // for a missing value and fail later with no trace of why.
   const { locals } = environment()

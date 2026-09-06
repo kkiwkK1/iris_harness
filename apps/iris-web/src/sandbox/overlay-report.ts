@@ -1,7 +1,7 @@
 /**
  * What a card built on its overlay surface, when that is worth saying.
  *
- * [OVERLAY-CARDS.md (3c)] A third class of interface card exists: it never
+ * [notes/apps/iris-web/OVERLAY-CARDS.md (3c)] A third class of interface card exists: it never
  * touches `parent.*` at all. Upstream's `parent_jquery.js` makes the `$` inside
  * a script frame the **page's** jQuery, so the card's `.appendTo('body')` lands
  * on the host page. In Iris's cohabiting realm `$` is the frame's own, so the
@@ -82,7 +82,7 @@ export function describeOverlayAttempt(attempt: OverlayAttempt): string | undefi
    * about a thing that is not wrong. "Built one div" and "built a whole
    * application" were the same sentence.
    *
-   * `RENDER.md`'s own rule: the value of a report depends on what it does not
+   * `notes/apps/iris-web/RENDER.md`'s own rule: the value of a report depends on what it does not
    * report. So the gate is a shape rather than a count — text, or something
    * whose only purpose is to be looked at, or more than one element.
    *

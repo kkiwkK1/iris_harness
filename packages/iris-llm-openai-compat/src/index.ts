@@ -215,7 +215,7 @@ export class OpenAiCompatAdapter extends LlmAdapter {
    * at the other end of it. This host serves several pages and can be
    * generating for one that has since been closed, so silence has to be
    * something the host itself can end. Recorded as an upgrade in
-   * `DEVIATIONS.md`, not as a compatibility fix.
+   * `notes/packages/iris-app-service/DEVIATIONS.md`, not as a compatibility fix.
    *
    * Three phases rather than one budget, because they fail for different
    * reasons and only a phase-specific sentence tells a reader which: an

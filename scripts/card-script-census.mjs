@@ -19,7 +19,7 @@
  *   extension keys and three serializations, and three cards carry the same
  *   scripts under both keys. Counting each list independently double-counts:
  *   that produced "61 scripts" on the first pass against a real 48, and it is
- *   the same mistake `SANDBOX.md` warns about, facing the other way.
+ *   the same mistake `docs/SANDBOX.md` warns about, facing the other way.
  * - **Extracted** = what `extractScripts` reports, which skips a script with no
  *   body. The corpus has exactly one such: an empty, disabled placeholder that
  *   appears under both keys and so is reported skipped twice.

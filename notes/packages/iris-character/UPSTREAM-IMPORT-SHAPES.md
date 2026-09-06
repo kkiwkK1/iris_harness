@@ -53,7 +53,7 @@ if (!importFunction) { throw new Error(`Unsupported format: ${format}`); }
 
 **六个键，四个真函数**（yaml/yml 共用）。**未知格式抛错，被外层 catch 接住，
 返回 `{ error: true }` 且 HTTP 200**——与 `chats.js` 的导入同一个约定
-（见 `packages/iris-app-service/UPSTREAM-A-TIER.md` §3.3：拒绝在响应体里，不在状态码里）。
+（见 `notes/packages/iris-app-service/UPSTREAM-A-TIER.md` §3.3：拒绝在响应体里，不在状态码里）。
 
 ### 用户看到什么：一句不点名的 toast
 

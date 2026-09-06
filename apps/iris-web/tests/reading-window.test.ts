@@ -101,7 +101,7 @@ test('the window and the count it reports always agree', () => {
 
 test('the boundary rounds outward so a turn is never split', () => {
   /*
-   * [WINDOWING.md 回合边界] A boundary inside a turn mounts an assistant reply
+   * [notes/apps/iris-web/WINDOWING.md 回合边界] A boundary inside a turn mounts an assistant reply
    * whose user line is hidden above the window: a reply to nothing, at the top
    * of the page, and with no turn number either — the ordinal marks boundaries
    * between mounted turns, and this one has nothing above it.

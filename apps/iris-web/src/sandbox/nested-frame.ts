@@ -18,7 +18,7 @@
  * one would reproduce the same refusal, one browsing context later.
  *
  * **What a card actually does with the frame** decides everything here, and it
- * is measured rather than imagined (`TEST-CARDS.md` §7.8, the overlay card's
+ * is measured rather than imagined (`notes/TEST-CARDS.md` §7.8, the overlay card's
  * `RA` class):
  *
  * - `document.createElement('iframe')`, then `srcdoc = '…'`, then append.
@@ -359,7 +359,7 @@ export function createNestedFrame(env: NestedFrameEnv): NestedFrame {
    *
    * **Two known gaps, both geometric, both unverified.** They are written here
    * rather than fixed because neither can be checked yet: in-frame geometry is
-   * unreadable while the tab is hidden (`METHODS.md` §二十三), and a fix built
+   * unreadable while the tab is hidden (`notes/METHODS.md` §二十三), and a fix built
    * against a reading of `0` is a fix built against nothing.
    *
    * 1. **No intrinsic size.** An `<iframe>` is a replaced element and is

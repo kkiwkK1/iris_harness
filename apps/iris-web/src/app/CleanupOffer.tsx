@@ -14,7 +14,7 @@
  * (`popup.js:312-315`), so "back up and clean" comes **before** "clean only".
  * A reader who has used the extension should recognise this dialog.
  *
- * **What diverges, once, and it is recorded in `DEVIATIONS.md`:** dismissing.
+ * **What diverges, once, and it is recorded in `notes/apps/iris-web/DEVIATIONS.md`:** dismissing.
  * Upstream routes `CANCELLED` into the same branch as `NEGATIVE`
  * (`legacy_chat.ts:27-33`), so one press of Esc writes `ignore_cleanup`
  * permanently — the user believes they deferred and the extension believes they

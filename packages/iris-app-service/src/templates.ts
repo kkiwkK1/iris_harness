@@ -1,7 +1,7 @@
 /**
  * Running EJS prompt templates over the assembled prompt.
  *
- * The seam is fixed by `packages/iris-compat-prompt-template/SNAPSHOT.md`:
+ * The seam is fixed by `notes/packages/iris-compat-prompt-template/SNAPSHOT.md`:
  * upstream evaluates at `GENERATE_AFTER_DATA` / `CHAT_COMPLETION_SETTINGS_READY`,
  * over the **already-assembled message array**, one item per message — not per
  * source field. So this runs after `assemble` and before the provider call, and

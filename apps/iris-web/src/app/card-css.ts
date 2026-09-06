@@ -1,11 +1,11 @@
 /**
  * Confining a card's own `<style>` to the one message it came in.
  *
- * The design is `INLINE-HTML.md` §4.4 (3c). This is the half that needs no DOM
+ * The design is `notes/apps/iris-web/INLINE-HTML.md` §4.4 (3c). This is the half that needs no DOM
  * and no sanitizer: text in, text out, so it can be tested.
  *
  * **Scanned, not matched.** Upstream finds and rewrites its style blocks with
- * regular expressions, and `INLINE-HTML.md` §2.3 records the hole that produced:
+ * regular expressions, and `notes/apps/iris-web/INLINE-HTML.md` §2.3 records the hole that produced:
  * its scoping hangs off a literal pattern that does not allow attributes, so
  * `<style type="text/tailwindcss">` walks straight past it and lands unscoped.
  * That is a warning about the technique, not only about that pattern — CSS has
@@ -24,7 +24,7 @@
 /**
  * At-rules that never survive, whatever they contain.
  *
- * `@import` and `@font-face` both fetch, and [INLINE-HTML.md §4.3] refuses every
+ * `@import` and `@font-face` both fetch, and [notes/apps/iris-web/INLINE-HTML.md §4.3] refuses every
  * external load with a measured cost of zero on the corpus — while noting the
  * thing that matters more: the corpus says the tightening hits nothing that
  * exists, not that it will never hit anything. Upstream filters `@import`
@@ -171,8 +171,8 @@ function fetchesExternally(block: string): string | undefined {
 /**
  * The host a refusal should name, or the whole reference when there is no host.
  *
- * **The refusal has to name what it refused.** [TEST-CARDS.md, and
- * `OBSERVABILITY.md` gap 8] the corpus contains cards that print their own
+ * **The refusal has to name what it refused.** [notes/TEST-CARDS.md, and
+ * `docs/OBSERVABILITY.md` gap 8] the corpus contains cards that print their own
  * message when a resource fails to arrive — one says the user's tavern is
  * broken. A report that says only "an external resource was refused" loses the
  * race against that: the reader sees the card's explanation, believes it, and

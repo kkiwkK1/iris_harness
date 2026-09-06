@@ -2,7 +2,7 @@
  * Which code blocks in a message are card interfaces.
  *
  * Step one of the message-frame pipeline, and deliberately the whole of it: this
- * decides what would be *claimed* and builds no frames. `RENDER.md` puts the
+ * decides what would be *claimed* and builds no frames. `notes/apps/iris-web/RENDER.md` puts the
  * caliper first and the diagnostics last for a reason — the first cut can be
  * entirely wrong about which blocks to claim, and the local corpus cannot tell
  * us, because it contains exactly one hit and that hit is a loader stub.
@@ -21,7 +21,7 @@
  *   is the sandbox wall rather than the predicate's precision.
  *
  * And one property that is *not* copied, because copying it would have been
- * wrong: there is **no entity decoding**. See `RENDER.md`'s retraction — showdown
+ * wrong: there is **no entity decoding**. See `notes/apps/iris-web/RENDER.md`'s retraction — showdown
  * escapes a block's body before the DOM exists, so upstream's `.text()` hands
  * back the author's own characters, and decoding here would claim blocks upstream
  * leaves alone.

@@ -93,7 +93,7 @@ test('the route answers 200 with the payload, at the path upstream serves', asyn
   // **Driven through the real route object**, the same value `apply` hands the
   // server — not through `versionInfo()`. Testing the payload and the
   // consumer's expression while leaving the thing that answers the request
-  // untested is the seam in `METHODS.md` §22, and this feature is small enough
+  // untested is the seam in `notes/METHODS.md` §22, and this feature is small enough
   // that the seam would have been most of it.
   const route = versionRoute()
   assert.equal(route.path, '/version')

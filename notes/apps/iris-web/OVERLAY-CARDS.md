@@ -595,7 +595,7 @@ if (chatEl) observer.observe(chatEl, { childList: true, subtree: true });
 | **`#mes_stop`** | `.is(':visible')` 当"正在生成" | 系统面板 `:9525-9526` |
 
 **`#send_form` / `#sheld` 语料里零命中。**（`#tavern_helper` 是 MVU 的选举用，不是卡挂靶，见
-`packages/iris-app-service/UPSTREAM-MVU-INIT-PATH.md` §三之六。）
+`notes/packages/iris-app-service/UPSTREAM-MVU-INIT-PATH.md` §三之六。）
 
 ### 二 · `.mes` 的结构（`[ST] index.html:7377-7378`）
 

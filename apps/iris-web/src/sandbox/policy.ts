@@ -1,7 +1,7 @@
 /**
  * Where the isolation actually comes from.
  *
- * `SANDBOX.md` rules out CSP: the card blobs are webpack output that `eval()`s
+ * `docs/SANDBOX.md` rules out CSP: the card blobs are webpack output that `eval()`s
  * per module, so a frame forbidding `unsafe-eval` runs none of them. Isolation
  * therefore has to come from the frame boundary and from what the globals inside
  * it are wired to. This module decides both.
@@ -51,7 +51,7 @@ export function frameSandbox(documentGranted: boolean): string {
  * forbidden. Those are different facts and a card author debugging deserves the
  * right one.
  *
- * Site counts are from the corpus measurement in `SANDBOX.md`.
+ * Site counts are from the corpus measurement in `docs/SANDBOX.md`.
  */
 export const UNBRIDGED_GLOBALS: readonly { name: string, sites: number, plan: string }[] = [
   /*

@@ -99,7 +99,7 @@ const config = {
 
 **消息路径上没有任何 `FORBID_TAGS` / `FORBID_ATTR` / `ALLOWED_TAGS` / `ALLOWED_ATTR` /
 `ALLOW_UNKNOWN_PROTOCOLS` 定制。**在 `public/`（排除 `node_modules/` 和 `lib/`）全文搜过，
-唯一命中在 `scripts/slash-commands.js:4579-4580`（`FORBID_TAGS: ['style']`），**那是另一条路**。
+唯一命中在 `public/scripts/slash-commands.js:4579-4580`（`FORBID_TAGS: ['style']`），**那是另一条路**。
 
 **所以「上游允许什么」= DOMPurify 3.4.2 的出厂默认 + 三个钩子。**
 
@@ -476,7 +476,7 @@ CSS 侧：url( ) 0、@import 0、url(http 0、url(data: 0、@font-face 0、image
 
    作用是让钩子（`chats.js:1917`）**豁免 `menu_button` 类的 class 名字空间化**，
    使那条消息能用 ST 真正的按钮样式。**`uses_system_ui: true` 只在
-   `scripts/system-messages.js:69, 84, 92` 被设**——**宿主自己的系统消息，卡片和模型输出都设不了。**
+   `public/scripts/system-messages.js:69, 84, 92` 被设**——**宿主自己的系统消息，卡片和模型输出都设不了。**
 
    **所以 §一「上游地板」对一切卡片/模型内容成立，例外只是宿主自撰的系统消息。**
 

@@ -4,7 +4,7 @@
  * **Shared across the whole profile, deliberately.** Upstream's cards write to
  * one `localStorage` per origin, so two cards choosing the same key see each
  * other's values — measured on the corpus as four shared keys between two cards
- * (`UPSTREAM-FRAME-ORIGIN.md §四`). That collision is upstream's behaviour and
+ * (`notes/apps/iris-web/UPSTREAM-FRAME-ORIGIN.md §四`). That collision is upstream's behaviour and
  * is reproduced rather than partitioned away: a card that reads a key another
  * card wrote is doing what it does in SillyTavern.
  *

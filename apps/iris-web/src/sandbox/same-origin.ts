@@ -9,7 +9,7 @@
  * Measured: MagVarUpdate's bundle, which every MVU card imports, opens with
  * `fetch('/version')` and posts to `/api/backends/...` the same way.
  *
- * The answer decided in `SANDBOX.md` is not a wider CSP but a bridge: a
+ * The answer decided in `docs/SANDBOX.md` is not a wider CSP but a bridge: a
  * same-origin request is carried to the shell on the existing `fetch` message
  * and fetched *by the shell page*, with its own credentials. This module is
  * the decision of what counts as same-origin, and it is consulted twice —

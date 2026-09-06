@@ -4,7 +4,7 @@
  * The difference from the probe is who is present. The probe runs a card because
  * someone pressed a button and is watching the result; this runs a card because a
  * chat came to the foreground, with nobody looking. Every rule below follows from
- * that, and the reasoning is in `GRANTS.md` and `AUTORUN.md`.
+ * that, and the reasoning is in `notes/apps/iris-web/GRANTS.md` and `docs/AUTORUN.md`.
  *
  * Three of them are load-bearing:
  *

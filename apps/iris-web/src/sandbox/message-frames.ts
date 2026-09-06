@@ -391,7 +391,7 @@ export function describeInterface(state: InterfaceState, lang: Language = 'en'):
     case 'over-budget':
       /*
        * Three things, because a placeholder that says fewer is worse than none.
-       * [WINDOWING.md §五之二] on this corpus a placeholder is what a reader
+       * [notes/apps/iris-web/WINDOWING.md §五之二] on this corpus a placeholder is what a reader
        * scrolling back sees **most** of the time — more often than a live panel
        * — so this string is a main surface of the feature, not an error caption.
        *

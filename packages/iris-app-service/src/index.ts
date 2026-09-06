@@ -221,7 +221,7 @@ export interface Config {
    * The three budgets below have **no SillyTavern equivalent** — upstream's
    * generation fetch runs with `timeout: 0` and an abort wired to the browser
    * socket closing, which works there because a hung request always has a
-   * person and a Stop button at the other end. See `DEVIATIONS.md`.
+   * person and a Stop button at the other end. See `notes/packages/iris-app-service/DEVIATIONS.md`.
    * @default 30000
    */
   connectTimeoutMs?: number

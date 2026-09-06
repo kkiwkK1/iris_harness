@@ -45,7 +45,7 @@ test('every config key is read off the parsed config by something', async () => 
  *
  * `pruneVariables` defaults **off**. It reached this state the hard way: the
  * schema said `true` while the docstring three lines above it said
- * "Off by default", and the ledger (`DEVIATIONS.md` §8) argued at length for
+ * "Off by default", and the ledger (`notes/packages/iris-app-service/DEVIATIONS.md` §8) argued at length for
  * `true` on compatibility grounds. One of those had to move, and the ruling
  * was that a sweep which deletes state nothing restores is an opt-out — never
  * a silent opt-in. Pinned here so the next person to read §8's original

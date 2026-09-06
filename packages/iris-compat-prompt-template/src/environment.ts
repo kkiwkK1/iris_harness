@@ -7,7 +7,7 @@
  * corpus, templates touch **six** of them. This module implements those six
  * faithfully and refuses the rest by name.
  *
- * Refusing by name rather than by omission is `SANDBOX.md`'s rule: `undefined`
+ * Refusing by name rather than by omission is `docs/SANDBOX.md`'s rule: `undefined`
  * from a lookup is indistinguishable from "not found", so a card would take a
  * policy decision for a missing value and fail somewhere later with no trace of
  * why.
@@ -220,7 +220,7 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
       // projection of what the card file ships. So the write would either vanish
       // silently — misleading — or edit the card, which is a different and much
       // larger operation than the template asked for. Refused by name instead;
-      // zero corpus sites, and `DEVIATIONS.md` records the divergence.
+      // zero corpus sites, and `notes/packages/iris-compat-prompt-template/DEVIATIONS.md` records the divergence.
       throw new UnsupportedTemplateApiError(
         'setvar scope \'initial\'',
         'initial variables come from the card file and are not writable at runtime',

@@ -36,7 +36,7 @@ import { registerWindowEventSink } from './window-events.ts'
 export interface MessageInterfacesInput {
   /** The floor this message is. */
   floor: number
-  /** Its text, **after** display regex — see `RENDER.md` on ordering. */
+  /** Its text, **after** display regex — see `notes/apps/iris-web/RENDER.md` on ordering. */
   text: string
   /**
    * Whether a frame may exist for this floor at all.

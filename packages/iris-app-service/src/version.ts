@@ -101,7 +101,7 @@ export function versionInfo(): VersionInfo {
  * inline in the plugin entry would leave the payload tested, the consumer's
  * expression tested, and **the thing that answers the request** reachable by
  * nothing: `node --test` cannot load an entry module with side effects, which
- * is exactly why field-copying code accumulates there. See `METHODS.md` §22.
+ * is exactly why field-copying code accumulates there. See `notes/METHODS.md` §22.
  *
  * `exact`, not `prefix`: upstream serves one path, and a prefix would also
  * answer `/version/anything` — routes upstream does not have.

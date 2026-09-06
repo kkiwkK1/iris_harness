@@ -1356,7 +1356,7 @@ function reportBodySummary(run: string, post: (message: FromFrame) => void): voi
    * permanent line under every card saying that the frame which was never going
    * to draw has not drawn.
    *
-   * But [OVERLAY-CARDS.md] found a third class of card that draws *into* the
+   * But [notes/apps/iris-web/OVERLAY-CARDS.md] found a third class of card that draws *into* the
    * script frame: it never touches `parent.*`, and upstream's `parent_jquery.js`
    * makes its `$` the page's, so `.appendTo('body')` lands on the host page.
    * Here `$` is the frame's own, so the card's whole interface is built in a

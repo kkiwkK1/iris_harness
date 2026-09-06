@@ -1,7 +1,7 @@
 /**
  * Filling the EJS evaluator's `Snapshot`, and applying what it writes back.
  *
- * The contract is `packages/iris-compat-prompt-template/SNAPSHOT.md`; this is
+ * The contract is `notes/packages/iris-compat-prompt-template/SNAPSHOT.md`; this is
  * the host half of it. Two properties do the work, and both fail silently if
  * they are got wrong:
  *

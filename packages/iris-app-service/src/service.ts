@@ -909,7 +909,7 @@ export class IrisAppService {
         // What the route genuinely lacks is not authority but **visibility**:
         // a card-supplied string reaching the same writer as an installed file
         // should not do so silently. So each op is named on the way through.
-        // See `DEVIATIONS.md` for the three options and why this one.
+        // See `notes/packages/iris-app-service/DEVIATIONS.md` for the three options and why this one.
         if (outcome.ops.length > 0) {
           const before = entry.header.chat_metadata
           for (const performed of outcome.ops) {

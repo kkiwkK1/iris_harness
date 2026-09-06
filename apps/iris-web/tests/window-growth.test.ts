@@ -1,7 +1,7 @@
 /**
  * Growing the reading window must not rebuild a frame that is already up.
  *
- * `WINDOWING.md` §七 acceptance 2 is worded as a browser observation — press
+ * `notes/apps/iris-web/WINDOWING.md` §七 acceptance 2 is worded as a browser observation — press
  * "show earlier" and watch that no existing frame is rebuilt. The mechanism
  * underneath is not visual, though: a message frame is rebuilt exactly when its
  * row unmounts or when one of `useMessageInterfaces`'s effect dependencies

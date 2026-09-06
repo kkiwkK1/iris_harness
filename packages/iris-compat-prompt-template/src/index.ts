@@ -14,7 +14,7 @@
  * Nothing the template can reach is a host object; every write it performs comes
  * back described, for the host to apply through its own entry points.
  *
- * `DEVIATIONS.md` lists where this deliberately differs from upstream, and what
+ * `notes/packages/iris-compat-prompt-template/DEVIATIONS.md` lists where this deliberately differs from upstream, and what
  * each difference was measured to cost.
  *
  * @module @iris/compat-prompt-template

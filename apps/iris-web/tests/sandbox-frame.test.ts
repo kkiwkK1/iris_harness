@@ -2895,14 +2895,14 @@ test('an existence check never throws, on any surface, for any upstream member',
   /*
    * **`typeof x` must be safe even where `x()` is refused.**
    *
-   * [OVERLAY-CARDS.md, V1.5.4] That card probes every Tavern Helper member with
+   * [notes/apps/iris-web/OVERLAY-CARDS.md, V1.5.4] That card probes every Tavern Helper member with
    * `typeof … === 'function'` and warns-and-degrades when one is missing. If a
    * refusal threw at *property access* time, the probe itself would explode and
    * the card's own fallback — the thing it wrote to survive a missing member —
    * would never run. A named refusal that prevents the degradation it was meant
    * to make legible is worse than an absence.
    *
-   * `COHABITATION.md` already fixes this for `has`/`in` on the virtual parent.
+   * `notes/apps/iris-web/COHABITATION.md` already fixes this for `has`/`in` on the virtual parent.
    * This walks the whole declared upstream surface across all three faces, so
    * the rule cannot hold in one place and lapse in another.
    */

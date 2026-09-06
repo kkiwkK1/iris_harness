@@ -166,7 +166,7 @@ export const OFF_ST_SURFACE: readonly string[] = [
    * A card reading `SillyTavern.getVariables` now gets `undefined` and a report,
    * which is the correct answer — the same card on real SillyTavern gets
    * `undefined` and silence. **The reports are expected new noise, not a
-   * regression**; see `DEVIATIONS.md`, which says so in writing precisely because
+   * regression**; see `notes/apps/iris-web/DEVIATIONS.md`, which says so in writing precisely because
    * predicted noise and an unpredicted regression look identical in a log.
    *
    * Deliberately *not* moved, though the names invite it: `generate`,

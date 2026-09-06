@@ -26,8 +26,8 @@
 - 前端块 / frame 楼:`npm run census:frontend-blocks`
 - 世界书来源与重复:`scripts/worldbook-source-census.mjs`
 - 脚本按钮:`npm run census:card-scripts`
-- 渲染后的 frame / 片段分布、`<pre>` 归属:见 `apps/iris-web/RENDER.md` 与
-  `apps/iris-web/INLINE-HTML.md`
+- 渲染后的 frame / 片段分布、`<pre>` 归属:见 `notes/apps/iris-web/RENDER.md` 与
+  `notes/apps/iris-web/INLINE-HTML.md`
 
 一句总结这批的形状:**所有 frame 楼都来自 display 正则展开**,界面由正则生成、由文档标记
 识别。下面那张 `V1.5.4_` 是第一张不属于这一族的卡。
@@ -827,7 +827,7 @@ if (typeof toastr !== "undefined") toastr.success("已设为壁纸");   // ← �
 
 ### 谓词与它依据的 realm 规则
 
-取自 `apps/iris-web/OVERLAY-CARDS.md` §二:上游 `parent_jquery.js` 全文两行
+取自 `notes/apps/iris-web/OVERLAY-CARDS.md` §二:上游 `parent_jquery.js` 全文两行
 (`window.$ = window.parent.$`),所以脚本 frame 里的 `$` **就是宿主页面的 jQuery**,
 其默认查找上下文是宿主 document。于是:
 
@@ -1799,7 +1799,7 @@ class RA {
 等真人手点。**注意 `elementFromPoint` 已命中 IFRAME**,所以"点不到"这一层已经排除,
 剩下的是合成事件本身还是卡的处理器,**目前分不出来,不要先归因**。
 
-#### 方案 C 验收单(对 `apps/iris-web/OVERLAY-HOST.md` b82ac8f)
+#### 方案 C 验收单(对 `notes/apps/iris-web/OVERLAY-HOST.md` b82ac8f)
 
 方案 C = **脚本 frame 自己就是全视口覆盖层表面**(`position:fixed; inset:0;
 pointer-events:none; background:transparent`)。路线 ①(`$('body')` 落自身 body)与

@@ -320,7 +320,7 @@ export interface FrameViewport {
  * transient state, not the reason the screen was blank.
  *
  * So this reports the number and stops. The shout cost a round of debugging
- * aimed at layout, which is [METHODS.md §二十]'s rule about a report signing
+ * aimed at layout, which is [notes/METHODS.md §二十]'s rule about a report signing
  * its own name: this instrument knows the box it measured, and it does not know
  * why the box is that size.
  * @param viewport - the frame's `documentElement` client box.

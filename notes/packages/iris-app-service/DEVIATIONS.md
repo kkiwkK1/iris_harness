@@ -920,7 +920,7 @@ out of it. **Structurally inapplicable rather than withheld**: it depends on
 another *extension* being installed, not on a host capability, so there is
 nothing for this host to implement. The card already degrades on its own —
 its guard resolves `false` — so nothing is broken by the absence. Source:
-`apps/iris-web/UPSTREAM-FRAME-ORIGIN.md` §六.
+`notes/apps/iris-web/UPSTREAM-FRAME-ORIGIN.md` §六.
 
 **What would overturn this.** Iris growing an extension ecosystem of its own, at
 which point "read another extension's data" becomes a capability question rather

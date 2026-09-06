@@ -11,7 +11,7 @@
  * disk.
  *
  * This host does not write runtime state into a shared card file — the same
- * ruling that moved `script.data` out (`DEVIATIONS.md §1`), and this is the
+ * ruling that moved `script.data` out (`notes/packages/iris-app-service/DEVIATIONS.md §1`), and this is the
  * structurally identical case: the card *declares* a button table, and
  * `replaceScriptButtons` changes it while running. Splitting the two across two
  * persistence schemes would leave nobody able to say which kind of runtime state
@@ -24,7 +24,7 @@
  * to a real SillyTavern carries its declared buttons and not the runtime ones —
  * a script that rearranged its own panel finds the arrangement gone. That
  * follows from seed semantics and is the price of not writing the shared file;
- * it is recorded in `DEVIATIONS.md` rather than left for someone to meet.
+ * it is recorded in `notes/packages/iris-app-service/DEVIATIONS.md` rather than left for someone to meet.
  *
  * @module @iris/app-service/script-buttons
  */

@@ -6,7 +6,7 @@
  *
  * Skips when the corpus is absent. Always exits 0: a caliper, not a test.
  * The findings this produced, and the design decisions they support, are in
- * `SETTINGS.md`.
+ * `docs/SETTINGS.md`.
  *
  * ## THIS CALIPER IS BRITTLE, AND THE OTHERS ARE NOT
  *
@@ -21,7 +21,7 @@
  * than produce a wrong number (the marker lookup throws), but it will stop
  * answering.
  *
- * **When it breaks:** the conclusions already recorded in `SETTINGS.md` do not
+ * **When it breaks:** the conclusions already recorded in `docs/SETTINGS.md` do not
  * expire — they were true of the version measured. But **no new number may be
  * quoted from this script until the extraction has been repaired and re-run.**
  * A half-working extractor is the one outcome to refuse: it would silently

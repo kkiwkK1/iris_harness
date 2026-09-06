@@ -29,7 +29,7 @@ export type Scope = 'global' | 'initial' | 'local' | 'message'
  *
  * `content` arrives **already macro-substituted and regexed**. Both of those are
  * host functions, and running them host-side is what lets the whole batch be one
- * round trip. The cost is deviation 4 in `DEVIATIONS.md`: upstream substitutes
+ * round trip. The cost is deviation 4 in `notes/packages/iris-compat-prompt-template/DEVIATIONS.md`: upstream substitutes
  * per `getwi` call, we substitute once per batch.
  */
 export interface WorldInfoEntry {

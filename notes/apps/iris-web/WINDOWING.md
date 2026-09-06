@@ -65,7 +65,7 @@ export interface ChatView { chatId, title, characterId?, messages: MessageView[]
 ### 决定：尾 N 条 + 显式按钮，不做无限滚动
 
 照上游 [上游] `script.js:1475-1488` / `:1431-1473`。**论据不是「上游这么做」，而是上游
-自己的 `loadUntilMesId`**（`scripts/power-user.js:2800-2812`）——它把「跳到第 N 楼」实现成
+自己的 `loadUntilMesId`**（`public/scripts/power-user.js:2800-2812`）——它把「跳到第 N 楼」实现成
 反复调用「加载更多」，这证明按钮语义足够支撑跳转，不需要滚动监听。
 
 ### N 取多少
