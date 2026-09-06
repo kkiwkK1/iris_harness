@@ -23,6 +23,10 @@
 //     it is subtracted, and counted separately as `arrivedBeforeSettle`.
 //     `settled` says whether the wait ever got its quiet moment; a run that hit
 //     the cap has a time-based delta again, and must be read as one.
+//     NOTE the baseline and the final read are NOT nested sets: clicking a chat
+//     of a different CHARACTER clears `cardReports`, so `rowsNow` can be smaller
+//     than the baseline. The set difference is still the right answer; a reader
+//     expecting "final ⊇ baseline" will think the instrument broke.
 //   - every reading prints the observation window it was taken at. All the
 //     judgements here are negatives, and a negative without its window cannot
 //     be reviewed by the next reader.
@@ -138,7 +142,11 @@ if (mode === 'render') {
   const WIDTH = Number(widthArg ?? 1680)
   const HEIGHT = Number(heightArg ?? 1050)
   const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-  const CDP_PORT = process.env.CDP_PORT ?? '9437'
+  // Default CDP port is offset by the pid: two runs back to back would
+  // otherwise fight over one debug port, and the loser dies as
+  // "chrome never came up" — which reads as a broken environment, not as a
+  // collision. An explicit CDP_PORT is honoured verbatim (see qa/README.md).
+  const CDP_PORT = String(Number(process.env.CDP_PORT ?? 9437) + (process.env.CDP_PORT === undefined ? process.pid % 100 : 0))
   const HARD_DEADLINE = setTimeout(() => { console.log('HARD TIMEOUT'); process.exit(3) }, 180_000)
   const outDir = new URL('./results/', import.meta.url)
   mkdirSync(outDir, { recursive: true })

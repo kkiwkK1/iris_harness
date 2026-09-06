@@ -19,7 +19,11 @@ if (target === undefined) {
 const WIDTH = Number(widthArg ?? 1680)
 const HEIGHT = Number(heightArg ?? 1050)
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-const CDP_PORT = process.env.CDP_PORT ?? '9334'
+// Default CDP port is offset by the pid: two runs back to back would
+// otherwise fight over one debug port, and the loser dies as
+// "chrome never came up" — which reads as a broken environment, not as a
+// collision. An explicit CDP_PORT is honoured verbatim (see qa/README.md).
+const CDP_PORT = String(Number(process.env.CDP_PORT ?? 9334) + (process.env.CDP_PORT === undefined ? process.pid % 100 : 0))
 const HARD_DEADLINE = setTimeout(() => { console.log('HARD TIMEOUT'); process.exit(3) }, 180_000)
 
 const outDir = new URL('./results/', import.meta.url)

@@ -2932,6 +2932,81 @@ ST 最后一次清理发生在文件 **675 行**时,那时窗口是 `[612, 654]`
   **必须指名是哪个图标**,或直接用上面那张干净卡。
 - **状态**:7b 实测中。
 
+### 11. 仪器自身的读数(`qa/`,不是卡族)
+
+**这一节不验卡,验的是_量卡的那些东西_。** 放在本单里,是因为上面每一格的可信度都以它们为前提;
+`qa/README.md` 是操作面,这里只留**定案读数与口径**。
+
+#### `qa/measure-frame-fit.mjs` —— 定案读数(2026-09-06,8791)
+
+报告:`qa/results/u-frame-fit-baseline-2026-09-06T12-02-21-report.json`。`run` 头原文:
+
+```json
+{ "tag": "baseline", "at": "2026-09-06T12:02:21.058Z",
+  "viewports": [[1920,1080],[1366,768]],
+  "profile": { "base": "http://127.0.0.1:8791", "characters": 9, "chats": 10,
+    "characterIds": ["1_5","2","2.1.0","哈人冰恋世界","人偶演出Lights-ON","尸变纪元-v0","Lights_ON","v0.5NSFW","V1.5.4_"],
+    "firstChatId": "尸变纪元-v0-20260906-194748" } }
+```
+
+结果 `resolved 3 of 5, measured 6 of 6`,exit 0;两张缺卡**被点名并带原因**
+(`no character whose name starts with "新·架空政治经济模拟器"` / `"全职高手"`)。
+
+**两处同名歧义在同一跑里选了_相反_的一侧**,这是「取列表第一个是任意的」最直接的证据:
+
+| key | 前缀 | 选中 | 同名的两个 id |
+|---|---|---|---|
+| `shibian` | 尸变纪元 | **`尸变纪元-v0`**(新导入那张) | `尸变纪元-v0` / `v0.5NSFW` |
+| `hanren` | 哈人冰恋世界 | **`1_5`**(原有那张) | `1_5` / `哈人冰恋世界` |
+| `shenyin` | 不要被神隐挑战 | `V1.5.4_` | —(`characterAmbiguous: false`,阴性对照) |
+
+成因是 `character.import` **不覆盖也不拒绝**,而是按**卡名**派生 id 再去重
+(`library.ts` 的 `uniqueId(toId(name))`),所以往一个已有该卡的 profile 里再导一次,
+就多出一张**同名不同 id**的卡。歧义**只记不解**(记 `characterAmbiguous` 与
+`charactersSharingThisName`),与下层的 `titleAmbiguous` 对称。
+
+**`frames` 2 / 0 落在同一跑的两侧,把「同意门不是几何」坐实:**
+
+```
+shibian@1920 frames=2 occlusions=2 | hanren@1920 frames=0 | shenyin@1920 frames=0
+shibian@1366 frames=2 occlusions=2 | hanren@1366 frames=0 | shenyin@1366 frames=0
+```
+
+`shibian` 解析到的是**已授脚本权**的新卡,`hanren` 解析到的是**未授权**的旧卡。
+首跑六格全 0 时我按 `script.list` 查出是同意门未答;这一跑把同一个结论摆在**同一次运行的两侧**,
+不再依赖另一次查询。**`occlusions=2` 是读数不是缺陷** —— 那一格量的是被塞了裸 HTML 的夹具局。
+
+> **下界断言的两条,缺一条都能被绕过**:`K ≥ 1`(**0 也是一个完全瞎掉的解析器会给的答案**)
+> 与「每张解析到的卡至少量到一格」(**单独用是空集上的全称量词,恒真**)。**帧数不进门禁**。
+> 齿检:`node qa/measure-frame-fit.mjs baseline nosuchkey` → 两条失败行同时点火,exit 1。
+
+#### `qa/bare-html-check.mjs` —— settle 基线的读数与齿检
+
+判据是**卡报告行的增量**,基线取在**列表安静之后**(1.5 s 无新行,15 s 上限)。
+
+| | CHAT_B(碎片与未闭合) | CHAT_A(裸组件) | **噪声启动局的齿检** |
+|---|---|---|---|
+| `settled` / `settleWaitedMs` | true / 1577 ms | true / 1573 ms | true / **3939 ms** |
+| boot → settled 基线行数 | 26 → 26 | 28 → 28 | **33 → 35** |
+| `arrivedBeforeSettle` | `[]` | `[]` | **2 行,非空** |
+| `neverClosedAddedThisRun` | **true**(channel `interface`) | **false** | false(正确) |
+
+**前两跑不是齿检,是"不碍事"**:`settleWaitedMs` 恰好是静默期加一次轮询,说明列表本来就安静。
+齿检的做法是**先 render 一张脚本多的卡**(`G验收-冰恋基线`,4 脚本、已授权)把它顶成启动局,
+再 render 目标 —— 于是四个数一起动,方向都对,被挡下的两行是启动局自己的帧流水:
+
+```
+"the frame's own viewport is 1038x870"
+"interface after 6s: 12 children, 53 descendants, 48 of them with a visible box, 2 style elements in …"
+```
+
+**旧版本会把这两行记成目标局「本次新增」。**
+
+> **口径两条,读数时必须带上:**
+> ① `channel` 取自**行自己的标签元素**,不是「页面某处出现 interface 这个词」;
+> ② **基线与终读不是包含关系** —— 换角色会清空 `cardReports`,所以 `rowsNow` 可能比基线小
+> (实测 35 → 28),差集仍然正确,**但默认「终读 ⊇ 基线」的读者会以为仪器坏了**。
+
 ### 未列进本单的
 按钮以外的 TavernHelper API 面、`injectPrompts`(n=1,V1.5.4_)、世界书写(n=1,V1.5.4_)、
 `getPreset`(n=1,且只传字面量 `'in_use'`)、`EjsTemplate.evalTemplate` 真调用(n=1,银麒赎世)——

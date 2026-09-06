@@ -22,7 +22,11 @@ const CHROME = process.env.IRIS_CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Ap
 const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8825/'
 // `CDP_PORT` is the name the other QA scripts use; `CHROME_DEBUG_PORT` still
 // answers so an existing invocation of this one keeps working.
-const DEBUG_PORT = Number(process.env.CDP_PORT ?? process.env.CHROME_DEBUG_PORT ?? 9338)
+// Default CDP port is offset by the pid: two runs back to back would
+// otherwise fight over one debug port, and the loser dies as
+// "chrome never came up" — which reads as a broken environment, not as a
+// collision. An explicit CDP_PORT is honoured verbatim (see qa/README.md).
+const DEBUG_PORT = Number(process.env.CDP_PORT ?? process.env.CHROME_DEBUG_PORT ?? 9338) + (process.env.CDP_PORT === undefined && process.env.CHROME_DEBUG_PORT === undefined ? process.pid % 100 : 0)
 const CORPUS = process.env.IRIS_CORPUS ?? 'D:/workspace/小项目/iris_分支/测试用卡'
 const CARD = `${CORPUS}/v0.5NSFW.png`
 
