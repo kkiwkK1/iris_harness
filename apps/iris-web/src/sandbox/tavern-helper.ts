@@ -138,6 +138,13 @@ export interface TavernHelperFrameHost {
   context: () => ScriptContext | undefined
   /** Which entry of `script.list` is running. */
   scriptId: () => string | undefined
+  /**
+   * The floor this frame renders, when it is a message frame.
+   *
+   * Undefined in a script frame, where `getCurrentMessageId` must keep
+   * upstream's throw. Answered from the shell's own `currentMessageId`.
+   */
+  currentMessageId?: () => number | undefined
   /** Ask the host to do something the frame cannot. */
   call: (method: string, params: Record<string, unknown>) => Promise<unknown>
   /** Run a slash command through the host's parser. */
@@ -1688,25 +1695,33 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       return undefined
     },
     /**
-     * Which message this frame belongs to — refused in a script frame.
+     * Which message this frame belongs to — the floor in a message frame, a
+     * refusal in a script frame.
      *
      * Upstream is explicit: *"只能对楼层消息 iframe 使用 … 如果不在楼层消息
      * iframe 内使用, 将会抛出错误"*. A script frame is not a message frame, so
-     * throwing here is not a limitation — it is the contract.
+     * throwing there is not a limitation — it is the contract.
      *
-     * This used to answer "the last message", which looked like a harmless
-     * placeholder and was actually an invention **more permissive than
-     * upstream**: a card relying on it could not survive in real SillyTavern, so
-     * the leniency has no beneficiary and quietly hides a card that is broken
-     * everywhere else. The real answer belongs to a message frame and arrives
-     * with the message-render pipeline, where it lands on the right frame type
-     * without anyone migrating.
+     * This used to throw **everywhere**, on the reasoning that "the real answer
+     * arrives with the message-render pipeline". The pipeline arrived and the
+     * throw stayed, and the cost was measured: 建国控制台's initialisation opens
+     * with `typeof getCurrentMessageId === 'function'` — true, it is a function —
+     * then calls it, catches the throw, and reports "MVU 未连接" while `mvuReady`
+     * has already been set, so the whole 暗线 write is skipped without a word
+     * anywhere a reader looks. A placeholder that answers a probe is worse than
+     * one that is absent: it passes the guard and fails the call. The shell now
+     * tells every message frame its floor (`currentMessageId`), and the member
+     * answers with it.
      */
     getCurrentMessageId: (): number => {
-      throw new UnsupportedApiError(
-        'getCurrentMessageId',
-        'Upstream throws outside a message iframe; the real answer arrives with the message-render pipeline.',
-      )
+      const floor = host.currentMessageId?.()
+      if (floor === undefined) {
+        throw new UnsupportedApiError(
+          'getCurrentMessageId',
+          'Upstream throws outside a message iframe; this frame is not one.',
+        )
+      }
+      return floor
     },
     getScriptId: (): string | undefined => host.scriptId(),
     /**

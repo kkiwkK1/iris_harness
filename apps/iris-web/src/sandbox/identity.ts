@@ -153,11 +153,10 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   eventEmit: 'shared',
   getLastMessageId: 'shared',
   /**
-   * Shared because it refuses identically for every script.
-   *
-   * Not an identity member despite naming a message: in a *script* frame
-   * upstream throws, so there is no per-script answer to get wrong. When message
-   * frames exist, the answer belongs to the frame, not to the script.
+   * The floor a message frame renders, answered from the shell's own word. It
+   * is a fact about the frame, not about which script asks — and in a script
+   * frame it refuses identically for every script, which is the same kind of
+   * shared answer `getLastMessageId` gives.
    */
   getCurrentMessageId: 'shared',
   getChatMessages: 'shared',

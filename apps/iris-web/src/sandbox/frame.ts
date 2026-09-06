@@ -267,6 +267,14 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   // Until the shell reports, fall back to the frame's own size. A card measuring
   // the viewport before the first message gets a real number rather than zero.
   let viewport = { width: 0, height: 0 }
+
+  /*
+   * The floor this frame renders, as the shell told it. Undefined is the
+   * legitimate state of a script frame — there, `getCurrentMessageId` must
+   * throw, exactly as upstream does outside a message iframe — so the flag is
+   * the value, and the member reads it through the closure below.
+   */
+  let currentFloor: number | undefined = undefined
   const readViewport = (): { width: number, height: number } => viewport
 
   /*
@@ -1767,6 +1775,9 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   const tavernHelper = env.members.createFrameTavernHelper({
     context: () => context,
     scriptId: () => scriptId,
+    // The shared surface answers `getCurrentMessageId` too — a fact about the
+    // frame, not about which script asks — so the floor rides here as well.
+    currentMessageId: () => currentFloor,
     reportGap,
     reportFault,
     call: callAction,
@@ -1894,6 +1905,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     const bound = env.members.createFrameTavernHelper({
       context: () => context,
       scriptId: () => forScript,
+      currentMessageId: () => currentFloor,
       reportGap,
       reportFault,
       call: callAction,
@@ -2132,6 +2144,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       return
     }
     if (message.type === 'context') {
+      // The floor this frame renders in, when the shell said one. A message
+      // frame carries it from build; a script frame never receives it, and
+      // `getCurrentMessageId` keeps upstream's throw there.
+      if (message.floor !== undefined) currentFloor = message.floor
       /*
        * The whole snapshot is replaced — **except the metadata**, which the frame
        * keeps for its own lifetime.

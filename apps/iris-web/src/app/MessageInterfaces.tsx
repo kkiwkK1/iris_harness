@@ -233,6 +233,9 @@ export function MessageInterfaces({
           networkGranted: false,
           bundleOrigin: window.location.origin,
           context: current.context,
+          // The floor this interface renders in — what `getCurrentMessageId()`
+          // answers for a status console writing its MVU layer.
+          currentMessageId: floor,
           viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
           fetch: async () => {
             throw new Error('a message frame fetches nothing on the shell’s behalf')
