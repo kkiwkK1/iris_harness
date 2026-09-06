@@ -25,6 +25,7 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { since, toBase64 } from './format.ts'
+import { CARD_FILE_ACCEPT } from './card-files.ts'
 import type { Language } from './i18n/strings.ts'
 import type { ChatSearchHit } from '@iris/protocol'
 
@@ -341,7 +342,7 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
         <input
           ref={picker}
           type="file"
-          accept=".png,.jpg,.jpeg,.json,.charx"
+          accept={CARD_FILE_ACCEPT}
           multiple
           hidden
           onChange={async event => {

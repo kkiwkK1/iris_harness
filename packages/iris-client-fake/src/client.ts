@@ -28,7 +28,7 @@ import {
 } from '@iris/protocol'
 
 import { chunk, replyFor, reasoningFor } from './corpus.ts'
-import { readCard } from './card.ts'
+import { cardFileExtension, readCard } from './card.ts'
 import { fakeItemization } from './prompt.ts'
 import {
   activateConnection,
@@ -500,6 +500,12 @@ class InMemoryClient implements FakeClient {
 
       case 'character.import': {
         const { filename, content } = params as RpcRequest<'character.import'>
+        // The same refusal, in the same words, as the host's `library.import`:
+        // a `.charx` dropped on the fake must fail the way it fails against a
+        // host, or the shell's refusal notice can only be seen with one running.
+        if (cardFileExtension(filename) === '.charx') {
+          throw new FakeRpcError('unsupported', '.charx cards are not supported yet')
+        }
         const card = readCard(filename, content)
         const character: CharacterSummary = {
           /*

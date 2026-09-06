@@ -85,6 +85,24 @@ export interface ReadCard {
 }
 
 /**
+ * The card file extensions the host stores, lowercased, dot included.
+ *
+ * A copy of `packages/iris-app-service/src/library.ts` `EXTENSIONS`, which the
+ * browser bundle cannot import; `apps/iris-web/tests/card-files.test.ts` reads
+ * the host's source and holds this list to it. `.charx` is deliberately absent:
+ * the host refuses it by name, and a fake that quietly named a `.charx` after
+ * its filename would let the drop target look like it worked where the host
+ * says no.
+ */
+export const CARD_FILE_EXTENSIONS: readonly string[] = ['.png', '.jpg', '.jpeg', '.json']
+
+/** The lowercased extension of a filename, dot included, or the empty string. */
+export function cardFileExtension(filename: string): string {
+  const dot = filename.lastIndexOf('.')
+  return dot === -1 ? '' : filename.slice(dot).toLowerCase()
+}
+
+/**
  * Read the display fields of an imported card.
  *
  * Falls back to the filename rather than failing: the import path should still
@@ -95,7 +113,11 @@ export interface ReadCard {
  * @returns the fields the library row needs.
  */
 export function readCard(filename: string, base64: string): ReadCard {
-  const fallback = filename.replace(/\.(png|json|charx)$/i, '').trim()
+  const extension = cardFileExtension(filename)
+  const stripped = CARD_FILE_EXTENSIONS.includes(extension)
+    ? filename.slice(0, filename.length - extension.length)
+    : filename
+  const fallback = stripped.trim()
   const bytes = bytesOf(base64)
   if (bytes === undefined) return { name: fallback === '' ? filename : fallback, tags: [] }
 
