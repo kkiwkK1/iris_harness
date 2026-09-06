@@ -1441,6 +1441,44 @@ have looked identical from the outside while being a different operation.
 
 ## Host
 
+**`GET /version` answers `pkgVersion: "1.18.0"` — SillyTavern's version, not
+Iris's.** Upstream's route (`src/server-main.js:272` → `getVersion`,
+`src/util.js:136-164`) returns `{agent, pkgVersion, gitRevision, gitBranch,
+commitDate, isLatest}`, and cards read `pkgVersion` to ask **which behaviour
+set they are talking to**. The honest answer to that question is the version of
+the behaviour set, which is the release this host reproduces. **What the user
+sees:** a host that reports itself as SillyTavern 1.18.0, which reads as Iris
+pretending to be something else. **Not fixed because** the alternative is worse
+*and* less true: MagVarUpdate opens with
+`fetch('/version').then(e => e.json()).then(e => e.pkgVersion).catch(() => '1.0.0')`,
+so reporting `0.1.0` — or not answering at all, which was the state until now
+and cost two red reports per MVU card per chat — pushes every version-gated
+card onto a branch written for a SillyTavern older than any that shipped. A
+card asking whether `getCharWorldbookNames` exists gets a right answer from
+`1.18.0` and a wrong one from `0.1.0`.
+
+Nothing is concealed by it: the payload carries an extra `iris: {version}`
+field upstream has no equivalent for, so "which host is this" has its own
+answer rather than being crammed into the field that answers a different
+question. Two divergences inside the reproduction, both deliberate:
+
+- **`agent` keeps upstream's shape but not its maintainer.** Upstream's literal
+  is `SillyTavern:${pkgVersion}:Cohee#1207`; this host sends
+  `SillyTavern:1.18.0:Iris`. That string exists to identify a client to the
+  **Horde API** — reproducing a version number states which behaviour we
+  implement, while reproducing a named person's handle in a string built to be
+  sent to a third party is a different act, and nothing here talks to the Horde.
+  Measured **0 reads** of this field across the fetched bundles, so the
+  substitution costs no observed consumer.
+- **The three git fields are `null` and `isLatest` is `true`.** Not invented:
+  that is precisely what upstream returns when `git` is absent (`util.js:159`'s
+  catch leaves them at their initial values), which is what a release-zip
+  install reports.
+
+**What would overturn this.** A card that branches on `agent`'s third segment,
+or one that treats `pkgVersion` as "which program" rather than "which
+behaviour" — the second would show up as a card refusing to run at all rather
+than degrading.
 
 **Injection order inside a group is the keys' lexicographic order.**
 Upstream walks `Object.keys(extension_prompts).sort()` (`script.js:3249`), so

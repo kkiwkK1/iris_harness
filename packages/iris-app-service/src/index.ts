@@ -20,6 +20,7 @@ import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { ChatCompletionPreset } from '@iris/preset'
 import { DEFAULT_TIMEOUTS, OpenAiCompatAdapter } from '@iris/llm-openai-compat'
+import { versionRoute } from './version.ts'
 
 import { BackupStore, DEFAULT_BACKUP_KEEP } from './backups.ts'
 import { ChatStore } from './chats.ts'
@@ -789,6 +790,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }),
     `irisApp: GET ${avatarPath}`,
   )
+
+  // The route object is built in `version.ts` so a test can hold the same one
+  // the server gets; this line is the only part no test can reach.
+  ctx.effect(() => ctx.webServer.register(versionRoute()), 'irisApp: GET /version')
 
   const bundlePath = config.scriptBundlePath ?? '/iris/script-bundle'
   const bundles = new ScriptCache({
