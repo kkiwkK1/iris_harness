@@ -994,20 +994,6 @@ class InMemoryClient implements FakeClient {
       }
 
       case 'debug.reports': {
-        // Placeholder in this client's existing refusal pattern, so the tree
-        // compiles; the sandbox half is 7b's to design. Refused rather than
-        // answered with an empty page for the same reason the host refuses when
-        // it holds no buffer: declaring the kinds with no records reads as
-        // "collected, nothing happened", and a fake that has collected nothing
-        // would be asserting all-clear about a host that is not there.
-        throw new FakeRpcError(
-          'unsupported',
-          'the fake client retains no diagnostic reports: it has no host bus to collect them from,'
-            + ' and an empty page would read as "nothing went wrong" rather than "nothing was watching"',
-        )
-      }
-
-      case 'debug.reports': {
         /*
          * Answered, and the answer is **empty** rather than invented.
          *

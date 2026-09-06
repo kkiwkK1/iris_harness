@@ -66,7 +66,10 @@ try {
   }
   globalThis.localStorage = globalThis.window.localStorage
   globalThis.matchMedia = globalThis.window.matchMedia
-  globalThis.document = { documentElement: { style: { setProperty() {} }, setAttribute() {} } }
+  // The overrides layer in theme.ts clears a token with removeProperty and sets
+  // one with setProperty; the stand-in needs both or the module's import-time
+  // applyThemeDocument() throws before any component renders.
+  globalThis.document = { documentElement: { style: { setProperty() {}, removeProperty() {} }, setAttribute() {} } }
 
   createRequire(pathToFileURL(bundle))(bundle)
   assert.ok(true)
