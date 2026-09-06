@@ -1571,3 +1571,32 @@ windows where it used to run full width — under the prose, which is the
 point. The lane's width is the UA's thin scrollbar, not a token, so the
 *reserved* amount is not project-owned; the *parity* is, because both
 surfaces ask the same question of the same browser.
+
+---
+
+## 41. A card's remote stylesheet is refused, and its font never arrives
+
+**Kind:** compatibility gap — the mechanism that closes it is ruled and queued, not built.
+
+**Upstream.** There is no policy layer here at all. SillyTavern mounts helmet with the CSP switched off — `app.use(helmet({ contentSecurityPolicy: false }))`, `[ST] src/server-main.js:103-106` — and that is its only CSP source: `public/index.html` carries no `<meta http-equiv>`, and the string `Content-Security-Policy` occurs nowhere under `public/` or `src/` (excluding `third-party/` and `lib/`). The message frame adds none either: TavernHelper's generated document (`[TH] src/panel/render/iframe.ts:78-103`) is a charset meta, a viewport meta, an optional `<base>`, one `<style>`, the third-party head block and four scripts — no CSP meta, and no `sandbox` attribute anywhere in `src/panel/render/` or `src/panel/script/`. **And the host frame is itself doing the thing in question**: `[TH] src/iframe/third_party_message.html` links two remote stylesheets and five remote scripts from `testingcf.jsdelivr.net`, plus a sixth remote script at `iframe.ts:95`. So a card adding one more `<link rel="stylesheet">` to any host is doing what the frame around it already does. (Read from the operator's install: ST `1.18.0`, TH `4.9.1`.)
+
+**Iris** refuses it. `style-src` admits `fonts.googleapis.com` and `'unsafe-inline'` by default and widens to `https:` only under a per-card network grant; `font-src` is `data: https://fonts.gstatic.com` **unconditionally** (`sandbox/srcdoc.ts:120-124`, `:156`). The refusal is named rather than silent: the bootstrap listens for `securitypolicyviolation` and posts the blocked host to the shell, which shows it beside the frame with the directive that refused it.
+
+**Why not an allow-list entry.** Ruled, 2026-09-06: `fontsapi.zeoseven.com` is one card and the next card is a different host, so a list keyed on hosts observed in the corpus is a per-card fix wearing a policy's clothes. This is one family — *a card referencing a remote stylesheet or font* — and the mechanism-layer answer is a **host-side proxy for remote stylesheets**, on the route the script bundles already take, rewriting the fetched CSS's own `@font-face` `src` to proxy URLs so `style-src`/`font-src` stay at `self`. Queued in `ROADMAP.md`; the reading behind it is in `SANDBOX.md`.
+
+**Measured, not inferred.** `Lights_ON.png`, read through `decodeCardPng`: the font link is **not in the greeting**. `first_mes` is three characters (`嘎嘎嘎`) and `alternate_greetings[0]` is three more (`咕咕咕`); the 30 188-character document is produced by the card's regex layer at display time. `data.extensions.regex_scripts` holds five scripts, all enabled, all `placement: [2]` (`AI_OUTPUT`, `[ST] public/scripts/extensions/regex/engine.js:281-287`), and **all five** carry the same pair of lines in a `<head>` they write themselves:
+
+```html
+<link href="https://fontsapi.zeoseven.com/925/main/result.css" onload="this.rel='stylesheet'" rel="preload" as="style" crossorigin />
+<noscript><link rel="stylesheet" href="https://fontsapi.zeoseven.com/925/main/result.css" /></noscript>
+```
+
+for `body { font-family: "Ark Pixel 12px Prop latin", sans-serif; font-size: 8px; }`. Ten references across five emission points, in one card — which is why this is filed as a family and not as a card.
+
+**Four gates sit on those two lines, and only the first has been observed.**
+`style-src` governs the `as="style"` preload — that is the refusal in the report. `font-src` governs the faces named inside that CSS, which resolve against the CSS's own URL and may live on a **different host**; this is the shape already encoded for Google at `srcdoc.ts:88-91` (*"`fonts.googleapis.com` serves the CSS, `fonts.gstatic.com` the faces — both are needed or neither works"*). `script-src` governs the `onload` rel-swap, and that gate is already open (`'unsafe-inline'`, `srcdoc.ts:153`) — the `<noscript>` twin is inert in a scripted frame, so it is a no-JS fallback and not a second path. And the preload carries **`crossorigin`**, making it a CORS-mode fetch from an **opaque origin**, so the response must answer `Access-Control-Allow-Origin: null` or `*` or the browser discards it *after* CSP has allowed it. **A host-side proxy meets none of the four; a per-host allow-list would open only the first.**
+
+**What it costs.** The document typesets in the fallback `sans-serif` at 8px and the card's pixel font never arrives. The handoff note for that card records a second-order effect — the late/absent font as a disturbance source in the height loop (`NOTES-handoff.md` §2, their observation, not re-measured here). **And the existing per-card network grant does not close it**: a granted card gets the stylesheet, because the grant widens `style-src` to `https:`, and still gets no faces, because `font-src` has no grant branch — so the visible outcome moves from "no font, `style-src` named" to "no font, `font-src` named, pointing at a host nobody has seen yet". Out of scope here and unchanged: the same card's eight `img.remit.ee` images, which ride `img-src` and the existing grant.
+
+**What would overturn it.** The stylesheet proxy landing. At that point a card's remote stylesheet loads with `style-src`/`font-src` still at `self`, this entry closes, and what replaces it is a note on what the proxy rewrites and what it does not.
+
