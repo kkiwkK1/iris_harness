@@ -44,6 +44,12 @@
    按候选存储）是否需要在 UI 可回溯，待用户反馈。
 5. **webp 角色卡**：语料中已删，但 ST 支持 webp 卡；导入面是否补，随任务 E 的上游
    核实一并定。
+   > **2026-09-06 正读更正**(`packages/iris-character/UPSTREAM-IMPORT-SHAPES.md`):ST 1.18.0 的角色导入**不支持** webp(两道闸都没有,`parse()` 只有 png;webp 只能当头像图经 Jimp 转 PNG);无卡 chunk 的 png 上游**拒绝**(`No PNG metadata.`)而非收作空角色;`liwy.jpg` 不含任何卡数据且在客户端扩展名闸静默丢弃。本项按「与上游一致的具名拒绝」收口,不补导入面。
+6. **导入聊天的扫描前缀应读行上说话人**（2026-09-06，`include_names` 落地时记）——
+   现在 `prompt.ts` 的扫描缓冲按 `role` 派生名字（`historyFromSession` 就是这么派生的），
+   而上游 `script.js:4565` 用的是消息**自己存的 `name`**。一对一聊天两者一致；**从安装
+   导入、行上带自己说话人的聊天会分叉**，正是 dev 那次 `MODELLED_KEYS`（header name 多为
+   `"unused"`、真名在行上）发现的那一面。改它是改投影不是改那一行，单独排批。
 
 ## 三、集成纪律（对四路交付统一执行）
 
