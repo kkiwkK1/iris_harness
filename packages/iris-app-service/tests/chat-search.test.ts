@@ -23,9 +23,13 @@ import { SettingsStore } from '../src/settings.ts'
  * matter are: a fragment deep in a long conversation is found AND located (the
  * chat and the floor), nothing is reported that is not really in a floor's
  * text — no hit invented from JSON keys, speaker names or dates — and the
- * scan of a 10 MiB-scale file stays under a second. The last two are measured
+ * scan **stays proportional to the bytes it reads**. The last two are measured
  * against a real 677-floor, 19 MiB conversation from the SillyTavern install,
  * not a fixture written by the same belief as the code.
+ *
+ * The proportionality bound replaced an absolute `elapsed < 1000`, which was a
+ * measurement of one machine wearing a constant's clothes; see the note on the
+ * 10 MiB test.
  */
 
 const CARD = JSON.stringify({
@@ -188,11 +192,27 @@ test('an empty query is refused, not answered with everything', async (t) => {
   )
 })
 
-test('a 10 MiB-scale chat scans in under a second', async (t) => {
-  const fix = await fixture(t)
+/**
+ * How much slower than proportional a scan may be before it counts as
+ * degraded.
+ *
+ * A linear scan that got slower with size — an accidental `O(n²)` from
+ * re-slicing, say — blows a 10× byte ratio out to ~100×, so a factor of 3
+ * separates the failure this guards from the noise it must tolerate. Small
+ * enough to catch the defect, wide enough that a loaded machine does not fail
+ * a correct implementation.
+ */
+const SCAN_SLACK = 3
 
-  // ~400 floors of ~25 KiB each: past the acceptance line in size, with the
-  // marker deep in the file so the scan has to earn the hit.
+/**
+ * Write one synthetic chat and return its size on disk.
+ * @param dir - the fixture's profile directory.
+ * @param stem - the chat id.
+ * @param floors - how many floors to write.
+ * @param marker - a phrase planted in the middle floor, unique to this file.
+ * @returns the file's byte length.
+ */
+async function writeChat(dir: string, stem: string, floors: number, marker: string): Promise<number> {
   const filler = 'The harbour lights kept their own counsel. '.repeat(570)
   const lines: string[] = [JSON.stringify({
     user_name: 'Traveller',
@@ -200,13 +220,64 @@ test('a 10 MiB-scale chat scans in under a second', async (t) => {
     create_date: '2026-01-04 @10h00m00s',
     chat_metadata: {},
   })]
-  for (let index = 0; index < 400; index += 1) {
-    const mes = index === 300
-      ? `${filler}and here, buried, the phrase quinquireme-of-nineveh surfaces once`
-      : filler
+  for (let index = 0; index < floors; index += 1) {
+    const mes = index === Math.floor(floors / 2) ? `${filler}and here, buried, ${marker} surfaces once` : filler
     lines.push(JSON.stringify({ name: 'Aria', is_user: index % 2 === 1, mes }))
   }
-  await writeFile(join(fix.dir, 'chats', 'weighted.jsonl'), lines.join('\n') + '\n', 'utf8')
+  const body = lines.join('\n') + '\n'
+  await writeFile(join(dir, 'chats', `${stem}.jsonl`), body, 'utf8')
+  return Buffer.byteLength(body)
+}
+
+/**
+ * A 10 MiB-scale scan stays proportional to the bytes it reads.
+ *
+ * **The assertion used to be `elapsed < 1000`, and that was a measurement
+ * wearing a constant's clothes** (§2 of `METHODS.md`: a number with no
+ * caliper). What it actually pinned was "this machine, unloaded, in 2026" —
+ * so it went red at 1456 ms when a peer ran headless Chrome alongside it, on
+ * an implementation that had not changed. A test that fails for something the
+ * code did not do costs more than it protects, because the next red is read as
+ * noise too.
+ *
+ * The invariant worth holding is **"the scan does not degrade with size"**, and
+ * that is a ratio, not a stopwatch: measure a small corpus in this same
+ * process, then require the large one to cost no more than its share of bytes
+ * times {@link SCAN_SLACK}. A uniformly slower machine moves both numbers and
+ * the ratio survives, which is exactly the property an absolute bound lacks.
+ *
+ * The baseline carries a fixed per-call cost (listing the directory, opening
+ * the store) that the ratio then credits to the large scan, so the bound is
+ * **looser than pure linearity** — an error in the safe direction.
+ *
+ * **And this test on its own does not discriminate a degradation — measured,
+ * not assumed.** Making the scan quadratic (re-folding every earlier line on
+ * each step) leaves it green: `small=19.6ms big=311.1ms allowed=645.7ms`,
+ * because at 40 against 400 floors the quadratic term inflates the *baseline*
+ * about as much as the large scan, and neither is dominated by it. A warm-up
+ * pass was tried and moved nothing (17.5ms). So this is a **smoke bound** —
+ * it holds the shape and would catch an order-of-magnitude blowup — while the
+ * test that actually has teeth is the 677-floor corpus one below, where the
+ * same mutation fails loudly (`452ms against 115ms allowed`).
+ *
+ * The cost of that split is worth stating: **the corpus test is skipped when
+ * the real chat is not on the machine**, so on a checkout without it, nothing
+ * here would catch the scan degrading.
+ */
+test('a 10 MiB-scale chat scans in proportion to its bytes', async (t) => {
+  const fix = await fixture(t)
+
+  // Baseline first, and alone in the profile: a search scans every chat it can
+  // see, so the small measurement has to be taken before the large file exists.
+  const smallBytes = await writeChat(fix.dir, 'baseline', 40, 'thalassocracy-of-tyre')
+  const smallStarted = performance.now()
+  const small = await fix.handlers['chat.search']({ query: 'thalassocracy-of-tyre' })
+  const smallElapsed = performance.now() - smallStarted
+  assert.equal(small.hits.length, 1, 'the baseline scan must do real work to be a baseline')
+
+  // ~400 floors of ~25 KiB each: past the acceptance line in size, with the
+  // marker deep in the file so the scan has to earn the hit.
+  const bigBytes = await writeChat(fix.dir, 'weighted', 400, 'quinquireme-of-nineveh')
 
   const started = performance.now()
   const { hits } = await fix.handlers['chat.search']({ query: 'quinquireme-of-nineveh' })
@@ -214,8 +285,18 @@ test('a 10 MiB-scale chat scans in under a second', async (t) => {
 
   const hit = hits[0]
   assert.ok(hit !== undefined)
-  assert.equal(hit.matches[0]?.messageId, 300)
-  assert.ok(elapsed < 1000, `expected the 10 MiB scan under 1s, took ${elapsed.toFixed(0)}ms`)
+  assert.equal(hit.matches[0]?.messageId, 200)
+
+  // The second scan reads both files; the ratio is over total bytes for that
+  // reason, not over the large file alone.
+  const ratio = (smallBytes + bigBytes) / smallBytes
+  assert.ok(ratio > 8, `the two corpora must differ enough to discriminate (ratio ${ratio.toFixed(1)})`)
+  const allowed = smallElapsed * ratio * SCAN_SLACK
+  assert.ok(
+    elapsed <= allowed,
+    `scan grew faster than its bytes: ${elapsed.toFixed(0)}ms for ${ratio.toFixed(1)}× the bytes, `
+    + `against ${smallElapsed.toFixed(0)}ms baseline (allowed ${allowed.toFixed(0)}ms)`,
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -245,17 +326,28 @@ async function findLongChat(): Promise<string | undefined> {
 
 const LONG_CHAT = await findLongChat()
 
-test('the real 677-floor chat is found by a message fragment, located, and scans under a second',
+test('the real 677-floor chat is found by a message fragment, located, and scans in proportion',
   { skip: LONG_CHAT === undefined },
   async (t) => {
     const fix = await fixture(t)
     const longChat = LONG_CHAT as string
+
+    // The baseline is measured **before** the real file is copied in: a search
+    // scans every chat in the profile, so the only moment a small corpus can be
+    // timed alone is before the large one exists. See the proportionality note
+    // on the 10 MiB test for why this replaced an absolute wall clock.
+    const smallBytes = await writeChat(fix.dir, 'baseline', 40, 'thalassocracy-of-tyre')
+    const smallStarted = performance.now()
+    const small = await fix.handlers['chat.search']({ query: 'thalassocracy-of-tyre' })
+    const smallElapsed = performance.now() - smallStarted
+    assert.equal(small.hits.length, 1, 'the baseline scan must do real work to be a baseline')
 
     // Copy, never point: the corpus stays read-only and the store sees a
     // profile of its own.
     const stem = longChat.split(/[\\/]/u).pop() ?? 'long-chat'
     const chatId = stem.replace(/\.jsonl$/u, '')
     await copyFile(longChat, join(fix.dir, 'chats', stem))
+    const bigBytes = (await readFile(longChat)).byteLength
 
     // A fragment from a deep floor — the middle of its text, and a window with
     // no escape or quote in it, so what the test searches is text as a reader
@@ -297,6 +389,13 @@ test('the real 677-floor chat is found by a message fragment, located, and scans
     )
     const located = hit.matches.find(match => match.messageId === floor)
     assert.ok(located?.snippet.includes(fragment), 'the snippet carries the fragment')
-    assert.ok(elapsed < 1000, `expected the 19 MiB scan under 1s, took ${elapsed.toFixed(0)}ms`)
+    const ratio = (smallBytes + bigBytes) / smallBytes
+    assert.ok(ratio > 8, `the two corpora must differ enough to discriminate (ratio ${ratio.toFixed(1)})`)
+    const allowed = smallElapsed * ratio * SCAN_SLACK
+    assert.ok(
+      elapsed <= allowed,
+      `scan grew faster than its bytes: ${elapsed.toFixed(0)}ms for ${ratio.toFixed(1)}× the bytes, `
+      + `against ${smallElapsed.toFixed(0)}ms baseline (allowed ${allowed.toFixed(0)}ms)`,
+    )
 })
 
