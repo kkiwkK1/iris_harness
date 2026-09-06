@@ -26,7 +26,10 @@ import {
 export interface BudgetedFloor {
   /** The floor's index in the conversation. */
   id: number
-  /** Its text after display regex — the same string the row renders. */
+  /**
+   * Its text after display regex and the settled stray-fence repair — the same
+   * string the row renders.
+   */
   text: string
   /** Whether it is a user row, for the plan's report. */
   isUser: boolean

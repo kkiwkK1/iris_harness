@@ -22,6 +22,7 @@ import { Composer } from './Composer.tsx'
 import { PlumSpray } from './marks.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
 import { PromptPanel } from './PromptPanel.tsx'
+import { repairStrayFences } from './stray-fences.ts'
 import { groupByTurn, lastReplyId, swipeTarget, withStream } from './project.ts'
 import { DEFAULT_WINDOW, grow, readingWindow } from './reading-window.ts'
 import { stepReading } from './rail.ts'
@@ -60,11 +61,16 @@ export function ChatPane(): ReactElement {
    * known. Only the text and the role matter to it, so a row whose reasoning or
    * swipe index changed does not re-plan — planning claims blocks over every
    * mounted message, which is the one part of this that is not free.
+   *
+   * Each row's text gets the same settled stray-fence repair the row itself
+   * applies (`MessageInterfaces`), so the budget plans over the text the view
+   * actually renders — a stray fence that used to hide a bare-HTML region from
+   * the claim would otherwise be rationed by a budget that never saw it.
    */
   const budgeted = useMemo<BudgetedFloor[]>(
     () => messages.map(message => ({
       id: message.id,
-      text: message.text,
+      text: message.streaming === true ? message.text : repairStrayFences(message.text),
       isUser: message.role === 'user',
     })),
     [messages],

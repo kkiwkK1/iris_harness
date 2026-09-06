@@ -44,6 +44,7 @@ import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
 import { broadcastWindowEvent } from './window-events.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
+import { repairStrayFences } from './stray-fences.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { getLanguage } from './i18n/language.ts'
 
@@ -203,9 +204,28 @@ export function MessageInterfaces({
    */
   const { refusedInstances, gate, open } = useFloorGate(floor)
 
+  /*
+   * The settled body gets one repair before anything downstream reads it.
+   *
+   * A model reply can carry a code fence that never closes — the 政经博弈 card
+   * pads its `<think_fox~>` thinking with a lone ` ``` ` — and CommonMark runs
+   * an unclosed fence to the end of the document, so the renderer received the
+   * remaining 310 lines as one code block and the reader scrolled headings and
+   * bold as source. `repairStrayFences` turns such an opener into the literal
+   * text upstream's showdown would have left, and the markdown below renders as
+   * markdown. Behind the same streaming gate as the claim, for the same reason:
+   * while a reply is still arriving, the unclosed fence is a code block in
+   * flight and code-to-end-of-stream is its honest render.
+   *
+   * Everything below — the controller's claim, the row's splice and the
+   * fallback — reads this one string, so no two of them derive surfaces from
+   * different texts.
+   */
+  const display = streaming ? text : repairStrayFences(text)
+
   const { states, swapping } = useMessageInterfaces({
     floor,
-    text,
+    text: display,
     refusedInstances,
     gate,
     allowed: ready !== undefined && chatId !== undefined,
@@ -424,7 +444,7 @@ export function MessageInterfaces({
    */
   const { blocks, refused, styles } = streaming
     ? { blocks: [], refused: [] as readonly string[], styles: [] as readonly MessageStyle[] }
-    : claimMessageSurfaces(text)
+    : claimMessageSurfaces(display)
 
   /*
    * An unclosed region is reported, not swallowed.
@@ -471,7 +491,7 @@ export function MessageInterfaces({
    * with neither.
    */
   if (blocks.length === 0 && styles.length === 0) {
-    return <MarkdownText text={unwrapUnknownTagsOutsideCode(text)} streaming={streaming} />
+    return <MarkdownText text={unwrapUnknownTagsOutsideCode(display)} streaming={streaming} />
   }
 
   /*
@@ -487,8 +507,13 @@ export function MessageInterfaces({
    * place. Their CSS has already gone into the region frames (through the same
    * claim, in `useMessageInterfaces`), and the characters themselves have no
    * reader left.
+   *
+   * The split reads `display`, the one string the claim and the controller
+   * already agreed on — a style span's offsets come from a claim over the
+   * repaired text, so splicing them out of the unrepaired text would cut at
+   * the wrong characters on any message whose fence was repaired.
    */
-  const segments = splitAroundInterfaces(text, blocks, styles)
+  const segments = splitAroundInterfaces(display, blocks, styles)
     .map(segment =>
       segment.kind === 'text'
         ? { ...segment, text: unwrapUnknownTagsOutsideCode(segment.text) }

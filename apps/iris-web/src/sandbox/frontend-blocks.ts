@@ -475,7 +475,7 @@ function collectRegions(
 }
 
 /** A fence's character and width, plus whatever followed it on the line. */
-interface Fence {
+export interface Fence {
   char: string
   width: number
   info: string
@@ -486,10 +486,16 @@ interface Fence {
  *
  * Up to three leading spaces are allowed before a fence (CommonMark); four would
  * make it indented code instead.
+ *
+ * Exported rather than kept private because the fence grammar is the one thing
+ * that must not grow a second implementation: the stray-fence repair
+ * (`app/stray-fences.ts`) walks a message with these same two predicates, so a
+ * repaired text and the claim built over it cannot disagree about where a fence
+ * begins or ends.
  * @param line - the line to inspect.
- * @returns the fence, or undefined.
+ * @returns the fence, or undefined when this line opens nothing.
  */
-function openingFence(line: string): Fence | undefined {
+export function openingFence(line: string): Fence | undefined {
   const indent = line.length - line.trimStart().length
   if (indent > 3) return undefined
   const rest = line.slice(indent)
@@ -511,12 +517,13 @@ function openingFence(line: string): Fence | undefined {
 }
 
 /**
- * Whether a line closes the given fence.
+ * Whether a line closes the given fence. Exported with {@link openingFence} for
+ * the same reason: one fence grammar, wherever a fence matters.
  * @param line - the line to inspect.
  * @param fence - the fence that is open.
  * @returns true when this line ends the block.
  */
-function closesFence(line: string, fence: Fence): boolean {
+export function closesFence(line: string, fence: Fence): boolean {
   const trimmed = line.trim()
   if (trimmed.length < fence.width) return false
   for (let index = 0; index < trimmed.length; index += 1) {

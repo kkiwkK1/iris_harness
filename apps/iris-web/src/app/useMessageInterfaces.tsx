@@ -36,7 +36,11 @@ import { registerWindowEventSink } from './window-events.ts'
 export interface MessageInterfacesInput {
   /** The floor this message is. */
   floor: number
-  /** Its text, **after** display regex — see `notes/apps/iris-web/RENDER.md` on ordering. */
+  /**
+   * Its text, **after** display regex and the settled stray-fence repair — see
+   * `RENDER.md` on ordering. The controller claims over the same string the row
+   * splices, which is the whole reason the row passes its `display` here.
+   */
   text: string
   /**
    * Whether a frame may exist for this floor at all.
