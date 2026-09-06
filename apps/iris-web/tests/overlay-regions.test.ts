@@ -342,3 +342,81 @@ test('the dedup key changes when the viewport does, so recovery is reported', ()
     'one element gained area and the report was suppressed',
   )
 })
+/*
+ * ── The gap the tests above could not see ───────────────────────────────────
+ *
+ * Every test above hands `describeVisibility` a `Visibility` directly, so they
+ * prove the *formatter* handles a zero box. They cannot prove anything about
+ * whether a zero box ever **reaches** it, and it did not: the collector took
+ * the record only on the branch that accepts a region, so an all-zero card
+ * produced an empty clip, an empty `seen`, a zero count of 0 and no sentence.
+ * The instrument built to explain a blank screen was silent on a blank screen,
+ * with nine green teeth-checks behind it.
+ *
+ * These tests go through `collectRegions`, which is where that decision lives.
+ */
+
+/** A node for the walk: a box, a visibility record, and children. */
+interface Labelled {
+  rect: Region
+  label: string
+  children?: Labelled[]
+}
+
+const walk = (roots: Labelled[]): { regions: Region[], seen: Visibility[] } => {
+  const seen: Visibility[] = []
+  const regions = collectRegions<Labelled>(roots, node => ({
+    measured: {
+      rect: node.rect,
+      interactive: true,
+      visibility: shown({ label: node.label, rect: node.rect }),
+    },
+    children: node.children ?? [],
+  }), seen)
+  return { regions, seen }
+}
+
+test('a zero-area root is still described, or nothing explains the blank screen', () => {
+  const { regions, seen } = walk([
+    { rect: at(0, 0, 0, 0), label: 'div#app' },
+    { rect: at(0, 0, 0, 0), label: 'iframe' },
+  ])
+  assert.deepEqual(regions, [], 'two empty boxes clip to nothing')
+  assert.deepEqual(
+    seen.map(it => it.label),
+    ['div#app', 'iframe'],
+    'both roots must be described even though neither became a region',
+  )
+  // And the two together are what the reader actually gets.
+  assert.match(describeEmptySurface(seen.length, seen.length) ?? '', /clip is empty/)
+})
+
+test('a descendant is described only when it becomes a region', () => {
+  /*
+   * The anti-flood half of the same rule. The walk descends through anything
+   * that is not a usable region, so describing every node it touches would put
+   * a card's entire subtree — hundreds of lines — through a message channel on
+   * every mutation.
+   */
+  const { seen } = walk([
+    {
+      rect: at(0, 0, 0, 0),
+      label: 'div#wrapper',
+      children: [
+        { rect: at(0, 0, 0, 0), label: 'div.empty-inner' },
+        { rect: at(5, 5, 40, 40), label: 'button' },
+      ],
+    },
+  ])
+  assert.deepEqual(
+    seen.map(it => it.label),
+    ['div#wrapper', 'button'],
+    'the zero-area descendant must not be listed, the real button must',
+  )
+})
+
+test('a healthy root is described too, so the report is comparable', () => {
+  const { regions, seen } = walk([{ rect: at(0, 0, 390, 844), label: 'div#app' }])
+  assert.equal(regions.length, 1)
+  assert.deepEqual(seen.map(it => it.label), ['div#app'])
+})

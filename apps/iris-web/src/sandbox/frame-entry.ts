@@ -397,12 +397,23 @@ function reportRegions(
      * per-element boxes are what they read next to find out which one.
      */
     const summary = members.describeEmptySurface(zero, seen.length)
+    const lines = seen
+      .map(it => members.describeVisibility(it))
+      .filter((line): line is string => line !== undefined)
+    /*
+     * Capped, because this string crosses a message boundary on every mutation
+     * and a card is free to build two hundred top-level nodes. The first dozen
+     * are what a reader acts on; the count says how much was left out, so the
+     * cap can never be mistaken for "that was all of them".
+     */
+    const shown = lines.slice(0, 12)
     const detail = [
       ...(summary === undefined ? [] : [summary]),
       members.describeFrameViewport(viewport),
-      ...seen
-        .map(it => members.describeVisibility(it))
-        .filter((line): line is string => line !== undefined),
+      ...shown,
+      ...(lines.length > shown.length
+        ? [`and ${String(lines.length - shown.length)} more element(s) not listed`]
+        : []),
     ].join('; ')
     post({
       iris: run,

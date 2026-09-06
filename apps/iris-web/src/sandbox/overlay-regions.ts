@@ -395,7 +395,25 @@ export function collectRegions<T>(
   seen: Visibility[] = [],
 ): Region[] {
   const found: Region[] = []
-  const queue = [...roots]
+  /*
+   * **Root-ness travels with the node, and it decides what gets described.**
+   *
+   * The visibility record used to be taken only on the branch below that
+   * accepts a region — non-zero and interactive — which made the instrument
+   * silent in the one case it was built for: a card whose elements all measure
+   * zero produced an empty clip, no records at all, and therefore no zero
+   * count and no "every element measured zero" sentence. The report said the
+   * card had built two elements and nothing about either of them. Caught in
+   * the foreground, on a blank screen, after the formatter had been tested
+   * directly with a zero rect and passed.
+   *
+   * So: **every root is described, whatever it measures**, because the roots
+   * are the things "this card built N element(s)" counts and the things a
+   * reader needs boxes for. Descendants are still described only when they
+   * become clip regions — a wrapper's whole subtree would otherwise arrive as
+   * hundreds of lines through a message channel.
+   */
+  const queue = roots.map(node => ({ node, root: true }))
   let guard = 0
 
   while (queue.length > 0) {
@@ -407,15 +425,19 @@ export function collectRegions<T>(
     guard += 1
     if (guard > 2_000) break
 
-    const node = queue.shift()
-    if (node === undefined) continue
-    const { measured, children } = measure(node)
-    if (measured.interactive && measured.rect.width > 0 && measured.rect.height > 0) {
+    const entry = queue.shift()
+    if (entry === undefined) continue
+    const { measured, children } = measure(entry.node)
+    const usable = measured.interactive && measured.rect.width > 0 && measured.rect.height > 0
+    // A root is described either way; a descendant only when it is a region.
+    if (measured.visibility !== undefined && (usable || entry.root)) {
+      seen.push(measured.visibility)
+    }
+    if (usable) {
       found.push(measured.rect)
-      if (measured.visibility !== undefined) seen.push(measured.visibility)
       continue
     }
-    queue.push(...children)
+    queue.push(...children.map(child => ({ node: child, root: false })))
   }
 
   return mergeRegions(found)
