@@ -504,7 +504,6 @@ register 清单）与验收脚本 `qa/multibook-acceptance.mjs`。MVU 侧 `initV
   去重）逐一转写，行号见各处注释。
 - 回归：`pnpm test` 2263 例全绿（哈人冰恋/神隐挑战的既有语料用例在内），
   `pnpm typecheck`、`apps/iris-web` typecheck 全绿。
-<<<<<<< HEAD
 # DEVIATIONS — 任务 T2：聊天备份视图（C17）
 
 分支 `dev/feat-backups`（基于主线 dev/iris-exploration 079bf31）。对照上游
@@ -845,7 +844,6 @@ bootstrap 增至 47,168 B，`FRAME_OVERHEAD_BYTES` 47→48 KiB（同一改动内
 - 无挂起真实网络复跑：全 PASS。
 - `npm test` 2,286 例全绿；根 typecheck、iris-web typecheck 全绿（iris-web 1,014 例，
   含就绪握手时序、竞态回归、setChatMessages 翻译与接口帧裸发布新用例）。
-=======
 
 ---
 
@@ -900,7 +898,6 @@ Chrome CDP + 本 worktree 独立宿主（端口 8821，数据目录为仓库内 
 6. **验收补充**：`qa/measure-frame-fit.mjs` 为本任务 CDP 验收脚本（基线/修复
    两模式），产物在 `qa/results/`（gitignore 内）。回归卡（哈人冰恋/神隐挑战/
    全职高手）双视口全部通过；`pnpm test` 2280 绿 / 0 失败，双 typecheck 绿。
->>>>>>> dev/fix-frame-fit
 
 # DEVIATIONS — 任务 X：SYSTEM_START 点击链路 + 设置抽屉纯 overlay
 
