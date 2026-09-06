@@ -197,7 +197,7 @@ export function MessageInterfaces({
    */
   const { refusedInstances, gate, open } = useFloorGate(floor)
 
-  const states = useMessageInterfaces({
+  const { states, swapping } = useMessageInterfaces({
     floor,
     text,
     refusedInstances,
@@ -208,6 +208,7 @@ export function MessageInterfaces({
       if (current === undefined || chatId === undefined) {
         throw new Error('a message frame was started before its build assets resolved')
       }
+      let painted = false
       const card = runCard(
         {
           bootstrap: current.bootstrap,
@@ -272,6 +273,18 @@ export function MessageInterfaces({
             broadcastWindowEvent(event, detail)
           },
           onReady: input.onReady,
+          /*
+           * The first real height is the frame saying "something is laid out on
+           * screen" — the one honest reveal signal. `ready` cannot be it: an
+           * interface frame announces ready when its bootstrap finishes, and
+           * its markup parses after that, so revealing there trades one blank
+           * for another. Once, because a card that relayouts keeps posting.
+           */
+          onHeight: () => {
+            if (painted) return
+            painted = true
+            input.onPainted()
+          },
           /*
            * The frame's own words for why it never came up, named the moment
            * they arrive. The bootstrap cannot report `ready` after a throw —
@@ -434,6 +447,7 @@ export function MessageInterfaces({
             key={`i-${segment.instance}`}
             instance={segment.instance}
             state={byInstance.get(segment.instance)}
+            pendingSwap={swapping}
             adopt={node => slots.current.set(segment.instance, node)}
             onOpen={() => {
               open(segment.instance)
@@ -451,17 +465,20 @@ export function MessageInterfaces({
  * The frame is moved into this slot rather than created by it: the controller
  * owns construction and teardown, and a component that built its own frame would
  * be a second place deciding how a frame is made.
- * @param props - the instance, its state, and how to register the slot.
+ * @param props - the instance, its state, how to register the slot, and
+ *   whether a parked predecessor is on screen while this frame boots.
  * @returns the slot element.
  */
 function InterfaceSlot({
   instance,
   state,
+  pendingSwap,
   adopt,
   onOpen,
 }: {
   instance: number
   state: InterfaceState | undefined
+  pendingSwap: boolean
   adopt: (node: HTMLDivElement | null) => void
   onOpen: () => void
 }): ReactElement {
@@ -487,7 +504,7 @@ function InterfaceSlot({
             {t('renderThisOne')}
           </button>
         </p>
-      ) : state === undefined || state.phase === 'live' ? null : (
+      ) : state === undefined || state.phase === 'live' ? null : pendingSwap && state.phase === 'claimed' ? null : (
         /*
          * Only when it is not live. A working interface is its own evidence — it
          * is on screen — and a caption under every one would be noise. A frame

@@ -27,7 +27,9 @@ import {
   runMessageInterfaces,
   type InterfaceState,
   type MessageFramesEnv,
+  type RunningInterfaces,
 } from '../sandbox/message-frames.ts'
+import { beginRetirement, type RetiringInterfaces } from './interface-swap.ts'
 import { registerWindowEventSink } from './window-events.ts'
 
 /** What the hook needs to build frames for one message. */
@@ -90,14 +92,46 @@ export interface MessageInterfacesInput {
   ) => () => void
 }
 
+/** How long a replacement may boot before a parked interface gives up its place. */
+const RETIRE_CAP_MS = 10_000
+
+/**
+ * The frame element, as the swap styles it. `runCard` sets `display:block`
+ * inline at creation, so the parked reveal restores exactly that.
+ */
+interface SwapElement {
+  style: { display: string }
+  remove(): void
+}
+
+/**
+ * One parked run: muted, still on screen, waiting for its replacement.
+ *
+ * `pendingInstances` is re-read at adoption time because the set of instances
+ * worth covering is the set with a frame on screen, known only after the run
+ * has built them.
+ */
+interface ParkedRun {
+  running: RunningInterfaces
+  retirement: RetiringInterfaces
+  elements: Map<number, SwapElement>
+  pendingInstances(): Set<number>
+  disposeNow(): void
+}
+
 /**
  * Run the interfaces belonging to one displayed message.
  *
  * @param input - the message and how to build frames for it.
- * @returns the interfaces' states, for the row to render.
+ * @returns the interfaces' states, and whether a parked set is still on
+ *   screen while its replacement boots.
  */
-export function useMessageInterfaces(input: MessageInterfacesInput): readonly InterfaceState[] {
+export function useMessageInterfaces(input: MessageInterfacesInput): {
+  states: readonly InterfaceState[]
+  swapping: boolean
+} {
   const [states, setStates] = useState<readonly InterfaceState[]>([])
+  const [swapping, setSwapping] = useState(false)
 
   /*
    * The callbacks are held in a ref so that changing them does not restart the
@@ -117,8 +151,44 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
     watchContext: input.watchContext,
   }
 
+  /*
+   * The parked predecessor of the running set, and the component-alive token.
+   *
+   * A rebuild used to dispose the old frames the moment the text changed, which
+   * made the whole boot of the replacement — members, preset, bootstrap, ready;
+   * about a second on a fast machine — a blank rectangle. Now the old set is
+   * **parked**: muted, still on screen, and swapped out only when the
+   * replacement can take its place (or the cap runs out — a broken boot must
+   * not hold a stale interface on screen forever).
+   *
+   * `alive` is what tells a parked set's cleanup apart from the final unmount:
+   * it is flipped only by the mount effect's own cleanup, which React runs
+   * exactly once, when the component leaves the tree. Whichever of the two
+   * cleanups runs first disposes the parked set, so the order they run in does
+   * not matter.
+   */
+  const alive = useRef(true)
+  const parked = useRef<ParkedRun | undefined>(undefined)
   useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+      parked.current?.disposeNow()
+      parked.current = undefined
+    }
+  }, [])
+
+  useEffect(() => {
+    // Whatever the last run parked is this run's to cover — or, when this run
+    // builds nothing, to release: there is no replacement coming, and a stale
+    // interface held on screen by a cap would be the bug this mechanism is, in
+    // every other path, the cure for.
+    const adopted = parked.current
+    parked.current = undefined
+
     if (!input.allowed) {
+      adopted?.disposeNow()
+      setSwapping(false)
       setStates([])
       return undefined
     }
@@ -131,8 +201,49 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
      */
     const { blocks } = claimMessageSurfaces(input.text)
     if (blocks.length === 0) {
+      adopted?.disposeNow()
+      setSwapping(false)
       setStates([])
       return undefined
+    }
+
+    /*
+     * Muted when this run is parked by a later one: a parked controller still
+     * holds a ready-timeout that can fire and publish, and a publish from a
+     * parked run would overwrite the replacement's states in the very same
+     * piece of React state.
+     */
+    const mute = { muted: false }
+    /** This run's frame elements, by instance, for the pending-swap styling. */
+    const elements = new Map<number, SwapElement>()
+    const adoptedPending = adopted?.pendingInstances() ?? new Set<number>()
+
+    /** One parked instance is covered: make way and reveal its replacement. */
+    const resolve = (instance: number): void => {
+      if (!adoptedPending.has(instance)) return
+      adoptedPending.delete(instance)
+      adopted?.retirement.replaced(instance)
+      adopted?.elements.get(instance)?.remove()
+      adopted?.elements.delete(instance)
+      const shown = elements.get(instance)
+      // A refused instance has no frame of its own; its placeholder is the
+      // answer, and removing the old frame is the whole swap.
+      if (shown !== undefined) shown.style.display = 'block'
+    }
+
+    const drive = (next: readonly InterfaceState[]): void => {
+      if (adopted === undefined) return
+      for (const state of next) {
+        if (!adoptedPending.has(state.instance)) continue
+        if (state.phase === 'claimed') continue
+        resolve(state.instance)
+      }
+      // Instances the replacement no longer claims: nothing will ever answer
+      // for them, so they make way now rather than at the cap.
+      for (const instance of [...adoptedPending]) {
+        if (next.some(state => state.instance === instance)) continue
+        resolve(instance)
+      }
     }
 
     const refused = input.refusedInstances
@@ -140,9 +251,31 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
       ...(refused === undefined ? {} : { allow: (instance: number) => !refused.has(instance) }),
       start: (...args) => callbacks.current.start(...args),
       attach: (...args) => {
-        callbacks.current.attach(...args)
+        const [frame] = args
+        const element = frame.element as unknown as SwapElement
+        if (adopted !== undefined && adoptedPending.has(frame.instance)) {
+          /*
+           * Hidden until its boot resolves: the reader is looking at the
+           * parked interface, and two stacked frames would read as a glitch.
+           * Revealed by `resolve`, on the first laid-out content — or dropped
+           * with the parked set at the cap, where the row's own failure line
+           * is what the reader gets.
+           */
+          element.style.display = 'none'
+        }
+        elements.set(frame.instance, element)
+        callbacks.current.attach(frame)
       },
-      onState: next => setStates(next),
+      onPainted: instance => {
+        // The frame laid out real content — the honest reveal moment, which
+        // can land before or after `ready`'s state change; whichever comes
+        // first resolves the parked instance.
+        resolve(instance)
+      },
+      onState: next => {
+        if (!mute.muted) setStates(next)
+        drive(next)
+      },
     })
 
     /*
@@ -179,12 +312,47 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
     return () => {
       unwatch()
       unregisterWindowEvents()
-      running.dispose()
+      if (alive.current) {
+        /*
+         * A rebuild: park rather than dispose. The old frames stay on screen,
+         * muted, until the replacement's states resolve every one of them —
+         * or the cap runs out, because a broken boot must not hold a stale
+         * interface on screen forever.
+         */
+        mute.muted = true
+        const tracked = [...elements.keys()]
+        const retirement = beginRetirement(
+          tracked,
+          () => {
+            parked.current?.disposeNow()
+            if (parked.current?.running === running) {
+              parked.current = undefined
+            }
+            setSwapping(false)
+          },
+          RETIRE_CAP_MS,
+        )
+        parked.current = {
+          running,
+          elements,
+          disposeNow: () => {
+            // Idempotent: the controller guards its own disposal, and a cap
+            // that fires after this has nothing left to settle.
+            running.dispose()
+          },
+          pendingInstances: () => new Set(tracked),
+          retirement,
+        }
+        setSwapping(true)
+      } else {
+        running.dispose()
+      }
       /*
        * Cleared here as well as in the controller, because this is the half a
        * reader sees. A row left showing `live` for a frame that has been torn
        * down is the stale-evidence problem the report list's generations exist
-       * to prevent, one surface over.
+       * to prevent, one surface over. The replacement's first publish is what
+       * fills it back in.
        */
       setStates([])
     }
@@ -192,7 +360,9 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
      * `input.text` is a dependency on purpose: an edited or swiped message is a
      * different interface, so its frame is rebuilt rather than updated. Upstream
      * destroys and rebuilds on the same events, and carrying a frame across a
-     * swipe would show one swipe's panel over another's content.
+     * swipe would show one swipe's panel over another's content. What has
+     * changed is *when* the old frames leave: at the replacement's ready, not
+     * at the text change — the swap, not the boot, is what the reader sees.
      */
     /*
      * `input.gate` and not `input.refusedInstances`: the set's identity changes
@@ -202,5 +372,5 @@ export function useMessageInterfaces(input: MessageInterfacesInput): readonly In
      */
   }, [input.floor, input.text, input.allowed, input.gate])
 
-  return states
+  return { states, swapping }
 }

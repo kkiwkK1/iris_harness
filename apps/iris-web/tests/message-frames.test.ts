@@ -58,6 +58,10 @@ function harness(options?: {
   becomeStaleReady: (instance: number) => void
   /** The frame reports that its bootstrap died before it could speak. */
   failBootstrap: (instance: number, message: string) => void
+  /** The frame laid out real content for the first time. */
+  paint: (instance: number) => void
+  /** What the controller told the env about first layouts, in order. */
+  envPainted: () => number[]
   /** Snapshots pushed into each frame after it was built, by instance. */
   refreshed: () => { instance: number, context: unknown }[]
   /** Events delivered into each frame after it was built, by instance. */
@@ -80,6 +84,9 @@ function harness(options?: {
   /** One list per instance; each `start` appends, so generations stay apart. */
   const readies = new Map<number, (() => void)[]>()
   const failures = new Map<number, (message: string) => void>()
+  const paints = new Map<number, (() => void)[]>()
+  /** What the controller told the env about first layouts, in order. */
+  const envPainted: number[] = []
 
   const env: MessageFramesEnv = {
     start: input => {
@@ -88,6 +95,9 @@ function harness(options?: {
       list.push(input.onReady)
       readies.set(input.instance, list)
       failures.set(input.instance, input.onBootstrapError)
+      const paintList = paints.get(input.instance) ?? []
+      paintList.push(input.onPainted)
+      paints.set(input.instance, paintList)
       return {
         element: { isConnected: options?.attachWorks !== false },
         refreshContext: context => pushed.push({ instance: input.instance, context }),
@@ -98,6 +108,9 @@ function harness(options?: {
     },
     attach: () => {
       attachedCount += 1
+    },
+    onPainted: instance => {
+      envPainted.push(instance)
     },
     onState: states => {
       latest = [...states]
@@ -115,6 +128,8 @@ function harness(options?: {
       for (const ready of readies.get(instance)?.slice(0, -1) ?? []) ready()
     },
     failBootstrap: (instance, message) => failures.get(instance)?.(message),
+    paint: instance => paints.get(instance)?.at(-1)?.(),
+    envPainted: () => envPainted,
     refreshed: () => pushed,
     emitted: () => delivered,
     started: () => startedWith,
@@ -373,6 +388,25 @@ test('a bootstrap error becomes a named state on the controller side too', () =>
     /onBootstrapError: message => \{\s*\n\s*input\.onBootstrapError\(message\)/u,
     'the interface host drops the frame\u2019s bootstrap error on the floor again',
   )
+})
+
+test('the first laid-out content reaches the env once per frame', () => {
+  /*
+   * The swap-on-ready reveal rides this signal, because `ready` lands at the
+   * end of the bootstrap while the markup parses after it — revealing at ready
+   * would trade one blank for another. Once per frame: a card that relayouts
+   * keeps posting heights, and the swap cares about the first only.
+   */
+  const blocks = claimFrontendBlocks(oneInterface())
+  const scope = harness()
+  const running = runMessageInterfaces(blocks, 2, scope.env)
+
+  scope.paint(0)
+  scope.paint(0)
+  scope.paint(0)
+
+  assert.deepEqual(scope.envPainted(), [0], 'a relayouting frame re-resolved the swap')
+  running.dispose()
 })
 
 test('a height of zero is refused at both ends, because applying it is unrecoverable', () => {

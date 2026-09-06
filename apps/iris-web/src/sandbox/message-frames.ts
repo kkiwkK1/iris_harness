@@ -164,6 +164,11 @@ export interface MessageFramesEnv {
      * `never-started` detail verbatim.
      */
     onBootstrapError: (message: string) => void
+    /**
+     * The frame laid out real content for the first time. Once per frame; see
+     * `MessageFramesEnv.onPainted` for why this and not `ready`.
+     */
+    onPainted: () => void
   }) => StartedInterface
   /**
    * Put the frame into the document.
@@ -174,6 +179,20 @@ export interface MessageFramesEnv {
    */
   attach: (frame: { element: { isConnected?: unknown }, floor: number, instance: number }) => void
   onState: (states: readonly InterfaceState[]) => void
+  /**
+   * One frame has laid out real content for the first time.
+   *
+   * The frame's own height report is the signal: it posts only once
+   * `body.scrollHeight` is a positive number, which is the first moment there
+   * is something on screen to look at. `ready` cannot play this role — an
+   * interface frame announces ready when its bootstrap is done, and its markup
+   * parses **after** that (the libraries sit between them) — so a caller that
+   * reveals frames at ready reveals a white rectangle. Optional, because the
+   * only present consumer is the reading view's swap, and a caller that does
+   * not care should not have to wire a no-op.
+   * @param instance - the instance whose frame laid out.
+   */
+  onPainted?: (instance: number) => void
   /** How long a frame may take to become ready before silence is a finding. */
   readyTimeoutMs?: number
   /**
@@ -277,12 +296,20 @@ export function runMessageInterfaces(
       return
     }
 
+    const painted = new Set<number>()
     const started = env.start({
       markup: block.body,
       floor,
       instance,
       onReady: () => move(instance, { phase: 'live' }),
       onBootstrapError: message => move(instance, { phase: 'never-started', detail: message }),
+      onPainted: () => {
+        // Once per frame: a card that relayouts keeps posting heights, and the
+        // swap cares only about the first.
+        if (painted.has(instance) || env.onPainted === undefined) return
+        painted.add(instance)
+        env.onPainted(instance)
+      },
     })
     running.push(started)
 

@@ -961,3 +961,59 @@ Chrome CDP + 本 worktree 独立宿主（端口 8821，数据目录为仓库内 
 10. 验收：`pnpm test` 2393 项 0 失败，双 typecheck 绿；实机两问题
     ALL CHECKS PASS（截图 x-system-start-after-click.png：楼层序号 1/11 → 2/11、
     INIT 提示随界面消失；x-drawer-open-on-content.png：抽屉浮于未动的阅读页上）。
+
+---
+
+# DEVIATIONS — 任务 Y：卡界面切换性能（切换空白 + 打开慢）
+
+分支 `dev/fix-interface-switch-perf`（worktree `wt-ready-handshake`，基于主线
+3b98b88 与任务 V 修复的合并）。
+
+## 测量结论（headless CDP，同工具修前/修后对照）
+
+切换 = 编辑楼层 0 原文（无 LLM），展示 regex 产出新界面 → 接口帧整只重建。
+尸变纪元与哈人冰恋（状态栏卡）实测时间线：
+
+- **修前**：触发后 ~13-20ms 旧帧即被拆除（空白开始）→ 新帧同拍插入 →
+  members(40KB)+message-preset(1.66MB) 拉取与解析 → ready ~450-550ms →
+  首次真实排版（painted）~830-1060ms。**空白期 = painted − 旧帧拆除 ≈ 0.82-1.05s**。
+- **修后**：旧帧保留在屏，直到新帧首次排版才移除（oldRemoved ≈ painted 时刻，
+  ~0.46-0.53s），**空白 ≈ 0**；总时长不变（重建成本仍在），但读者全程看到旧界面。
+- **缓存实证**：宿主对内容哈希资产已发 `cache-control: immutable`；普通页面二次
+  fetch transferSize=0（命中），而 opaque origin 的接口帧**每次全量重下**
+  1.66MB+40KB（transferSize>0）——Chrome 对沙箱帧不命中 HTTP 缓存，属结构性限制，
+  修缓存头无效，故未采用该候选。
+
+## 修复机制（swap-on-ready，服务一切重卡，无按卡分支）
+
+- `useMessageInterfaces.tsx`：重建时旧帧集不再立即 dispose，而是**驻留**（静音、
+  保持在屏）；新帧集挂载时对被覆盖实例隐藏；其首份真实排版信号到达即原子换入
+  （移旧帧、显新帧）。替换集不存在的实例立即让位；10s 上限兜底（坏启动不得永久
+  占住旧画面，行内失败行先于上限到达）。最终卸载（`alive` token）与无替换路径
+  （consent 关闭/无块）立即释放，避免滚动场景的 realm 滞留。
+- `interface-swap.ts`（新，纯模块）：驻留跟踪的可测核心——何时算覆盖、何时结算，
+  计时器可注入；6 条单测。
+
+## 修复链路上的一个时序更正
+
+接口帧的 ready 在 bootstrap 末尾发出，而其标记解析在其后（库标签居中）——以 ready
+为 reveal 时机会用一次白屏换一次白屏。故 reveal 信号取**首份真实高度报告**
+（body.scrollHeight>0，即确有内容排版）：`message-frames.ts` 把帧的首个 height 转
+为 `onPainted`（每帧一次），`MessageInterfaces.tsx` 经 runner 的 `onHeight` 接线。
+驻留期间 `starting…` 行被抑制（读者看到的是旧界面，新状态行只会造成误读）。
+
+## 与任务书的偏离
+
+- **政经博弈卡本地缺失**（同任务 V，未变）：以尸变纪元（最重：1.66MB preset +
+  字体 + 277KB srcdoc）与哈人冰恋（状态栏卡）测切换，机制对所有卡一致。
+- 候选中的"复用已活帧（只 push context/seed）"仅适用于标记不变的刷新（已有通道）；
+  切换本质是标记改变，跨标记复用需帧内热替换标记并重挂文档级观测器，风险收益比
+  不佳，未采用。重建的总成本（~0.9s）因此保留，但读者不再看到它。
+
+## 验收对账
+
+- 修前/修后时间线（同脚本、同宿主、同卡）：尸变 6 轮、冰恋 4 轮，空白 0.82-1.05s → 0。
+- 零回归：任务 V 验收脚本全 PASS（SYSTEM START swipe 生效、哈人冰恋/神隐挑战/
+  绿茵好莱坞无 never-started）；10 轮开关聊天 stress 全 PASS。
+- `npm test` 2,400 例全绿（iris-web 1,099，含 interface-swap 6 例与 onPainted
+  单帧一次用例）；根与 iris-web typecheck 全绿。
