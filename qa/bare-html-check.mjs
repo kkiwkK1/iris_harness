@@ -13,6 +13,15 @@
 //                                          frame geometry, check for source
 //                                          leaks, and screenshot.
 //
+// Two properties of the render pass, because both are easy to lose:
+//   - the card-report list is read as a DELTA against a baseline taken before
+//     the chat is opened. Those rows never expire and are cleared only when the
+//     CHARACTER changes, and both fixture chats are the same card — so presence
+//     alone cannot tell this chat's report from the other chat's leftovers.
+//   - every reading prints the observation window it was taken at. All the
+//     judgements here are negatives, and a negative without its window cannot
+//     be reviewed by the next reader.
+//
 // The fixtures are card shapes, not card-specific branches: the de24 widget is
 // 尸变纪元's MVU status panel as seen on 8790, the fragment chat is the
 // 936-floor corpus shape (details/style + narrative + an unclosed tail), and
@@ -166,10 +175,64 @@ if (mode === 'render') {
       return r.result?.result?.value
     }
 
+    /*
+     * The observation windows, named once so every reading below can print the
+     * one it used.
+     *
+     * Every judgement here is a negative one — no leak, no report, no frame —
+     * and a negative reading without its window is not reviewable: "did not see
+     * it" and "looked too early" are the same sentence (TEST-CARDS §九 ③之二).
+     */
+    const WINDOW = { boot: 7000, framesBoot: 12_000, drawerSettle: 1200 }
+
+    /**
+     * The card-report rows, scoped to the scripts card.
+     *
+     * `#iris-card-scripts` is `CollapsibleSection`'s own body id — stable and
+     * language-independent, where the card's title is neither. The scoping
+     * matters: `.iris-script__report` is also the notice log's row class, and
+     * `.iris-field__note` is on a dozen unrelated paragraphs, so an unscoped
+     * selector would describe two lists at once.
+     *
+     * Rows are read even while the card is folded: `hidden` removes it from the
+     * rendering, not from the DOM. `cardPresent` is separate from an empty row
+     * list on purpose — "no scripts card here" and "the card is here and says
+     * nothing" are different facts, and a missing key must not read as a zero.
+     */
+    const READ_REPORTS = `(() => {
+      const card = document.querySelector('#iris-card-scripts')
+      if (card === null) return { cardPresent: false, rows: [] }
+      const rows = [...card.querySelectorAll('.iris-script__report')].map(row => ({
+        // Direct text children only: the channel label and the staleness marks
+        // are spans, so this is the report's own sentence and nothing else.
+        text: [...row.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent ?? '').join('').trim(),
+        channel: row.querySelector('.iris-reports__area')?.textContent ?? null,
+        fault: String(row.className).includes('iris-script__report--fault'),
+      }))
+      return { cardPresent: true, rows }
+    })()`
+
     await send('Page.enable')
     await send('Runtime.enable')
     await send('Page.navigate', { url: BASE })
-    await delay(7000)
+    const navigatedAt = Date.now()
+    const since = () => Date.now() - navigatedAt
+    await delay(WINDOW.boot)
+
+    /*
+     * Baseline of the card-report list, taken BEFORE this chat is opened.
+     *
+     * These rows are a durable channel: `addCardReport` writes them into
+     * `cardReports`, which has no expiry and is cleared only when the
+     * **character** changes (`store.ts` `loadScripts`, first line:
+     * `if (scriptsFor === characterId) return`). Both fixture chats belong to
+     * one card, so a row the other chat left is still standing — under a plain
+     * `includes()` "this chat reported it" and "the previous one did" take the
+     * same value. **The delta is the judgement; the presence is not**
+     * (TEST-CARDS §九 ③之三).
+     */
+    const baseline = await evaluate(READ_REPORTS)
+    console.log('reports baseline:', JSON.stringify({ observedAtMs: since(), bootWindowMs: WINDOW.boot, ...baseline }))
 
     const opened = await evaluate(`(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -184,8 +247,8 @@ if (mode === 'render') {
       rows[0].click()
       return { clicked: rows.length }
     })()`)
-    console.log('open:', JSON.stringify(opened))
-    await delay(12_000) // script frames boot
+    console.log('open:', JSON.stringify({ observedAtMs: since(), ...opened }))
+    await delay(WINDOW.framesBoot) // script frames boot
 
     const reading = await evaluate(`(() => {
       const frames = [...document.querySelectorAll('.iris-interfaces__slot iframe')].map(f => {
@@ -206,21 +269,48 @@ if (mode === 'render') {
         .map(t => ({ widget: t.includes('<div class="de24-update-widget"'), details: t.includes('<details>'), fenced: t.includes('<body>'), style: t.includes('.de24-update-widget {') }))
       return { frames, leaks, slots: document.querySelectorAll('.iris-interfaces__slot').length }
     })()`)
-    console.log('reading:', JSON.stringify(reading, null, 1))
+    // The leak checks below are negatives, so they carry the window they were
+    // read at: everything here was sampled once, this long after the navigate.
+    console.log('reading:', JSON.stringify({ observedAtMs: since(), sinceOpenMs: WINDOW.framesBoot, ...reading }, null, 1))
 
     // The refused note: open the settings drawer, where the card report list
-    // lives, and look for the split's own sentence.
-    const reports = await evaluate(`(async () => {
+    // lives, and read the rows — not the page's prose.
+    const after = await evaluate(`(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms))
       const buttons = [...document.querySelectorAll('button')]
       const settings = buttons.find(b => (b.textContent ?? '').trim() === 'Settings')
       if (settings === undefined) return { error: 'no Settings button' }
       settings.click()
-      await sleep(1200)
-      const text = document.body.textContent ?? ''
-      return { neverClosed: text.includes('never closed'), channel: text.includes('interface') }
+      await sleep(${WINDOW.drawerSettle})
+      return ${READ_REPORTS}
     })()`)
-    console.log('reports:', JSON.stringify(reports))
+
+    const baselineRows = baseline?.rows ?? []
+    const afterRows = after?.rows ?? []
+    const seenBefore = new Set(baselineRows.map(row => row.text))
+    const added = afterRows.filter(row => !seenBefore.has(row.text))
+    const neverClosed = added.find(row => row.text.includes('never closed'))
+    console.log('reports:', JSON.stringify({
+      observedAtMs: since(),
+      drawerSettleMs: WINDOW.drawerSettle,
+      ...(after?.error === undefined ? {} : { error: after.error }),
+      // A missing card and a card with nothing to say are different findings.
+      baselineCardPresent: baseline?.cardPresent === true,
+      cardPresent: after?.cardPresent === true,
+      baselineRows: baselineRows.length,
+      rowsNow: afterRows.length,
+      addedThisRun: added.map(row => ({ channel: row.channel, fault: row.fault, text: row.text.slice(0, 140) })),
+      // The judgement: this run ADDED the row. "The words are somewhere on the
+      // page" cannot tell that from a row the previous chat of the same card
+      // left behind — the list is only cleared when the character changes.
+      neverClosedAddedThisRun: neverClosed !== undefined,
+      // Read off the row's own label element, not from the word "interface"
+      // appearing anywhere in the drawer — the drawer is full of that word, so
+      // the old check was true whatever the row said.
+      neverClosedChannel: neverClosed?.channel ?? null,
+      // Printed so a false reading is diagnosable rather than just negative.
+      neverClosedAlreadyInBaseline: baselineRows.some(row => row.text.includes('never closed')),
+    }, null, 1))
 
     const shot = await send('Page.captureScreenshot', { format: 'jpeg', quality: 55 })
     const name = target.replace(/[^\p{L}\p{N}-]+/gu, '-')
