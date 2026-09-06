@@ -22,6 +22,8 @@ qa/** 判别力四条(D/A/C/E)、frame-entry 两条 500ms 的源码断言、dev 
 **远程样式表/字体族(2026-09-06 裁)**:上游无 CSP、其帧头自装九个远程资源;卡引用远程 CSS 是一族(Lights ON 五条 regex 产出各带一份),
 不按 host 加白名单;机制解 = 远程样式表走宿主代理(与 script bundle 同路由,代理重写 `@font-face src`,`style-src`/`font-src` 仍只 self),
 一次盖住 style-src / font-src / script-src(onload) / CORS(不透明源 preload)四道门;落地前具名拒绝并报告。事实见 SANDBOX.md 该节。
+**世界书扫描的说话人前缀(2026-09-06)**:`include_names` 已接成真实旋钮(eb9ee2c),但前缀名按 role 派生;从 ST 导入、行上带自己说话人的聊天,
+上游用的是行上存的 `name`——待改投影让扫描读行上说话人(与 dev 的 MODELLED_KEYS 5→4 同一处)。
 
 **已完成**（每项都在真卡/真语料上验收过）：Tier 0 全部——卡片脚本沙箱（共居 realm、
 虚拟 parent、按卡授权、自动运行，实际位置 `apps/iris-web/src/sandbox/`）✅；正则脚本
