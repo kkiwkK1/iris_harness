@@ -604,12 +604,13 @@ blocks, and the count gate counts frames. Keys are `floor:instance`.
 **No AI/user distinction in the accounting.** The design says the budget counts
 AI floors only, resting on a measured 0 user rows among 189 interface floors
 with nothing enforcing it. Charging the *actual* interface bytes of whatever
-builds a frame makes the distinction unnecessary — user rows contribute nothing
-because they carry no interfaces, which is the same result with no
-un-mechanised premise. Two things now hold the line instead: `Message.tsx`
-routes only `role === 'assistant'` through `MessageInterfaces`, so a user row
-has no path to a frame at all; and the plan reports any user row that carries
-one, which fires if that routing ever changes.
+builds a frame makes the distinction unnecessary — and when user floors began
+carrying interfaces too (§52: a console writes its markup floor as a **user**
+message, and upstream renders message HTML wherever the floor sits), the
+role-blind accounting absorbed the change with no edit at all: a user floor's
+blocks are candidates on the same terms, spent and gated beside every other.
+The plan's `userInterfaces` report remains the account of which on-screen
+frames a user floor is responsible for.
 
 **Hysteresis is not built.** The design proposes a half-screen band so scrolling
 across the boundary does not build and tear frames. Layer ② grows the window by
@@ -1911,3 +1912,52 @@ entry but the inline path of `INLINE-HTML.md` §三, where the remainder above
 disappears because the floor is one tree again. Or a message whose sheets are
 large enough that copying them per region is measurable; 940 B against a
 360 KiB interface says that is not today's problem.
+
+---
+
+## 52. A user floor's HTML renders as a sandbox frame, exactly like an assistant floor's
+
+**Kind:** compatibility gap, closed — no new mechanism, one routing gate removed.
+
+**Upstream.** `messageFormatting` (`public/script.js:1753`) is role-agnostic
+about markup: its `isUser` argument only chooses the regex placement
+(`USER_INPUT` vs `AI_OUTPUT`), the prompt-bias strip and the `name2`
+suppression. With `encode_tags` at its default (`false`,
+`scripts/power-user.js:301`) a user message's bare `<div>`/`<details>` reaches
+showdown and DOMPurify exactly like an assistant message's, and renders as live
+HTML — so a console that writes a floor of markup as a user message
+(`createChatMessages`) still gets its panel. Verified against
+E:/sillyTavern/SillyTavern source; no deviation to record **in the direction of
+this change** — Iris before it was the deviation.
+
+**The report that opened it.** The 政经博弈卡's console submitted 建国档案 and
+`createChatMessages` made the floor a **user** message: 5,836 characters
+opening line-initially with `<div style="width: 85%">`, a `<details
+class="polsim-terminal">` terminal with a nested 👾 variable panel, `is_user`
+undefined at the ST-format data layer and therefore a user row in the view.
+`Message.tsx` routed only assistant rows through `MessageInterfaces`, so §25's
+bare-HTML pipeline had no effect on the floor and the reader saw the whole
+source.
+
+**The change.** Every row routes through `MessageInterfaces`, with the row's
+role handed along. Claim, budget, count gate, sandbox frame and height sync are
+the assistant pipeline's, shared — `FrameBudgetProvider` had always planned
+over user floors (the `isUser` flag was carried precisely so a routing change
+could not pass unreported), so a user region pays `FRAME_OVERHEAD_BYTES` and
+loses to the count gate exactly as an assistant one does, and the plan's
+`userInterfaces` report now records what user floors actually carry. The one
+role difference kept is the **prose between frames**: an assistant row's
+unclaimed segments read as markdown (`MarkdownText`), every other row's stay
+the raw text that row has always shown. This closes the HTML gap, not the
+markdown one.
+
+**Residual deviations from upstream, both already on record or standing.** The
+frame, not in-page sanitized HTML — §25's twist, now applying to user floors
+too. And user prose stays plain text where upstream runs markdown over the
+whole message — pre-existing Iris behaviour, deliberately preserved here.
+
+**What it costs.** A user floor with a claimed region now spends real budget,
+so a chat whose user floors carry interfaces reaches the count gate sooner —
+which is the accounting working, not a regression; the measured corpus had zero
+such floors, and the report names them the moment that stops being true. A
+plain-text user floor claims nothing and renders byte-for-byte as before.

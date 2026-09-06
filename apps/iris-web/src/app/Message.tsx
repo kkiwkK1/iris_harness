@@ -136,18 +136,29 @@ export function Message({
               the state, and streaming (same key throughout) never replays it.
             */}
             <div key={swipes?.index ?? 0} className="iris-msg__text iris-msg__text--enter">
-              {message.role === 'assistant' ? (
-                /*
-                 * The assistant body goes through `MessageInterfaces`, which
-                 * renders the markdown itself and puts a card interface **in
-                 * place of** the block that declares it. Rendering `MarkdownText`
-                 * here as well would show 360 KiB of source above the interface
-                 * it describes, which is what the first cut did.
-                 */
-                <MessageInterfaces floor={message.id} text={message.text} streaming={streaming} />
-              ) : (
-                message.text
-              )}
+              {/*
+                * Every body goes through `MessageInterfaces`, which renders the
+                * prose itself and puts a card interface **in place of** the
+                * block or bare region that declares it. Rendering `MarkdownText`
+                * here as well would show 360 KiB of source above the interface
+                * it describes, which is what the first cut did.
+                *
+                * The row's role travels along, but it never gates this call:
+                * upstream renders message HTML wherever the floor sits
+                * (`messageFormatting` asks `isUser` only where the regex
+                * placement and the name suppression need it), and a console can
+                * write a floor of markup onto a user row — which, routed around
+                * the pipeline, arrived as 5.8 KiB of visible source. The role
+                * decides only the prose between frames: an assistant row's
+                * segments read as markdown, a user row's stay the raw text that
+                * row has always shown.
+                */}
+              <MessageInterfaces
+                floor={message.id}
+                text={message.text}
+                streaming={streaming}
+                role={message.role}
+              />
               {streaming ? <span className="iris-caret" aria-label={t('generatingAria')} /> : null}
             </div>
             <Slot name="iris.message.footer" owner={{ message, streaming }} />
