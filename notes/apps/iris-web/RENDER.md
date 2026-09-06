@@ -731,3 +731,37 @@ document already specifies: same `runCard`, same wall, same budget, no second
 accounting. The composition rule (fence-first, and why indented blocks are not
 excluded) and the cost ledger live in `DEVIATIONS.md` §25; the split itself and
 its measured specification live in `app/html-regions.ts`.
+
+## Added 2026-09-06: the fence that never closes — `app/stray-fences.ts`
+
+The fence path's own grammar turned on us on the 政经博弈卡
+（新·架空政治经济模拟器）: a 320-line reply whose `<think_fox~>` thinking
+carries a lone ` ``` ` at line 10 that nothing closes. CommonMark — and so
+`MarkdownText` — runs an unclosed fence to the end of the document, so the
+reply parsed as a paragraph plus **one `code` block of 310 lines**, and the
+reader scrolled headings, bold, lists and rules as raw source. The claim
+pipeline was innocent: the unclosed fence bounds the bare-HTML split, its body
+carries no `html>`/`<head>`/`<body>` marker, so nothing was claimed and the
+whole text fell to the markdown fallback — where the fence ate it.
+
+The repair is upstream's own answer, restated for a settled message: showdown
+only builds a code block when the *closing* fence arrives, so a stray opener
+stays literal text and the reply below renders as markdown.
+`repairStrayFences` (`app/stray-fences.ts`) copies that outcome — a
+never-closing opener has its fence characters backslash-escaped, the line
+renders as the literal text it reads as, and everything below renders as
+markdown. Real blocks (an opener with a closer anywhere below) are consumed
+untouched, which is also why the walk shares `openingFence`/`closesFence` with
+the claim pipeline: the repair and the claim must not be two implementations of
+what a fence is.
+
+Gated on settled text exactly as the claim is — while a reply streams, an
+unclosed fence is a code block in flight and code-to-end-of-stream is its
+honest render — and applied at the two seams that read a message's display
+text: the row (`MessageInterfaces`, whose controller, splice and fallback all
+read the repaired string) and the budget's floors (`ChatPane`), so no two
+consumers derive surfaces from different texts. One consequence worth naming:
+repairing can *unhide* a bare-HTML region a stray fence used to bury, which the
+claim then frames — measured on the corpus floors that fail this way, not
+assumed, and the budget repairs for the same reason it claims the combined
+list, so what it rations is what the view renders.
