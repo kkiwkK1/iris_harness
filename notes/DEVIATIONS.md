@@ -1014,3 +1014,70 @@ Chrome CDP + 本 worktree 独立宿主（端口 8821，数据目录为仓库内 
   绿茵好莱坞无 never-started）；10 轮开关聊天 stress 全 PASS。
 - `npm test` 2,400 例全绿（iris-web 1,099，含 interface-swap 6 例与 onPainted
   单帧一次用例）；根与 iris-web typecheck 全绿。
+
+# DEVIATIONS — 任务 Z1：政经博弈建国链路（triggerSlash 路由核实 + MVU 状态保真）
+
+分支 `dev/fix-z1-trigger-slash`（自 `dev/iris-exploration` f1cd7ab 分出）。实测卡：
+`新架空政治经济模拟器.png`（8790 主宿主 character 目录提取，建国控制台为其
+`建国初始化控制台` regex 脚本）。
+
+## 根因链路（两条，同一报障的两个症状）
+
+1. **`errUnsupported` 来自 8790 宿主的旧进程/旧前端，不是主线缺口。**
+   帧 TH 面的 `triggerSlash` 成员存在（`tavern-helper.ts:2791` → frame 的
+   `slash` 报文 → shell `runSlash` → 宿主 `script.slash`），裸 `/trigger` 在
+   2321dbf 已路由为 regenerate——8821 worktree 宿主上 RPC 与真实 UI 双路复验
+   通过（点确认建国 → 「变量已写入 3 项 · 指令已发送」→ user 楼落地 →
+   `/trigger` 生成完成）。用户实测的三症状（报文 + 「指令已发送 · 变量将由 AI
+   初始化写入」+ 无生成）与 e7df148/2321dbf **之前**的行为逐项吻合：
+   旧 `getCurrentMessageId` 在界面帧抛错 → MVU 写入分支静默跳过 → 卡走的正是
+   `mvuWritten === false` 那句文案；旧 `script.slash` 对裸 `/trigger` 抛
+   `AppError('unsupported')` → 生成从未开始。**8790 宿主需按 PID 重启进主线
+   HEAD 并重建 dist**（本任务不碰主检出，未代做）。
+
+2. **STATE 面板"清空"在主线 HEAD 上真实重现，属机制缺陷，本次已修。**
+   链路：控制台把变量写入 0 楼（成功，`replaceMvuData` = 整表 replace）→
+   `createChatMessages` 追加建国 user 楼 → `importChat` 给每行开
+   `turn/start` → 最新 turn 只有 user 行、**无 candidate** →
+   `sessionMessageBackend.candidateSeqOf` 抛 `VariableScopeError` →
+   `currentVariables()` catch 后返回 `undefined` → `view.variables` 为空 →
+   面板清空；线上同读答 `internal "turn 1 has no generated reply"`。存储里
+   变量从未丢（0 楼读回始终正确），丢的是**一切 'latest' 读**——而"读到空"
+   恰是 MagVarUpdate 重新初始化、用默认值覆盖活状态的触发条件。修后窗口内
+   继承最近已结算 turn 的表（`inheritedTable` 本就实现的规则，扩展到尚无
+   candidate 的 turn），写入侧维持"必须挂在 candidate 上"原判。
+   复现/修后对照：`qa/z1-repro.mjs`（PANEL/LATEST read 由
+   `code=internal` 转为 `国名=测试共和国`）。
+
+## 附带修复（同一报障的可诊断性）
+
+`describeError` 原把 `unsupported` 折叠为通用文案"这一版 Iris 还做不到"，
+**丢弃宿主detail**（"only /trigger and /send <text>|/trigger are supported;
+got …"）——detail 正是读者需要的事实，与 `provider-error`/`internal` 同理，
+改为透传（`errors.ts` COPY 表 + 注释；新用例锁住）。旧进程若再遇到此类
+拒绝，报文将自带答案。
+
+## 与任务书/上游的偏离
+
+- 上游 `/trigger` 的未名参数是**群聊成员选择器**（slash-commands.js:1819），
+  单聊无意义；Iris 单聊场景丢弃之，与既录的裸 `/trigger` 语义一致。
+- 上游 `getVariables({type:'message'})` 对无变量楼层答 `{}` 且从不抛错；其
+  状态连续性由 MVU 包的"新楼复制上一楼变量"维持。Iris 无该写侧复制（时序
+  不可保证），改由宿主存储在**读侧**继承——观察行为与上游一致（user→reply
+  窗口内面板不空），机制不同，记为本侧语义。
+- `generation-kinds.test.ts` 的 impersonate 用例原断言无 candidate 读**抛错**，
+  随语义修正改为断言"读到的是继承来的上一 turn 表"；测试意图（该 turn 不产
+  生自己的表、既有表不动）不变。
+
+## 验收对账
+
+- `qa/z1-repro.mjs`（RPC 全链）：写入 → 追加 → PANEL/LATEST 读修后
+  `ok=true` 且 国名 保真 → `/trigger` → `stream.end completed` → 终态
+  `view.variables.国名=测试共和国`（AI 初始化采纳了写入值）。
+- `qa/z1-e2e.mjs`（真实 UI，CDP 入界面帧填表并点击）：状态行
+  「变量已写入 3 项 · 指令已发送」，零 notice、零 console error，最终
+  floors = assistant,user,assistant。
+- 回归：哈人冰恋世界 / 尸变纪元（`qa/z1-regression.mjs`，真 turn）——帧
+  稳定渲染、stream completed、面板照实显示、无新增 notice。
+- `pnpm test` 2,432 例（pass 2,427 / skip 5 corpus）全绿；根与 iris-web
+  typecheck 全绿。
