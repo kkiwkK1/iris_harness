@@ -343,3 +343,57 @@ test('the report states the whole deletion, not one path of it', async (t) => {
   )
   assert.ok(trimmed > 0)
 })
+
+test('cleanup is off by default, and the offer is still made', async (t) => {
+  // **The two halves of one ruling, pinned together because they read as a
+  // contradiction.** The periodic sweep now defaults OFF (`Config`'s
+  // `pruneVariables` is `false`; see `DEVIATIONS.md` §8's correction) — the
+  // decision is an opt-out, never a silent opt-in, because a sweep deletes
+  // state nothing here restores.
+  //
+  // The offer is not part of that switch and must not be gated behind it.
+  // Upstream asks on every chat load, and asking is how a user who *does* want
+  // the space back gets it — one press of a button. Wiring the question to the
+  // automatic sweep would make "we do not delete without asking" quietly mean
+  // "we never ask", which is the version of this that loses the feature rather
+  // than the data.
+  const dir = await mkdtemp(join(tmpdir(), 'iris-legacy-off-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await mkdir(join(dir, 'chats'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+  await writeFile(join(dir, 'chats', 'long.jsonl'), longChatFile(673, true), 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const chats = new ChatStore(join(dir, 'chats'), library)
+  const events: IrisEvent[] = []
+  const stream: StreamFn = async function* (_options: GenerateOptions): AsyncIterable<StreamChunk> {
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  // No `pruneVariables` key at all — exactly what the plugin passes when the
+  // config says `false`, since presence is the switch there.
+  const handlers = new IrisAppService({
+    stream, library, chats,
+    settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
+    broadcast: (event: IrisEvent) => { events.push(event) },
+    userName: 'Traveller',
+    diagnostics: new DiagnosticBuffer(),
+  }).handlers()
+
+  await handlers['chat.open']({ chatId: 'long' })
+  assert.equal(
+    events.filter(event => event.type === 'cleanup.offer').length,
+    1,
+    'the offer must survive the sweep being off — otherwise the user can never ask for it',
+  )
+
+  // And nothing was swept on the way past: the offer is a question, not a
+  // deletion with a notification attached. Message 1 still holding its table is
+  // upstream's own "never cleaned" gate, so this is the same fact the gate
+  // reads rather than a second opinion about it.
+  const entry = await chats.open('long')
+  assert.ok(
+    'stat_data' in ((entry.toFile().messages[1]?.['variables'] as Record<string, unknown>[])?.[0] ?? {}),
+    'opening a chat with the sweep off must not have trimmed it',
+  )
+})

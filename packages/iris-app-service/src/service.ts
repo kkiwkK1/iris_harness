@@ -16,7 +16,7 @@
  * @module @iris/app-service/service
  */
 
-import { BlockAssembler, createAssistantMessage, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { BlockAssembler, createAssistantMessage, createUserMessage, isHarnessError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, selectCandidate, selectedCandidate, SwipeError, type Candidate } from '@iris/chat'
 import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
@@ -92,6 +92,27 @@ const GENERATION_TYPE_OF = {
   continue: 'continue',
   impersonate: 'impersonate',
 } as const
+
+/**
+ * Name the layer a failed generation failed at.
+ *
+ * The user's own signal is checked **first**: a stop pressed while a budget
+ * happened to be expiring is still a stop, because that is the outcome the
+ * person chose and the one their interface is already showing.
+ *
+ * `TIMEOUT` is the harness's own code rather than one minted here — it is
+ * already in `dsh-llm`'s default retryable set — so this reads a taxonomy
+ * instead of inventing a parallel one. Anything else is the provider's, which
+ * is what `provider-error` has always meant.
+ * @param signal - the caller's cancellation, aborted only by a real stop.
+ * @param error - what the driver raised.
+ * @returns the `stream.error` code for this failure.
+ */
+function failureCode(signal: AbortSignal, error: unknown): 'aborted' | 'timeout' | 'provider-error' {
+  if (signal.aborted) return 'aborted'
+  if (isHarnessError(error) && error.code === 'TIMEOUT') return 'timeout'
+  return 'provider-error'
+}
 
 /**
  * The text a continue writes on from: the reading under the cursor.
@@ -2507,6 +2528,13 @@ export class IrisAppService {
     kind: 'send' | 'regenerate' | 'continue' | 'impersonate',
   ): Promise<void> {
     const partial = entry.pending?.text ?? ''
+    // Three outcomes, not two. A budget expiring in the adapter aborts a
+    // controller the *adapter* owns, so `signal` — the user's — is not
+    // aborted, and the two-way test above would have called a silent endpoint
+    // a `provider-error`. The provider did not error; it stopped speaking, and
+    // those ask a reader for different things (retry versus look at the
+    // endpoint). The adapter's message names which phase and how long.
+    const code = failureCode(signal, error)
 
     if (kind === 'impersonate') {
       if (signal.aborted && partial.length > 0) {
@@ -2528,7 +2556,7 @@ export class IrisAppService {
         type: 'stream.error',
         chatId: entry.chatId,
         turn,
-        code: signal.aborted ? 'aborted' : 'provider-error',
+        code,
         message: error instanceof Error ? error.message : String(error),
       })
       return
@@ -2566,7 +2594,7 @@ export class IrisAppService {
       type: 'stream.error',
       chatId: entry.chatId,
       turn,
-      code: signal.aborted ? 'aborted' : 'provider-error',
+      code,
       message: error instanceof Error ? error.message : String(error),
     })
   }

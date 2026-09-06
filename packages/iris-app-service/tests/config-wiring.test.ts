@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { Config } from '../src/index.ts'
+import { DEFAULT_TIMEOUTS } from '@iris/llm-openai-compat'
 
 /**
  * Every configurable option is read by something.
@@ -37,4 +38,33 @@ test('every config key is read off the parsed config by something', async () => 
   // prefix, because only the parsed object carries a value.
   const unread = keys.filter(key => !source.includes(`config.${key}`))
   assert.deepEqual(unread, [], `declared on the config and never read: ${unread.join(', ')}`)
+})
+
+/**
+ * The two defaults a reader is most likely to assume the other way.
+ *
+ * `pruneVariables` defaults **off**. It reached this state the hard way: the
+ * schema said `true` while the docstring three lines above it said
+ * "Off by default", and the ledger (`DEVIATIONS.md` §8) argued at length for
+ * `true` on compatibility grounds. One of those had to move, and the ruling
+ * was that a sweep which deletes state nothing restores is an opt-out — never
+ * a silent opt-in. Pinned here so the next person to read §8's original
+ * paragraph does not "restore" it.
+ *
+ * The timeout budgets default to the adapter's own constants rather than to
+ * numbers repeated here, and this pins that they are the same object: two
+ * schemas each naming 30000 are two places to change it, and the one nobody
+ * changes is the one that runs.
+ */
+test('the defaults that a reader would guess wrong', () => {
+  const parsed = Config({
+    dataDir: '/tmp/iris',
+    presetPath: '/tmp/iris/preset.json',
+    webDistIndex: '/tmp/iris/index.html',
+  } as never) as unknown as Record<string, unknown>
+
+  assert.equal(parsed['pruneVariables'], false, 'the periodic sweep is an opt-out, not a silent opt-in')
+  assert.equal(parsed['connectTimeoutMs'], DEFAULT_TIMEOUTS.connectMs)
+  assert.equal(parsed['firstByteTimeoutMs'], DEFAULT_TIMEOUTS.firstByteMs)
+  assert.equal(parsed['idleTimeoutMs'], DEFAULT_TIMEOUTS.idleMs)
 })

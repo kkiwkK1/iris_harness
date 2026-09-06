@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { LlmError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { ChatView, IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
@@ -480,6 +480,23 @@ function stallingStream(prefix: string): StreamFn {
   }
 }
 
+/**
+ * A stream that goes silent the way a hung endpoint does.
+ *
+ * Shaped after what the adapter actually raises: some text arrives, then the
+ * idle budget expires and an `LlmError` with the harness's `TIMEOUT` code is
+ * thrown out of the iteration. Note what it is *not* — a `finish` chunk with
+ * an error reason, which is the provider saying something. This provider said
+ * nothing at all, and the two travel by different routes.
+ */
+function timingOutStream(): StreamFn {
+  return async function* (_options: GenerateOptions): AsyncIterable<StreamChunk> {
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: '*She begins to' }
+    throw new LlmError('no data from http://endpoint/v1/chat/completions for 200 ms after 14 bytes', 'TIMEOUT')
+  }
+}
+
 /** A stream that fails the way a provider does: a terminal error finish. */
 function failingStream(): StreamFn {
   return async function* (_options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -565,6 +582,82 @@ test('a provider failure is reported and the user’s message survives', async (
   assert.equal(last(view).role, 'user')
   assert.equal(last(view).text, 'Hello?')
   assert.equal(chats.cached(chatId)?.generating, false)
+})
+
+test('an endpoint that goes silent is named a timeout, not a provider error', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-app-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const chats = materialisingChatStore(dir, library)
+  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
+  const sink = collector()
+  const handlers = new IrisAppService({
+    stream: timingOutStream(),
+    library,
+    chats,
+    settings,
+    broadcast: sink.broadcast,
+    userName: 'Traveller',
+  }).handlers()
+
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+  await handlers['chat.send']({ chatId, text: 'Hello?' })
+
+  const failure = await sink.waitFor('stream.error')
+  // Not `provider-error`: the caller's signal is not aborted here (nobody
+  // pressed stop) and the provider did not answer with a failure — it stopped
+  // speaking. The two ask a reader for different things, so they get different
+  // words. The phase and the number ride in the message because the shell
+  // renders that verbatim and never looks at the code.
+  assert.equal(failure.code, 'timeout')
+  assert.match(failure.message, /for 200 ms after 14 bytes/u)
+})
+
+test('a timed-out turn releases the chat, so the next send is not refused as busy', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-app-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const chats = materialisingChatStore(dir, library)
+  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
+  const sink = collector()
+  let silent = true
+  const handlers = new IrisAppService({
+    // Silent once, then healthy — a retry is the whole point of releasing.
+    stream: (options: GenerateOptions) => {
+      if (!silent) return scriptedStream(['*She smiles.'])(options)
+      silent = false
+      return timingOutStream()(options)
+    },
+    library,
+    chats,
+    settings,
+    broadcast: sink.broadcast,
+    userName: 'Traveller',
+  }).handlers()
+
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+  await handlers['chat.send']({ chatId, text: 'Hello?' })
+  await sink.waitFor('stream.error')
+
+  // **This is the assertion the feature exists for.** `begin()` claims the
+  // chat and only `#settle`/`#fail` give it back, and both of those sit
+  // downstream of the awaited stream — so before the budgets existed a silent
+  // endpoint left `#abort` set for ever and *every later send on this chat*
+  // was refused `busy` until the host restarted. One lost reply was never the
+  // severity; a conversation bricked for the life of the process was.
+  assert.equal(chats.cached(chatId)?.generating, false)
+  await handlers['chat.send']({ chatId, text: 'Still there?' })
+  const end = await sink.waitFor('stream.end')
+  assert.equal(end.reason, 'completed')
+  assert.equal(last(end.view).text, '*She smiles.')
 })
 
 /**
