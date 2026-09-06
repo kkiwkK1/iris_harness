@@ -497,3 +497,48 @@ test('the foreground pass measures twice, because the rescue timer cannot cover 
     'the two slices overlap, so neither test is pinning what its name says',
   )
 })
+
+test('a resize measures forced, because the clip can be right for a box that is gone', () => {
+  /*
+   * **The third decision, and it is not either of the two above.**
+   *
+   * The frame gets a resize from the host when the shell hands it a new
+   * viewport, and one from the browser when the window changes. Both are
+   * moments when a `vh`-sized card's boxes become computable for the first
+   * time — the reading that prompted it was a card empty at first open and
+   * full-screen after the window height changed. What makes it its own guard is
+   * the **force**: a plain `schedule()` here is measured and then thrown away
+   * whenever the new clip happens to hash the same as the old one, and "the
+   * same clip against a different viewport" is exactly the state the dedup key
+   * was widened to notice. Neither timer above helps: the rescue timer fires
+   * only when the animation frame never ran, and the foreground pair is bound
+   * to `visibilitychange`, which a resize does not raise.
+   *
+   * Its own slice again, for the reason the slice above needed one — this
+   * listener is registered after both of them, so neither existing slice
+   * reaches it.
+   */
+  const entry = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
+    'utf8',
+  )
+  const opens = entry.indexOf('And on a resize, forced.')
+  const closes = entry.indexOf('Once up front')
+  assert.ok(opens >= 0, 'the resize comment was renamed or removed')
+  assert.ok(closes > opens, 'the up-front schedule no longer follows the resize listener')
+  const resize = entry.slice(opens, closes)
+
+  assert.match(
+    resize,
+    /addEventListener\('resize', forceMeasure\)/u,
+    'the resize listener is gone, or no longer forced — an unforced pass is discarded by the dedup'
+    + ' whenever the new clip hashes the same, which is the recovery this exists to report',
+  )
+  // Disjoint from both slices above, so three guards keep three tests.
+  assert.doesNotMatch(resize, /if \(scheduled\) send\(\)/u, 'this slice reaches the rescue timer')
+  assert.doesNotMatch(
+    resize,
+    /setTimeout\(forceMeasure, 500\)/u,
+    'this slice reaches the foreground pair',
+  )
+})
