@@ -237,6 +237,21 @@ async function callRpc(method, params = {}) {
 async function resolveChats(requested) {
   const { characters } = await callRpc('character.list')
   const { chats } = await callRpc('chat.list')
+  /*
+   * Enough of the profile to tell two runs apart in the file.
+   *
+   * Two reports with the same name can come from different profiles — the host
+   * is a variable and the ids carry timestamps — and nothing inside the old
+   * report said which one it read. Cheap to record, impossible to reconstruct
+   * afterwards.
+   */
+  const fingerprint = {
+    base: BASE,
+    characters: characters.length,
+    chats: chats.length,
+    characterIds: characters.map(character => character.characterId).slice(0, 20),
+    firstChatId: chats[0]?.chatId ?? null,
+  }
   const resolved = []
   const missing = []
 
@@ -258,7 +273,23 @@ async function resolveChats(requested) {
       continue
     }
 
-    const card = characters.find(character => (character.name ?? '').startsWith(prefix))
+    /*
+     * More than one character can carry the same name.
+     *
+     * `character.import` neither overwrites nor refuses: it derives the id from
+     * the card's *name* and de-duplicates it (`library.ts` `uniqueId(toId(…))`),
+     * so importing a card the profile already holds leaves two characters with
+     * one name under different ids. Measured, not predicted: importing three
+     * cards into a six-card profile produced `1_5` beside `哈人冰恋世界`,
+     * `v0.5NSFW` beside `尸变纪元-v0`, `Lights_ON` beside `人偶演出Lights-ON`.
+     *
+     * Recorded, not resolved — the same treatment as an ambiguous chat title one
+     * level down. Picking silently would make two runs that measured different
+     * cards produce indistinguishable reports, and there is no honest rule for
+     * which of two identically named cards was meant.
+     */
+    const matches = characters.filter(character => (character.name ?? '').startsWith(prefix))
+    const card = matches[0]
     if (card === undefined) {
       missing.push({ key, why: `no character whose name starts with ${JSON.stringify(prefix)}` })
       continue
@@ -284,13 +315,19 @@ async function resolveChats(requested) {
       chatId: newest.chatId,
       title: newest.title,
       character: card.name,
+      characterId: card.characterId,
       source: 'newest',
       titleAmbiguous: sameTitle > 1,
       ...(sameTitle > 1 ? { sharingThisTitle: sameTitle } : {}),
+      // The character-level twin of `titleAmbiguous`. Both ids are listed
+      // because "it picked one of these two" is the honest reading, and the
+      // next run may pick the other one.
+      characterAmbiguous: matches.length > 1,
+      ...(matches.length > 1 ? { charactersSharingThisName: matches.map(match => match.characterId) } : {}),
     })
   }
 
-  return { resolved, missing }
+  return { resolved, missing, fingerprint }
 }
 
 async function openChat(spec) {
@@ -400,17 +437,29 @@ try {
   console.error(`Is a host answering on ${BASE}? Nothing was measured, so this run says nothing about the frames.`)
   process.exit(2)
 }
-const { resolved, missing } = resolution
-console.log(`resolved ${resolved.length} of ${keys.length} requested card(s)`)
+const { resolved, missing, fingerprint } = resolution
+console.log(`resolved ${resolved.length} of ${keys.length} requested card(s) on ${fingerprint.base} (${String(fingerprint.characters)} character(s), ${String(fingerprint.chats)} chat(s))`)
 for (const spec of resolved) {
-  console.log(`  ${spec.key} -> ${spec.chatId} (${spec.source}${spec.titleAmbiguous ? ', TITLE AMBIGUOUS' : ''})`)
+  const flags = [
+    spec.characterAmbiguous ? `CHARACTER AMBIGUOUS: ${spec.charactersSharingThisName.join(' / ')}` : '',
+    spec.titleAmbiguous ? 'TITLE AMBIGUOUS' : '',
+  ].filter(flag => flag !== '')
+  console.log(`  ${spec.key} -> ${spec.chatId} (char ${spec.characterId}, ${spec.source}${flags.length === 0 ? '' : `, ${flags.join(', ')}`})`)
 }
 for (const miss of missing) console.log(`  ${miss.key} -> UNRESOLVED: ${miss.why}`)
 
 /** Cells actually measured, per card key. The floor assertions read this. */
 const measured = new Map(resolved.map(spec => [spec.key, 0]))
 
-const report = { resolution: { requested: keys, resolved, missing }, cells: {} }
+const startedAt = new Date()
+const report = {
+  // The header says which host and which profile this run read. Without it two
+  // reports are distinguishable only by their contents, which is exactly what
+  // is in question when two runs disagree.
+  run: { tag, at: startedAt.toISOString(), viewports: VIEWPORTS, profile: fingerprint },
+  resolution: { requested: keys, resolved, missing },
+  cells: {},
+}
 
 for (const [W, H] of VIEWPORTS) {
   await setViewport(W, H)
@@ -495,7 +544,17 @@ report.floors = {
   unmeasured: unmeasured.map(spec => spec.key),
 }
 
-const outName = `u-frame-fit-${tag}-report.json`
+/*
+ * One file per run, never overwritten.
+ *
+ * The name used to be `u-frame-fit-<tag>-report.json` and nothing else, so the
+ * next run replaced the last one — including a *failing* run replacing a good
+ * one, which is how a teeth check erased a first run's geometry. A reading is
+ * history, not a snapshot; a failing run's report is kept too, because its
+ * `resolution.missing` is the diagnosis.
+ */
+const stamp = startedAt.toISOString().replace(/[:.]/g, '-').slice(0, 19)
+const outName = `u-frame-fit-${tag}-${stamp}-report.json`
 writeFileSync(join(OUT, outName), JSON.stringify(report, null, 2))
 console.log('report:', join(OUT, outName))
 

@@ -14,10 +14,14 @@
 //                                          leaks, and screenshot.
 //
 // Two properties of the render pass, because both are easy to lose:
-//   - the card-report list is read as a DELTA against a baseline taken before
-//     the chat is opened. Those rows never expire and are cleared only when the
-//     CHARACTER changes, and both fixture chats are the same card — so presence
-//     alone cannot tell this chat's report from the other chat's leftovers.
+//   - the card-report list is read as a DELTA, and against TWO baselines: one at
+//     boot and one immediately before the target row is clicked. Those rows never
+//     expire and are cleared only when the CHARACTER changes, and both fixture
+//     chats are the same card — so presence alone cannot tell this chat's report
+//     from the other chat's leftovers. The pre-click baseline is what the
+//     judgement subtracts; the gap between the two is reported as
+//     `arrivedBeforeClick`, because the chat the page opened by itself keeps
+//     reporting well past the boot window and that traffic is not this chat's.
 //   - every reading prints the observation window it was taken at. All the
 //     judgements here are negatives, and a negative without its window cannot
 //     be reviewed by the next reader.
@@ -232,12 +236,36 @@ if (mode === 'render') {
      * same value. **The delta is the judgement; the presence is not**
      * (TEST-CARDS §九 ③之三).
      */
-    const baseline = await evaluate(READ_REPORTS)
-    console.log('reports baseline:', JSON.stringify({ observedAtMs: since(), bootWindowMs: WINDOW.boot, ...baseline }))
+    const bootBaseline = await evaluate(READ_REPORTS)
+    console.log('reports baseline (boot):', JSON.stringify({ observedAtMs: since(), bootWindowMs: WINDOW.boot, ...bootBaseline }))
 
     // The tab by order and confirmation, never by its label (see qa/locators.mjs);
     // the chat by its title, which is user data and the only handle there is.
     const tabbed = await evaluate(clickTabExpr('chats'))
+
+    /*
+     * The second baseline, taken **immediately before the target row is
+     * clicked** — this is the one the judgement subtracts.
+     *
+     * The boot baseline above is not enough, and the first run showed why: the
+     * page opens the most recent chat on its own, and that chat's frames keep
+     * reporting long past the 7 s mark. Twenty-five rows of `height sources`,
+     * `libraries cost`, `parent.Mvu`, MVU `toastr.info` — frame start-up
+     * traffic, which a statically edited floor cannot produce — landed in what
+     * was labelled "added this run".
+     *
+     * So `addedThisRun` used to mean **"rows that appeared after 7 s"**, not
+     * **"rows this chat reported"**. Better than the old `includes()` over the
+     * whole page, and still not attributed to the chat under test.
+     *
+     * Both baselines are kept, and their difference is reported as
+     * `arrivedBeforeClick`: that number is the boot chat still talking, and it
+     * belongs in the reading rather than folded into it. When the two baselines
+     * differ a lot, the run is saying "the page was busy when I started".
+     */
+    const clickBaseline = await evaluate(READ_REPORTS)
+    console.log('reports baseline (pre-click):', JSON.stringify({ observedAtMs: since(), rows: clickBaseline?.rows?.length ?? null }))
+
     const opened = tabbed?.error !== undefined ? tabbed : await evaluate(`(() => {
       const wanted = ${JSON.stringify(target)}
       const rows = [...document.querySelectorAll('.iris-list .iris-row')]
@@ -307,10 +335,15 @@ if (mode === 'render') {
       return ${READ_REPORTS}
     })()`)
 
-    const baselineRows = baseline?.rows ?? []
+    const bootRows = bootBaseline?.rows ?? []
+    const clickRows = clickBaseline?.rows ?? []
     const afterRows = after?.rows ?? []
-    const seenBefore = new Set(baselineRows.map(row => row.text))
-    const added = afterRows.filter(row => !seenBefore.has(row.text))
+    // Judged against the pre-click baseline; the boot one only measures how
+    // busy the page already was.
+    const seenAtBoot = new Set(bootRows.map(row => row.text))
+    const seenAtClick = new Set(clickRows.map(row => row.text))
+    const arrivedBeforeClick = clickRows.filter(row => !seenAtBoot.has(row.text))
+    const added = afterRows.filter(row => !seenAtClick.has(row.text))
     const neverClosed = added.find(row => row.text.includes('never closed'))
     console.log('reports:', JSON.stringify({
       observedAtMs: since(),
@@ -318,21 +351,33 @@ if (mode === 'render') {
       drawer,
       ...(after?.error === undefined ? {} : { error: after.error }),
       // A missing card and a card with nothing to say are different findings.
-      baselineCardPresent: baseline?.cardPresent === true,
+      baselineCardPresent: bootBaseline?.cardPresent === true,
       cardPresent: after?.cardPresent === true,
-      baselineRows: baselineRows.length,
+      bootBaselineRows: bootRows.length,
+      clickBaselineRows: clickRows.length,
       rowsNow: afterRows.length,
+      /*
+       * The boot chat still talking, kept out of the judgement and reported on
+       * its own. A large number here does not invalidate the run — it says the
+       * page was busy when this one started, which is the fact that used to be
+       * folded into `addedThisRun` and read as this chat's own output.
+       */
+      arrivedBeforeClick: arrivedBeforeClick.map(row => row.text.slice(0, 100)),
       addedThisRun: added.map(row => ({ channel: row.channel, fault: row.fault, text: row.text.slice(0, 140) })),
-      // The judgement: this run ADDED the row. "The words are somewhere on the
-      // page" cannot tell that from a row the previous chat of the same card
-      // left behind — the list is only cleared when the character changes.
+      // The judgement: this run ADDED the row, measured from the moment the
+      // target row was clicked. "The words are somewhere on the page" cannot
+      // tell that from a row the previous chat of the same card left behind —
+      // the list is only cleared when the character changes.
       neverClosedAddedThisRun: neverClosed !== undefined,
       // Read off the row's own label element, not from the word "interface"
       // appearing anywhere in the drawer — the drawer is full of that word, so
       // the old check was true whatever the row said.
       neverClosedChannel: neverClosed?.channel ?? null,
-      // Printed so a false reading is diagnosable rather than just negative.
-      neverClosedAlreadyInBaseline: baselineRows.some(row => row.text.includes('never closed')),
+      // Both printed, so a false reading is diagnosable rather than just
+      // negative: in the boot baseline it was standing before this run touched
+      // anything; arriving between the baselines means the boot chat said it.
+      neverClosedAtBoot: bootRows.some(row => row.text.includes('never closed')),
+      neverClosedArrivedBeforeClick: arrivedBeforeClick.some(row => row.text.includes('never closed')),
     }, null, 1))
 
     const shot = await send('Page.captureScreenshot', { format: 'jpeg', quality: 55 })
