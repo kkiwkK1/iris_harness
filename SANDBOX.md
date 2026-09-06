@@ -289,6 +289,96 @@ stylesheets and fonts (`fonts.googleapis.com` — six cards), images and texture
   grant that would allow it. A refusal the user cannot see is indistinguishable
   from a bug in whatever the card does next.
 
+### Upstream has no policy here at all — and its own frames load remote stylesheets
+
+(Added 2026-09-06, for the ruling on `ACTION-PLAN.md` §二 item 3, the zeoseven
+font domain. **Facts and locations only.** Read directly from the operator's
+install: SillyTavern `1.18.0`, TavernHelper `4.9.1`
+(`data/default-user/extensions/JS-Slash-Runner`). Static reading, nothing run.)
+
+**1. SillyTavern sends no Content-Security-Policy.** It mounts helmet with the
+CSP explicitly switched off:
+
+```js
+// [ST] src/server-main.js:103-106
+const app = express();
+app.use(helmet({
+    contentSecurityPolicy: false,
+}));
+```
+
+That is the only CSP source in the server. `public/index.html` carries **no**
+`<meta http-equiv>` of any kind, and the string `Content-Security-Policy` does
+not occur anywhere under `public/` or `src/` (excluding `third-party/` and
+`lib/`). **So there is no policy layer to pass: any host, any directive.**
+
+**2. The message frame does not add one either.** TavernHelper builds the frame
+document in `createSrcContent` (`[TH] src/panel/render/iframe.ts:78-103`): a
+charset meta, a viewport meta, an optional `<base>`, one `<style>`, the
+third-party head block, and four scripts. **No CSP meta, and no `sandbox`
+attribute on the iframe** — `sandbox` and `csp` appear nowhere in
+`src/panel/render/` or `src/panel/script/`. The frame is srcdoc by default
+(`use_blob_url` defaults to `false`, `[TH] src/type/settings.ts:66`; this
+install has `false`), and a srcdoc frame inherits the parent's policy — which
+is none.
+
+**3. Upstream's own frame head is nine remote assets from a public CDN.**
+`[TH] src/iframe/third_party_message.html` (injected verbatim at
+`iframe.ts:93`) is:
+
+| kind | host |
+| --- | --- |
+| `<link rel="stylesheet">` FontAwesome `all.min.css` | `testingcf.jsdelivr.net` |
+| `<link rel="stylesheet">` jQuery-UI `theme.min.css` | `testingcf.jsdelivr.net` |
+| `<script>` tailwind | **local** (`/scripts/extensions/third-party/JS-Slash-Runner/lib/`) |
+| `<script>` jQuery, jQuery-UI, touch-punch, Vue, vue-router | `testingcf.jsdelivr.net` |
+
+plus a sixth remote script at `iframe.ts:95`
+(`.../gh/N0VI028/JS-Slash-Runner/src/iframe/node_modules/log.js`, same host).
+**Two remote stylesheets and seven remote scripts, on every message frame.**
+
+> So the answer to "what is upstream's policy on a card loading a remote
+> stylesheet or font" is: **it has none, and the host frame the card runs in is
+> itself doing exactly that.** A card adding one more `<link rel="stylesheet">`
+> to any domain is not doing anything upstream's own injection layer does not
+> already do. Note also that ST's *page* loads no remote CSS or fonts (28
+> `<link>` tags in `index.html`, all local) — the remote-asset habit belongs to
+> the frame layer, not to SillyTavern's shell.
+
+**4. What this does NOT establish, about the card itself.**
+`Lights_ON.png` **is not on this machine** — not in `测试用卡/`, not in
+SillyTavern's `characters/` (20 entries), not in Iris's own data directory. The
+only records of `fontsapi.zeoseven.com` in this repo are two prose lines in
+`ACTION-PLAN.md` and `NOTES-handoff.md`. **So the card's markup here is
+transcription, not a file anyone can re-read**, and "would it load upstream" can
+only be answered at the mechanism layer: nothing in upstream refuses it, so it
+comes down to whether the host is reachable.
+
+**5. If the ruling is to allow-list it, it is two entries, not one — and the
+second refusal cannot be seen until the first is lifted.**
+The transcribed markup is `<link rel="preload" as="style" onload="this.rel='stylesheet'">`
+pointing at `https://fontsapi.zeoseven.com/925/main/result.css`. Three separate
+gates sit on that one line:
+
+- the preload is fetched with destination *style*, so **`style-src`** governs it
+  — that is the refusal `NOTES-handoff.md` observed;
+- the `@font-face` `src` inside that CSS resolves against the CSS's own URL and
+  is governed by **`font-src`**, and it may name a **different host**. This is
+  the same shape already encoded for Google in
+  `apps/iris-web/src/sandbox/srcdoc.ts:88-91` — *"`fonts.googleapis.com` serves
+  the CSS, `fonts.gstatic.com` the faces — both are needed or neither works"*;
+- the `onload` rel-swap is an inline handler, governed by **`script-src`**.
+  Checked rather than assumed: our `script-src` carries `'unsafe-inline'`
+  (`srcdoc.ts:153`), **so this gate is already open** and the swap would fire
+  once the stylesheet arrives.
+
+> **The second gate is invisible from the current reading.** Only the `style-src`
+> refusal has been observed, because the request never got far enough to ask for
+> a face. Adding `fontsapi.zeoseven.com` to `style-src` alone would move the
+> failure rather than fix it, and the new failure would look like a *different*
+> bug. Which host serves zeoseven's faces is **not known here** — reading the
+> CSS would answer it, and that is a network fetch nobody has made.
+
 ### Same-origin fetches ride a bridge, not a widened `connect-src`
 
 (Added 2026-09-03.) Upstream's card scripts share SillyTavern's origin, so
