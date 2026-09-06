@@ -368,31 +368,17 @@
   }
 
   /*
-   * The settings drawer is an overlay — opening it must never re-wrap a page
-   * of prose mid-read. But the sheet's centring is computed against the
-   * *visible* region, and the drawer changes what is visible: overlaying the
-   * right flank while the grid stood still is what left a dead desk beside the
-   * sidebar and read as a page that failed to load. So while the drawer is
-   * open the stage cedes the drawer's width (the shared token, not a second
-   * copy of the number) and drops back to the single centred track, and the
-   * sheet re-centres between the sidebar and the drawer's left edge. The aside
-   * stands down for the duration: the drawer occupies exactly the margin's
-   * territory, and a variable column squeezed into what is left of it would
-   * serve nobody.
+   * The settings drawer is a **pure overlay** — nothing on this page may react
+   * to it. The earlier ruling re-wrapped the stage while the drawer was open
+   * (padding-right, a single centred track, the aside stood down), and the user
+   * measured the cost directly: opening the drawer shifted the scroll position
+   * and deformed the page. The drawer's own geometry is fixed and independent
+   * of the layer beneath it, so open and close are now invisible to the
+   * stage: same scrollTop, same sheet rect, aside merely covered while the
+   * drawer is up. This block is a deliberate no-op left here so the ruling has
+   * an address; any future rule under `.iris-shell--drawer-open` must re-justify
+   * itself against that measurement.
    */
-  .iris-shell--drawer-open .iris-stage {
-    grid-template-columns: minmax(0, var(--iris-sheet));
-    justify-content: center;
-    padding-right: var(--iris-drawer-w);
-  }
-
-  .iris-shell--drawer-open .iris-sheet {
-    grid-column: auto;
-  }
-
-  .iris-shell--drawer-open .iris-aside {
-    display: none;
-  }
 }
 
 .iris-nav-toggle {

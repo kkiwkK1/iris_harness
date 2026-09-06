@@ -2260,10 +2260,20 @@ export function createIrisStore(
         const chatId = get().chatId
         if (chatId === undefined) throw new Error('no chat is open')
         // Deliberately not wrapped in `guard`: the caller is a card waiting on a
-        // promise, and it needs the rejection. Turning this into a notice would
-        // resolve the card's `await` as though the command had worked.
-        const { result } = await client.call('script.slash', { chatId, command })
-        return result
+        // promise, and it needs the rejection. The failure still goes on the
+        // record below, though — the rejection is kept, so "reported" and
+        // "handed back" are two channels carrying one outcome, not a choice
+        // between them.
+        try {
+          const { result } = await client.call('script.slash', { chatId, command })
+          return result
+        } catch (error: unknown) {
+          set(raise('error', translate(getLanguage(), 'cardCallFailed', {
+            method: 'triggerSlash',
+            detail: describeError(error, getLanguage()),
+          })))
+          throw error
+        }
       },
 
       async runCardAction(method: string, params: unknown): Promise<unknown> {
@@ -2328,8 +2338,13 @@ export function createIrisStore(
           )
         }
 
-        // Not wrapped in `guard`: a card is awaiting this, and turning a refusal
-        // into a notice would resolve its promise as though the action had run.
+        // Not wrapped in `guard`: a card is awaiting this, and resolving its
+        // promise despite a refusal would read as the action having run. But a
+        // rejection alone is not enough either — the measured card wraps its
+        // TH calls in its own try/catch and logs to the console, so a failure
+        // that only travels as a rejection never reaches the user. Reported
+        // **and** rethrown: the notice puts the failure on the record, the
+        // rethrow keeps the card's contract intact.
         const params_ = (typeof params === 'object' && params !== null ? params : {}) as Record<string, unknown>
         /*
          * An injection carries the run it belongs to.
@@ -2346,7 +2361,15 @@ export function createIrisStore(
           : {}
         // The method is typed now; only the params still need the cast, because
         // their shape depends on which method this turned out to be.
-        return client.call(wire, { chatId, ...scoped, ...params_ } as never)
+        try {
+          return await client.call(wire, { chatId, ...scoped, ...params_ } as never)
+        } catch (error: unknown) {
+          set(raise('error', translate(getLanguage(), 'cardCallFailed', {
+            method,
+            detail: describeError(error, getLanguage()),
+          })))
+          throw error
+        }
       },
 
       async itemize(turn?: number): Promise<ItemizationResult> {

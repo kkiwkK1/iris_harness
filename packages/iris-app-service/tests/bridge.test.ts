@@ -376,6 +376,47 @@ test('swipeTo addresses a message the way a card does', async (t) => {
   )
 })
 
+test('swipeTo still answers for the greeting after the chat has moved on', async (t) => {
+  /*
+   * The measured card's opening-menu button addresses message 0 on a chat that
+   * already has floors after it — `setChatMessages([{ message_id: 0,
+   * swipe_id: 1 }])` lands here long after turn 1 exists. Refusing that because
+   * turn 0 was "settled" was the SYSTEM START button that silently did nothing:
+   * the card catches the rejection and logs it to its own console, so the user
+   * saw a hint that never turned into a switch.
+   */
+  const { handlers, dir, settled } = await fixture(t, ['And then?'])
+  await writeFile(join(dir, 'characters', 'menu.json'), JSON.stringify({
+    spec: 'chara_card_v2',
+    spec_version: '2.0',
+    data: {
+      name: 'Menu', description: '', personality: '', scenario: '',
+      first_mes: '<开局>', mes_example: '', creator_notes: '',
+      system_prompt: '', post_history_instructions: '',
+      alternate_greetings: ['<介绍>', '<自定义>'],
+      tags: [], creator: '', character_version: '1', extensions: {},
+    },
+  }), 'utf8')
+
+  const created = await handlers['chat.create']({ characterId: 'menu' })
+  const chatId = created.view.chatId
+  await handlers['chat.send']({ chatId, text: 'Hello?' })
+  await settled()
+
+  // Three floors: the greeting, the user's line, the reply. Turn 0 is not the
+  // last turn any more — the exact shape the old guard refused.
+  const before = (await handlers['chat.open']({ chatId })).view
+  assert.equal(before.messages.length, 3)
+  assert.equal(before.messages[0]?.text, '<开局>')
+
+  const { view } = await handlers['script.swipeTo']({ chatId, messageId: 0, swipeIndex: 1 })
+  assert.equal(view.messages[0]?.text, '<介绍>')
+  // The later floors stay exactly where they were: one reply per turn, in order.
+  assert.equal(view.messages.length, 3)
+  assert.equal(view.messages[1]?.text, 'Hello?')
+  assert.equal(view.messages[2]?.text, 'And then?')
+})
+
 test('getVariables reads back what each scope holds, and reads an empty scope as empty', async (t) => {
   const { handlers } = await fixture(t)
   const created = await handlers['chat.create']({ characterId: 'aria' })

@@ -146,13 +146,19 @@ export function appendCandidate(session: Session, input: CandidateInput): Candid
  * lineage in `iris/swipe-select`. The new message gets its own id: message
  * identity is per-appearance, while candidate identity is the seq the swipe
  * list is keyed by.
+ *
+ * **Any turn, not only the last.** Upstream lets a swipe switch the reading of
+ * any floor — a card's opening-menu button addresses the greeting on turn 0
+ * long after the conversation moved on, and refusing that was measured as a
+ * button that silently did nothing. The replacement is positional
+ * (`start === end`), so the chosen candidate takes over its own turn's surface
+ * node and every later turn stays exactly where it was.
  * @param session - the chat log.
  * @param turn - turn number.
  * @param index - position in {@link listCandidates}.
  * @returns the now-selected candidate.
- * @throws {SwipeError} when the index is out of range, or when a later turn has
- *   already been recorded — the surface is a single thread, so only the last
- *   turn's swipes can still be changed.
+ * @throws {SwipeError} when the index is out of range, or when the turn has no
+ *   message on the surface.
  */
 export function selectCandidate(session: Session, turn: number, index: number): Candidate {
   const candidates = listCandidates(session, turn)
@@ -160,11 +166,6 @@ export function selectCandidate(session: Session, turn: number, index: number): 
   if (target === undefined) {
     throw new SwipeError(`turn ${turn} has ${candidates.length} candidates; no index ${index}`)
   }
-
-  const laterTurn = session.events.some(
-    event => event.type === 'assistant/message' && event.data.turn > turn,
-  )
-  if (laterTurn) throw new SwipeError(`turn ${turn} is not the last turn; its swipes are settled`)
 
   const current = selectedCandidate(session, turn)
   if (current?.seq === target.seq) return target

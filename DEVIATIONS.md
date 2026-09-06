@@ -901,3 +901,63 @@ Chrome CDP + 本 worktree 独立宿主（端口 8821，数据目录为仓库内 
    两模式），产物在 `qa/results/`（gitignore 内）。回归卡（哈人冰恋/神隐挑战/
    全职高手）双视口全部通过；`pnpm test` 2280 绿 / 0 失败，双 typecheck 绿。
 >>>>>>> dev/fix-frame-fit
+
+# DEVIATIONS — 任务 X：SYSTEM_START 点击链路 + 设置抽屉纯 overlay
+
+分支 `dev/fix-click-shift`（基于 c1308cf）。两个用户实测问题都闭环，全部为机制层修改。
+
+## swipes 语义决策（问题 1 的根）
+
+1. **任何楼层都可切换读法，不再限于最后一楼。** 旧 `selectCandidate`（@iris/chat）
+   拒绝"已有后继楼层"的 swipe（`turn X is not the last turn; its swipes are
+   settled`）——上游 ST 允许对任何楼的 swipe_id 切换读法。卡的开场菜单按钮在
+   会话推进后寻址 floor 0，被拒即"按钮静默无反应"（卡的 try/catch 只 console，
+   用户侧零反馈）。修改后选择是**位置性的**（surfaceOp `start === end`）：
+   选中候选接管自己楼层的 surface 节点，后续楼层原地不动（模型视野每楼一回复、
+   顺序不变，bridge 新增回归测试断言三点：切换生效、后继楼层逐字不动、新楼仍可切）。
+   `chat.swipe` 与 `script.swipeTo` 两个 RPC 都走这一个函数，一处修全链生效。
+2. **卡的真实调用与它的注释不符（重要发现）。** 尸变纪元 v0.5 的
+   `jumpToOpening11()` 注释写"swipe_id: 10 对应第十一个开场白"，代码实际发的是
+   `setChatMessages([{message_id: 0, swipe_id: 1}])`。Iris 忠实执行**实际调用**
+   （floor 0 切到 swipe 1 `<介绍>`，楼层序号 1/11 → 2/11），验证按卡的真实行为
+   断言。悬浮提示 `INIT_SEQUENCE_11...` 是卡作者自己的叙事装饰，随界面刷新消失。
+3. **TH 层翻译臂无需改动**：`setChatMessages` 的 swipe 臂（tavern-helper.ts）本就
+   翻成 `swipeTo` → `script.swipeTo` → `lineTurns[messageId]` → `selectCandidate`，
+   唯一的拒绝点在包层，已除。卡脚本为 classic `<script>`，onclick 全局可达性本就
+   成立（实测帧内 `typeof jumpToOpening11 === 'function'`）。
+4. **TH 调用失败必进通知（不吞）**：store 的 `triggerSlash` 与 `runCardAction`
+   现在先 `raise('error', cardCallFailed…)` 再原样 rethrow——通知与拒绝是同一
+   结果的双通道，卡的 await 契约不变。新增 i18n 键 `cardCallFailed`（中英）。
+
+## 抽屉纯 overlay（问题 2）
+
+5. `.iris-shell--drawer-open` 的布局重排（stage padding-right、单轨收窄、aside
+   display:none）全部移除，App.tsx 不再加 modifier；抽屉自身几何固定、与底层无关。
+   实测（1920/2400/1280 三档，qa/verify-widescreen.mjs 按新裁定重写断言）：
+   开/关抽屉 `.iris-scroll` scrollTop 与书页 rect 零变化，aside 仅被盖住。
+6. **midline 23px 是本分支既有几何，非本任务回归**（有基线对照实验）：
+   `.iris-turn` 盒子含左侧楼层号边栏，中心恒比 composer 字段偏左 23px。
+   stash 全部改动 → 基线构建实测**逐位相同**（prose 1091 / field 1114，两个宽档、
+   空聊天同值）。宽屏脚本的 midline 断言改为相对基线常数（23+2 容差）判失败，
+   保留对 scrollbar-gutter 类回归的检出能力。
+7. **ChatPane 贴底吸附与检查脚本的关系（未改产品代码）**：距底 <64px 的读者在
+   任意 store 更新时被吸到（移动中的）底部（ChatPane.tsx:101）。验证脚本若贴底
+   停放会被该既有行为污染测量（实测 153 → 363，与抽屉无关）——两个验证脚本改为
+   停在离底 ≥128px 处再量。该吸附行为本身是聊天贴底惯例，是否要随本裁定调整
+   留给用户裁决。
+
+## 宿主与验证方法偏离
+
+8. **端口 8825 被无记录遗留宿主占用，验证宿主改用 8826。** 8825 上的 PID 30900
+   （今天 12:04:55 启动，早于 12:12:01 的最终源码修改，CWD=本 worktree 的
+   apps/iris，数据落在 apps/iris/data）是前一任中断时留下的，**无 PID 记录**，
+   按纪律不碰、也不可信（进程内是旧 swipes 代码）。请用户按 PID 30900 处置。
+   本任务验证宿主：`IRIS_PORT=8826 IRIS_DATA_DIR=.x-host-data node apps/iris/bin.ts`
+   （后台任务管理，独立全新数据目录）。
+9. **qa/verify-click-shift.mjs 为本任务新增验收脚本**（提交），两点方法论修正：
+   授权横幅（全新 profile 必问，且答案按 profile 记忆故复跑不再出现）需轮询等待
+   或视为已授权；接口帧是沙箱 iframe（opaque origin → OOPIF），主页面会话枚举不到
+   其执行上下文，须 `Target.setAutoAttach` 附着子 target 后在子会话内求值。
+10. 验收：`pnpm test` 2393 项 0 失败，双 typecheck 绿；实机两问题
+    ALL CHECKS PASS（截图 x-system-start-after-click.png：楼层序号 1/11 → 2/11、
+    INIT 提示随界面消失；x-drawer-open-on-content.png：抽屉浮于未动的阅读页上）。

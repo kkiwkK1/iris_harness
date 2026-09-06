@@ -110,8 +110,9 @@
   z-index: 30;
   display: flex;
   flex-direction: column;
-  /* The token, not a literal: the stage subtracts this same width to keep the
-     sheet centred in the region the drawer leaves visible (shell.css). */
+  /* The token, not a literal: the drawer's one width decision, shared with
+     nothing — the page beneath is a pure overlay floor that never reacts to
+     the drawer opening or closing (shell.css). */
   width: var(--iris-drawer-w);
   background: var(--iris-bg-page);
   border-left: var(--iris-hairline) solid var(--iris-rule);
