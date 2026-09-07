@@ -211,10 +211,18 @@ test('the streaming gate holds where the text enters, and every consumer repairs
   /*
    * The fallback splits by role: an assistant row reads the repaired text as
    * markdown, every other row keeps the raw text it has always shown. Assert
-   * the branch rather than one arm of it.
+   * the branch rather than one arm of it — an earlier version of this line
+   * pinned the markdown arm as `text={text}`, which stopped describing the
+   * code the moment the unknown-markup rule joined it and would have gone red
+   * on a correct change. The markdown arm now carries that rule and reads
+   * `display`, the one string the claim and the controller already agreed on;
+   * the raw arm reads `text`, because a row that never rendered markdown has
+   * no fence to repair.
    */
   assert.ok(
-    row.includes("markdownProse ? <MarkdownText text={text} streaming={streaming} /> : <>{text}</>"),
+    row.includes(
+      'markdownProse ? <MarkdownText text={unwrapUnknownTagsOutsideCode(display)} streaming={streaming} /> : <>{text}</>',
+    ),
     'the fallback splits the repaired-vs-raw rendering by role',
   )
 

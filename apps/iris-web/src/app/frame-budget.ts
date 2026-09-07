@@ -71,14 +71,17 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * rather than a settled one. Raised with the coordinator rather than decided
  * here.
  *
- * **Two independent lines of work moved it again, and both are here.** The
- * height reporter's 500ms timer rescue — real code in the per-frame bootstrap,
- * for the frame whose queued `requestAnimationFrame` never fires — was measured
- * to take the artifact from 48 to 49 KiB, and `check-bootstrap.mjs` caught that
- * overrun in the change that caused it. The mainline pass that read 48.6 KiB
- * raised the constant to 50 KiB independently. The two are additive in the
- * combined tree, so the figure here is the higher of the two ceilings and the
- * build's own measurement is what confirms it still fits.
+ * **Two independent lines of work raised it, and neither branch's number
+ * describes this tree.** The height reporter's 500ms timer rescue — real code
+ * in the per-frame bootstrap, for the frame whose queued
+ * `requestAnimationFrame` never fires — took the artifact from 48 to 49 KiB on
+ * the branch that added it, with `check-bootstrap.mjs` catching the overrun in
+ * the change that caused it; the mainline's own pass read 48.6 KiB and raised
+ * this constant to 50 KiB. Merged, the two land inside the single higher
+ * ceiling, and the *only* reading that counts is the build's: `build:sandbox`
+ * measures the combined artifact against this constant on every run and prints
+ * both figures. Two stale numbers agreeing is not a measurement of the tree
+ * that has both changes in it.
  *
  * **No current figure is written here on purpose.** Two earlier versions of this
  * comment carried "as this line is written" numbers and both were stale within
