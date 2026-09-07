@@ -47,6 +47,32 @@ export interface MessageView {
   turn?: number
   /** True while this message is still streaming. */
   streaming?: boolean
+  /**
+   * What generating the **selected** candidate cost, when the provider reported
+   * it. Assistant messages only; user lines and imported history carry none.
+   */
+  usage?: TurnUsage
+}
+
+/**
+ * What one generation cost, in the harness convention: the three prompt-side
+ * buckets are **disjoint** (`inputTokens` excludes what the cache served), so a
+ * cache-hit share is `cacheReadTokens / (inputTokens + cacheReadTokens +
+ * cacheWriteTokens)`. Mirrors `@deepseek-ai/dsh-llm` `TokenUsage`, which the
+ * adapter already produces; kept as its own name here because a view type must
+ * not import from the LLM layer. Absent fields were not reported by the
+ * provider - never zero-filled, because "0 cache reads" and "the provider does
+ * not report cache" are different facts and a hit rate must not be computed
+ * from the second.
+ */
+export interface TurnUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  reasoningTokens?: number
+  /** Present only when the provider's aggregate counters were exact and agreed. */
+  totalTokens?: number
 }
 
 /** One open conversation. */
@@ -57,6 +83,14 @@ export interface ChatView {
   messages: MessageView[]
   /** Variables of the newest turn, for a status-bar surface. */
   variables?: Record<string, unknown>
+  /**
+   * Every generation this conversation ever paid for, summed - all swipes, not
+   * only the selected ones, because a regenerated reply was billed too. Absent
+   * until one generation has reported usage. Optional buckets are summed only
+   * over generations that reported them; a bucket no generation reported stays
+   * absent, so the hit rate is never diluted by providers that say nothing.
+   */
+  usage?: TurnUsage
 }
 
 /** A conversation in the sidebar list. */

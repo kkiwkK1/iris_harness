@@ -66,6 +66,7 @@ export type {
   InsertionStrategy,
   LorebookSettings,
   MessageView,
+  TurnUsage,
   PersonaView,
   PresetManagerView,
   PresetPromptView,
