@@ -643,12 +643,23 @@ The frame's code arrives in two pieces now. The **policy core** is inlined into
 the srcdoc — every decision about what a card may touch, refuse or read. The
 **member table** is a separate classic script fetched from `/sandbox`, carrying
 the implementations those decisions call: the storage façade, the ST anchors,
-the overlay-region walk, the TavernHelper surface, the nested-frame stand-in.
+the overlay-region walk, the TavernHelper surface, the nested-frame stand-in,
+the popup API.
 
 The split exists for cost, not for design purity: a member added to the inlined
 core is paid for **once per frame**, and there are up to 20 frames. It moved the
-per-member cost from `20 ×` to `1 ×` and took ~24 KiB off every frame. The
-question this section answers is the one that matters more than the saving:
+per-member cost from `20 ×` to `1 ×` and took ~24 KiB off every frame.
+
+**It is also the decision every added surface now has to make.** The popup API
+(`sandbox/popup-api.ts`) is the worked example: in the core it grew the
+bootstrap by 7.1 KiB and would have forced the reading window's live-frame gate
+from 20 down to 17, because that gate is derived from the per-frame overhead; in
+the table it costs 0.9 KiB of core and the gate did not move
+(`app/frame-budget.ts`, `notes/apps/iris-web/DEVIATIONS.md` §58). What stays in
+the core is what has to: the policy — which names a card may read — and the
+validation of any message the frame believes.
+
+The question this section answers is the one that matters more than the saving:
 **does fetching half the frame's code weaken the sandbox?**
 
 **No, and the reason is that the fetch is not a new capability.** Four things

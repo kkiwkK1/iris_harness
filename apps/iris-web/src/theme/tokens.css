@@ -254,7 +254,16 @@
    * (`.iris-cleanup`, panels.css) is above both, because it destroys data.
    *
    *   scrim 19 < sidebar 20 < drop 25 < overlay 40 < overlay toggle 45
-   *            < drawer 50 < cleanup 60
+   *            < card popup 48 < drawer 50 < cleanup 60
+   *
+   * A **card's own popup** (`.iris-popup`, panels.css) is the one rung the rule
+   * above does not settle on its own, so it is argued rather than placed: it
+   * must be over the overlay surface and its toggle, because a card's own
+   * fullscreen interface would otherwise cover the question that card is
+   * blocked on — and it must stay *under* the drawer and the cleaning offer,
+   * because it is content asking, and the shell is what a reader reaches for to
+   * get away from content. 48 rather than 46 leaves the toggle's `overlay + 5`
+   * room to move with the surface.
    *
    * The toggle is `overlay + 5`, computed where it is used, so it follows the
    * surface. `reading.css` also writes `z-index: 1` three times — the
@@ -268,6 +277,7 @@
   --iris-sidebar-z: 20;
   --iris-drop-z: 25;
   --iris-overlay-z: 40;
+  --iris-card-popup-z: 48;
   --iris-drawer-z: 50;
   --iris-cleanup-z: 60;
 

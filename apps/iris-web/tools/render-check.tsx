@@ -26,6 +26,8 @@ import { createIrisStore, type IrisStore } from '../src/client/store.ts'
 import { SlotProvider } from '../src/slots/Slot.tsx'
 import { createIrisSlots } from '../src/slots/slots.ts'
 import { registerMessageAction } from '../src/slots/message-actions.ts'
+import { pushCardPopup, resetCardPopups } from '../src/app/card-popups.ts'
+import { planPopup } from '../src/sandbox/popup.ts'
 import { RAIL_MAX_TICKS, railMode } from '../src/app/rail.ts'
 import { bookFigures } from '../src/app/character-facts.ts'
 import { modelMenu } from '../src/app/model-menu.ts'
@@ -931,6 +933,56 @@ async function main(): Promise<void> {
     unpriced,
     /iris-act--reading/,
     'a reply with no reported usage still got a usage reading',
+  )
+
+  /*
+   * A card's popup, drawn by the shell.
+   *
+   * Server-rendered, so this proves what the tree puts on the page and nothing
+   * about pressing a button. What it does prove is the one thing a reader
+   * cannot check by looking: **upstream's button order**. ST prepends custom
+   * buttons before the ok button (`popup.js:312-315`), so MagVarUpdate's
+   * cleanup dialog reads "back up and clean" / "clean only" / "do not remind me
+   * again" — and an implementation that appended instead would look perfectly
+   * reasonable while putting the destructive option last.
+   *
+   * The plan comes from `planPopup`, not from a literal: a hand-written plan
+   * would be this check agreeing with itself about the order.
+   */
+  pushCardPopup({
+    key: 'render-check:p1',
+    source: 'render-check',
+    plan: planPopup('检测到可以清理本聊天文件中的旧变量，是否清理？', 2, '', {
+      okButton: '仅清理',
+      cancelButton: '不再提醒',
+      customButtons: ['备份并清理'],
+    }),
+    answer: () => undefined,
+  })
+  const asked = render(wired.store, slots.core)
+  assert.match(asked, /class="iris-popup"/, 'a card popup on the queue did not render')
+  assert.match(asked, /A card is asking/, 'the dialog does not say a card is asking')
+  const captions = ['备份并清理', '仅清理', '不再提醒'].map(caption => asked.indexOf(caption))
+  for (const [at, index] of captions.entries()) {
+    assert.ok(index >= 0, `button ${String(at)} is missing from the dialog`)
+  }
+  assert.deepEqual(
+    [...captions].sort((a, b) => a - b),
+    captions,
+    'the buttons are not in upstream’s order: its custom button is prepended before ok',
+  )
+  /*
+   * The content is the card's own markup, and it reaches the page through the
+   * sanitizer. In a server render DOMPurify cannot run at all, so that module
+   * escapes rather than passing the string through — asserted here because
+   * "sanitized" must never quietly come to mean "unchanged".
+   */
+  assert.match(asked, /检测到可以清理本聊天文件中的旧变量/, 'the card’s words never reached the panel')
+  resetCardPopups()
+  assert.doesNotMatch(
+    render(wired.store, slots.core),
+    /class="iris-popup"/,
+    'the dialog outlived its queue entry',
   )
 
   wired.dispose()

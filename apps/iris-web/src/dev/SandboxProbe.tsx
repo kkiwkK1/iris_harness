@@ -251,6 +251,22 @@ export function SandboxProbe(): ReactElement | null {
               status: `card dialog (${kind})`,
             }))
           },
+          /*
+           * The probe answers popups itself rather than drawing one: it mounts
+           * outside the shell tree, so there is no `CardPopup` above it to take
+           * the queue. `CANCELLED` is the honest answer — upstream's own value
+           * for a dismissed dialog — and it is **recorded on the harness**, so
+           * a probe run that reached this path says so instead of looking like
+           * a card that decided not to ask.
+           */
+          onPopup: request => {
+            setHarness(before => ({
+              dialog: [...before.dialog, `popup(${String(request.plan.kind)}): ${request.plan.content}`],
+              status: 'card popup — the probe answers cancelled',
+            }))
+            request.answer({ closed: true, result: null })
+          },
+          onPopupWithdrawn: () => undefined,
           onSlash: async command => {
             setHarness(before => ({ slash: [...before.slash, command] }))
             // Rethrown, not swallowed: the card is awaiting this, and a resolved

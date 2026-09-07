@@ -31,6 +31,7 @@ import { Sidebar } from './Sidebar.tsx'
 import type { SidebarTab } from './Sidebar.tsx'
 import { CardScriptFrames } from './useCardScripts.tsx'
 import { ConsentAsk } from './ConsentAsk.tsx'
+import { CardPopup } from './CardPopup.tsx'
 import { CleanupOffer } from './CleanupOffer.tsx'
 import { StatePanel } from './StatePanel.tsx'
 import { toBase64 } from './format.ts'
@@ -281,6 +282,15 @@ export function App(): ReactElement {
         Renders nothing until the host actually asks.
       */}
       <CleanupOffer />
+
+      {/*
+        A card's own popup, at the same level and for a weaker version of the
+        same reason: the card that raised it is *blocked* until it is answered,
+        so it cannot be reachable only by opening something first. It sits below
+        the cleaning offer in the z ladder — that one destroys data and this one
+        is content asking a question. Renders nothing until a card asks.
+      */}
+      <CardPopup />
 
       {dropping ? (
         <div className="iris-drop" role="status">

@@ -42,12 +42,14 @@ import {
 } from './overlay-regions.ts'
 import { createNestedFrame, virtualiseNestedFrames } from './nested-frame.ts'
 import { createReportingToastr } from './toastr-report.ts'
+import { createPopupApi } from './popup-api.ts'
 import {
   SETTLED_EVENT_NAMES,
   STARTED_EVENTS,
   createEventSource,
   createFrameTavernHelper,
   restoreFloorTables,
+  sealLegacyCleanup,
   settledEvents,
 } from './tavern-helper.ts'
 
@@ -57,6 +59,7 @@ host[MEMBERS_GLOBAL] = {
   createFrameTavernHelper,
   createEventSource,
   restoreFloorTables,
+  sealLegacyCleanup,
   settledEvents,
   STARTED_EVENTS,
   SETTLED_EVENT_NAMES,
@@ -72,6 +75,7 @@ host[MEMBERS_GLOBAL] = {
   createNestedFrame,
   virtualiseNestedFrames,
   createReportingToastr,
+  createPopupApi,
 }
 
 /*

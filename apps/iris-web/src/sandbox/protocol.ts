@@ -1,4 +1,5 @@
 import type { ScriptContext } from '@iris/protocol'
+import type { PopupButtonPlan, PopupLabel, PopupPlan, PopupSlot } from './popup.ts'
 
 /**
  * The host↔frame message protocol.
@@ -96,6 +97,31 @@ export type ToFrame =
   /** Answer to a card action. */
   | { iris: string, type: 'call:ok', id: string, result: unknown }
   | { iris: string, type: 'call:error', id: string, message: string }
+  /**
+   * What the reader did with a popup the card raised.
+   *
+   * One arm for two outcomes, separated by `closed` rather than by the presence
+   * of `result` — because `result` is legitimately `null` (upstream's
+   * `CANCELLED`), so "absent" and "null" would have had to mean different
+   * things in the same field. `closed: false` is upstream's custom button
+   * declared with no `result`, which fires its action and leaves the dialog up
+   * ([ST] `popup.js:69`).
+   *
+   * `input` is the input box's text at the moment of the press, carried on every
+   * answer rather than only for an INPUT popup: the value rule is upstream's
+   * (`popup.js:755-758`) and it lives frame-side, so the shell reports what it
+   * has and does not decide whether it matters.
+   */
+  | {
+      iris: string
+      type: 'popup:answer'
+      id: string
+      closed: boolean
+      result: number | null
+      /** Which button, as its index in the plan, when a button was pressed. */
+      button?: number
+      input?: string
+    }
 
 /** Frame → host. */
 export type FromFrame =
@@ -231,6 +257,32 @@ export type FromFrame =
    * actually shows.
    */
   | { iris: string, type: 'dialog', kind: 'alert' | 'confirm' | 'prompt', text: string }
+  /**
+   * The card raised one of SillyTavern's own popups and is awaiting an answer.
+   *
+   * A **different message from `dialog`**, and the difference is the whole
+   * reason this exists: `dialog` shadows `window.alert`/`confirm`/`prompt`,
+   * which upstream answers synchronously and Iris therefore cannot answer at
+   * all — so it records what was asked and answers "cancel" for the card. This
+   * one is `callGenericPopup`, which is **asynchronous upstream too**, so the
+   * reader's actual answer can be carried back and the card gets upstream's
+   * behaviour rather than a note about it.
+   *
+   * The dialog is drawn by the shell, not the frame. A card frame is clipped to
+   * its message's height, so a modal drawn inside one is invisible — and the
+   * one drawn in the shell reaches the whole viewport, which is what a modal
+   * asking a question about the user's data has to do.
+   */
+  | { iris: string, type: 'popup', id: string, plan: PopupPlan }
+  /**
+   * The card closed its own popup — `popup.complete(result)` and the three
+   * `completeX()` helpers ([ST] `popup.js:798-807`).
+   *
+   * Its own message because the frame has already resolved the card's promise
+   * by then: without this the shell would hold a dialog nobody is waiting for,
+   * on screen, with no way back for the reader. Nothing is expected in reply.
+   */
+  | { iris: string, type: 'popup:done', id: string }
   /** The card's content changed height; the shell sizes the frame to it. */
   | { iris: string, type: 'height', pixels: number }
   /**
@@ -339,6 +391,33 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
       return typeof message['id'] === 'string' && typeof message['message'] === 'string'
         ? { iris: token, type: 'call:error', id: message['id'], message: message['message'] }
         : undefined
+    case 'popup:answer': {
+      const id = message['id']
+      const result = message['result']
+      const button = message['button']
+      const input = message['input']
+      if (typeof id !== 'string') return undefined
+      /*
+       * `null` is a value here, not an absence — it is upstream's `CANCELLED` —
+       * so it is accepted alongside a number and nothing else is. A `result`
+       * that arrived as a string would otherwise be compared against
+       * `POPUP_RESULT.NEGATIVE` by the card and lose.
+       */
+      if (result !== null && typeof result !== 'number') return undefined
+      return {
+        iris: token,
+        type: 'popup:answer',
+        id,
+        closed: message['closed'] !== false,
+        result,
+        ...(typeof button === 'number' && Number.isInteger(button) && button >= 0
+          ? { button }
+          : {}),
+        // Bounded like every other free-text field, and generous because this is
+        // whatever the reader typed into a card's own input box.
+        ...(typeof input === 'string' ? { input: input.slice(0, 32_000) } : {}),
+      }
+    }
     case 'slash:ok':
       return typeof message['id'] === 'string' && typeof message['result'] === 'string'
         ? { iris: token, type: 'slash:ok', id: message['id'], result: message['result'] }
@@ -378,6 +457,102 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
  */
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
+}
+
+/**
+ * Validate a popup plan arriving from a frame.
+ *
+ * The frame computed this plan, and the frame is the untrusted side — so every
+ * field is checked and every card-controlled string is bounded before it can
+ * reach a React tree or a sanitizer. What is deliberately **not** re-derived
+ * here is the *meaning*: which result each button carries is upstream's rule
+ * and lives in `sandbox/popup.ts`. Re-deriving it here would be a second copy
+ * of that rule, free to disagree with the first.
+ *
+ * A plan that fails any check is dropped whole rather than repaired. A popup
+ * that never appears leaves the card's promise pending, which is visible; a
+ * popup silently missing half its buttons is a reader pressing the wrong one.
+ * @param value - the raw `plan` field.
+ * @returns the plan, or undefined when it is not one.
+ */
+function parsePopupPlan(value: unknown): PopupPlan | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const bag = value as Record<string, unknown>
+
+  const kind = bag['kind']
+  if (typeof kind !== 'number' || !Number.isInteger(kind)) return undefined
+  const content = bag['content']
+  if (typeof content !== 'string') return undefined
+
+  const rawButtons = bag['buttons']
+  if (!Array.isArray(rawButtons)) return undefined
+  const buttons: PopupButtonPlan[] = []
+  // Upstream's ceiling is nine custom results plus ok and cancel. Sixteen keeps
+  // room for `appendAtEnd` without letting a card paper the panel in buttons.
+  for (const entry of rawButtons.slice(0, 16)) {
+    if (typeof entry !== 'object' || entry === null) return undefined
+    const button = entry as Record<string, unknown>
+    const at = button['at']
+    const slot = button['slot']
+    const label = button['label']
+    const text = button['text']
+    const result = button['result']
+    const tooltip = button['tooltip']
+    const custom = button['custom']
+    if (typeof at !== 'number' || !Number.isInteger(at) || at < 0) return undefined
+    if (slot !== 'custom' && slot !== 'ok' && slot !== 'cancel') return undefined
+    if (!['ok', 'yes', 'no', 'cancel', 'save', 'crop', 'close'].includes(String(label))) {
+      return undefined
+    }
+    buttons.push({
+      at,
+      slot: slot as PopupSlot,
+      label: label as PopupLabel,
+      ...(typeof text === 'string' ? { text: text.slice(0, 200) } : {}),
+      // Absent is a state: upstream's non-closing custom button.
+      ...(typeof result === 'number' || result === null ? { result } : {}),
+      ...(typeof tooltip === 'string' ? { tooltip: tooltip.slice(0, 200) } : {}),
+      ...(typeof custom === 'number' && Number.isInteger(custom) && custom >= 0
+        ? { custom }
+        : {}),
+    })
+  }
+
+  const defaultResult = bag['defaultResult']
+  const measure = bag['measure']
+  const rows = bag['rows']
+  const names = bag['ignored']
+
+  return {
+    kind,
+    /*
+     * Bounded, and this is the one bound with a cost attached: upstream renders
+     * whatever a card hands it, so a panel longer than this is truncated rather
+     * than refused. 32 kB is the same ceiling a slash command gets, and the
+     * measured content is four sentences.
+     */
+    content: content.slice(0, 32_000),
+    inputValue: typeof bag['inputValue'] === 'string' ? bag['inputValue'].slice(0, 32_000) : '',
+    rows: typeof rows === 'number' && Number.isFinite(rows) ? Math.min(Math.max(Math.floor(rows), 1), 40) : 1,
+    placeholder: typeof bag['placeholder'] === 'string' ? bag['placeholder'].slice(0, 200) : '',
+    tooltip: typeof bag['tooltip'] === 'string' ? bag['tooltip'].slice(0, 200) : '',
+    buttons,
+    closeCorner: bag['closeCorner'] === true,
+    defaultResult: typeof defaultResult === 'number' || defaultResult === null ? defaultResult : 1,
+    allowEscapeClose: bag['allowEscapeClose'] !== false,
+    measure: measure === 'wide' || measure === 'large' ? measure : 'normal',
+    scrolling: bag['scrolling'] === true,
+    leftAlign: bag['leftAlign'] === true,
+    /*
+     * Names of options this surface ignores. Frame-chosen from a fixed list
+     * rather than card-authored — and bounded anyway, on the same reasoning as
+     * `blocked`'s `covered`: a field that decides what a report *says* is
+     * exactly the one not to take on trust from an untrusted sender.
+     */
+    ignored: Array.isArray(names)
+      ? names.filter((name): name is string => typeof name === 'string').slice(0, 32).map(name => name.slice(0, 60))
+      : [],
+  }
 }
 
 export function parseFromFrame(token: string, data: unknown): FromFrame | undefined {
@@ -538,6 +713,18 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
       if (kind !== 'alert' && kind !== 'confirm' && kind !== 'prompt') return undefined
       if (typeof text !== 'string') return undefined
       return { iris: token, type: 'dialog', kind, text: text.slice(0, 2000) }
+    }
+    case 'popup': {
+      const id = message['id']
+      if (typeof id !== 'string' || id === '') return undefined
+      const plan = parsePopupPlan(message['plan'])
+      return plan === undefined ? undefined : { iris: token, type: 'popup', id, plan }
+    }
+    case 'popup:done': {
+      const id = message['id']
+      return typeof id === 'string' && id !== ''
+        ? { iris: token, type: 'popup:done', id }
+        : undefined
     }
     case 'fetch':
       return typeof message['id'] === 'string' && typeof message['url'] === 'string'

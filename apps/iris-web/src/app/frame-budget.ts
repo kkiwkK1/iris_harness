@@ -95,8 +95,25 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * 41.8, charging every frame about 2.9 KB less than it cost — and every move
  * since **in the same change that caused it**. The figure used to drift until
  * someone thought to re-measure; now it cannot.
+ *
+ * **51 KiB, and it is the largest value the gate survives.** The popup API
+ * (`sandbox/popup-api.ts`) tripped the build's comparison. Its first shape put
+ * the whole runtime in the bootstrap — 7.1 KiB, a seventh of the artifact, for
+ * a dialog most frames never raise — and covering that needs 57 KiB, at which
+ * `FRAME_BUDGET_BYTES / this` falls to ≈36 and the invariant below forces
+ * `FRAME_COUNT_LIMIT` down to 17. So the API went into the **fetched member
+ * table** instead, the way the member-table split answered this the last time,
+ * and the bootstrap grew by 0.9 KiB rather than 7.1 (measured with one bundler
+ * over both trees, so the delta describes the change and not the toolchain).
+ *
+ * One KiB is then the whole move, and 51 is deliberate rather than rounded up
+ * from the reading: 52 KiB puts half the degradation point under a gate of 20
+ * and would cost a live panel. **The headroom is about a kilobyte** — it was
+ * about 0.8 before this change, so the tightness is not new — and the next
+ * thing that grows the bootstrap has the same choice to make: put it in the
+ * member table, or move the gate and say so.
  */
-export const FRAME_OVERHEAD_BYTES = 50 * 1024
+export const FRAME_OVERHEAD_BYTES = 51 * 1024
 
 /**
  * The whole reading view's frame budget.
