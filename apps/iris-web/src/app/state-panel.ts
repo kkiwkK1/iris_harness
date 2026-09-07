@@ -474,6 +474,18 @@ export const ASIDE_FROM = 1360
 export const READING_FLOOR = 640
 
 /**
+ * The window width from which the settings drawer takes a grid track instead
+ * of sliding over the page (`panels.css`, `.iris-drawer`).
+ *
+ * The same arithmetic as {@link ASIDE_YIELD_BELOW}, one flank fewer: sidebar
+ * plus drawer plus the reading floor. The first version used 1200, which
+ * leaves the reading column 536px wide - below the floor the margin yields
+ * for - so the drawer was allowed to do at 1200 what the margin was forbidden
+ * to do at 1539. One floor, both flanks (coordinator ruling, 2026-09-07).
+ */
+export const DRAWER_TRACK_FROM = SIDEBAR_TRACK + DRAWER_TRACK + READING_FLOOR
+
+/**
  * The window width at which the margin no longer has to yield to the drawer.
  *
  * At exactly this width the reading column is `READING_FLOOR` wide with all

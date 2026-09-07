@@ -12,8 +12,8 @@
  *
  * ```
  *   ≤ 880      sidebar slides over the page   margin hidden   drawer overlays
- *   881–1199   sidebar is a column            margin hidden   drawer overlays
- *   1200–1359  sidebar is a column            margin hidden   drawer is a track
+ *   881–1303   sidebar is a column            margin hidden   drawer overlays
+ *   1304–1359  sidebar is a column            margin hidden   drawer is a track
  *   1360–1539  sidebar is a column            236 or 36 …     drawer is a track
  *              …and an open drawer takes the margin's column (ASIDE_YIELD_QUERY)
  *   ≥ 1540     sidebar is a column            236 or 36       drawer is a track
@@ -33,7 +33,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-import { ASIDE_FROM } from '../src/app/state-panel.ts'
+import { ASIDE_FROM, DRAWER_TRACK_FROM } from '../src/app/state-panel.ts'
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'app')
 
@@ -110,7 +110,7 @@ test('the shell has exactly the three width breakpoints the interval table cover
    */
   const found = SHEETS.flatMap(sheet => widths(readFileSync(join(APP, sheet), 'utf8')))
   const seen = [...new Set(found.map(one => `${one.edge}:${String(one.px)}`))].sort()
-  assert.deepEqual(seen, ['max:880', 'min:1200', `min:${String(ASIDE_FROM)}`].sort(), [
+  assert.deepEqual(seen, ['max:880', `min:${String(DRAWER_TRACK_FROM)}`, `min:${String(ASIDE_FROM)}`].sort(), [
     'the width breakpoints changed. The interval table in this file describes',
     'the sidebar, the variable margin and the settings drawer at every width;',
     'update it, then update this list.',
@@ -134,7 +134,7 @@ test('each flank has a base rule and one width rule, so no interval is a default
     // The margin is absent by default and appears where there is room for it.
     { what: 'the variable margin', selector: '.iris-aside', base: panels, over: panels, edge: `(min-width: ${String(ASIDE_FROM)}px)` },
     // The drawer overlays by default and becomes a track on a wide window.
-    { what: 'the settings drawer', selector: '.iris-drawer', base: panels, over: panels, edge: '(min-width: 1200px)' },
+    { what: 'the settings drawer', selector: '.iris-drawer', base: panels, over: panels, edge: `(min-width: ${String(DRAWER_TRACK_FROM)}px)` },
   ]
 
   for (const one of cases) {

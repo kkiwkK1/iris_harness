@@ -28,6 +28,7 @@ import {
   changedPaths,
   diffStats,
   DRAWER_TRACK,
+  DRAWER_TRACK_FROM,
   EMPTY_DIFF,
   filterByName,
   keepChanged,
@@ -453,6 +454,11 @@ test('the yield range is derived from the tracks the stylesheets actually declar
   // The arithmetic itself: at the boundary the reading column is exactly the
   // floor, so the yield applies strictly below it.
   assert.equal(ASIDE_YIELD_BELOW, SIDEBAR_TRACK + ASIDE_TRACK + DRAWER_TRACK + READING_FLOOR)
+  assert.equal(DRAWER_TRACK_FROM, SIDEBAR_TRACK + DRAWER_TRACK + READING_FLOOR)
+  assert.ok(
+    panels.includes(`@media (min-width: ${String(DRAWER_TRACK_FROM)}px)`),
+    `the drawer no longer becomes a track at ${String(DRAWER_TRACK_FROM)}px - one reading floor for both flanks`,
+  )
   assert.equal(ASIDE_YIELD_BELOW - SIDEBAR_TRACK - ASIDE_TRACK - DRAWER_TRACK, READING_FLOOR)
   // The measured case that started this: 1440 with all three flanks up.
   assert.ok(1440 < ASIDE_YIELD_BELOW, '1440px must be inside the yield range, it was measured at 539px of prose')
