@@ -2100,3 +2100,13 @@ CSP, per-frame grants) is the isolation, not the question.
 same explicit yes as scripts for *every* card — then the question has to be
 put for empty lists too, and `ConsentAsk`'s suppression (not this derivation)
 is what must change.
+
+
+**Merge addendum (2026-09-07).** The mainline took the gate, not the derivation:
+`interfacesMayBuild` admits `unasked` when the script count is zero, so the
+store's field keeps answering only what the host answered, and `unasked` stays
+the truth about what was asked. Deriving `allowed` in `loadScripts` — this
+section's original shape, merged from `dev/fix-render` — was superseded by that
+gate in the same merge and reverted there; the ruling stands, the mechanism
+moved one level out. The test that pinned the derivation now pins both halves:
+the store's honest state and the gate's admission.

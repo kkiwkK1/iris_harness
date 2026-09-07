@@ -15,7 +15,7 @@ import {
 import type { ChatView, IrisClient, IrisEvent } from '@iris/protocol'
 import { createFakeClient } from '@iris/client-fake'
 
-import { consentState } from '../src/sandbox/consent.ts'
+import { consentState, interfacesMayBuild } from '../src/sandbox/consent.ts'
 
 /** A client that records calls and lets a test push frames by hand. */
 function stubClient(): {
@@ -553,26 +553,23 @@ test('the browser half of delete → reimport → open: nothing is inherited', a
   dispose()
 })
 
-test('a card with no scripts is not held at unasked, or its interface never renders', async () => {
+test('a script-less card sits at unasked, and the interface gate admits exactly that', async () => {
   /*
    * The dead state this pins, measured live on 人偶演出Lights ON: a card whose
    * only surface is a message interface and which carries **no** scripts.
    * `ConsentAsk` suppresses the question for an empty list ("a card with no
    * scripts is not a decision"), and the host — honestly — reports
-   * `scriptsAllowed` as absent, which read straight is `unasked`. But the
-   * **interface** pipeline gates on the same field, so the card sat at
-   * `unasked` forever: no question could ever be put, and no interface ever
-   * rendered — no iframe, no caption, no reason anywhere. The merge-acceptance
-   * round hit exactly this: three cards with scripts were fine, the one
-   * script-less card's greeting lost its frame.
+   * `scriptsAllowed` as absent, which reads straight as `unasked`. The fault
+   * this once caused was real: the interface pipeline gated on the same field,
+   * so the card sat at `unasked` forever and its greeting rendered no frame.
    *
-   * So the derivation lives where the empty list is known: nothing to run is
-   * nothing to ask about, and the state becomes `allowed` — for the script
-   * surface a vacuous answer (there is nothing to run), for the interface
-   * surface the difference between a rendering card and a silently blank one.
-   * Never written back to the host: the host's absent key stays the truth about
-   * what was asked, and a reused id later carrying scripts is asked like anyone
-   * else.
+   * Two fixes were proposed. The one that landed is at the **gate**:
+   * `interfacesMayBuild` admits `unasked` when the script count is zero, so
+   * the store keeps saying only what the host said, and `unasked` stays the
+   * truth about what was asked. This test pins both halves — the store's
+   * honest state, and the gate's admission — because either alone is the bug
+   * back again: a store that derives `allowed` lies about consent, and a gate
+   * that drops the zero-script branch blanks the card again.
    *
    * The stub returns the host's exact unanswered shape: no `scriptsAllowed` key
    * at all, not `false`.
@@ -598,10 +595,14 @@ test('a card with no scripts is not held at unasked, or its interface never rend
   await actions.loadScripts('scriptless')
   assert.equal(
     store.getState().scriptsAllowed,
-    'allowed',
-    'a card that can never be asked must not be stuck at unasked',
+    'unasked',
+    'the store says only what the host said: nobody has asked a script-less card',
   )
   assert.equal(store.getState().scripts.length, 0)
+  assert.ok(
+    interfacesMayBuild(store.getState().scriptsAllowed, store.getState().scripts.length),
+    'the gate admits the script-less unasked card, or its interface never renders',
+  )
 
   // Not written back: the next card re-derives from its own list, so a stub
   // that starts answering (a card with scripts, still unanswered) is read as
