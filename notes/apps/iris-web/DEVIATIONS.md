@@ -1964,7 +1964,7 @@ plain-text user floor claims nothing and renders byte-for-byte as before.
 
 ---
 
-## 50. A clamped frame scrolls itself, and its boundary stops the wheel
+## 53. A clamped frame scrolls itself, and its boundary stops the wheel
 
 **Kind:** deliberate divergence from upstream — forced by the clamp, which
 upstream does not have.
@@ -2005,7 +2005,7 @@ like the three observers that trigger it.
 
 ---
 
-## 51. The height reporter's schedule survives a frame that never paints
+## 54. The height reporter's schedule survives a frame that never paints
 
 **Kind:** robustness fix against a measured environment fault, not a behaviour
 change.
@@ -2020,7 +2020,7 @@ fired** (render-throttled children), so `reportHeight`'s rAF-only
 `schedule()` meant the bootstrap's one synchronous `send` — taken before the
 card's markup parsed — was also its last. A card whose interface builds its DOM
 asynchronously (政经博弈's reply interface, an async `$(fn)`) never posted a
-height, lived at the 60vh starting height, and neither the height nor the §50
+height, lived at the 60vh starting height, and neither the height nor the §53
 scroll decision ever ran for it.
 
 **The change.** `reportHeight`'s schedule gains the timer rescue
@@ -2059,7 +2059,7 @@ measured on the 政经博弈 reply chat):
 
 ---
 
-## 52. A card with no scripts is never held at `unasked`
+## 55. A card with no scripts is never held at `unasked`
 
 **Kind:** deliberate improvement (closing a dead state the acceptance round
 walked into).
