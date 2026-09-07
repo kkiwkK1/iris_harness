@@ -22,7 +22,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import type { ConnectionProfile, GenerationSettings } from '@iris/protocol'
+import type { ConnectionProfile, GenerationSettings, HostDefaultConnection } from '@iris/protocol'
 
 import { notFound } from './errors.ts'
 import { sanitize } from './settings.ts'
@@ -52,6 +52,19 @@ interface StoredProfile {
   apiKey?: string
   /** The header the key is sent in. Absent means the OpenAI-compatible default. */
   apiKeyHeader?: string
+  /**
+   * The ids a successful probe of {@link baseURL} last reported.
+   *
+   * The one non-user, non-derived field in this file, and the module's opening
+   * rule survives it: nothing *derived* is stored, and this is not derived —
+   * it is an observation, kept with the moment it was made so it cannot be
+   * mistaken for the present. Dropped whenever {@link baseURL} changes, because
+   * a list from the endpoint this profile used to point at is not a stale
+   * version of the truth, it is a different endpoint's answer.
+   */
+  models?: string[]
+  /** Unix epoch milliseconds of the probe {@link models} came from. */
+  modelsProbedAt?: number
 }
 
 /** The file's shape. */
@@ -77,6 +90,138 @@ export interface ProfileInput {
    */
   apiKey?: string
   apiKeyHeader?: string
+  /**
+   * The model list a probe just reported, recorded on the profile.
+   *
+   * Merges like the key does — absent keeps what was recorded, because a caller
+   * editing a label has no probe result to re-send. An empty array is a real
+   * record ("probed, advertised nothing"), not a clear.
+   */
+  models?: string[]
+}
+
+/**
+ * The connection the host process was started with, as this runtime is told it.
+ *
+ * Preferably **handed in** by the composition, which is the one place that
+ * decides what the host generates through. When it is not — and on the shipped
+ * composition today it is not, because the `app` row carries no endpoint —
+ * {@link hostConnectionFromEnv} reads the same variables that composition
+ * reads, which makes it a second *reader* of one answer rather than a second
+ * answer. `HOST_CONNECTION_ENV` names that coupling and a test holds it.
+ *
+ * `apiKey` stays inside the process — it is what a bare probe and an adoption
+ * use, and it is never projected onto {@link hostDefaultView}.
+ */
+export interface HostConnection {
+  /** The adapter route the composition registered. */
+  provider: string
+  /** The endpoint, when the host was configured with one. */
+  baseURL?: string
+  /** The model the host was configured with. */
+  model?: string
+  /** The credential the process holds, if any. **Never leaves the process.** */
+  apiKey?: string
+  /** The header it is sent in. Absent means `Authorization: Bearer`. */
+  apiKeyHeader?: string
+  /** The environment variable the key came from, for a form to name it by. */
+  keyEnv?: string
+}
+
+/**
+ * The environment variables the shipped composition configures the host's own
+ * endpoint from.
+ *
+ * Named as a constant because this list is a **coupling to another file**:
+ * `apps/iris/cordis.yml` reads exactly these three for its
+ * `llm-openai-compat` row, and this module reads them only as a fallback for a
+ * host that did not hand its connection in. A rename there with no rename here
+ * would leave the panel quietly reporting a host default that is not the one
+ * generating — so `tests/host-connection.test.ts` parses that file and holds
+ * the two together, and the drift goes red instead of silent.
+ */
+export const HOST_CONNECTION_ENV = {
+  baseURL: 'IRIS_BASE_URL',
+  model: 'IRIS_MODEL',
+  /** Not the key — the *name of the variable* holding it, which is the indirection upstream of the key. */
+  keyEnv: 'IRIS_API_KEY_ENV',
+} as const
+
+/**
+ * Read the host's own connection out of the environment, as a fallback.
+ *
+ * **The composition is the authority**; this is what a host that never told
+ * this runtime what it generates through can still be asked. It reads the same
+ * variables that composition reads, which is what makes it a second *reader*
+ * rather than a second *answer*.
+ *
+ * `baseURL` stays absent when `IRIS_BASE_URL` is unset, rather than repeating
+ * the composition's `http://127.0.0.1:11434/v1` default here: an absent
+ * endpoint already means "rides the host's configured route" everywhere else in
+ * this protocol, and a copied default is a constant that drifts.
+ * @param env - the environment to read (`process.env` in the product).
+ * @param route - the provider and model the settings layer already knows,
+ * which is where the composition's own `provider` / `model` row landed.
+ * @returns what the environment says the host is; the route alone when it says nothing.
+ */
+export function hostConnectionFromEnv(
+  env: Record<string, string | undefined>,
+  route: { provider: string, model: string },
+): HostConnection {
+  const baseURL = env[HOST_CONNECTION_ENV.baseURL]
+  const keyEnv = env[HOST_CONNECTION_ENV.keyEnv]
+  const apiKey = keyEnv === undefined || keyEnv.length === 0 ? undefined : env[keyEnv]
+  return {
+    provider: route.provider,
+    model: route.model,
+    ...baseURL === undefined || baseURL.length === 0 ? {} : { baseURL },
+    ...apiKey === undefined || apiKey.length === 0 ? {} : { apiKey },
+    ...keyEnv === undefined || keyEnv.length === 0 ? {} : { keyEnv },
+  }
+}
+
+/**
+ * Project the host's own connection onto the wire — **without the credential**.
+ *
+ * The whole point of the row is that a user can see what is answering their
+ * messages, and the whole point of this function is that seeing it does not
+ * mean holding its key.
+ * @param host - what the composition told this runtime.
+ * @returns the read-only row, carrying the key's *source* and never the key.
+ */
+export function hostDefaultView(host: HostConnection): HostDefaultConnection {
+  const hasKey = host.apiKey !== undefined && host.apiKey.length > 0
+  return {
+    provider: host.provider,
+    ...host.baseURL === undefined || host.baseURL.length === 0 ? {} : { baseURL: host.baseURL },
+    ...host.model === undefined || host.model.length === 0 ? {} : { model: host.model },
+    keySource: hasKey ? 'env' : 'none',
+    ...hasKey && host.keyEnv !== undefined && host.keyEnv.length > 0 ? { keyEnv: host.keyEnv } : {},
+  }
+}
+
+/**
+ * Whether two endpoints are the same place, for the purpose of reusing a key.
+ *
+ * Origin, not the full URL: `…/v1` and `…/v1/` and `…/v1beta/openai` are the
+ * same host holding the same credential, and demanding a character-identical
+ * base URL would refuse to reuse a key the user plainly meant. The path is
+ * deliberately *not* compared — but the origin is, and that is the line that
+ * matters: a stored key must never be sent to a **different** host because the
+ * page asked for a bare probe of one.
+ * @param left - one endpoint.
+ * @param right - the other.
+ * @returns true when both parse and share an origin.
+ */
+export function sameEndpointOrigin(left: string | undefined, right: string | undefined): boolean {
+  if (left === undefined || right === undefined) return false
+  try {
+    return new URL(left).origin === new URL(right).origin
+  } catch {
+    // One of them is not a URL. Refusing is the safe direction: the question
+    // this answers is "may this key go there", and "I could not tell" is no.
+    return false
+  }
 }
 
 /**
@@ -132,6 +277,11 @@ function toWire(profile: StoredProfile): ConnectionProfile {
     ...profile.apiKey === undefined ? {} : { hasKey: true },
     ...tail === undefined ? {} : { keyTail: tail },
     ...profile.apiKeyHeader === undefined ? {} : { apiKeyHeader: profile.apiKeyHeader },
+    // The list travels as it was recorded, timestamp included. Sending one
+    // without the other would hand a picker a list it cannot date, which is
+    // the shape that turns an observation into a claim.
+    ...profile.models === undefined ? {} : { models: [...profile.models] },
+    ...profile.modelsProbedAt === undefined ? {} : { modelsProbedAt: profile.modelsProbedAt },
   }
 }
 
@@ -221,11 +371,48 @@ export class ConnectionStore {
       stored.apiKey = input.apiKey
     }
 
+    // The recorded model list merges like the key, and for the same reason —
+    // the caller editing a label has no probe result in hand. The one case that
+    // is *not* a merge is a moved endpoint: a list recorded against the old
+    // base URL describes a different server, so it goes rather than becoming a
+    // set of model names this profile will never be able to reach.
+    if (input.models !== undefined) {
+      stored.models = [...input.models]
+      stored.modelsProbedAt = Date.now()
+    } else if (previous?.models !== undefined && sameEndpointOrigin(previous.baseURL, stored.baseURL)) {
+      stored.models = previous.models
+      if (previous.modelsProbedAt !== undefined) stored.modelsProbedAt = previous.modelsProbedAt
+    }
+
     if (at === -1) this.#file.profiles.push(stored)
     else this.#file.profiles[at] = stored
 
     await this.#save()
     return this.list()
+  }
+
+  /**
+   * Record what a probe of a profile's endpoint just reported.
+   *
+   * Its own method rather than a `save` call, because `save` replaces a whole
+   * profile from a caller's values and a probe has none of them: routing this
+   * through `save` would mean the probe path had to re-send the label, preset
+   * and sampling it was never given, and getting that wrong would silently
+   * blank a field.
+   *
+   * A profile that has since been deleted is not an error — the probe answered
+   * a question about an endpoint, and the answer having nowhere to be filed is
+   * not a failure of the probe.
+   * @param id - the profile the probe was pointed at.
+   * @param models - the ids it reported, possibly empty.
+   */
+  async recordModels(id: string, models: readonly string[]): Promise<void> {
+    await this.#load()
+    const found = this.#file.profiles.find(profile => profile.id === id)
+    if (found === undefined) return
+    found.models = [...models]
+    found.modelsProbedAt = Date.now()
+    await this.#save()
   }
 
   /**

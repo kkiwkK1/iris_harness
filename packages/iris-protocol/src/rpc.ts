@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { BackupPreview, BackupSummary, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
+import type { BackupPreview, BackupSummary, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -391,6 +391,30 @@ export const requestSchemas = {
     apiKey: z.string().max(2000).optional(),
     /** The header the key is sent in. Absent means the OpenAI-compatible `Authorization: Bearer`. */
     apiKeyHeader: z.string().max(200).optional(),
+    /**
+     * Copy the **host's own startup credential** into this profile, host-side.
+     *
+     * This is how the read-only `host` row of `connection.list` becomes an
+     * editable profile. The alternative — showing the environment key so the
+     * form could send it back — is the one thing this whole surface exists to
+     * prevent, so the copy happens where the key already is and the browser
+     * only ever asks for it by name.
+     *
+     * Ignored when the host holds no environment credential, and outranked by
+     * an explicit non-empty {@link apiKey}: a key the user just typed is a
+     * newer decision than a flag the form set when it opened.
+     */
+    adoptHostKey: z.boolean().optional(),
+    /**
+     * The model ids a probe of this profile's endpoint just reported, recorded
+     * on the profile so a picker elsewhere has a list without probing again.
+     *
+     * A **record of an observation**, not a claim about the present — the store
+     * stamps it with the time it was written. Absent leaves whatever was
+     * recorded before; an empty array records "probed, and it advertised
+     * nothing", which is a different fact from never having probed.
+     */
+    models: z.array(z.string().min(1).max(400)).max(2000).optional(),
   }),
   'connection.delete': z.object({ id: z.string().min(1) }),
   /** Apply a profile: globally, or to one chat when `chatId` is given. */
@@ -406,11 +430,27 @@ export const requestSchemas = {
    * with the key as typed). The two share one schema rather than two methods:
    * the question is the same — can this endpoint serve me — and the caller's
    * distinction of "saved or not" is not worth a second method to guess at.
+   *
+   * **`apiKey` is optional on purpose, and its absence is a request, not an
+   * omission.** Most providers show an API key exactly once, so a form that
+   * demands a re-typed key on every probe is a form that can be used once. An
+   * absent key asks the host to probe with what it already holds — the named
+   * profile's stored key, or the credential the process was started with — and
+   * the answer says which one it used (`keySource`). The host will only reuse a
+   * key **at the origin that key belongs to**: a probe pointed somewhere else
+   * goes out bare, because otherwise this parameter would be a way for the page
+   * to post a stored credential to an endpoint of its choosing.
    */
   'connection.test': z.object({
     profileId: z.string().min(1).optional(),
     baseURL: z.string().max(2000).optional(),
-    /** The key as typed in the form. Never logged, never echoed back. */
+    /**
+     * The key as typed in the form. Never logged, never echoed back.
+     *
+     * Absent means "use what the host has" (see above). Empty string means the
+     * same thing — a form that clears the field has not asked for a bare probe,
+     * it has just not typed anything.
+     */
     apiKey: z.string().max(2000).optional(),
     apiKeyHeader: z.string().max(200).optional(),
     /** Which provider preset the form is testing, so a known-to-need-a-key endpoint says so by name. */
@@ -1552,9 +1592,16 @@ export interface RpcResponseMap {
   'backup.restore': { chat: ChatSummary, previous?: BackupSummary }
   'backup.delete': Record<string, never>
 
-  'connection.list': { profiles: ConnectionProfile[], activeId?: string }
-  'connection.save': { profiles: ConnectionProfile[], activeId?: string }
-  'connection.delete': { profiles: ConnectionProfile[], activeId?: string }
+  /**
+   * The saved profiles, and the connection the host itself was started with.
+   *
+   * `host` is present only when the composition told this runtime what it is
+   * generating through. Its absence means "this host does not describe its own
+   * route", **not** "there is no route" — a host has always had one.
+   */
+  'connection.list': { profiles: ConnectionProfile[], activeId?: string, host?: HostDefaultConnection }
+  'connection.save': { profiles: ConnectionProfile[], activeId?: string, host?: HostDefaultConnection }
+  'connection.delete': { profiles: ConnectionProfile[], activeId?: string, host?: HostDefaultConnection }
   'connection.activate': { settings: GenerationSettings, activeId: string }
   /**
    * The probe's verdict, said in full even when it failed.
@@ -1570,6 +1617,16 @@ export interface RpcResponseMap {
     latencyMs: number
     /** Model ids from `GET /models`, in the endpoint's own order, when the probe succeeded. */
     models?: string[]
+    /**
+     * Which key the probe actually sent — always, pass or fail.
+     *
+     * Present on every verdict, including the refusals that never left the
+     * process, because the sentence a form shows differs by source: a `stored`
+     * pass says the saved profile still works, and a `typed` pass says what is
+     * in the field right now does. Never the key, and never enough of it to
+     * reconstruct one.
+     */
+    keySource: ConnectionKeySource
     error?: ConnectionTestError
   }
 
@@ -1584,8 +1641,26 @@ export interface RpcResponseMap {
   /** The star's new state, echoed so a caller need not diff the list. */
   'character.favorite': { characterId: string, favorite: boolean }
 
-  'settings.get': { settings: GenerationSettings }
-  'settings.set': { settings: GenerationSettings }
+  /**
+   * The settings in force, and — when a chat was named — which of them that
+   * chat is overriding.
+   *
+   * `settings` is the merged read it always was: the global layer with the
+   * chat's own values on top. `overrides` is the chat layer **by itself**, and
+   * it exists because the merged value alone cannot answer "is this the
+   * conversation's choice or the default showing through?" — a question an
+   * interface has to answer before it can offer to undo the choice. Two
+   * different `model` values that happen to be equal are indistinguishable in
+   * the merge and distinguishable here.
+   *
+   * **Presence is scope, not emptiness.** `overrides` is present exactly when
+   * the request named a `chatId` — `{}` then means "that chat overrides
+   * nothing", a real answer. Absent means the read was of the global layer,
+   * which is the bottom and has nothing to override. A reader that treats
+   * absent as `{}` will report the global layer as an un-overridden chat.
+   */
+  'settings.get': { settings: GenerationSettings, overrides?: Partial<GenerationSettings> }
+  'settings.set': { settings: GenerationSettings, overrides?: Partial<GenerationSettings> }
 
   'preset.list': { presets: PresetSummary[], active?: string, install?: string[] }
   'preset.select': { presets: PresetSummary[], active: string, manager: PresetManagerView }

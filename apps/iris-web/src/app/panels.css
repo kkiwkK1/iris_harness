@@ -289,9 +289,10 @@
 
 /*
  * The two capsules under the field: what prompt is in force, and which model
- * answers. They are readouts, not controls — the prompt capsule is a button
- * because pressing it opens the breakdown of what would be sent, which is the
- * question the capsule raises.
+ * answers. Both are buttons, because each states a fact and pressing it answers
+ * the question that fact raises — the prompt capsule opens the breakdown of
+ * what would be sent, and the model capsule changes the model for this one
+ * conversation.
  */
 .iris-composer__pill {
   display: inline-flex;
@@ -320,6 +321,23 @@
 .iris-composer__pill--action:hover {
   color: var(--iris-accent);
   border-color: var(--iris-accent);
+}
+
+/*
+ * "This conversation is not on its connection's model."
+ *
+ * A dot rather than a word: the capsule is meant to be read at a glance and it
+ * already carries a model id that can be long. `flex: 0 0 auto` because the
+ * capsule ellipsises its text — without it, a long model name would eat the
+ * marker and the one visible sign of the override would disappear exactly in
+ * the case where the reader most needs it.
+ */
+.iris-composer__pill-dot {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--iris-accent);
 }
 
 .iris-composer__hint {
@@ -1697,6 +1715,24 @@
 .iris-conn[aria-current='true'] {
   border-left-color: var(--iris-accent);
   background: var(--iris-accent-wash);
+}
+
+/*
+ * The host's own connection: the same row, wrapping instead of picking.
+ *
+ * `flex-direction: column` because it has no `__pick` button to stretch — it is
+ * not selectable, being what the host is already generating through — and the
+ * dashed edge says the same thing the "(read-only)" in its title does: this row
+ * comes from the environment the process was launched with, not from the list
+ * below that this panel owns.
+ */
+.iris-conn--host {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border-left-style: dashed;
+  border-left-color: var(--iris-rule);
+  padding: 8px 0 8px 8px;
 }
 
 .iris-conn__pick {

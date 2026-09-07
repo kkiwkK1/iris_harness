@@ -183,6 +183,56 @@ async function main(): Promise<void> {
   // travel together.
   assert.match(settled, /iris-composer__send--idle[^"]*"[^>]*disabled/, 'Send is not disabled while the composer is empty')
 
+  // ---------------------------------------------------- model capsule
+  /*
+   * The model capsule is a **control**, and switching it moves only this
+   * conversation.
+   *
+   * The reported failure was that the model name under the field could not be
+   * pressed at all, so the first assertion is the crudest one that would have
+   * caught it: the capsule is a `<button>` with a menu behind it, not a `<span>`
+   * readout. What a server render cannot do is open that menu — the open state
+   * is `useState` inside the component and there is no click here — so the
+   * menu's *contents* are pinned in `tests/model-menu.test.ts`, against these
+   * same seeded profiles, and what is pinned here is the wiring on either side
+   * of it: the capsule offers a press, and a choice from the seeded list lands
+   * on this chat and shows on the capsule.
+   */
+  const connections = wired.store.getState().connections
+  const activeProfile = connections.find(row => row.id === wired.store.getState().activeConnectionId)
+  const offered = activeProfile?.models ?? []
+  // A floor on the fixture before anything is concluded from it: with no
+  // recorded list the switch below would be testing a model nobody offered,
+  // and every assertion after it would still pass.
+  assert.ok(offered.length >= 2, 'the seeded active connection carries no model list to pick from')
+
+  assert.match(
+    settled,
+    /<button[^>]*iris-composer__pill--action[^>]*aria-haspopup="menu"/,
+    'the model capsule is not a button with a menu',
+  )
+  assert.match(settled, /local\/qwen3-8b<\/button>|local\/qwen3-8b<span/, 'the capsule does not name the model in force')
+  assert.doesNotMatch(settled, /iris-composer__pill-dot/, 'the seeded chat is marked as overriding the model')
+
+  // The switch. `offered[1]` rather than a literal, so this cannot pass by
+  // agreeing with a hard-coded name the fixture has stopped carrying.
+  const picked = offered[1]!
+  await wired.store.getState().setChatModel(picked)
+  const switched = render(wired.store, slots.core)
+  assert.match(switched, new RegExp(`${picked.replace('/', '\\/')}<`), 'the capsule did not follow the switch')
+  assert.match(switched, /iris-composer__pill-dot/, 'the per-conversation override is not marked')
+  assert.equal(
+    wired.store.getState().settingsOverrides?.model,
+    picked,
+    'the switch did not land on the chat’s own layer',
+  )
+
+  // And the undo puts it back, which is what makes the override safe to make.
+  await wired.store.getState().setChatModel(null)
+  const restored = render(wired.store, slots.core)
+  assert.doesNotMatch(restored, /iris-composer__pill-dot/, 'clearing the override left the marker behind')
+  assert.equal(wired.store.getState().settingsOverrides?.model, undefined)
+
   // --------------------------------------------------------- character page
   /*
    * Both ends of the facts row, on the two fixtures that were seeded to be the

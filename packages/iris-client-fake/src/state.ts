@@ -59,6 +59,21 @@ export interface FakeChat {
   /** Unix epoch milliseconds of the last activity. */
   updatedAt: number
   settings: GenerationSettings
+  /**
+   * The fields **this conversation** overrides, apart from the merged read.
+   *
+   * The fake keeps `settings` as a whole copy because that is how it was
+   * seeded, so the merged value on its own cannot say whether a field is the
+   * conversation's choice or the global default showing through — and an
+   * interface that offers to *undo* the choice needs the difference. Tracked
+   * rather than reconstructed by diffing against the global layer: two layers
+   * carrying the same string is a real state, and a diff would report it as
+   * "not overridden".
+   *
+   * Absent on a seeded chat, which is what "this conversation has decided
+   * nothing of its own" looks like.
+   */
+  settingsOverride?: Partial<GenerationSettings>
   /** Per-chat variables, so a status-bar surface has something to render. */
   variables: Record<string, unknown>
 }

@@ -13,21 +13,43 @@
  * the prompt and the model — which is the pair of facts a reader checks before
  * pressing send and which previously lived only behind the settings drawer.
  *
+ * **Both capsules are buttons**, and for the same reason: a capsule states a
+ * fact, and the reader's next thought is about that fact. The prompt capsule
+ * opens the breakdown of what would be sent. The model capsule changes the
+ * model — **for this conversation only**, which is the scope the capsule is
+ * already standing in. A model switched here does not follow the reader into
+ * the next scene, and a dot beside the name says when this conversation is not
+ * on its connection's model: an override nobody can see is one the reader will
+ * eventually be surprised by.
+ *
  * @module iris-web/app/Composer
  */
 
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 
-import { useIris } from '../client/provider.tsx'
+import { useIris, useIrisActions } from '../client/provider.tsx'
 import type { ResolvedButton } from './script-buttons.ts'
 import { Slot } from '../slots/Slot.tsx'
 import { PlumBlossom, PlumBranch } from './marks.tsx'
 import { ScriptButtons } from './ScriptButtons.tsx'
 import { registerComposer } from './composer-bus.ts'
 import { usageLineGroups } from './token-format.ts'
+import { modelMenu } from './model-menu.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
+
+/**
+ * The menu row that returns this conversation to its connection's model.
+ *
+ * A leading space so it can never collide with a model id: every other row's id
+ * *is* a model id, they come from an endpoint rather than from this file, and
+ * `onSelect` hands back only an id. A sentinel that a provider could
+ * legitimately mint would make one model unselectable and nobody would know
+ * which.
+ */
+const RESTORE_ID = ' restore-connection-default'
 
 /**
  * Render the composer.
@@ -87,6 +109,17 @@ export function Composer({
    * streaming message does not re-render the composer through this line.
    */
   const usage = useIris(state => state.view?.usage)
+  /*
+   * What the model capsule needs to be a control rather than a readout: which
+   * of the settings this conversation overrides, and the list the active
+   * connection last reported. Selected narrowly (four fields, not the whole
+   * store) because this component re-renders on every keystroke of the draft.
+   */
+  const overrides = useIris(state => state.settingsOverrides)
+  const connections = useIris(state => state.connections)
+  const activeConnectionId = useIris(state => state.activeConnectionId)
+  const actions = useIrisActions()
+  const [modelOpen, setModelOpen] = useState(false)
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
   // Subscribed so a language switch re-renders the composer's words.
@@ -110,6 +143,47 @@ export function Composer({
 
   const empty = draft.trim() === ''
   const stats = usageLineGroups(usage, lang)
+
+  /*
+   * The model capsule's menu, decided in `model-menu.ts` and dressed here.
+   *
+   * The heading names the connection the list came from, because the list is
+   * the *endpoint's* answer and a menu that showed model names with no
+   * provenance would invite the reader to pick one that a different connection
+   * offers. When there is nothing to offer, the menu still opens and still says
+   * something — a disabled row naming which nothing this is — rather than
+   * opening onto an empty card that reads as broken.
+   */
+  const menu = modelMenu({ model: model ?? '', overrides, connections, activeId: activeConnectionId })
+  const modelItems: MenuEntry[] = [
+    ...menu.connectionName === undefined
+      ? [{ type: 'label' as const, id: 'heading', text: t('modelMenuHeading') }]
+      : [{
+        type: 'label' as const,
+        id: 'heading',
+        text: t('modelMenuFromConnection', { connection: menu.connectionName }),
+      }],
+    ...menu.models.map(id => ({ id, label: id })),
+    ...menu.empty === undefined
+      ? []
+      : [{
+        id: 'empty',
+        label: menu.empty === 'no-connection' ? t('modelMenuNoConnection') : t('modelMenuNoList'),
+        disabled: true,
+      }],
+  ]
+  /*
+   * The undo, pinned below the list so it stays reachable while a long model
+   * list scrolls. Offered only when there is something to undo *and* a
+   * connection whose model to name: "back to the default" with no default named
+   * is a button whose effect the reader has to guess.
+   */
+  const modelFooter: MenuEntry[] = menu.overridden && menu.connectionModel !== undefined
+    ? [{
+      id: RESTORE_ID,
+      label: t('modelRestoreConnectionDefault', { model: menu.connectionModel }),
+    }]
+    : []
 
   const submit = (): void => {
     const text = draft.trim()
@@ -234,10 +308,11 @@ export function Composer({
         </div>
         <div className="iris-composer__row">
           {/*
-            What is in force, as two readouts. The prompt capsule is a button
-            because pressing it answers the question the capsule raises — the
-            breakdown of what would actually be sent. The per-turn record hangs
-            off each message instead.
+            What is in force, as two controls. Each capsule states a fact and
+            answers the question that fact raises when pressed: the prompt
+            capsule opens the breakdown of what would actually be sent, and the
+            model capsule changes the model for this conversation. The per-turn
+            record hangs off each message instead.
           */}
           <button
             type="button"
@@ -247,7 +322,47 @@ export function Composer({
             {preset === undefined ? t('promptButton') : `${t('promptButton')} · ${preset}`}
           </button>
           {model === undefined || model === '' ? null : (
-            <span className="iris-composer__pill" title={model}>{model}</span>
+            <Menu
+              open={modelOpen}
+              portal
+              align="start"
+              side="top"
+              anchor={
+                <button
+                  type="button"
+                  className="iris-composer__pill iris-composer__pill--action"
+                  aria-haspopup="menu"
+                  aria-expanded={modelOpen}
+                  title={t('modelMenuOpen', { model })}
+                  onClick={() => setModelOpen(!modelOpen)}
+                >
+                  {model}
+                  {/*
+                    The override marker. A dot rather than a word, because the
+                    capsule's job is to be scannable — and `title` carries the
+                    sentence for anyone who wonders what the dot means.
+                  */}
+                  {menu.overridden ? (
+                    <span
+                      className="iris-composer__pill-dot"
+                      title={t('modelOverriddenHere')}
+                      aria-label={t('modelOverriddenHere')}
+                    />
+                  ) : null}
+                </button>
+              }
+              items={modelItems}
+              selectedId={model}
+              footer={modelFooter}
+              onSelect={id => {
+                setModelOpen(false)
+                // `null` is the protocol's clear: it drops this chat's override
+                // so the connection's model shows through again. Anything else
+                // is a model id straight from the endpoint's own list.
+                void actions.setChatModel(id === RESTORE_ID ? null : id)
+              }}
+              onClose={() => setModelOpen(false)}
+            />
           )}
           <Slot name="iris.composer.actions" owner={{ chatId, generating }} />
           <span className="iris-composer__hint">

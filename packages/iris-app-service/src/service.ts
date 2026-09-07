@@ -23,7 +23,7 @@ import { assemble, type AssembleResult, type Contribution, type HistoryEntry } f
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, ChatView, CharacterSummary, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import type { BackupSummary, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import { providerPreset } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
@@ -35,7 +35,14 @@ import { randomUUID } from 'node:crypto'
 
 import { PresetStore } from './presets.ts'
 import type { BackupStore } from './backups.ts'
-import { ConnectionStore, routeOf } from './connections.ts'
+import {
+  ConnectionStore,
+  hostConnectionFromEnv,
+  hostDefaultView,
+  routeOf,
+  sameEndpointOrigin,
+  type HostConnection,
+} from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
 import { writeTimedEffects } from './entry.ts'
@@ -177,6 +184,15 @@ export interface ConnectionEndpoint {
 export const DEFAULT_PROBE_TIMEOUT_MS = 10_000
 
 /**
+ * A probe's verdict before the caller says which key produced it.
+ *
+ * The wire shape minus `keySource`, so the field cannot be forgotten: the
+ * response type requires it, this one forbids nothing, and the single place
+ * that resolved the credential is the single place that fills it in.
+ */
+type ProbeVerdict = Omit<RpcResponse<'connection.test'>, 'keySource'>
+
+/**
  * Read the model ids out of a `/models` response body.
  *
  * The OpenAI-compatible shape is `{ data: [{ id }] }`; Ollama's native list is
@@ -265,6 +281,29 @@ export interface AppServiceOptions {
    * reaches a log line or a response.
    */
   installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
+  /**
+   * The connection this host process was **started** with.
+   *
+   * Two things need it, and neither can be done without it. A probe run from a
+   * form with an empty key field falls back to the credential the process
+   * already holds — which is the whole point of the field being allowed to be
+   * empty — and the panel shows the startup route as a row rather than
+   * reporting "no active connection" about a host that has been generating
+   * happily all along.
+   *
+   * Given by the composition where it can be; when it is absent this runtime
+   * falls back to reading the same environment variables the composition's own
+   * `llm-openai-compat` row reads (see {@link hostConnectionFromEnv}), so the
+   * feature works on the shipped composition without a second wiring step. An
+   * explicit value always wins, which is what makes this an option rather than
+   * a hard-coded environment read.
+   */
+  hostConnection?: HostConnection
+  /**
+   * The environment the host-connection fallback reads. Defaults to
+   * `process.env`; injected by tests so nothing depends on the real shell.
+   */
+  env?: Record<string, string | undefined>
   /**
    * How long `connection.test` waits for an endpoint before saying `timeout`.
    * @default 10000
@@ -410,9 +449,10 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings' | 'backups'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings' | 'backups' | 'hostConnection'>>
     & {
       onError: (error: Error) => void
+      hostConnection?: HostConnection
       scripts?: ScriptPolicyStore
       extensionSettings?: ExtensionSettingsStore
       scriptButtons?: ScriptButtonStore
@@ -464,6 +504,8 @@ export class IrisAppService {
       onError: options.onError ?? (() => {}),
       fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
       probeTimeoutMs: options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+      env: options.env ?? process.env,
+      ...options.hostConnection === undefined ? {} : { hostConnection: options.hostConnection },
       ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
       ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
@@ -573,12 +615,106 @@ export class IrisAppService {
   }
 
   /**
+   * The connection this host was started with, as the composition told it or
+   * as the environment still says.
+   *
+   * The provider and model come from the **global settings layer**, which is
+   * where the composition's own `provider` / `model` row landed — so the row
+   * describes the route the host actually generates through rather than a
+   * second copy of the same configuration.
+   * @returns the host's own connection, credential included (in-process only).
+   */
+  #hostConnection(): HostConnection {
+    const explicit = this.#options.hostConnection
+    if (explicit !== undefined) return explicit
+    const global = this.#options.settings.get()
+    return hostConnectionFromEnv(this.#options.env, { provider: global.provider, model: global.model })
+  }
+
+  /**
+   * Decide which key a probe sends, and say where it came from.
+   *
+   * The order is a precedence of *decisions*, newest first: what the user just
+   * typed, then the profile they are looking at, then the profile the host is
+   * currently generating through, then the credential the process was started
+   * with. Each fallback is gated on {@link sameEndpointOrigin} — a key is only
+   * ever reused at the origin it belongs to, so an absent `apiKey` cannot be
+   * turned into "send my credential to this address of my choosing".
+   *
+   * The header travels with whichever key won, not with the request: a stored
+   * key sent under a header the form happened to hold would authenticate as
+   * neither.
+   * @param baseURL - where the probe is actually going.
+   * @param input - the request, whose `apiKey` may be absent or empty.
+   * @param profile - the named profile, when one was named.
+   * @returns the key (in-process), its header, and the source to report.
+   */
+  async #probeCredential(
+    baseURL: string,
+    input: { apiKey?: string | undefined, apiKeyHeader?: string | undefined },
+    profile?: { baseURL?: string, apiKey?: string, apiKeyHeader?: string },
+  ): Promise<{ apiKey?: string, apiKeyHeader?: string, keySource: ConnectionKeySource }> {
+    const header = (owner: { apiKeyHeader?: string | undefined }): { apiKeyHeader?: string } => {
+      const chosen = input.apiKeyHeader ?? owner.apiKeyHeader
+      return chosen === undefined || chosen.length === 0 ? {} : { apiKeyHeader: chosen }
+    }
+
+    if (input.apiKey !== undefined && input.apiKey.length > 0) {
+      return { apiKey: input.apiKey, ...header(input), keySource: 'typed' }
+    }
+
+    // The profile the form is editing. Its own endpoint is the origin its key
+    // belongs to; a form that has retyped the base URL elsewhere gets nothing.
+    if (
+      profile?.apiKey !== undefined && profile.apiKey.length > 0
+      && sameEndpointOrigin(profile.baseURL, baseURL)
+    ) {
+      return { apiKey: profile.apiKey, ...header(profile), keySource: 'stored' }
+    }
+
+    // The profile the host is generating through right now. This is the case
+    // that makes an untouched form testable: open the panel, press Test, and
+    // the connection in force answers for itself.
+    const store = this.#options.connections
+    if (store !== undefined) {
+      const listed = await store.list()
+      if (listed.activeId !== undefined) {
+        const active = await store.get(listed.activeId).catch(() => undefined)
+        if (
+          active?.apiKey !== undefined && active.apiKey.length > 0
+          && sameEndpointOrigin(active.baseURL, baseURL)
+        ) {
+          return { apiKey: active.apiKey, ...header(active), keySource: 'stored' }
+        }
+      }
+    }
+
+    const host = this.#hostConnection()
+    if (
+      host.apiKey !== undefined && host.apiKey.length > 0
+      && sameEndpointOrigin(host.baseURL, baseURL)
+    ) {
+      return { apiKey: host.apiKey, ...header(host), keySource: 'host' }
+    }
+
+    // Nothing to send, which a local serve is perfectly happy with. The header
+    // still rides so a 401 says something about the endpoint rather than about
+    // a header this branch dropped.
+    return { ...header(input), keySource: 'none' }
+  }
+
+  /**
    * Probe an endpoint the way a model list would be fetched.
    *
    * The credential, if any, goes into the request headers and **nowhere
    * else** — not into an error message, not into the report log. A failed
    * probe is a result rather than a thrown error: the caller is a form, and a
    * form renders a verdict, it does not catch one.
+   *
+   * `keySource` is deliberately **not** part of what this returns: this method
+   * knows what key it was handed, not where the key came from, and the caller
+   * that resolved it is the only honest author of that field. Stamping it here
+   * would mean threading the answer in just to read it back out.
    * @param target - the endpoint and optional credential to probe.
    * @returns the verdict: latency always, models when it worked, a named error when not.
    */
@@ -586,7 +722,7 @@ export class IrisAppService {
     baseURL: string
     apiKey?: string | undefined
     apiKeyHeader?: string | undefined
-  }): Promise<RpcResponse<'connection.test'>> {
+  }): Promise<ProbeVerdict> {
     const url = `${target.baseURL.replace(/\/+$/, '')}/models`
     // `Authorization` carries the Bearer scheme; any other header name is a
     // bare value — the same rule the LLM adapter applies, so a probe that
@@ -1238,23 +1374,48 @@ export class IrisAppService {
         return { result: '' }
       },
 
-      'connection.list': async () => this.#connections().list(),
-
-      'connection.save': async (input) => this.#connections().save({
-        provider: input.provider,
-        model: input.model,
-        ...input.id === undefined ? {} : { id: input.id },
-        ...input.label === undefined ? {} : { label: input.label },
-        ...input.preset === undefined ? {} : { preset: input.preset },
-        ...input.sampling === undefined ? {} : { sampling: input.sampling },
-        ...input.baseURL === undefined ? {} : { baseURL: input.baseURL },
-        // Passed through untouched: the merge-or-clear decision belongs to the
-        // store, which is the only place that can still see the stored key.
-        ...input.apiKey === undefined ? {} : { apiKey: input.apiKey },
-        ...input.apiKeyHeader === undefined ? {} : { apiKeyHeader: input.apiKeyHeader },
+      'connection.list': async () => ({
+        ...await this.#connections().list(),
+        host: hostDefaultView(this.#hostConnection()),
       }),
 
-      'connection.delete': async ({ id }) => this.#connections().delete(id),
+      'connection.save': async (input) => {
+        // Adopting the host's credential happens **here**, where the key
+        // already is. The browser asked for it by name and never saw it; a
+        // key the user has just typed outranks the flag, because it is the
+        // newer decision of the two.
+        const host = this.#hostConnection()
+        const adopted = input.adoptHostKey === true
+          && (input.apiKey === undefined || input.apiKey.length === 0)
+          && host.apiKey !== undefined
+          && host.apiKey.length > 0
+          ? host.apiKey
+          : undefined
+        const saved = await this.#connections().save({
+          provider: input.provider,
+          model: input.model,
+          ...input.id === undefined ? {} : { id: input.id },
+          ...input.label === undefined ? {} : { label: input.label },
+          ...input.preset === undefined ? {} : { preset: input.preset },
+          ...input.sampling === undefined ? {} : { sampling: input.sampling },
+          ...input.baseURL === undefined ? {} : { baseURL: input.baseURL },
+          // Passed through untouched: the merge-or-clear decision belongs to the
+          // store, which is the only place that can still see the stored key.
+          ...adopted !== undefined
+            ? { apiKey: adopted }
+            : input.apiKey === undefined ? {} : { apiKey: input.apiKey },
+          ...input.apiKeyHeader === undefined
+            ? adopted === undefined || host.apiKeyHeader === undefined ? {} : { apiKeyHeader: host.apiKeyHeader }
+            : { apiKeyHeader: input.apiKeyHeader },
+          ...input.models === undefined ? {} : { models: input.models },
+        })
+        return { ...saved, host: hostDefaultView(host) }
+      },
+
+      'connection.delete': async ({ id }) => ({
+        ...await this.#connections().delete(id),
+        host: hostDefaultView(this.#hostConnection()),
+      }),
 
       'connection.activate': async ({ id, chatId }) => {
         const store = this.#connections()
@@ -1288,20 +1449,40 @@ export class IrisAppService {
       },
 
       'connection.test': async (input) => {
-        // One probe, two ways to name what it probes. A saved profile carries
-        // its key in the store — which the caller cannot re-send, because no
-        // read ever returned it — and unsaved form values carry the key as
-        // typed. Neither naming a stored key back, ever.
+        /*
+         * One probe; three places the key it sends can come from.
+         *
+         * The measured problem: nearly every provider shows an API key exactly
+         * once, so a form that requires the key to be re-typed before every
+         * probe is a form that can be used once and then never again. An absent
+         * `apiKey` is therefore a request — "probe with what you already
+         * hold" — served from the named profile's store, or from the
+         * credential the host process was started with.
+         *
+         * **The guard that makes that safe is the origin check.** Without it,
+         * `{ baseURL: 'https://attacker.example/v1' }` with no key would be an
+         * instruction to post the user's stored credential to an endpoint the
+         * page chose — the page cannot read the key, but it could still spend
+         * it. A key is reused only at the origin it belongs to; pointed
+         * anywhere else the probe goes out bare and says `keySource: 'none'`,
+         * which the form renders as the missing-key sentence it already has.
+         */
         let baseURL: string
-        let apiKey: string | undefined
-        let apiKeyHeader: string | undefined
         let presetId: string | undefined
-        if (input.profileId !== undefined) {
-          const profile = await this.#connections().get(input.profileId)
+        const profile = input.profileId === undefined
+          ? undefined
+          : await this.#connections().get(input.profileId)
+        // The form's own endpoint wins when it sent one: a user editing a saved
+        // profile's base URL is testing what they have typed, not what is filed.
+        if (input.baseURL !== undefined && input.baseURL.length > 0) {
+          baseURL = input.baseURL
+          presetId = input.preset ?? profile?.provider
+        } else if (profile !== undefined) {
           if (profile.baseURL === undefined || profile.baseURL.length === 0) {
             return {
               ok: false,
               latencyMs: 0,
+              keySource: 'none',
               error: {
                 code: 'no-endpoint',
                 message: 'this profile rides the host\'s configured endpoint and carries none of its own; set a base URL to test it',
@@ -1309,25 +1490,20 @@ export class IrisAppService {
             }
           }
           baseURL = profile.baseURL
-          apiKey = profile.apiKey
-          apiKeyHeader = profile.apiKeyHeader
           // A profile saved from the form names its preset in `provider`.
           presetId = profile.provider
-        } else if (input.baseURL !== undefined && input.baseURL.length > 0) {
-          baseURL = input.baseURL
-          apiKey = input.apiKey
-          apiKeyHeader = input.apiKeyHeader
-          presetId = input.preset
         } else {
           throw invalid('name a saved profile (profileId) or give the endpoint to probe (baseURL)')
         }
 
+        const resolved = await this.#probeCredential(baseURL, input, profile)
         const preset = presetId === undefined ? undefined : providerPreset(presetId)
         const needsKey = preset?.requiresKey === true
-        if (needsKey && (apiKey === undefined || apiKey.length === 0)) {
+        if (needsKey && (resolved.apiKey === undefined || resolved.apiKey.length === 0)) {
           return {
             ok: false,
             latencyMs: 0,
+            keySource: 'none',
             error: {
               code: 'missing-key',
               message: preset === undefined
@@ -1336,7 +1512,19 @@ export class IrisAppService {
             },
           }
         }
-        return this.#probeEndpoint({ baseURL, apiKey, apiKeyHeader })
+        const verdict = await this.#probeEndpoint({
+          baseURL,
+          apiKey: resolved.apiKey,
+          apiKeyHeader: resolved.apiKeyHeader,
+        })
+        // A successful probe of a *saved* profile is filed on that profile, so
+        // a picker somewhere else has a list without opening this form. Only
+        // on success and only with a profile named: recording an empty list
+        // after a 401 would say "this endpoint offers nothing".
+        if (verdict.ok && verdict.models !== undefined && input.profileId !== undefined) {
+          await this.#connections().recordModels(input.profileId, verdict.models)
+        }
+        return { ...verdict, keySource: resolved.keySource }
       },
 
       'preset.list': async () => {
@@ -1705,11 +1893,24 @@ export class IrisAppService {
         return { characterId, favorite }
       },
 
-      'settings.get': ({ chatId }) => Promise.resolve({ settings: settings.get(chatId) }),
-
-      'settings.set': async ({ chatId, settings: patch }) => ({
-        settings: await settings.set(chatId, patch),
+      // `overrides` rides along **only when a chat was named**, because the
+      // contract makes presence mean scope: `{}` says "this chat overrides
+      // nothing" and absent says "you asked the bottom layer, which has nothing
+      // to override". Spread rather than a ternary field so an absent value is
+      // an absent key, which is what `exactOptionalPropertyTypes` asks for and
+      // what a JSON reader testing presence needs.
+      'settings.get': ({ chatId }) => Promise.resolve({
+        settings: settings.get(chatId),
+        ...chatId === undefined ? {} : { overrides: settings.overrides(chatId) },
       }),
+
+      'settings.set': async ({ chatId, settings: patch }) => {
+        const applied = await settings.set(chatId, patch)
+        return {
+          settings: applied,
+          ...chatId === undefined ? {} : { overrides: settings.overrides(chatId) },
+        }
+      },
 
       // World books that live in their own files rather than inside a card.
       // Reads only: the write half of this family is a ruling item, because

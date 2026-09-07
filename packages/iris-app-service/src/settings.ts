@@ -217,6 +217,21 @@ export class SettingsStore {
   }
 
   /**
+   * One chat's own layer, without the global values showing through.
+   *
+   * The merged read from {@link get} cannot answer "did this conversation
+   * choose this, or is it the default?": a chat that overrode `model` with the
+   * same string the global layer already carried is byte-identical to one that
+   * overrode nothing. An interface that offers to *undo* the choice has to know
+   * which of the two it is looking at, so the layer is readable on its own.
+   * @param chatId - the chat.
+   * @returns the fields that chat overrides; empty when it overrides none.
+   */
+  overrides(chatId: string): Partial<GenerationSettings> {
+    return { ...this.#file.chats[chatId] }
+  }
+
+  /**
    * Apply a patch and persist it.
    *
    * Three cases, per the contract: an omitted key leaves the field alone, an

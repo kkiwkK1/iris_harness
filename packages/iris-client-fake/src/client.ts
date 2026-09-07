@@ -36,7 +36,7 @@ import {
   listConnections,
   saveConnection,
 } from './connections.ts'
-import { mergeSettings } from './settings.ts'
+import { mergeOverrides, mergeSettings } from './settings.ts'
 import { DEFAULT_SETTINGS, FAKE_SCRIPTS, seedCharacters, seedChats } from './seed.ts'
 import {
   fakeBookEntries,
@@ -483,8 +483,17 @@ class InMemoryClient implements FakeClient {
         // Activating writes through to whichever settings scope was named, so the
         // interface sees the same effect the real host would produce rather than a
         // list that changed and a chat that did not.
-        if (chatId === undefined) this.#globalSettings = { ...result.settings }
-        else this.#require(chatId).settings = { ...result.settings }
+        if (chatId === undefined) {
+          this.#globalSettings = { ...result.settings }
+        } else {
+          const chat = this.#require(chatId)
+          // A chat-scoped activation is a chat-scoped decision, so it lands in
+          // that chat's override layer as well as its merged read — otherwise
+          // the interface would show the new route with no way to tell it from
+          // the global default and no way to put it back.
+          chat.settingsOverride = mergeOverrides(chat.settingsOverride ?? {}, { ...result.settings })
+          chat.settings = { ...result.settings }
+        }
         return result
       }
 
@@ -495,6 +504,11 @@ class InMemoryClient implements FakeClient {
         // endpoint ever gave. An interface developed against the fake sees
         // this refusal in dev, where its absence of a real probe is visible —
         // not against a host, where it would be a lie.
+        //
+        // What the fake *does* serve is the **recorded** list on each profile
+        // (`connections.ts`), which is fixture data about a profile rather than
+        // a verdict about a network — so the model pickers have something real
+        // to render here without anyone inventing a probe result.
         throw new FakeRpcError('unsupported', 'the fake client cannot reach a real endpoint; run against a host to test a connection')
 
       case 'prompt.itemize': {
@@ -574,10 +588,17 @@ class InMemoryClient implements FakeClient {
         return {}
       }
 
+      // `overrides` rides along **only when a chat was named** — the contract
+      // makes presence mean scope, so `{}` says "this chat overrides nothing"
+      // and absent says "you read the bottom layer".
       case 'settings.get': {
         const { chatId } = params as RpcRequest<'settings.get'>
         if (chatId === undefined) return { settings: { ...this.#globalSettings } }
-        return { settings: { ...this.#require(chatId).settings } }
+        const chat = this.#require(chatId)
+        return {
+          settings: { ...chat.settings },
+          overrides: { ...chat.settingsOverride },
+        }
       }
 
       case 'settings.set': {
@@ -587,8 +608,15 @@ class InMemoryClient implements FakeClient {
           return { settings: { ...this.#globalSettings } }
         }
         const chat = this.#require(chatId)
-        chat.settings = mergeSettings(chat.settings, settings)
-        return { settings: { ...chat.settings } }
+        // Both layers move together, and the merged read is rebuilt from the
+        // global one **plus** the new override rather than patched in place:
+        // that is the only way clearing an override (`null`) can let the layer
+        // below show through, which is what a "back to the default" control
+        // asks for.
+        const override = mergeOverrides(chat.settingsOverride ?? {}, settings)
+        chat.settingsOverride = override
+        chat.settings = { ...this.#globalSettings, ...override }
+        return { settings: { ...chat.settings }, overrides: { ...override } }
       }
 
       case 'script.list': {
