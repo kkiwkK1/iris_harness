@@ -38,7 +38,6 @@ import { describeLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
 import { describeFailure, topFrame } from './failure-attribution.ts'
 import {
-  applyScrollCapability,
   containDecision,
   contentExtent,
   describeHeightSources,
@@ -882,32 +881,14 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
     }
 
     /*
-     * **Whatever is past the frame's own viewport has to stay reachable**, and
-     * the frame scrolls itself when it is. The policy and its application live
-     * in `frame-height.ts` (`applyScrollCapability`), where they are testable —
-     * this file is an IIFE bundle, and a decision that lives only in here can
-     * only be tested through a browser.
-     *
-     * **This runs behind the honest-extent decision above, and the two can
-     * disagree in one direction.** They ask the same question
-     * (`overflowsViewport` is `overflowDecision` without the string), but this
-     * one asks it of `body.scrollHeight` alone — the ruler a self-pinning card
-     * lies to. So where the extent said `auto` and `bodyScroll` fits, this
-     * takes the scroll back off for one measurement. It does not stick: the
-     * shell applies the reported height, the frame's viewport becomes that
-     * height, and the next measurement is an echo (`heightSignal` → `silent`)
-     * that returns before reaching this line, leaving the extent's `auto` in
-     * place. Both halves are kept because both are separately tested — the
-     * decision in `frame-scroll.test.ts`, the application's four properties
-     * (`important`, the `html`/`body` pair, the change gate, viewport 0) in
-     * `frame-height.test.ts` — and collapsing them into one is a design change
-     * rather than a merge.
+     * There is deliberately no second scroll decision here. One used to follow
+     * the report, asking the same question of `body.scrollHeight` alone - the
+     * ruler a self-pinning card lies to - and where the honest extent above had
+     * said `auto` it took the scroll back off in the same pass, leaving the
+     * reset's `overflow:hidden` in force on exactly the cards the extent path
+     * was written for. The decision lives once, above, before `heightSignal`'s
+     * early returns; `frame-scroll.test.ts` pins that there is one.
      */
-    applyScrollCapability(
-      { html: document.documentElement.style, body: document.body.style },
-      pixels,
-      document.documentElement.clientHeight,
-    )
   }
   const schedule = (): void => {
     if (scheduled) return
