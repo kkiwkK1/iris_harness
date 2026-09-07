@@ -389,6 +389,48 @@ export function saveFoldMemory(chatId: string, overrides: ReadonlyMap<string, bo
   }
 }
 
+/** Whether the margin itself is open. Per device, not per chat — see below. */
+const OPEN_KEY = 'iris.state.open'
+
+/**
+ * Read whether the variable margin is showing.
+ *
+ * **Per device and not per chat**, unlike the fold memory above, and the two are
+ * different on purpose: which branches interest a reader is a fact about the
+ * card they are reading, while whether they want a 236px column at all is a
+ * fact about their screen. A reader who folded it away on a laptop wants it
+ * folded on the next chat too.
+ *
+ * Open is the default and is also what an unavailable store yields: the margin
+ * is the reason a wide window is not empty, and a reader who has never touched
+ * the control should see what it holds.
+ * @param storage - where from; defaults to `localStorage` when it exists.
+ * @returns whether it is showing.
+ */
+export function loadAsideOpen(storage: StorageLike | undefined = globalThis.localStorage): boolean {
+  if (storage === undefined) return true
+  try {
+    return storage.getItem(OPEN_KEY) !== 'shut'
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Remember whether the variable margin is showing.
+ * @param open - the reader's choice.
+ * @param storage - where to; defaults to `localStorage` when it exists. A
+ *   refused write is dropped silently, for the reason `saveFoldMemory` gives.
+ */
+export function saveAsideOpen(open: boolean, storage: StorageLike | undefined = globalThis.localStorage): void {
+  if (storage === undefined) return
+  try {
+    storage.setItem(OPEN_KEY, open ? 'open' : 'shut')
+  } catch {
+    // The convenience failed; the panel carries on without it.
+  }
+}
+
 /** Where the last-seen variable tree lives, so "this round" survives a reload. */
 const LAST_TREE_PREFIX = 'iris.state.lastTree.'
 

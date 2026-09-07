@@ -119,48 +119,67 @@ test('the frame itself is given a starting height', () => {
   assert.match(block, /width:\s*100%/u, 'a frame narrower than its row would clip the card sideways')
 })
 
-test('the interface breakout and the container it measures against travel together', () => {
+test('prose, a card interface and the composer are one width: nothing capped, nothing escaping', () => {
   /*
-   * A pairing guard, the same shape as the CORS one. `100cqi` in the slot rule
-   * is not an error when no ancestor is a container — it falls back to the small
-   * viewport, silently, and the breakout computes a plausible wrong number. So
-   * the two halves are asserted against each other rather than each alone.
+   * The 「梅花」 ruling, expressed as three declarations that must not be there.
+   *
+   * This assertion replaces its own opposite, and the history is the point. It
+   * used to pin a *breakout*: the prose was capped at a 68ch book measure, a
+   * card computed negative inline margins in `100cqi` against
+   * `--iris-column-max` to escape that cap, and this guard held the arithmetic
+   * to the bound it subtracted — plus a pairing check that `.iris-scroll` really
+   * declared a container, because a stray `cqi` with no container falls back to
+   * the viewport and computes a plausible wrong number in silence.
+   *
+   * canvas.json removes the cause instead of repairing the effect — 正文、卡的
+   * 界面、输入框三者同宽 … 不留死槽 — so there is no cap left to escape and the
+   * arithmetic is gone with it. What is worth guarding is that nobody puts
+   * either half back: a `max-width` on the prose column or on the composer
+   * restores the dead channel, and a negative inline margin on the slot pulls a
+   * card past the page's own flanks.
+   *
+   * Asserted as absences, which is weaker than asserting a number and is the
+   * honest shape here — the three widths are one grid track's, so there is no
+   * number in any stylesheet to compare them against.
    */
-  const styles = readFileSync(join(here, '..', 'src', 'app', 'reading.css'), 'utf8')
+  const reading = readFileSync(join(here, '..', 'src', 'app', 'reading.css'), 'utf8')
+  const panels = readFileSync(join(here, '..', 'src', 'app', 'panels.css'), 'utf8')
 
-  const slotAt = styles.indexOf('.iris-interfaces__slot {')
-  assert.notEqual(slotAt, -1, 'the slot rule is gone')
-  const slot = styles.slice(slotAt, styles.indexOf('}', slotAt))
-
-  if (slot.includes('cqi')) {
-    const scrollAt = styles.indexOf('.iris-scroll {')
-    const scroll = styles.slice(scrollAt, styles.indexOf('}', scrollAt))
-    /*
-     * Compared as a scan, not a pattern. The first cut of this assertion was
-     * written with an escape in it, the escape was eaten before it reached the
-     * file, and the surviving regex asked for a literal `s` — so the guard
-     * failed against a stylesheet that was correct. The whole reason this
-     * package prefers scanning is that a collapsed escape still parses.
-     */
-    assert.ok(
-      dense(scroll).includes('container-type:inline-size'),
-      'the slot measures in cqi but nothing declares a container — cqi would fall back to the viewport and be quietly wrong',
-    )
+  /** One rule's declarations, comments stripped and whitespace collapsed. */
+  const rule = (styles: string, selector: string): string => {
+    const at = styles.indexOf(selector)
+    assert.notEqual(at, -1, `${selector} is gone`)
+    // Comments first, and that is not tidiness: each of these rules explains
+    // itself at length, and the words `max-width` and `cqi` appear in that
+    // prose. Scanning the comment would make every assertion here vacuous.
+    return dense(styles.slice(at, styles.indexOf('}', at)).replace(/\/\*[\s\S]*?\*\//g, ''))
   }
 
-  assert.match(
-    slot,
-    /--iris-column-max/u,
-    'the breakout must be computed from the bound it escapes, not from a repeated literal that can drift from it',
+  const column = rule(reading, '.iris-column {')
+  assert.ok(!column.includes('max-width'), 'the reading column is capped again, which is the dead channel back')
+
+  const slot = rule(reading, '.iris-interfaces__slot {')
+  assert.ok(
+    !slot.includes('margin-inline-start') && !slot.includes('cqi'),
+    'the interface slot is escaping the column again, and there is no cap left for it to escape',
   )
+
+  const inner = rule(panels, '.iris-composer__inner {')
+  assert.ok(!inner.includes('max-width'), 'the composer is capped again, so it no longer matches the prose')
 })
 
-test('the bound four surfaces align to is written once', () => {
+test('the old book measure is still written once, wherever it is still read', () => {
   /*
    * It was copied into five places. That was survivable while it only had to
    * agree with itself; it stopped being survivable when the interface breakout
    * began subtracting it — a column at one width and a breakout computed from
    * another would misplace the card by exactly the difference.
+   *
+   * The breakout is gone and so is every layout consumer, but the formula still
+   * has one reader: `--iris-column-max` feeds the `--sheldWidth` SillyTavern
+   * alias (`theme/tokens.css`), which a card's inline HTML may read. So the
+   * guard stands, one rung lower — retyping the formula is still how the alias
+   * and the token drift apart.
    */
   const repeated = 'var(--iris-gutter) + var(--iris-measure) + 40px'
   for (const name of ['reading.css', 'panels.css', 'shell.css']) {

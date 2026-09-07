@@ -10,42 +10,173 @@
 
 /* ---------------------------------------------------------------- composer */
 
+/*
+ * The composer is the one place on this page where the hand is let off the
+ * brake, and canvas.json says so in as many words: 装饰只在两处 … 输入区顶边一枝
+ * 横梅、藕粉染纸、梅红印章式的发送键(这一屏唯一放开手的地方). Everything else
+ * in Iris is structure carried by 1px rules; the whole budget of gradients and
+ * shadows is spent here, once.
+ *
+ * Four moves, in the order they read: a branch across the top edge in place of
+ * the hairline, the paper dyed 藕粉 downward, the writing surface as a sheet
+ * laid on that paper, and the send key as a plum seal.
+ */
 .iris-composer {
-  border-top: var(--iris-hairline) solid var(--iris-rule);
-  padding: 13px 20px 18px;
-  background: var(--iris-bg-page);
+  position: relative;
+  /*
+   * No `border-top`. The branch (`.iris-branch`) *is* the edge — a hairline
+   * behind it would read as a rule someone drew a picture on.
+   */
+  padding: 0;
+  /* The one gradient on the page: paper at the top, 藕粉 at the bottom edge. */
+  background: linear-gradient(180deg, var(--iris-bg-page) 0%, var(--iris-blush) 100%);
+  /*
+   * **No `overflow` here, and that is the whole reason the padding moved
+   * inward.** The scrollbar-lane reservation below has to live on a scroll
+   * container, and a scroll container clips its absolutely-positioned children
+   * — `overflow-y: auto` computes `overflow-x` to `auto` as well, so the branch
+   * that is meant to cross this panel's top edge would have been cut off at it.
+   * So the container is `__inner` and this box only paints and positions.
+   */
+}
+
+/*
+ * The branch across the top edge.
+ *
+ * `top: -4px` and a 34px strip, as the artboards draw it: the curve crosses the
+ * boundary rather than sitting under it, which is what makes it read as a branch
+ * in front of the page instead of a border with bumps. `overflow: hidden` on
+ * nothing — the twigs are *meant* to leave the strip — so the panel above must
+ * not clip it, and nothing here may take pointer events.
+ */
+.iris-branch {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 34px;
+  pointer-events: none;
+}
+
+.iris-branch__line {
+  display: block;
+  width: 100%;
+  height: 34px;
+}
+
+/*
+ * The flowers are a second layer, positioned in percent, so they stay round
+ * while the line beneath them stretches. `PlumBranch` (`app/marks.tsx`) carries
+ * the offsets and says why the split exists.
+ */
+.iris-branch__flowers {
+  position: absolute;
+  inset: 0;
+}
+
+.iris-branch__flower {
+  position: absolute;
+  /* Centred on its own coordinate rather than hung from its top-left corner,
+     so the artboard's numbers mean what they mean there. */
+  translate: -50% -50%;
+  border-radius: var(--iris-radius-pill);
+  background: var(--iris-accent);
+}
+
+/* The open flowers: the paper's blush inside a hairline, so a strip can carry
+   eight blossoms without the accent appearing eight times. */
+.iris-branch__flower--open {
+  background: var(--iris-blush);
+  border: 1px solid var(--iris-rule);
+  box-sizing: border-box;
+}
+
+.iris-composer__inner {
+  /*
+   * No centring box. The composer used to be a `--iris-column-max` box centred
+   * in the panel with one gutter of padding on the left so its field sat under
+   * the prose; with the measure gone, this 46px inset **is** that alignment, and
+   * the field takes the whole track — the third of the three surfaces
+   * canvas.json holds to one width.
+   */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
+  padding: 30px var(--iris-gutter) 22px;
   /*
    * Reserve the same scrollbar lane the reading surface above reserves
-   * (`reading.css`, `scrollbar-gutter: stable` on `.iris-scroll`), so the
-   * composer's centring box is the reading column's: without this, the
-   * scroller's lane made the message column sit half a scrollbar left of
-   * the composer's centre line, and the two midlines disagreed by that
-   * half for no reason a reader could see. Same property, so the parity is
-   * exact whatever the platform draws — a real lane here, nothing where
-   * scrollbars overlay. `overflow-y:auto` is what makes the box a scroll
-   * container (the property has no effect on a non-scrolling box); it never
-   * scrolls in practice, and `min-height` hands back the automatic minimum a
-   * scroll container otherwise loses — without it a short window would be
-   * allowed to squash the composer into an internal scroller, which is a
-   * narrow-window regression the reading surface never had.
+   * (`reading.css`, `scrollbar-gutter: stable` on `.iris-scroll`), so this box
+   * and the reading column have the same content edges: without it, the
+   * scroller's lane made the prose end half a scrollbar left of the field, and
+   * the two disagreed by that half for no reason a reader could see. Same
+   * property, so the parity is exact whatever the platform draws — a real lane
+   * here, nothing where scrollbars overlay. `overflow-y: auto` is what makes
+   * this a scroll container (the property has no effect on a non-scrolling
+   * box); it never scrolls in practice, and `min-height` hands back the
+   * automatic minimum a scroll container otherwise loses — without it a short
+   * window would be allowed to squash the composer into an internal scroller,
+   * which is a narrow-window regression the reading surface never had.
    */
   overflow-y: auto;
   scrollbar-gutter: stable;
   min-height: max-content;
 }
 
-.iris-composer__inner {
-  max-width: var(--iris-column-max);
-  margin: 0 auto;
-  /*
-   * The margin column, not an inset: the message prose starts one gutter in
-   * from the reading column's content edge (`.iris-msg`'s 46px marginalia
-   * track), and the composer's field lines up under it. The right side
-   * deliberately has no twin — the prose ends at the column's padding, and
-   * so does the field. The 23px-asymmetric *centre* of this box is shared
-   * with the prose's, which is what the midline check measures.
-   */
-  padding-left: var(--iris-gutter);
+/* Field and stamp on one line, the stamp stretching to the field's height. */
+.iris-composer__write {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+}
+
+/*
+ * The writing surface: a sheet of the raised paper laid on the dyed page.
+ *
+ * Two shadows and they do different jobs — a 1px white inset that gives the
+ * sheet a lit top edge, and a plum-tinted drop that lifts it off the page. The
+ * plum is the token (`--iris-accent-soft`) rather than a literal because 墨
+ * needs more alpha for the same effect.
+ */
+.iris-composer__sheet {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  /* Border-box, because the 64px below is the artboards' box height and not
+     64px of type inside 30px of padding. */
+  box-sizing: border-box;
+  min-height: 64px;
+  padding: 14px 16px;
+  background: var(--iris-bg-raised);
+  border: var(--iris-hairline) solid var(--iris-rule-strong);
+  border-radius: var(--iris-radius-send);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 60%) inset,
+    0 6px 18px var(--iris-accent-soft);
+  transition: border-color var(--iris-fast) var(--iris-ease);
+}
+
+/*
+ * Focus is drawn on the **sheet**, not on the textarea inside it: the field has
+ * no border of its own any more, so a ring on the field would appear inside the
+ * paper it sits on. `:focus-within` is what lets the container answer for its
+ * child without any JavaScript knowing the field exists.
+ */
+.iris-composer__sheet:focus-within {
+  border-color: var(--iris-accent);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 60%) inset,
+    0 6px 18px var(--iris-accent-soft),
+    0 0 0 3px var(--iris-accent-wash);
+}
+
+/* The seal on the writing surface: the same blossom as the brand, sized down,
+   with its centre in the raised paper it sits on. */
+.iris-composer__seal {
+  margin-top: 2px;
 }
 
 .iris-composer__field {
@@ -59,14 +190,17 @@
    * exactly its padding plus border on every viewport.
    */
   box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
   width: 100%;
   resize: none;
   max-height: 40vh;
-  background: var(--iris-bg-raised);
+  /* The sheet around it draws the paper, the border and the focus ring, so the
+     field itself is only type. */
+  background: none;
+  border: 0;
+  padding: 0;
   color: var(--iris-ink);
-  border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: var(--iris-radius-lg);
-  padding: 11px 13px;
   font-family: var(--iris-font-ui);
   font-size: 15px;
   line-height: 1.6;
@@ -83,44 +217,160 @@
   color: var(--iris-ink-faint);
 }
 
+/*
+ * The field's own ring is suppressed, because `.iris-composer__sheet` draws it
+ * one box out. Stated rather than left to the global `:focus-visible` rule,
+ * which would otherwise paint a plum outline inside the paper.
+ */
 .iris-composer__field:focus-visible {
   outline: none;
-  border-color: var(--iris-accent-quiet);
-  box-shadow: 0 0 0 3px var(--iris-accent-wash);
+}
+
+/*
+ * The send key: a plum seal, 84px wide, arrow over word.
+ *
+ * It is the primitives' `Button` under the paint, with a two-class selector so
+ * these declarations outrank the component's own single-class module rules
+ * whichever order the bundler injects them in. Keeping the component matters:
+ * `tools/render-check.tsx` asserts Send is the quiet variant and `disabled`
+ * while the composer is empty, and a hand-rolled element would have silently
+ * dropped both that behaviour and its check.
+ *
+ * **Where this diverges from the artboards, on purpose.** They draw the seal
+ * saturated beside an empty field. Iris's rule is older and stands: the one
+ * saturated element on the page appears exactly when it has a job, because a
+ * permanently-disabled primary button was the first thing on the page and read
+ * as broken. So the geometry is identical in both states and only the fill
+ * changes — plum on plum-wash while there is nothing to send, solid plum once
+ * there is.
+ */
+.iris-composer .iris-composer__send {
+  flex: none;
+  width: 84px;
+  height: auto;
+  align-self: stretch;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: var(--iris-radius-send);
+  font-size: var(--iris-ui-size);
+  letter-spacing: 0.1em;
+}
+
+/* Filled: the seal pressed into the page, casting the one coloured shadow. */
+.iris-composer .iris-composer__send--ready {
+  background: var(--iris-accent);
+  color: var(--iris-ink-inverted);
+  box-shadow: 0 6px 18px var(--iris-accent-cast);
+}
+
+.iris-composer .iris-composer__send--ready:hover:not(:disabled) {
+  background: var(--iris-accent-strong);
+}
+
+/* Quiet: the same seal, uninked. No cast shadow — a control that cannot be
+   pressed must not appear to stand off the page. */
+.iris-composer .iris-composer__send--idle {
+  background: var(--iris-accent-wash);
+  border: var(--iris-hairline) solid var(--iris-accent);
+  color: var(--iris-accent);
 }
 
 .iris-composer__row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+  gap: 14px;
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-tertiary);
+}
+
+/*
+ * The two capsules under the field: what prompt is in force, and which model
+ * answers. They are readouts, not controls — the prompt capsule is a button
+ * because pressing it opens the breakdown of what would be sent, which is the
+ * question the capsule raises.
+ */
+.iris-composer__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 22ch;
+  padding: 3px 10px 4px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius-pill);
+  background: var(--iris-bg-page);
+  font: inherit;
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-composer__pill--action {
+  cursor: pointer;
+  transition:
+    color var(--iris-fast) var(--iris-ease),
+    border-color var(--iris-fast) var(--iris-ease);
+}
+
+.iris-composer__pill--action:hover {
+  color: var(--iris-accent);
+  border-color: var(--iris-accent);
 }
 
 .iris-composer__hint {
   flex: 1;
-  color: var(--iris-ink-faint);
-  font-size: 11.5px;
+  text-align: right;
+  color: var(--iris-ink-tertiary);
+  /* The hint is the one thing here that may be dropped rather than wrapped: on
+     a narrow composer the capsules are the information. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ------------------------------------------------------------------ drawer */
 
+/*
+ * The drawer, in two forms, and **which one is the default is the careful part**.
+ *
+ * 「梅花」 makes it a column of the stage: `.iris-stage`'s third track
+ * (shell.css), so opening it narrows the reading area and the prose re-wraps —
+ * canvas.json: 设置抽屉打开时占一列 392px 把阅读区挤窄,不再 overlay + 遮罩. That
+ * overturns the previous ruling, which was written against a real measurement
+ * (the drawer shifting the scroll position); shell.css's header says why the
+ * trade flipped.
+ *
+ * But a 392px track is only a *narrowing* where there is something left to
+ * narrow. The artboards are 1440 wide; at 1000 the same track leaves 336px of
+ * reading area, and at 900 it leaves 236 — which is not a narrowed page, it is a
+ * destroyed one. So the **overlay is the base rule** and the column is promoted
+ * at a width where the arithmetic works, rather than the other way round: a
+ * media query that has to *rescue* the layout is one that fails at every width
+ * the author did not think to test.
+ *
+ * 1200px is the floor, and it is arithmetic rather than a round number:
+ * 272 sidebar + 392 drawer leaves 536px of reading area, which is about 520 of
+ * text once the two 46px flanks come off — a book measure, and the narrowest
+ * this column has ever been asked to hold prose at.
+ *
+ * The z rung is unchanged either way (`theme/tokens.css`). It still matters in
+ * the column form, where nothing overlaps: the cast shadow has to fall **on**
+ * the reading column, and grid siblings otherwise paint in DOM order. The rule
+ * behind the rung: the drawer is shell — the reader's own controls — and a
+ * card's overlay is content, and at the old literal 30 a full-column card
+ * (surface at 40) painted over the drawer's inner 88px, so the one panel that
+ * could have collapsed the card was itself half under it.
+ */
 .iris-drawer {
   position: fixed;
   inset: 0 0 0 auto;
-  /*
-   * Above a card's overlay surface, from the ladder in `theme/tokens.css`. The
-   * drawer is shell — the reader's own controls — and the overlay is content;
-   * at the old literal 30 a full-column card (surface at 40) painted over the
-   * drawer's inner 88px, so the one panel that could have collapsed the card
-   * was itself half under it.
-   */
   z-index: var(--iris-drawer-z);
   display: flex;
   flex-direction: column;
-  /* The token, not a literal: the drawer's one width decision, shared with
-     nothing — the page beneath is a pure overlay floor that never reacts to
-     the drawer opening or closing (shell.css). */
+  min-height: 0;
   width: var(--iris-drawer-w);
+  overflow: hidden;
   background: var(--iris-bg-page);
   border-left: var(--iris-hairline) solid var(--iris-rule);
   box-shadow: var(--iris-shadow);
@@ -136,11 +386,62 @@
   visibility: visible;
 }
 
+@media (min-width: 1200px) {
+  /*
+   * The column form. Everything the overlay form set has to be unset, which is
+   * the cost of choosing the safe base rule — and it is the right cost: the
+   * declarations that get undone here are the ones that would otherwise be
+   * *missing* at a width nobody checked.
+   *
+   * **A track that appears, not a panel that slides.** The overlay slides over a
+   * page that never moves, so its 180ms transform is free. A width transition
+   * here would re-lay-out the reading column — and every card iframe in it — on
+   * every frame of those 180ms, which is the expensive version of a cheap
+   * effect. So there is no transition, and closed is `display: none` rather than
+   * a zero width, because a zero-width column keeps three things it should not:
+   * its 1px border as a visible sliver, its 28px cast shadow over the page, and
+   * every control inside it in the tab order.
+   */
+  .iris-drawer {
+    position: relative;
+    inset: auto;
+    grid-column: 3;
+    display: none;
+    transform: none;
+    visibility: visible;
+    transition: none;
+    /*
+     * Sideways, not down: the panel's shadow says which edge it came from, and
+     * the shared `--iris-shadow` casts downward, which read as a floating card
+     * once the panel stopped floating.
+     *
+     * The colour is `--iris-bg-mask` diluted to about a fifth, which is the
+     * artboards' 6% ink in 雪 and lands near 12% in 墨 — a dark page needs the
+     * stronger cast to show one at all, and keying off the mask is what makes
+     * one declaration do that. A flat `rgb(35 32 31 / 6%)` would have been
+     * invisible under 墨.
+     */
+    box-shadow: -8px 0 28px color-mix(in srgb, var(--iris-bg-mask) 20%, transparent);
+    /* 抽屉外角 14px — on the two corners that face the page. */
+    border-radius: var(--iris-radius-lg) 0 0 var(--iris-radius-lg);
+  }
+
+  .iris-drawer--open {
+    display: flex;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iris-drawer {
+    transition: none;
+  }
+}
+
 .iris-drawer__head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 15px 18px 13px;
+  padding: 22px 22px 16px;
   border-bottom: var(--iris-hairline) solid var(--iris-rule);
 }
 
@@ -237,10 +538,19 @@
 /* ---------------------------------------------------------------- appearance */
 
 /*
- * The appearance card's swatch row. Each swatch is painted from the theme's
- * own token table (inline styles from `presets.ts`), so preview and page are
- * the same numbers; the classes here only do the geometry — a desk, a sheet
- * on it, two lines of prose, and the one accent tick.
+ * The theme picker: three cells, each a slab of that theme's paper under its
+ * name — 雪 / 墨 / 宣, as `Drawer.dc.html` draws it.
+ *
+ * The slab is painted from the theme's own token table (inline styles from
+ * `presets.ts`), so preview and page are the same numbers rather than a picture
+ * of them. What the cell no longer draws is a miniature page — a desk, a sheet,
+ * two lines of prose and an accent tick — because at 22px that was five colours
+ * arguing inside a 100px box, and the artboards answer the question a picker
+ * actually gets asked ("which paper?") with the paper.
+ *
+ * The cost, stated: the accent is no longer previewed. Three plums that differ
+ * only in lightness were the least informative half of the old thumbnail
+ * anyway, and the chosen cell shows the live accent as its own border.
  */
 .iris-appearance__themes {
   display: grid;
@@ -251,10 +561,11 @@
 .iris-appearance__swatch {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 6px;
   padding: 8px;
+  background: none;
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: var(--iris-radius-lg);
+  border-radius: var(--iris-radius);
   cursor: pointer;
   font: inherit;
 }
@@ -264,44 +575,29 @@
   outline-offset: 2px;
 }
 
-/* Chosen is a ring in the accent, not a fill: the swatch's own colours are
-   the content, and tinting them would misrepresent the theme. */
+/* Chosen takes the plum border and its wash, which is the same "selected"
+   figure the sidebar's current row and the library's sort capsules use — one
+   mark for one meaning across the whole shell. */
 .iris-appearance__swatch[aria-pressed='true'] {
-  outline: 2px solid var(--iris-accent);
-  outline-offset: 1px;
+  border-color: var(--iris-accent);
+  background: var(--iris-accent-wash);
 }
 
 .iris-appearance__sheet {
   display: block;
-  padding: 7px 8px 9px;
+  height: 22px;
   border: 1px solid;
-  border-radius: var(--iris-radius);
-}
-
-.iris-appearance__line {
-  display: block;
-  height: 4px;
-  border-radius: 2px;
-  margin-bottom: 4px;
-  opacity: 0.85;
-}
-
-.iris-appearance__line--short {
-  width: 62%;
-  margin-bottom: 6px;
-}
-
-.iris-appearance__tick {
-  display: block;
-  width: 16px;
-  height: 2px;
-  border-radius: 1px;
+  border-radius: 6px;
 }
 
 .iris-appearance__name {
-  padding-top: 6px;
   font-size: var(--iris-label-size);
-  color: var(--iris-ink-secondary);
+  text-align: center;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-appearance__swatch[aria-pressed='true'] .iris-appearance__name {
+  color: var(--iris-ink);
 }
 
 /*
@@ -315,7 +611,7 @@
   background: var(--iris-bg-raised);
   color: var(--iris-ink);
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: var(--iris-radius);
+  border-radius: var(--iris-radius-field);
   padding: 8px 10px;
   font-family: var(--iris-font-mono);
   font-size: 12px;
@@ -373,7 +669,7 @@
   background: var(--iris-bg-raised);
   color: var(--iris-ink);
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: var(--iris-radius);
+  border-radius: var(--iris-radius-field);
   padding: 6px 9px;
   font-family: var(--iris-font-mono);
   font-size: 12px;
@@ -514,19 +810,20 @@
     display: inline-flex;
   }
 
-  .iris-column {
-    padding-inline: 12px;
-  }
-
   /*
-   * Deliberately **not** overridden to 0 here, though it once was. The prose
-   * keeps its marginalia track at this width (`--iris-gutter: 34px` below),
-   * so its centre sits half a gutter right of the column's — and a composer
-   * inset with no twin put the two midlines 17px apart, measured at
-   * 800×700. Inheriting the base `padding-left: var(--iris-gutter)` keeps
-   * the field under the prose, exactly as on the wide layout.
+   * Nothing about the drawer here. It is a sliding overlay by default and only
+   * becomes a column above 1200px, so a phone already gets the right form —
+   * this block used to have to put it back, which is the inverted shape the
+   * drawer's own comment argues against.
    */
 
+  /*
+   * The reading column's right flank shrinks with the gutter token below, and
+   * the composer's inset follows it — both read `--iris-gutter`, so the prose
+   * and the field stay on one vertical without a second override here. That was
+   * once got wrong in the other direction: a composer inset with no twin put
+   * the two midlines 17px apart, measured at 800×700.
+   */
   :root {
     --iris-gutter: 34px;
   }
@@ -686,9 +983,18 @@
 /* ------------------------------------------------------------ state margin */
 
 /*
- * Hidden until there is genuinely room for it. Below 1360px the sheet takes the
- * whole stage, so this must not merely shrink — a 120px column of key/value
- * pairs would be worse than the emptiness it replaced.
+ * The variable margin: 「变量」, the host's own tool, full height beside the
+ * reading area (`.iris-stage`'s second track, shell.css).
+ *
+ * canvas.json is explicit about what this is and is not: 右侧「变量」边栏是宿主
+ * 自己的工具(TavernHelper 变量管理器那一格),固定 236px、可收起;卡的前端从不
+ * 放在那里. It is full height rather than floating so the reading column's two
+ * 46px flanks stay symmetrical — a margin that started below the masthead would
+ * have made the composer sit off-centre in its own panel.
+ *
+ * Hidden below 1360px, unchanged: a 120px column of key/value pairs would be
+ * worse than the emptiness it replaced, and the collapse rail is a reader's
+ * choice rather than a fallback for a window with no room.
  */
 .iris-aside {
   display: none;
@@ -696,31 +1002,108 @@
 
 @media (min-width: 1360px) {
   .iris-aside {
-    display: block;
+    grid-column: 2;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     min-width: 0;
-    overflow-y: auto;
+    width: var(--iris-aside);
+    box-sizing: border-box;
+    border-left: var(--iris-hairline) solid var(--iris-rule-faint);
+    background: var(--iris-bg-page);
+  }
+
+  /*
+   * Collapsed: a 36px strip with the word 「变量」 set vertically.
+   *
+   * `data-iris-aside` rather than a modifier class, and that is not a style
+   * preference: `tools/render-check.tsx` matches `class="iris-aside"` literally,
+   * so a second class on this element would break the render check in a way no
+   * type or test in this package would have caught first.
+   */
+  .iris-aside[data-iris-aside='shut'] {
+    width: var(--iris-aside-rail);
   }
 }
 
 /*
- * The margin's content column.
- *
- * The aside is anchored to the SHEET's right edge, not to its track's start
- * and not to the window: the inner box is capped and left-aligned, so the
- * annotations sit a fixed 24px from the page they annotate and never drift
- * or float when the window widens — anchored but not pinned to the glass,
- * with the rest of the track left as the desk's breathing room to the right
- * edge. The track itself is floored at the aside token (shell.css) so the
- * margin never collapses below legibility.
+ * The margin's content column, and the one thing in it that scrolls. The
+ * heading row stays put, because it holds the collapse control: a toggle that
+ * scrolls away is a toggle a reader has to hunt for.
  */
 .iris-aside__inner {
-  max-width: calc(var(--iris-aside) + 92px);
-  padding: 26px 32px 40px 24px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 20px 40px 18px;
   box-sizing: border-box;
 }
 
+/*
+ * The heading and the collapse chevron on one line, above the scroller.
+ *
+ * The whole row is the button — 236px of margin gives a 12px chevron plenty of
+ * company, and a hit area the width of the panel is what makes the collapse
+ * findable at all.
+ */
+.iris-aside__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 22px 20px 10px 18px;
+  box-sizing: border-box;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--iris-ink-tertiary);
+  transition: color var(--iris-fast) var(--iris-ease);
+}
+
+.iris-aside__bar:hover {
+  color: var(--iris-ink-secondary);
+}
+
+/*
+ * Collapsed, the bar becomes the whole panel: the chevron over a vertical
+ * label, centred in the 36px strip. `writing-mode` rather than a rotation, so
+ * the CJK glyphs stay upright and the Latin fallback still reads.
+ */
+.iris-aside[data-iris-aside='shut'] .iris-aside__bar {
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 22px 0 0;
+}
+
+.iris-aside[data-iris-aside='shut'] .iris-aside__head {
+  writing-mode: vertical-rl;
+  letter-spacing: 0.2em;
+  /* Not uppercased in this form: `.iris-label`'s treatment suits "STATE" and
+     destroys a vertical CJK word. */
+  text-transform: none;
+}
+
+/* The chevron points the way the panel will move. */
+.iris-aside__chevron {
+  flex: none;
+  transition: transform var(--iris-fast) var(--iris-ease);
+}
+
+.iris-aside[data-iris-aside='shut'] .iris-aside__chevron {
+  transform: scaleX(-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iris-aside__chevron {
+    transition: none;
+  }
+}
+
 .iris-aside__head {
-  margin: 0 0 12px;
+  margin: 0;
 }
 
 .iris-aside__empty {
@@ -906,7 +1289,7 @@
   display: inline-block;
   margin-right: 5px;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--iris-radius-pill);
   font-size: 9.5px;
   line-height: 1.6;
   vertical-align: 1px;
@@ -1544,7 +1927,7 @@
   z-index: calc(var(--iris-overlay-z, 40) + 5);
   padding: 4px 11px 5px;
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: 999px;
+  border-radius: var(--iris-radius-pill);
   background: var(--iris-bg-page);
   color: var(--iris-ink-tertiary);
   font: inherit;
@@ -1628,7 +2011,7 @@
   font-size: 10.5px;
   color: var(--iris-ink-faint);
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: 999px;
+  border-radius: var(--iris-radius-pill);
   padding: 0 7px 1px;
 }
 
@@ -1955,7 +2338,7 @@
   background: var(--iris-bg-raised);
   color: var(--iris-ink);
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: var(--iris-radius);
+  border-radius: var(--iris-radius-field);
   padding: 6px 8px;
   font: inherit;
   font-size: 12px;
@@ -1978,7 +2361,7 @@
   background: var(--iris-bg-raised);
   color: var(--iris-ink);
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: var(--iris-radius);
+  border-radius: var(--iris-radius-field);
   padding: 8px 10px;
   /* Monospace because the file stores exactly these bytes; a proportional face
      invites "tidying" that would survive into every future prompt. */
@@ -2000,7 +2383,7 @@
   align-items: center;
   gap: 6px;
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: var(--iris-radius);
+  border-radius: var(--iris-radius-field);
   background: var(--iris-bg-raised);
   padding: 6px 8px;
 }
@@ -2011,7 +2394,7 @@
   gap: 4px;
   background: var(--iris-accent-wash);
   color: var(--iris-ink);
-  border-radius: 999px;
+  border-radius: var(--iris-radius-pill);
   padding: 2px 4px 2px 9px;
   font-size: 12px;
 }
@@ -2025,7 +2408,7 @@
   line-height: 1;
   color: var(--iris-ink-tertiary);
   padding: 2px 5px;
-  border-radius: 999px;
+  border-radius: var(--iris-radius-pill);
 }
 
 .iris-tags__x:hover {
@@ -2142,7 +2525,7 @@
   flex: none;
   width: 9px;
   height: 9px;
-  border-radius: 999px;
+  border-radius: var(--iris-radius-pill);
 }
 
 .iris-entry__dot--normal {
@@ -2194,7 +2577,7 @@
   font-size: 10.5px;
   color: var(--iris-ink-tertiary);
   border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: 999px;
+  border-radius: var(--iris-radius-pill);
   padding: 1px 7px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;

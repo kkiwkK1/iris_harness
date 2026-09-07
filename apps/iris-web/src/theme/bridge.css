@@ -48,9 +48,12 @@
 
   /* ---------------------------------------------------------------- button */
   /* Iris buttons are text-weight by default; only the primary one takes fill,
-     and it takes the accent rather than a brand blue. */
+     and it takes the accent rather than a brand blue.
+     Hover is `--iris-accent-strong`, not `-quiet`: under 「梅花」 those two pull
+     in opposite directions (tokens.css says why), and a hover that *lightens*
+     reads as the control going away under the cursor. */
   --dsw-alias-button-primary-fill: var(--iris-accent);
-  --dsw-alias-button-primary-hover: var(--iris-accent-quiet);
+  --dsw-alias-button-primary-hover: var(--iris-accent-strong);
   --dsw-alias-button-contrast-fill: var(--iris-ink-inverted);
   --dsw-alias-button-ghost-active-fill: var(--iris-accent-wash);
   --dsw-alias-button-ghost-active-border: var(--iris-rule-strong);
