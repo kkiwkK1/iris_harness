@@ -1923,7 +1923,7 @@ large enough that copying them per region is measurable; 940 B against a
 about markup: its `isUser` argument only chooses the regex placement
 (`USER_INPUT` vs `AI_OUTPUT`), the prompt-bias strip and the `name2`
 suppression. With `encode_tags` at its default (`false`,
-`scripts/power-user.js:301`) a user message's bare `<div>`/`<details>` reaches
+`public/scripts/power-user.js:301`) a user message's bare `<div>`/`<details>` reaches
 showdown and DOMPurify exactly like an assistant message's, and renders as live
 HTML — so a console that writes a floor of markup as a user message
 (`createChatMessages`) still gets its panel. Verified against
