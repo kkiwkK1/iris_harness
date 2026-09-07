@@ -417,3 +417,141 @@ test('an unclosed region reaches the report channel from the row that rendered i
   assert.match(source, /addCardReport[^]*?channel: 'interface'/, 'the note goes to the report channel')
 })
 
+/*
+ * The unknown-markup rule (`unwrapUnknownTagsOutsideCode`), which is the
+ * policy of `app/inline-html.ts` plus the question of where it may run.
+ */
+import { unwrapUnknownTagsOutsideCode } from '../src/sandbox/frontend-blocks.ts'
+
+/**
+ * The shape of 灭仇家满门之后，我收养了想对我复仇的孤女's opening message.
+ *
+ * Its skeleton, not its 16 KiB: one `<Gui>` wrapper at column 0, a ```html
+ * fence holding a complete document, the closing `</Gui>`, and a self-closing
+ * `<StatusPlaceHolderImpl/>` after a blank line. Those four lines are the whole
+ * of what the fault was about, and the interior is stubbed down to the parts
+ * the claim predicate reads.
+ */
+function guiWrappedOpening(): string {
+  return [
+    '<Gui>',
+    fenced('html', [
+      '<!DOCTYPE html>',
+      '<html lang="zh-CN">',
+      '<head>',
+      '<meta charset="UTF-8">',
+      '<style>',
+      '  #rvr-welcome{position:relative!important;width:100%!important}',
+      '</style>',
+      '</head>',
+      '<body>',
+      '<div id="rvr-welcome">初次见面。</div>',
+      '</body>',
+      '</html>',
+    ].join(NL)),
+    '</Gui>',
+    '',
+    '<StatusPlaceHolderImpl/>',
+  ].join(NL)
+}
+
+test('the Gui wrapper and the placeholder leave the reading surface entirely', () => {
+  /*
+   * The fault as measured in the browser: the row showed the escaped text
+   * `<Gui>`, then the interface, then `</Gui> <StatusPlaceHolderImpl/>`. The
+   * card's author has never seen those lines, because upstream hands the whole
+   * message to DOMPurify and an unrecognised name is removed with its children
+   * hoisted (`purify.cjs.js:1894` → `:1743`) — nothing in the extension layer
+   * touches them first (JS-Slash-Runner's own predicate reads already-rendered
+   * `<pre>` text, `src/util/is_frontend.ts:1-3`).
+   */
+  const source = guiWrappedOpening()
+  const { blocks, refused } = claimMessageSurfaces(source)
+
+  assert.deepEqual(refused, [])
+  assert.equal(blocks.length, 1, 'the document is one interface')
+  assert.equal(blocks[0]?.kind, 'fenced')
+
+  const segments = splitAroundInterfaces(source, blocks)
+  /*
+   * The fixture has teeth only if the wrapper really reaches a prose segment —
+   * a fixture that never carried it would let the assertions below pass while
+   * proving nothing.
+   */
+  assert.ok(
+    segments.some(segment => segment.kind === 'text' && segment.text.includes('<Gui>')),
+    'the split really does strand the wrapper in the prose',
+  )
+
+  const prose = segments
+    .filter(segment => segment.kind === 'text')
+    .map(segment => unwrapUnknownTagsOutsideCode(segment.text))
+  assert.equal(prose.length, 2, 'prose above and below the interface')
+  for (const text of prose) {
+    assert.doesNotMatch(text, /Gui/, `wrapper survived: ${JSON.stringify(text)}`)
+    assert.doesNotMatch(text, /StatusPlaceHolderImpl/, `placeholder survived: ${JSON.stringify(text)}`)
+  }
+  // And nothing is left to render: this opening *is* the interface, so the row
+  // shows the frame and no stray paragraph where a wrapper used to be.
+  assert.deepEqual(prose.filter(text => text.trim() !== ''), [])
+})
+
+test('the frame still gets the document it was going to get', () => {
+  // The transform runs on the prose handed to the renderer, never on the
+  // claimed span: a frame whose `<!DOCTYPE>` or `<body>` had been rewritten
+  // would be a fix that broke the thing it was fixing around.
+  const { blocks } = claimMessageSurfaces(guiWrappedOpening())
+  const body = blocks[0]?.body ?? ''
+  assert.ok(body.includes('<!DOCTYPE html>'), body.slice(0, 80))
+  assert.ok(body.includes('<body>'), body.slice(0, 80))
+  assert.ok(body.includes('<div id="rvr-welcome">初次见面。</div>'))
+})
+
+test('markup a card documents in code keeps its characters', () => {
+  /*
+   * Both code shapes, because the walk that finds them is the same one the
+   * claim pipeline uses and it knows about both. Upstream keeps these too, one
+   * layer down: showdown turns a fence into escaped `<pre><code>` before it
+   * looks at raw HTML at all (`showdown.js:2504`).
+   */
+  const fence = ['写卡的人要包一层：', '', fenced('text', '<Gui>…</Gui>'), '', '就这样。'].join(NL)
+  assert.equal(unwrapUnknownTagsOutsideCode(fence), fence)
+
+  const indented = ['像这样：', '', '    <StatusPlaceHolderImpl/>', '', '记住了。'].join(NL)
+  assert.equal(unwrapUnknownTagsOutsideCode(indented), indented)
+
+  // Prose on either side of a fence is still prose.
+  const mixed = ['<Gui>前言</Gui>', '', fenced('text', '<Gui>'), '', '<Gui>尾巴</Gui>'].join(NL)
+  const cleaned = unwrapUnknownTagsOutsideCode(mixed)
+  assert.ok(cleaned.includes(fenced('text', '<Gui>')), 'the fence survives whole')
+  assert.equal(cleaned.split('<Gui>').length - 1, 1, 'exactly the one inside the fence is left')
+  assert.ok(cleaned.startsWith('前言'), cleaned.slice(0, 40))
+})
+
+test('every string the row hands the renderer goes through the rule', () => {
+  /*
+   * Two call sites, and the quiet one is the dangerous one: a message with no
+   * claimed block takes the early return, and that is the commoner half of the
+   * population — the corpus has six cards writing `<StatusPlaceHolderImpl/>`
+   * into `first_mes` and only some of them fence an interface beside it. Read
+   * at the source because a missed call site is invisible to any test that
+   * exercises the path it forgot.
+   */
+  const source = readFileSync(
+    fileURLToPath(new URL('../src/app/MessageInterfaces.tsx', import.meta.url)),
+    'utf8',
+  )
+  const renders = [...source.matchAll(/<MarkdownText[\s\S]*?\/>/g)].map(hit => hit[0])
+  assert.equal(renders.length, 2, `MarkdownText call sites: ${String(renders.length)}`)
+  for (const render of renders) {
+    assert.match(
+      render,
+      /text=\{(?:unwrapUnknownTagsOutsideCode\(|segment\.text)/,
+      `a MarkdownText that skips the rule: ${render}`,
+    )
+  }
+  // The segment form is pre-cleaned in the map above it, so that spelling is
+  // only allowed while the map is there.
+  assert.match(source, /unwrapUnknownTagsOutsideCode\(segment\.text\)/, 'segments must be cleaned before render')
+})
+

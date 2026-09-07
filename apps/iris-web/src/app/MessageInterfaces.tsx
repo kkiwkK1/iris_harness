@@ -32,7 +32,11 @@ import { interfacesMayBuild } from '../sandbox/consent.ts'
 import { MVU_UPDATE_ENDED_EVENT } from '../sandbox/tavern-helper.ts'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 
-import { claimMessageSurfaces, splitAroundInterfaces } from '../sandbox/frontend-blocks.ts'
+import {
+  claimMessageSurfaces,
+  splitAroundInterfaces,
+  unwrapUnknownTagsOutsideCode,
+} from '../sandbox/frontend-blocks.ts'
 import { describeInterface, type InterfaceState } from '../sandbox/message-frames.ts'
 import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
@@ -442,9 +446,35 @@ export function MessageInterfaces({
     }
   }, [refusedNote, store])
 
-  if (blocks.length === 0) return <MarkdownText text={text} streaming={streaming} />
+  /*
+   * Every string that reaches `MarkdownText` goes through the unknown-markup
+   * rule first, and both call sites do it, because a message with no claimed
+   * block is the commoner half of the population — the card that started this
+   * has one claimed block and two stranded wrappers, but a card that writes
+   * `<StatusPlaceHolderImpl/>` and nothing else has no block at all.
+   *
+   * Applied here rather than inside the claim pipeline: claims are offsets into
+   * the message as stored (see `unwrapUnknownTagsOutsideCode`).
+   */
+  if (blocks.length === 0) {
+    return <MarkdownText text={unwrapUnknownTagsOutsideCode(text)} streaming={streaming} />
+  }
 
+  /*
+   * The prose the renderer actually gets, and the reason the empties are
+   * dropped: on the card that started this, one whole segment is the single
+   * line `<Gui>` — once the wrapper is gone there is nothing left, and handing
+   * `MarkdownText` an empty string would put a blank paragraph exactly where
+   * the wrapper used to be. Same rule `splitAroundInterfaces` already applies
+   * to whitespace between two interfaces, one transform later.
+   */
   const segments = splitAroundInterfaces(text, blocks)
+    .map(segment =>
+      segment.kind === 'text'
+        ? { ...segment, text: unwrapUnknownTagsOutsideCode(segment.text) }
+        : segment,
+    )
+    .filter(segment => segment.kind !== 'text' || segment.text.trim() !== '')
   const byInstance = new Map(states.map(state => [state.instance, state]))
 
   return (
