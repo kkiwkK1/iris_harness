@@ -42,6 +42,7 @@ import type {
 } from '@iris/protocol'
 
 import { asRpcError, describeError, isHostError } from './errors.ts'
+import { inFlight, requestKey } from './in-flight.ts'
 import { isShellAction, wireMethodFor } from '../sandbox/card-api.ts'
 import { draftThroughComposer, sendThroughComposer } from '../app/composer-bus.ts'
 import { loadAutoOpenChat } from '../theme/theme.ts'
@@ -1177,6 +1178,32 @@ export function createIrisStore(
       }
     }
 
+    /**
+     * The card's script list, asked for once however many callers want it now.
+     *
+     * Three of them do, and they are not coordinated: the panel's
+     * `loadScripts`, the script frame's `resolveScripts`, and one
+     * `resolveScripts` per displayed message row. On a cold load that is one
+     * question issued 22 times in a millisecond — see `in-flight.ts` for the
+     * measurement and for why sharing the *flight* rather than the answer needs
+     * no invalidation rule.
+     *
+     * **One function rather than the same `requestKey(…)` written at each call
+     * site.** Two spellings of a key that must be equal is a seam, and the
+     * failure it produces is silent: the calls simply stop sharing and the
+     * traffic comes back.
+     * @param characterId - whose scripts.
+     * @returns the host's answer, whole — each caller projects what it needs, so
+     *   the panel's `scriptsAllowed` and the runner's `documentGranted` come out
+     *   of one reading rather than two.
+     */
+    const listScripts = async (characterId: string): Promise<RpcResponse<'script.list'>> =>
+      inFlight(
+        client,
+        requestKey('script.list', { characterId }),
+        async () => client.call('script.list', { characterId }),
+      )
+
     return {
       connected: client.connected,
       chats: [],
@@ -1912,7 +1939,7 @@ export function createIrisStore(
           cardReports: [],
         })
         await guard(async () => {
-          const listed = await client.call('script.list', { characterId })
+          const listed = await listScripts(characterId)
           if (get().scriptsFor !== characterId) return
           set({
             scripts: listed.scripts,
@@ -2163,7 +2190,16 @@ export function createIrisStore(
         // Not wrapped in `guard`: the caller is about to decide whether to run
         // code, and a refusal turned into a notice would resolve as though the
         // host had answered.
-        const listed = await client.call('script.list', { characterId })
+        //
+        // Shared with whatever else is asking this instant (`listScripts`), and
+        // that is safe for the same reason it is safe for the snapshot: the
+        // answer a joiner gets was fetched after it asked. The one case worth
+        // naming is a flight that was already in the air when the user flipped
+        // a script's switch — a caller arriving right after the write can join
+        // the older reading. That race exists without the sharing too, because
+        // the write and the read are separate round trips; what the sharing
+        // does not do is widen it past the flight's own duration.
+        const listed = await listScripts(characterId)
         return { scripts: listed.scripts, documentGranted: listed.documentGranted }
       },
 
@@ -2204,7 +2240,28 @@ export function createIrisStore(
 
       async scriptContext(chatId: string, characterId: string): Promise<ScriptContext | undefined> {
         try {
-          const { context } = await client.call('script.context', { chatId, characterId })
+          /*
+           * One flight per (chat, card), joined by everyone asking right now.
+           *
+           * This is the single hottest call the page makes: on a cold load of a
+           * 25-message conversation the host answered it 22 times with the same
+           * ~145 KB, at ~1.75 s each, in series. `in-flight.ts` carries the
+           * measurement, the argument for sharing the flight rather than
+           * remembering the answer, and the one thing that costs — a joiner's
+           * snapshot can predate its own call by up to the flight's duration.
+           *
+           * No `messageId` is passed, and that is what makes one flight serve
+           * every row: measured on the same conversation, the only field the
+           * argument adds is `floor`, and the rest of the snapshot is
+           * byte-identical across `undefined`, `0` and the newest floor. The
+           * floor a message frame renders in travels separately, as `runCard`'s
+           * `currentMessageId`.
+           */
+          const { context } = await inFlight(
+            client,
+            requestKey('script.context', { chatId, characterId }),
+            async () => client.call('script.context', { chatId, characterId }),
+          )
           return context
         } catch {
           // Swallowed on purpose, and the only place in this store that does. A
