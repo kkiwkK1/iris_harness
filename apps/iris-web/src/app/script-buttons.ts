@@ -2,7 +2,7 @@
  * Which card-script buttons a bar should show.
  *
  * Split out of `ScriptButtons.tsx` for the reason recorded on
- * `shared-snapshot.ts`: `node --test` cannot load a `.tsx` module at all —
+ * `client/in-flight.ts`: `node --test` cannot load a `.tsx` module at all —
  * Node's type stripping does not do JSX — so logic that needs a test cannot
  * live beside a component. The filtering is the part with rules in it.
  *

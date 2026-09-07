@@ -21,7 +21,6 @@ import type { MessageView, ScriptContext } from '@iris/protocol'
 import type { MessageStyle } from './html-regions.ts'
 
 import { actionsOf, tapHostEvents } from '../client/store.ts'
-import { snapshotFor } from './shared-snapshot.ts'
 import { describeRefusal } from './blocked-line.ts'
 import { useIris, useIrisStore } from '../client/provider.tsx'
 import {
@@ -417,9 +416,16 @@ export function MessageInterfaces({
         if (event.type !== 'chat.updated' && event.type !== 'stream.end') return
         if (chatId === undefined || characterId === undefined) return
         if (event.chatId !== chatId) return
-        void snapshotFor(event, async () =>
-          actionsOf(store).scriptContext(chatId, characterId),
-        ).then(next => {
+        /*
+         * Every displayed row has its own subscription and the host hands the
+         * same event to all of them, so this call is made N times per event —
+         * and they all land in one flight, because `scriptContext` shares a
+         * request in the air (`client/in-flight.ts`). That used to be a
+         * separate, event-keyed helper here; the flight is a strictly wider
+         * mechanism and covers the mount burst too, so there is one answer to
+         * "how many round trips did that event cost" rather than two.
+         */
+        void actionsOf(store).scriptContext(chatId, characterId).then(next => {
           /*
            * No snapshot, no push — the rule the first one follows. A card handed
            * an invented empty context redraws its panel as zeroes, and zeroes

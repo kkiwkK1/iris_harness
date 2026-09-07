@@ -2116,3 +2116,68 @@ section's original shape, merged from `dev/fix-render` — was superseded by tha
 gate in the same merge and reverted there; the ruling stands, the mechanism
 moved one level out. The test that pinned the derivation now pins both halves:
 the store's honest state and the gate's admission.
+
+
+---
+
+## 56. Every frame asking for the context at the same moment shares one request
+
+**Kind:** deliberate improvement, with a named freshness cost.
+
+**Upstream.** `getContext()` is a synchronous in-process read of a singleton, so
+each interface frame really does take its own — and the cost of "its own" is
+nothing. Twenty-two frames reading in one tick read one identical state anyway,
+because the page is single-threaded and nothing can change between the reads.
+
+**Iris** has to ship the same facts across an origin boundary, so a frame's
+"own read" is an RPC. Every displayed row mounts its own `MessageInterfaces`,
+whose effect depends on the chat, the card and the consent answer — identical
+for every row — so React commits them together and the page issued **one
+question N times**. Measured on 8789, 2026-09-07, one conversation of 25
+messages: 22 `script.context` calls inside the same millisecond with identical
+response sizes, plus 22 `script.list`. Re-measured headless against a read-only
+copy of the same profile (`scripts/script-context-probe.mjs`, 2026-09-08): one
+snapshot is **about 145 KB** of JSON and the host takes **1.75 s** to build it.
+The size is quoted loosely because it tracks the conversation — two runs an hour
+apart read 145,282 and 147,385 bytes as the log grew — while the 1.75 s does
+not, being almost entirely card-library decoding. The host serves RPCs one at a
+time, so the batch resolved 9 s → 47 s in a straight line, and a
+`connection.test` the reader fired after it queued behind all of them for
+30.7 s.
+
+`apps/iris-web/src/client/in-flight.ts` now shares the request **while it is in
+the air**: one flight per `(method, arguments)` per client, joined by every
+caller asking during it, dropped the moment it settles. Not a cache — nothing
+outlives the request. It replaced `app/shared-snapshot.ts`, whose event-keyed
+sharing covered the refresh burst but not the mount burst; the flight covers
+both, and a host event's taps are fanned out in one synchronous loop, so it
+still gives that module's guarantee of one round trip per event.
+
+Sharing the request is only sound because the answer does not depend on which
+row asks. Measured through `scripts/script-context-probe.mjs` on the same
+conversation: `script.context` is byte-identical across `messageId` absent, `0`
+and the newest floor **except** for the `floor` field it adds — and the page
+never passes `messageId` at all. The floor a message frame renders in travels
+separately, as `runCard`'s `currentMessageId`.
+
+**What it costs.** A joiner's snapshot can predate its own call by up to one
+flight's duration; the caller that opened the flight is unaffected. Upstream's
+equivalent window is zero, because its read is synchronous. Two things bound it.
+The host is single-threaded, so before this the joiner's own request queued
+*behind* the flight and was answered later — fresher data at the price of the
+reader waiting for two requests instead of one. And anything happening inside
+the window that changes what the snapshot says arrives as a host event, on
+which `watchContext` opens a fresh flight and pushes the newer snapshot into
+every live frame. The window is bounded and self-correcting, and it sits inside
+the much larger snapshot-versus-live-object divergence §5 already records.
+
+The same sharing covers `script.list`, where the analogous cost is a caller
+arriving just after a `script.setEnabled` write joining a reading issued just
+before it. That race exists without the sharing too — the write and the read are
+separate round trips — and the sharing does not widen it past one flight.
+
+**What would overturn it.** A frame-addressed context — a snapshot that
+legitimately differs per row, `floor` being carried in it rather than beside it
+— would make one flight the wrong unit, and the key would have to carry the
+floor. So would a host that served RPCs concurrently: N parallel requests would
+no longer serialise, and per-row freshness would cost nothing again.

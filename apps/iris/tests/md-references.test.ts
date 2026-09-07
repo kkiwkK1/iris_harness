@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, posix } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -43,8 +43,20 @@ const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 // Tracked files plus untracked-but-not-ignored ones: a document written this
 // turn and not yet `git add`ed is a legitimate link target, and a build
 // artifact under an ignored directory is not.
+//
+// **Minus whatever is no longer on disk**, which is the mirror of the sentence
+// above and was missing. `--cached` reads the *index*, so a file deleted this
+// turn and not yet staged is still listed — and this check then opened it for
+// its contents and died of `ENOENT`, reporting a crash over a tree that is
+// fine. Filtered here rather than at each use so there stays **one**
+// population: the same list decides what gets scanned and what counts as
+// existing, and a link to a file deleted this turn therefore goes red as a
+// broken link rather than being quietly tolerated. The names still come from
+// git rather than from a directory walk, which is what makes a casing mistake
+// fail here on Windows the way it would on a Linux runner.
 const tracked = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: ROOT, encoding: 'utf8' })
   .split('\n').map(line => line.trim()).filter(line => line !== '')
+  .filter(path => existsSync(join(ROOT, path)))
 const trackedSet = new Set(tracked)
 const mdFiles = tracked.filter(path => path.endsWith('.md'))
 const mdBasenames = new Set(mdFiles.map(path => posix.basename(path)))

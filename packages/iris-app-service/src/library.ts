@@ -10,7 +10,7 @@
  */
 
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
-import { extname } from 'node:path'
+import { extname, resolve } from 'node:path'
 
 import { CharacterCardError, decodeCardPng, mutateCardPng, normalizeCard, readCardChunks, type CharacterCard } from '@iris/character'
 import type { CharacterSummary } from '@iris/protocol'
@@ -47,6 +47,21 @@ export interface CardFileRef {
   extension: string
   /** The file's last modification, Unix epoch milliseconds, when it could be read. */
   updatedAt?: number
+  /**
+   * The file's length in bytes, when it could be read.
+   *
+   * Beside the mtime because the two together are what {@link
+   * CharacterLibrary.list} recognises an unchanged file by — see the summary
+   * cache for why one of them alone is not enough.
+   */
+  size?: number
+}
+
+/** One card file's summary, held against the stamp it was decoded from. */
+interface HeldSummary {
+  mtimeMs: number
+  size: number
+  summary: CharacterSummary
 }
 
 /** Reads and writes the character folder. */
@@ -55,12 +70,52 @@ export class CharacterLibrary {
   readonly #avatarBase: string
 
   /**
+   * One summary per card file, keyed by path, held against its file stamp.
+   *
+   * **This exists because `list()` is on the hot path of every card script.**
+   * `script.context` carries `characters` — upstream's `getContext().characters`
+   * — so a listing happens on every snapshot, and a snapshot happens once per
+   * script frame per turn. Measured on the operator's own profile (13 cards,
+   * 50 MB of card PNGs): a listing costs **1737 ms**, of which 28 ms is reading
+   * the files and the rest is decoding them — PNG chunk walk, base64, JSON
+   * parse, V1 lift — to produce **3.2 KiB** of summaries. A page that showed 22
+   * message rows paid that 22 times over, and the host is single-threaded, so
+   * the 22nd row waited for all of them.
+   *
+   * **What a hit is checked against.** The path plus mtime plus size, and both
+   * halves of the stamp are load-bearing: Windows stamps a write with the system
+   * clock, whose granularity is ~15.6 ms, so two writes inside one tick can
+   * share an mtime — and a rename from one 4-character name to another leaves
+   * the size unchanged. Neither alone is a safe identity, which is also why the
+   * library **forgets a path it writes to itself** ({@link
+   * CharacterLibrary.#forget}) rather than trusting the stamp to notice.
+   *
+   * A file edited by something other than this process is caught by the stamp.
+   * A file rewritten by another process to the same length inside the same
+   * clock tick is not, and that is the one case this cache can be wrong about;
+   * it is the same window `refs()`'s own mtime already has.
+   */
+  readonly #summaries = new Map<string, HeldSummary>()
+
+  /**
    * @param dir - the folder holding card files.
    * @param avatarBase - pathname prefix the avatar route is served at.
    */
   constructor(dir: string, avatarBase: string) {
     this.#dir = dir
     this.#avatarBase = avatarBase
+  }
+
+  /**
+   * Drop what is held about one card file.
+   *
+   * Called from every path in this class that writes or removes a file, because
+   * the file stamp cannot be relied on to notice a write this process just made
+   * — see {@link CharacterLibrary.#summaries} for the two ways it misses one.
+   * @param path - the file that was written.
+   */
+  #forget(path: string): void {
+    this.#summaries.delete(resolve(path))
   }
 
   /** Create the folder if this is a first run. */
@@ -92,10 +147,14 @@ export class CharacterLibrary {
           extension: extname(name).toLowerCase(),
         }
         try {
-          ref.updatedAt = (await stat(ref.path)).mtimeMs
+          const stamp = await stat(ref.path)
+          ref.updatedAt = stamp.mtimeMs
+          ref.size = stamp.size
         } catch {
           // The listing tolerates a file vanishing mid-walk; the timestamp is
           // optional and a sort can fall back for the row that lost the race.
+          // The size goes with it: a ref with half a stamp is not one the
+          // summary cache will answer from.
         }
         return ref
       }))
@@ -179,15 +238,56 @@ export class CharacterLibrary {
   async list(): Promise<CharacterSummary[]> {
     const summaries: CharacterSummary[] = []
     for (const ref of await this.refs()) {
-      let card: CharacterCard
-      try {
-        card = decode(await readFile(ref.path), ref.extension)
-      } catch {
-        continue
-      }
-      summaries.push(this.summarize(ref, card))
+      const summary = await this.#summaryOf(ref)
+      if (summary !== undefined) summaries.push(summary)
     }
     return summaries
+  }
+
+  /**
+   * One card's summary, decoded only if the file has moved since last time.
+   *
+   * The whole cost of a listing is here — see {@link
+   * CharacterLibrary.#summaries} for the measurement and for what a hit is
+   * checked against.
+   *
+   * A card that fails to decode is **not** held: the skip is the listing's
+   * decision, not a fact about the file, and a corrupt file is cheap to refuse
+   * again (the PNG signature check throws on the first bytes). Holding the
+   * failure would also mean holding a decision that a later reader of this
+   * cache would have to know to interpret.
+   *
+   * **The key is `resolve`d, and that is not decoration.** This class spells the
+   * same file two ways — `refs()` builds `${dir}/${name}`, while `fileFor` (and
+   * therefore `ref()`, and therefore every write path) returns a `resolve`d
+   * path, which on Windows means backslashes. Keyed on the raw string, a hit was
+   * simply never found from the listing side and `#forget` never deleted
+   * anything: the first cut of this cache served a renamed card's *old* name for
+   * the life of the process, and `library-cache.test.ts` is the test that caught
+   * it.
+   * @param ref - the card file, with the stamp `refs()` read.
+   * @returns the summary, or `undefined` when the file is not a readable card.
+   */
+  async #summaryOf(ref: CardFileRef): Promise<CharacterSummary | undefined> {
+    const { updatedAt, size } = ref
+    const key = resolve(ref.path)
+    const stamped = updatedAt !== undefined && size !== undefined
+    if (stamped) {
+      const held = this.#summaries.get(key)
+      if (held !== undefined && held.mtimeMs === updatedAt && held.size === size) return held.summary
+    }
+    let card: CharacterCard
+    try {
+      card = decode(await readFile(ref.path), ref.extension)
+    } catch {
+      return undefined
+    }
+    const summary = this.summarize(ref, card)
+    // Only a fully stamped ref is held. A file that lost the `stat` race has no
+    // identity to check a later hit against, and a cache entry with a made-up
+    // stamp would answer for a file it cannot recognise.
+    if (stamped) this.#summaries.set(key, { mtimeMs: updatedAt, size, summary })
+    return summary
   }
 
   /**
@@ -276,6 +376,11 @@ export class CharacterLibrary {
     const characterId = uniqueId(toId(card.data.name.length > 0 ? card.data.name : filename), taken)
     const path = fileFor(this.#dir, characterId, extension)
     await writeFile(path, bytes)
+    // The id is unique against the cards that exist, so there should be nothing
+    // held under this path — but the rule is "a write forgets its path", and a
+    // rule with an exception for the case that looks safe is how a stale entry
+    // gets in.
+    this.#forget(path)
 
     return this.summarize(await this.#refOf(characterId, extension, path), card)
   }
@@ -288,6 +393,10 @@ export class CharacterLibrary {
   async delete(characterId: string): Promise<void> {
     const ref = await this.ref(characterId)
     await unlink(ref.path)
+    // The same rule, and it earns its keep here: an id freed by a delete is
+    // handed to the next card of that name, so the path comes back — with a
+    // different card behind it.
+    this.#forget(ref.path)
   }
 
   /**
@@ -360,6 +469,7 @@ export class CharacterLibrary {
     // Verbatim bytes: the copy is the source card, not a re-encoding of what
     // this build happens to model about it.
     await writeFile(path, await readFile(ref.path))
+    this.#forget(path)
     return this.summarize(await this.#refOf(freshId, ref.extension, path), card)
   }
 
@@ -470,25 +580,37 @@ export class CharacterLibrary {
     ref: CardFileRef,
     mutate: (raw: Record<string, unknown>) => Record<string, unknown>,
   ): Promise<void> {
-    if (ref.extension === '.png') {
-      const bytes = await readFile(ref.path)
-      await writeFile(ref.path, mutateCardPng(bytes, mutate))
-      return
-    }
-    if (ref.extension === '.json') {
-      let raw: unknown
-      try {
-        raw = JSON.parse(await readFile(ref.path, 'utf8'))
-      } catch {
-        throw invalid('could not read the character card: the file is not valid JSON')
+    /*
+     * Forgotten **after** the write, whatever the write did, which is why this
+     * is a `finally` and not a line at the top. Dropping the entry first would
+     * leave a window: a listing that ran between the drop and the write would
+     * decode the old card and hold it under the old stamp, and if the rewrite
+     * left the file the same length inside one clock tick — a rename between
+     * two equally long names — nothing afterwards would ever look again.
+     */
+    try {
+      if (ref.extension === '.png') {
+        const bytes = await readFile(ref.path)
+        await writeFile(ref.path, mutateCardPng(bytes, mutate))
+        return
       }
-      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-        throw invalid('could not read the character card: the file is not a JSON object')
+      if (ref.extension === '.json') {
+        let raw: unknown
+        try {
+          raw = JSON.parse(await readFile(ref.path, 'utf8'))
+        } catch {
+          throw invalid('could not read the character card: the file is not valid JSON')
+        }
+        if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+          throw invalid('could not read the character card: the file is not a JSON object')
+        }
+        await writeFile(ref.path, JSON.stringify(mutate(raw as Record<string, unknown>)))
+        return
       }
-      await writeFile(ref.path, JSON.stringify(mutate(raw as Record<string, unknown>)))
-      return
+      throw new AppError('unsupported', `"${ref.characterId}" is a plain image and carries no card to edit`)
+    } finally {
+      this.#forget(ref.path)
     }
-    throw new AppError('unsupported', `"${ref.characterId}" is a plain image and carries no card to edit`)
   }
 
   /**
