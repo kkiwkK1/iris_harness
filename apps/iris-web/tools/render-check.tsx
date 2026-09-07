@@ -27,6 +27,7 @@ import { SlotProvider } from '../src/slots/Slot.tsx'
 import { createIrisSlots } from '../src/slots/slots.ts'
 import { registerMessageAction } from '../src/slots/message-actions.ts'
 import { RAIL_MAX_TICKS, railMode } from '../src/app/rail.ts'
+import { bookFigures } from '../src/app/character-facts.ts'
 import { modelMenu } from '../src/app/model-menu.ts'
 import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView } from '@iris/protocol'
@@ -316,7 +317,36 @@ async function main(): Promise<void> {
     'the plain fixture gained a fact, so the absent branches below are no longer being taken',
   )
 
-  const densePage = render(wired.store, slots.core, <CharacterPage characterId={dense.characterId} />)
+  /*
+   * The page's own fetch, run by hand.
+   *
+   * A server render never runs effects, so `loadCharacterDetail` — which the
+   * page calls from `useEffect` — would never fire here and the three lists
+   * could only ever be missing. Awaiting it first is the same concession the
+   * store snapshot above is, and it buys the one thing this file can prove
+   * about the lists: that the page renders what the client answered.
+   */
+  await wired.store.getState().loadCharacterDetail(dense.characterId)
+  const detailHeld = wired.store.getState().characterDetail
+  assert.ok(
+    detailHeld !== undefined && detailHeld.characterId === dense.characterId && !detailHeld.loading,
+    'the detail fetch did not settle against the dense card',
+  )
+  /*
+   * The fixture's premise for the lists, asserted before anything is read off
+   * the markup. The fake answers `worldbook.charDigest` only for a card whose
+   * book it seeds and refuses the imported-card shape outright, so a seed change
+   * that dropped 络络's book would leave every list assertion below passing on an
+   * empty page — the failure mode this whole block exists to catch.
+   */
+  const detailHeldBooks = detailHeld.books
+  const detailHeldScripts = detailHeld.scripts
+  assert.ok(detailHeldBooks !== undefined && detailHeldBooks.length > 0, 'the fake no longer lists the dense card\'s books')
+  assert.ok(detailHeldScripts !== undefined && detailHeldScripts.length > 0, 'the fake no longer lists the dense card\'s scripts')
+  const entryCount = detailHeldBooks.reduce((sum, book) => sum + book.entries.length, 0)
+  assert.ok(entryCount > 0, 'the seeded book has no entries, so no entry row can render')
+
+  const densePage = render(wired.store, slots.core, <CharacterPage characterId={dense.characterId} onEnterReading={() => undefined} />)
   assert.ok(densePage.includes(dense.name), 'the dense card page does not name its character')
   // The 简介 band. Its own modifier class, because the heading word is shared
   // with nothing but the band is: a bare paragraph would sit outside the grid.
@@ -332,7 +362,97 @@ async function main(): Promise<void> {
   assert.ok(densePage.includes('>World book<'), 'the world book column is missing on a card that embeds one')
   assert.ok(densePage.includes('>Conversations<'), 'the always-knowable column is missing')
 
-  const plainPage = render(wired.store, slots.core, <CharacterPage characterId={plain.characterId} />)
+  /*
+   * ------------------------------------------------- the three columns' lists
+   *
+   * The upgrade this file is the only executable check on: each column carries
+   * a *list* under its count now, and a count over an empty column is exactly
+   * the state the page was in before. So each of the three is asserted by
+   * something only its own data can produce — a chat's title, the book's
+   * minted name and its ownFigures, a script's name and its two switches — rather
+   * than by the presence of a class name, which would survive all three lists
+   * rendering nothing.
+   */
+  const seededChat = wired.store.getState().chats.find(row => row.characterId === dense.characterId)
+  assert.ok(seededChat !== undefined, 'the dense card has no seeded conversation to list')
+  assert.ok(
+    densePage.includes(`Open “${seededChat.title}”`),
+    'the conversation list is missing: no row offers to open the seeded chat',
+  )
+  assert.ok(
+    densePage.includes(`${String(seededChat.messageCount)} messages`),
+    'a conversation row does not report how many floors it holds',
+  )
+  // The book row, by the name the *host* minted rather than the one the card
+  // binds — which is the whole reason a reader cannot find their book in a flat
+  // list, and the fake seeds the collision deliberately.
+  const ownBook = detailHeldBooks[0]
+  assert.ok(ownBook !== undefined)
+  assert.ok(densePage.includes(ownBook.name), 'the world book list does not name the card\'s book')
+  assert.ok(
+    densePage.includes('renamed by this host'),
+    'the minted-name note is gone, so a reader cannot tell why the name differs from the card\'s',
+  )
+  const ownFigures = bookFigures(ownBook)
+  assert.ok(
+    densePage.includes(`${String(ownFigures.entries)} entries · ${String(ownFigures.enabled)} on`),
+    'a book row does not carry the ownFigures counted from the entries it was sent',
+  )
+  // The entries themselves, and enough of them: one row per entry in the book,
+  // plus one per script, all sharing the row class. A page that rendered the
+  // book's *summary* and dropped its entries would pass every assertion above.
+  const rows = densePage.match(/class="iris-fact__entry"/g)?.length ?? 0
+  assert.ok(
+    rows >= entryCount + detailHeldScripts.length,
+    `expected at least ${String(entryCount + detailHeldScripts.length)} entry rows, rendered ${String(rows)}`,
+  )
+  // Named, not indexed with a fallback: a nullish default would let this
+  // assertion pass against any page at all the day the fixture had no entry
+  // there, or an entry with no title.
+  const firstEntry = ownBook.entries[0]
+  assert.ok(
+    firstEntry !== undefined && firstEntry.name !== "",
+    "the seeded book’s first entry has no name to look for",
+  )
+  assert.ok(densePage.includes(firstEntry.name), "the first world book entry is not on the page")
+  // The script list: a name, and both switches said as the reason rather than
+  // the result. The fixture's third script is one its author shipped off, which
+  // is the sentence a combined "off" could not produce.
+  const authorOff = detailHeldScripts.find(script => !script.enabledByCard)
+  assert.ok(authorOff !== undefined, 'the script fixture no longer carries an author-disabled script')
+  assert.ok(densePage.includes(authorOff.name), 'the script list does not name the card\'s scripts')
+  assert.ok(
+    densePage.includes('the author shipped it off'),
+    'the author\'s own switch is no longer distinguishable from the reader\'s',
+  )
+  /*
+   * The source, asserted as part of the row's own composed meta line rather
+   * than as the phrase alone: 「in the card」 also occurs in this column's
+   * closing note about where the switch lives, so the bare substring passed
+   * with the label deleted. Joined to the switch sentence it can only come from
+   * a rendered script row.
+   */
+  assert.ok(
+    densePage.includes('in the card · enabled'),
+    'a script row does not say where the script came from',
+  )
+
+  /*
+   * The plain card, fetched too — and this is the sharper half of the pair.
+   *
+   * The fake answers `{books: []}` for a card with no world info at all, so the
+   * plain page is the case where the page *has* an answer and it is empty. An
+   * empty list must still not draw a column: 「没有的数据不编」 is about the fact,
+   * not about whether a call was made.
+   */
+  await wired.store.getState().loadCharacterDetail(plain.characterId)
+  const plainDetail = wired.store.getState().characterDetail
+  assert.ok(
+    plainDetail?.books !== undefined && plainDetail.books.length === 0,
+    'the plain fixture no longer answers with an empty book list, so the empty branch is untested',
+  )
+
+  const plainPage = render(wired.store, slots.core, <CharacterPage characterId={plain.characterId} onEnterReading={() => undefined} />)
   assert.ok(plainPage.includes(plain.name), 'the plain card page does not name its character')
   assert.equal(plainPage.includes('iris-fact--prose'), false, 'a card with no description drew the 简介 band')
   assert.equal(plainPage.includes('>World book<'), false, 'a card embedding no book drew the world book column')

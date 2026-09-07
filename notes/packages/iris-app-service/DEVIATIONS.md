@@ -1947,3 +1947,68 @@ The ruling this follows is the standing one: compatibility is the floor. A card 
 **What it costs.** The prompt panel gets more rows. Measured on a bare chat with `DEFAULT_PRESET` and a card carrying only a description: the itemization was `main:36 | charDescription:6 | chatHistory:2` and is now that plus **six** zeroes — `worldInfoBefore`, `personaDescription`, `charPersonality`, `scenario`, `worldInfoAfter`, `dialogueExamples`. `jailbreak` gets none, and correctly: it carries empty `content` rather than being a marker, so it is an author's blank prompt and not an unfilled slot. The request itself is byte-identical — `renderSystem` drops empty text before it joins, `injectAtDepth` skips it, and `count('')` is 0, so the itemization's parts still sum exactly to its total. **The natural home for this is `resolvePreset`**, which is the function that decides to drop them; it lives in the app service because that was this round's write scope, and the visible consequence of the split is that the zero rows are appended after the preset's own contributions rather than interleaved into the order — the itemization lists contributions in array order, so they group together after the sections that produced text.
 
 **What would overturn it.** For (a): a provider that reports which prefix it matched, which would make the proxy unnecessary. For (b): moving the zero into `resolvePreset`, which would put the rows back in preset order and let `emptyMarkerRows` be deleted.
+
+## 27. A listing of one card's world books, with the entry text left out
+
+**Kind: deliberate improvement — a read upstream has no member for.**
+
+**Upstream** answers two questions about a card's world info and neither is this
+one. `getCharWorldbookNames` (TavernHelper) returns **names**: the card's
+`extensions.world` and the stored extras, and the caller fetches contents itself.
+`getWorldbook(name)` / `SillyTavern.loadWorldInfo(name)` return **one whole
+book**, every entry with its `content`. There is no "tell me what this card's
+world info consists of" — because upstream never needs one: the world info editor
+is opened on the character that is playing, and it is an editor, so it wants the
+text.
+
+**Iris adds `worldbook.charDigest`** (`characterId` → `{books}`), which is the
+listing shape: for each book the card involves, every entry's `uid`, `name` (the
+file's `comment`), `enabled`, `constant`, primary keys, secondary keys when it
+has any, position, and `depth` where the position uses one. **No `content`.**
+`cardWorldbookDigest` in `worldbooks.ts` builds it; the entry mapping is
+`toEntryDigest` and it lives in `@iris/protocol` because the fake client
+produces the same shape and two copies of an inverting mapping (`disable` →
+`enabled`) drift silently.
+
+**It is a second reading of an existing decision, not a second decision.** Which
+book is the card's own comes from `cardWorldbookView` and from nothing here, so
+the character page and the world book panel cannot name different books for one
+card. The extras come from `settings.charBooks`, the same reader
+`worldbook.charNames` uses. `globalSelect` is deliberately **not** read: a
+globally selected book applies to every character, and listing it under one card
+would report an installation-wide setting as a property of that card.
+
+**Three book states, all listed.** A file; the card's embedded `character_book`,
+which is where a card nobody has opened on this host still sits (converted the
+way `materialise.ts` converts it — `fromCharacterBook` then `toWorldbookEntry`,
+because a card book is the V2 spec's shape and reading it as a book file's gives
+every entry a default position and no keys); and a **bound name with nothing
+behind it**, reported as `source: 'missing'` rather than dropped. That last one
+is 2 of the corpus's 18 bindings, and it is the case a listing has to keep: a
+binding that activates nothing is otherwise indistinguishable from a book with
+no entries, and only one of those is a broken card.
+
+**What it costs, measured against the operator's own profile** (13 cards, 11
+carrying a book, 841 entries between them):
+
+| card | entries | `charDigest` | the same book through `worldbook.get` |
+| --- | --- | --- | --- |
+| `Sgw又看一集` | 140 | 23 489 B | 349 188 B |
+| `魔法少女的扣扣审判1` | 153 | 20 526 B | 1 161 905 B |
+| `银麒赎世` | 129 | 20 393 B | 839 338 B |
+| `爱衣` | 12 | 1 483 B | 51 732 B |
+
+15× to 57× smaller, and the difference is entirely `content`. The read itself
+costs what `worldbook.charNames` with `withCard` already costs — one card
+decode, one binding-table read, one book file per book — plus the per-entry
+mapping; there is no new file access pattern and no cache.
+
+**Refused, never answered empty, on a host with no book store.** `{books: []}`
+is already the answer for a card that carries no world info, and a store-less
+host giving it would be reporting a fact about a card it never looked at. Same
+line every read in this family draws.
+
+**What would overturn it.** A book large enough that ~23 KB stops being the
+ceiling — the shape would grow a `limit`/`cursor`, not a per-book call. Or
+upstream growing a listing member of its own, at which point this should be
+renamed to match it.

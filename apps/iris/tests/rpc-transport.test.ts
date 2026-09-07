@@ -340,6 +340,9 @@ const PROBES: Record<string, unknown> = {
   // Empty name is upstream's absent-answer path and needs no book to exist.
   'worldbook.load': { name: '' },
   'worldbook.charNames': { characterId: 'no-such-character' },
+  // The character page's listing. Refused with not-found on the probe host —
+  // no book store — which proves the handler ran, like the probes around it.
+  'worldbook.charDigest': { characterId: 'no-such-character' },
   'worldbook.replace': { name: 'no-such-book', entries: [] },
   // Refused with not-found on the probe host (no store) — reachability, not success.
   'worldbook.create': { name: 'no-such-book' },

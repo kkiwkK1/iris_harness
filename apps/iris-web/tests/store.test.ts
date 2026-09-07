@@ -1541,3 +1541,160 @@ test('a host without the file import answers honestly: nothing landed, and the r
   assert.equal(store.getState().notice?.kind, 'error')
   dispose()
 })
+
+test('the character page fetches its detail once per card, however often it asks', async () => {
+  /*
+   * The budget this action was written to. The page asks from an effect, so it
+   * asks again on every re-render and on every language switch; the measured
+   * precedent for getting this wrong is `script.context`, where a per-frame
+   * fetch of 322 KB put the host 30 seconds behind on a cold page load.
+   *
+   * Counted per method, not in total: a guard that skipped only the book half
+   * would still leave the script half firing on every render, and one number
+   * would hide that.
+   */
+  const calls: string[] = []
+  const stub = stubClient()
+  const client: IrisClient = {
+    ...stub.client,
+    async call(method) {
+      calls.push(method)
+      if (method === 'worldbook.charDigest') return { books: [] } as never
+      if (method === 'script.list') return { scripts: [], documentGranted: false } as never
+      throw new Error(`unexpected ${method}`)
+    },
+  }
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+
+  await store.getState().loadCharacterDetail('luoluo')
+  await store.getState().loadCharacterDetail('luoluo')
+  await store.getState().loadCharacterDetail('luoluo')
+
+  assert.equal(calls.filter(method => method === 'worldbook.charDigest').length, 1)
+  assert.equal(calls.filter(method => method === 'script.list').length, 1)
+
+  // A different card is a different question, and is asked.
+  await store.getState().loadCharacterDetail('aria-vance')
+  assert.equal(calls.filter(method => method === 'worldbook.charDigest').length, 2)
+  assert.equal(store.getState().characterDetail?.characterId, 'aria-vance')
+  dispose()
+})
+
+test('a host that refuses the detail leaves the page as it was, with no error banner', async () => {
+  /*
+   * Both halves are refusable by configuration: a host with no world book store
+   * refuses `worldbook.charDigest`, one with no script policy can refuse
+   * `script.list`. Neither is a fault, and a page opened on such a host must
+   * not greet the reader with an error about a feature it never had — the same
+   * line `loadPresets` and `loadRegexScripts` draw.
+   *
+   * `undefined` after the fetch settles is the answer, and it is deliberately
+   * not an empty list: an empty list would read as "this card has no books",
+   * which is a claim about the card rather than about the host.
+   */
+  const stub = stubClient()
+  const client: IrisClient = {
+    ...stub.client,
+    call: async () => {
+      throw Object.assign(new Error('this host keeps no world book store'), { code: 'not-found' })
+    },
+  }
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+
+  await store.getState().loadCharacterDetail('luoluo')
+
+  const detail = store.getState().characterDetail
+  assert.equal(detail?.characterId, 'luoluo')
+  assert.equal(detail?.loading, false, 'the column would say "reading the card" forever')
+  assert.equal(detail?.books, undefined)
+  assert.equal(detail?.scripts, undefined)
+  assert.equal(store.getState().notice, undefined, 'browsing a card raised an error notice')
+  dispose()
+})
+
+test('browsing a card does not move the open chat’s script slice', async () => {
+  /*
+   * `scripts` / `scriptsFor` / `scriptsAllowed` describe the card whose
+   * conversation is open, and the consent answer travels with them. Writing
+   * them from a page that is merely being *looked at* would report one card's
+   * authorisation under another card's name — and, through `ConsentAsk`, could
+   * put the run-scripts question about a card nobody opened. So the page's
+   * fetch lands in its own slice, and this holds that line.
+   */
+  const stub = stubClient()
+  const client: IrisClient = {
+    ...stub.client,
+    async call(method) {
+      if (method === 'worldbook.charDigest') return { books: [] } as never
+      if (method === 'script.list') {
+        return {
+          scripts: [{ id: 's1', name: 'browsed card script', enabledByCard: true, enabled: true, bytes: 10 }],
+          documentGranted: true,
+          scriptsAllowed: true,
+        } as never
+      }
+      throw new Error(`unexpected ${method}`)
+    },
+  }
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+  store.setState({ scripts: [], scriptsFor: 'the-open-card', scriptsAllowed: 'declined', documentGranted: false })
+
+  await store.getState().loadCharacterDetail('some-other-card')
+
+  assert.equal(store.getState().scriptsFor, 'the-open-card')
+  assert.deepEqual(store.getState().scripts, [])
+  assert.equal(store.getState().scriptsAllowed, 'declined')
+  assert.equal(store.getState().documentGranted, false, 'a browsed card handed its page grant to the open one')
+  // …while the page's own slice did get the answer.
+  assert.equal(store.getState().characterDetail?.scripts?.length, 1)
+  dispose()
+})
+
+test('a script switched off in the panel reaches the card page’s own copy', async () => {
+  /*
+   * Two surfaces hold the same list: `scripts` (the open chat's card, which the
+   * panel edits) and `characterDetail.scripts` (whatever card is being
+   * browsed). When they are the same card, a switch flipped in the panel has to
+   * reach both, or the page goes on saying 「you switched it off」 about a script
+   * the reader has just switched back on — a stale read with nothing on screen
+   * to suggest it.
+   *
+   * Written from the write's own answer rather than re-fetched: `script.setEnabled`
+   * hands back the whole list for that card.
+   */
+  const stub = stubClient()
+  const client: IrisClient = {
+    ...stub.client,
+    async call(method, params) {
+      if (method === 'worldbook.charDigest') return { books: [] } as never
+      if (method === 'script.list') {
+        return {
+          scripts: [{ id: 's1', name: 'panel script', enabledByCard: true, enabled: true, bytes: 10 }],
+          documentGranted: false,
+        } as never
+      }
+      if (method === 'script.setEnabled') {
+        const asked = params as { enabled: boolean }
+        return {
+          scripts: [{ id: 's1', name: 'panel script', enabledByCard: true, enabled: asked.enabled, bytes: 10 }],
+        } as never
+      }
+      throw new Error(`unexpected ${method}`)
+    },
+  }
+  const { store, dispose } = createIrisStore(client, TEST_SOURCE)
+
+  await store.getState().loadCharacterDetail('aria')
+  store.setState({ scriptsFor: 'aria' })
+  assert.equal(store.getState().characterDetail?.scripts?.[0]?.enabled, true)
+
+  await store.getState().setScriptEnabled('s1', false)
+
+  assert.equal(store.getState().characterDetail?.scripts?.[0]?.enabled, false)
+  // …and a page open on a *different* card is left alone: the two surfaces are
+  // only one fact when they name the same card.
+  store.setState({ characterDetail: { characterId: 'someone-else', loading: false, books: undefined, scripts: [] } })
+  await store.getState().setScriptEnabled('s1', true)
+  assert.deepEqual(store.getState().characterDetail?.scripts, [])
+  dispose()
+})

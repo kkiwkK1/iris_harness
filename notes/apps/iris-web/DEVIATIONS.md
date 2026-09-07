@@ -2181,3 +2181,81 @@ legitimately differs per row, `floor` being carried in it rather than beside it
 — would make one flight the wrong unit, and the key would have to carry the
 floor. So would a host that served RPCs concurrently: N parallel requests would
 no longer serialise, and per-row freshness would cost nothing again.
+
+## 57. A character's page lists what a card carries; upstream has no such page
+
+**Kind:** deliberate improvement (a second round on the same page: the columns
+were counts, and are now counts over lists).
+
+**Upstream.** There is no character page. A card is a row in the character list,
+and clicking the row *starts a conversation with it*. What the card contains is
+answerable only by opening panels that describe **the card currently being
+played**: the world info editor for its book, the script manager for its
+scripts, the chat list for its conversations. A card you have not opened is a
+picture and a name.
+
+**Iris** has the page (§ the 「梅花」 library work, `CharacterPage.tsx`), and this
+round gave its three columns their contents:
+
+- **对话** — one row per conversation: title, last activity, floor count.
+  Clicking it calls `openChat`, the same action the sidebar's rows call, and
+  hands the shell back to the reading surface (`onEnterReading`). Derived
+  entirely from `state.chats`, so it needs no host call and is answerable for
+  every card on every host.
+- **世界书** — one row per book the card involves (its own, plus every book the
+  reader bound through the host), folding open to its entries. The row carries
+  three figures — entries / enabled / constant — and each entry carries its
+  name, what fires it, where it lands, and whether it is switched off.
+- **脚本** — one row per script: name, that it came out of the card, both
+  switches said as the *reason* rather than the result, its size in bytes, and
+  how many of its buttons its author left visible.
+
+**What it costs, in bytes, measured.** The library list must stay counts-only —
+a card is a median of 494 KiB — so the lists are fetched per page open:
+`worldbook.charDigest` (new, host ledger §27) plus the existing `script.list`,
+held in the store against the character id and re-fetched for no other reason.
+Measured against the operator's own profile, `charDigest`'s whole response:
+
+| card | entries | this response | the same books through `worldbook.get` |
+| --- | --- | --- | --- |
+| `Sgw又看一集` | 140 | 23 489 B (22.9 KiB) | 349 188 B (341.0 KiB) |
+| `魔法少女的扣扣审判1` | 153 | 20 526 B (20.0 KiB) | 1 161 905 B (1 134.7 KiB) |
+| `爱衣` | 12 | 1 483 B (1.4 KiB) | 51 732 B (50.5 KiB) |
+| `Assistant` (no book) | 0 | 12 B | — |
+
+The 140-entry card is `Sgw又看一集`, not `爱衣`: the task named 爱衣 for its
+「内嵌 140 条」 and 爱衣's book holds **12**. Worth recording because the two cards
+are adjacent in every earlier note about this page.
+
+So the ceiling on this page's new traffic is ~23 KB per card, once. The
+alternative — composing the same view out of `worldbook.charNames` plus one
+`worldbook.get` per book — is one call per book and 15× to 57× the bytes, all of
+it entry *content* the page never shows.
+
+**The second cost is vertical.** 153 entries is 153 rows, and a column that grew
+by 153 would push the two beside it off the screen. So a book folds shut behind
+its figures and its entries scroll inside the column (`max-height: 320px`,
+`shell.css`). A reader who wants to *edit* those entries still goes to the world
+book panel; this page is a listing.
+
+**The cache has two invalidations, and they are the whole staleness story.**
+Saving a book in the world book editor clears the held listing (the next page
+open asks again), and a script switched in `ScriptPanel` is written straight
+into the page's copy from that write's own answer. Nothing else invalidates:
+another client editing a book on the same host would leave this page's figures
+behind until the reader switched cards, which is the cost of holding the answer
+at all and is recorded rather than fixed.
+
+**What is deliberately not here.** No switch. `script.setEnabled` is scoped to
+the card whose conversation is open (the store's `scriptsFor`), and the panel
+beside that conversation owns it — a toggle on a page being browsed would either
+need a second write path for a card nobody opened, or would write the wrong
+card's policy. The page says where the control is instead. Likewise the reader's
+own consent answer is shown only when `scriptsFor` names *this* card, unchanged
+from the previous round.
+
+**What would overturn it.** A card whose books run to thousands of entries, where
+23 KB stops being the ceiling and the digest needs paging (the shape would be a
+`limit`/`cursor` on `worldbook.charDigest`, not a per-book call). Or a decision
+that the page should edit rather than list, which would move the entry rows onto
+the world book panel's editor and make this page a launcher again.

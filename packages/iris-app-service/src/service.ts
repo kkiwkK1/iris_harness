@@ -51,7 +51,7 @@ import { AppError, invalid, notFound } from './errors.ts'
 import { FavoriteStore } from './favorites.ts'
 import type { WorldbookBindingStore } from './materialise.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
-import { cardWorldbookView, charWorldbookNames, WorldbookStore } from './worldbooks.ts'
+import { cardWorldbookDigest, cardWorldbookView, charWorldbookNames, WorldbookStore } from './worldbooks.ts'
 import { activationSettingsOf } from './worldbook-settings.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
@@ -2088,6 +2088,36 @@ export class IrisAppService {
         return {
           ...names,
           card: await cardWorldbookView(card, worldbooks, binding?.name),
+        }
+      },
+
+      /*
+       * The character page's one world-book call, and one per page open is the
+       * budget it was designed to.
+       *
+       * Refused on a host with no book store rather than answered `{books: []}`:
+       * the empty list is already this method's answer for a card that carries no
+       * world info, and a store-less host giving it would report a fact about a
+       * card it never looked at. That is the line every read in this family
+       * draws.
+       *
+       * The extra bindings come from `settings.charBooks`, the same reader
+       * `worldbook.charNames` above uses, so the two cannot disagree about which
+       * books the user bound to this character.
+       */
+      'worldbook.charDigest': async ({ characterId }) => {
+        if (worldbooks === undefined) {
+          throw notFound(`world books for "${characterId}"`)
+        }
+        const card = await library.load(characterId)
+        const binding = await this.#options.worldbookBindings?.get(characterId)
+        return {
+          books: await cardWorldbookDigest(
+            card,
+            worldbooks,
+            binding?.name,
+            settings.charBooks(characterId),
+          ),
         }
       },
 

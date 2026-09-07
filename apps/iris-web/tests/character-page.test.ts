@@ -48,6 +48,21 @@ const KEYS: readonly StringKey[] = [
   'faceScriptCount',
   'faceScriptsAllowed',
   'faceScriptsDeclined',
+  /*
+   * The three lists' own copy. Each column carries a list under its count now
+   * (`loadCharacterDetail`), and every key here is rendered by the page itself
+   * — the sentences built inside `character-facts.ts` go through `translate`
+   * and are held by `character-facts.test.ts` in both languages instead.
+   */
+  'faceOpenConversation',
+  'readingCard',
+  'faceBookFigures',
+  'faceBookNoEntries',
+  'faceEntryConstant',
+  'faceEntrySecondary',
+  'faceEntryOff',
+  'faceScriptInCard',
+  'faceScriptSwitchNote',
 ]
 
 test('the page names every key it needs, in both languages', () => {
@@ -87,10 +102,32 @@ test('each content column is guarded by the field it reports', () => {
     /character\.description === undefined \|\| character\.description === ''/,
     'the description column no longer refuses an absent or empty description',
   )
+  /*
+   * The world book column's guard **widened** with the listing, and the wider
+   * form is the assertion now: the column exists when the card embeds a book
+   * *or* when the host listed one. A card that embeds nothing and binds a book
+   * by name has world info no count on the summary can see, and 18 of the 19
+   * local cards bind something — so the old guard was dropping a column for a
+   * card that plainly has a book. What must not come back is a column drawn
+   * unconditionally, which is what the second assertion holds.
+   */
+  assert.match(
+    PAGE,
+    /const bookColumn = character\.bookEntryCount !== undefined \|\| hasBooks/,
+    'the world book column is no longer guarded on the card having a book at all',
+  )
+  assert.match(
+    PAGE,
+    /\{!bookColumn \? null : \(/,
+    'the world book column no longer refuses to draw for a card with no book',
+  )
+  // The count line inside it keeps its own guard: `bookEntryCount` is the only
+  // thing that can produce that sentence, and a card whose books are known only
+  // to the host has no count to print.
   assert.match(
     PAGE,
     /character\.bookEntryCount === undefined \? null/,
-    'the world book column is no longer guarded on the count being present',
+    'the embedded-count line is no longer guarded on the count being present',
   )
   assert.match(
     PAGE,
@@ -149,5 +186,14 @@ test('the facts row still has a column that is always knowable', () => {
    * own three columns.
    */
   assert.match(PAGE, /t\('faceConversations'\)/, 'the always-knowable column is gone')
-  assert.match(PAGE, /chats\.filter\(row => row\.characterId === character\.characterId\)/, 'the count is no longer derived')
+  /*
+   * The filter moved into `character-facts.ts` (`chatsOf`) when the column grew
+   * its list, so what is held here is that the column is still **derived from
+   * the store's chats** rather than fetched — the property that makes it
+   * answerable for every card on every host, including one that refuses every
+   * detail call. The filter's own rule (a chat with no `characterId` is nobody's)
+   * is held in `character-facts.test.ts`.
+   */
+  assert.match(PAGE, /chatsOf\(chats, character\.characterId\)/, 'the conversation column is no longer derived from the store')
+  assert.match(PAGE, /useIris\(state => state\.chats\)/, 'the page no longer reads the store’s conversations')
 })

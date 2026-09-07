@@ -18,6 +18,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 import type {
   BackupPreview,
   BackupSummary,
+  CardBookDigest,
   CardWorldbookView,
   CharacterSummary,
   ChatSearchHit,
@@ -392,6 +393,39 @@ export interface IrisState {
     card?: CardWorldbookView
   } | undefined
   /**
+   * What one character's page has fetched about that card, or undefined before
+   * any page has been opened.
+   *
+   * **Per page open, and cached against `characterId`.** The library list
+   * carries counts and one clipped string for every card, deliberately — a card
+   * is a median of 494 KiB — so the page's lists have to be fetched, and this is
+   * where they land. `loadCharacterDetail` refuses to re-fetch a card it already
+   * holds, which is what keeps a re-render from becoming a request: the same
+   * discipline `script.context` lacked when a per-frame fetch of 322 KB put the
+   * host 30 seconds behind.
+   *
+   * **Three states per half, not two.** `loading` says a call is in flight;
+   * `undefined` after it clears says the host would not answer (no book store,
+   * no script policy), which is a configuration rather than a fault and must not
+   * read as "this card has no books". The counts on the summary are what the
+   * page falls back to, and they are always there.
+   *
+   * `scripts` is held here rather than in {@link IrisState.scripts} on purpose:
+   * that slice belongs to the **open chat's** character and carries the consent
+   * answer with it, and a page merely being looked at must not move it — writing
+   * it would report one card's authorisation under another card's name and could
+   * put the run-scripts question about a card nobody opened.
+   */
+  characterDetail: {
+    characterId: string
+    /** True while either half is still in flight. */
+    loading: boolean
+    /** The card's books, entry by entry; undefined when the host refused. */
+    books: CardBookDigest[] | undefined
+    /** The card's scripts; undefined when the host refused. */
+    scripts: ScriptView[] | undefined
+  } | undefined
+  /**
    * The entry editor's local draft for the one book it has open, or undefined
    * when none is open.
    *
@@ -693,6 +727,16 @@ export interface IrisActions {
   exportCharacter(characterId: string, format: 'png' | 'json'): Promise<void>
   patchSettings(patch: Record<string, unknown>): Promise<void>
   loadScripts(characterId: string): Promise<void>
+  /**
+   * Fetch what a character's page shows beyond the library's counts.
+   *
+   * One call per card per session: it returns immediately for a card already
+   * held. Each half resolves to `undefined` rather than raising when the host
+   * refuses it — a host with no book store or no script policy is a
+   * configuration, and a page opened on such a host must not greet the reader
+   * with an error about a feature it never had.
+   */
+  loadCharacterDetail(characterId: string): Promise<void>
   setScriptEnabled(scriptId: string, enabled: boolean): Promise<void>
   /**
    * Record the user's answer to the run-scripts question.
@@ -1215,6 +1259,7 @@ export function createIrisStore(
       settingsOverrides: undefined,
       worldbooks: undefined,
       charBooks: undefined,
+      characterDetail: undefined,
       wiEditor: undefined,
       personas: undefined,
       notice: undefined,
@@ -1865,6 +1910,19 @@ export function createIrisStore(
           // Reset dirty from the host's answer, not from the drafts.
           set(prev => ({
             wiEditor: prev.wiEditor === undefined ? undefined : markSaved(prev.wiEditor, answer.entries),
+            /*
+             * And drop whatever listing a character page is holding.
+             *
+             * `characterDetail` is cached per card and re-fetched for no other
+             * reason, which is what keeps that page to one call per card — but a
+             * book just rewritten here is exactly the case where "no other
+             * reason" is wrong: the reader would go back to the card and read
+             * their own edit's figures as they were before it. Cleared rather
+             * than patched, because which card a book belongs to is the host's
+             * answer (`worldbook.charDigest`), not something to infer from a
+             * name — and the next page open pays one call to ask again.
+             */
+            characterDetail: undefined,
           }))
           get().notify('info', translate(getLanguage(), 'wiSaved', { name: state.book }))
         })
@@ -1958,6 +2016,59 @@ export function createIrisStore(
             // the store keeps saying only what the host said.
             scriptsAllowed: consentState(listed),
           })
+        })
+      },
+
+      async loadCharacterDetail(characterId: string): Promise<void> {
+        /*
+         * Held per card, and this line is the budget.
+         *
+         * The page asks on every mount and on every character switch, so
+         * without the guard a re-render would be a pair of host calls. The
+         * comparison is against the *held* card rather than a "loading" flag, so
+         * a second ask while the first is in flight is also refused — the set
+         * below happens before the first await.
+         */
+        if (get().characterDetail?.characterId === characterId) return
+        // Cleared to this card first: the previous card's books and scripts must
+        // not sit under the new card's name for the length of a round trip, and
+        // `loading` is what lets the page say "reading the card" rather than
+        // rendering an absence that means something else.
+        set({ characterDetail: { characterId, loading: true, books: undefined, scripts: undefined } })
+        /*
+         * Caught per half rather than guarded, on the `loadPresets` precedent.
+         * A host with no world book store refuses `worldbook.charDigest` and one
+         * with no script policy answers `script.list` with an empty list; either
+         * is a composition, not a fault, and a notice would put an error banner
+         * in front of a reader who merely opened a card page. The console keeps
+         * the reason.
+         *
+         * `script.list` is reused rather than a second listing method being
+         * added: it already answers exactly this — every script the card
+         * carries, both switches reported — and the one thing it must not do
+         * here is write the store's `scripts`/`scriptsFor` slice, which belongs
+         * to the open chat.
+         */
+        const [books, scripts] = await Promise.all([
+          client.call('worldbook.charDigest', { characterId }).catch((error: unknown) => {
+            console.warn('worldbook.charDigest refused; the page keeps the summary counts', error)
+            return undefined
+          }),
+          client.call('script.list', { characterId }).catch((error: unknown) => {
+            console.warn('script.list refused; the page keeps the summary counts', error)
+            return undefined
+          }),
+        ])
+        // The reader can have moved to another card while both were in flight.
+        // An answer about a card that is no longer open is dropped, not shown.
+        if (get().characterDetail?.characterId !== characterId) return
+        set({
+          characterDetail: {
+            characterId,
+            loading: false,
+            books: books?.books,
+            scripts: scripts?.scripts,
+          },
         })
       },
 
@@ -2216,6 +2327,21 @@ export function createIrisStore(
         await guard(async () => {
           const { scripts } = await client.call('script.setEnabled', { characterId, scriptId, enabled })
           if (get().scriptsFor === characterId) set({ scripts })
+          /*
+           * The character page holds its own copy of the same list, so a switch
+           * flipped in the panel has to reach it — otherwise the page keeps
+           * saying 「你已关闭」 about a script the reader has just switched back
+           * on. Written from this answer rather than cleared: the host has just
+           * handed over the whole list for this card, so there is nothing to
+           * re-fetch. Guarded on the page's slice naming the same card, because
+           * a reader can be browsing one card while another one's conversation
+           * is open.
+           */
+          set(prev => ({
+            characterDetail: prev.characterDetail?.characterId === characterId
+              ? { ...prev.characterDetail, scripts }
+              : prev.characterDetail,
+          }))
         })
       },
 

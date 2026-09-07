@@ -176,6 +176,17 @@ provider counted」是另一件事（上游 ST 每条消息显示的 `token_coun
 | `Composer.tsx` 列表状态那一行 | 点开菜单时列表缺席就当场探一次，所以多了两种状态：在读、以及读失败。失败那句原样转述宿主命名过的拒绝（`unauthorized` / `network` / `no-endpoint` …），不改写成一句「获取失败」——那三种指向的下一步不同 | `modelMenuReading modelMenuReadFailed` |
 | `Composer.tsx` | **改写** `modelMenuNoList`：原文写「可在连接面板里探测一次」。现在点开菜单自己就会探，那句话把读者指向一条不再需要走的路；剩下的只说事实 | （改写一键） |
 
+任务（角色页三栏由计数升级成清单，`dev/character-page-details`）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `CharacterPage.tsx` 对话栏 | 每个会话一行：标题＋「N 分钟前 · N 条消息」，点进去就是库里那条既有的打开路径（`openChat`）。行的 aria 回显标题，因为一列里全是同形状的行，只念「打开」的按钮在读屏里是十个一样的按钮 | `faceOpenConversation`（`messageCount` 复用） |
+| `CharacterPage.tsx` 世界书栏 | 每本书一行摘要，展开才列条目（`<details>`）。摘要是三个数：条目数 / 启用数 / 常驻数——实测本机 841 条里 622 启用、309 常驻，只报总数会把一本书说得比实际在跑的大三成 | `faceBookFigures faceBookNoEntries` |
+| `CharacterPage.tsx` 书来源注记 | 只在需要解释时出现：卡里还没落盘的内嵌书、宿主物化时撞名改过的名字、绑了名字但本机没有这本书（实测 18 条绑定里 2 条如此）、以及你自己加绑的附加书。寻常那本（卡自己的、在磁盘上、名字没变）不加注——每行都注等于没注 | `faceBookEmbedded faceBookMinted faceBookMissing faceBookExtra` |
+| `CharacterPage.tsx` 条目行 | 一行名字（`comment`）＋一行 meta：常驻 / 触发键 / 位置（八种 ST 位置，只有 `at_depth` 带深度）/ 副键计数 / 已停用。「没有触发键——永远不会触发」是给非常驻却无键的条目的：本机 841 条里 307 条无键，页面上没有别的东西说得出这件事 | `faceEntryConstant faceEntryKeys faceEntryNoKeys faceEntrySecondary faceEntryOff facePlaceBeforeChar facePlaceAfterChar facePlaceBeforeExamples facePlaceAfterExamples facePlaceBeforeNote facePlaceAfterNote facePlaceAtDepth facePlaceOutlet` |
+| `CharacterPage.tsx` 脚本行 | 一行名字＋一行 meta：来源（`script.list` 只答卡内嵌，本机 42 个脚本的 `type` 全是 ST 的 `'script'`，没有第二档）/ 两个开关分开成句 / 体积 / 按钮数与其中可见数（89 个按钮里 58 个作者设为不可见）。末尾一句说开关在哪——这一页只报告，`script.setEnabled` 的作用域是**正在对话的那张卡** | `faceScriptInCard faceScriptOn faceScriptOffByCard faceScriptOffByYou faceScriptOnByYou faceScriptButtons faceScriptSwitchNote` |
+| `CharacterPage.tsx` 在读一句 | 两份清单按需拉取（`worldbook.charDigest` ＋ `script.list`），在途时栏里说「正在读取卡片…」；落地后仍然缺就什么都不说——宿主不存世界书是处境，空清单会被读成「这张卡没有书」。这一键与 `ScriptPanel.tsx` 共用 | （`readingCard` 复用） |
+
 ## 四、持久化决策（同 `language.ts` 文档）
 
 `localStorage` 键 `iris.language`，与 `iris.theme` / `iris.reading` 同一处、同一套
