@@ -20,6 +20,7 @@ import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
+import { isFailure } from '../sandbox/script-run-state.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
@@ -41,6 +42,7 @@ export function Masthead({
   const characters = useIris(state => state.characters)
   const transport = useIris(state => state.transport)
   const origin = useIris(state => state.dataOrigin)
+  const runStates = useIris(state => state.runStates)
   // Subscribed so a language switch re-renders every word the head shows.
   useLanguage()
 
@@ -48,6 +50,22 @@ export function Masthead({
   // Turns rather than messages: a turn is the unit the reader thinks in, and the
   // one swipe and regenerate address.
   const turns = new Set((view?.messages ?? []).map(message => message.turn)).size
+
+  /*
+   * How many of the card's scripts are actually alive, for the meta line.
+   *
+   * Counted from the **run states** and not from `state.scripts`: the script
+   * list says what the card ships and what is switched on, which is a different
+   * question — a script can be enabled and have thrown on line one. So the count
+   * is the live phases: everything that is not a failure
+   * (`refused`/`threw`/`bootstrap-failed`/`silent`) and not `killed`, which is
+   * what leaving a chat looks like from inside. `ran` counts, because `ran`
+   * means the body finished evaluating and not that the card stopped working —
+   * a status-bar card spends its whole life in listeners installed by then.
+   */
+  const running = runStates.filter(
+    state => !isFailure(state.phase) && state.phase !== 'killed',
+  ).length
 
   return (
     <header className="iris-masthead">
@@ -74,7 +92,10 @@ export function Masthead({
          * the language exactly like the text does — so it buys the instrument
          * nothing and costs the reader the name they can see.
          */}
-        <Button variant="ghost" size="sm" data-control="settings" onClick={onOpenSettings}>
+        {/* Outlined rather than ghost: the artboards give it a hairline box
+            (`Main.dc.html`), because a bare word at the end of the masthead's
+            own line read as part of the meta rather than as the way out. */}
+        <Button variant="outline" size="sm" data-control="settings" onClick={onOpenSettings}>
           {t('settings')}
         </Button>
       </div>
@@ -106,11 +127,25 @@ export function Masthead({
         </p>
       ) : null}
       {view === undefined ? null : (
+        /*
+         * 第 N 回 · 模型 · N 个脚本在运行 — the artboards' meta line, plus the
+         * character's name, which they leave out and which the title above does
+         * not carry: a conversation can be renamed to anything.
+         *
+         * The running-script count is the part that was missing. `state.scripts`
+         * has been on the page since card scripts existed and the reader could
+         * only learn the number by opening the settings drawer — while it is the
+         * single most useful fact about a card-heavy conversation, and the
+         * reason the page might be slow. Rendered only when it is non-zero: a
+         * 「0 个脚本在运行」 on every chat without a card would be a permanent
+         * clause saying nothing.
+         */
         <p className="iris-masthead__meta iris-meta">
           {[
             character?.name,
             turns === 0 ? t('notStarted') : turns === 1 ? t('oneTurn') : t('turns', { n: turns }),
             settings?.model,
+            running === 0 ? undefined : t('scriptsRunning', { n: running }),
             generating ? t('writingNow') : undefined,
           ]
             .filter(part => part !== undefined && part !== '')

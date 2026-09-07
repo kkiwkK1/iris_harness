@@ -12,6 +12,13 @@
  * branch whose parent is not in the list is a top-level row; a wrong-looking
  * guess at the parent would be worse than a flat list.
  *
+ * **Neither the open tab nor the chosen character is local state any more.**
+ * Both live in the shell (`App.tsx`), because under 「梅花」 the library tab
+ * changes the *main area* too: a row opens that character's page rather than
+ * starting a conversation with it on the spot. That is the artboards' ruling
+ * (`Library.dc.html`), and it also answers a real cost of the old behaviour — a
+ * click that created a chat immediately left no way to look at a card first.
+ *
  * @module iris-web/app/Sidebar
  */
 
@@ -23,6 +30,8 @@ import type { CharacterSummary, ChatSummary } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
+import { Portrait } from './Portrait.tsx'
+import { PlumBlossom } from './marks.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { since, toBase64 } from './format.ts'
 import { CARD_FILE_ACCEPT } from './card-files.ts'
@@ -45,10 +54,34 @@ interface RowAction {
 /**
  * Render the sidebar.
  * @param props.open - whether the sidebar is showing on a narrow screen.
+ * @param props.tab - which list is showing; held by the shell, because the main
+ *   area follows it.
+ * @param props.onTab - switch lists.
+ * @param props.face - the character whose page is open, if any.
+ * @param props.onFace - open a character's page.
  * @returns the sidebar.
  */
-export function Sidebar({ open }: { open: boolean }): ReactElement {
-  const [tab, setTab] = useState<SidebarTab>('chats')
+export function Sidebar({
+  open,
+  tab,
+  onTab,
+  face,
+  onFace,
+}: {
+  open: boolean
+  tab: SidebarTab
+  onTab: (tab: SidebarTab) => void
+  face: string | undefined
+  onFace: (characterId: string) => void
+}): ReactElement {
+  /*
+   * Kept under the name the tablist has always written, because
+   * `sidebar-tabs.test.ts` pins each `data-tab="…"` against the `setTab('…')`
+   * beside it — two literals for one identity, and that test is the only thing
+   * that notices when they drift. Renaming the call to `onTab` in the JSX would
+   * have silenced it rather than satisfied it.
+   */
+  const setTab = onTab
   const chats = useIris(state => state.chats)
   const characters = useIris(state => state.characters)
   const chatId = useIris(state => state.chatId)
@@ -85,9 +118,9 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
   }, [query, actions])
 
   // The library's filter, sort and inline editors. All client-side state: the
-  // whole list is already in the store, so a tag click re-renders it at once —
+  // whole list is already in the store, so a keystroke re-renders it at once —
   // a round trip per filter would be latency in front of a list this small.
-  const [tagFilter, setTagFilter] = useState('')
+  const [libraryQuery, setLibraryQuery] = useState('')
   const [sortBy, setSortBy] = useState<CharacterSort>('name')
   // At most one row edits at a time; `undefined` means none does.
   const [renaming, setRenaming] = useState<{ id: string, name: string } | undefined>(undefined)
@@ -99,11 +132,17 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
   const roots = chats.filter(row =>
     row.parentChatId === undefined || !chats.some(other => other.chatId === row.parentChatId))
 
-  // Every tag the library carries, once, in reading order — the filter's
-  // options. A tag no card uses any more disappears from the row by itself.
-  const allTags = [...new Set(characters.flatMap(character => character.tags))].sort((a, b) => a.localeCompare(b))
+  /*
+   * One box over names and tags, which is what the artboards' 「搜索角色或标签」
+   * promises and what replaced the tag `<select>`. Case-folded on both sides,
+   * and a substring rather than a prefix: a corpus card is called
+   * `不要被神隐挑战 V1.5.4 测试版`, and a reader looking for it types 神隐.
+   */
+  const needle = libraryQuery.trim().toLowerCase()
   const visibleCharacters = characters
-    .filter(character => tagFilter === '' || character.tags.includes(tagFilter))
+    .filter(character => needle === ''
+      || character.name.toLowerCase().includes(needle)
+      || character.tags.some(tag => tag.toLowerCase().includes(needle)))
     .sort((left, right) => {
       if (sortBy === 'updated') {
         return (right.updatedAt ?? 0) - (left.updatedAt ?? 0)
@@ -144,7 +183,9 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
   return (
     <nav className={`iris-sidebar${open ? ' iris-sidebar--open' : ''}`} aria-label={t('sidebarAria')}>
       <div className="iris-brand">
-        <span className="iris-brand__mark" aria-hidden="true" />
+        {/* The centre dot takes the desk this mark sits on, so it reads as a
+            blossom rather than as a hole punched in one under 墨. */}
+        <PlumBlossom size={22} on="var(--iris-bg-base)" />
         <span className="iris-brand__name">Iris</span>
       </div>
 
@@ -226,35 +267,42 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
         ) : (
           <>
             {/*
-              Filter and sort, above the rows. Two selects rather than a row of
-              chips: a corpus-wide tag census runs to dozens of tags, and a chip
-              row that scrolls sideways hides the filter it exists to offer.
+              A search box and three capsules, as the artboards draw it.
+
+              This replaces two `<select>`s. The tag one is gone because the box
+              above searches tags as well — a corpus-wide tag census runs to
+              dozens of names, and a menu of them is a scroll rather than a
+              filter. The sort one is gone because three words fit on the line:
+              a menu that must be opened to reveal its whole set costs a click
+              to learn nothing.
             */}
-            <div className="iris-library-tools">
-              <select
-                className="iris-search"
-                aria-label={t('filterByTag')}
-                value={tagFilter}
-                onChange={event => setTagFilter(event.target.value)}
-              >
-                <option value="">{t('allTags')}</option>
-                {allTags.map(tag => (
-                  <option key={tag} value={tag}>{tag}</option>
-                ))}
-              </select>
-              <select
-                className="iris-search"
-                aria-label={t('sortByAria')}
-                value={sortBy}
-                onChange={event => setSortBy(event.target.value as CharacterSort)}
-              >
-                <option value="name">{t('sortByName')}</option>
-                <option value="updated">{t('sortByUpdated')}</option>
-                <option value="favorite">{t('sortByFavorite')}</option>
-              </select>
+            <input
+              type="search"
+              className="iris-search"
+              aria-label={t('librarySearchAria')}
+              placeholder={t('librarySearchPlaceholder')}
+              value={libraryQuery}
+              onChange={event => setLibraryQuery(event.target.value)}
+            />
+            <div className="iris-sorts" role="group" aria-label={t('sortByAria')}>
+              {([
+                ['favorite', t('sortByFavorite')],
+                ['updated', t('sortByUpdated')],
+                ['name', t('sortByName')],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className="iris-sort"
+                  aria-pressed={sortBy === id}
+                  onClick={() => setSortBy(id)}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
             {visibleCharacters.length === 0 ? (
-              <p className="iris-list__empty">{t('libraryFilteredEmpty', { tag: tagFilter })}</p>
+              <p className="iris-list__empty">{t('librarySearchEmpty', { query: libraryQuery.trim() })}</p>
             ) : (
               visibleCharacters.map(character =>
                 renaming?.id === character.characterId ? (
@@ -290,7 +338,8 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
                     key={character.characterId}
                     character={character}
                     lang={lang}
-                    onOpen={() => void actions.createChat(character.characterId)}
+                    current={character.characterId === face}
+                    onOpen={() => { onFace(character.characterId) }}
                     onToggleStar={() =>
                       void actions.favoriteCharacter(character.characterId, character.favorite !== true)}
                     menu={{
@@ -457,17 +506,25 @@ function ChatRow({
 }
 
 /**
- * One library row: open on click, a star beside it, and the manager menu.
+ * One library row: a portrait, the name, its tags, a star, and the manager menu.
  *
- * The star is its own control rather than menu item *only* — favouriting is
- * the one action a reader does without opening anything, and hiding it a menu
- * deep would starve the sort-by-favorites order of the rows that make it
- * useful. The menu carries the rest: duplicate, rename, tags, export and the
- * chat import that was already here.
+ * The portrait is what makes this row a different shape from a chat row rather
+ * than the same shape with different words — a library is scanned by face, and
+ * the artboards give it 34px of one. The star is its own control rather than a
+ * menu item *only*, because favouriting is the one action a reader does without
+ * opening anything, and hiding it a menu deep would starve the sort-by-favorites
+ * order of the rows that make it useful. The menu carries the rest: duplicate,
+ * rename, tags, export and the chat import that was already here.
+ *
+ * The row's meta line is now the **tags**, not the date. Both were on it before
+ * and the row could not hold both plus a portrait; the artboards choose tags,
+ * and the choice is right — a date sorts a library and a tag identifies a card.
+ * The date is on the character page, where there is room to say what it means.
  */
 function CharacterRow({
   character,
   lang,
+  current,
   onOpen,
   onToggleStar,
   menu,
@@ -475,6 +532,8 @@ function CharacterRow({
   character: CharacterSummary
   /** The interface language, for the row's relative-time words. */
   lang: Language
+  /** Whether this character's page is the one open. */
+  current: boolean
   onOpen: () => void
   onToggleStar: () => void
   menu: { items: RowAction[], onSelect: (id: string) => void }
@@ -489,31 +548,41 @@ function CharacterRow({
 
   return (
     <div className="iris-row-group">
-      <button type="button" className="iris-row" onClick={onOpen}>
-        <span className="iris-row__title">
-          <span className={starred ? 'iris-star iris-star--on' : 'iris-star'} aria-hidden="true">
-            {starred ? '★' : '☆'}
-          </span>
-          {character.name}
-        </span>
-        <span className="iris-row__meta iris-meta">
-          {character.creator === undefined || character.updatedAt === undefined
-            ? meta
-            : `${meta} · ${t('byCreator', { creator: character.creator })}`}
-        </span>
-        {character.tags.length > 0 ? (
-          <span className="iris-row__tags">
-            {character.tags.slice(0, 4).map(tag => (
-              <span className="iris-tag" key={tag}>
-                {tag}
-              </span>
-            ))}
-          </span>
-        ) : null}
-      </button>
       <button
         type="button"
-        className="iris-act"
+        className="iris-row iris-row--character"
+        aria-current={current}
+        onClick={onOpen}
+      >
+        <Portrait character={character} size="row" />
+        <span className="iris-row__lines">
+          <span className="iris-row__title">{character.name}</span>
+          {character.tags.length > 0 ? (
+            <span className="iris-row__tags">
+              {character.tags.slice(0, 3).map(tag => (
+                <span className="iris-tag" key={tag}>
+                  {tag}
+                </span>
+              ))}
+            </span>
+          ) : (
+            // No tags is not nothing to say: the row still has to report when
+            // the card last changed, or a whole untagged library shows two
+            // lines of name and one of blank.
+            <span className="iris-row__meta iris-meta">{meta}</span>
+          )}
+        </span>
+      </button>
+      {/*
+        The star carries `iris-star` as well as `iris-act`, which it did not
+        before: the glyph used to be prefixed to the name *inside* the row and
+        the button beside it was an unstyled action, so two marks said one thing
+        and only one of them was plum. Now there is one star, and it is the
+        control (`shell.css` — plum when on, the faintest ink when not).
+      */}
+      <button
+        type="button"
+        className={starred ? 'iris-act iris-star iris-star--on' : 'iris-act iris-star'}
         aria-label={t(starred ? 'unfavorite' : 'favorite')}
         aria-pressed={starred}
         title={t(starred ? 'unfavorite' : 'favorite')}

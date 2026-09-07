@@ -121,9 +121,16 @@ export function AppearanceCard(): ReactElement {
       summary={`${t(THEME_NAME[resolveThemeId(theme)])} · ${userCss.enabled ? t('appearanceUserCssOn') : t('appearanceUserCssOff')}`}
     >
       {/*
-        The three built-ins, drawn rather than named. Each thumbnail is painted
-        from the theme's own token table, so these are swatches of the real
-        palettes, not pictures of them.
+        雪 / 墨 / 宣 — three cells, each a slab of that theme's own paper under
+        its name, as `Drawer.dc.html` draws it. The slab is painted from the
+        theme's token table, so these are swatches of the real palettes rather
+        than pictures of them.
+
+        It used to draw a whole miniature page in each cell: a desk, a sheet, two
+        lines of prose and an accent tick. `panels.css` records why that went —
+        five colours arguing inside a 100px box, answering a question nobody
+        asked — and what it cost: the accent is no longer previewed, which the
+        chosen cell's own plum border partly repays.
       */}
       <div className="iris-field">
         <span className="iris-field__label">{t('appearanceThemes')}</span>
@@ -134,7 +141,6 @@ export function AppearanceCard(): ReactElement {
               key={preset.id}
               type="button"
               className="iris-appearance__swatch"
-              style={{ background: preset.tokens['--iris-bg-base'] }}
               aria-pressed={theme === preset.id}
               aria-label={t('appearanceThemeAria', { name: t(THEME_NAME[preset.id]) })}
               onClick={() => setTheme(preset.id)}
@@ -145,20 +151,7 @@ export function AppearanceCard(): ReactElement {
                   background: preset.tokens['--iris-bg-page'],
                   borderColor: preset.tokens['--iris-rule'],
                 }}
-              >
-                <span
-                  className="iris-appearance__line"
-                  style={{ background: preset.tokens['--iris-ink'] }}
-                />
-                <span
-                  className="iris-appearance__line iris-appearance__line--short"
-                  style={{ background: preset.tokens['--iris-ink-secondary'] }}
-                />
-                <span
-                  className="iris-appearance__tick"
-                  style={{ background: preset.tokens['--iris-accent'] }}
-                />
-              </span>
+              />
               <span className="iris-appearance__name">{t(THEME_NAME[preset.id])}</span>
             </button>
           ))}

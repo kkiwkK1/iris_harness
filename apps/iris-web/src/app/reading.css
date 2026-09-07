@@ -2,7 +2,8 @@
  * The reading surface.
  *
  * No bubbles, no avatars, no rule between every message. A message is a
- * two-column row — a 46px margin for marginalia, then the text at the measure —
+ * two-column row — a 46px margin for marginalia, then the text filling the rest
+ * of the reading track —
  * and the only hairline is between *turns*, because a turn is what swipe and
  * regenerate address. The reader's own lines are set in the UI sans and
  * subordinated; the model's are typeset in the prose serif. That contrast
@@ -21,20 +22,26 @@
    */
   scrollbar-gutter: stable;
   /*
-   * Named as a container so an interface can ask how much room the window
-   * actually has. Nothing else needs it: prose is bounded by the measure on
-   * purpose, and only the thing that must escape the measure needs the page's
-   * real width. Query units read the content box, so the scrollbar is already
-   * excluded.
+   * No `container-type` any more. It existed so the interface slot could ask
+   * how wide the window really was and compute a breakout from the book measure
+   * in `cqi`. There is no measure to escape now — prose, a card and the composer
+   * are one width (`.iris-interfaces__slot` below) — so the container was a
+   * declaration with no reader, and containment is not free.
    */
-  container-type: inline-size;
 }
 
 .iris-column {
-  /* Margin + measure, plus breathing room at the right edge. */
-  max-width: var(--iris-column-max);
-  margin: 0 auto;
-  padding: 26px 20px 28px;
+  /*
+   * Three tracks, and the left one is not padding: `46px | 1fr | 46px`, where
+   * the 46px on the left is `.iris-msg`'s own marginalia grid track and the
+   * 46px on the right is this padding. That is what makes the flanks
+   * symmetrical (canvas.json: 阅读区左右各留 46px 对称,输入框居中不偏) without
+   * the prose being indented twice.
+   *
+   * No `max-width` and no auto margin: the column takes the whole reading track
+   * and re-wraps when the variable margin or the drawer moves.
+   */
+  padding: 40px var(--iris-gutter) 28px 0;
   /*
    * A short conversation sits ON the composer instead of floating above it. It
    * used to start at the top of the scroller, which left a hundred-plus pixels
@@ -59,6 +66,33 @@
 
 .iris-turn + .iris-turn {
   border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+/*
+ * 回目分隔用一小段枝: the boundary between turns carries a twig and one blossom.
+ *
+ * It sits **on** the rule, in the prose track rather than the margin — the turn
+ * ordinal already owns the margin — with the paper painted behind it so the rule
+ * appears to break for it. That is the same trick the ordinal uses, and it needs
+ * the same stacking position for the same reason: a card's interface is opaque
+ * and comes later in the DOM.
+ */
+.iris-turn__seam {
+  position: absolute;
+  top: -7px;
+  /*
+   * Centred on the **prose** track and not on the turn: the turn box spans the
+   * marginalia gutter as well, so a plain `left: 50%` would sit half a gutter
+   * left of the text it divides. The percentage resolves against the turn's
+   * width, which makes `(100% - gutter) / 2` half the prose column.
+   */
+  left: calc(var(--iris-gutter) + (100% - var(--iris-gutter)) / 2);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--iris-bg-page);
+  z-index: 1;
 }
 
 /*
@@ -91,10 +125,11 @@
   background: var(--iris-bg-page);
   font-variant-numeric: tabular-nums;
   /*
-   * Above the interface breakout, for the same reason `.iris-msg__margin` is:
-   * the slot's negative margins reclaim the air this number sits in, and the
-   * frame is later in the DOM. Its own background would otherwise be painted
-   * under an opaque card with nothing to report the loss.
+   * Above a card's interface, for the same reason `.iris-msg__margin` is: the
+   * frame is opaque and later in the DOM, so this number's own paper background
+   * would be painted over with nothing to report the loss. The slot no longer
+   * reclaims the margin — it is the prose's width exactly — but the DOM order
+   * has not changed, so the layer is still what keeps the mark.
    */
   z-index: 1;
 }
@@ -114,19 +149,20 @@
   align-items: flex-end;
   padding: 4px 15px 0 0;
   /*
-   * **Marginalia above the breakout.**
+   * **Marginalia above the interface.**
    *
-   * An interface slot escapes the measure with negative inline margins and
-   * reclaims the air beside the prose — air that includes this column, where
-   * the variant rail and the floor number live. The frame is opaque (a card
-   * paints its own background), it comes later in the DOM, and without a
-   * stacking position here it painted **over** the rail: measured at 240px² of
-   * rail hidden under a card interface, with nothing reporting a fault.
+   * The frame is opaque (a card paints its own background) and comes later in
+   * the DOM, and without a stacking position here it painted **over** the rail:
+   * measured at 240px² of rail hidden under a card interface, with nothing
+   * reporting a fault. That measurement was taken when the slot escaped the
+   * measure with negative margins and reclaimed this column's air; the slot is
+   * the prose's width now, so the overlap is gone — but the layer stays, because
+   * what actually protected the rail was the stacking position and not the
+   * geometry, and the next card that positions something of its own will find
+   * the same DOM order.
    *
-   * A stacking position is the whole repair: the box never moves, the breakout
-   * keeps its width, and the marginalia simply keep their layer. The frame
-   * cannot answer in kind — nothing inside it can escape the frame's own box —
-   * so this is not a fight it is able to reopen.
+   * The frame cannot answer in kind — nothing inside it can escape the frame's
+   * own box — so this is not a fight it is able to reopen.
    */
   position: relative;
   z-index: 1;
@@ -443,7 +479,7 @@
   background: var(--iris-bg-raised);
   color: var(--iris-ink);
   border: var(--iris-hairline) solid var(--iris-rule-strong);
-  border-radius: var(--iris-radius);
+  border-radius: var(--iris-radius-field);
   padding: 10px 12px;
   font: var(--iris-text-weight) var(--iris-prose-size) / var(--iris-prose-leading) var(--iris-font-prose);
 }
@@ -616,51 +652,28 @@
 }
 
 /*
- * An interface breaks out of the reading measure, because it is not reading.
+ * A card's interface is exactly as wide as the prose above it, and there is
+ * nothing left to break out of.
  *
- * 68ch is a book measure and it is right for prose. Applied to a card it was
- * measured doing the wrong thing well: the frame sat at 477px inside a 1038px
- * window, and because these cards lay themselves out against whatever viewport
- * they are handed, that is the viewport the card believed in — so it drew a
- * narrow column and the remaining 560px stayed empty. The card was not failing
- * to fill its frame; the frame was telling it the window was small.
+ * This rule used to compute a breakout: 68ch is a book measure and it is right
+ * for prose, and applied to a card it was measured doing the wrong thing well —
+ * the frame sat at 477px inside a 1038px window, so that is the viewport the
+ * card believed in, and it drew a narrow column with 560px dead beside it. The
+ * repair was symmetric negative margins plus a 900px cap, computed in `cqi`
+ * against `--iris-column-max`.
  *
- * Symmetric negative margins rather than a wider column, so prose keeps the
- * measure and only the interface leaves it.
+ * 「梅花」 removes the cause instead: the prose is no longer capped, so the card
+ * already has the whole reading track, and the negative margins would now pull
+ * it *past* the page's own flanks. The ruling is one width for the three things
+ * the reader looks at (canvas.json: 与正文、输入框同一列同一宽,如同 ST 的
+ * .mes_text), which is a plain margin and no arithmetic at all. `--iris-slot-air`,
+ * `--iris-slot-out` and `--iris-interface-max` are gone with it.
+ *
+ * What the paper still gives a frame is the 28px of rhythm above and below —
+ * the artboards' 段落节律 — and nothing else: no border, no radius, no shadow.
  */
 .iris-interfaces__slot {
-  margin: 12px 0 0;
-
-  /*
-   * What the column’s auto margin leaves on each side, plus the 20px the
-   * column pads itself by. `max(0px, …)` because on a narrow window the column
-   * is under its bound and there is nothing out there to reclaim.
-   */
-  --iris-slot-air: calc(max(0px, (100cqi - var(--iris-column-max)) / 2) + 20px);
-  /*
-   * The percentage resolves against this slot’s own width, so this is "half the
-   * growth still allowed before the cap" — clamped at zero so a cap narrower
-   * than the measure shrinks nothing.
-   */
-  --iris-slot-out: max(
-    0px,
-    min(
-      var(--iris-slot-air),
-      calc((var(--iris-interface-max) - var(--iris-gutter) - 100%) / 2)
-    )
-  );
-
-  /*
-   * The start side reclaims the marginalia gutter as well, and this asymmetry
-   * is the whole point: symmetric margins centre the card on the *text block*,
-   * which sits one gutter right of the page’s centre — measured at 97px of slack
-   * on the left against 51px on the right, which reads as a misaligned panel
-   * rather than as a deliberate margin. Prose is indented by the gutter because
-   * the gutter holds its marginalia; an interface has no marginalia, so it has
-   * no reason to be indented past it.
-   */
-  margin-inline-start: calc(-1 * (var(--iris-slot-out) + var(--iris-gutter)));
-  margin-inline-end: calc(-1 * var(--iris-slot-out));
+  margin: 28px 0 0;
 }
 
 /*
@@ -695,7 +708,7 @@
   margin: 4px 0 0;
   padding: 10px 12px;
   border: 1px dashed var(--iris-rule);
-  border-radius: 3px;
+  border-radius: var(--iris-radius);
 }
 
 .iris-interfaces__over .iris-interfaces__state {

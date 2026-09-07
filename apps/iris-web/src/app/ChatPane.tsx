@@ -19,6 +19,7 @@ import { emitToCard } from './card-bus.ts'
 import { FRAME_BAND_VARIABLE, frameBandPixels } from './frame-fit.ts'
 import { FrameBudgetProvider, type BudgetedFloor } from './FrameBudget.tsx'
 import { Composer } from './Composer.tsx'
+import { PlumSpray } from './marks.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
 import { PromptPanel } from './PromptPanel.tsx'
 import { groupByTurn, lastReplyId, swipeTarget, withStream } from './project.ts'
@@ -285,6 +286,17 @@ export function ChatPane(): ReactElement {
                 {at > 0 && group.turn !== undefined ? (
                   <span className="iris-turn__ordinal" aria-hidden="true">
                     {group.turn}
+                  </span>
+                ) : null}
+                {/*
+                  回目分隔用一小段枝: the twig that marks a turn boundary. Keyed
+                  to the boundary rather than to the turn, so the first turn's
+                  top edge — which is the head of the page, not a division —
+                  does not get one.
+                */}
+                {at > 0 ? (
+                  <span className="iris-turn__seam">
+                    <PlumSpray />
                   </span>
                 ) : null}
                 {group.messages.map(message => (

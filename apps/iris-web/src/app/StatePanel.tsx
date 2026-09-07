@@ -70,12 +70,14 @@ import {
   EMPTY_DIFF,
   filterByName,
   keepChanged,
+  loadAsideOpen,
   loadFoldMemory,
   loadLastTree,
   previewValue,
   RANGED_RIGHT_LIMIT,
   ROUND_QUIET_MS,
   sameValue,
+  saveAsideOpen,
   saveFoldMemory,
   saveLastTree,
   type StateDiff,
@@ -379,6 +381,13 @@ export function StatePanel(): ReactElement | null {
   const [queryInput, setQueryInput] = useState('')
   const [query, setQuery] = useState('')
   const [onlyChanges, setOnlyChanges] = useState(false)
+  /*
+   * Whether the margin is showing at all — a 236px column or the 36px 「变量」
+   * strip (canvas.json: 固定 236px、可收起). Per device rather than per chat,
+   * initialised from storage rather than in an effect, so a reader who folded
+   * it away does not watch it open and shut on every load.
+   */
+  const [asideOpen, setAsideOpen] = useState(loadAsideOpen)
 
   const diff = useVariableDiff(chatId, variables)
   const searching = query !== ''
@@ -429,10 +438,60 @@ export function StatePanel(): ReactElement | null {
   }
 
   return (
-    <aside className="iris-aside" aria-label={t('stateAria')}>
-      <div className="iris-aside__inner">
-        <h2 className="iris-label iris-aside__head">{t('stateHead')}</h2>
+    /*
+     * `data-iris-aside` rather than a second class, and that is load-bearing:
+     * `tools/render-check.tsx` matches `class="iris-aside"` **literally**, so a
+     * modifier class here would fail the render check in the collapsed state and
+     * in no test in this package. The attribute carries the state where CSS can
+     * still read it (`panels.css`) and the class attribute stays one word.
+     */
+    <aside
+      className="iris-aside"
+      data-iris-aside={asideOpen ? 'open' : 'shut'}
+      aria-label={t('stateAria')}
+    >
+      {/*
+        The heading row is the collapse control, and it sits outside the
+        scroller: a toggle that scrolls away with the tree is a toggle the
+        reader has to go and find. The whole row is the hit area, because 236px
+        of margin gives a 12px chevron plenty of company.
+      */}
+      <button
+        type="button"
+        className="iris-aside__bar"
+        aria-expanded={asideOpen}
+        title={t(asideOpen ? 'stateCollapse' : 'stateExpand')}
+        onClick={() => {
+          const next = !asideOpen
+          setAsideOpen(next)
+          saveAsideOpen(next)
+        }}
+      >
+        <span className="iris-label iris-aside__head">{t('stateHead')}</span>
+        <svg
+          className="iris-aside__chevron"
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path d="M4 2.5 7.5 6 4 9.5" />
+        </svg>
+      </button>
 
+      {/*
+        Collapsed, nothing below the strip renders. Not merely hidden: the tree
+        is the expensive part of this panel — a real MVU card's `政局` branch
+        alone is 34 rows — and a reader who folded the margin away should not go
+        on paying to build it on every host event.
+      */}
+      {!asideOpen ? null : (
+      <div className="iris-aside__inner">
         {hasVariables && (
           <div className="iris-var__tools">
             <input
@@ -553,6 +612,7 @@ export function StatePanel(): ReactElement | null {
           </>
         )}
       </div>
+      )}
     </aside>
   )
 }

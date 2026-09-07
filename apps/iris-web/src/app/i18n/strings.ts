@@ -60,13 +60,34 @@ export const en = {
   chatExported: 'Exported “{name}”.',
 
   /** Character library — tags, favorites, sorting, and the card manager. */
-  filterByTag: 'Filter by tag',
-  allTags: 'All tags',
+  /* One box over names *and* tags, replacing the tag dropdown: the artboards
+     promise 「搜索角色或标签」, and a corpus-wide tag census runs to dozens of
+     names, which a select turns into a scroll. */
+  librarySearchAria: 'Search characters and tags',
+  librarySearchPlaceholder: 'Search characters or tags',
+  librarySearchEmpty: 'No character matches “{query}”.',
   sortByAria: 'Sort characters',
   sortByName: 'By name',
   sortByUpdated: 'By updated',
   sortByFavorite: 'Favorites first',
-  libraryFilteredEmpty: 'No character carries the tag “{tag}”.',
+  /* The character page. Only facts the library actually carries appear on it —
+     `Library.tsx` records which of the artboards' three columns are knowable
+     for an arbitrary card and which are not. */
+  characterPageAria: 'Character',
+  startNewChat: 'Start a new conversation',
+  faceConversations: 'Conversations',
+  faceNoConversations: 'None yet',
+  faceOneConversation: '1 open',
+  faceOpenCount: '{n} open',
+  faceLatest: 'Last {when}',
+  faceTags: 'Tags',
+  faceNoTags: 'None on this card',
+  faceTagCount: '{n} on this card',
+  faceCardFile: 'Card file',
+  faceUpdated: 'Changed {when}',
+  faceUpdatedUnknown: 'The host reports no date',
+  faceCreator: 'By {creator}',
+  facePickHint: 'Pick a character on the left to see its card.',
   favorite: 'Add to favorites',
   unfavorite: 'Remove from favorites',
   duplicateCharacter: 'Duplicate',
@@ -97,6 +118,9 @@ export const en = {
   oneTurn: '1 turn',
   turns: '{n} turns',
   writingNow: 'writing…',
+  /* The artboards' 「N 个脚本在运行」. Counted from the run states, not the
+     script list — `Masthead.tsx` says why those are different questions. */
+  scriptsRunning: '{n} scripts running',
   seededNotice: 'Seeded data — this page is not talking to a host. Add',
   seededNoticeSource: 'Source:',
 
@@ -179,7 +203,13 @@ export const en = {
 
   /** State panel. */
   stateAria: 'Conversation state',
-  stateHead: 'State',
+  /* 「变量」, which is what this margin is: the host's own variable manager
+     (canvas.json), not a general "state" panel. */
+  stateHead: 'Variables',
+  /* The collapse control on its heading row. Two labels, so the button says
+     what pressing it does rather than where it is. */
+  stateCollapse: 'Fold the variables away',
+  stateExpand: 'Show the variables',
   stateEmpty: 'Nothing tracked yet. When a card keeps variables (MVU stat_data), they appear here as the scene moves.',
   booleanYes: 'yes',
   booleanNo: 'no',
@@ -464,9 +494,14 @@ export const en = {
   credentialBodyTransport: 'Requests to the provider are sent by the host; this page never holds a credential nor talks to the endpoint itself. The transport boundary is pinned by the host’s rpc-transport tests.',
   theme: 'Theme',
   themeSystem: 'System',
-  themeLight: 'Light',
-  themeDark: 'Dark',
-  themeParchment: 'Parchment',
+  /* The three built-ins' names, 「梅花」. The **ids** stay `light`/`dark`/
+     `parchment` — they are what readers have in `localStorage`, and renaming
+     them would silently reset every stored choice (`theme/presets.ts`). 宣 is
+     宣纸, the paper; it has no one-word English name, so it keeps the
+     transliteration rather than being flattened back to "Parchment". */
+  themeLight: 'Snow',
+  themeDark: 'Ink',
+  themeParchment: 'Xuan paper',
 
   /** Appearance card — themes as swatches, the user.css slot, the theme package. */
   sectionAppearance: 'Appearance',
@@ -804,13 +839,28 @@ export const zh: Record<StringKey, string> = {
   chatExported: '已导出「{name}」。',
 
   /** 角色库——标签、收藏、排序与卡片管理。 */
-  filterByTag: '按标签过滤',
-  allTags: '全部标签',
+  librarySearchAria: '搜索角色与标签',
+  librarySearchPlaceholder: '搜索角色或标签',
+  librarySearchEmpty: '没有角色匹配「{query}」。',
   sortByAria: '角色排序',
-  sortByName: '按名称',
-  sortByUpdated: '按更新时间',
-  sortByFavorite: '收藏优先',
-  libraryFilteredEmpty: '没有角色带有标签「{tag}」。',
+  sortByName: '名称',
+  sortByUpdated: '最近',
+  sortByFavorite: '收藏',
+  characterPageAria: '角色',
+  startNewChat: '开始新对话',
+  faceConversations: '对话',
+  faceNoConversations: '还没有',
+  faceOneConversation: '1 个进行中',
+  faceOpenCount: '{n} 个进行中',
+  faceLatest: '最近 {when}',
+  faceTags: '标签',
+  faceNoTags: '这张卡没有标签',
+  faceTagCount: '这张卡有 {n} 个',
+  faceCardFile: '卡片文件',
+  faceUpdated: '{when}改动过',
+  faceUpdatedUnknown: '宿主没有报告日期',
+  faceCreator: '作者 {creator}',
+  facePickHint: '在左边选一个角色，看它的卡片。',
   favorite: '收藏',
   unfavorite: '取消收藏',
   duplicateCharacter: '复制角色',
@@ -841,6 +891,7 @@ export const zh: Record<StringKey, string> = {
   oneTurn: '1 回合',
   turns: '{n} 回合',
   writingNow: '正在写…',
+  scriptsRunning: '{n} 个脚本在运行',
   seededNotice: '种子数据——本页面没有连接宿主。加上',
   seededNoticeSource: '来源：',
 
@@ -920,7 +971,9 @@ export const zh: Record<StringKey, string> = {
 
   /** 状态面板。 */
   stateAria: '对话状态',
-  stateHead: '状态',
+  stateHead: '变量',
+  stateCollapse: '收起变量栏',
+  stateExpand: '展开变量栏',
   stateEmpty: '还没有跟踪任何内容。卡片写入变量（MVU 的 stat_data）后，会随剧情推进显示在这里。',
   booleanYes: '是',
   booleanNo: '否',
@@ -1204,9 +1257,9 @@ export const zh: Record<StringKey, string> = {
   credentialBodyTransport: '对提供方的请求由宿主发出；本页面不持有凭据，也不直接访问端点。传输边界由宿主的 rpc-transport 测试钉住。',
   theme: '主题',
   themeSystem: '跟随系统',
-  themeLight: '浅色',
-  themeDark: '深色',
-  themeParchment: '羊皮纸',
+  themeLight: '雪',
+  themeDark: '墨',
+  themeParchment: '宣',
 
   /** 外观卡——主题缩略块、user.css 插槽、主题包。 */
   sectionAppearance: '外观',

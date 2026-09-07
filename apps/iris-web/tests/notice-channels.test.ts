@@ -79,8 +79,18 @@ test('an interface frame fault reaches the notice log, not only the report list'
 })
 
 test('the composer reserves the reading surface’s scrollbar lane', () => {
-  const composer = ruleBody(panelsCss, '.iris-composer {')
-  assert.ok(composer !== undefined, 'the composer rule disappeared')
+  /*
+   * Read from `__inner`, not `.iris-composer`, and the move is load-bearing.
+   *
+   * A scroll container clips its absolutely-positioned children — `overflow-y:
+   * auto` computes `overflow-x` to `auto` as well — and the 「梅花」 composer has
+   * one: the plum branch that crosses its top edge. So the lane reservation and
+   * the panel's padding moved one box inward, and the paint-and-position box
+   * declares no overflow at all. Asserting the old element would have passed
+   * only while the branch was clipped.
+   */
+  const composer = ruleBody(panelsCss, '.iris-composer__inner {')
+  assert.ok(composer !== undefined, 'the composer inner rule disappeared')
   const body = dense(composer)
   assert.match(body, /scrollbar-gutter:stable/, 'the lane reservation is the midline parity')
   assert.match(body, /overflow-y:auto/, 'the reservation needs a scroll container')
@@ -105,18 +115,45 @@ test('the composer field is sized inside its box', () => {
   )
 })
 
-test('the composer still shares the message prose’s left inset', () => {
+test('the composer and the prose share both flanks, not just the left one', () => {
   /*
-   * The midline arithmetic rests on this pair: the prose starts one gutter in
-   * from the column's content edge (`.iris-msg`'s marginalia track), and the
-   * composer's inner starts one gutter in from its own. Removing either side
-   * of that symmetry moves one midline and not the other.
+   * The arithmetic this pins got simpler, and grew a second half.
+   *
+   * It used to be a one-sided symmetry: the prose started one gutter in from
+   * the column's content edge (`.iris-msg`'s marginalia track), the composer's
+   * inner had a matching `padding-left`, and the right sides deliberately had no
+   * twin — so what was checked was that one midline had not moved away from the
+   * other. 「梅花」 makes the reading area `46px | 1fr | 46px` on both sides
+   * (canvas.json: 阅读区左右各留 46px 对称,输入框居中不偏), so the composer's
+   * flanks are now a plain `padding: 30px var(--iris-gutter) 22px` and the
+   * column's right flank is a gutter too.
+   *
+   * All three are read from the shorthand rather than from `padding-left`,
+   * because the shorthand is what the files now write — a `padding-left`
+   * assertion would have failed against a stylesheet that was correct.
    */
   const inner = ruleBody(panelsCss, '.iris-composer__inner {')
   assert.ok(inner !== undefined, 'the inner rule disappeared')
-  assert.match(dense(inner), /padding-left:var\(--iris-gutter\)/)
+  assert.match(
+    dense(inner),
+    /padding:30pxvar\(--iris-gutter\)22px/,
+    'the composer no longer takes its flanks from the gutter token',
+  )
+
   const readingCss = readFileSync(join(src, 'app', 'reading.css'), 'utf8')
   const msg = ruleBody(readingCss, '.iris-msg {')
   assert.ok(msg !== undefined)
-  assert.match(dense(msg), /grid-template-columns:var\(--iris-gutter\)/)
+  assert.match(
+    dense(msg),
+    /grid-template-columns:var\(--iris-gutter\)/,
+    'the prose lost its marginalia track, which is the reading column\u2019s left flank',
+  )
+
+  const column = ruleBody(readingCss, '.iris-column {')
+  assert.ok(column !== undefined, 'the column rule disappeared')
+  assert.match(
+    dense(column.replace(/\/\*[\s\S]*?\*\//g, '')),
+    /padding:40pxvar\(--iris-gutter\)28px0/,
+    'the reading column\u2019s right flank no longer matches its marginalia track, so the two are asymmetric again',
+  )
 })
