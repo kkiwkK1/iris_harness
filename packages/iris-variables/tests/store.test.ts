@@ -189,6 +189,85 @@ test('a user line awaiting its reply reads the state it was founded on', () => {
   assert.deepEqual(store.getVariables({ type: 'message', message_id: 1 }), { 国名: '测试共和国' })
 })
 
+/** The exact shape `recordImpersonation` lands: a closed turn with a user floor and no candidate. */
+function chatWithImpersonatedFloor() {
+  const session = chatWithTurns(1)
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 0 })
+  session.append(
+    'user/message',
+    createUserMessage({ content: [{ type: 'text', text: '(as user) I pocket the key' }], source: { kind: 'user' } }),
+    { surfaceOp: 'append' },
+  )
+  session.append('step/end', { turn: 1, step: 0 })
+  session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+  return session
+}
+
+test('an impersonated user floor is a floor a card can write on', () => {
+  // 代我发言 lands turn/start + a user line and nothing else — no candidate. A
+  // card script writing `latest` in that window used to be refused with "turn
+  // N has no generated reply to attach variables to", and the scheduled
+  // rejection took the whole card body down (the user 8790 report). The
+  // floor is the turn's one message, so its own seq is the attach point.
+  const session = chatWithImpersonatedFloor()
+  const store = new VariableStore({ message: sessionMessageBackend(session) })
+
+  store.replaceVariables({ 好感度: 30 }, { type: 'message' })
+
+  assert.deepEqual(store.getVariables({ type: 'message' }), { 好感度: 30 })
+  assert.deepEqual(store.getVariables({ type: 'message', message_id: 'latest' }), { 好感度: 30 })
+  assert.deepEqual(store.getVariables({ type: 'message', message_id: 1 }), { 好感度: 30 })
+})
+
+test('a reply on an impersonated turn reads the floor until it writes its own', () => {
+  const session = chatWithImpersonatedFloor()
+  const store = new VariableStore({ message: sessionMessageBackend(session) })
+  store.replaceVariables({ 好感度: 30 }, { type: 'message' })
+
+  // The reply generates onto the same turn (a reroll or retry of the open
+  // floor) and changes nothing: it reads the floor's state and writes it back,
+  // so the table is not copied onto the candidate.
+  appendCandidate(session, {
+    turn: 1,
+    step: 0,
+    message: createAssistantMessage({
+      content: [{ type: 'text', text: 'a1' }],
+      source: { provider: 'test', model: 'test' },
+    }),
+  })
+  assert.deepEqual(store.getVariables({ type: 'message' }), { 好感度: 30 }, 'the reply reads its floor')
+  assert.equal(storedTables(session), 1, 'the inherited table was not copied onto the reply')
+
+  // The reply's own change is its own, and from then on it wins over the floor.
+  store.replaceVariables({ 好感度: 40 }, { type: 'message' })
+  assert.deepEqual(store.getVariables({ type: 'message' }), { 好感度: 40 })
+  assert.deepEqual(store.getVariables({ type: 'message', message_id: 1 }), { 好感度: 40 })
+})
+
+test('a silent swipe of an impersonated turn reads the floor, never the other swipe', () => {
+  // The floor's table is the turn's foundation, not one swipe's change, so it
+  // must not travel between swipes the way inheritance must not: the second
+  // take reads the floor's state, and swiping back to the first take finds the
+  // first take's own write where it wrote one.
+  const session = chatWithImpersonatedFloor()
+  const store = new VariableStore({ message: sessionMessageBackend(session) })
+  store.replaceVariables({ 好感度: 30 }, { type: 'message' })
+
+  const reply = (text: string) => createAssistantMessage({
+    content: [{ type: 'text', text }],
+    source: { provider: 'test', model: 'test' },
+  })
+  appendCandidate(session, { turn: 1, step: 0, message: reply('first take') })
+  store.replaceVariables({ 好感度: 40 }, { type: 'message' })
+  appendCandidate(session, { turn: 1, step: 0, message: reply('second take') })
+
+  assert.deepEqual(store.getVariables({ type: 'message' }), { 好感度: 30 }, 'the silent take reads the floor')
+
+  selectCandidate(session, 1, 0)
+  assert.deepEqual(store.getVariables({ type: 'message' }), { 好感度: 40 }, 'the first take kept its own')
+})
+
 /** A log with `turns` settled turns, one candidate each. */
 function chatWithTurns(turns: number) {
   const session = Session.create(SessionId(`vars-${Math.random().toString(36).slice(2)}`))

@@ -24,7 +24,13 @@ declare module '@deepseek-ai/dsh-session' {
   interface SessionEventMap {
     /** One candidate's variable table, as of this point in the log. */
     'iris/variables': {
-      /** Seq of the `assistant/message` event these belong to. */
+      /**
+       * Seq of the message event these attach to — normally the selected
+       * `assistant/message`, but the turn's own `user/message` when the turn has
+       * no reply yet (an impersonated line's turn). The field kept its name for
+       * log compatibility; what it has always carried is "a message's seq",
+       * which is why the user floor can ride it without a migration.
+       */
       candidateSeq: number
       variables: Record<string, unknown>
     }
@@ -38,7 +44,9 @@ declare module '@deepseek-ai/dsh-session' {
  * next to an append, so a stale cache would be a correctness risk bought with
  * no measurable speed.
  * @param session - the chat log.
- * @returns the last table written for each candidate seq.
+ * @returns the last table written for each attached message seq (see the
+ *   `iris/variables` event: a candidate's reply, or a candidate-less turn's
+ *   user floor).
  */
 function tablesBySeq(session: Session): Map<number, Variables> {
   const tables = new Map<number, Variables>()
@@ -77,6 +85,41 @@ function lastTurn(session: Session): number {
     if (event.type === 'turn/start') turn = Math.max(turn, event.data.turn)
   }
   return turn
+}
+
+/**
+ * The seq of the user line that opened a turn, when one did.
+ *
+ * A `user/message` event carries no turn of its own — the association is
+ * positional, the line belonging to the `turn/start` most recently opened when
+ * the event was appended (the same walk the message view in the app service
+ * uses). The first line of the turn is the floor: in Iris a turn opens with
+ * exactly one user message (`send`, `recordImpersonation`, import all append
+ * one), and pinning the first keeps the binding stable no matter what else is
+ * journalled into the turn afterwards.
+ *
+ * What makes this seq load-bearing for variables is impersonation:
+ * `recordImpersonation` lands `turn/start`, the user floor, and nothing else,
+ * so a candidate-less turn is a *normal* state of the log — and while the
+ * reply has not generated, the floor's own seq is the only message the turn
+ * has for a table to attach to.
+ * @param session - the chat log.
+ * @param turn - the turn whose opening user line to find.
+ * @returns the seq of the turn's first `user/message`, or `undefined` when the
+ *   turn has no user line (a greeting-only turn, an empty turn).
+ */
+function userFloorSeqOf(session: Session, turn: number): number | undefined {
+  if (turn < 0) return undefined // no turn has opened; there is no floor anywhere
+  let open = -1
+  for (const event of session.events) {
+    if (event.type === 'turn/start') {
+      if (open === turn) break // the next turn/start is the previous turn's close
+      open = event.data.turn
+    } else if (event.type === 'user/message' && open === turn) {
+      return event.seq
+    }
+  }
+  return undefined
 }
 
 /**
@@ -129,14 +172,26 @@ export function sessionMessageBackend(session: Session): ScopeBackend {
     return resolveTurn(session, option.message_id)
   }
 
-  /** The candidate a `message` selector's write attaches to. */
-  const candidateSeqOf = (option: VariableOption): number => {
+  /**
+   * The message a `message` selector's write attaches to.
+   *
+   * The turn's selected candidate when it has one; otherwise the turn's own
+   * user floor. A candidate-less turn used to be refused outright, which made
+   * the impersonated line's turn the one floor a card could not write on: the
+   * MVU script of the card that produced the line (or any script running while
+   * the reply pends) had its `setVariables` rejected with "no generated reply",
+   * and the rejection took the card body down with it. The floor is a message
+   * of the turn like a candidate is, the binding key is a message seq either
+   * way, and only a turn with no message at all (a bare `turn/start`) has
+   * nowhere to attach.
+   */
+  const attachSeqOf = (option: VariableOption): number => {
     const turn = turnOf(option)
     const candidate = selectedCandidate(session, turn)
-    if (candidate === undefined) {
-      throw new VariableScopeError(`turn ${turn} has no generated reply to attach variables to`)
-    }
-    return candidate.seq
+    if (candidate !== undefined) return candidate.seq
+    const floor = userFloorSeqOf(session, turn)
+    if (floor !== undefined) return floor
+    throw new VariableScopeError(`turn ${turn} has no message to attach variables to`)
   }
 
   const effective = (option: VariableOption): Variables => {
@@ -146,6 +201,22 @@ export function sessionMessageBackend(session: Session): ScopeBackend {
     const candidate = selectedCandidate(session, turn)
     const own = candidate === undefined ? undefined : tables.get(candidate.seq)
     if (own !== undefined) return own
+    /*
+     * The turn's own user floor is next. An impersonated line's turn has no
+     * candidate, and the scripts that run as the line lands write exactly
+     * here; reading the floor's table on this tier is what makes the
+     * user→reply window lossless in both directions — the write above attaches
+     * to the floor's seq, so this read finds it. Once a reply lands, a
+     * candidate that wrote nothing still reads the floor's state, and one that
+     * wrote its own table wins — the same "own answer first" rule the
+     * candidate tier applies. The tier is turn-local, so it sits before
+     * inheritance and does not touch the swipe-exclusivity rule below: the
+     * floor's table is the turn's foundation, not one swipe's change for the
+     * other to inherit.
+     */
+    const floor = userFloorSeqOf(session, turn)
+    const founded = floor === undefined ? undefined : tables.get(floor)
+    if (founded !== undefined) return founded
     /*
      * A candidate that wrote nothing inherits — and so does a turn with **no
      * candidate at all**: a user line awaiting its answer, which is exactly the
@@ -174,7 +245,7 @@ export function sessionMessageBackend(session: Session): ScopeBackend {
       // is by serialization: a key-order difference can only produce a spurious
       // *inequality*, which costs a redundant write rather than a wrong read.
       if (JSON.stringify(effective(option)) === JSON.stringify(next)) return
-      session.append('iris/variables', { candidateSeq: candidateSeqOf(option), variables: next })
+      session.append('iris/variables', { candidateSeq: attachSeqOf(option), variables: next })
     },
   }
 }
