@@ -15,6 +15,7 @@ export { fakeItemization } from './prompt.ts'
 export {
   activateConnection,
   deleteConnection,
+  hostDefault,
   listConnections,
   saveConnection,
   summarize,

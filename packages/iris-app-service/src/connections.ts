@@ -181,22 +181,52 @@ export function hostConnectionFromEnv(
 }
 
 /**
+ * What a probe of the host's own endpoint reported, held in memory.
+ *
+ * `origin` is stored beside the list rather than assumed: the host connection
+ * this runtime reads can change between two reads (a composition that hands one
+ * in, an environment read that now answers differently), and a list attributed
+ * to the wrong endpoint is worse than no list at all. {@link hostDefaultView}
+ * drops the record rather than project it when the origins disagree.
+ */
+export interface HostProbeRecord {
+  /** The origin the list was read from. */
+  origin: string
+  /** The ids the endpoint advertised, in its own order. */
+  models: readonly string[]
+  /** Unix epoch milliseconds of that read. */
+  probedAt: number
+}
+
+/**
  * Project the host's own connection onto the wire — **without the credential**.
  *
  * The whole point of the row is that a user can see what is answering their
  * messages, and the whole point of this function is that seeing it does not
  * mean holding its key.
  * @param host - what the composition told this runtime.
+ * @param probe - what a probe of that endpoint reported, when one has run in
+ * this process. Projected only when it was read from the endpoint this host
+ * currently points at, so a moved route cannot inherit the old one's list.
  * @returns the read-only row, carrying the key's *source* and never the key.
  */
-export function hostDefaultView(host: HostConnection): HostDefaultConnection {
+export function hostDefaultView(
+  host: HostConnection,
+  probe?: HostProbeRecord | undefined,
+): HostDefaultConnection {
   const hasKey = host.apiKey !== undefined && host.apiKey.length > 0
+  const listed = probe !== undefined && sameEndpointOrigin(host.baseURL, probe.origin)
+    ? probe
+    : undefined
   return {
     provider: host.provider,
     ...host.baseURL === undefined || host.baseURL.length === 0 ? {} : { baseURL: host.baseURL },
     ...host.model === undefined || host.model.length === 0 ? {} : { model: host.model },
     keySource: hasKey ? 'env' : 'none',
     ...hasKey && host.keyEnv !== undefined && host.keyEnv.length > 0 ? { keyEnv: host.keyEnv } : {},
+    // The list and its stamp travel together or not at all, as they do on a
+    // profile: half of this pair is an undatable claim.
+    ...listed === undefined ? {} : { models: [...listed.models], modelsProbedAt: listed.probedAt },
   }
 }
 

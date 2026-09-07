@@ -793,6 +793,30 @@ export interface HostDefaultConnection {
    * to change it knows where to look. The variable's *name*, never its value.
    */
   keyEnv?: string
+  /**
+   * The model ids a probe of {@link baseURL} last reported.
+   *
+   * The same field a saved profile carries, for the same reason and with one
+   * difference: **the host keeps this in memory only, for the life of the
+   * process.** A profile's list is filed beside the user's own decisions, so it
+   * belongs in their file; this one is filed against a connection that lives in
+   * the environment the process was launched with, and it is an *observation*
+   * rather than a decision of theirs — nothing the user did created it and
+   * nothing they can do edits it, so persisting it would leave a record of a
+   * moment in a file that reads as a record of choices.
+   *
+   * Absent means nobody has probed the host's endpoint since it started, which
+   * is the state every launch begins in. A picker reading this must offer to
+   * fetch one rather than report that the host advertises nothing.
+   */
+  models?: string[]
+  /**
+   * Unix epoch milliseconds of the probe {@link models} came from.
+   *
+   * Travels with the list and never without it: a list nobody can date is the
+   * shape that turns an observation into a claim about the present.
+   */
+  modelsProbedAt?: number
 }
 
 /**

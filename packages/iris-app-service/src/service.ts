@@ -23,7 +23,7 @@ import { assemble, type AssembleResult, type Contribution, type HistoryEntry } f
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import type { BackupSummary, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
 import { providerPreset } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
@@ -42,6 +42,7 @@ import {
   routeOf,
   sameEndpointOrigin,
   type HostConnection,
+  type HostProbeRecord,
 } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
@@ -486,6 +487,18 @@ export class IrisAppService {
   #activePreset: ChatCompletionPreset
   /** The active preset's library name, when it has one. */
   #activePresetName: string | undefined
+  /**
+   * What a probe of the **host's own** endpoint reported, for this process only.
+   *
+   * A saved profile's list goes in the user's file; this one deliberately does
+   * not go anywhere. The host default is not a decision of the user's — it is
+   * the environment the process was launched with — so the only thing being
+   * remembered here is an observation, and an observation belongs in memory
+   * with the process that made it. It is also what makes the composer's model
+   * menu answerable on a host with no saved profiles: the list is fetched once
+   * per launch and read from here after that.
+   */
+  #hostProbe: HostProbeRecord | undefined
 
   /**
    * @param options - domain stores, the model stream, and the event sink.
@@ -630,6 +643,40 @@ export class IrisAppService {
     if (explicit !== undefined) return explicit
     const global = this.#options.settings.get()
     return hostConnectionFromEnv(this.#options.env, { provider: global.provider, model: global.model })
+  }
+
+  /**
+   * The host's own connection as every `connection.*` answer projects it.
+   *
+   * One method rather than four bare `hostDefaultView(host)` call sites,
+   * because the model list is now part of the projection and a call site that
+   * forgot to pass it would answer "the host advertises nothing" — which reads
+   * as a fact about the endpoint rather than as a missing argument.
+   * @returns the read-only row, with this process's probe of it when the probe
+   * was of the endpoint the host still points at.
+   */
+  #hostDefaultRow(): HostDefaultConnection {
+    return hostDefaultView(this.#hostConnection(), this.#hostProbe)
+  }
+
+  /**
+   * File a successful probe against the host's own connection, when that is
+   * what was probed.
+   *
+   * Keyed on the **origin**, not on how the caller addressed the probe: a
+   * profile that carries the host's endpoint and a bare `baseURL` typed into
+   * the form are the same server answering, and the list is that server's
+   * answer either way. A probe of anywhere else leaves this alone — the whole
+   * value of the row is that it describes the endpoint the host generates
+   * through, and a list from a neighbouring provider would quietly make it
+   * describe something else.
+   * @param baseURL - where the probe actually went.
+   * @param models - what it reported.
+   */
+  #recordHostModels(baseURL: string, models: readonly string[]): void {
+    const host = this.#hostConnection()
+    if (!sameEndpointOrigin(host.baseURL, baseURL)) return
+    this.#hostProbe = { origin: baseURL, models: [...models], probedAt: Date.now() }
   }
 
   /**
@@ -1377,7 +1424,7 @@ export class IrisAppService {
 
       'connection.list': async () => ({
         ...await this.#connections().list(),
-        host: hostDefaultView(this.#hostConnection()),
+        host: this.#hostDefaultRow(),
       }),
 
       'connection.save': async (input) => {
@@ -1410,12 +1457,12 @@ export class IrisAppService {
             : { apiKeyHeader: input.apiKeyHeader },
           ...input.models === undefined ? {} : { models: input.models },
         })
-        return { ...saved, host: hostDefaultView(host) }
+        return { ...saved, host: hostDefaultView(host, this.#hostProbe) }
       },
 
       'connection.delete': async ({ id }) => ({
         ...await this.#connections().delete(id),
-        host: hostDefaultView(this.#hostConnection()),
+        host: this.#hostDefaultRow(),
       }),
 
       'connection.activate': async ({ id, chatId }) => {
@@ -1524,6 +1571,13 @@ export class IrisAppService {
         // after a 401 would say "this endpoint offers nothing".
         if (verdict.ok && verdict.models !== undefined && input.profileId !== undefined) {
           await this.#connections().recordModels(input.profileId, verdict.models)
+        }
+        // And a successful probe of the host's **own** endpoint is filed in
+        // memory, which is the one connection with no file to file it on. The
+        // two are not exclusive: a profile pointed at the host's endpoint
+        // records on both, because both rows describe that server.
+        if (verdict.ok && verdict.models !== undefined) {
+          this.#recordHostModels(baseURL, verdict.models)
         }
         return { ...verdict, keySource: resolved.keySource }
       },

@@ -38,6 +38,7 @@ import { ScriptButtons } from './ScriptButtons.tsx'
 import { registerComposer } from './composer-bus.ts'
 import { usageLineGroups } from './token-format.ts'
 import { modelMenu } from './model-menu.ts'
+import { describeError } from '../client/errors.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
@@ -50,6 +51,29 @@ import { useLanguage, t } from './i18n/use-language.ts'
  * which.
  */
 const RESTORE_ID = ' restore-connection-default'
+
+/**
+ * The ids of the menu's non-model rows.
+ *
+ * Leading space for the same reason {@link RESTORE_ID} has one: every other row
+ * in this menu is identified by a model id minted by an endpoint, and a
+ * sentinel a provider could legitimately mint would make one model
+ * unselectable — or, for these two, give two rows the same key.
+ */
+const HEADING_ID = ' heading'
+/** The one row that explains the list's state: reading, refused, or absent. */
+const NOTE_ID = ' note'
+
+/**
+ * What the menu is doing about a missing model list, for the row that says so.
+ *
+ * Keyed by the source it belongs to, because the reader can switch connections
+ * with a menu's failure still in state: a refusal from one endpoint shown under
+ * another endpoint's heading is a sentence blaming the wrong server.
+ */
+type ModelListRead =
+  | { key: string, phase: 'reading' }
+  | { key: string, phase: 'failed', reason: string }
 
 /**
  * Render the composer.
@@ -118,8 +142,20 @@ export function Composer({
   const overrides = useIris(state => state.settingsOverrides)
   const connections = useIris(state => state.connections)
   const activeConnectionId = useIris(state => state.activeConnectionId)
+  /*
+   * The host's own startup connection — the source the menu falls back to.
+   *
+   * Read here rather than left to the connection panel because of the reported
+   * bug: with the route configured as `IRIS_*` variables and no profile ever
+   * saved, `activeConnectionId` is undefined and the menu used to conclude
+   * "no connection is active" about a host that was generating replies at the
+   * time. The row was already on the wire (`connection.list`'s `host`); nothing
+   * under the composer was reading it.
+   */
+  const hostConnection = useIris(state => state.hostConnection)
   const actions = useIrisActions()
   const [modelOpen, setModelOpen] = useState(false)
+  const [listRead, setListRead] = useState<ModelListRead | undefined>(undefined)
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
   // Subscribed so a language switch re-renders the composer's words.
@@ -150,27 +186,57 @@ export function Composer({
    * The heading names the connection the list came from, because the list is
    * the *endpoint's* answer and a menu that showed model names with no
    * provenance would invite the reader to pick one that a different connection
-   * offers. When there is nothing to offer, the menu still opens and still says
-   * something — a disabled row naming which nothing this is — rather than
-   * opening onto an empty card that reads as broken.
+   * offers. The host's own startup connection is named as such, with the
+   * variable its key is read from, because that is the one route the reader
+   * cannot edit from this app and has to go to a shell to change.
+   *
+   * There is always at least one row — the model in force — and there is always
+   * a sentence when the endpoint's own list is missing: reading, refused, or
+   * absent. A menu that opened onto nothing would read as broken, and a menu
+   * that opened onto model names alone would not say which of them is running.
    */
-  const menu = modelMenu({ model: model ?? '', overrides, connections, activeId: activeConnectionId })
+  const menu = modelMenu({
+    model: model ?? '',
+    overrides,
+    connections,
+    activeId: activeConnectionId,
+    host: hostConnection,
+  })
+  /** The heading's words: which connection this list belongs to. */
+  const heading = menu.source === 'profile' && menu.connectionName !== undefined
+    ? t('modelMenuFromConnection', { connection: menu.connectionName })
+    : menu.source === 'host'
+      ? menu.hostKeyEnv === undefined
+        ? t('modelMenuFromHost')
+        : t('modelMenuFromHostEnv', { keyEnv: menu.hostKeyEnv })
+      : t('modelMenuHeading')
+  /*
+   * The one row about the list itself.
+   *
+   * The read's own phase outranks the plain emptiness — a refusal is the newer
+   * and more specific fact, and it is the host's own named reason rather than a
+   * sentence written here, because a probe that failed `unauthorized` and one
+   * that failed `network` send the reader to different places.
+   *
+   * Two conditions gate it, and both are about not showing a stale sentence.
+   * The read must belong to **this** source, or a refusal would still be on
+   * screen under the next connection's heading. And the list must still be
+   * missing: a probe that failed here and a list that arrived some other way —
+   * the connection panel's own Test — would otherwise leave "could not read the
+   * model list" sitting above the list it says is not there.
+   */
+  const read = menu.empty === undefined || listRead?.key !== menu.sourceKey ? undefined : listRead
+  const note = read?.phase === 'reading'
+    ? t('modelMenuReading')
+    : read?.phase === 'failed'
+      ? t('modelMenuReadFailed', { reason: read.reason })
+      : menu.empty === 'no-connection'
+        ? t('modelMenuNoConnection')
+        : menu.empty === 'no-list' ? t('modelMenuNoList') : undefined
   const modelItems: MenuEntry[] = [
-    ...menu.connectionName === undefined
-      ? [{ type: 'label' as const, id: 'heading', text: t('modelMenuHeading') }]
-      : [{
-        type: 'label' as const,
-        id: 'heading',
-        text: t('modelMenuFromConnection', { connection: menu.connectionName }),
-      }],
+    { type: 'label' as const, id: HEADING_ID, text: heading },
     ...menu.models.map(id => ({ id, label: id })),
-    ...menu.empty === undefined
-      ? []
-      : [{
-        id: 'empty',
-        label: menu.empty === 'no-connection' ? t('modelMenuNoConnection') : t('modelMenuNoList'),
-        disabled: true,
-      }],
+    ...note === undefined ? [] : [{ id: NOTE_ID, label: note, disabled: true }],
   ]
   /*
    * The undo, pinned below the list so it stays reachable while a long model
@@ -184,6 +250,58 @@ export function Composer({
       label: t('modelRestoreConnectionDefault', { model: menu.connectionModel }),
     }]
     : []
+
+  /**
+   * Open or close the model menu, fetching a missing list on the way open.
+   *
+   * **The reader should not have to go to the connection panel and press
+   * "Test" before the menu can answer.** Pressing the capsule is already the
+   * question, so the press is what asks the endpoint — once, and only when
+   * `model-menu.ts` says a list is missing and stale enough to be worth a round
+   * trip. The ask carries no key: the host resolves the credential from what it
+   * already holds (the profile's, or its own startup one, origin-checked on its
+   * side), which is what makes a bare probe safe to fire from a menu.
+   *
+   * A success is **re-read rather than kept**: the host files the list — on the
+   * profile, or in its own in-memory record for the host row — and
+   * `loadConnections` brings back both, stamped. Holding the returned array in
+   * component state instead would be a second copy of a fact the store already
+   * carries, and the stamp is what suppresses the next probe.
+   */
+  const toggleModelMenu = (): void => {
+    const opening = !modelOpen
+    setModelOpen(opening)
+    if (!opening) return
+    const ask = menu.probe
+    const key = menu.sourceKey
+    if (ask === undefined || key === undefined) return
+    setListRead({ key, phase: 'reading' })
+    void (async () => {
+      try {
+        const verdict = await actions.testConnection(ask)
+        if (verdict.ok) {
+          setListRead(undefined)
+          await actions.loadConnections()
+          return
+        }
+        // The host's own words, code included. `ok: false` is an answer, not a
+        // throw — the form-shaped surfaces render it, and so does this one.
+        setListRead({
+          key,
+          phase: 'failed',
+          reason: verdict.error === undefined
+            ? String(verdict.latencyMs)
+            : `${verdict.error.code}: ${verdict.error.message}`,
+        })
+      } catch (error: unknown) {
+        // A refusal that never became a probe — a fake client, a malformed ask.
+        // Shown rather than swallowed: the fake refuses `connection.test` by
+        // design, and a menu that went blank there would look like the bug this
+        // whole change is about.
+        setListRead({ key, phase: 'failed', reason: describeError(error, lang) })
+      }
+    })()
+  }
 
   const submit = (): void => {
     const text = draft.trim()
@@ -334,7 +452,7 @@ export function Composer({
                   aria-haspopup="menu"
                   aria-expanded={modelOpen}
                   title={t('modelMenuOpen', { model })}
-                  onClick={() => setModelOpen(!modelOpen)}
+                  onClick={toggleModelMenu}
                 >
                   {model}
                   {/*
