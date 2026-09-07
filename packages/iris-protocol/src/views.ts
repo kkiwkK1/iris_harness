@@ -717,6 +717,82 @@ export interface ConnectionProfile {
   keyTail?: string
   /** The header the key is sent in, when not the OpenAI-compatible default. */
   apiKeyHeader?: string
+  /**
+   * The model ids the last successful probe of **this profile's** endpoint
+   * reported, so a picker has a list without the user opening the connection
+   * form and probing again.
+   *
+   * This is the one thing stored here that was not typed by the user, and it is
+   * allowed for a reason the rest of this type forbids: it is not *derived from*
+   * the profile's other fields — it is a **record of an observation**, and it
+   * ships with {@link modelsProbedAt} so it can never pass itself off as
+   * current truth. (The rule this type is built around is that a *description*
+   * of the profile must be computed on every read; a measurement with a
+   * timestamp is the opposite case — recomputing it would mean putting a
+   * request on the network for every list read.)
+   *
+   * Absent means no probe of this endpoint has ever succeeded. An empty array
+   * means one did and the endpoint advertised nothing — a different fact, and
+   * the picker says so differently.
+   */
+  models?: string[]
+  /** Unix epoch milliseconds of the probe {@link models} came from. */
+  modelsProbedAt?: number
+}
+
+/**
+ * Where the key a `connection.test` probe actually sent came from.
+ *
+ * The form's problem this answers: an API key is shown once by most providers,
+ * so a probe that demands a re-typed key on every attempt is a probe the user
+ * cannot run twice. The host therefore falls back to what it already holds —
+ * and then has to say **which** key it used, because "it worked" means three
+ * different things depending on the answer, and only one of them ("typed") is
+ * a verdict on what is currently in the form.
+ *
+ * `'none'` is not a failure: a local serve (Ollama, llama.cpp, LM Studio) is
+ * reached with no credential at all, and that is worth saying rather than
+ * leaving the field absent to be read as "unknown".
+ */
+export type ConnectionKeySource =
+  /** The key came from the request — what the user has just typed in the form. */
+  | 'typed'
+  /** The key came from a saved profile's own store; the browser never held it. */
+  | 'stored'
+  /** The key came from the host's environment (the startup credential). */
+  | 'host'
+  /** No key was sent, because none was available or none is needed. */
+  | 'none'
+
+/**
+ * The connection the host process was **started** with, as a read-only row.
+ *
+ * A host configured from its environment (`IRIS_BASE_URL` / `IRIS_MODEL` /
+ * `IRIS_API_KEY_ENV`) has always generated perfectly well while the connection
+ * panel said "no active connection" — true of the *profile* list and useless as
+ * a report, because the thing answering the user's messages was right there and
+ * unnamed. This is that thing, named.
+ *
+ * It is not a profile: it has no id, cannot be edited, and cannot be deleted,
+ * because it lives in the environment the process was launched with. What the
+ * user can do is adopt it — `connection.save` with `adoptHostKey`, which copies
+ * the credential into a real profile **inside the host**, so an editable copy
+ * exists without the key ever crossing the wire.
+ */
+export interface HostDefaultConnection {
+  /** The adapter route the composition registered it under. */
+  provider: string
+  /** The endpoint it generates through, when the host was told one. */
+  baseURL?: string
+  /** The model the host was configured with. */
+  model?: string
+  /** Whether the host holds a credential for it. **Never the credential.** */
+  keySource: 'env' | 'none'
+  /**
+   * The environment variable the key is read from, named so a user who wants
+   * to change it knows where to look. The variable's *name*, never its value.
+   */
+  keyEnv?: string
 }
 
 /**

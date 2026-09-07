@@ -18,7 +18,7 @@
  * @module @iris/client-fake/connections
  */
 
-import type { ConnectionProfile, GenerationSettings } from '@iris/protocol'
+import type { ConnectionProfile, GenerationSettings, HostDefaultConnection } from '@iris/protocol'
 
 /** What the fake stores. Deliberately without `summary`, which is never stored. */
 interface StoredProfile {
@@ -32,10 +32,58 @@ interface StoredProfile {
   /** A made-up key, for the mask the interface shows. Never projected to the wire. */
   apiKey?: string
   apiKeyHeader?: string
+  /**
+   * The model ids a probe of this endpoint reported, as the host records them.
+   *
+   * **Seeded rather than probed, and that distinction is the whole licence for
+   * it being here.** The fake still refuses `connection.test`: putting a
+   * request on a real network is the one thing that method exists to do, and a
+   * fabricated latency would teach a form a verdict no endpoint ever gave. A
+   * recorded list is not a verdict — it is fixture data *about a profile*,
+   * exactly like `model` and `baseURL` beside it, and it is what lets the model
+   * picker be developed without anybody inventing a probe.
+   */
+  models?: string[]
+  modelsProbedAt?: number
 }
 
 /** How much of a key a mask may show — matching the host's store. */
 const KEY_TAIL_MIN_LENGTH = 8
+
+/**
+ * The stamp on the seeded model lists.
+ *
+ * A literal rather than `Date.now()`: the seed is a fixture, and a fixture that
+ * moves on every boot cannot be asserted against. 2026-03-01T00:00:00Z.
+ */
+const SEEDED_PROBE_AT = 1_772_323_200_000
+
+/**
+ * The connection the fake "host" was started with.
+ *
+ * Modelled because the interface has a **branch** for it — a host configured
+ * from its environment shows a read-only row where the panel used to say "no
+ * active connection" — and a branch nothing renders in development is a branch
+ * whose first execution is in front of a user. It carries a key *source* and
+ * the *name* of the variable, never a key, which is the shape the real host
+ * projects.
+ */
+const HOST_DEFAULT: HostDefaultConnection = {
+  provider: 'default',
+  baseURL: 'https://api.deepseek.com/v1',
+  model: 'deepseek-chat',
+  keySource: 'env',
+  keyEnv: 'DEEPSEEK_API_KEY',
+}
+
+/**
+ * The key the fake's "host environment" holds, for an adoption to copy.
+ *
+ * No read returns it — {@link hostDefault} projects the source instead — so the
+ * fake reproduces the property that matters: adopting the host's credential is
+ * something the host does, never something the browser relays.
+ */
+const HOST_ENV_KEY = 'sk-fake-host-env-1a2b3c4d'
 
 const STORED: StoredProfile[] = [
   {
@@ -45,6 +93,12 @@ const STORED: StoredProfile[] = [
     model: 'local/qwen3-8b',
     sampling: { temperature: 0.9, topP: 0.95 },
     baseURL: 'http://127.0.0.1:11434/v1',
+    // A local serve advertising several tags, one of which is the profile's
+    // own model — so the picker has both a match to tick and alternatives to
+    // offer. This is the profile the seed activates, so it is the list the
+    // composer's model menu reads.
+    models: ['local/qwen3-8b', 'local/qwen3-14b', 'local/gemma3-12b', 'local/llama3.1-8b'],
+    modelsProbedAt: SEEDED_PROBE_AT,
   },
   {
     // The upstream trap, reproduced: the label says one thing and the route says
@@ -59,10 +113,18 @@ const STORED: StoredProfile[] = [
     // A key the mask can render, and a tail long enough to be shown.
     apiKey: 'sk-fake-key-9f2e77ab',
     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    // A list that does **not** contain this profile's own model, which is the
+    // case the picker has to render without losing the current value: it keeps
+    // it as a "(custom) current value" row rather than silently re-pointing
+    // the profile at whatever the list happens to offer first.
+    models: ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'],
+    modelsProbedAt: SEEDED_PROBE_AT,
   },
   {
     // Never named. The interface has to fall back to something, and the summary
-    // is the only honest candidate.
+    // is the only honest candidate. No recorded list either — a profile that has
+    // never been probed is the state every profile starts in, and the picker has
+    // to fall back to a text field and say why.
     id: 'unnamed',
     provider: 'openai-compat',
     model: 'deepseek-v4-flash',
@@ -111,17 +173,32 @@ function project(profile: StoredProfile): ConnectionProfile {
     ...(profile.apiKey === undefined ? {} : { hasKey: true }),
     ...(tail === undefined ? {} : { keyTail: tail }),
     ...(profile.apiKeyHeader === undefined ? {} : { apiKeyHeader: profile.apiKeyHeader }),
+    ...(profile.models === undefined ? {} : { models: [...profile.models] }),
+    ...(profile.modelsProbedAt === undefined ? {} : { modelsProbedAt: profile.modelsProbedAt }),
   }
+}
+
+/**
+ * The connection the fake host was started with.
+ * @returns the read-only row, carrying the key's source and never the key.
+ */
+export function hostDefault(): HostDefaultConnection {
+  return { ...HOST_DEFAULT }
 }
 
 /**
  * Every profile, plus which one is active.
  * @returns the list.
  */
-export function listConnections(): { profiles: ConnectionProfile[], activeId?: string } {
+export function listConnections(): {
+  profiles: ConnectionProfile[]
+  activeId?: string
+  host: HostDefaultConnection
+} {
   return {
     profiles: STORED.map(project),
     ...(activeId === undefined ? {} : { activeId }),
+    host: hostDefault(),
   }
 }
 
@@ -145,7 +222,9 @@ export function saveConnection(patch: {
   baseURL?: string | undefined
   apiKey?: string | undefined
   apiKeyHeader?: string | undefined
-}): { profiles: ConnectionProfile[], activeId?: string } {
+  adoptHostKey?: boolean | undefined
+  models?: string[] | undefined
+}): { profiles: ConnectionProfile[], activeId?: string, host: HostDefaultConnection } {
   const stored: StoredProfile = {
     id: patch.id ?? `profile-${nextId++}`,
     ...(patch.label === undefined ? {} : { label: patch.label }),
@@ -162,10 +241,25 @@ export function saveConnection(patch: {
   // clears, anything else replaces.
   const at = STORED.findIndex(row => row.id === stored.id)
   const previous = at === -1 ? undefined : STORED[at]
-  if (patch.apiKey === undefined) {
-    if (previous?.apiKey !== undefined) stored.apiKey = previous.apiKey
-  } else if (patch.apiKey.length > 0) {
+  if (patch.apiKey === undefined || patch.apiKey.length === 0) {
+    // Adopting the host's credential happens here, where the fake's "host
+    // environment" holds it — the browser asked for it by name. A typed key
+    // outranks the flag, as it does on the real host: it is the newer decision.
+    if (patch.adoptHostKey === true && patch.apiKey === undefined) stored.apiKey = HOST_ENV_KEY
+    else if (patch.apiKey === undefined && previous?.apiKey !== undefined) stored.apiKey = previous.apiKey
+  } else {
     stored.apiKey = patch.apiKey
+  }
+
+  // The recorded list merges like the key, and is dropped when the endpoint
+  // moves — a list from the address this profile used to point at is another
+  // server's answer, not a stale version of this one's.
+  if (patch.models !== undefined) {
+    stored.models = [...patch.models]
+    stored.modelsProbedAt = SEEDED_PROBE_AT
+  } else if (previous?.models !== undefined && previous.baseURL === stored.baseURL) {
+    stored.models = previous.models
+    if (previous.modelsProbedAt !== undefined) stored.modelsProbedAt = previous.modelsProbedAt
   }
 
   if (at === -1) STORED.push(stored)
@@ -181,7 +275,7 @@ export function saveConnection(patch: {
  */
 export function deleteConnection(
   id: string,
-): { profiles: ConnectionProfile[], activeId?: string } | undefined {
+): { profiles: ConnectionProfile[], activeId?: string, host: HostDefaultConnection } | undefined {
   const at = STORED.findIndex(row => row.id === id)
   if (at === -1) return undefined
   STORED.splice(at, 1)

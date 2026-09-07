@@ -262,7 +262,13 @@ export function seedChats(): FakeChat[] {
       characterId: 'aria-vance',
       messages: survey,
       updatedAt: now - 3 * 60 * 60 * 1000,
+      // The one seeded conversation that has decided something of its own. The
+      // override is stated as the layer it is rather than folded into the
+      // merged copy: `settings` is the merged read, and `settingsOverride` is
+      // what lets the interface tell this 0.7 apart from a global default that
+      // happens to equal it.
       settings: { ...DEFAULT_SETTINGS, temperature: 0.7 },
+      settingsOverride: { temperature: 0.7 },
       variables: { trust: 11, location: 'chart room' },
     },
   ]

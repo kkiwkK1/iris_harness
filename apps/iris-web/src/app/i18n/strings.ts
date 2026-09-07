@@ -160,6 +160,16 @@ export const en = {
   send: 'Send',
   stop: 'Stop',
 
+  /** The composer's model capsule and the menu behind it. */
+  modelMenuOpen: 'Change the model for this conversation ({model})',
+  modelMenuHeading: 'Model for this conversation',
+  modelMenuFromConnection: 'From {connection}',
+  modelRestoreConnectionDefault: 'Back to the connection’s model ({model})',
+  /** The dot beside the capsule: this chat is not on the connection's model. */
+  modelOverriddenHere: 'This conversation overrides the model',
+  modelMenuNoList: 'No model list for the active connection yet — the connection panel can fetch one.',
+  modelMenuNoConnection: 'No connection is active, so there is no model list to offer.',
+
   /** Message row. */
   save: 'Save',
   cancel: 'Cancel',
@@ -696,17 +706,47 @@ export const en = {
   endpointBaseURL: 'Base URL',
   apiKeyLabel: 'API key',
   apiKeyPlaceholder: 'Paste your key…',
-  apiKeyStored: 'Saved key: ••••{tail}',
-  apiKeyStoredNoTail: 'A key is saved. Type to replace it.',
+  /** Shown in the key field once a key is stored — most providers show a key once. */
+  apiKeyPlaceholderKeep: 'Leave blank to keep the saved key',
+  apiKeyStored: 'Saved · last four {tail}. Leave blank to keep it.',
+  apiKeyStoredNoTail: 'A key is saved. Leave blank to keep it, or type to replace it.',
+  /** The key is not the profile's own — it comes from the host's environment. */
+  apiKeyFromHost: 'Provided by the host environment ({env}). Leave blank to use it.',
+  apiKeyFromHostNoName: 'Provided by the host environment. Leave blank to use it.',
   clearKey: 'Clear the saved key',
   keyWillClear: 'The saved key will be removed when you save.',
   modelLabel: 'Model',
   modelsListLabel: 'Models this endpoint offers',
-  modelsFromEndpoint: '{count} models from the endpoint. Type to filter, or enter one by hand.',
+  modelsFromEndpoint: '{count} models from the endpoint.',
+  /** The list is stale by construction, so it says when it was taken. */
+  modelsProbedAt: '{count} models, last checked {when}.',
+  /** The current value is not in the list; kept as a row so picking never loses it. */
+  modelCustomCurrent: '(custom) {model}',
+  refreshModels: 'Refresh the model list',
+  /** No list yet: the field falls back to typing, and says why. */
+  modelsNoneYet: 'No model list yet — test the connection to fetch one, or type the name.',
+  modelsEndpointOffersNone: 'The endpoint answered with an empty model list. Type the name by hand.',
+  /** Non-blocking: the save goes through. */
+  modelNotInList: '“{model}” was not in the last model list from this endpoint. Saved anyway.',
   testConnection: 'Test connection',
   testing: 'Testing…',
   testOk: '{latency} ms · {count} models',
   testOkOne: '{latency} ms · 1 model',
+  /** Which key the probe used — a pass means different things for each. */
+  testKeyTyped: 'Used the key you typed.',
+  testKeyStored: 'Used the saved key — you did not have to re-enter it.',
+  testKeyHost: 'Used the host’s own key from its environment.',
+  testKeyNone: 'Sent no key.',
+
+  /** The connection the host process was started with: a row, not a profile. */
+  hostDefaultTitle: 'Host default (read-only)',
+  hostDefaultNote: 'What this host was started with. It generates through this until you activate a connection.',
+  hostDefaultKeyEnv: 'Key from the environment variable {env}',
+  hostDefaultKeyAnon: 'Key from the host’s environment',
+  hostDefaultNoKey: 'No key configured',
+  hostDefaultEndpointRidden: 'the host’s configured endpoint',
+  adoptHostConnection: 'Save as a connection',
+  hostAdopted: 'Saved as a connection. The host copied its own key across — the browser never saw it.',
   testErrMissingKey: 'This endpoint needs an API key — paste one above, then test again.',
   testErrUnauthorized: 'The endpoint refused the key (401/403). Check it and try again.',
   testErrTimeout: 'The endpoint did not answer in time. Is the address right, and is it up?',
@@ -1001,6 +1041,16 @@ export const zh: Record<StringKey, string> = {
   composerHint: 'Enter 发送 · Shift+Enter 换行 · Alt+←/→ 切换读法',
   send: '发送',
   stop: '停止',
+
+  /** 输入框下的模型胶囊与它打开的菜单。 */
+  modelMenuOpen: '为本对话切换模型（当前 {model}）',
+  modelMenuHeading: '本对话使用的模型',
+  modelMenuFromConnection: '来自「{connection}」',
+  modelRestoreConnectionDefault: '恢复连接默认（{model}）',
+  /** 胶囊旁的小点：本对话没有跟随连接的模型。 */
+  modelOverriddenHere: '本对话覆盖了模型',
+  modelMenuNoList: '活动连接还没有模型列表——可在连接面板里探测一次。',
+  modelMenuNoConnection: '没有活动连接，因此没有可选的模型列表。',
 
   /** 消息行。 */
   save: '保存',
@@ -1508,17 +1558,47 @@ export const zh: Record<StringKey, string> = {
   endpointBaseURL: '端点地址',
   apiKeyLabel: 'API 密钥',
   apiKeyPlaceholder: '粘贴密钥…',
-  apiKeyStored: '已保存密钥：••••{tail}',
-  apiKeyStoredNoTail: '已保存密钥。输入可替换。',
+  /** 已存有密钥时的输入框提示——多数平台的密钥只显示一次。 */
+  apiKeyPlaceholderKeep: '留空即沿用已保存的密钥',
+  apiKeyStored: '已保存 · 末四位 {tail}。留空即沿用。',
+  apiKeyStoredNoTail: '已保存密钥。留空即沿用，输入则替换。',
+  /** 密钥不属于这个连接，而是宿主环境提供的。 */
+  apiKeyFromHost: '由宿主环境提供（{env}）。留空即使用它。',
+  apiKeyFromHostNoName: '由宿主环境提供。留空即使用它。',
   clearKey: '清除已保存的密钥',
   keyWillClear: '保存后将移除已保存的密钥。',
   modelLabel: '模型',
   modelsListLabel: '该端点提供的模型',
-  modelsFromEndpoint: '来自端点的 {count} 个模型。可输入过滤，也可手填。',
+  modelsFromEndpoint: '来自端点的 {count} 个模型。',
+  /** 列表天生会过期，所以要说清是什么时候取的。 */
+  modelsProbedAt: '{count} 个模型，上次探测于{when}。',
+  /** 当前值不在列表里；保留成一项，选择时就不会把它丢掉。 */
+  modelCustomCurrent: '（自定义）{model}',
+  refreshModels: '刷新模型列表',
+  /** 还没有列表：退回文本框，并说明原因。 */
+  modelsNoneYet: '还没有模型列表——测试一次连接即可获取，也可以手填。',
+  modelsEndpointOffersNone: '端点返回的模型列表是空的。请手动填写模型名。',
+  /** 非阻塞：保存照常完成。 */
+  modelNotInList: '「{model}」不在最近一次从该端点取到的列表里。已照常保存。',
   testConnection: '测试连接',
   testing: '正在测试…',
   testOk: '{latency} 毫秒 · {count} 个模型',
   testOkOne: '{latency} 毫秒 · 1 个模型',
+  /** 用的是哪把密钥——同样的“通过”，含义并不相同。 */
+  testKeyTyped: '使用了你刚填的密钥。',
+  testKeyStored: '使用了已保存的密钥——无需重填。',
+  testKeyHost: '使用了宿主环境里的密钥。',
+  testKeyNone: '没有发送密钥。',
+
+  /** 宿主启动时所用的那条连接：它是一行只读记录，不是一个 profile。 */
+  hostDefaultTitle: '宿主默认（只读）',
+  hostDefaultNote: '这是宿主启动时配置的连接。在你启用某个连接之前，回复都由它生成。',
+  hostDefaultKeyEnv: '密钥来自环境变量 {env}',
+  hostDefaultKeyAnon: '密钥来自宿主环境',
+  hostDefaultNoKey: '未配置密钥',
+  hostDefaultEndpointRidden: '宿主配置的端点',
+  adoptHostConnection: '存为连接',
+  hostAdopted: '已存为连接。密钥由宿主自行复制，浏览器全程没有经手。',
   testErrMissingKey: '该端点需要 API 密钥——请在上方粘贴后重新测试。',
   testErrUnauthorized: '端点拒绝了这个密钥（401/403）。请检查后重试。',
   testErrTimeout: '端点未在时限内应答。地址是否正确？服务是否在运行？',

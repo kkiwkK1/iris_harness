@@ -26,6 +26,7 @@ import type {
   ConnectionProfile,
   DebugReport,
   GenerationSettings,
+  HostDefaultConnection,
   IrisClient,
   IrisEvent,
   PersonaView,
@@ -332,6 +333,21 @@ export interface IrisState {
   /** Sampling in force for the open chat, or the global defaults. */
   settings: GenerationSettings | undefined
   /**
+   * Which of {@link settings} the **open chat** is overriding, from the same
+   * read.
+   *
+   * `undefined` means the loaded settings are the global layer — no chat open,
+   * or a read of the defaults — and `{}` means a chat is open and has decided
+   * nothing of its own. The two are different states and the interface renders
+   * them differently: the marker that says "this conversation" and the offer to
+   * put a value back both need to know that a value is the conversation's own
+   * rather than the default showing through. Reconstructing this by diffing
+   * against the global layer would report an override that happens to equal
+   * the default as "not overridden" — the exact case a reader gets wrong by
+   * hand.
+   */
+  settingsOverrides: Partial<GenerationSettings> | undefined
+  /**
    * The worldbook panel's data, as last fetched.
    *
    * `undefined` until `loadWorldbooks` runs — which the panel reads as "not
@@ -571,6 +587,17 @@ export interface IrisState {
   /** Saved connection profiles, and which one was last activated. */
   connections: ConnectionProfile[]
   activeConnectionId: string | undefined
+  /**
+   * The connection the **host process itself** was started with, as it
+   * describes itself.
+   *
+   * `undefined` means the host does not describe its own route — not that it
+   * has none. A host configured from its environment used to be reported as
+   * "no active connection", which was true of the *profile list* and useless
+   * as a report: the thing answering the reader's messages was right there and
+   * unnamed. Carries a key *source*, never a key.
+   */
+  hostConnection: HostDefaultConnection | undefined
 
   /**
    * The profile's preset library, once fetched.
@@ -910,8 +937,30 @@ export interface IrisActions {
      */
     apiKey?: string
     apiKeyHeader?: string
+    /**
+     * Ask the host to copy **its own** startup credential into this profile.
+     *
+     * How the read-only host row becomes an editable profile. The browser is
+     * naming a key it has never been shown and will never be shown; the copy
+     * happens inside the host.
+     */
+    adoptHostKey?: boolean
+    /** The model list a probe just reported, filed on the profile for later pickers. */
+    models?: string[]
   }): Promise<void>
   deleteConnection(id: string): Promise<void>
+  /**
+   * Point the **open conversation** at one model, or put it back on the
+   * connection's own.
+   *
+   * A chat-scoped `settings.set`, which is what the composer's model menu
+   * commits: `null` clears the override so the connection's model shows
+   * through again. Refuses quietly with no chat open — there is no
+   * conversation to scope a choice to, and the global layer is the settings
+   * drawer's business.
+   * @param model - the model id, or `null` to drop this chat's override.
+   */
+  setChatModel(model: string | null): Promise<void>
   /**
    * Ask the host to probe an endpoint and fetch its model list.
    *
@@ -1136,6 +1185,7 @@ export function createIrisStore(
       view: undefined,
       stream: undefined,
       settings: undefined,
+      settingsOverrides: undefined,
       worldbooks: undefined,
       charBooks: undefined,
       wiEditor: undefined,
@@ -1169,6 +1219,7 @@ export function createIrisStore(
       documentGranted: false,
       connections: [],
       activeConnectionId: undefined,
+      hostConnection: undefined,
       presets: undefined,
       activePreset: undefined,
       presetInstall: undefined,
@@ -1178,16 +1229,36 @@ export function createIrisStore(
 
       async boot(): Promise<void> {
         await guard(async () => {
-          const [chats, characters, settings] = await Promise.all([
+          const [chats, characters, settings, connections] = await Promise.all([
             client.call('chat.list', {}),
             client.call('character.list', {}),
             client.call('settings.get', {}),
+            /*
+             * The connections are read at boot now, because the **composer**
+             * needs them: its model capsule offers the active connection's
+             * recorded model list, and it is on screen from the first frame,
+             * long before anyone opens the settings drawer.
+             *
+             * Caught rather than guarded, on the `loadPresets` precedent: a
+             * host with no connection store refuses this method, and that is a
+             * configuration, not a fault. Raising a notice for it would make
+             * every such host open with an error about a feature it never had.
+             * `loadConnections` keeps its guard — a refusal there was asked for
+             * by a panel the reader opened, and silence would be the panel
+             * failing to load with no word.
+             */
+            client.call('connection.list', {}).catch(() => undefined),
           ])
           set({
             chats: chats.chats,
             characters: characters.characters,
             settings: settings.settings,
             connected: client.connected,
+            ...connections === undefined ? {} : {
+              connections: connections.profiles,
+              activeConnectionId: connections.activeId,
+              hostConnection: connections.host,
+            },
           })
           // Open the most recent conversation rather than an empty surface. This
           // is a reading app: the reader almost always wants to continue. A
@@ -1210,12 +1281,23 @@ export function createIrisStore(
           ])
           // A second open may have started while this one was in flight.
           if (get().chatId !== chatId) return
-          set({ view: opened.view, settings: settings.settings })
+          // `overrides` is spread rather than assigned so a host that does not
+          // send it leaves the field absent instead of reporting `{}` — "this
+          // chat overrides nothing" is a claim only a host that answered it can
+          // make.
+          set({
+            view: opened.view,
+            settings: settings.settings,
+            settingsOverrides: settings.overrides,
+          })
         })
       },
 
       closeChat(): void {
-        set({ chatId: undefined, view: undefined, stream: undefined })
+        // The override layer goes with the chat it described. Left behind, the
+        // composer would mark the global default as this conversation's choice
+        // on a surface with no conversation at all.
+        set({ chatId: undefined, view: undefined, stream: undefined, settingsOverrides: undefined })
       },
 
       async createChat(characterId: string): Promise<void> {
@@ -1562,11 +1644,11 @@ export function createIrisStore(
         await guard(async () => {
           // Scoped to the open chat when there is one: a reader adjusting
           // temperature mid-scene means "for this scene", not "for everything".
-          const { settings } = await client.call('settings.set', {
+          const answer = await client.call('settings.set', {
             ...(chatId === undefined ? {} : { chatId }),
             settings: patch,
           })
-          set({ settings })
+          set({ settings: answer.settings, settingsOverrides: answer.overrides })
         })
       },
 
@@ -2158,7 +2240,11 @@ export function createIrisStore(
       async loadConnections(): Promise<void> {
         await guard(async () => {
           const listed = await client.call('connection.list', {})
-          set({ connections: listed.profiles, activeConnectionId: listed.activeId })
+          set({
+            connections: listed.profiles,
+            activeConnectionId: listed.activeId,
+            hostConnection: listed.host,
+          })
         })
       },
 
@@ -2173,13 +2259,41 @@ export function createIrisStore(
             ...(chatId === undefined ? {} : { chatId }),
           })
           set({ settings: result.settings, activeConnectionId: result.activeId })
+          // Activating rewrote whichever settings layer it was scoped to, so
+          // the chat's own layer just changed too — re-read it rather than let
+          // the composer keep marking a value that is no longer the override it
+          // was. Silent on failure: the activation itself succeeded, and a
+          // notice here would attribute a follow-up read's failure to it.
+          if (chatId !== undefined) {
+            const refreshed = await client.call('settings.get', { chatId }).catch(() => undefined)
+            if (refreshed !== undefined && get().chatId === chatId) {
+              set({ settings: refreshed.settings, settingsOverrides: refreshed.overrides })
+            }
+          }
         })
       },
 
       async saveConnection(patch): Promise<void> {
         await guard(async () => {
           const listed = await client.call('connection.save', patch)
-          set({ connections: listed.profiles, activeConnectionId: listed.activeId })
+          set({
+            connections: listed.profiles,
+            activeConnectionId: listed.activeId,
+            hostConnection: listed.host,
+          })
+        })
+      },
+
+      async setChatModel(model): Promise<void> {
+        const chatId = get().chatId
+        // No conversation, no scope. The global default is the settings
+        // drawer's business, and silently writing it here would make a menu
+        // labelled "this conversation" change every conversation.
+        if (chatId === undefined) return
+        await guard(async () => {
+          const answer = await client.call('settings.set', { chatId, settings: { model } })
+          if (get().chatId !== chatId) return
+          set({ settings: answer.settings, settingsOverrides: answer.overrides })
         })
       },
 
@@ -2196,7 +2310,11 @@ export function createIrisStore(
           // `activeId` is taken from the response rather than kept: deleting the
           // active profile clears it host-side, and holding the old value would
           // leave the interface reporting a current connection nobody can open.
-          set({ connections: listed.profiles, activeConnectionId: listed.activeId })
+          set({
+            connections: listed.profiles,
+            activeConnectionId: listed.activeId,
+            hostConnection: listed.host,
+          })
         })
       },
 
@@ -2233,7 +2351,7 @@ export function createIrisStore(
           const refreshed = chatId === undefined
             ? await client.call('settings.get', {})
             : await client.call('settings.get', { chatId })
-          set({ settings: refreshed.settings })
+          set({ settings: refreshed.settings, settingsOverrides: refreshed.overrides })
         })
       },
 
