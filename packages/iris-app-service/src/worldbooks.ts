@@ -35,7 +35,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 
 import { fromCharacterBook, parseLorebook, type Lorebook, type LorebookEntry } from '@iris/lorebook'
 import type { CharacterCard } from '@iris/character'
-import type { SecondaryLogic, WorldbookEntry, WorldbookPosition } from '@iris/protocol'
+import type { CardWorldbookView, SecondaryLogic, WorldbookEntry, WorldbookPosition } from '@iris/protocol'
 
 import { invalid, notFound } from './errors.ts'
 import { fileFor } from './paths.ts'
@@ -366,6 +366,35 @@ export class WorldbookStore {
   }
 
   /**
+   * Every book that has a file, with its entry count.
+   *
+   * **Deliberately separate from {@link names}, and deliberately not folded
+   * into it.** `names` answers a directory listing; this opens all 18 books to
+   * count them, which is exactly the cost the module header says a listing must
+   * not pay. The two callers want opposite things: a card asking what books
+   * exist wants the cheap answer, a panel drawing a chooser wants the counts,
+   * and `worldbook.names`' `withCounts` is where the caller says which.
+   *
+   * A file that will not parse is **left out** rather than reported as empty. A
+   * zero here would be read as a book the user emptied, and "I could not read
+   * it" is a different repair from "there is nothing in it"; the name is still
+   * in {@link names}, so the book does not vanish — it appears without a count.
+   * @returns one row per readable book, in {@link names}' order.
+   */
+  async summaries(): Promise<{ name: string, entryCount: number }[]> {
+    const rows: { name: string, entryCount: number }[] = []
+    for (const name of await this.names()) {
+      try {
+        const book = await this.read(name)
+        rows.push({ name, entryCount: Object.keys(book.entries).length })
+      } catch {
+        // Unreadable or unparseable. See above: absent, not zero.
+      }
+    }
+    return rows
+  }
+
+  /**
    * One book, in the shape a card script reads.
    *
    * Sorted by `displayIndex`, matching upstream — that is the order the user
@@ -690,6 +719,80 @@ export async function resolveCardWorldbook(
   // this runs; by the time resolution asks, an embedded book is already a named
   // one. See `materialise.ts` and `notes/packages/iris-app-service/EMBEDDED-BOOK-MATERIALISATION.md`.
   return { entries: [], source: 'none', world: fallbackName, additional, global }
+}
+
+/**
+ * Report which book one card's world info comes from, for a panel to show.
+ *
+ * **A report of {@link resolveCardWorldbook}'s choice, not a second choice.**
+ * The one line that decides *which name* is the same line and in the same
+ * order — `materialised ?? charWorldbookNames(card).primary` — so the two
+ * cannot name different books. What this adds is only what a screen needs and
+ * a prompt does not: how many entries, and whether the name on screen is the
+ * one written on the card.
+ *
+ * It deliberately does **not** reproduce the two other things resolution does.
+ * It does not read the global selection, so it never answers `none` for the
+ * dedup case (a card bound to a globally selected book contributes nothing
+ * *as a character book* there, but the book is still what the card's world info
+ * is, and telling a reader "none" would be answering a question about
+ * assembly with a sentence about ownership). And it does not read the extra
+ * bindings, which the panel edits and shows separately.
+ *
+ * The `embedded` case is the one resolution has no branch for, and that is not
+ * a disagreement: materialisation runs on the import and open paths, so by the
+ * time a prompt is assembled an embedded book has already become a named one.
+ * A card that has never been opened on this host has not been through it yet,
+ * and this is the reader looking at exactly that card — 140 entries the card
+ * plainly carries, no file yet, and previously nothing on screen to say so.
+ *
+ * The embedded count is `character_book.entries.length`, the same expression
+ * `LibraryStore.summarize` uses for `CharacterSummary.bookEntryCount`, so the
+ * count in this panel and the count on the character page are one derivation
+ * read twice rather than two that can drift.
+ * @param card - the character being played, or undefined when none is open.
+ * @param store - the named books, when the host has them.
+ * @param materialised - the name this host materialised for the card, if any.
+ * @returns the book, its size, and where the count came from.
+ */
+export async function cardWorldbookView(
+  card: CharacterCard | undefined,
+  store: WorldbookStore | undefined,
+  materialised?: string,
+): Promise<CardWorldbookView> {
+  const own = charWorldbookNames(card).primary
+  const bound = materialised ?? own
+  const embedded = card?.data.character_book
+  // True only when this host minted a name the card does not carry. A
+  // materialisation that got the name it wanted is invisible to the reader and
+  // should stay that way; the flag exists for the collision case, which is the
+  // one that makes a panel look wrong.
+  const minted = materialised !== undefined && materialised !== own
+
+  if (bound !== null && store !== undefined) {
+    try {
+      const book = await store.read(bound)
+      return {
+        name: bound,
+        source: 'named',
+        entryCount: Object.keys(book.entries).length,
+        materialised: minted,
+      }
+    } catch {
+      // A binding with no file behind it, or a file this build cannot parse.
+      // Falls through to the embedded copy, which is what the card still
+      // plainly contains — and what resolution's rule 2 was written for.
+    }
+  }
+
+  if (embedded !== undefined) {
+    // The name stays whatever the card asked for even though no file carries
+    // it: "bound to X, and X is not on disk yet" is the state, and blanking the
+    // name would hide the half a reader needs to go looking.
+    return { name: bound, source: 'embedded', entryCount: embedded.entries.length, materialised: minted }
+  }
+
+  return { name: null, source: 'none', entryCount: 0, materialised: false }
 }
 
 /**

@@ -22,6 +22,14 @@ export {
 export { mergeSettings } from './settings.ts'
 export { DEFAULT_SETTINGS, seedCharacters, seedChats } from './seed.ts'
 export {
+  fakeBookEntries,
+  fakeCardWorldbook,
+  FAKE_CARD_BINDINGS,
+  FAKE_GLOBAL_SELECT,
+  FAKE_WORLDBOOKS,
+  type FakeWorldbook,
+} from './worldbooks.ts'
+export {
   selected,
   toChatSummary,
   toChatView,

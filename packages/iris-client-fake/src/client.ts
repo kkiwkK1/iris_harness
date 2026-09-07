@@ -38,6 +38,14 @@ import {
 } from './connections.ts'
 import { mergeSettings } from './settings.ts'
 import { DEFAULT_SETTINGS, FAKE_SCRIPTS, seedCharacters, seedChats } from './seed.ts'
+import {
+  fakeBookEntries,
+  fakeCardWorldbook,
+  FAKE_CARD_BINDINGS,
+  FAKE_GLOBAL_SELECT,
+  FAKE_WORLDBOOKS,
+  type FakeWorldbook,
+} from './worldbooks.ts'
 import { selected, toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
 
 /** How the fake is tuned for a given consumer. */
@@ -127,10 +135,30 @@ class InMemoryClient implements FakeClient {
   #chunkDelayMs: number
   #chunkCount: number
   #nextId = 1
+  /**
+   * The books selected for every chat.
+   *
+   * Held rather than refused, unlike the other world-book writes: a selection
+   * is a list of names, this client has the books to check them against, and
+   * the next `worldbook.globalSelect` read can therefore show what the write
+   * did. The writes that stay refused are the ones whose whole effect is
+   * downstream of a prompt assembly this client does not perform.
+   */
+  #globalSelect: string[]
+  /**
+   * The named books this client holds.
+   *
+   * Emptied by the same `empty` switch that empties the library, so the
+   * no-books state — which the panel has its own rendering for, and which every
+   * fresh profile is in — stays reachable without a second option.
+   */
+  readonly #worldbooks: readonly FakeWorldbook[]
 
   constructor(options: FakeClientOptions) {
     this.#chats = options.empty === true ? [] : seedChats()
     this.#characters = options.empty === true ? [] : seedCharacters()
+    this.#worldbooks = options.empty === true ? [] : FAKE_WORLDBOOKS
+    this.#globalSelect = options.empty === true ? [] : [...FAKE_GLOBAL_SELECT]
     this.#globalSettings = { ...DEFAULT_SETTINGS }
     this.#chunkDelayMs = options.chunkDelayMs ?? 24
     this.#chunkCount = options.chunkCount ?? 28
@@ -703,38 +731,73 @@ class InMemoryClient implements FakeClient {
       }
 
       /*
-       * World books, answered as a host that genuinely has none.
+       * World books, answered from `worldbooks.ts`' seed.
        *
-       * The distinction this arm rests on: an empty book list is a **real host
-       * state**, not a stand-in for one. The fake has no world book data — no
-       * fixture, no parsed `character_book` — so "none" is the true answer here
-       * rather than an invented one, and that is what separates these from the
-       * refused group above. `script.generate` is refused because faking it
-       * means inventing SillyTavern’s assembly; there is nothing to invent in
-       * reporting an absence.
+       * **These used to answer as a host with none**, and that was defended as
+       * a true answer rather than a stand-in — which it was. What changed is
+       * not the honesty argument but which state is worth having reachable. A
+       * panel developed against an empty book store gets its empty state
+       * polished and its dense state discovered on a user's machine: a reader
+       * with nine books and one card could not tell which book was theirs, and
+       * no check here could have shown it. The seed's whole design is the
+       * *shapes* — a materialised book under a minted name, a hand-bound one,
+       * two nobody bound — because those are what the panel groups by.
        *
-       * It also keeps the empty state reachable in development, which a refusal
-       * would not. A card bound to no books, and an interface that has to render
-       * that, are both things somebody has to be able to see.
+       * The empty state is still reachable, and by the same switch that empties
+       * the library: `createFakeClient({empty: true})` seeds no books either.
        *
-       * When the fake grows real book fixtures these become real reads. Until
-       * then a developer who needs books runs against a host that has them.
+       * The **writes** below are unchanged in kind. A selection is held,
+       * because this client owns the list it would be held in; the rest stay
+       * refused, because their whole effect is on a prompt assembly this client
+       * does not perform, and a success it cannot reflect is the failure this
+       * package exists to prevent.
        */
       case 'worldbook.names': {
-        return { names: [] }
+        const { withCounts } = params as RpcRequest<'worldbook.names'>
+        const names = this.#worldbooks.map(book => book.name)
+        if (withCounts !== true) return { names }
+        return {
+          names,
+          books: this.#worldbooks.map(book => ({
+            name: book.name,
+            entryCount: book.entryCount,
+            ...book.fromCharacterId === undefined ? {} : { fromCharacterId: book.fromCharacterId },
+          })),
+        }
       }
 
       case 'worldbook.charNames': {
-        const { characterId } = params as RpcRequest<'worldbook.charNames'>
+        const { characterId, withCard } = params as RpcRequest<'worldbook.charNames'>
         /*
          * The card still has to exist. A binding query for a character that is
          * not there is a caller mistake and should read as one, rather than as
          * a card that happens to be bound to nothing.
          */
-        if (!this.#characters.some(row => row.characterId === characterId)) {
+        const character = this.#characters.find(row => row.characterId === characterId)
+        if (character === undefined) {
           throw new FakeRpcError('not-found', `no character "${characterId}"`)
         }
-        return { primary: null, additional: [] }
+        /*
+         * `additional` stays empty, and stays empty for a reason rather than
+         * for want of a fixture: `worldbook.setCharBooks` below is refused, so
+         * a non-empty list here would be one no write could have produced and
+         * no write can change — an interface would show extra bindings that
+         * cannot be edited off.
+         *
+         * `card` is answered only when asked for — the flag is what keeps the
+         * names-only member cheap on a real host, and a fake that answered it
+         * unasked would let a caller forget to ask. It is omitted with the
+         * books, not with the library: a client with no book store has no
+         * answer to "which book plays", and `none` there would be a claim
+         * rather than an admission.
+         */
+        const primary = FAKE_CARD_BINDINGS[characterId]?.primary ?? null
+        if (withCard !== true || this.#worldbooks.length === 0) return { primary, additional: [] }
+        return {
+          primary,
+          additional: [],
+          card: fakeCardWorldbook(characterId, character.bookEntryCount),
+        }
       }
 
       case 'script.evalTemplate': {
@@ -812,70 +875,104 @@ class InMemoryClient implements FakeClient {
       }
 
       case 'worldbook.globalSelect': {
-        /*
-         * An empty selection, which is a true answer here for the same reason
-         * `worldbook.names` returns nothing: this client holds no world books, so
-         * none of them can be globally selected. Reporting an absence invents
-         * nothing.
-         */
-        return { names: [] }
+        return { names: [...this.#globalSelect] }
       }
 
       case 'worldbook.setGlobalSelect': {
         const { names } = params as RpcRequest<'worldbook.setGlobalSelect'>
         /*
-         * Refused, on the same line the reads and writes were split along: a
-         * selection is a **write**, and "this host has no books" is not a true
-         * answer to one. The contract says a name with no file behind it is
-         * skipped, so accepting an arbitrary list against an empty store would
-         * skip every entry and answer `{names: []}` — a success that looks
-         * exactly like the caller having selected nothing, when in fact nothing
-         * could ever have been selected.
+         * Held, where it used to be refused — and the reason it used to be
+         * refused is what makes holding it correct now.
+         *
+         * The old refusal's argument was that an empty store would skip every
+         * name and answer `{names: []}`, a success byte-identical to having
+         * selected nothing. That argument was about the **skip**, not about the
+         * write: the contract says a name with no file behind it is simply
+         * skipped, so a selection over a store that *has* books is a write
+         * whose effect this client can both perform and show — the next
+         * `worldbook.globalSelect` read answers with it.
+         *
+         * The skip is reproduced rather than being an error, because that is
+         * upstream's behaviour and the host's, and it is why the answer is read
+         * back from the stored list instead of echoing the argument.
          */
-        throw new FakeRpcError(
-          'not-found',
-          `the fake client has no world books, so none of [${names.join(', ')}] can be selected`,
-        )
+        this.#globalSelect = names.filter(name => this.#worldbooks.some(book => book.name === name))
+        return { names: [...this.#globalSelect] }
       }
 
       case 'worldbook.replace': {
         const { name } = params as RpcRequest<'worldbook.replace'>
         /*
-         * Refused, and for the opposite reason to the reads above.
+         * Still refused, and the seed above does not change that — but it does
+         * change the reason, so the message says the real one.
          *
-         * "This host has no world books" is a true answer to *names* and to
-         * *bindings*: nothing is being invented by reporting an absence. It is
-         * not a true answer to a write. Upstream's `replaceWorldbook` rebuilds
-         * the stored book entirely from the array it is handed — entries absent
-         * from it are gone — and it also renumbers: missing uids are assigned at
-         * random and `displayIndex` is reassigned from array position, so a
-         * round trip reorders the file. Accepting the call and doing nothing
-         * would tell a card its rewrite landed when no book exists to have
-         * received it, which is the "passes here, breaks on a real host" failure
-         * this whole package exists to prevent.
+         * Upstream's `replaceWorldbook` rebuilds the stored book entirely from
+         * the array it is handed — entries absent from it are gone — and it also
+         * **renumbers**: missing uids are assigned at random and `displayIndex`
+         * is reassigned from array position, so a round trip reorders the file.
+         * This client does not model that renumbering. Accepting the write and
+         * answering with the entries as sent would teach a caller that a save
+         * round-trips unchanged, which on a real host it does not; that is the
+         * "passes here, breaks in production" failure this package exists to
+         * prevent, and it is worse than an honest refusal.
          */
-        throw new FakeRpcError('not-found', `no world book named ${name}`)
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client does not model upstream's uid and displayIndex renumbering, so a whole-book`
+          + ` replace of "${name}" would not round-trip the way a real host's does`,
+        )
       }
 
       case 'worldbook.load': {
         const { name } = params as RpcRequest<'worldbook.load'>
-        // Placeholder in this client's own idiom (7b owns the sandbox half).
-        // `null` rather than a refusal, because this client holds no books and
-        // upstream's answer for a name that resolves to nothing is `null` —
-        // and an empty name is upstream's absent answer, which is also this
-        // client's honest one.
-        return name === '' ? {} : { book: null }
+        /*
+         * The **raw saved shape**, `entries` keyed by uid — not the normalised
+         * array `worldbook.get` answers with. The two upstream APIs for one
+         * book return different shapes on purpose, and MVU's guard is literally
+         * `isPlainObject(loaded) && isPlainObject(loaded.entries)`, so handing
+         * back the array form here is exactly what produces its "Failed to read
+         * character-card configuration".
+         *
+         * An empty name is upstream's absent answer (`if (!name) return;`), and
+         * a name with no book is `null` — both kept, because a caller reads the
+         * two differently.
+         */
+        if (name === '') return {}
+        if (!this.#worldbooks.some(row => row.name === name)) return { book: null }
+        /*
+         * A **seeded** name is refused rather than answered, and this is the
+         * one arm the seed made worse instead of better.
+         *
+         * The saved shape is not the shape `fakeBookEntries` produces: on disk
+         * an entry carries `key`, `keysecondary`, `comment`, a numeric
+         * `position` and a `displayIndex`, and turning the protocol's
+         * `WorldbookEntry` back into that is the host's `fromWorldbookEntry` —
+         * a mapping with documented asymmetries, in a package this client does
+         * not depend on. Transcribing it here would be a second implementation
+         * of it, free to drift.
+         *
+         * Answering with the normalised array instead would be worse than
+         * either: it passes MVU's guard (`isPlainObject(loaded.entries)`) and
+         * is then read field by field as something it is not. `null` is worse
+         * still — the book is right there in `worldbook.names`.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client holds "${name}" in the protocol's entry shape, not the raw saved shape this`
+          + ` method answers with, and inventing that shape is what it refuses to do`,
+        )
       }
 
       case 'worldbook.get': {
         const { name } = params as RpcRequest<'worldbook.get'>
         /*
-         * Not-found rather than an empty entry list, and the difference is the
-         * one a caller acts on: "this book has no entries" and "there is no such
-         * book" lead to different repairs, and `worldbook.names` above has
-         * already promised that no name exists.
+         * Not-found rather than an empty entry list for a name that is not
+         * seeded, and the difference is the one a caller acts on: "this book has
+         * no entries" and "there is no such book" lead to different repairs.
          */
-        throw new FakeRpcError('not-found', `no world book named ${name}`)
+        const book = this.#worldbooks.find(row => row.name === name)
+        if (book === undefined) throw new FakeRpcError('not-found', `no world book named ${name}`)
+        return { entries: fakeBookEntries(book) }
       }
 
       case 'worldbook.settings': {
@@ -920,12 +1017,21 @@ class InMemoryClient implements FakeClient {
       case 'worldbook.create': {
         const { name } = params as RpcRequest<'worldbook.create'>
         /*
-         * Refused like `worldbook.replace`: a creation this client accepted
-         * would answer `{created: true}` with no file behind it, and a card's
-         * next `getWorldbook` — honestly refused here — would fail on a book it
-         * was told exists.
+         * Refused like `worldbook.replace`. The seed is a constant, so a
+         * creation this client accepted would answer `{created: true}` with
+         * nothing behind it, and the caller's next `worldbook.get` — the
+         * get-or-create pattern cards actually write — would then fail on a
+         * book it was just told exists.
+         *
+         * `already-exists` for a seeded name is answered as upstream answers
+         * it, with `false` rather than an error: that is a normal outcome of
+         * get-or-create and this client can tell the truth about it.
          */
-        throw new FakeRpcError('not-found', `no world book store, so "${name}" cannot be created`)
+        if (this.#worldbooks.some(book => book.name === name)) return { created: false }
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client's world books are a fixed seed, so "${name}" cannot be created`,
+        )
       }
 
       case 'worldbook.bindChat': {

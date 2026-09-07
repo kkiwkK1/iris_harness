@@ -2658,3 +2658,85 @@
   border-top: var(--iris-hairline) solid var(--iris-rule);
   padding: 4px 12px 10px;
 }
+
+/* ------------------------------------------- world books, grouped by card */
+
+/* The open card's own book, ruled off from the chooser below it: the whole
+   point of the reorganisation is that the first thing in this panel is *this
+   card's*, and a section that shares a ground with the global list is back to
+   being one flat list with a heading. */
+.iris-wb-card {
+  border-bottom: var(--iris-hairline) solid var(--iris-rule);
+  padding-bottom: 10px;
+}
+
+.iris-wb-card__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+}
+
+/* Wraps rather than truncating. This is the line a reader is scanning for, and
+   the measured name it failed to find —
+   `【Sgw】『普通』和『理所当然』是什么呢 2.3（好感度x10版）` — is 33 code points of
+   brackets and parentheses with nothing to break on. */
+.iris-wb-card__title {
+  font-size: 13px;
+  color: var(--iris-ink);
+  overflow-wrap: anywhere;
+}
+
+/* One book per line. `.iris-choice` is a horizontal segmented control, and
+   eighteen book names in a row is exactly the squeeze this grouping exists to
+   undo. */
+.iris-wb-books {
+  flex-direction: column;
+}
+
+.iris-wb-book {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  text-align: left;
+}
+
+/* The segmented control's divider turned through ninety degrees, since the
+   rows now stack. Same specificity as the rule it replaces, and after it. */
+.iris-wb-book + .iris-wb-book {
+  border-left: 0;
+  border-top: var(--iris-hairline) solid var(--iris-rule);
+}
+
+.iris-wb-book__name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The fold. Link weight rather than button weight, because it reveals a list
+   and changes nothing — the buttons inside it are what change something. */
+.iris-wb-more {
+  background: none;
+  border: 0;
+  padding: 8px 0 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  color: var(--iris-accent);
+  align-self: flex-start;
+}
+
+.iris-wb-more:focus-visible {
+  outline: none;
+  text-decoration: underline;
+}
+
+/* The global section's own count sits on the value column, which is monospace
+   and tabular — right for `34 entries`, wrong for a sentence. */
+.iris-wb-global > .iris-field__value {
+  font-family: inherit;
+  font-variant-numeric: normal;
+}

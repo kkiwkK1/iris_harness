@@ -276,10 +276,45 @@ export const en = {
   worldbooksNotLoaded: 'World book settings have not loaded.',
   worldbooksEmpty: 'No world books in this installation.',
   worldbookGlobalSelect: 'Injected into every chat',
-  worldbookCharBind: 'Bound to the current character',
+  /** The card's *extra* bindings, which is the only half this panel writes. */
+  worldbookCharBind: "This card's extra books",
+  worldbookCharBindCount: '{count} bound of {total} on disk',
   worldbookCharPrimary: 'The card itself binds: {name}',
   worldbookCharPrimaryNone: 'The card itself binds no book.',
   worldbookCharNote: 'Extra books join the scan on the next chat open; stored with the profile, never written into the card.',
+
+  /**
+   * This card's own book — the panel's first section.
+   *
+   * `worldbookCardRule` is the mechanism said in words, which is what the user
+   * asked for: a chat plays its own card's book and nothing else's, plus
+   * whatever is globally on. It is not a promise the panel makes — it is what
+   * `worldbooks.ts` already does ("choose, never combine") — but the panel was
+   * silent about it, and a reader with nine flat book names had no way to know.
+   */
+  worldbookThisCard: "This card's world book",
+  /** The book has a file. */
+  worldbookCardSourceNamed: 'a book on disk',
+  /** The card carries the entries and no file holds them yet. */
+  worldbookCardSourceEmbedded: 'embedded in the card, not written out yet',
+  /** Embedded, and the card binds no name for it either. */
+  worldbookCardEmbeddedUnnamed: 'the card’s own book, unnamed',
+  worldbookCardNone: 'This card has no world book.',
+  /** Said only when the name on screen is not the name on the card. */
+  worldbookCardMinted: 'Iris wrote it out under a name of its own, because the one the card asked for ({wanted}) was taken.',
+  worldbookCardRule: 'This conversation plays this card’s book, plus whatever is switched on globally below. No other card’s book reaches it.',
+  worldbookCardNotLoaded: 'This host keeps no world books, so there is nothing to say about this card’s.',
+  worldbookNoChat: 'Open a conversation to see which book its card plays.',
+
+  /** The global section — folded by default, so a long book list cannot crowd. */
+  worldbookGlobalHead: 'Switched on for every chat',
+  worldbookGlobalCount: '{count} on of {total} on disk',
+  worldbookGlobalNone: 'None — every conversation plays only its own card’s book.',
+  worldbookGlobalExpand: 'Show all {total} books',
+  worldbookGlobalCollapse: 'Hide the full list',
+  /** Beside a book some card claims, so a list of strangers becomes a list of names. */
+  worldbookFromCard: 'from {name}',
+  worldbookEntryCount: '{count} entries',
   worldbookScanDepth: 'Scan depth',
   worldbookScanDepthNote: 'How many messages back a keyword scan reads.',
   worldbookBudget: 'Token budget (% of context)',
@@ -1075,10 +1110,29 @@ export const zh: Record<StringKey, string> = {
   worldbooksNotLoaded: '世界书设置尚未加载。',
   worldbooksEmpty: '此安装还没有世界书。',
   worldbookGlobalSelect: '注入每个聊天',
-  worldbookCharBind: '绑定到当前角色',
+  worldbookCharBind: '本卡的附加绑定',
+  worldbookCharBindCount: '已绑定 {count} / 磁盘上 {total} 本',
   worldbookCharPrimary: '卡自带绑定：{name}',
   worldbookCharPrimaryNone: '卡未自带绑定。',
   worldbookCharNote: '附加书在下次打开聊天时参与扫描；随配置档保存，不写入卡文件。',
+
+  worldbookThisCard: '本卡的世界书',
+  worldbookCardSourceNamed: '磁盘上的一本书',
+  worldbookCardSourceEmbedded: '卡内嵌，尚未写成文件',
+  worldbookCardEmbeddedUnnamed: '卡自带的书，没有名字',
+  worldbookCardNone: '这张卡没有世界书。',
+  worldbookCardMinted: 'Iris 用自己起的名字把它写了出来，因为卡要的那个名字（{wanted}）已经被占用。',
+  worldbookCardRule: '这个对话只用这张卡自己的书，再加下面全局启用的书。别的卡的书进不来。',
+  worldbookCardNotLoaded: '这台宿主不保存世界书，所以说不出这张卡的书。',
+  worldbookNoChat: '打开一个对话，才能看到它的卡在用哪本书。',
+
+  worldbookGlobalHead: '对每个聊天都启用',
+  worldbookGlobalCount: '已启用 {count} / 磁盘上 {total} 本',
+  worldbookGlobalNone: '一本都没有——每个对话只用它自己那张卡的书。',
+  worldbookGlobalExpand: '展开全部 {total} 本',
+  worldbookGlobalCollapse: '收起完整列表',
+  worldbookFromCard: '来自 {name} 卡',
+  worldbookEntryCount: '{count} 条',
   worldbookScanDepth: '扫描深度',
   worldbookScanDepthNote: '关键词向回扫描多少条消息。',
   worldbookBudget: '令牌预算（上下文百分比）',

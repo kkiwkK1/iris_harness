@@ -1,11 +1,29 @@
 /**
- * The world books panel: the global selection, the scan settings, and the
- * entry editor.
+ * The world books panel: this card's book, its extras, the global selection,
+ * the scan settings, and the entry editor.
  *
- * The first two are the mechanism-grade half — the things that change what
- * every prompt contains. The third, added on top of them, is the fine-grained
- * half: one named book's entries, listed, filtered, sorted, and editable
- * field by field, from the primary keys down to the per-entry scan overrides.
+ * **Grouped by whose a book is, and that ordering is the panel's answer to a
+ * measured complaint.** It used to open with a flat multi-select of every book
+ * in the installation and mention the open card's own binding as a note
+ * underneath. On a real profile — nine books, one of them the 140-entry copy
+ * the host had materialised out of the open card under a name matching neither
+ * the card nor the card's binding — the reader's conclusion was that their
+ * card's world book was not there at all. So the card's own book comes first
+ * and says how big it is and where it came from, its extras follow, and the
+ * rest of the disk is folded away behind a count.
+ *
+ * **The host's selection rule is untouched.** `@iris/app-service/worldbooks`
+ * chooses — bound book, else the embedded copy, never both — and *adds* the
+ * globally selected books on top. This panel renders that; what it now also
+ * does is **say** it, in `worldbookCardRule`, because a mechanism nobody can
+ * see is a mechanism nobody believes. Where Iris parts from SillyTavern here is
+ * the grouping only, and that is written down as entry 48 of `DEVIATIONS.md`.
+ *
+ * The scan settings are the mechanism-grade half — the things that change what
+ * every prompt contains. The entry editor, added on top of them, is the
+ * fine-grained half: one named book's entries, listed, filtered, sorted, and
+ * editable field by field, from the primary keys down to the per-entry scan
+ * overrides.
  *
  * The editor's shape is upstream's. Every field it shows exists in
  * SillyTavern's entry editor (`index.html` `entry_edit_template`), every
@@ -28,9 +46,17 @@ import { useEffect } from 'react'
 import type { ReactElement } from 'react'
 import { useState } from 'react'
 
-import type { InsertionStrategy, WorldbookEntry, WorldbookSettingsView } from '@iris/protocol'
+import type {
+  CardWorldbookView,
+  CharacterSummary,
+  InsertionStrategy,
+  WorldbookEntry,
+  WorldbookSettingsView,
+  WorldbookSummary,
+} from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
+import { bookOwner } from '../client/store.ts'
 import { ChoiceField, CollapsibleSection, ToggleField } from './fields.tsx'
 import type { StringKey } from './i18n/strings.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
@@ -728,6 +754,234 @@ function WiEntryEditor({ entry, onPatch }: {
   )
 }
 
+/**
+ * Render the open card's own book: which one, how big, and where from.
+ *
+ * **The panel's first section, and the reorganisation's whole point.** It used
+ * to be a `worldbookCharPrimary` note buried under a flat multi-select of every
+ * book the installation has. Measured on a real profile: a card embedding 140
+ * entries, a book on disk called
+ * `【Sgw】『普通』和『理所当然』是什么呢 2.3（好感度x10版）` — the materialised copy,
+ * under neither the card's name nor the card's own binding — and eight
+ * strangers laid out beside it in one row. The user's report was "I don't see
+ * this card's world book in there", and they were right: nothing on screen
+ * connected the card to the book.
+ *
+ * Three states, and each of them is a real shape rather than a defensive
+ * branch: a book with a file (every card that has been played), the card's own
+ * embedded entries with no file yet (a card that has never been opened here),
+ * and nothing at all (a plain V1 card — 2 of the corpus's 19).
+ *
+ * The rule sentence under it is the second half of the report: "the world book
+ * settings should bind each conversation's own book first, not be polluted by
+ * other books". The host already works that way — `worldbooks.ts`' choose,
+ * never combine — and the panel simply never said so.
+ * @param props.characterId - the open conversation's character, if any.
+ * @param props.card - the host's answer for that character, when it keeps books.
+ * @param props.primary - what the card file itself binds, for the minted note.
+ * @returns the section.
+ */
+function CardWorldbook({ characterId, card, primary }: {
+  characterId: string | undefined
+  card: CardWorldbookView | undefined
+  primary: string | null | undefined
+}): ReactElement {
+  useLanguage()
+
+  const counted = card !== undefined && card.source !== 'none'
+
+  return (
+    <div className="iris-field iris-wb-card">
+      <span className="iris-field__label">{t('worldbookThisCard')}</span>
+      <span className="iris-field__value">
+        {counted ? t('worldbookEntryCount', { count: card.entryCount }) : ''}
+      </span>
+      <div className="iris-field__control">
+        {characterId === undefined
+          ? <p className="iris-list__empty">{t('worldbookNoChat')}</p>
+          : card === undefined
+            ? (
+              <>
+                {/*
+                  A host with no book store cannot say which book plays, so the
+                  only knowable fact is what the card file itself binds — which
+                  is exactly what this panel showed before the section existed.
+                */}
+                <p className="iris-list__empty">{t('worldbookCardNotLoaded')}</p>
+                <p className="iris-field__note">
+                  {primary === null || primary === undefined
+                    ? t('worldbookCharPrimaryNone')
+                    : t('worldbookCharPrimary', { name: primary })}
+                </p>
+              </>
+            )
+            : (
+              <>
+                {card.source === 'none'
+                  ? <p className="iris-list__empty">{t('worldbookCardNone')}</p>
+                  : (
+                    <p className="iris-wb-card__name">
+                      <span className="iris-wb-card__title">
+                        {card.name ?? t('worldbookCardEmbeddedUnnamed')}
+                      </span>
+                      <span className="iris-entry__badge">
+                        {card.source === 'named'
+                          ? t('worldbookCardSourceNamed')
+                          : t('worldbookCardSourceEmbedded')}
+                      </span>
+                    </p>
+                  )}
+                {/*
+                  Said only when the name on screen is not the name on the card.
+                  A materialisation that got the name it asked for is invisible
+                  to the reader and should stay that way; this note exists for
+                  the collision, which is the case that makes the panel look
+                  like it is showing somebody else's book.
+                */}
+                {card.materialised && primary !== null && primary !== undefined && (
+                  <p className="iris-field__note">{t('worldbookCardMinted', { wanted: primary })}</p>
+                )}
+                <p className="iris-field__note">{t('worldbookCardRule')}</p>
+              </>
+            )}
+      </div>
+    </div>
+  )
+}
+
+/** One book as a row: its name, its size, and whose card it is. */
+function BookRow({ name, count, owner, on, onToggle }: {
+  name: string
+  count: number | undefined
+  owner: string | undefined
+  on: boolean
+  onToggle: () => void
+}): ReactElement {
+  useLanguage()
+  return (
+    <button
+      type="button"
+      className="iris-choice__option iris-wb-book"
+      aria-pressed={on}
+      onClick={onToggle}
+    >
+      <span className="iris-wb-book__name">{name}</span>
+      {/*
+        Absent rather than zero when the host could not parse the file: a book
+        it could not read and a book the user emptied are different repairs, and
+        `worldbook.names` keeps them apart deliberately.
+      */}
+      {count === undefined ? null : <span className="iris-entry__badge">{t('worldbookEntryCount', { count })}</span>}
+      {owner === undefined ? null : <span className="iris-entry__badge">{t('worldbookFromCard', { name: owner })}</span>}
+    </button>
+  )
+}
+
+/**
+ * Render the global selection: what is on, always; everything else, folded.
+ *
+ * **Folded by default, and that is the answer to "as cards pile up the books
+ * pile up and this layout squeezes them against each other".** What a reader
+ * needs in view is their own card's book and the handful that are switched on
+ * for every chat; the rest of the disk is a chooser they open when they are
+ * choosing. Nine books flat was already crowded, and the corpus profile this
+ * was measured on has eighteen.
+ *
+ * `useState`, not `CollapsibleSection`: that component's open state is keyed by
+ * `CardId` and persisted per drawer card, and this is a section *inside* one of
+ * those cards. Local, so it also reverts to folded on the next drawer visit —
+ * which is the behaviour wanted here, unlike a drawer card the reader has
+ * deliberately pinned open.
+ * @param props.worldbooks - names, selection and counts as last fetched.
+ * @param props.bindings - the bindings the client knows, for ownership labels.
+ * @param props.characters - the library, for turning an owner id into a name.
+ * @param props.onSelect - called with the whole next selection.
+ * @returns the section.
+ */
+function GlobalBooks({ worldbooks, bindings, characters, onSelect }: {
+  worldbooks: { names: string[], globalSelect: string[], books: WorldbookSummary[] }
+  bindings: readonly { characterId: string, primary: string | null }[]
+  characters: readonly CharacterSummary[]
+  onSelect: (names: readonly string[]) => void
+}): ReactElement {
+  useLanguage()
+  const [open, setOpen] = useState(false)
+
+  const counts = new Map(worldbooks.books.map(book => [book.name, book.entryCount]))
+  // The selection in the order the host stores it — that is the order the user
+  // built — and everything else by name, which is the only order a chooser of
+  // eighteen strangers can be scanned in.
+  const on = worldbooks.globalSelect.filter(name => worldbooks.names.includes(name))
+  const off = worldbooks.names
+    .filter(name => !worldbooks.globalSelect.includes(name))
+    // `.sort` on the array `.filter` just made, not `toSorted`: it is the
+    // project's idiom, it mutates nothing the caller can see, and it does not
+    // ask the browser for an ES2023 method this build does not downlevel.
+    .sort((left, right) => left.localeCompare(right))
+
+  const row = (name: string, selected: boolean): ReactElement => (
+    <BookRow
+      key={name}
+      name={name}
+      count={counts.get(name)}
+      owner={bookOwner(name, worldbooks.books, bindings, characters)}
+      on={selected}
+      onToggle={() =>
+        onSelect(
+          selected
+            ? worldbooks.globalSelect.filter(other => other !== name)
+            : [...worldbooks.globalSelect, name],
+        )}
+    />
+  )
+
+  return (
+    <div className="iris-field iris-wb-global">
+      <span className="iris-field__label">{t('worldbookGlobalHead')}</span>
+      <span className="iris-field__value">
+        {t('worldbookGlobalCount', { count: on.length, total: worldbooks.names.length })}
+      </span>
+      <div className="iris-field__control">
+        {worldbooks.names.length === 0
+          ? <span className="iris-list__empty">{t('worldbooksEmpty')}</span>
+          : (
+            <>
+              {on.length === 0
+                ? <p className="iris-list__empty">{t('worldbookGlobalNone')}</p>
+                : (
+                  <div className="iris-choice iris-wb-books" role="group" aria-label={t('worldbookGlobalSelect')}>
+                    {on.map(name => row(name, true))}
+                  </div>
+                )}
+              {off.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    className="iris-wb-more"
+                    aria-expanded={open}
+                    aria-controls="iris-wb-offlist"
+                    onClick={() => setOpen(!open)}
+                  >
+                    {open ? t('worldbookGlobalCollapse') : t('worldbookGlobalExpand', { total: worldbooks.names.length })}
+                  </button>
+                  <div
+                    id="iris-wb-offlist"
+                    className="iris-choice iris-wb-books"
+                    role="group"
+                    aria-label={t('worldbookGlobalSelect')}
+                    hidden={!open}
+                  >
+                    {off.map(name => row(name, false))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+      </div>
+    </div>
+  )
+}
+
 /** The status dot's class, per activation strategy. */
 function dotClass(entry: WorldbookEntry): string {
   if (!entry.enabled) return 'iris-entry__dot--off'
@@ -959,6 +1213,11 @@ export function WorldbookPanel(): ReactElement {
   const worldbooks = useIris(state => state.worldbooks)
   const characterId = useIris(state => state.view?.characterId)
   const charBooks = useIris(state => state.charBooks)
+  // The library, read only to turn an owner's character id into a name. The
+  // host answers ids on purpose — resolving names there would decode every
+  // card, which the corpus measures at about two seconds for nineteen — and
+  // this store already holds the listing.
+  const characters = useIris(state => state.characters)
   const actions = useIrisActions()
   useLanguage()
 
@@ -996,6 +1255,19 @@ export function WorldbookPanel(): ReactElement {
     ? charBooks
     : undefined
 
+  /*
+   * The bindings `bookOwner` may match a book's name against.
+   *
+   * One entry, because the client fetches one binding — the open chat's
+   * character. That is the section's coverage limit and it is stated on
+   * `bookOwner`: a book bound by hand to a card that is not open goes
+   * unlabelled. The strong rule (what this host materialised, and from which
+   * card) does not depend on this list and covers every book on disk.
+   */
+  const bindings = charBinding === undefined
+    ? []
+    : [{ characterId: charBinding.characterId, primary: charBinding.primary }]
+
   return (
     <CollapsibleSection
       id="worldbooks"
@@ -1003,75 +1275,66 @@ export function WorldbookPanel(): ReactElement {
       summary={t('worldbookSummary', { count: selected, total: worldbooks.names.length })}
     >
       {/*
-        The global selection. A checkbox list because the underlying fact is a
-        set: order is upstream's array order, but every selected book applies
-        whole, and a control that implied ranking would promise a semantics the
-        host does not implement.
+        This card first, then this card's extras, then the global list folded.
+        The old order was the reverse — every book in the installation flat at
+        the top, the card's own binding as a note below it — and it is what the
+        report was about: with nine books there was no way to tell which one was
+        the open card's, and the panel never said that a chat plays its own
+        card's book and nothing else's.
+
+        Nothing about the host's selection rule changed. `worldbooks.ts` still
+        chooses (bound book, else embedded) and still *adds* the global list;
+        this is the same facts, grouped by whose they are.
       */}
-      <div className="iris-field">
-        <span className="iris-field__label">{t('worldbookGlobalSelect')}</span>
-        <span />
-        <div className="iris-choice iris-field__control" role="group" aria-label={t('worldbookGlobalSelect')}>
-          {worldbooks.names.length === 0
-            ? <span className="iris-list__empty">{t('worldbooksEmpty')}</span>
-            : worldbooks.names.map(name => {
-              const selected = worldbooks.globalSelect.includes(name)
-              return (
-                <button
-                  key={name}
-                  type="button"
-                  className="iris-choice__option"
-                  aria-pressed={selected}
-                  onClick={() =>
-                    void actions.setGlobalSelect(
-                      selected
-                        ? worldbooks.globalSelect.filter(row => row !== name)
-                        : [...worldbooks.globalSelect, name],
-                    )}
-                >
-                  {name}
-                </button>
-              )
-            })}
-        </div>
-      </div>
+      <CardWorldbook
+        characterId={characterId}
+        card={charBinding?.card}
+        primary={charBinding?.primary}
+      />
 
       {characterId !== undefined && (
         <div className="iris-field">
           <span className="iris-field__label">{t('worldbookCharBind')}</span>
-          <span />
+          <span className="iris-field__value">
+            {t('worldbookCharBindCount', {
+              count: charBinding?.additional.length ?? 0,
+              total: worldbooks.names.length,
+            })}
+          </span>
           <div className="iris-field__control">
             {/*
-              The card's own binding, shown for orientation and deliberately
-              not editable here: it lives on the card file, which is shared
-              between installations — this panel only writes the host's own
-              per-character list.
+              The extra bindings, and only those: the card's own binding is the
+              section above, and it is deliberately not editable — it lives on
+              the card file, which is shared between installations, while this
+              list is the host's own per-character one.
+
+              One book per line, with its count and its owner, for the same
+              reason the global list is: this control also offered every book in
+              the installation as one horizontal row, and on an eighteen-book
+              profile that row is the squeeze the report was about. What is
+              editable is unchanged, and nothing is hidden here — the whole list
+              stays open, because binding an extra book is a deliberate act on
+              a short list, not a chooser someone scrolls.
             */}
-            <p className="iris-field__note">
-              {charBinding?.primary !== null && charBinding?.primary !== undefined
-                ? t('worldbookCharPrimary', { name: charBinding.primary })
-                : t('worldbookCharPrimaryNone')}
-            </p>
-            <div className="iris-choice" role="group" aria-label={t('worldbookCharBind')}>
+            <div className="iris-choice iris-wb-books" role="group" aria-label={t('worldbookCharBind')}>
               {worldbooks.names.length === 0
                 ? <span className="iris-list__empty">{t('worldbooksEmpty')}</span>
                 : worldbooks.names.map(name => {
                   const bound = charBinding?.additional.includes(name) ?? false
                   return (
-                    <button
+                    <BookRow
                       key={name}
-                      type="button"
-                      className="iris-choice__option"
-                      aria-pressed={bound}
-                      onClick={() =>
+                      name={name}
+                      count={worldbooks.books.find(book => book.name === name)?.entryCount}
+                      owner={bookOwner(name, worldbooks.books, bindings, characters)}
+                      on={bound}
+                      onToggle={() =>
                         void actions.setCharBooks(
                           bound
                             ? charBinding?.additional.filter(row => row !== name) ?? []
                             : [...charBinding?.additional ?? [], name],
                         )}
-                    >
-                      {name}
-                    </button>
+                    />
                   )
                 })}
             </div>
@@ -1084,6 +1347,13 @@ export function WorldbookPanel(): ReactElement {
           </div>
         </div>
       )}
+
+      <GlobalBooks
+        worldbooks={worldbooks}
+        bindings={bindings}
+        characters={characters}
+        onSelect={names => void actions.setGlobalSelect(names)}
+      />
 
       <Slider
         label={t('worldbookScanDepth')}

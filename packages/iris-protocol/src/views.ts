@@ -1158,6 +1158,90 @@ export interface WorldbookSettingsView {
 }
 
 /**
+ * One named world book, with the two facts a chooser needs beside its name.
+ *
+ * **Deliberately not part of `worldbook.names`' default answer.** That method
+ * documents itself as names-and-not-contents because listing books must not
+ * read every entry off the disk, and an entry count cannot be had without
+ * opening the file. So the counts are asked for — `worldbook.names`'
+ * `withCounts` — and a caller that only wants names pays exactly what it paid
+ * before.
+ */
+export interface WorldbookSummary {
+  /** The book's name, exactly as `worldbook.names` spells it. */
+  name: string
+  /**
+   * How many entries the file holds, enabled or not.
+   *
+   * Every entry, because that is what the file *contains* and what an editor
+   * would list. How many of them a scan would admit depends on the chat, the
+   * budget and the keys, and is not a property of the book.
+   */
+  entryCount: number
+  /**
+   * The card this book was materialised from, when this host materialised it.
+   *
+   * Read off the materialisation table (`materialise.ts`'s
+   * `WorldbookBindingStore`), which is **the** link between a card and its
+   * book — the filename is not, precisely so that a name can be given up when
+   * it collides. So this answers "which card's embedded book became this file",
+   * which is the question a reader looking at nine similarly-named books is
+   * actually asking.
+   *
+   * An id, not a name: resolving the name means decoding the card, and a
+   * listing of 18 books must not decode 19 cards. The client already holds the
+   * library and can look it up.
+   *
+   * **Absent does not mean "no card's".** A book the user made in SillyTavern
+   * and bound to a card by hand was never materialised here, so this host has
+   * no record of the link; a client that also knows a card's `extensions.world`
+   * can match on the name as a second, weaker rule.
+   */
+  fromCharacterId?: string
+}
+
+/**
+ * Which book one card's own world info comes from, and how.
+ *
+ * A **report of the host's choice, not a second choice.** The name is the same
+ * one `resolveCardWorldbook` resolves with — the materialised binding when
+ * there is one, otherwise the card's `extensions.world` — so a panel showing
+ * this and a prompt built by that host cannot disagree about which book is
+ * playing.
+ */
+export interface CardWorldbookView {
+  /**
+   * The book the card's world info comes from, or `null` when it has none.
+   *
+   * Not always the card's own `extensions.world`: see {@link materialised}.
+   */
+  name: string | null
+  /**
+   * Where {@link entryCount} was counted.
+   *
+   * - `named` — a book file, the case every played card is in once its chat has
+   *   been opened.
+   * - `embedded` — the card's own `character_book`, which has **not** been
+   *   materialised into a file yet. A real and transient state: materialisation
+   *   runs on the import and open paths, so a card that has never been opened
+   *   on this host sits here.
+   * - `none` — neither. The card ships no book and binds nothing that resolves.
+   */
+  source: 'named' | 'embedded' | 'none'
+  /** Entries in that book; `0` when {@link source} is `none`. */
+  entryCount: number
+  /**
+   * Whether {@link name} is the name this host minted rather than the card's own.
+   *
+   * True exactly when the materialisation table holds a name for this card and
+   * it differs from `extensions.world` — a collision made the host give the
+   * wanted name up. It is the reason a user reads a book name in this panel
+   * that is not the one written on their card, so it has to be sayable.
+   */
+  materialised: boolean
+}
+
+/**
  * Why a snapshot of a conversation exists.
  *
  * The host records the reason **in the snapshot's file name**, so a folder

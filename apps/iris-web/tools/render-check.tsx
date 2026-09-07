@@ -312,6 +312,122 @@ async function main(): Promise<void> {
   assert.match(withScripts, /A card has no way to ask/, 'the panel does not say a card cannot request this')
   assert.doesNotMatch(withScripts, /document access/i, 'the grant is worded as an API, not a consequence')
 
+  // ------------------------------------------------------------ world books
+  /*
+   * The panel's grouping, rendered — and this is the only place it is.
+   *
+   * `worldbook-panel.test.ts` pins that the branches are still in the source
+   * and that the store holds what the host answers; neither of those executes
+   * a single one of them. The property under test here is the one the user's
+   * report was about: with several books on disk, is the open card's own book
+   * findable, named, and counted, and is the rest of the disk out of the way.
+   *
+   * The panel's effects do not run in a server render, so the two loads are
+   * driven here, the same way the script panel's are above.
+   */
+  await wired.store.getState().loadWorldbooks()
+  await wired.store.getState().loadCharBooks()
+
+  const held = wired.store.getState().worldbooks
+  const bound = wired.store.getState().charBooks
+  assert.ok(held !== undefined, 'the world book panel never loaded')
+  // The fixture's premise, asserted rather than assumed: with no books seeded
+  // every assertion below would be checking an empty state while reading like a
+  // check on a full one.
+  assert.ok(held.names.length > 1, 'the fake seeds too few books for a grouping to be visible')
+  assert.ok(held.books.length === held.names.length, 'the seeded books did not all report a count')
+  assert.ok(bound?.card !== undefined, 'the host answered no book for the open card')
+  assert.equal(bound.card.source, 'named', 'the open card’s book should be a file the panel can point at')
+
+  const withBooks = render(wired.store, slots.core)
+
+  // The card's own book, by name and by size. The name is the whole point: it
+  // is neither the card's name nor the card's own binding, which is exactly why
+  // a flat list of book names was unreadable.
+  const cardBook = bound.card.name
+  assert.ok(cardBook !== null, 'a named book with no name')
+  assert.ok(withBooks.includes(cardBook), 'the card’s own book is not named in the panel')
+  assert.ok(
+    withBooks.includes(`${String(bound.card.entryCount)} entries`),
+    'the card’s book is named without saying how big it is',
+  )
+  // …and that size is the same number the character page reports for the card's
+  // embedded book, because the file was written out of it. Two screens, one
+  // fact; a mismatch here means the seed has drifted apart from itself.
+  assert.equal(
+    bound.card.entryCount,
+    dense.bookEntryCount,
+    'the panel’s count and the character page’s count are no longer the same book',
+  )
+  /*
+   * The sentence that answers "why is this called something else".
+   *
+   * The fixture's premise first: the card asks for one name, the file carries
+   * another. Without that the note is correctly absent and the two assertions
+   * below would pass for the wrong reason.
+   */
+  assert.ok(bound.card.materialised, 'the fixture no longer has the host minting a name')
+  assert.ok(bound.primary !== null && bound.primary !== cardBook, 'the fixture’s two names agree, so nothing is explained')
+  assert.ok(withBooks.includes(bound.primary), 'the name the card asked for is not on screen')
+  assert.ok(
+    withBooks.includes('under a name of its own'),
+    'the panel shows a book under a name the card never asked for and does not say why',
+  )
+
+  // The mechanism, in words. The report was not only that the book was hard to
+  // find — it was that nothing said a conversation plays its own card's book.
+  assert.ok(
+    withBooks.includes('plus whatever is switched on globally below'),
+    'the panel no longer states how a conversation’s books are chosen',
+  )
+
+  // Ownership labels: a book this host materialised out of a card says so, so a
+  // list of unfamiliar names becomes a list of names with owners.
+  assert.ok(withBooks.includes(`from ${dense.name}`), 'no book reports which card it came from')
+
+  // The disk, folded. The fold's own label is the assertion — an open fold
+  // renders the collapse wording instead — and it carries the total, which is
+  // what makes a folded list honest rather than a hidden one.
+  const offDisk = held.names.filter(name => !held.globalSelect.includes(name)).length
+  assert.ok(offDisk > 0, 'every seeded book is globally selected, so nothing is folded away')
+  assert.ok(
+    withBooks.includes(`Show all ${String(held.names.length)} books`),
+    'the global book list is not folded, or does not say how many it is hiding',
+  )
+  assert.equal(
+    withBooks.includes('Hide the full list'),
+    false,
+    'the global book list rendered open',
+  )
+
+  /*
+   * The other two states of the top section, reached by writing the store.
+   *
+   * A harness concession of the same kind as the 677-floor chat below: the fake
+   * seeds three cards and only one of them embeds a book, so `embedded` — a
+   * card whose entries have never been written to a file — has no fixture to
+   * reach it, and manufacturing a fourth seeded card to render one branch would
+   * change what the dev server's library looks like for everybody. Nothing in
+   * the app depends on this being possible.
+   */
+  for (const [source, sentence] of [
+    ['embedded', 'embedded in the card, not written out yet'],
+    ['none', 'This card has no world book.'],
+  ] as const) {
+    wired.store.setState({
+      charBooks: { ...bound, card: { ...bound.card, source, entryCount: source === 'none' ? 0 : 140 } },
+    })
+    const state = render(wired.store, slots.core)
+    assert.ok(state.includes(sentence), `the ${source} state of the card’s book does not render`)
+    // The rule sentence stays whatever the answer is: "this card has no book"
+    // is exactly when a reader most needs to be told what would reach it.
+    assert.ok(
+      state.includes('plus whatever is switched on globally below'),
+      `the ${source} state dropped the mechanism sentence`,
+    )
+  }
+  wired.store.setState({ charBooks: bound })
+
   // ----------------------------------------------------- rail as a record
   // Only the last turn's readings can still be changed. Swapping an earlier
   // beat's reading would leave every later turn answering words the transcript
