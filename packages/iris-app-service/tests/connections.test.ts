@@ -9,7 +9,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
-import { ConnectionStore, routeOf } from '../src/connections.ts'
+import { ConnectionStore, hostDefaultView, routeOf } from '../src/connections.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type ConnectionEndpoint, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
@@ -854,4 +854,188 @@ test('a global read carries no overrides at all, because presence is scope', asy
   // "this conversation" marker on a surface with no conversation.
   assert.equal((await handlers['settings.get']({})).overrides, undefined)
   assert.equal((await handlers['settings.set']({ settings: {} })).overrides, undefined)
+})
+
+/* ------------------------------------------------------------------------- *
+ * The host's own connection gets a model list too.
+ *
+ * The reported failure (user, 2026-09-07): the composer's model menu answered
+ * 「没有活动连接，因此没有可选的模型列表」 on a host configured entirely from
+ * `IRIS_*` variables, with no profile ever saved. The menu's fallback source is
+ * the `host` row, and until this section the row had nowhere to carry a list:
+ * `recordModels` files against a profile id, and the host default has none.
+ *
+ * So the list is held in the **service process's memory**. Not a shortcut —
+ * the choice is argued in `service.ts`: the host default is the environment the
+ * process was launched with rather than a decision of the user's, and a
+ * one-off observation about it does not belong in the file that records their
+ * decisions. The last test here holds the "not on disk" half.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * A host whose own `IRIS_BASE_URL` is a live `/models` endpoint.
+ * @param t - the test context, for closing the server.
+ * @returns the handlers and the endpoint the host points at.
+ */
+async function hostEndpointFixture(t: TestContext): Promise<{
+  handlers: Handlers
+  endpoint: ModelsEndpoint
+  dir: string
+}> {
+  const endpoint = new ModelsEndpoint()
+  await endpoint.start()
+  t.after(async () => { await endpoint.close() })
+  const { handlers, dir } = await fixture(t, {
+    probeTimeoutMs: 300,
+    env: {
+      IRIS_BASE_URL: `${endpoint.baseURL}/v1`,
+      IRIS_MODEL: 'deepseek-v4-flash',
+      IRIS_API_KEY_ENV: 'PROBE_KEY',
+      // The key this endpoint accepts, held by the host and never typed.
+      PROBE_KEY: 'sk-real-key',
+    },
+  })
+  return { handlers, endpoint, dir }
+}
+
+test('probing the host’s own endpoint gives its row a model list', async (t) => {
+  const { handlers, endpoint } = await hostEndpointFixture(t)
+
+  // The state every launch starts in, asserted before anything is concluded
+  // from the change: absent, not empty. A default-to-`[]` reader would call
+  // this "the host advertises nothing" and never offer to look.
+  const before = await handlers['connection.list']({})
+  assert.equal(before.host?.models, undefined, 'a fresh process already carried a host model list')
+  assert.equal(before.host?.modelsProbedAt, undefined)
+
+  // The bare probe the composer's menu fires: the host's own endpoint, and no
+  // key — the credential is the one the process was started with.
+  const verdict = await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1` })
+  assert.equal(verdict.ok, true)
+  assert.equal(verdict.keySource, 'host', 'the probe did not use the startup credential')
+
+  const after = await handlers['connection.list']({})
+  assert.deepEqual(after.host?.models, ['deepseek-v4-flash', 'deepseek-v4-chat', 'deepseek-reasoner'])
+  assert.equal(typeof after.host?.modelsProbedAt, 'number', 'the list is not stamped')
+  // No profile was created by any of this: the row is read-only and a probe of
+  // it is not a save.
+  assert.deepEqual(after.profiles, [])
+  // And the credential is still nowhere on the wire.
+  assert.equal(JSON.stringify(after).includes('sk-real-key'), false)
+})
+
+test('a probe of a different endpoint does not become the host row’s list', async (t) => {
+  const { handlers, endpoint } = await hostEndpointFixture(t)
+  // A second server, on its own port: a neighbouring provider the user is
+  // testing in the connection form while the host generates elsewhere.
+  const elsewhere = new ModelsEndpoint()
+  await elsewhere.start()
+  t.after(async () => { await elsewhere.close() })
+  assert.notEqual(elsewhere.baseURL, endpoint.baseURL, 'both fixtures landed on one port')
+
+  // A *successful* probe — which is what makes this discriminating. A failed
+  // one would record nothing anyway, and the test would pass on the wrong
+  // reason.
+  const verdict = await handlers['connection.test']({
+    baseURL: `${elsewhere.baseURL}/v1`,
+    apiKey: 'sk-real-key',
+  })
+  assert.equal(verdict.ok, true)
+  assert.ok((verdict.models ?? []).length >= 3, 'the other endpoint answered with no list')
+
+  const listed = await handlers['connection.list']({})
+  assert.equal(
+    listed.host?.models,
+    undefined,
+    'another endpoint’s list was filed against the host’s own connection',
+  )
+
+  /*
+   * And the other direction, which is the one a projection-time origin check
+   * alone would not catch: with the host row's own list already recorded, a
+   * successful probe of somewhere else must not **displace** it. Written after
+   * a teeth-check found the first half of this test still green with the
+   * recording guard removed — the row was being cleaned up on the way out
+   * instead of never being polluted, and the difference shows exactly here.
+   */
+  await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1` })
+  const mine = (await handlers['connection.list']({})).host?.models
+  assert.ok((mine ?? []).length >= 3, 'the host’s own probe did not land')
+
+  await handlers['connection.test']({ baseURL: `${elsewhere.baseURL}/v1`, apiKey: 'sk-real-key' })
+  assert.deepEqual(
+    (await handlers['connection.list']({})).host?.models,
+    mine,
+    'a probe of a neighbouring endpoint wiped the host row’s own list',
+  )
+})
+
+test('a profile pointed at the host’s endpoint fills both, because it is one server', async (t) => {
+  const { handlers, endpoint } = await hostEndpointFixture(t)
+  // The origin is what decides, not how the caller addressed the probe: this
+  // profile and the host row describe the same server, so its answer is both
+  // rows' answer. Addressed by `profileId` with no `baseURL` and no key, which
+  // is the ask the menu sends for an active profile.
+  const saved = await handlers['connection.save']({
+    provider: 'deepseek',
+    model: 'deepseek-v4-flash',
+    baseURL: `${endpoint.baseURL}/v1`,
+  })
+  const id = saved.profiles[0]?.id
+  assert.ok(id !== undefined)
+  assert.equal(saved.host?.models, undefined, 'saving a profile invented a host list')
+
+  const verdict = await handlers['connection.test']({ profileId: id })
+  assert.equal(verdict.ok, true)
+
+  const listed = await handlers['connection.list']({})
+  assert.ok((listed.profiles[0]?.models ?? []).length >= 3, 'the profile lost its own record')
+  assert.deepEqual(listed.host?.models, listed.profiles[0]?.models)
+})
+
+test('a recorded host list is dropped rather than reattributed when the route moves', () => {
+  /*
+   * The projection's own guard, which is a different failure from the
+   * recording guard above and is why both exist. The record is held for the
+   * life of the process and the host connection it describes is read fresh on
+   * every answer — a composition that hands a new one in, or an environment
+   * that now says something else. A list attributed to whatever the host
+   * happens to point at *now* would be a claim about an endpoint nobody
+   * probed, so it goes.
+   */
+  const probe = {
+    origin: 'https://api.deepseek.com/v1',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    probedAt: 1_800_000_000_000,
+  }
+  const same = hostDefaultView({ provider: 'default', baseURL: 'https://api.deepseek.com/v1/' }, probe)
+  // Same origin, different trailing slash: one server, one list. The origin is
+  // what is compared, as everywhere else a key or a list is reused.
+  assert.deepEqual(same.models, probe.models)
+  assert.equal(same.modelsProbedAt, probe.probedAt)
+
+  const moved = hostDefaultView({ provider: 'default', baseURL: 'https://api.example.test/v1' }, probe)
+  assert.equal(moved.models, undefined, 'the list followed the host to another endpoint')
+  assert.equal(moved.modelsProbedAt, undefined, 'the stamp outlived the list it dates')
+
+  const nowhere = hostDefaultView({ provider: 'default' }, probe)
+  assert.equal(nowhere.models, undefined, 'a host with no endpoint inherited a list')
+})
+
+test('the host row’s list is never written to the connections file', async (t) => {
+  const { handlers, endpoint, dir } = await hostEndpointFixture(t)
+  await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1` })
+  assert.ok(((await handlers['connection.list']({})).host?.models ?? []).length >= 3)
+
+  // The file is the record of the *user's* decisions. Nothing here was one:
+  // the endpoint is in the environment, and the list is an observation of it.
+  // A missing file is the strongest form of this passing — there were no
+  // profiles to write — so both shapes are accepted and neither may contain
+  // the list.
+  const file = await readFile(join(dir, 'connections.json'), 'utf8').catch(() => undefined)
+  assert.equal(
+    file?.includes('deepseek-v4-chat') ?? false,
+    false,
+    'the in-memory host list reached the user’s connections file',
+  )
 })

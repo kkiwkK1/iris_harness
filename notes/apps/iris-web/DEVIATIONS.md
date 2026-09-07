@@ -1811,6 +1811,12 @@ So on this profile the strong ownership rule — what this host materialised, an
 
 **What would reopen it.** A decision to give the capsule the global scope as well — a modifier, or a second row — which would need the drawer's "defaults for new conversations" wording to reach the composer too, or the two surfaces would be two ways to write different layers with no visible difference.
 
+**2026-09-07，用户实测：菜单在最常见的那台宿主上答错了对象。** 原话：「我点击输入框下方的模型标签希望快速切换模型但是确实提示：『本对话使用的模型 / 没有活动连接，因此没有可选的模型列表。』当很明显我是连接着模型的。」那台宿主整条路由都来自环境变量（`IRIS_BASE_URL` / `IRIS_MODEL` / `IRIS_API_KEY_ENV`），用户从没存过 profile——`activeId` 是 undefined，而菜单只读活动 profile 的 `models`，于是说出一句**关于 profile 列表为真、关于「谁在回答我」为假**的话。宿主默认那一行（条目 47 的 `host` 投影）当时已经在线上，只是输入框底下没人读它。
+
+现在：**宿主默认连接也是一路列表来源。** `HostDefaultConnection` 多了 `models?` 与 `modelsProbedAt?`；宿主在**服务进程内存里**记一次探测结果，不落盘——宿主默认不是用户的决定，是进程启动时的环境，一次观测不该躺在记录用户决定的那个文件里；`connection.test` 打到宿主默认端点的**原点**且成功时写入（按原点而不是按调用方式，所以一条指向宿主端点的 profile 探测同时填两行），四个 `connection.*` 应答都带上它。`model-menu.ts` 有 profile 用 profile、否则用宿主默认、两者都无才说「没有连接」；菜单标题分开写「来自「某个 profile」」与「来自宿主默认连接（变量名）」——只说变量名，不说值。列表缺席时**点开菜单就去探一次**（`connection.test`，带 `profileId` 或宿主默认的 `baseURL`，**不带密钥**：凭据由宿主自己按原点解析，这也是裸探测存在的理由），期间菜单显示「正在读取模型列表…」，失败原样显示宿主命名过的那句（`unauthorized` / `network` / `no-endpoint` …）而不是吞掉；成功后 5 分钟内不重探（`MODEL_LIST_FRESH_MS`，读的是宿主写下的时间戳而不是组件里的计数器，所以重挂载也不会重探）。**当前生效的模型永远是第一项且被勾选**，无论列表回不回来、含不含它——菜单在任何状态下都要答得出「现在用的是什么」；这也是为什么「是哪一种空」现在从**来源自己的列表**判定，而不是从菜单的行数判定。
+
+这一段没有关掉上面列的任何一项代价，只改正了本条自己的一处措辞：原先写「列表是活动连接的」，准确的说法是「列表是**正在回答的那个端点**的」——没有 profile 时，那就是宿主启动时的那条。仍然没做的是反向汇总：连接面板依旧不列出哪些对话覆盖了它的模型。
+
 ---
 
 ## 51. A message's own `<style>` is copied into every frame its regions became

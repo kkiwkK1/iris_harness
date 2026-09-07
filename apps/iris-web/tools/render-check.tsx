@@ -27,6 +27,7 @@ import { SlotProvider } from '../src/slots/Slot.tsx'
 import { createIrisSlots } from '../src/slots/slots.ts'
 import { registerMessageAction } from '../src/slots/message-actions.ts'
 import { RAIL_MAX_TICKS, railMode } from '../src/app/rail.ts'
+import { modelMenu } from '../src/app/model-menu.ts'
 import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView } from '@iris/protocol'
 import { contributing, discrepancy, rowsFor } from '../src/app/itemization.ts'
@@ -232,6 +233,56 @@ async function main(): Promise<void> {
   const restored = render(wired.store, slots.core)
   assert.doesNotMatch(restored, /iris-composer__pill-dot/, 'clearing the override left the marker behind')
   assert.equal(wired.store.getState().settingsOverrides?.model, undefined)
+
+  // ------------------------------------------- the capsule with no profile
+  /*
+   * The reported bug's own state: a host configured from its environment, with
+   * no profile ever saved. The menu used to answer 「没有活动连接，因此没有可选
+   * 的模型列表」 about a host that was generating replies at the time.
+   *
+   * What a server render can and cannot show here has to be said plainly. The
+   * menu's open state is `useState` inside `Composer` and there is no click in
+   * this harness, so the *rows* are not in the markup — `tests/model-menu.test.ts`
+   * pins those. What this adds, and what a unit test cannot, is the **seam**:
+   * the host row survives `connection.list` → the fake's projection → the
+   * store, and the decision run over that live store state offers the host's
+   * models rather than the empty sentence. The capsule itself is rendered in
+   * the same state to prove the tree does not fall over without a profile.
+   */
+  wired.store.setState({ activeConnectionId: undefined })
+  const state = wired.store.getState()
+  const hostRow = state.hostConnection
+  assert.ok(hostRow !== undefined, 'the fake host row did not reach the store')
+  // A floor on the fixture before concluding anything from it: with no seeded
+  // host list, "the menu offers the host's models" would pass by offering none.
+  assert.ok((hostRow.models ?? []).length >= 2, 'the seeded host row carries no model list')
+
+  const hostMenu = modelMenu({
+    model: state.settings?.model ?? '',
+    overrides: state.settingsOverrides,
+    connections: state.connections,
+    activeId: state.activeConnectionId,
+    host: hostRow,
+  })
+  assert.equal(hostMenu.empty, undefined, 'the reported bug: a configured host read as no connection')
+  assert.equal(hostMenu.source, 'host')
+  for (const id of hostRow.models ?? []) {
+    assert.ok(hostMenu.models.includes(id), `the host row's ${id} is not offered`)
+  }
+  // The model in force leads, whatever the endpoint lists — the seeded chat
+  // runs a local model this endpoint has never heard of.
+  assert.equal(hostMenu.models[0], state.settings?.model)
+  assert.equal(hostMenu.hostKeyEnv, hostRow.keyEnv, 'the heading cannot name the variable to change')
+
+  const profileless = render(wired.store, slots.core)
+  assert.match(
+    profileless,
+    /<button[^>]*iris-composer__pill--action[^>]*aria-haspopup="menu"/,
+    'the capsule stopped being a control once no profile was active',
+  )
+  // Put the seed back: everything below reads the store as booted.
+  await wired.store.getState().loadConnections()
+  assert.ok(wired.store.getState().activeConnectionId !== undefined, 'the seeded active profile did not come back')
 
   // --------------------------------------------------------- character page
   /*

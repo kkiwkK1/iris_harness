@@ -74,6 +74,20 @@ const HOST_DEFAULT: HostDefaultConnection = {
   model: 'deepseek-chat',
   keySource: 'env',
   keyEnv: 'DEEPSEEK_API_KEY',
+  /**
+   * A list against the host's own endpoint, seeded on the same licence as the
+   * profiles' lists: fixture data *about a connection* rather than a verdict
+   * about a network, so it teaches the model menu nothing a real host would
+   * contradict while `connection.test` stays refused here.
+   *
+   * It carries more weight than it looks. This is the row the composer's model
+   * menu falls back to when no profile is active — which, on a host configured
+   * from its environment, is **the normal state**, and the state the bug was
+   * reported from. With no list seeded here, that path could only ever be
+   * developed against its own empty case.
+   */
+  models: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-chat-0711'],
+  modelsProbedAt: SEEDED_PROBE_AT,
 }
 
 /**
@@ -180,9 +194,18 @@ function project(profile: StoredProfile): ConnectionProfile {
 
 /**
  * The connection the fake host was started with.
+ * @param options.models - whether the row carries a recorded model list.
+ * `false` is the **never-probed** host: a real host holds this list in memory
+ * only, so every launch starts without one, and the model menu's "fetch it
+ * now" path is reachable in development only if something can serve that shape.
+ * `createFakeClient({ empty: true })` is where it comes from.
  * @returns the read-only row, carrying the key's source and never the key.
  */
-export function hostDefault(): HostDefaultConnection {
+export function hostDefault(options: { models?: boolean } = {}): HostDefaultConnection {
+  if (options.models === false) {
+    const { models: _dropped, modelsProbedAt: _stamp, ...rest } = HOST_DEFAULT
+    return rest
+  }
   return { ...HOST_DEFAULT }
 }
 
