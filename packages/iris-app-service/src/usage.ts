@@ -22,6 +22,8 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import type { SillyTavernMessage } from '@iris/persistence'
 import type { TurnUsage } from '@iris/protocol'
 
+import type { PromptFingerprint } from './fingerprint.ts'
+
 declare module '@deepseek-ai/dsh-session' {
   interface SessionEventMap {
     /**
@@ -37,6 +39,15 @@ declare module '@deepseek-ai/dsh-session' {
       /** Seq of the `assistant/message` event this generation produced. */
       candidateSeq: number
       usage: TurnUsage
+      /**
+       * Which request this generation actually sent (`./fingerprint.ts`).
+       *
+       * Optional, and absent for every chat written before it existed and for
+       * every generation whose provider reported no usage at all — there is no
+       * record to hang it on in that case, and inventing one would put a
+       * hash beside a cost that was never reported.
+       */
+      fingerprint?: PromptFingerprint
     }
   }
 }
@@ -87,6 +98,30 @@ export function usageBySeq(session: Session): Map<number, TurnUsage> {
     if (event.type === 'iris/usage') usages.set(event.data.candidateSeq, event.data.usage)
   }
   return usages
+}
+
+/**
+ * The newest fingerprint recorded for each candidate.
+ *
+ * Read separately from {@link usageBySeq} because the two answer different
+ * questions and only one of them is a *cost*: `MessageView.usage` carries the
+ * numbers, and nothing on the wire carries these hashes. They are host-side
+ * evidence for the report panel and for whoever is asking why a turn read no
+ * cache.
+ * @param session - the chat log.
+ * @returns fingerprints by candidate seq; generations that recorded none are absent.
+ */
+export function fingerprintBySeq(session: Session): Map<number, PromptFingerprint> {
+  const prints = new Map<number, PromptFingerprint>()
+  for (const event of session.events) {
+    if (event.type !== 'iris/usage') continue
+    const fingerprint = event.data.fingerprint
+    // A correction that carries no fingerprint must not leave the previous
+    // one standing beside a body it did not describe.
+    if (fingerprint === undefined) prints.delete(event.data.candidateSeq)
+    else prints.set(event.data.candidateSeq, fingerprint)
+  }
+  return prints
 }
 
 /** The optional buckets, in the order a reader meets them on the type. */

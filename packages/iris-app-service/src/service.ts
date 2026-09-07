@@ -30,7 +30,7 @@ import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper
 import { checkScriptFetch, extractScripts } from '@iris/script'
 import { defaultRegistry } from '@iris/macro'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
-import { historyFromSession, TurnDriver, type GenerateEvents, type StreamFn } from '@iris/turn'
+import { historyFromSession, TurnDriver, type GenerateEvents, type HistoryProjection, type StreamFn } from '@iris/turn'
 import { randomUUID } from 'node:crypto'
 
 import { PresetStore } from './presets.ts'
@@ -58,6 +58,7 @@ import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
+import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
 import { PersonaStore, type ActivePersona } from './persona.ts'
 import type { PruneOptions } from './prune.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
@@ -2865,7 +2866,7 @@ export class IrisAppService {
       // The generation type travels with the driver so the assembly it drives
       // is the one this turn asked for: triggers and the continue rule read it.
       contributions: session => this.#contributions(entry, session, count, true, generationType),
-      history: session => this.#history(entry, session),
+      history: (session, projection) => this.#history(entry, session, projection),
       budget: {
         context: windowOf(settings, this.#options.contextWindow),
         reserve: this.#options.reserveTokens,
@@ -2898,6 +2899,16 @@ export class IrisAppService {
     const names = entry.names
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
     const window = windowOf(settings, this.#options.contextWindow)
+    // A reroll's world-info scan and its itemization must read the same
+    // conversation the request carries — the driver drops the reply being
+    // replaced, and a scan that still saw it could fire an entry on a keyword
+    // that only exists in the text nobody is sending. Upstream's scan buffer is
+    // built from `coreChat` **after** the pop (`script.js:4438`, then
+    // `getWorldInfoPrompt(chat2, …)`), and its itemization records what was
+    // actually sent.
+    const projection: HistoryProjection = generationType === GENERATION_TYPE_OF.regenerate
+      ? { dropTrailingReply: true }
+      : {}
     // The scan knobs, read per assembly: the settings file can change while the
     // host runs, and a chat opened before the change must still scan with what
     // the user set, not with what was set when the chat was opened.
@@ -2920,7 +2931,7 @@ export class IrisAppService {
       characterName: names.character,
       // The same projection the model gets, so a world-info scan cannot match a
       // keyword inside a block the prompt scripts are about to strip.
-      history: this.#history(entry, session),
+      history: this.#history(entry, session, projection),
       count,
       // `world_info_budget` and `world_info_budget_cap`, translated by
       // `computeBudget` — the same percentage-of-context arithmetic upstream
@@ -2964,7 +2975,7 @@ export class IrisAppService {
       writeTimedEffects(entry.header.chat_metadata, built.timedEffects)
     }
 
-    const contributions = [...built.contributions, ...injectedContributions(entry)]
+    const contributions = [...built.contributions, ...injectedContributions(entry, built.contributions)]
 
     // Recorded here because this is the only moment the parts and the history
     // agree with what is about to be sent: by the time the turn settles, the
@@ -2976,7 +2987,7 @@ export class IrisAppService {
     if (turn !== undefined) {
       const assembled = assemble({
         contributions,
-        history: this.#history(entry, session),
+        history: this.#history(entry, session, projection),
         budget: this.#budget(count, window),
       })
       // The first floor the budget kept is the one the dropped count names —
@@ -3096,7 +3107,7 @@ export class IrisAppService {
       // actually be sent, and that includes the persona's slot.
       ...persona === undefined ? {} : { persona },
     })
-    const contributions = [...built.contributions, ...injectedContributions(entry)]
+    const contributions = [...built.contributions, ...injectedContributions(entry, built.contributions)]
     const result = assemble({
       contributions,
       history: this.#history(entry, entry.session),
@@ -3220,13 +3231,24 @@ export class IrisAppService {
    * keeps a card's own command blocks out of the next request. Leaving them in
    * is not cosmetic: the model reads back its own `<UpdateVariable>` output from
    * every earlier turn and starts imitating it.
+   * The **projection** is honoured here rather than left to the driver's
+   * repair, because the `depth` below is computed over whatever this returns:
+   * upstream's regex depths are counted on the popped conversation
+   * (`coreChat.length - index - 1` after `coreChat.pop()`,
+   * `public/script.js:4438-4444`), so a reroll must number its floors from the
+   * user's line and not from the reply being thrown away.
    * @param entry - the conversation.
    * @param session - the log to project.
+   * @param projection - what the generation this is for must not be shown.
    * @returns history entries, oldest first.
    */
-  #history(entry: ChatEntry, session: Session): HistoryEntry[] {
+  #history(entry: ChatEntry, session: Session, projection: HistoryProjection = {}): HistoryEntry[] {
     const names = entry.names
-    const entries = historyFromSession(session, { characterName: names.character, userName: names.user })
+    const entries = historyFromSession(session, {
+      characterName: names.character,
+      userName: names.user,
+      ...projection,
+    })
     const scripts = entry.scripts
     if (scripts.length === 0) return entries
     return entries.map((item, index) => ({
@@ -3336,22 +3358,62 @@ export class IrisAppService {
       }
     }
 
-    for await (const chunk of this.#options.stream(request)) {
-      if (chunk.type === 'usage') {
-        this.#counter.observe(estimated, chunk.usage.inputTokens)
-        // Recorded beside the estimate so a user can see whether to trust it.
-        const turn = entry?.pending?.turn
-        const recorded = turn === undefined ? undefined : entry?.itemizations.get(turn)
-        if (recorded !== undefined) recorded.actualTokens = chunk.usage.inputTokens
-        // **The whole report, kept.** The estimator above takes one number out
-        // of it and throws the rest away, which is what this code did in full
-        // until now: `cacheReadTokens` — the figure that decides what a long
-        // chat costs — was arriving on every DeepSeek reply and being dropped.
-        // Held on `pending` and attached to the candidate when the turn settles,
-        // because the candidate does not exist yet.
-        if (turn !== undefined) entry?.noteUsage(turn, chunk.usage)
+    // **Which body went out, recorded before it goes.** A turn that comes back
+    // with `cacheReadTokens: 0` has two possible causes — we sent something
+    // different from last turn, or the provider did not serve its cache — and
+    // after the fact nothing could tell them apart, because the request is
+    // gone. Taken from `request` rather than from `options`: the templates and
+    // the macro pass above have already run, so this is the body the provider
+    // sees. A side generation (`#generateRaw`, `script.generate`) arrives here
+    // with no entry, has no candidate to file a record against, and is not part
+    // of any turn-to-turn comparison, so it records nothing.
+    const fingerprint = fingerprintRequest(request)
+    const pendingTurn = entry?.pending?.turn
+    if (entry !== undefined && pendingTurn !== undefined) {
+      entry.notePromptFingerprint(pendingTurn, fingerprint)
+    }
+    let cacheReadTokens: number | undefined
+    try {
+      for await (const chunk of this.#options.stream(request)) {
+        if (chunk.type === 'usage') {
+          this.#counter.observe(estimated, chunk.usage.inputTokens)
+          // Recorded beside the estimate so a user can see whether to trust it.
+          const turn = entry?.pending?.turn
+          const recorded = turn === undefined ? undefined : entry?.itemizations.get(turn)
+          if (recorded !== undefined) recorded.actualTokens = chunk.usage.inputTokens
+          cacheReadTokens = chunk.usage.cacheReadTokens
+          // **The whole report, kept.** The estimator above takes one number out
+          // of it and throws the rest away, which is what this code did in full
+          // until now: `cacheReadTokens` — the figure that decides what a long
+          // chat costs — was arriving on every DeepSeek reply and being dropped.
+          // Held on `pending` and attached to the candidate when the turn settles,
+          // because the candidate does not exist yet.
+          if (turn !== undefined) entry?.noteUsage(turn, chunk.usage)
+        }
+        yield chunk
       }
-      yield chunk
+    } finally {
+      // In a `finally`, so **every** generation leaves exactly one line — an
+      // aborted one and a refused one included. Those are the turns whose cache
+      // figure is missing, and a report that skipped them would leave a gap
+      // exactly where a reader is counting turns to compare two prefixes.
+      // A note, not a fault: nothing here is wrong, it is a measurement.
+      if (entry !== undefined) {
+        try {
+          this.#report(fingerprintLine(fingerprint, cacheReadTokens), {
+            kind: 'prompt',
+            grade: 'note',
+            chatId: entry.chatId,
+            ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+          })
+        } catch {
+          // A note must not replace the failure it was written beside. This is
+          // the one report site that runs in a `finally`, so a host whose
+          // `onError` throws would otherwise surface *its* error to the user
+          // instead of the provider's — the generation error would be lost on
+          // the way out of the generator.
+        }
+      }
     }
   }
 
@@ -3508,14 +3570,25 @@ export class IrisAppService {
 }
 
 /**
- * A card script's keyed injections, as prompt contributions.
+ * Where the preset put its main prompt, which is what a script's `before` and
+ * `after` injections are placed relative to.
  *
- * Ordered around the preset's own sections rather than inside them: a card
- * injecting text has no way to know what the preset numbered its parts, so the
- * only stable promise is "before everything" or "after everything".
- * @param entry - the conversation holding the injections.
- * @returns one contribution per live injection.
+ * Read off the resolved contributions rather than off the preset file, because
+ * the number that matters is the one `resolvePreset` computed: the order is
+ * `10 × the item's position among the ones that rendered`, so it moves when the
+ * user enables or disables a prompt.
+ *
+ * Absent has a meaning of its own — a preset whose `main` is disabled, empty,
+ * or filtered out by this generation's `injection_trigger` produced no main
+ * section, and upstream drops the injection entirely in that case (see
+ * {@link injectedContributions}).
+ * @param contributions - what the preset resolved to for this generation.
+ * @returns main's placement, or undefined when the preset produced none.
  */
+function mainPlacement(contributions: readonly Contribution[]): Contribution['placement'] | undefined {
+  return contributions.find(item => item.id === 'main')?.placement
+}
+
 /**
  * Where one injection goes, decided exhaustively.
  *
@@ -3529,17 +3602,64 @@ export class IrisAppService {
  *
  * The same shape as `Set<Code>` against `Record<Code, true>`: a construct that
  * only complains about an *extra* case cannot complain about a missing one.
+ *
+ * **`before` and `after` are anchored to the preset's `main` prompt**, which is
+ * what upstream means by them and not what this host used to do. The path:
+ * `getPromptPosition` turns `BEFORE_PROMPT` into `'start'` and `IN_PROMPT` into
+ * `'end'` (`public/scripts/openai.js:1131-1140`), and the only consumer of
+ * those two words is `injectToMain`, which inserts the message into the **main
+ * prompt's own collection** — `chatCompletion.insert(message, 'main', position)`
+ * with `'start'` unshifting and `'end'` pushing (`openai.js:1256-1300`,
+ * `:3940-3960`). So an injection sits immediately before or immediately after
+ * the main prompt, near the TOP of the request; `850` / `950` put both of them
+ * after every preset section instead (the preset's own orders are 10, 20, 30 …
+ * — `chat-completion.ts:249`), which is neither of upstream's two positions.
+ * A card injecting a rule for the model to follow had it land behind 400 lines
+ * of preset that the rule was supposed to qualify.
+ *
+ * When `main` is itself an in-chat (absolute) injection, upstream places the
+ * extension prompt as a depth injection copying main's depth, role and order
+ * (the `else` branch of `injectToMain`) — mirrored here, because a preset that
+ * moves its main prompt into the conversation would otherwise send the card's
+ * text to a place no upstream branch puts it.
  * @param injection - the registered injection.
+ * @param main - where this generation's main prompt landed, if it produced one.
  * @returns its placement, or undefined when the position asks for none.
  */
-function placementFor(injection: ScriptInjection): Contribution['placement'] | undefined {
+function placementFor(
+  injection: ScriptInjection,
+  main: Contribution['placement'] | undefined,
+): Contribution['placement'] | undefined {
   switch (injection.position) {
     case 'at-depth':
       return { kind: 'depth', depth: injection.depth, role: injection.role ?? 'system', order: 2 }
     case 'before':
-      return { kind: 'system', order: 850 }
-    case 'after':
-      return { kind: 'system', order: 950 }
+    case 'after': {
+      // `±1`, because the preset's own sections are ten apart: the injection
+      // lands beside main with nothing able to sort between them. Upstream
+      // keeps the *same* order bucket and relies on array position instead
+      // ("Keeping prompts in the same order bucket will squash them together
+      // during in-chat injection", `openai.js:1268`) — a pipeline that sorts by
+      // (order, sequence) cannot express "before" that way, since injections
+      // are appended after the preset's contributions.
+      const offset = injection.position === 'before' ? -1 : 1
+      if (main?.kind === 'system') return { kind: 'system', order: main.order + offset }
+      if (main?.kind === 'depth') {
+        return {
+          kind: 'depth',
+          depth: main.depth,
+          role: main.role,
+          order: (main.order ?? 0) + offset,
+        }
+      }
+      // No main section at all. Upstream loses the injection here — `injectToMain`
+      // finds neither a main message nor an absolute main prompt and simply
+      // returns — so there is no position to copy. Kept at the old ends of the
+      // system block rather than dropped: silently deleting a card's text is
+      // the one outcome that cannot be diagnosed from the prompt panel, and a
+      // preset with no main prompt at all is not the case this parity is about.
+      return { kind: 'system', order: injection.position === 'before' ? 850 : 950 }
+    }
     case 'none':
       return undefined
     default: {
@@ -3549,7 +3669,18 @@ function placementFor(injection: ScriptInjection): Contribution['placement'] | u
   }
 }
 
-export function injectedContributions(entry: ChatEntry): Contribution[] {
+/**
+ * A card script's keyed injections, as prompt contributions.
+ *
+ * Placed relative to the preset's `main` prompt, which is what upstream's two
+ * relative positions mean — see {@link placementFor}.
+ * @param entry - the conversation holding the injections.
+ * @param preset - the contributions the preset resolved to, so `before` and
+ *   `after` can find main. Absent falls back to the ends of the system block.
+ * @returns one contribution per live injection.
+ */
+export function injectedContributions(entry: ChatEntry, preset: readonly Contribution[] = []): Contribution[] {
+  const main = mainPlacement(preset)
   const contributions: Contribution[] = []
   // **Sorted by key, because upstream is**: `getExtensionPrompt` walks
   // `Object.keys(extension_prompts).sort()` (`script.js:3249`), so within one
@@ -3566,7 +3697,7 @@ export function injectedContributions(entry: ChatEntry): Contribution[] {
   for (const key of [...entry.extensionPrompts.keys()].sort()) {
     const injection = entry.extensionPrompts.get(key)
     if (injection === undefined) continue
-    const placement = placementFor(injection)
+    const placement = placementFor(injection, main)
     // `position: 'none'` is registered but never assembled — upstream's `-1` is
     // queried by no call site, so such an injection exists to be overwritten or
     // removed by key and contributes no text, which is a distinct state from

@@ -42,8 +42,18 @@ import { scriptIdOf } from './script-variables.ts'
 import { busy } from './errors.ts'
 import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
 import { scriptsOf } from './regex.ts'
-import { parseUsage, usageBySeq, usageFieldOf, USAGE_FIELD } from './usage.ts'
+import { parseFingerprint, type PromptFingerprint } from './fingerprint.ts'
+import { fingerprintBySeq, parseUsage, usageBySeq, usageFieldOf, USAGE_FIELD } from './usage.ts'
 import { projectMessages, textOf, toChatView, type Names, type PendingTurn } from './views.ts'
+
+/**
+ * One generation's per-candidate record, as the log holds it and the file
+ * writes it: what the provider charged, and which request it was charged for.
+ */
+interface StoredGeneration {
+  usage: TurnUsage
+  fingerprint?: PromptFingerprint
+}
 
 /** Iris's own header block inside a SillyTavern chat file. */
 export interface IrisChatMeta {
@@ -1004,6 +1014,24 @@ export class ChatEntry {
   }
 
   /**
+   * Hold which request this generation sent until there is a candidate to hang
+   * it on.
+   *
+   * The same shape and the same guard as {@link noteUsage} beside it — the
+   * fingerprint is computed at the moment the body leaves for the provider,
+   * which is before the candidate exists — and for the same reason: a
+   * fingerprint arriving for a turn that is no longer pending belongs to a
+   * generation that has already settled, and attaching it would label this
+   * turn's cost with that turn's prompt.
+   * @param turn - the turn the request was assembled for.
+   * @param fingerprint - the hashes of the body that went out.
+   */
+  notePromptFingerprint(turn: number, fingerprint: PromptFingerprint): void {
+    if (this.pending === undefined || this.pending.turn !== turn) return
+    this.pending.fingerprint = fingerprint
+  }
+
+  /**
    * Attach a generation's cost to the candidate it produced.
    *
    * **The newest candidate of the turn, not the selected one.** A generation
@@ -1017,7 +1045,12 @@ export class ChatEntry {
    *
    * Nothing is recorded when the provider reported nothing — see the protocol's
    * `TurnUsage`: no field may be invented, and a generation with no usage at
-   * all must produce no record rather than a zero-filled one.
+   * all must produce no record rather than a zero-filled one. **The request
+   * fingerprint rides on that same record**, so a provider that reports no
+   * usage leaves no stored fingerprint either: the pair exists to be read
+   * together (a prefix hash beside a cache figure), and half of it persisted
+   * alone would answer nothing while looking like an answer. The report line
+   * this generation emitted still carries both.
    * @param turn - the turn that just settled.
    * @param usage - what it cost; the noted value when absent.
    * @returns whether a record was appended.
@@ -1030,7 +1063,12 @@ export class ChatEntry {
     // candidate. Its cost is genuinely unrecordable in this shape and is
     // dropped rather than parked on a neighbouring reply.
     if (candidate === undefined) return false
-    this.session.append('iris/usage', { candidateSeq: candidate.seq, usage })
+    const fingerprint = this.pending?.turn === turn ? this.pending.fingerprint : undefined
+    this.session.append('iris/usage', {
+      candidateSeq: candidate.seq,
+      usage,
+      ...fingerprint === undefined ? {} : { fingerprint },
+    })
     return true
   }
 
@@ -1103,10 +1141,17 @@ export class ChatEntry {
 
       const savedUsage = beforeUsage.get(source)
       for (let swipe = 0; swipe < (savedUsage?.length ?? 0); swipe += 1) {
-        const usage = savedUsage?.[swipe]
+        const record = savedUsage?.[swipe]
         const candidate = candidates[swipe]
-        if (usage === undefined || candidate === undefined) continue
-        rebuilt.append('iris/usage', { candidateSeq: candidate.seq, usage })
+        if (record === undefined || candidate === undefined) continue
+        // Cost and fingerprint travel together, as one record: a rebuild that
+        // carried the cost across and left the hashes behind would make a
+        // sentence trim look like a prompt change.
+        rebuilt.append('iris/usage', {
+          candidateSeq: candidate.seq,
+          usage: record.usage,
+          ...record.fingerprint === undefined ? {} : { fingerprint: record.fingerprint },
+        })
       }
     }
   }
@@ -1159,6 +1204,13 @@ export class ChatEntry {
     // Written outside `extra` on purpose — see `USAGE_FIELD` for the
     // measurement that decided it. SillyTavern's own `extra.token_count` is
     // never read and never written here.
+    //
+    // The request fingerprint is written into the **same object** as the
+    // buckets, not into a sibling array: it is one record about one generation,
+    // and a parallel array would be a second thing for SillyTavern's swipe
+    // deletion to shift out from under (`USAGE_FIELD` names that residual).
+    // `parseUsage` ignores the two extra keys, so a file written here is read
+    // back by an older reader with its costs intact.
     for (const [index, saved] of this.#snapshotUsage()) {
       const line = messages[index]
       // Assistant lines only, for the reason the tables give above: a turn's
@@ -1166,7 +1218,11 @@ export class ChatEntry {
       if (line === undefined || line.is_user) continue
       const swipes = line['swipes']
       const width = Math.max(1, Array.isArray(swipes) ? swipes.length : 1)
-      line[USAGE_FIELD] = Array.from({ length: width }, (_unused, swipe) => saved[swipe] ?? null)
+      line[USAGE_FIELD] = Array.from({ length: width }, (_unused, swipe) => {
+        const record = saved[swipe]
+        if (record === undefined) return null
+        return { ...record.usage, ...record.fingerprint ?? {} }
+      })
     }
 
     // **Row-level trims, applied on the way out.** A user row’s table is not a
@@ -1313,7 +1369,16 @@ export class ChatEntry {
           )
           continue
         }
-        this.session.append('iris/usage', { candidateSeq: candidate.seq, usage })
+        // The fingerprint is read from the same object, and its absence says
+        // nothing: every chat written before this record existed has costs and
+        // no hashes, which is exactly the state a reader must not mistake for
+        // "the prompt changed".
+        const fingerprint = parseFingerprint(stored[swipe])
+        this.session.append('iris/usage', {
+          candidateSeq: candidate.seq,
+          usage,
+          ...fingerprint === undefined ? {} : { fingerprint },
+        })
       }
     }
   }
@@ -1819,18 +1884,29 @@ export class ChatEntry {
    * reported anything are absent from the map entirely, so a chat that has
    * never generated through a usage-reporting provider writes no new key into
    * its file at all.
+   * The **fingerprint travels with the cost** rather than in a second
+   * projection: they are one record per generation (`iris/usage`), one entry
+   * per swipe in the file, and separating them here would let a rebuild carry
+   * one across and drop the other — which reads as "this turn's prompt was
+   * different" on a turn whose prompt nobody recorded.
    * @returns costs by line index, only for lines that have any.
    */
-  #snapshotUsage(): Map<number, (TurnUsage | undefined)[]> {
+  #snapshotUsage(): Map<number, (StoredGeneration | undefined)[]> {
     const byCandidate = usageBySeq(this.session)
-    const snapshot = new Map<number, (TurnUsage | undefined)[]>()
+    const printByCandidate = fingerprintBySeq(this.session)
+    const snapshot = new Map<number, (StoredGeneration | undefined)[]>()
     const turns = lineTurns(this.session)
     for (let index = 0; index < turns.length; index += 1) {
       const turn = turns[index]
       if (turn === undefined) continue
       const candidates = listCandidates(this.session, turn)
       if (candidates.length === 0) continue
-      const saved = candidates.map(candidate => byCandidate.get(candidate.seq))
+      const saved = candidates.map((candidate) => {
+        const usage = byCandidate.get(candidate.seq)
+        if (usage === undefined) return undefined
+        const fingerprint = printByCandidate.get(candidate.seq)
+        return { usage, ...fingerprint === undefined ? {} : { fingerprint } }
+      })
       if (saved.some(entry => entry !== undefined)) snapshot.set(index, saved)
     }
     return snapshot

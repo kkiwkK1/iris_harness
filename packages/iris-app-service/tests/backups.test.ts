@@ -409,3 +409,21 @@ test('the store reads back what it wrote after a fresh construction', async (t) 
   const characters = await readdir(backupsDir(join(fixed.dir, 'chats')))
   assert.deepEqual(characters, ['aria'])
 })
+
+test('snapshots taken in the same millisecond still order newest first and rotate oldest first', async (t) => {
+  // The failure this pins showed only on a fast Linux runner: three snapshots
+  // in one millisecond shared a createdAt, so "newest first" was insertion
+  // order and the same-millisecond `-2` suffix sorted before the unsuffixed
+  // name. The store now stamps monotonically, which this asserts without
+  // depending on how fast the clock ticks.
+  const fixed = await fixture(t, { keep: 2 })
+  const first = await fixed.backups.snapshot('long', 'delete-message', 'aria')
+  await setChatFile(fixed.dir, 'long', 7)
+  const second = await fixed.backups.snapshot('long', 'rewrite-messages', 'aria')
+  await setChatFile(fixed.dir, 'long', 8)
+  const third = await fixed.backups.snapshot('long', 'delete-message', 'aria')
+  assert.ok(first.createdAt < second.createdAt && second.createdAt < third.createdAt, 'stamps did not increase strictly')
+  const listed = await fixed.backups.list('long')
+  assert.deepEqual(listed.map(row => row.createdAt), [third.createdAt, second.createdAt], 'keep 2 must leave the two newest, newest first')
+})
+

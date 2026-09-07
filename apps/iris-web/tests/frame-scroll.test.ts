@@ -225,3 +225,24 @@ test('the reset keeps upstream overflow:hidden — the scroll is the exception, 
   const srcdoc = readFileSync(join(here, '..', 'src', 'sandbox', 'srcdoc.ts'), 'utf8')
   assert.match(srcdoc, /overflow:hidden!important/u)
 })
+
+test('the frame decides its overflow once, from the honest extent, and never again from bodyScroll alone', () => {
+  /*
+   * Two decisions once lived in the same send: the extent path above the height
+   * signal, and a second one after the report that asked `body.scrollHeight`
+   * alone - the ruler a self-pinning card lies to. On such a card the second
+   * removed the `auto` the first had just set, in the same pass, and nothing
+   * put it back: the early returns on the next measurement never reach either.
+   * So the file may write `overflow-y` from exactly one predicate.
+   */
+  const entry = readFileSync(join(here, '..', 'src', 'sandbox', 'frame-entry.ts'), 'utf8')
+  assert.equal(entry.includes('applyScrollCapability'), false, 'a second scroll decision came back')
+  // Whole lines, because the value is a nested call and a bracket-counting
+  // regex is exactly the kind of instrument that passes for the wrong reason.
+  const writers = entry.split(/\r?\n/u).filter(line => /applyScrollStyles\((document\.documentElement|document\.body), 'overflow-y'/u.test(line))
+  assert.equal(writers.length, 2, 'overflow-y must be written for html and body, once each')
+  for (const line of writers) {
+    assert.match(line, /overflowDecision\(contentExtent\(rulers\), viewport\)/u, `an overflow-y writer is not fed the honest extent: ${line}`)
+  }
+})
+

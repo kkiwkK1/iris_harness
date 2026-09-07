@@ -26,6 +26,8 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, listCandidates, selectCandidate, selectedCandidate, type Candidate } from '@iris/chat'
 import { assemble, type Budget, type Contribution, type HistoryEntry, type PipelineMessage } from '@iris/pipeline'
 
+import type { HistoryProjection } from './history.ts'
+
 /** Streams one model call. Normally `ctx.llm.stream` bound to the registry. */
 export type StreamFn = (options: GenerateOptions) => AsyncIterable<StreamChunk>
 
@@ -45,8 +47,19 @@ export interface TurnDriverOptions {
    * chat-open time.
    */
   contributions: (session: Session) => readonly Contribution[] | Promise<readonly Contribution[]>
-  /** Turn the durable log into the conversation the model should see. */
-  history: (session: Session) => readonly HistoryEntry[]
+  /**
+   * Turn the durable log into the conversation the model should see.
+   *
+   * The **projection** says what this particular generation must not be shown —
+   * today only "the reply you are replacing" (see {@link HistoryProjection}).
+   * A callback that honours it lets its own per-entry work see the sent
+   * conversation, which is what a regex script's `depth` has to be computed
+   * over; a callback that ignores the argument (`session => historyFromSession(session)`,
+   * which is the obvious thing to write) is repaired by the driver, because
+   * parity on a reroll cannot depend on how a caller happened to spell its
+   * projection.
+   */
+  history: (session: Session, projection: HistoryProjection) => readonly HistoryEntry[]
   budget: Budget
   /** Sampling beyond the harness's own fields; the Iris adapter reads it. */
   sampling?: GenerateOptions['sampling']
@@ -110,6 +123,7 @@ export class TurnDriver {
    * @param extend - what makes this call a continue rather than a reroll: the
    *   text the candidate opens with, and a message pinned after the assembled
    *   conversation (upstream's continue nudge).
+   * @param projection - what this generation must not be shown.
    * @returns the recorded candidate.
    * @throws {TurnError} when the provider ends the stream with a failure.
    */
@@ -118,8 +132,9 @@ export class TurnDriver {
     turn: number,
     events: GenerateEvents = {},
     extend: { seed?: string, tail?: PipelineMessage, postfix?: string } = {},
+    projection: HistoryProjection = {},
   ): Promise<Candidate> {
-    const run = await this.#run(session, turn, events, extend.tail, extend.postfix)
+    const run = await this.#run(session, turn, events, extend.tail, extend.postfix, projection)
     const seed = extend.seed
     // A continue's candidate is the joined text, not the continuation alone:
     // the swipe list of this turn is what the file exports, and SillyTavern's
@@ -144,6 +159,7 @@ export class TurnDriver {
    * @param postfix - the separator a continue rides on the text being continued
    *   (upstream appends `continue_postfix` to `cyclePrompt`, script.js:4917).
    *   Absent leaves the request alone — only a continue has one.
+   * @param projection - what this generation must not be shown.
    * @returns the content blocks, the message source they imply, and the visible
    *   text.
    * @throws {TurnError} when the provider ends the stream with a failure.
@@ -154,6 +170,7 @@ export class TurnDriver {
     events: GenerateEvents,
     tail?: PipelineMessage,
     postfix?: string,
+    projection: HistoryProjection = {},
   ): Promise<{
     blocks: AssistantMessage['content']
     source: Parameters<typeof createAssistantMessage>[0]['source']
@@ -162,7 +179,7 @@ export class TurnDriver {
     const options = this.#options
     const request = assemble({
       contributions: await options.contributions(session),
-      history: options.history(session),
+      history: projectedHistory(session, options.history, projection),
       budget: options.budget,
     })
     // The tail rides outside `assemble` because it has to be the request's LAST
@@ -268,6 +285,16 @@ export class TurnDriver {
 
   /**
    * Produce another candidate for the most recent turn.
+   *
+   * **The reply being replaced is not part of the request.** This is upstream's
+   * rule on both of its paths (`public/script.js:4344-4352` for a regenerate,
+   * `:4438-4440` for a swipe) and it is a behaviour question before it is a
+   * cost one: a model shown its own previous answer and asked for another one
+   * either repeats it or argues with it. It is also the whole difference
+   * between "a swipe is a fresh attempt at this turn" and "a swipe is a reply
+   * to my last reply". A **swipe** in Iris is this method — `swipe()` only
+   * chooses among candidates that already exist — so the two upstream paths
+   * meet here in one.
    * @param session - the chat log.
    * @param events - streaming callbacks and cancellation.
    * @returns the new candidate, now the selected one.
@@ -276,7 +303,7 @@ export class TurnDriver {
   async regenerate(session: Session, events: GenerateEvents = {}): Promise<Candidate> {
     const turn = lastTurn(session)
     if (turn < 0) throw new TurnError('there is no turn to regenerate')
-    return this.#generate(session, turn, events)
+    return this.#generate(session, turn, events, {}, { dropTrailingReply: true })
   }
 
   /**
@@ -407,6 +434,41 @@ export class TurnDriver {
     const candidates = listCandidates(session, turn)
     return { candidates, selected: selectedCandidate(session, turn)?.index ?? 0 }
   }
+}
+
+/**
+ * Ask the caller's projection for this generation's conversation, and enforce
+ * what the generation asked for.
+ *
+ * The enforcement is the point. `TurnDriverOptions.history` is a callback, and
+ * the obvious way to write one — `session => historyFromSession(session)` —
+ * takes no projection at all and cannot honour it; three call sites in this
+ * repository are spelled exactly that way. A parity rule that a caller opts
+ * out of by writing the natural thing is not a parity rule, so the driver
+ * checks the answer rather than trusting it.
+ *
+ * The check is *not* "pop the tail if it is an assistant entry", which would
+ * pop a second entry off a projection that had already honoured the request.
+ * It compares against what the log itself derives: a projection that dropped
+ * the reply comes back one entry shorter, and only a projection that returned
+ * every derived message is repaired here. The pop rule is then upstream's own
+ * — a trailing **assistant** entry, so a turn whose reply never landed (a
+ * retry) loses nothing.
+ * @param session - the chat log.
+ * @param history - the caller's projection.
+ * @param projection - what this generation must not be shown.
+ * @returns the conversation to assemble.
+ */
+function projectedHistory(
+  session: Session,
+  history: TurnDriverOptions['history'],
+  projection: HistoryProjection,
+): readonly HistoryEntry[] {
+  const projected = history(session, projection)
+  if (projection.dropTrailingReply !== true) return projected
+  if (projected.length !== session.deriveMessages().length) return projected
+  if (projected[projected.length - 1]?.role !== 'assistant') return projected
+  return projected.slice(0, -1)
 }
 
 /** Turn one assembled message into the harness message type. */
