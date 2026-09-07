@@ -28,7 +28,14 @@ test('every zh string is actually Chinese, and every en string is not', () => {
   // parameter names and the language option shown in its own language — are
   // allowlisted by key.
   const cjk = /[\u3400-\u9fff]/
-  const neutral = new Set(['topP', 'topK', 'minP', 'langEn'])
+  // `tokensThousand` / `tokensMillion` / `thousandsSeparator` / `usageCount`
+  // are number *formats*, not sentences: `12.2K`, `1,234`, `300 tok` read the
+  // same in both columns. They sit in the dictionary because a third language
+  // changes the separator before it changes anything else.
+  const neutral = new Set([
+    'topP', 'topK', 'minP', 'langEn',
+    'tokensThousand', 'tokensMillion', 'thousandsSeparator', 'usageCount',
+  ])
   for (const [key, value] of Object.entries(DICTIONARIES.zh)) {
     if (neutral.has(key)) continue
     assert.match(value, cjk, `zh["${key}"] has no Chinese: ${value}`)
