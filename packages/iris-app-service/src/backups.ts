@@ -167,6 +167,16 @@ export class BackupStore {
   readonly #chatsDir: string
   readonly #keep: number
   readonly #onError: ((error: Error) => void) | undefined
+  /**
+   * The millisecond the last snapshot was stamped with, so the next one is
+   * stamped at least one later. Two snapshots in one millisecond used to share
+   * a `createdAt` - the list's newest-first order and the rotation's oldest-first
+   * order both became insertion order - and the second one's `-2` suffix sorts
+   * *before* the unsuffixed name as a plain string (`-` is 0x2d, `.` is 0x2e),
+   * so rotation read the newer copy as the older. Seen only on a fast Linux
+   * runner; a Windows clock ticks coarsely enough to hide it.
+   */
+  #lastStampMs = 0
 
   /**
    * @param chatsDir - the profile's chat directory.
@@ -233,9 +243,15 @@ export class BackupStore {
     }
 
     await mkdir(chatDir, { recursive: true })
-    // Two snapshots in one millisecond must not overwrite each other: the one
-    // being replaced is exactly the one worth keeping.
-    const stamp = backupStamp(new Date())
+    // The stamp is monotonic per store: never earlier than the last one plus a
+    // millisecond, so names sort in the order the snapshots were taken and no
+    // two share a `createdAt`. The suffix loop below stays as the guard for the
+    // case the monotonic clock cannot see - a second store, or a restart within
+    // the same millisecond - because the one being replaced is exactly the copy
+    // worth keeping.
+    const stampedAt = Math.max(Date.now(), this.#lastStampMs + 1)
+    this.#lastStampMs = stampedAt
+    const stamp = backupStamp(new Date(stampedAt))
     const base = `${stamp}-f${String(floors)}-${reason}`
     let name = `${base}.jsonl`
     for (let suffix = 2; existsSync(join(chatDir, name)); suffix += 1) {
