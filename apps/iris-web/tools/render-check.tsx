@@ -30,6 +30,9 @@ import { RAIL_MAX_TICKS, railMode } from '../src/app/rail.ts'
 import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView } from '@iris/protocol'
 import { contributing, discrepancy, rowsFor } from '../src/app/itemization.ts'
+import {
+  billedInputTokens, cacheHitPercent, formatTokens, totalTokens, usageDetailText,
+} from '../src/app/token-format.ts'
 import type { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 
 /**
@@ -474,6 +477,123 @@ async function main(): Promise<void> {
   assert.ok(windowed.includes(`floor ${String(FLOORS - 1)}`), 'the newest floor is not mounted')
 
   wired.store.setState({ view: seeded })
+
+  // ------------------------------------------------------------------ usage
+  /*
+   * The two usage surfaces: the conversation's line under the composer, and
+   * each reply's own reading in its actions row.
+   *
+   * Everything below reads the fake's **seeded** costs rather than a fixture
+   * written here, and the numbers are computed from the seed rather than
+   * spelled out, so a change to the seed moves the expectation with it instead
+   * of turning this into a wrong-answer check. What the seed is shaped to
+   * contain (`@iris/client-fake`'s `seed.ts`): one reply on a cache-reporting
+   * provider, one on a cold prompt that reports `0`, one swipe that reported
+   * nothing at all, and a greeting nobody was ever billed for.
+   */
+  const costed = wired.store.getState().view
+  assert.ok(costed?.usage !== undefined, 'the fake no longer seeds a conversation total')
+  const chatUsage = costed.usage
+  const billed = billedInputTokens(chatUsage)
+  const share = cacheHitPercent(chatUsage)
+  assert.ok(share !== null, 'the seeded total should report a cache bucket, or the line loses a group')
+  // The fixture's premise, asserted rather than assumed: a share that happened
+  // to be 0% or 100% would let a hand-rolled or echoed figure pass here.
+  assert.ok(
+    Number(share) > 0 && Number(share) < 100,
+    `the seeded cache share is ${share}%, which no longer exercises the computation`,
+  )
+
+  const priced = render(wired.store, slots.core)
+  // English, because `getLanguage()` under node is `en` and nothing here
+  // switches it; `tests/token-format.test.ts` holds both columns' wording.
+  assert.match(priced, /class="iris-composer__stats"/, 'the composer usage line is missing')
+  assert.ok(
+    priced.includes(`Cache hit ${share}%`),
+    'the usage line does not report the cache share',
+  )
+  assert.ok(
+    priced.includes(`Input ${formatTokens(billed)} tok · Output ${formatTokens(chatUsage.outputTokens)} tok`),
+    'the usage line does not report the billed input and the output',
+  )
+  /*
+   * The assertion above is what discriminates the one wrong implementation
+   * that would otherwise look right here: `ChatView.usage.totalTokens` is a
+   * sum over only the generations that *reported* a total, so on a
+   * conversation of mixed providers it is smaller than the buckets beside it,
+   * and a line reading it would print a different number. It only
+   * discriminates while the seed keeps a generation that reported buckets and
+   * no total, so that premise is asserted rather than assumed — the message
+   * says the check went blind, not that the interface broke.
+   * `tests/token-format.test.ts` pins the rule unconditionally.
+   */
+  assert.ok(
+    chatUsage.totalTokens !== undefined
+      && chatUsage.totalTokens < billed + chatUsage.outputTokens,
+    'the seed lost its bucket-only generation, so a line built on the summed total would pass here',
+  )
+
+  // Per-reply readings: exactly the replies whose generation reported a cost.
+  const pricedFloors = costed.messages.flatMap(row =>
+    row.usage === undefined ? [] : [{ id: row.id, usage: row.usage }])
+  assert.ok(pricedFloors.length >= 2, 'the seed should price more than one reply')
+  assert.equal(
+    priced.match(/iris-act--reading/g)?.length,
+    pricedFloors.length,
+    'the per-turn reading appeared on a different number of floors than the host priced',
+  )
+  // …and not on the greeting, which was copied from the card rather than
+  // generated. This is the absent branch, and it is a *seeded* absence: no
+  // arithmetic can produce a figure for a reply nobody was billed for.
+  assert.ok(
+    costed.messages.some(row => row.role === 'assistant' && row.usage === undefined),
+    'the seed no longer carries an unpriced reply, so the absent branch is not taken here',
+  )
+  for (const floor of pricedFloors) {
+    assert.ok(
+      priced.includes(`>Usage ${formatTokens(totalTokens(floor.usage))}<`),
+      `floor ${String(floor.id)} does not carry its own usage reading`,
+    )
+  }
+  // The hover table reaches the page as the `title`, rows and all — this is the
+  // only place the plain-text assembly is actually rendered into the DOM. Read
+  // off the reply that reported reasoning, because the reasoning note is a row
+  // inside another row rather than one of its own.
+  const reasoned = pricedFloors.find(row => row.usage.reasoningTokens !== undefined)
+  assert.ok(reasoned !== undefined, 'the seed should price one reply with reasoning')
+  for (const row of usageDetailText(reasoned.usage).split('\n')) {
+    assert.ok(priced.includes(row), `the breakdown row "${row}" did not reach the page`)
+  }
+
+  /*
+   * The empty state, from the fake's second conversation.
+   *
+   * `usage` is optional everywhere, so a row that rendered unconditionally
+   * would put a line of blank height under the composer for the whole life of
+   * an imported chat. The fake seeds one with no costs anywhere for exactly
+   * this check, and it is opened through the real action rather than written
+   * into the store — the point is that a conversation switch takes the row
+   * away again.
+   */
+  const other = wired.store.getState().chats.find(row => row.chatId !== costed.chatId)
+  assert.ok(other !== undefined, 'the fake no longer seeds a second conversation')
+  await wired.store.getState().openChat(other.chatId)
+  assert.equal(
+    wired.store.getState().view?.usage,
+    undefined,
+    'the second seeded conversation is meant to carry no costs at all',
+  )
+  const unpriced = render(wired.store, slots.core)
+  assert.doesNotMatch(
+    unpriced,
+    /iris-composer__stats/,
+    'the usage line was drawn for a conversation the host reported no usage for',
+  )
+  assert.doesNotMatch(
+    unpriced,
+    /iris-act--reading/,
+    'a reply with no reported usage still got a usage reading',
+  )
 
   wired.dispose()
   slots.dispose()

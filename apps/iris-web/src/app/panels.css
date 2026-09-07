@@ -333,6 +333,36 @@
   white-space: nowrap;
 }
 
+/*
+ * What the conversation has cost, one line under the capsules.
+ *
+ * `display: block`, not flex, and that is the point: `text-overflow` elides a
+ * block's inline content, so a line too long for the track ends in … instead
+ * of being cut through a glyph — a flex row would clip mid-character. The box
+ * already spans the writing track (it is a child of `__inner`, whose padding
+ * is the alignment), so centring the text here centres it on the body column
+ * without a second width to keep in step with the field's.
+ *
+ * The faintest tier and the label size, like the capsules above it: this is a
+ * reading a reader consults, not something the page is telling them.
+ */
+.iris-composer__stats {
+  display: block;
+  text-align: center;
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The group separator. A rule's colour rather than ink, because it divides
+   rather than says anything — the same distinction the page's hairlines make. */
+.iris-composer__stats-sep {
+  margin: 0 10px;
+  color: var(--iris-rule-strong);
+}
+
 /* ------------------------------------------------------------------ drawer */
 
 /*

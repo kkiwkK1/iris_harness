@@ -470,6 +470,26 @@
 }
 
 /*
+ * A reading in the actions row, not an action: the turn's token usage.
+ *
+ * It borrows `.iris-act` for the type size and the row's hover reveal — the
+ * point is that it is exactly as loud as the words beside it — and takes back
+ * the two things that would make it look pressable. `pointer-events` stays on,
+ * because the whole reading is the trigger for its `title`.
+ */
+.iris-act--reading {
+  cursor: default;
+  /* The faintest tier even once the row is revealed, and no hover ground: a
+     figure that lights up under the pointer reads as a control. */
+  color: var(--iris-ink-faint);
+}
+
+.iris-act--reading:hover {
+  background: none;
+  color: var(--iris-ink-faint);
+}
+
+/*
  * Editing is a mode, and a mode should look like one. SillyTavern makes the same
  * distinction with a different mechanism — its edit row swaps to filled buttons
  * while its normal row stays bare icons — and the reason holds here: a reader who

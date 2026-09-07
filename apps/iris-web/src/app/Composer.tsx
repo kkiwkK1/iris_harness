@@ -16,7 +16,7 @@
  * @module iris-web/app/Composer
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
@@ -26,6 +26,7 @@ import { Slot } from '../slots/Slot.tsx'
 import { PlumBlossom, PlumBranch } from './marks.tsx'
 import { ScriptButtons } from './ScriptButtons.tsx'
 import { registerComposer } from './composer-bus.ts'
+import { usageLineGroups } from './token-format.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
@@ -76,10 +77,20 @@ export function Composer({
    */
   const model = useIris(state => state.settings?.model)
   const preset = useIris(state => state.activePreset)
+  /*
+   * What the conversation has cost so far — every generation it ever paid for,
+   * summed by the host (`ChatView.usage`), swipes included. Read here because
+   * this is where the reader is when the question comes up: the number is
+   * consulted before pressing send, not while reading back.
+   *
+   * Selected as the field rather than the whole view, so a delta arriving on a
+   * streaming message does not re-render the composer through this line.
+   */
+  const usage = useIris(state => state.view?.usage)
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
   // Subscribed so a language switch re-renders the composer's words.
-  useLanguage()
+  const { lang } = useLanguage()
 
   // Grow to fit. Measured in a layout effect rather than tracked as state: the
   // height is a function of the text, and holding it in state means a render
@@ -98,6 +109,7 @@ export function Composer({
   }, [chatId])
 
   const empty = draft.trim() === ''
+  const stats = usageLineGroups(usage, lang)
 
   const submit = (): void => {
     const text = draft.trim()
@@ -242,6 +254,39 @@ export function Composer({
             {t('composerHint')}
           </span>
         </div>
+        {/*
+          * What the conversation has cost, under the two capsules.
+          *
+          * **No row at all when there is nothing to report**, rather than an
+          * empty one: `usage` is absent until a generation reports any, so a
+          * conversation that has not been generated in yet would otherwise
+          * reserve a line of blank height under the field for its whole life,
+          * and the composer would jump the first time a reply arrived.
+          *
+          * Groups separated by `|`, items within a group by `·`, and a group
+          * with no data disappears whole (`usageLineGroups`) — the harness's
+          * stats strip, whose grouping is the part worth copying: it is what
+          * lets a provider that reports no caching simply not have a cache
+          * group, instead of having one that says nothing.
+          *
+          * A native `title` carrying the same line, because the row is one
+          * ellipsised line: measuring whether it actually overflowed would
+          * mean a `ResizeObserver` per composer to decide whether to attach a
+          * tooltip, and a `title` that repeats a fully-visible line costs the
+          * reader nothing.
+          */}
+        {stats.length === 0 ? null : (
+          <div className="iris-composer__stats" title={stats.join(' | ')}>
+            {stats.map((group, at) => (
+              <Fragment key={group}>
+                {at === 0 ? null : (
+                  <span className="iris-composer__stats-sep" aria-hidden="true">|</span>
+                )}
+                <span>{group}</span>
+              </Fragment>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

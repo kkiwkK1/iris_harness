@@ -181,6 +181,57 @@ vendored.
 
 ---
 
+## deepseek-harness
+
+Iris meets this project twice, and the two are separate obligations. As
+**dependencies** its published `@deepseek-ai/dsh-*` packages are listed under
+npm dependencies below. This section is about the **source checkout**, which is
+reference material here — the harness is the interface Iris's own shell is
+modelled on — and out of which one file was transcribed.
+
+- **Project** — deepseek-harness ·
+  `https://github.com/deepseek-ai/deepseek-harness`
+  (`packages/client/ui-chat/package.json` `repository.url`)
+- **Licence** — `MIT` (root `package.json` `"license": "MIT"`, and the same
+  field on the transcribed package; `LICENSE` carries the MIT text)
+- **Copyright line** — verbatim from `LICENSE`:
+
+  > `Copyright (c) 2026 DeepSeek`
+
+- **Full licence text** — the MIT text is **not reproduced in this file**; it is
+  in the checkout at `.reference/deepseek-harness/LICENSE`. That path is
+  `.gitignore`d (`.gitignore:9`), so a clone of this repository does not carry
+  it — **the text has to travel with any distribution of the transcribed code**,
+  and that is a condition this file records rather than satisfies. See
+  `notes/LICENSE-INVENTORY.md`.
+- **What Iris uses** —
+  - **Algorithm transcription (1):** `apps/iris-web/src/app/token-format.ts` —
+    `formatTokens`, `formatExactTokens` and `formatCacheHitPercent` (including
+    its helpers `roundedPercentUnits` and `displayPercentUnits`), from
+    `packages/client/ui-chat/src/client/chat/token-format.ts`. Structure and
+    arithmetic preserved, including the property the file exists for: a partial
+    cache hit is never rounded up to `100%`. Changed in the transcription: the
+    locale seat is Iris's `i18n/strings.ts` rather than a slot-passed `t`, the
+    counts are clamped to non-negative integers on the way in, and the
+    `TurnUsage` readers that live beside them
+    (`billedInputTokens`, `totalTokens`, `cacheHitPercent`,
+    `usageLineGroups`, `usageDetailText`) are Iris's own.
+  - **Interface compatibility / design reference (not code):** the usage line's
+    grouping and the per-turn breakdown's rows, from the same package's
+    `StatsLine.tsx` and `TurnUsagePanel.tsx`; the copy from its `locale.ts`,
+    re-keyed into Iris's dictionary. Iris renders both with its own markup and
+    its own tokens, and uses a native `title` where the harness uses its
+    `Tooltip` primitive and an anchored dialog.
+  - **Elsewhere in Iris:** the application framework and host harness as
+    **published packages** — see npm dependencies below, same copyright line.
+- **Version read** — **0.1.3-alpha.1**, commit `d347e70`. That is the working
+  copy the transcription was made from; the checkout in this repository at
+  `.reference/deepseek-harness` is **0.1.2-alpha.2**, commit `0a53fb5`, and the
+  transcribed file is **byte-identical between the two** (`diff -q`), so either
+  reads as the source.
+
+---
+
 ## npm dependencies
 
 Taken from `pnpm licenses list --json` against the current lockfile:
