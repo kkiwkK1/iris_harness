@@ -395,6 +395,8 @@ Iris 站在这些项目的工作上。兼容它们不是顺带,是这个项目�
 
 # 四、许可与第三方声明
 
-**Iris 自身的开源协议待定**,仓库里目前没有 `LICENSE` 文件——不要把这句话读成任何一种许可。选择要满足的约束(我们转写了哪些上游代码、各自什么条款、哪两份条款不能同时满足)记在 [notes/LICENSE-INVENTORY.md](notes/LICENSE-INVENTORY.md)。
+**Iris 以 [GNU AGPL-3.0](LICENSE) 发布**(`SPDX: AGPL-3.0-only`)。裁定的理由记录在 [notes/LICENSE-INVENTORY.md](notes/LICENSE-INVENTORY.md):仓库带着对 SillyTavern / ST-Prompt-Template(均为 AGPL-3.0)的逐字移植与算法转写,AGPL §5(c) 的整仓义务由此成立——这也是本项目自愿的选择:对一个以网络服务形态运行的宿主,网络 copyleft 本来就是想要的那条。若你通过网络运行修改版,按 AGPL §13 向交互用户提供源码的义务由公开仓库本身满足:`https://github.com/kkiwkK1/iris_harness`。
+
+版权:`Copyright (C) 2026 kkiwkK1 and Iris contributors`。
 
 我们用到的第三方项目、各自的许可证、以及**具体怎么用的**(依赖 / 接口兼容 / 算法转写 / 逐字移植),逐条列在 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

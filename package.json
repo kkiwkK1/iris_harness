@@ -1,5 +1,6 @@
 {
   "name": "iris",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "A SillyTavern alternative built on the Cordis plugin architecture.",

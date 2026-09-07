@@ -4,9 +4,22 @@
 本仓库目前**没有任何 `LICENSE` 文件**（`git ls-files` 下无 `LICENSE`/`COPYING`）。
 这份清单是「我们能选什么」这个问题的输入，不是答案。
 
-> **状态（2026-09-06 落地时）：Iris 自身的开源协议待定，尚未拍板。** 下文任何提到 AGPL /
-> AFPL / MIT 的地方说的都是**上游**的许可证及其义务，不是本仓库的选择。对外的事实清单
-> 在根目录 `THIRD-PARTY-NOTICES.md`；本文件留在 `notes/`，是那份清单的推导过程。
+> **裁定（总指挥 kkiwkK1，2026-09-07）：Iris 采用 `AGPL-3.0-only`，`LICENSE` 已落。**
+> 推理见下文的移植面：ST 的逐字移植（`reply-trim.ts`）使 AGPL §5(c) 的整仓义务
+> 大概率成立，而依赖树对 AGPL 无一冲突——AGPL 是义务所要求、也是本项目自愿选择的
+> （对一个以网络服务形态运行的宿主，网络 copyleft 本来就是想要的那条）。
+>
+> **裁定的三个前置手术**（AGPL 与 AFPL/卡作者的冲突消除，未做完前本裁定是「方向已定、
+> 手术未毕」）：
+> 1. `packages/iris-compat-tavernhelper/src/macros.ts` 的 A 级转写改为从行为规格推导的
+>    独立实现——AFPL §2(c)(ii) 与 AGPL §5(c) 不可同真，这是唯一可能把 AFPL 拽进来的钩子；
+>    `script-source.ts:4` 的两条 A（小）规则同批处理。
+> 2. `packages/iris-mvu/src/json-patch.ts` 里那张卡（爱衣）的世界书条目正文换成合成等价物
+>    ——卡作者的著作权不在任何上游许可证的覆盖范围内。
+> 3. EJS 归属补进 `THIRD-PARTY-NOTICES`（ST-Prompt-Template 的 vendored 副本，Apache-2.0）。
+>
+> 下文任何提到 AGPL / AFPL / MIT 的地方说的都是**上游**的许可证及其义务；本文件留在
+> `notes/`，是对外清单 `THIRD-PARTY-NOTICES.md` 的推导过程。
 
 ## 口径
 

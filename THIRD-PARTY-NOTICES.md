@@ -17,12 +17,18 @@ section.
 
 ## Iris itself
 
-**Iris has not chosen its licence yet.** There is no `LICENSE` file in this
-repository, and nothing below should be read as one. The constraints the choice
-has to satisfy — which upstream code was transcribed, under what terms, and
-where two of those terms cannot both be met — are worked through in
-`notes/LICENSE-INVENTORY.md`. Until a decision is recorded there and a `LICENSE`
-file exists, the status is: **licence pending**.
+**Iris is licensed under the GNU Affero General Public License v3.0**
+(`AGPL-3.0-only` — the unmodified FSF text ships as `LICENSE`). The ruling and
+its reasoning are recorded in `notes/LICENSE-INVENTORY.md`; in short: the
+repository carries a verbatim port and algorithm transcriptions from
+SillyTavern and ST-Prompt-Template, both AGPL-3.0, whose §5(c) obligation
+attaches to the work as a whole — AGPL-3.0 is the licence that obligation
+demands, and the one this project would have chosen for its own reasons
+(network copyleft for a host that is meant to be served). Source for any
+network-served copy is the repository itself:
+`https://github.com/kkiwkK1/iris_harness`.
+
+Copyright line for the work: `Copyright (C) 2026 kkiwkK1 and Iris contributors`.
 
 ---
 
