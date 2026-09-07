@@ -452,7 +452,17 @@ test('the global scope survives a restart, at upstream’s own path', async (t) 
   await first['script.setVariables']({
     chatId: created.view.chatId, scope: 'global', op: 'replace', variables: { theme: 'dark' },
   })
-  await new Promise(resolve => setTimeout(resolve, 20))
+  // The store persists on a debounce, so wait for the write to land rather than
+  // for a number of milliseconds: a fixed 20ms sleep passed on an idle machine
+  // and read `{}` back under load (1 of 6 parallel full runs, 2026-09-07). The
+  // bound is a smoke bound - it only says the debounce never fired at all.
+  const settled = Date.now() + 5000
+  for (;;) {
+    const text = await readFile(settingsPath, 'utf8').catch(() => '')
+    if (text.includes('"theme"')) break
+    assert.ok(Date.now() < settled, `the global scope never reached ${settingsPath} within 5s`)
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
 
   // Upstream keeps this installation-wide, so an in-memory scope means a card
   // storing a preference never finds it again — the gap this closes.
