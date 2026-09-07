@@ -61,6 +61,8 @@ import { spawn } from 'node:child_process'
  * - `packages/iris-app-service/tests/mvu-events.test.ts` ×1 — cards that listen for the end of an update
  * - `packages/iris-app-service/tests/mvu-storage.test.ts` ×2 — the longest real conversation round-trips
  * - `packages/iris-app-service/tests/script-variables.test.ts` ×3 — real cards' script data and button census
+ * - `packages/iris-app-service/tests/library-summary.test.ts` ×1 — every real card lists with its three
+ *   summary facts clipped and whole (added 2026-09-07 with the character-page facts)
  * - `packages/iris-app-service/tests/unit.test.ts` ×1 — every real filename is a usable id (**new to the
  *   count**: it hardcoded the install path until 2026-09-06 and so ran here while skipping on CI)
  * - `packages/iris-app-service/tests/worldbook-global.test.ts` ×1, `worldbook-source.test.ts` ×1,
@@ -87,7 +89,7 @@ import { spawn } from 'node:child_process'
  * constant at 33 and been wrong. Update this number **only** after listing the skips again and
  * naming the one that moved.
  */
-const EXPECTED_SKIPPED = 32
+const EXPECTED_SKIPPED = 33
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 

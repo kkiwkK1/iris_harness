@@ -115,7 +115,13 @@ after(async () => {
   client.close()
   await ctx.fiber.dispose()
   await mock.close()
-  await rm(dataDir, { recursive: true, force: true })
+  // Windows can still hold a handle inside `default-user` for a moment after
+  // the fiber is disposed (the store's last write closing, an antivirus scan
+  // of the fresh chat file), and a bare `rm` then fails the whole file with
+  // ENOTEMPTY - seen on three separate full-suite runs here, never on Linux.
+  // `maxRetries` is Node's own answer for exactly this window; the tests
+  // themselves are unaffected, only the tidy-up waits.
+  await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
 })
 
 test('the composition mounts both rows and answers a method', async () => {
