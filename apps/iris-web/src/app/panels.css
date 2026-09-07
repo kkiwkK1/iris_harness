@@ -1559,10 +1559,21 @@
 
 /* --------------------------------------------------------- prompt breakdown */
 
-/* The modal's own body: a fixed measure so a forty-row table does not stretch
-   the dialog to the window's width and lose the alignment of its columns. */
+/* The dialog carries the measure. The primitive's card is 380px wide and
+   `overflow: hidden`; a body wider than that is clipped, not accommodated, so
+   the width has to be set on the card itself. 640px seats the four columns
+   with the label column still readable; on a narrow window the card takes what
+   the window gives and the label column (the only flexible one) absorbs it. */
+.iris-prompt-dialog {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 48px);
+}
+
+/* The body fills the card rather than asking for its own minimum — a minimum
+   wider than the card was exactly the clipped state above. */
 .iris-prompt {
-  min-width: min(560px, 78vw);
+  width: 100%;
+  min-width: 0;
 }
 
 .iris-prompt__notice {
@@ -1645,7 +1656,9 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  max-height: 46vh;
+  /* Tall enough that a real preset's rows mostly show at once; the list
+     scrolls for the rest, inside the card's own height cap. */
+  max-height: min(60vh, 640px);
   overflow-y: auto;
 }
 

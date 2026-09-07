@@ -95,6 +95,15 @@ export function PromptPanel({
       onClose={onClose}
       title={turn === undefined ? t('promptNextTitle') : t('promptTurnTitle', { turn })}
       closeLabel={t('close')}
+      /*
+        The primitive's dialog card is 380px wide and clips its overflow — a
+        measure for a confirmation, not for a four-column table. Left at that
+        width the share and token columns fell outside the card and were cut
+        off, which is what a reader saw as "rows without numbers". The dialog,
+        not the table, has to carry the wider measure, because the clip is on
+        the dialog.
+      */
+      className="iris-prompt-dialog"
     >
       {state.kind === 'loading' ? <p className="iris-list__empty">{t('counting')}</p> : null}
       {state.kind === 'error' ? <p className="iris-list__empty">{state.message}</p> : null}
