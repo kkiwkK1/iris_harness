@@ -600,6 +600,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // been used should leave nothing behind, and both stores already tolerate a
   // directory that does not exist yet.
   await settings.load()
+  // A brand-new profile takes its world-info scan knobs from the user's own
+  // SillyTavern install, if one is configured — a migration convenience, once,
+  // not a sync (DEVIATIONS.md §21). The store decides whether this is a first
+  // run and only then asks the install, so an existing profile never has its
+  // knobs re-read from someone else's settings file.
+  for (const line of await settings.seedWorldbookSettings(() => stInstall.worldInfoSettings())) {
+    ctx.logger.warn(`worldbook settings: ${line}`)
+  }
   // Primed before any chat can open, so the persona closure the chats carry
   // answers from memory instead of racing a file read inside a macro.
   await personas.prime()
