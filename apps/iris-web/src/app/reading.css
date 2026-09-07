@@ -226,11 +226,34 @@
   margin-bottom: 0;
 }
 
-/* The reader's own voice: an editor's query in the margin of a proof, not
-   typeset prose. Smaller, sans, and one step back in the ink. */
+/*
+ * The reader's own line: a note laid on the page, not a line of the prose.
+ *
+ * The first plum pass set it as "an editor's query in the margin" - 15px sans,
+ * one step back in the ink, no ground - and the user could not find their own
+ * messages in a 13-floor chat (2026-09-07: "我怎么看不到我自己发的消息记录").
+ * A voice that only differs by weight and shade disappears into a narrator who
+ * also says "你". So the user's turn gets the same treatment the sidebar gives
+ * the selected row: a plum bar on the left and a blush wash behind, which is
+ * the design's one way of saying "this one is yours" and appears nowhere else
+ * in the reading column. Full ink for the words - it is the reader's text, not
+ * a caption - and the sans face and 15px stay, so it still reads as speech
+ * rather than as the book.
+ */
+.iris-msg--user .iris-msg__body {
+  padding: 12px 16px 13px 16px;
+  background: var(--iris-accent-wash);
+  border-left: 2px solid var(--iris-accent);
+  border-radius: 0 var(--iris-radius) var(--iris-radius) 0;
+}
+
+.iris-msg--user .iris-msg__who {
+  color: var(--iris-accent);
+}
+
 .iris-msg--user .iris-msg__text {
   font: var(--iris-text-weight) 15px / 1.62 var(--iris-font-ui);
-  color: var(--iris-ink-secondary);
+  color: var(--iris-ink);
   white-space: pre-wrap;
 }
 
