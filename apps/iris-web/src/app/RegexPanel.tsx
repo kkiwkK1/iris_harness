@@ -5,13 +5,22 @@
  * card: upstream keeps it at `extension_settings.regex` and runs it against
  * **every** conversation, before anything the character ships
  * (`extensions/regex/engine.js`, `SCRIPT_TYPES.GLOBAL`). This panel lists the
- * tier in run order and edits it — toggle, delete, reorder, and the import that
- * is the migration path: a `regex-*.json` file exported from SillyTavern, in
- * either shape that export produces (one script, or an array of them).
+ * tier in run order and edits it — write a rule from scratch, change one, toggle,
+ * delete, reorder, export, and the import that is the migration path: a
+ * `regex-*.json` file exported from SillyTavern, in either shape that export
+ * produces (one script, or an array of them).
  *
- * The other two tiers are deliberately absent: a card's own scripts belong to
- * the card, and the preset tier is one this host does not carry. A panel that
- * showed what it cannot edit would be promising edits that do nothing.
+ * **Writing one from scratch is new**, and its absence was the gap that
+ * mattered most: until it existed, every rule in this tier had to be authored
+ * in a SillyTavern install and imported, so the panel could govern rules it
+ * could not create and could not fix a typo in one. `RegexEditor` is the form,
+ * and it is upstream's `editor.html` field for field.
+ *
+ * The card's own tier is next door in `ScopedRegexPanel` — it belongs to one
+ * card, so it answers to the open conversation rather than to the profile. The
+ * preset tier is still absent: this host's preset library is read-only, and a
+ * panel that showed what it cannot edit would be promising edits that do
+ * nothing.
  *
  * Rendered inside the settings drawer, after the presets: both are "what the
  * model and the reader actually see" surfaces, and both are profile-wide.
@@ -27,6 +36,9 @@ import type { RegexScriptView } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { CollapsibleSection } from './fields.tsx'
+import { RegexEditor } from './RegexEditor.tsx'
+import { exportRegexFile } from './regex-export.ts'
+import { RegexBadges } from './regex-rows.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
@@ -45,18 +57,18 @@ function isRegexScript(value: unknown): value is RegexScriptView {
 }
 
 /**
- * The filename an export lands under, spelled the way upstream spells it:
- * `regex-` plus the script name run through its own `sanitizeFileName`
- * (illegal characters to `_`, then lowercased). A script exported from here
- * and imported into SillyTavern arrives under the name that install expects.
- * @param script - the script being exported.
- * @returns a safe filename.
+ * A stable handle for one row, for the "which row is being edited" state.
+ *
+ * The id when there is one, and the index otherwise. A rule really can arrive
+ * without an id — upstream assigns them lazily, and an import file may carry
+ * none until the host mints one — and `undefined` as a key would open the
+ * editor on every unnamed rule at once.
+ * @param script - the row.
+ * @param index - its position, as the fallback.
+ * @returns the handle.
  */
-function exportName(script: RegexScriptView): string {
-  const stem = (script.scriptName ?? 'script')
-    .replace(/[\s.<>:"/\\|?*\u0000-\u001F\u007F]/g, '_')
-    .toLowerCase()
-  return `regex-${stem}.json`
+function keyOf(script: RegexScriptView, index: number): string {
+  return script.id ?? `#${String(index)}`
 }
 
 /**
@@ -80,6 +92,15 @@ export function RegexPanel(): ReactElement | null {
   // Set while a write is in flight, so a second click cannot interleave two
   // read-modify-writes and lose one of them.
   const [busy, setBusy] = useState(false)
+  /*
+   * Which row the editor is open on: its `id`, `'new'`, or nothing.
+   *
+   * Keyed by id rather than by index, because every write here is a whole-list
+   * replacement and the list can be reordered under the editor. An index would
+   * survive a move and start editing whichever rule had slid into that
+   * position — with the form still showing the old rule's fields.
+   */
+  const [editing, setEditing] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     void actions.loadRegex()
@@ -91,6 +112,24 @@ export function RegexPanel(): ReactElement | null {
     if (busy) return
     setBusy(true)
     void actions.setRegexScripts(next).finally(() => setBusy(false))
+  }
+
+  /**
+   * Store one rule the editor produced, and close the form.
+   *
+   * A whole-list replacement, because that is the only write the host offers
+   * for this tier — so an edit is "the list, with this row swapped" and a
+   * create is "the list, with this row appended". The row is matched by
+   * identity rather than by id: a rule can legitimately arrive from an import
+   * with no id at all, and `undefined === undefined` would match the wrong one.
+   * @param row - the row being edited, or undefined when creating.
+   * @param next - the rule as the form left it.
+   */
+  const commit = (row: RegexScriptView | undefined, next: RegexScriptView): void => {
+    setEditing(undefined)
+    replace(row === undefined
+      ? [...scripts, next]
+      : scripts.map(entry => (entry === row ? next : entry)))
   }
 
   const importFile = async (file: File | undefined): Promise<void> => {
@@ -121,19 +160,6 @@ export function RegexPanel(): ReactElement | null {
     }
   }
 
-  const exportScript = (script: RegexScriptView): void => {
-    // Four-space JSON, matching what upstream's export writes — a file that
-    // goes out of here can go straight back into an install without showing
-    // up as a full-file diff there.
-    const body = JSON.stringify(script, null, 4)
-    const url = URL.createObjectURL(new Blob([body], { type: 'application/json' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = exportName(script)
-    link.click()
-    URL.revokeObjectURL(url)
-  }
-
   const move = (index: number, target: number): void => {
     if (target < 0 || target >= scripts.length) return
     const next = [...scripts]
@@ -156,7 +182,8 @@ export function RegexPanel(): ReactElement | null {
       ) : (
         <div className="iris-regex__list">
           {scripts.map((script, index) => (
-            <div className="iris-regex__row" key={script.id ?? index}>
+            <div className="iris-regex__entry" key={script.id ?? index}>
+            <div className="iris-regex__row">
               <input
                 type="checkbox"
                 className="iris-regex__toggle"
@@ -167,11 +194,7 @@ export function RegexPanel(): ReactElement | null {
               />
               <span className="iris-regex__name">
                 {script.scriptName}
-                {script.markdownOnly === true ? <span className="iris-regex__badge">{t('regexDisplayOnly')}</span> : null}
-                {script.promptOnly === true ? <span className="iris-regex__badge">{t('regexPromptOnly')}</span> : null}
-                {script.markdownOnly !== true && script.promptOnly !== true
-                  ? <span className="iris-regex__badge">{t('regexPermanent')}</span>
-                  : null}
+                <RegexBadges script={script} />
               </span>
               <span className="iris-regex__actions">
                 <button
@@ -195,7 +218,14 @@ export function RegexPanel(): ReactElement | null {
                 <button
                   type="button"
                   className="iris-act"
-                  onClick={() => exportScript(script)}
+                  onClick={() => setEditing(editing === keyOf(script, index) ? undefined : keyOf(script, index))}
+                >
+                  {t('edit')}
+                </button>
+                <button
+                  type="button"
+                  className="iris-act"
+                  onClick={() => exportRegexFile(script)}
                 >
                   {t('regexExport')}
                 </button>
@@ -209,9 +239,26 @@ export function RegexPanel(): ReactElement | null {
                 </button>
               </span>
             </div>
+            {editing === keyOf(script, index) ? (
+              <RegexEditor
+                script={script}
+                busy={busy}
+                onSave={next => commit(script, next)}
+                onCancel={() => setEditing(undefined)}
+              />
+            ) : null}
+            </div>
           ))}
         </div>
       )}
+
+      {editing === 'new' ? (
+        <RegexEditor
+          busy={busy}
+          onSave={next => commit(undefined, next)}
+          onCancel={() => setEditing(undefined)}
+        />
+      ) : null}
 
       {/*
         The import row is unconditional: the file comes from the user's disk,
@@ -219,6 +266,14 @@ export function RegexPanel(): ReactElement | null {
         render — this is the migration path and it is always live.
       */}
       <div className="iris-regex__import">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy || editing === 'new'}
+          onClick={() => setEditing('new')}
+        >
+          {t('regexNew')}
+        </Button>
         <Button
           variant="outline"
           size="sm"

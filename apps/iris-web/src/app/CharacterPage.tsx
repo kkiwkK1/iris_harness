@@ -52,7 +52,7 @@
  * @module iris-web/app/CharacterPage
  */
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
@@ -66,10 +66,12 @@ import {
   describeBookOrigin,
   describeButtons,
   describePlace,
+  describeScriptSource,
   describeScriptSwitch,
   describeTrigger,
   latestActivity,
 } from './character-facts.ts'
+import { ScriptEditor } from './ScriptEditor.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
@@ -113,6 +115,18 @@ export function CharacterPage({
   const actions = useIrisActions()
   // Subscribed so a language switch re-renders every word this page shows.
   const { lang } = useLanguage()
+  /*
+   * Whether the "add a script for this character" form is open.
+   *
+   * The one write this page makes. It is allowed here, where a *card* script's
+   * switch deliberately is not, and the difference is which store the write
+   * lands in: `script.setEnabled` is scoped to the card whose conversation is
+   * open (the store's `scriptsFor`), so a switch on a page about another card
+   * would write the wrong card's policy. A library write names its character
+   * explicitly, so a page about a card nobody has opened can make it correctly.
+   */
+  const [addingScript, setAddingScript] = useState(false)
+  const [savingScript, setSavingScript] = useState(false)
 
   /*
    * One fetch per card, on arrival and on every switch.
@@ -178,6 +192,18 @@ export function CharacterPage({
   const authorised = !decided
     ? undefined
     : scriptsAllowed === 'allowed' ? t('faceScriptsAllowed') : t('faceScriptsDeclined')
+
+  /*
+   * How many of the listed scripts are **not** the card's.
+   *
+   * The count above the list is `character.scriptCount`, which is a fact about
+   * the card and is what the library summary carries for every row without a
+   * fetch. The list is now three repositories deep, so "3" over five rows would
+   * read as a miscount rather than as two of the reader's own scripts — and the
+   * fix is a second sentence rather than a bigger number, because the number is
+   * the one the world-book column beside it is also counting: the card's.
+   */
+  const notFromCard = (scripts ?? []).filter(script => script.source !== 'card').length
 
   /*
    * Whether the world book column exists at all.
@@ -410,14 +436,17 @@ export function CharacterPage({
                       <span className="iris-meta iris-fact__meta">
                         {[
                           /*
-                            Every row here came out of the card: `script.list`
-                            answers with the card's own scripts and there is no
-                            other tier behind it (the corpus's 42 scripts all
-                            declare ST's `type: 'script'`). Said rather than
-                            assumed, because "where is this from" is the first
-                            question a list of runnable code raises.
+                            Read off the row, not asserted.
+
+                            This was `t('faceScriptInCard')` — a constant — with
+                            a comment explaining that `script.list` answers with
+                            the card's own scripts and there is no other tier
+                            behind it. That was true when it was written and
+                            stopped being true the moment the user's own library
+                            existed, and nothing would have caught it: a fixed
+                            string renders perfectly under a wrong premise.
                           */
-                          t('faceScriptInCard'),
+                          describeScriptSource(script, lang),
                           describeScriptSwitch(script, lang),
                           describeBytes(script.bytes, lang),
                           describeButtons(script, lang),
@@ -429,8 +458,44 @@ export function CharacterPage({
                     </li>
                   ))}
                 </ul>
+                {notFromCard === 0 ? null : (
+                  <p className="iris-fact__note">{t('faceScriptsOfYours', { n: notFromCard })}</p>
+                )}
                 {scripts.length === 0 ? null : (
                   <p className="iris-fact__note">{t('faceScriptSwitchNote')}</p>
+                )}
+                {/*
+                  The card's own repository in the user's library, addable from
+                  the page about that card — which is the only surface that
+                  names a character the reader is not currently playing.
+                */}
+                {addingScript ? (
+                  <ScriptEditor
+                    busy={savingScript}
+                    onSave={draft => {
+                      if (savingScript) return
+                      setSavingScript(true)
+                      void actions
+                        .saveLibraryScript('character', character.characterId, draft)
+                        .then(async id => {
+                          if (id === undefined) return
+                          setAddingScript(false)
+                          // Re-fetched, because this page holds its own copy of
+                          // the list and the write it just made is not in it.
+                          await actions.loadCharacterDetail(character.characterId, { refresh: true })
+                        })
+                        .finally(() => setSavingScript(false))
+                    }}
+                    onCancel={() => setAddingScript(false)}
+                  />
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setAddingScript(true)}
+                  >
+                    {t('faceAddScript')}
+                  </Button>
                 )}
               </>
             )}

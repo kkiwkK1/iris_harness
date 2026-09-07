@@ -175,6 +175,33 @@ export function describeTrigger(
  * @param lang - the reader's language.
  * @returns the sentence for the script's state.
  */
+/**
+ * Where a script came from, in the reader's own words.
+ *
+ * **Read off the row, never assumed.** This page printed a fixed 「卡内嵌」 under
+ * every script until the user's own library existed — correct while the card was
+ * the only source, and a lie the moment it stopped being. The comment beside
+ * that line said "there is no other tier behind it", which was true when it was
+ * written and is the reason a wrong sentence survived: nothing rechecks a claim
+ * that was accurate.
+ *
+ * The `default` arm covers `'card'` and anything a newer host adds. A source
+ * this build has never heard of reading as "in the card" is the wrong direction
+ * in principle — but the alternative is a blank where the reader expects a
+ * word, and the type makes an unhandled case a compile error on the build that
+ * adds one.
+ * @param script - the row as `script.list` reported it.
+ * @param lang - the reader's language.
+ * @returns the sentence.
+ */
+export function describeScriptSource(script: ScriptView, lang: Language): string {
+  switch (script.source) {
+    case 'global': return translate(lang, 'faceScriptGlobal')
+    case 'character': return translate(lang, 'faceScriptCharacter')
+    default: return translate(lang, 'faceScriptInCard')
+  }
+}
+
 export function describeScriptSwitch(script: ScriptView, lang: Language): string {
   if (script.enabled) {
     return script.enabledByCard

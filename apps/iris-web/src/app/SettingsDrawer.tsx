@@ -31,6 +31,8 @@ import { NoticeLog } from './NoticeLog.tsx'
 import { PresetPanel } from './PresetPanel.tsx'
 import { PersonaPanel } from './PersonaPanel.tsx'
 import { RegexPanel } from './RegexPanel.tsx'
+import { ScopedRegexPanel } from './ScopedRegexPanel.tsx'
+import { ScriptLibraryPanel } from './ScriptLibraryPanel.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
 import { UsageSection } from './UsageSection.tsx'
 import { WorldbookPanel } from './WorldbookPanel.tsx'
@@ -152,6 +154,14 @@ export function SettingsDrawer({
               the things that change text they did not type.
             */}
             <RegexPanel />
+
+            {/*
+              The card's own tier, under the profile's, because that is the order
+              they run in — upstream's `SCRIPT_TYPES` iteration puts global
+              first. A reader comparing the two lists is comparing them along
+              the axis that decides which rewrite wins.
+            */}
+            <ScopedRegexPanel />
 
             <CollapsibleSection
               id="route"
@@ -434,6 +444,16 @@ export function SettingsDrawer({
         </CollapsibleSection>
 
         <ScriptPanel />
+
+        {/*
+          The user's own scripts, after the card's. They run in the same frame,
+          under the same per-card consent and the same remote-code allowlist —
+          `ScriptPanel` above is where all three of those are governed, for
+          every script in the conversation regardless of which repository it
+          came out of, which is why the switchboard is there and this panel is
+          only the library.
+        */}
+        <ScriptLibraryPanel />
 
         {/*
           The world books panel, beside the script panel because it answers the

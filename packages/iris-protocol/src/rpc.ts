@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, UsageSummary, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -129,6 +129,39 @@ const regexScriptRequest = z.looseObject({
   scriptName: z.string().min(1).max(300),
   findRegex: z.string().max(100_000),
   replaceString: z.string().max(100_000),
+})
+
+/**
+ * Which of the user's own script repositories a request names.
+ *
+ * `'character'` requires a `characterId`; `'global'` refuses one. The pair is
+ * checked in the handler rather than modelled as a discriminated union, because
+ * the refusal has to *name* the mistake — a schema failure on a two-field
+ * request reads as "malformed" and sends the reader to the transport.
+ */
+const libraryScope = z.enum(['global', 'character'])
+
+/**
+ * One library script as the wire carries it.
+ *
+ * Loose for `regexScriptRequest`'s reason and with the same consequence: what
+ * a 酒馆助手 export file carried, the host keeps, so `data` and `export_with`
+ * survive a round trip through a shell that renders neither. The caps are the
+ * ones that matter for a *body of code* — 2 MB is above the largest script in
+ * the local corpus by a wide margin (the biggest card script measures 448 kB)
+ * and far below a memory request.
+ */
+const userScriptRequest = z.looseObject({
+  /** Absent on create; present on edit, and then it must already exist. */
+  id: z.string().min(1).max(200).optional(),
+  name: z.string().min(1).max(300),
+  content: z.string().max(2_000_000),
+  info: z.string().max(20_000).optional(),
+  enabled: z.boolean().optional(),
+  button: z.object({
+    enabled: z.boolean(),
+    buttons: z.array(z.object({ name: z.string().max(300), visible: z.boolean() })).max(200),
+  }).optional(),
 })
 
 /** Runtime schemas for every request body, keyed by method. */
@@ -741,7 +774,54 @@ export const requestSchemas = {
    */
   'regex.set': z.object({ scripts: z.array(regexScriptRequest).max(1000) }),
 
-  /** Every script a character's card carries, enabled or not. */
+  /**
+   * One card's own regex tier, and whether the user lets it run.
+   *
+   * Upstream's second tier (`data.extensions.regex_scripts`), which travels
+   * inside the card. Read-only as a *list*: the rules belong to the card and are
+   * not rewritten here, so the two writes below record the user's decisions
+   * instead — which is the whole difference from `regex.set`, where the list
+   * itself is the thing being edited.
+   */
+  'regex.scopedList': z.object({ characterId: z.string().min(1) }),
+  /**
+   * Allow or refuse one card's own regex tier.
+   *
+   * Upstream's `character_allowed_regex` membership (`engine.js:175`/`:194`),
+   * per character. Two states, not three: nothing asks, so "never decided" and
+   * "allowed" are one state — see `ScriptPolicyStore.regexAllowed` for why that
+   * is the opposite convention from `script.setScriptsAllowed`, and what a
+   * future round that adds the question would have to change first.
+   */
+  'regex.setScopedAllowed': z.object({
+    characterId: z.string().min(1),
+    allowed: z.boolean(),
+  }),
+  /**
+   * The user's own on/off for one of a card's regex rules.
+   *
+   * Stored beside the user's other decisions rather than written into the card,
+   * which is where upstream puts it (`writeExtensionField`, `engine.js:148`).
+   * The rule must exist on the card: a decision recorded against an id the card
+   * does not carry is one nobody can audit, the same rule `script.setEnabled`
+   * holds.
+   */
+  'regex.setScopedEnabled': z.object({
+    characterId: z.string().min(1),
+    scriptId: z.string().min(1),
+    enabled: z.boolean(),
+  }),
+
+  /**
+   * Every script that would run in this character's conversations.
+   *
+   * **Three repositories now, not one.** The card's own, plus the user's global
+   * library (which runs everywhere) and the user's library for this card. They
+   * arrive in one list, in run order, each row naming its `source` — because
+   * they are one list at run time too, and a caller that had to compose three
+   * responses would be the place the composition could disagree with what
+   * actually runs.
+   */
   'script.list': z.object({ characterId: z.string().min(1) }),
   /**
    * The user's own on/off for one script, independent of the card's `enabled`.
@@ -749,11 +829,20 @@ export const requestSchemas = {
    * Two switches rather than one: the card author's is a fact about the card and
    * survives re-import, the user's is a decision about this installation. Fusing
    * them would let a re-import quietly revive a script the user turned off.
+   *
+   * `source` says which store the write lands in — the per-character policy for
+   * a card script, the library entry itself for one of the user's. **Absent
+   * means `'card'`**, which is the one place in this family where a default is
+   * right: the field is a routing hint from a caller that already read the row
+   * it is toggling, and every caller that predates the library was toggling a
+   * card script. A wrong route cannot silently mislabel anything, unlike
+   * `ScriptView.source`, because the id has to exist in the store it names.
    */
   'script.setEnabled': z.object({
     characterId: z.string().min(1),
     scriptId: z.string().min(1),
     enabled: z.boolean(),
+    source: z.enum(['card', 'global', 'character']).optional(),
   }),
   /**
    * Grant or revoke one card's access to the real page document.
@@ -1131,6 +1220,83 @@ export const requestSchemas = {
   'script.body': z.object({
     characterId: z.string().min(1),
     scriptId: z.string().min(1),
+    /**
+     * Which repository the id belongs to, from the `script.list` row the runner
+     * is executing.
+     *
+     * **Named rather than searched for**, and this is the one place it is
+     * load-bearing. Upstream keeps its three repositories' ids globally unique
+     * by re-minting on collision (`use_resolve_id_conflict.ts`), but *card* ids
+     * are the card author's and this host cannot re-mint them — so "look in the
+     * card, then in the library" would resolve a collision by silently running
+     * the wrong body. Absent means `'card'`, which is what every caller before
+     * the library meant.
+     */
+    source: z.enum(['card', 'global', 'character']).optional(),
+  }),
+
+  /**
+   * The user's own script library, as a listing.
+   *
+   * `characterId` picks up that card's repository alongside the global one; with
+   * it absent the answer is the global repository alone, which is what the
+   * settings drawer asks for when no conversation is open.
+   */
+  'scriptLibrary.list': z.object({ characterId: z.string().min(1).optional() }),
+  /**
+   * One library script whole, for the editor and for an export.
+   *
+   * Separate from the listing for `script.body`'s reason — a listing must not
+   * carry the bodies — and distinct from `script.body`, which serves a *runner*
+   * and refuses a switched-off script. This one serves the person editing it, so
+   * it answers regardless of the switch: refusing to show someone the script
+   * they just turned off would make the switch a lock on their own work.
+   */
+  'scriptLibrary.read': z.object({
+    scope: libraryScope,
+    characterId: z.string().min(1).optional(),
+    id: z.string().min(1).max(200),
+  }),
+  /**
+   * Create or replace one library script.
+   *
+   * One script per call, not a whole-list replacement like `regex.set`. The two
+   * differ because the payloads differ: a regex list is a few kilobytes and the
+   * panel holds all of it, while a library holds bodies the listing deliberately
+   * does not carry — a whole-list write would mean the panel had to fetch every
+   * body just to toggle one switch, and any body it failed to fetch would be
+   * erased by the write.
+   *
+   * A script arriving without an `id` is created and given one; one with an `id`
+   * replaces the entry it names, and is refused if no such entry exists — a
+   * create that silently happens because an edit missed its target is how a
+   * duplicate appears with nothing reporting it.
+   */
+  'scriptLibrary.save': z.object({
+    scope: libraryScope,
+    characterId: z.string().min(1).optional(),
+    script: userScriptRequest,
+  }),
+  /** Remove one library script, and the user's switch with it. */
+  'scriptLibrary.delete': z.object({
+    scope: libraryScope,
+    characterId: z.string().min(1).optional(),
+    id: z.string().min(1).max(200),
+  }),
+  /**
+   * Switch one library script on or off.
+   *
+   * A verb of its own rather than a `save` with one field changed, because
+   * `save` carries the body: a toggle that had to round-trip a megabyte of
+   * webpack output would be the most expensive control in the panel, and the
+   * body it sent back would be whatever the panel last read rather than what is
+   * stored.
+   */
+  'scriptLibrary.setEnabled': z.object({
+    scope: libraryScope,
+    characterId: z.string().min(1).optional(),
+    id: z.string().min(1).max(200),
+    enabled: z.boolean(),
   }),
 
   /**
@@ -1798,6 +1964,34 @@ export interface RpcResponseMap {
   /** The global tier as stored, in run order — so a writer sees what survived. */
   'regex.list': { scripts: RegexScriptView[] }
   'regex.set': { scripts: RegexScriptView[] }
+
+  /**
+   * The card's own tier, and whether it may run.
+   *
+   * `allowed` is a plain boolean rather than the three-state `scriptsAllowed`
+   * shape: nothing asks the question, so there is no "not asked yet" for a
+   * reader to act on. The rows are listed **whether or not** the tier is
+   * allowed, the way upstream's own panel lists them (`getRegexScripts`
+   * defaults to `allowedOnly: false` and only the engine passes `true`) — a
+   * refused tier that showed an empty list would read as a card with no rules.
+   */
+  'regex.scopedList': { scripts: ScopedRegexView[], allowed: boolean }
+  'regex.setScopedAllowed': { scripts: ScopedRegexView[], allowed: boolean }
+  'regex.setScopedEnabled': { scripts: ScopedRegexView[], allowed: boolean }
+
+  /**
+   * The user's own library. Global first, then this character's — run order.
+   *
+   * One flat list with each row naming its `scope`, rather than two fields.
+   * Two fields would let a caller render them in an order the runtime does not
+   * use, and the order is observable: a global script and a character script
+   * that both write the same variable settle it by who ran last.
+   */
+  'scriptLibrary.list': { scripts: UserScriptView[] }
+  'scriptLibrary.read': { script: UserScript }
+  'scriptLibrary.save': { scripts: UserScriptView[], id: string }
+  'scriptLibrary.delete': { scripts: UserScriptView[] }
+  'scriptLibrary.setEnabled': { scripts: UserScriptView[] }
 
   /**
    * What a card contains, and what the user has decided about it.

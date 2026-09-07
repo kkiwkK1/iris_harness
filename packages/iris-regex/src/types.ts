@@ -43,9 +43,15 @@ export type SubstituteMode = (typeof SUBSTITUTE)[keyof typeof SUBSTITUTE]
 /**
  * Script priority by owner.
  *
- * The numeric order is the run order: global first, then the character's own,
- * then the preset's. A card that ships a script expects to run after the user's
- * global ones.
+ * Upstream's own numbers (`extensions/regex/engine.js:11-16`), which is why
+ * `PRESET` is `2` and `SCOPED` is `1`.
+ *
+ * **The numeric order is not the run order.** Upstream declares the object as
+ * `{ GLOBAL: 0, PRESET: 2, SCOPED: 1 }` and iterates it with
+ * `Object.values(SCRIPT_TYPES)` — key *insertion* order — so the tiers run
+ * global, then the preset's, then the character's own. Sorting by the value
+ * gives global, character, preset: the last two swapped. Sort by
+ * {@link TIER_ORDER}.
  */
 export const SCRIPT_TYPE = {
   GLOBAL: 0,
@@ -55,6 +61,22 @@ export const SCRIPT_TYPE = {
 
 /** One script owner. */
 export type ScriptType = (typeof SCRIPT_TYPE)[keyof typeof SCRIPT_TYPE]
+
+/**
+ * Run order by tier, as a rank rather than as the tier's own number.
+ *
+ * Separate from `SCRIPT_TYPE` because the two disagree, and the disagreement is
+ * invisible in this codebase *today*: this host carries no preset tier, so
+ * ordering by the tier number and ordering by upstream's iteration order give
+ * the same list for every input that exists. Sorting by the number would ship
+ * the wrong order with every test green, and it would first be observed by a
+ * user whose preset regex ran after a card's instead of before it.
+ */
+export const TIER_ORDER: Record<ScriptType, number> = {
+  [SCRIPT_TYPE.GLOBAL]: 0,
+  [SCRIPT_TYPE.PRESET]: 1,
+  [SCRIPT_TYPE.SCOPED]: 2,
+}
 
 /**
  * One regex script, in the shape a character card stores under

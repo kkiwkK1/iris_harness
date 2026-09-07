@@ -230,6 +230,11 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   // `settings.get`) is exactly where a silent write once hid.
   { method: 'worldbook.settings', params: () => ({}) },
   { method: 'regex.list', params: () => ({}) },
+  // The library listing. It reads two stores that a save writes, so the
+  // interesting property is that *asking* what is in the library does not
+  // create the file — a store whose loader wrote a default on first read would
+  // pass a round-trip test and fail this one.
+  { method: 'scriptLibrary.list', params: () => ({}) },
   // A listing and a preview of the snapshot seeded above: reads off the
   // snapshot's own bytes, which must not so much as re-date it.
   { method: 'backup.list', params: () => ({}) },

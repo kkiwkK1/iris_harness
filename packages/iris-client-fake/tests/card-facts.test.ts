@@ -89,31 +89,50 @@ test('every seeded description is already within the host clip', () => {
   }
 })
 
-test('scriptCount and script.list agree for every card the fake holds', async () => {
+test('scriptCount and the card rows of script.list agree for every card the fake holds', async () => {
   /*
    * The invariant, over the whole library rather than one sampled card: the
-   * count on the summary is the number of rows `script.list` answers with. It
-   * is asserted in both directions by construction — a card with no count must
-   * get an empty list, which is the state an imported card and a plain V1 card
-   * are in, and the panel's "this card ships no scripts" branch exists for.
+   * count on the summary is the number of **card** rows `script.list` answers
+   * with. It is asserted in both directions by construction — a card with no
+   * count must get no card rows, which is the state an imported card and a
+   * plain V1 card are in, and the panel's "this card ships no scripts" branch
+   * exists for.
+   *
+   * **It was `listed.scripts.length` until the script library existed**, and
+   * that spelling silently changed what was being compared the moment
+   * `script.list` grew a second and third repository: `scriptCount` is a fact
+   * about the *card*, and the list is now three sources merged. Comparing it
+   * against the whole list would make a page saying "3" over a panel listing 5
+   * the passing case, and would go red for the user's own global script rather
+   * than for a parser fault.
    */
   const client = testClient()
   const { characters } = await client.call('character.list', {})
   assert.ok(characters.length > 0, 'the seeded library is empty, so this test compares nothing')
 
   let withScripts = 0
+  let withLibrary = 0
   for (const row of characters) {
     const listed = await client.call('script.list', { characterId: row.characterId })
+    const fromCard = listed.scripts.filter(script => script.source === 'card')
     assert.equal(
-      listed.scripts.length,
+      fromCard.length,
       row.scriptCount ?? 0,
-      `${row.characterId}: the page would say ${String(row.scriptCount ?? 0)} over a panel listing ${String(listed.scripts.length)}`,
+      `${row.characterId}: the page would say ${String(row.scriptCount ?? 0)} over a panel listing ${String(fromCard.length)} card scripts`,
     )
-    if (listed.scripts.length > 0) withScripts += 1
+    if (fromCard.length > 0) withScripts += 1
+    if (listed.scripts.length > fromCard.length) withLibrary += 1
   }
   // A floor on the sample: without this the loop above passes on a library where
   // every card carries no scripts, comparing 0 against 0 the whole way down.
   assert.ok(withScripts >= 1, 'no seeded card carries scripts, so the agreement was never tested')
+  // And a floor on the *other* direction, which is what makes the filter above
+  // load-bearing rather than decorative: with no library rows anywhere, dropping
+  // the filter would leave this test green.
+  assert.ok(
+    withLibrary >= 1,
+    'no card’s list carries a row from outside the card, so filtering on source proves nothing here',
+  )
 })
 
 test('an imported card reports the description and book it carries, clipped', async () => {
@@ -145,7 +164,18 @@ test('an imported card reports the description and book it carries, clipped', as
   // it cannot stand behind — and its own script list agrees.
   assert.equal(character.scriptCount, undefined, 'the fake claimed a script count it cannot derive')
   const listed = await client.call('script.list', { characterId: character.characterId })
-  assert.deepEqual(listed.scripts, [], 'an imported card was served the seeded script pack')
+  assert.deepEqual(
+    listed.scripts.filter(script => script.source === 'card'),
+    [],
+    'an imported card was served the seeded script pack',
+  )
+  // The user's own global scripts *do* reach a freshly imported card — they run
+  // in every conversation, which is what "global" means — so the assertion above
+  // is about the card's own rows and this one says the rest are not missing.
+  assert.ok(
+    listed.scripts.every(script => script.source === 'global'),
+    'a card the fake just imported was served rows from somewhere other than the global library',
+  )
 })
 
 test('an imported card with an empty embedded book reports zero, with none reports nothing', () => {

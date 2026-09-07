@@ -30,6 +30,7 @@ import {
   describeBookOrigin,
   describeButtons,
   describePlace,
+  describeScriptSource,
   describeScriptSwitch,
   describeTrigger,
   latestActivity,
@@ -53,9 +54,17 @@ function book(over: Partial<CardBookDigest> = {}): CardBookDigest {
   return { name: 'a book', source: 'named', role: 'card', entries: [], ...over }
 }
 
-/** One script row, defaulted to a script its author shipped switched on. */
+/** One script row, defaulted to a card script its author shipped switched on. */
 function script(over: Partial<ScriptView> = {}): ScriptView {
-  return { id: 's', name: 'a script', enabledByCard: true, enabled: true, bytes: 4_820, ...over }
+  return {
+    id: 's',
+    name: 'a script',
+    source: 'card',
+    enabledByCard: true,
+    enabled: true,
+    bytes: 4_820,
+    ...over,
+  }
 }
 
 /** One conversation summary. */
@@ -148,6 +157,29 @@ test('a script’s two switches produce four sentences, not two', () => {
     describeScriptSwitch(script({ enabledByCard: false, enabled: true }), 'zh'),
     '你打开了',
   )
+})
+
+test('a script row names the repository it came from, and does not assume the card', () => {
+  /*
+   * The three sources, each with its own sentence.
+   *
+   * This is the assertion that was missing when the field was added: the page's
+   * source cell had been the constant `faceScriptInCard` with a comment saying
+   * `script.list` has no second tier — true when written, false the moment the
+   * user's own library existed, and a constant renders perfectly under a wrong
+   * premise. Found by pointing the `'global'` arm at the card's string and
+   * watching nothing go red.
+   */
+  assert.equal(describeScriptSource(script(), 'en'), 'in the card')
+  assert.equal(describeScriptSource(script({ source: 'global' }), 'en'), 'yours, everywhere')
+  assert.equal(describeScriptSource(script({ source: 'character' }), 'en'), 'yours, this character')
+  // Three *different* sentences, stated as its own assertion: three calls that
+  // each return something are not evidence that the three arms are distinct,
+  // and one arm pointing at another's key is exactly the mistake above.
+  const said = new Set((['card', 'global', 'character'] as const)
+    .map(source => describeScriptSource(script({ source }), 'en')))
+  assert.equal(said.size, 3, 'two sources produce the same sentence, so one of them is mislabelled')
+  assert.equal(describeScriptSource(script({ source: 'global' }), 'zh'), '你的·全局')
 })
 
 test('a script’s buttons report both numbers, and nothing when there are none', () => {

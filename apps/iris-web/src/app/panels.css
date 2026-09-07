@@ -2738,9 +2738,148 @@
 .iris-regex__import {
   margin-top: 8px;
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/*
+ * A row and whatever is open under it.
+ *
+ * The editor opens *inside* the list, under the rule it belongs to, rather than
+ * as a dialog over the drawer. Same reason the backup panel puts its preview
+ * under its own row: a form about one item, floating over a list of items, makes
+ * the reader hold on to which one it was about — and a drawer is already a
+ * layer, so a second one over it reads as a modal the drawer cannot dismiss.
+ */
+.iris-regex__entry {
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-regex__entry > .iris-regex__row {
+  border-bottom: none;
+}
+
+/*
+ * The editor body, indented to the row's own left edge so a reader never has to
+ * guess which rule the form is about.
+ */
+.iris-regex__editor,
+.iris-library__editor {
+  display: flex;
   flex-direction: column;
-  gap: 4px;
-  align-items: flex-start;
+  gap: 6px;
+  margin: 4px 0 10px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--iris-rule);
+  background: var(--iris-bg-sunken);
+}
+
+/*
+ * A field inside the editor stacks its label over its control, where the
+ * drawer's own `.iris-field` puts them in a grid. The grid is right for a row
+ * of short settings and wrong for a textarea: a 10-row body squeezed into a
+ * grid column is unreadable, and the label ends up floating beside its middle.
+ */
+.iris-regex__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.iris-regex__field > .iris-field__control {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* A pattern and a script body are code, and are read character by character. */
+.iris-regex__mono {
+  font-family: var(--iris-font-mono);
+  font-size: 12px;
+}
+
+.iris-library__body {
+  min-height: 160px;
+  resize: vertical;
+}
+
+.iris-regex__group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0;
+  padding: 6px 8px;
+  border: var(--iris-hairline) solid var(--iris-rule-faint);
+  border-radius: var(--iris-radius);
+}
+
+.iris-regex__check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+  cursor: pointer;
+}
+
+.iris-regex__check input {
+  accent-color: var(--iris-accent);
+  flex: none;
+}
+
+.iris-regex__depths {
+  display: flex;
+  gap: 10px;
+}
+
+.iris-regex__depths > .iris-regex__field {
+  flex: 1;
+  min-width: 0;
+}
+
+/*
+ * What a rule would fail to do.
+ *
+ * A rule with `--danger` would be wrong: nothing is broken, and the rule saves.
+ * These are the sentences that turn "my regex does nothing" into a fix, so they
+ * are marked as *attention* — a left rule in the accent, which is the drawer's
+ * existing vocabulary for "read this" — and not as an error.
+ */
+.iris-regex__problems {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 8px;
+  border-left: 2px solid var(--iris-accent);
+}
+
+.iris-regex__problem {
+  margin: 0;
+}
+
+.iris-regex__editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* One repository inside the library section. */
+.iris-library__repo {
+  margin-top: 10px;
+}
+
+.iris-library__button {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.iris-library__button > .iris-text {
+  flex: 1;
+  min-width: 120px;
 }
 
 /*

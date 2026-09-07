@@ -27,6 +27,7 @@ import {
 } from '@iris/persistence'
 import type { ChatSearchHit, ChatSearchMatch, ChatSummary, UsageSummary } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
+import type { ScopedRegexPolicy } from './regex.ts'
 import type { ScopeBackend, Variables } from '@iris/variables'
 
 import { BackupStore } from './backups.ts'
@@ -137,6 +138,16 @@ export class ChatStore {
    */
   readonly #globalRegex: (() => Promise<readonly RegexScript[]>) | undefined
   /**
+   * The user's decisions about the *card's* regex tier, read fresh each open.
+   *
+   * The second half of what {@link ChatEntry.scripts} composes, and it is read
+   * here for `#globalRegex`'s reason: the allow switch and the per-rule switches
+   * are edited while the host runs, and a snapshot taken at construction would
+   * outlive the edit. `refreshRegex` is the path a change takes to a chat that
+   * is already open.
+   */
+  readonly #scopedRegex: ((characterId: string) => Promise<ScopedRegexPolicy>) | undefined
+  /**
    * Where the pre-change copies live.
    *
    * Always present: a store without a snapshot directory would make the
@@ -166,6 +177,7 @@ export class ChatStore {
     globalRegex?: () => Promise<readonly RegexScript[]>,
     charBooks?: (characterId: string) => readonly string[],
     backups?: BackupStore,
+    scopedRegex?: (characterId: string) => Promise<ScopedRegexPolicy>,
   ) {
     this.#dir = dir
     this.#library = library
@@ -178,6 +190,7 @@ export class ChatStore {
     this.#globalRegex = globalRegex
     this.#charBooks = charBooks
     this.#backups = backups ?? new BackupStore(dir)
+    this.#scopedRegex = scopedRegex
   }
 
   /**
@@ -199,6 +212,23 @@ export class ChatStore {
   /** The global regex tier as it stands right now; absent when there is no store. */
   async #globals(): Promise<readonly RegexScript[]> {
     return await this.#globalRegex?.() ?? []
+  }
+
+  /**
+   * The user's decisions about one card's regex tier, right now.
+   *
+   * A chat with no card has no scoped tier to decide about, and a host with no
+   * policy store has recorded no decision — both answer "allowed, nothing
+   * overridden", which is what {@link scriptsOf} does with an absent policy and
+   * is the behaviour this host had before the switch existed.
+   * @param characterId - the chat's character, if it has one.
+   * @returns the policy to compose under.
+   */
+  async #scoped(characterId: string | undefined): Promise<ScopedRegexPolicy> {
+    if (characterId === undefined || this.#scopedRegex === undefined) {
+      return { allowed: true, enabled: {} }
+    }
+    return this.#scopedRegex(characterId)
   }
 
   /** Create the folder if this is a first run. */
@@ -340,20 +370,26 @@ export class ChatStore {
   }
 
   /**
-   * Re-read the global regex tier and hand it to every live conversation.
+   * Re-read both regex tiers and hand them to every live conversation.
    *
-   * Called after a `regex.set`: the store's list is what the next open would
+   * Called after any regex edit: the stores' state is what the next open would
    * compose from, but a chat left open across the edit is still running on the
    * snapshot it took, and SillyTavern's answer to that is `reloadCurrentChat()` —
-   * the reader sees the new text, not the text the old list produced.
+   * the reader sees the new text, not the text the old rules produced.
+   *
+   * **Both tiers, one method.** It refreshed only the global list until the
+   * card's tier gained a switch; a method named for one tier that a caller
+   * reached for after editing the other is the shape where the second edit
+   * silently does not land until the chat is reopened. There is no
+   * `#globalRegex === undefined` short circuit any more for the same reason:
+   * a host with no global store can still have scoped decisions to apply.
    * @returns the ids of the live conversations that were refreshed.
    */
-  async refreshGlobalRegex(): Promise<string[]> {
-    if (this.#globalRegex === undefined) return []
-    const scripts = await this.#globalRegex()
+  async refreshRegex(): Promise<string[]> {
+    const scripts = await this.#globals()
     const ids: string[] = []
     for (const [chatId, entry] of this.#entries) {
-      entry.setGlobalScripts(scripts)
+      entry.setRegex(scripts, await this.#scoped(entry.meta.characterId))
       ids.push(chatId)
     }
     return ids
@@ -388,6 +424,7 @@ export class ChatStore {
     const entry = new ChatEntry({
       chatId, header: file.header, session, card,
       globalScripts: await this.#globals(),
+      scopedRegex: await this.#scoped(meta.characterId),
       worldbook: await resolveCardWorldbook(
         card, this.#worldbooks, this.#globalSelect?.() ?? [],
         await this.#bookFor?.(meta.characterId, card),
@@ -439,6 +476,7 @@ export class ChatStore {
     const entry = new ChatEntry({
       chatId, header, session, card,
       globalScripts: await this.#globals(),
+      scopedRegex: await this.#scoped(characterId),
       worldbook: await resolveCardWorldbook(
         card, this.#worldbooks, this.#globalSelect?.() ?? [],
         await this.#bookFor?.(characterId, card),
@@ -535,6 +573,7 @@ export class ChatStore {
     const child = new ChatEntry({
       chatId: childId, header, session, card: parent.card,
       globalScripts: await this.#globals(),
+      scopedRegex: await this.#scoped(parentMeta.characterId),
       // Reused rather than re-resolved: a branch plays the same character from
       // the same books, and a second resolution could disagree with its parent
       // if a book changed on disk in between.

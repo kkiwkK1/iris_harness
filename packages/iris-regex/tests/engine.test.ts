@@ -296,14 +296,38 @@ test('escapeForPattern neutralises metacharacters and control characters', () =>
 
 // ── ordering ────────────────────────────────────────────────────────────────
 
-test('global scripts run before the character’s, and those before the preset’s', () => {
+/*
+ * The tier order, restated against upstream rather than against the numbers.
+ *
+ * This asserted `['global', 'scoped', 'preset']` until 2026-09-08, and it was
+ * wrong for the same reason `orderScripts` was: both read the run order off
+ * `SCRIPT_TYPE`'s values. Upstream declares
+ * `SCRIPT_TYPES = { GLOBAL: 0, PRESET: 2, SCOPED: 1 }` and iterates it with
+ * `Object.values(...)` — key *insertion* order — so the tiers run global,
+ * preset, scoped (`extensions/regex/engine.js:11-16`, consumed at `:99`), and
+ * the numeric values deliberately do not match that.
+ *
+ * Nothing else in this host could observe the difference: there is no preset
+ * tier to pass in, so the bug's only witness was this assertion agreeing with
+ * it.
+ */
+test('scripts run global, then the preset’s, then the character’s — upstream’s iteration order', () => {
   const ordered = orderScripts([
     { script: script({ findRegex: '/./', replaceString: 'preset' }), type: SCRIPT_TYPE.PRESET },
     { script: script({ findRegex: '/./', replaceString: 'scoped' }), type: SCRIPT_TYPE.SCOPED },
     { script: script({ findRegex: '/./', replaceString: 'global' }), type: SCRIPT_TYPE.GLOBAL },
   ])
 
-  assert.deepEqual(ordered.map(entry => entry.replaceString), ['global', 'scoped', 'preset'])
+  assert.deepEqual(ordered.map(entry => entry.replaceString), ['global', 'preset', 'scoped'])
+  // The premise, asserted rather than assumed: this case discriminates between
+  // the two implementations only while the numeric order still disagrees with
+  // the run order. If someone renumbers the constants, this test silently stops
+  // testing anything, and the message is what says so.
+  assert.ok(
+    SCRIPT_TYPE.SCOPED < SCRIPT_TYPE.PRESET,
+    'SCOPED no longer sorts before PRESET numerically, so this case can no longer tell '
+    + 'a value-sort from upstream’s insertion-order sort',
+  )
 })
 
 test('ordering is stable inside a tier, because a card lists its scripts in sequence', () => {

@@ -2645,3 +2645,247 @@ Typing `/` opens a completion menu (the `Menu` primitive, portaled and anchored 
 - **`/compact` is refused while a reply is arriving**, with a named sentence rather than silence: it rewrites what the next request assembles from, so running it under a request in flight would change the conversation beneath it. `/help` is not gated, because asking what the commands are costs nothing.
 
 **What would overturn it.** A host method that enumerates what `script.slash` accepts, which would let the completion menu offer upstream's names beside Iris's instead of leaving them undiscoverable. Or widening `script.slash` past the three commands — every name it gains is a name this table must not have, and the disjointness test is where that collision would surface.
+
+## 62. A rule editor with no test panel, that says beforehand what a rule would fail to do
+
+**Kind: compatibility (the editor) plus one deliberate improvement and one
+deliberate omission.**
+
+**The compatibility half.** Until this round the regex panel could import,
+toggle, reorder, export and delete, and could not **write** a rule. Every rule
+in the profile's global tier had to be authored in a SillyTavern install and
+imported, and a typo in a pattern meant going back there to fix it.
+`RegexEditor` is upstream's `editor.html`, field for field:
+
+| upstream label | field | note |
+| --- | --- | --- |
+| Script Name | `scriptName` | required, as upstream's save requires it |
+| Find Regex | `findRegex` | bare or `/pattern/flags` |
+| Replace With | `replaceString` | `{{match}}`, `$1`, `$<name>` |
+| Trim Out | `trimStrings` | one per line; blank lines dropped, as upstream filters |
+| Affects | `placement` | five checkboxes: 1, 2, 3, 5, 6 |
+| Min / Max Depth | `minDepth` / `maxDepth` | blank means unlimited |
+| Disabled | `disabled` | |
+| Run On Edit | `runOnEdit` | |
+| Macro in Find Regex | `substituteRegex` | 0 / 1 / 2 |
+| Only Format Display | `markdownOnly` | reworded, below |
+| Only Format Prompt | `promptOnly` | reworded, below |
+
+New rules start on upstream's own defaults (`index.js:797-809`): display-only,
+run-on-edit, User Input. Reproduced rather than improved on, so a rule written
+here and exported into an install is the rule that install's editor would have
+produced.
+
+**Placements 0 and 4 have no control**, matching upstream: `0` is `MD_DISPLAY`,
+marked deprecated in upstream's own source, and `4` is the retired `sendAs` and
+a hole in the enum. A rule that arrives carrying one keeps it — the editor's
+round trip preserves what it cannot show.
+
+**The two ephemerality checkboxes are reworded by consequence.** Upstream's
+visible text is "Alter Chat Display" and "Alter Outgoing Prompt"; its i18n keys
+are the field names, `Only Format Display` / `Only Format Prompt`. Neither says
+the thing the reader is choosing, which is *whether the chat file on disk
+changes*. Here they are 「你读到的文本」 / 「模型读到的文本」 under 「改动的是」,
+with a note that switches on the state: with either ticked, the stored
+conversation is left alone; with neither, the rule rewrites it and that cannot
+be undone.
+
+**The improvement: four sentences about what a saved rule would fail to do**
+(`regexDraftProblems`). All four are consequences of one gate in the engine
+(`getRegexedString`, `engine.js:348-355`) meeting the flags each call site
+passes, so they are derivable rather than guessed:
+
+| condition | upstream's treatment |
+| --- | --- |
+| no placement ticked | a toast, **after** the save |
+| no find pattern | a toast, after the save |
+| World Info without prompt-only | a tooltip on the checkbox, enforced nowhere |
+| Slash Commands with either ephemerality flag | **nothing at all** |
+
+The last is the one worth having. All four slash-command call sites pass no
+flags, so only the "neither" branch of the gate can fire — and upstream's
+new-script default ticks *display-only*. So a freshly created slash-command rule
+silently never runs, and the mistake is pre-made by the defaults. Reported, not
+refused: a half-finished rule is a normal thing to save, and upstream saves it.
+
+**The omission: no test panel.** Upstream's runs the rule with every gate
+disabled — `disabled`, `promptOnly`, `markdownOnly` and `runOnEdit` forced
+false, `placement` and both depths `null` (`index.js:816-843`). It answers "would
+this pattern match this text, ignoring everything that decides whether it runs",
+and all four rows of the table above pass it. A control that says "works" about
+a rule that will never fire is worse than no control. The four sentences are
+what a test panel was being used to discover.
+
+**What would overturn it.** A test panel that ran the *real* gate — placement,
+depth and ephemerality included, against a chosen message of the open
+conversation — would answer the question the reader actually has, and would be
+worth building. It needs a message to test against, which is why it is not in
+a profile-wide settings card.
+
+## 63. The card's own regex tier gets a panel, and the switch it never had
+
+**Kind: compatibility fix — a control upstream has and this shell did not.**
+
+**Measured, and the measurement is why this is here rather than in a later
+round.** Over the 19 local cards: **15 carry `data.extensions.regex_scripts`,
+173 rules between them**, all 13 fields present on every one. The same install's
+global tier — the only one this shell could see — held **zero**. All 15 carry at
+least one live display-only rule and **11** use the tier to strip the card's own
+`<UpdateVariable>` blocks. So essentially all of a real user's regex was
+invisible in Iris, and the tier that decides whether a reader sees a card's
+bookkeeping had no control at all. The host side of the gate is
+`notes/packages/iris-app-service/DEVIATIONS.md` §30–§31.
+
+`ScopedRegexPanel` sits under `RegexPanel` in the drawer, in **run order** —
+global first, as upstream's `SCRIPT_TYPES` iteration puts it — because a reader
+comparing the two lists is comparing them along the axis that decides which
+rewrite wins.
+
+**It lists a refused tier rather than emptying out**, which is upstream's own
+behaviour: `getRegexScripts` defaults to `allowedOnly: false` and only the engine
+passes `true`, so upstream's panel shows a disallowed card's rules too. A refused
+tier answering with an empty list would read as a card carrying no rules, with
+the control that reverses the decision sitting over nothing.
+
+**Both switches are reported**, the way `ScriptPanel` reports a card script's
+two: 「卡作者关掉的」 for the author's `disabled`, and the reader's own checkbox
+beside it. "Why is this off" has two answers and they call for different
+actions.
+
+**What this panel deliberately will not do is edit a rule.** The rules belong to
+the card — the author wrote them, they travel with it through export and
+re-import — and an edit here would either rewrite someone else's document or
+invent a shadow copy that the next card update silently disagreed with. Export
+is offered instead, and the panel says so, so the absence reads as a decision
+rather than as a missing button. The path for a reader who wants to change one
+is: export it, import it into the global tier, edit it there, switch the card's
+copy off.
+
+**What would overturn it.** A card update flow — "this card has a new version,
+here is what changed" — would give a shadow copy somewhere to be reconciled, and
+then editing in place becomes answerable.
+
+## 64. A script library: the user's own scripts, in the same sandbox as a card's
+
+**Kind: compatibility — TavernHelper's 脚本库, which this shell had no
+equivalent of.**
+
+Iris could list, govern and run the scripts a **card** ships. A user who had
+written a script of their own — a dice roller, a status panel — had nowhere to
+put it. `ScriptLibraryPanel` is the two repositories this host keeps (global,
+and one per character; the shapes and the storage decision are host ledger §32),
+with `ScriptEditor` as the form and `script-library.ts` as the file format.
+
+**The one design decision that matters: it is not a second run path.** A library
+script reaches the page through `script.list` and `script.body` — the two calls
+the card runner already used — with a new `source` field on the row saying which
+repository it came from. So a library script runs in the same frame, under the
+same per-card consent question, with the same remote-code allowlist
+(`*.jsdelivr.net`, `raw.githubusercontent.com`), reports the same run states, and
+appears in the same panel a card's scripts are governed from. **Nothing was
+opened for it.**
+
+A parallel listing would have been easier to build and would have put the user's
+own scripts outside every one of those. It would also have been *invisible*: the
+scripts would have run, so nothing would have looked broken, and the missing
+consent gate would only have surfaced the day one of those scripts did something
+the user had not read.
+
+**The user's own code is not more trusted than a card's**, and the reason is
+mechanical rather than moral: the two run in the same realm, so a card would
+inherit anything granted to a neighbour. `COHABITATION.md` is the same argument
+between two cards' scripts.
+
+**Two repositories, listed in run order** — global, then this character's,
+matching upstream's own merge (`store/iframe_runtimes/script.ts:26-32`) with the
+card's tier standing in for the preset one. The order is data: two scripts
+writing the same variable settle it by which ran last.
+
+**Where each repository is edited.** The drawer holds both, with the
+per-character half present only while a conversation is open — a repository
+belongs to a card, and the drawer has no card to name otherwise. The **character
+page** holds the same rows for a card merely being browsed, and its own "write a
+script for this character" control. That page deliberately refuses to switch a
+*card* script (§57), and the difference is which store the write lands in:
+`script.setEnabled` is scoped to the card whose conversation is open, so a switch
+there would write the wrong card's policy, while a library write names its
+character explicitly.
+
+**Buttons carry both figures**, as the card-script rows do: 58 of the corpus's
+89 buttons are `visible: false`, so "2 buttons, 1 shown" is the ordinary case
+and a bar built from the whole array is the bug the proportion exists to catch.
+
+**Folders are not carried.** Upstream has one level of `ScriptFolder`
+(`type/scripts.ts:36-45`, `flattenScriptTree` at `:55`), and a folder export is
+refused here rather than half-imported — its scripts live in a nested array, and
+importing the wrapper would store a bodiless entry and drop everything inside it.
+Listed as a gap, not silently mishandled.
+
+**What would overturn it.** A library big enough to want folders. The shape
+would be a `folder` discriminator on the stored record plus one level of nesting
+in the listing, which is upstream's own and is additive.
+
+## 65. An exported script carries its variable table; upstream offers to strip it
+
+**Kind: known divergence, in the less private direction. Recorded, not fixed.**
+
+**Upstream** asks before writing the file. `panel/script/ScriptExport.vue` shows
+「脚本导出将包含以下内容, 请确认是否保留」 with a checkbox for 变量 and one for
+按钮, driven by the script's own `export_with` defaults (`data: true`,
+`button: true`, `type/scripts.ts:10-13`), and clearing one empties that field in
+the exported copy (`ScriptItem.vue:167-183`).
+
+**`exportScriptFile` writes the stored record whole**, `data` and `export_with`
+included. So someone sharing a script they have been running shares whatever it
+has accumulated with it.
+
+**Why it is not simply always stripped.** A `data` table is sometimes the
+script's *shipped* data rather than its accumulated state — 8 of the corpus's 47
+card scripts carry a non-empty one — and dropping it would export something that
+does not run. The correct fix is upstream's: ask, with the script's own
+`export_with` as the default. It is not in this round because the question wants
+a small dialog and this round's surface was already the two features themselves.
+
+**The mitigation that exists.** This host does not use `data` as the live
+`script` scope (host ledger §33), so the table in a stored library script is
+whatever an import brought in or the author typed — not a running script's
+accumulated variables. That narrows the exposure to imported tables rather than
+removing it.
+
+**What would overturn it.** Nothing; this is a gap with a known shape. The next
+round should add the confirmation and default it from `export_with`.
+
+## 66. The fake client answers the regex and script-library methods from memory
+
+**Kind: a reversal of an earlier decision in this file's own subject.**
+
+`regex.list` and `regex.set` were **refused** by the fake, with the reason
+recorded in its own source: "the global regex list is profile state on the
+host's disk; a fake has none, and an imaginary list would let a panel believe an
+import landed."
+
+**The argument was about the wrong thing.** An import into an in-memory list
+*does* land, and `regex.list` reports it — which is exactly the truthfulness the
+fake already claims for `scriptsAllowed`, the document grants and the per-script
+overrides, all of which are host-side files it holds in memory. What the refusal
+actually cost was visibility: `RegexPanel` returns `null` when
+`regexScripts === undefined`, so the whole regex panel had never been rendered
+by anything in this repository, and the editor added in §62 would have had
+nowhere to be checked.
+
+So the fake now holds a global regex tier, a per-card scoped tier, and the two
+library repositories, and `render-check.tsx` pins all three sections plus the
+merged `script.list`.
+
+**The line the fake still holds is the same one it always held**: it will not
+invent a script **body** (`script.body`) or a remote **fetch**
+(`script.fetch`), because handing back plausible code would let a runner appear
+to work here and fail against a real host. A list, a switch and a small store
+the user writes are things a fake can model honestly; executable content is not.
+
+**The seed is shaped after the corpus rather than being three identical rows**:
+one display-only global rule and one that rewrites stored text; a scoped tier on
+the dense card only, with its second rule `disabled: true`, because 4 of the 19
+real cards carry none and the "this card ships none" branch is the common one;
+and both library scripts switched **off**, which is the state a fresh library is
+in.

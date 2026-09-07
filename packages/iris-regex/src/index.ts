@@ -18,6 +18,7 @@ export {
   PLACEMENT,
   SCRIPT_TYPE,
   SUBSTITUTE,
+  TIER_ORDER,
   type MacroSubstitute,
   type Placement,
   type RegexParams,

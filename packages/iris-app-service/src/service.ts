@@ -23,7 +23,7 @@ import { assemble, type AssembleResult, type Contribution, type HistoryEntry } f
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse } from '@iris/protocol'
+import type { BackupSummary, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView } from '@iris/protocol'
 import { providerPreset } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
@@ -80,6 +80,7 @@ import { runScripts } from './regex.ts'
 import { evaluatePrompt, promptHasTemplate } from './templates.ts'
 import { applyOps, buildSnapshot } from './template.ts'
 import type { ScriptPolicyStore } from './scripts.ts'
+import { scriptRowOf, type LibraryScope, type ScriptLibraryStore } from './script-library.ts'
 import type { ScriptVariableStore } from './script-variables.ts'
 import { CONTINUE_POSTFIX_SEPARATORS, type SettingsStore } from './settings.ts'
 import { trimToEndSentence } from './reply-trim.ts'
@@ -250,6 +251,15 @@ export interface AppServiceOptions {
    * holds a document grant, which is the safe reading of "not configured".
    */
   scripts?: ScriptPolicyStore
+  /**
+   * The user's own scripts, global and per character.
+   *
+   * Optional for `scripts`' reason, but absent reads **more strongly** here: a
+   * host with no library refuses every library method rather than answering an
+   * empty list. An empty listing under live controls would let someone type a
+   * script, press Save, and be told nothing about where it went.
+   */
+  scriptLibrary?: ScriptLibraryStore
   /**
    * Per-card `extension_settings`.
    *
@@ -464,11 +474,12 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings' | 'backups' | 'hostConnection'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings' | 'backups' | 'hostConnection'>>
     & {
       onError: (error: Error) => void
       hostConnection?: HostConnection
       scripts?: ScriptPolicyStore
+      scriptLibrary?: ScriptLibraryStore
       extensionSettings?: ExtensionSettingsStore
       scriptButtons?: ScriptButtonStore
       cardStorage?: CardStorageStore
@@ -535,6 +546,7 @@ export class IrisAppService {
       ...options.hostConnection === undefined ? {} : { hostConnection: options.hostConnection },
       ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
+      ...options.scriptLibrary === undefined ? {} : { scriptLibrary: options.scriptLibrary },
       ...options.extensionSettings === undefined ? {} : { extensionSettings: options.extensionSettings },
       ...options.scriptButtons === undefined ? {} : { scriptButtons: options.scriptButtons },
       ...options.worldbooks === undefined ? {} : { worldbooks: options.worldbooks },
@@ -885,7 +897,82 @@ export class IrisAppService {
   handlers(): Handlers {
     const { chats, library, settings, worldbooks } = this.#options
     const scripts = this.#options.scripts
+    const scriptLibrary = this.#options.scriptLibrary
     const cardStorage = this.#options.cardStorage
+
+    /**
+     * The library, or a refusal that names what is missing.
+     *
+     * Refused rather than answered empty, and the argument is the one
+     * `debug.reports` makes: an empty listing under live controls says
+     * "configured, and you have written nothing", which on a host with no
+     * library is false. The panel would offer Save and swallow it.
+     * @returns the store.
+     * @throws {AppError} `unsupported` on a host that keeps no library.
+     */
+    const requireLibrary = (): ScriptLibraryStore => {
+      if (scriptLibrary === undefined) {
+        throw new AppError('unsupported', 'this host keeps no script library')
+      }
+      return scriptLibrary
+    }
+
+    /**
+     * Check a library request's scope against the character id beside it.
+     *
+     * The pair is checked here rather than modelled as a discriminated union in
+     * the schema, because the refusal has to *name* the mistake: a schema
+     * failure on a two-field request reads as "malformed" and sends whoever hit
+     * it to the transport. And the character is **loaded**, not merely required
+     * to be present — a repository keyed on an id no card holds is one that the
+     * next card taking that id would inherit, which is arbitrary code beginning
+     * to run in a stranger's conversations.
+     * @param scope - which repository the caller named.
+     * @param characterId - the id beside it, if any.
+     * @throws {AppError} `invalid-request` when the two disagree.
+     * @throws {AppError} `not-found` when a named character does not exist.
+     */
+    const requireScopeCharacter = async (
+      scope: LibraryScope,
+      characterId: string | undefined,
+    ): Promise<void> => {
+      if (scope === 'global') {
+        if (characterId !== undefined) {
+          throw invalid('the global script repository takes no character id')
+        }
+        return
+      }
+      if (characterId === undefined) {
+        throw invalid('a character script repository needs a character id')
+      }
+      await library.load(characterId)
+    }
+
+    /**
+     * Every script that would run in one character's conversations, in run
+     * order: the user's global library, then this card's own scripts, then the
+     * user's library for this card.
+     *
+     * **One reading, one order, used by every caller.** The order is the merge
+     * order upstream's runtime uses for its own three repositories
+     * (`store/iframe_runtimes/script.ts:26-32`) with the card's tier standing
+     * in for the preset one, and it is observable: two scripts writing the same
+     * variable settle it by which ran last. The listing and the runner read the
+     * same function so the panel cannot show an order the page does not use.
+     * @param characterId - whose conversations.
+     * @returns the rows, switched-off ones included.
+     */
+    const listAllScripts = async (characterId: string): Promise<ScriptView[]> => {
+      const rows: ScriptView[] = []
+      const mine = scriptLibrary === undefined ? [] : await scriptLibrary.views(characterId)
+      rows.push(...mine.filter(row => row.scope === 'global').map(scriptRowOf))
+      if (scripts !== undefined) {
+        const overrides = await this.#options.scriptButtons?.all(characterId) ?? {}
+        rows.push(...await scripts.view(characterId, await library.load(characterId), overrides))
+      }
+      rows.push(...mine.filter(row => row.scope === 'character').map(scriptRowOf))
+      return rows
+    }
 
     return {
       'chat.list': async () => ({ chats: await chats.list() }),
@@ -1900,12 +1987,7 @@ export class IrisAppService {
         const stored = scripts.map(script =>
           ({ ...script, ...(script.id === undefined ? { id: randomUUID() } : {}) }))
         await extensionSettings.setGlobalRegex(stored)
-        // Live conversations re-compose now, and each is re-announced so every
-        // open page re-renders under the new list — the host's stand-in for
-        // upstream reloading the current chat after every regex edit.
-        for (const chatId of await chats.refreshGlobalRegex()) {
-          this.#announceChat(await chats.open(chatId))
-        }
+        await this.#refreshRegex()
         return { scripts: await extensionSettings.globalRegex() }
       },
 
@@ -1939,6 +2021,10 @@ export class IrisAppService {
         await this.#options.scriptVariables?.forget(characterId)
         await this.#options.favorites?.forget(characterId)
         await scripts?.forget(characterId)
+        // The user's own scripts for this card, and the strongest case in the
+        // list: what a reused id would inherit here is arbitrary code, which
+        // would then start running in a stranger's conversations.
+        await scriptLibrary?.forget(characterId)
         // **`cardStorage` is deliberately not in this list, and it is the one
         // store where forgetting would be wrong.** The others are partitioned
         // *by* character, so a leftover partition is a stale answer waiting for
@@ -2184,17 +2270,115 @@ export class IrisAppService {
         // claim one was given: `scriptsAllowed` stays absent rather than `false`.
         // Absent is "not asked", and a host that cannot store the answer is
         // exactly a host that has never asked.
-        if (scripts === undefined) return { scripts: [], documentGranted: false }
-        const card = await library.load(characterId)
+        //
+        // **The library is still listed on such a host.** The two stores answer
+        // different questions — the policy store holds the user's decisions
+        // about the *card's* code, the library holds the user's own — and
+        // folding them together would hide a user's own scripts on a host that
+        // merely has no policy file. The character must exist either way, so a
+        // list for a card that is not there reads as the caller mistake it is.
+        await library.load(characterId)
+        const listed = await listAllScripts(characterId)
+        if (scripts === undefined) return { scripts: listed, documentGranted: false }
         const allowed = await scripts.scriptsAllowed(characterId)
         return {
-          scripts: await scripts.view(characterId, card, await this.#options.scriptButtons?.all(characterId) ?? {}),
+          scripts: listed,
           documentGranted: await scripts.documentGranted(characterId),
           // Omitted rather than sent as `undefined`, because the key's absence
           // is the third state and `exactOptionalPropertyTypes` makes the
           // difference a type error rather than a convention.
           ...allowed === undefined ? {} : { scriptsAllowed: allowed },
         }
+      },
+
+      /**
+       * One card's own regex tier, and whether the user lets it run.
+       *
+       * Listed **whether or not** it is allowed, which is upstream's own
+       * behaviour: `getRegexScripts` defaults to `allowedOnly: false` and only
+       * the engine passes `true` (`engine.js:35,346`). A refused tier that
+       * answered with an empty list would read as a card carrying no rules, and
+       * the control that lets the user change their mind would have nothing to
+       * sit beside.
+       */
+      'regex.scopedList': async ({ characterId }) => {
+        if (scripts === undefined) {
+          throw new AppError('unsupported', 'script policy is not configured on this host')
+        }
+        return scripts.scopedRegexView(characterId, await library.load(characterId))
+      },
+
+      'regex.setScopedAllowed': async ({ characterId, allowed }) => {
+        if (scripts === undefined) {
+          throw new AppError('unsupported', 'script policy is not configured on this host')
+        }
+        // Loaded first, so a decision cannot be stored against an id no card
+        // holds: it would be waiting for whatever card next takes that id, the
+        // inheritance the policy store's `forget` exists to prevent.
+        const card = await library.load(characterId)
+        await scripts.setScopedRegexAllowed(characterId, allowed)
+        await this.#refreshRegex()
+        return scripts.scopedRegexView(characterId, card)
+      },
+
+      'regex.setScopedEnabled': async ({ characterId, scriptId, enabled }) => {
+        if (scripts === undefined) {
+          throw new AppError('unsupported', 'script policy is not configured on this host')
+        }
+        const card = await library.load(characterId)
+        // Refused for a rule the card does not carry, the same gate
+        // `script.setEnabled` applies: a policy file accumulating ids from typos
+        // and stale cards is a policy file nobody can audit.
+        const known = await scripts.scopedRegexView(characterId, card)
+        if (!known.scripts.some(row => row.script.id === scriptId)) {
+          throw notFound(`${characterId} has no regex script "${scriptId}"`)
+        }
+        await scripts.setScopedRegexEnabled(characterId, scriptId, enabled)
+        await this.#refreshRegex()
+        return scripts.scopedRegexView(characterId, card)
+      },
+
+      /**
+       * The user's own library.
+       *
+       * With a `characterId`, that card's repository beside the global one; with
+       * it absent, the global one alone — what the settings drawer asks for
+       * before any conversation is open.
+       */
+      'scriptLibrary.list': async ({ characterId }) => {
+        const store = requireLibrary()
+        // The character must exist when one is named, for the reason every
+        // per-character read here does: an answer about a card that is not there
+        // is a fact about nothing, and the caller wants to know it asked wrongly.
+        if (characterId !== undefined) await library.load(characterId)
+        return { scripts: await store.views(characterId) }
+      },
+
+      'scriptLibrary.read': async ({ scope, characterId, id }) => {
+        const store = requireLibrary()
+        await requireScopeCharacter(scope, characterId)
+        return { script: await store.read(scope, characterId, id) }
+      },
+
+      'scriptLibrary.save': async ({ scope, characterId, script }) => {
+        const store = requireLibrary()
+        await requireScopeCharacter(scope, characterId)
+        const id = await store.save(scope, characterId, script)
+        return { scripts: await store.views(characterId), id }
+      },
+
+      'scriptLibrary.delete': async ({ scope, characterId, id }) => {
+        const store = requireLibrary()
+        await requireScopeCharacter(scope, characterId)
+        await store.delete(scope, characterId, id)
+        return { scripts: await store.views(characterId) }
+      },
+
+      'scriptLibrary.setEnabled': async ({ scope, characterId, id, enabled }) => {
+        const store = requireLibrary()
+        await requireScopeCharacter(scope, characterId)
+        await store.setEnabled(scope, characterId, id, enabled)
+        return { scripts: await store.views(characterId) }
       },
 
       'script.setScriptsAllowed': async ({ characterId, allowed }) => {
@@ -2222,9 +2406,26 @@ export class IrisAppService {
         return diagnostics.read(since, limit)
       },
 
-      'script.setEnabled': async ({ characterId, scriptId, enabled }) => {
-        if (scripts === undefined) throw new AppError('unsupported', 'script policy is not configured on this host')
+      /**
+       * The user's switch for one script — a card's, or one of their own.
+       *
+       * Routed by `source`, and the write lands in a different store for each:
+       * a card script's switch is the user's *opinion* of someone else's code
+       * and belongs in the policy file, while a library script's `enabled` is a
+       * field of the script itself. Absent means `'card'`, which is what every
+       * caller meant before the library existed.
+       */
+      'script.setEnabled': async ({ characterId, scriptId, enabled, source }) => {
+        // The card is loaded whichever store the write lands in: the answer is
+        // the whole list for this character, and a list for a card that is not
+        // there is a fact about nothing.
         const card = await library.load(characterId)
+        if (source !== undefined && source !== 'card') {
+          const store = requireLibrary()
+          await store.setEnabled(source, source === 'global' ? undefined : characterId, scriptId, enabled)
+          return { scripts: await listAllScripts(characterId) }
+        }
+        if (scripts === undefined) throw new AppError('unsupported', 'script policy is not configured on this host')
         // Refused for a script the card does not have, rather than stored: a
         // policy file that accumulates ids from typos and stale cards is a
         // policy file nobody can audit.
@@ -2233,11 +2434,24 @@ export class IrisAppService {
           throw notFound(`${characterId} has no script "${scriptId}"`)
         }
         await scripts.setEnabled(characterId, scriptId, enabled)
-        return { scripts: await scripts.view(characterId, card, await this.#options.scriptButtons?.all(characterId) ?? {}) }
+        return { scripts: await listAllScripts(characterId) }
       },
 
-      'script.body': async ({ characterId, scriptId }) => {
+      'script.body': async ({ characterId, scriptId, source }) => {
         const card = await library.load(characterId)
+        if (source !== undefined && source !== 'card') {
+          const store = requireLibrary()
+          const mine = await store.find(source, characterId, scriptId)
+          if (mine === undefined) throw notFound(`${source} script "${scriptId}"`)
+          // The switch is honoured here as it is for a card script below, and
+          // for the same reason: a runner that could fetch a switched-off body
+          // would make the switch advisory. There is only one switch to check —
+          // the user wrote this, so there is no author to disagree with.
+          if (!mine.enabled) {
+            throw new AppError('unsupported', `"${mine.name}" is switched off`)
+          }
+          return { content: mine.content }
+        }
         const script = extractScripts(card).scripts.find(row => row.id === scriptId)
         if (script === undefined) throw notFound(`${characterId} has no script "${scriptId}"`)
         // The card's own switch and the user's are both honoured here, not only
@@ -2680,6 +2894,28 @@ export class IrisAppService {
     const view = this.#viewOf(entry)
     this.#options.broadcast({ type: 'chat.updated', chatId: entry.chatId, view })
     return view
+  }
+
+  /**
+   * Re-compose every live conversation's regex, and re-announce it.
+   *
+   * Called after **any** regex edit — the global list, a card's allow switch, or
+   * one of a card's rules — because all three feed one composed list per open
+   * chat (`ChatEntry.scripts`), and a chat left open across the edit is still
+   * running on the snapshot it took. Upstream's answer to the same problem is
+   * `reloadCurrentChat()` after every write in its panel; this is the host's,
+   * and the re-announce is what makes an open page re-render under the new
+   * rules rather than showing text the old ones produced.
+   *
+   * One method rather than a call per write site: the shared thing is not the
+   * two lines, it is the *obligation*. Three writes each remembering to refresh
+   * is three chances for the fourth to forget, and a forgotten refresh looks
+   * exactly like a rule that does not work.
+   */
+  async #refreshRegex(): Promise<void> {
+    for (const chatId of await this.#options.chats.refreshRegex()) {
+      this.#announceChat(await this.#options.chats.open(chatId))
+    }
   }
 
   /** Push the conversation list. */

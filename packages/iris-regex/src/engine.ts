@@ -17,6 +17,7 @@ import { escapeForPattern, regexFromString } from './parse.ts'
 import {
   SCRIPT_TYPE,
   SUBSTITUTE,
+  TIER_ORDER,
   type MacroSubstitute,
   type Placement,
   type RegexParams,
@@ -37,8 +38,16 @@ export interface OwnedScript {
 }
 
 /**
- * Order scripts the way upstream runs them: global, then the character's, then
- * the preset's.
+ * Order scripts the way upstream runs them: global, then the preset's, then
+ * the character's own.
+ *
+ * **Ranked by {@link TIER_ORDER}, not by the tier's own number.** Upstream
+ * iterates `Object.values(SCRIPT_TYPES)` over a literal declared
+ * `{ GLOBAL: 0, PRESET: 2, SCOPED: 1 }`, so its run order is the declaration's
+ * order and not the numeric one. This function sorted by `type` until the
+ * upstream reading of 2026-09-08, which put a card's scripts *before* the
+ * preset's; nothing here could see it, because this host has no preset tier to
+ * pass in yet.
  *
  * Stable within a tier, so a card's own scripts keep the order it listed them
  * in — they are often written to run in sequence.
@@ -48,7 +57,8 @@ export interface OwnedScript {
 export function orderScripts(owned: readonly OwnedScript[]): RegexScript[] {
   return owned
     .map((entry, index) => ({ ...entry, index }))
-    .sort((left, right) => left.type - right.type || left.index - right.index)
+    .sort((left, right) =>
+      TIER_ORDER[left.type] - TIER_ORDER[right.type] || left.index - right.index)
     .map(entry => entry.script)
 }
 

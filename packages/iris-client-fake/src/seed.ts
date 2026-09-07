@@ -9,7 +9,7 @@
  * @module @iris/client-fake/seed
  */
 
-import type { CharacterSummary, GenerationSettings, TurnUsage } from '@iris/protocol'
+import type { CharacterSummary, GenerationSettings, RegexScriptView, TurnUsage, UserScript } from '@iris/protocol'
 
 import type { FakeChat, FakeMessage } from './state.ts'
 
@@ -184,6 +184,139 @@ export const FAKE_SCRIPTS: { id: string, name: string, info?: string, enabledByC
   { id: 'acf69655', name: 'ERA 经验值系统', enabledByCard: true, bytes: 4_820 },
   { id: '3fc1e259', name: 'ERA 以上待修改', info: '', enabledByCard: false, bytes: 0 },
 ]
+
+/**
+ * The profile's global regex tier, seeded.
+ *
+ * Two rules that differ in the field the panel actually renders differently:
+ * one display-only (upstream's `markdownOnly`, "Alter Chat Display"), one that
+ * rewrites the stored message. A seed of two identical rows would leave the
+ * badge logic and the editor's ephemerality controls unexercised.
+ *
+ * `substituteRegex: 2` on the second is upstream's `ESCAPED` — the mode where a
+ * macro's expansion is escaped before being read as regex syntax — so the
+ * editor's three-way select has a non-default value to come up with.
+ */
+export const FAKE_GLOBAL_REGEX: RegexScriptView[] = [
+  {
+    id: '9e0ba7c4-0000-4000-8000-000000000001',
+    scriptName: '隐藏思考块',
+    findRegex: '/<thinking>[\\s\\S]*?<\\/thinking>/g',
+    replaceString: '',
+    trimStrings: [],
+    placement: [2],
+    disabled: false,
+    markdownOnly: true,
+    promptOnly: false,
+    runOnEdit: true,
+    substituteRegex: 0,
+    minDepth: null,
+    maxDepth: null,
+  },
+  {
+    id: '9e0ba7c4-0000-4000-8000-000000000002',
+    scriptName: '统一称呼',
+    findRegex: '{{user}}',
+    replaceString: '你',
+    trimStrings: ['「', '」'],
+    placement: [1, 2],
+    disabled: true,
+    markdownOnly: false,
+    promptOnly: false,
+    runOnEdit: false,
+    substituteRegex: 2,
+    minDepth: 0,
+    maxDepth: 4,
+  },
+]
+
+/**
+ * One card's own regex tier, seeded against 络络.
+ *
+ * The tier that turned out to be the *dominant* one in practice: 15 of the 19
+ * local cards carry it, 173 rules between them, while the same install's global
+ * tier was empty. So the fake seeds it on the dense card and leaves the other
+ * two without — a shell built against a fake where every card carried scoped
+ * rules would never render the "this card ships none" branch, which is the
+ * branch four of the nineteen real cards take.
+ *
+ * The second rule arrives `disabled: true` so the two-switch display has a
+ * card-off row to render.
+ */
+export const FAKE_SCOPED_REGEX: Record<string, RegexScriptView[]> = {
+  luoluo: [
+    {
+      id: 'c1c1c1c1-0000-4000-8000-000000000001',
+      scriptName: '状态栏隐藏',
+      findRegex: '/<UpdateVariable>[\\s\\S]*?<\\/UpdateVariable>/g',
+      replaceString: '',
+      trimStrings: [],
+      placement: [2],
+      disabled: false,
+      markdownOnly: true,
+      promptOnly: false,
+      runOnEdit: false,
+      substituteRegex: 0,
+      minDepth: null,
+      maxDepth: null,
+    },
+    {
+      id: 'c1c1c1c1-0000-4000-8000-000000000002',
+      scriptName: '旧版指令清理',
+      findRegex: '/_\\.set\\(/g',
+      replaceString: 'set(',
+      trimStrings: [],
+      placement: [1],
+      disabled: true,
+      markdownOnly: false,
+      promptOnly: true,
+      runOnEdit: false,
+      substituteRegex: 0,
+      minDepth: null,
+      maxDepth: null,
+    },
+  ],
+}
+
+/**
+ * The user's own script library, seeded.
+ *
+ * One global entry and one against 络络, because those are the two repositories
+ * this host keeps and they render in different places — the settings drawer and
+ * the character page. Both arrive **switched off**, which is upstream's default
+ * for a newly created or imported script (`type/scripts.ts:20`, and the
+ * importer forces it again at `panel/script/Toolbar.vue:95`); a seed that
+ * arrived enabled would show the shell a state a fresh library never has.
+ *
+ * The global one carries two buttons, one hidden, because that is the ordinary
+ * proportion — 58 of the corpus's 89 buttons are `visible: false` — and a bar
+ * built from the whole array rather than the visible half is the bug the
+ * proportion exists to catch.
+ */
+export const FAKE_LIBRARY: { global: UserScript[], characters: Record<string, UserScript[]> } = {
+  global: [
+    {
+      type: 'script',
+      id: 'l1b1a1a1-0000-4000-8000-000000000001',
+      name: '快捷骰子',
+      content: '// seeded body: the fake serves listings, not bodies\n',
+      info: '在任何对话里投一次 d20',
+      enabled: false,
+      button: { enabled: true, buttons: [{ name: '投骰', visible: true }, { name: '重置', visible: false }] },
+    },
+  ],
+  characters: {
+    luoluo: [
+      {
+        type: 'script',
+        id: 'l1b1a1a1-0000-4000-8000-000000000002',
+        name: '络络的天气面板',
+        content: '// seeded body\n',
+        enabled: false,
+      },
+    ],
+  },
+}
 
 /**
  * The seeded character library.

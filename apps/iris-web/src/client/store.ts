@@ -34,16 +34,29 @@ import type {
   PresetManagerView,
   PresetSummary,
   RegexScriptView,
+  RpcRequest,
   RpcResponse,
+  ScopedRegexView,
   ScriptContext,
   ScriptView,
   UsageGranularity,
+  UserScript,
+  UserScriptView,
   WorldbookEntry,
   WorldbookSettingsView,
   WorldbookSummary,
 } from '@iris/protocol'
 
 import { asRpcError, describeError, isHostError } from './errors.ts'
+
+/**
+ * What a library save carries: the editable half of a stored script.
+ *
+ * Taken from the request schema rather than restated, so the panel's form and
+ * the wire cannot drift — an added field would be a type error at the form
+ * rather than a key the host silently ignores.
+ */
+export type UserScriptDraft = RpcRequest<'scriptLibrary.save'>['script']
 import { inFlight, requestKey } from './in-flight.ts'
 import { isShellAction, wireMethodFor } from '../sandbox/card-api.ts'
 import { draftThroughComposer, sendThroughComposer } from '../app/composer-bus.ts'
@@ -687,6 +700,44 @@ export interface IrisState {
   regexScripts: RegexScriptView[] | undefined
 
   /**
+   * The card's own regex tier for the character whose conversation is open.
+   *
+   * The tier that turned out to be the *dominant* one in practice — 15 of the
+   * 19 local cards carry it, 173 rules between them, while the same install's
+   * global tier was empty — and until this round the shell could neither show
+   * nor switch it.
+   *
+   * `undefined` means "not loaded, or this host keeps no script policy", read
+   * the same way `regexScripts === undefined` is. {@link scopedRegexFor} is
+   * what makes the difference between that and "loaded, and this card has
+   * none" legible: a list held under the wrong card's name is the one mistake a
+   * per-character slice can make silently.
+   */
+  scopedRegex: ScopedRegexView[] | undefined
+  /** Which character {@link scopedRegex} describes. */
+  scopedRegexFor: string | undefined
+  /** Whether the user lets that card's own regex tier run. */
+  scopedRegexAllowed: boolean
+
+  /**
+   * The user's own script library, once fetched.
+   *
+   * Both repositories in one list, each row naming its `scope`, because that is
+   * the shape the host answers with and the order is run order. `undefined`
+   * means the same as it does for `regexScripts`: this host keeps no library,
+   * and the panel renders nothing rather than an empty list with live controls.
+   */
+  library: UserScriptView[] | undefined
+  /**
+   * Which character's repository is included in {@link library}, if any.
+   *
+   * Absent means the listing is the global repository alone — what the settings
+   * drawer asks for with no conversation open. Held for `scopedRegexFor`'s
+   * reason: a per-character half of a list must be attributable to its card.
+   */
+  libraryFor: string | undefined
+
+  /**
    * The profile's conversation snapshots, once fetched, newest first.
    *
    * Same meaning of `undefined` as `presets` and `regexScripts`: a host that
@@ -756,7 +807,7 @@ export interface IrisActions {
    * configuration, and a page opened on such a host must not greet the reader
    * with an error about a feature it never had.
    */
-  loadCharacterDetail(characterId: string): Promise<void>
+  loadCharacterDetail(characterId: string, options?: { refresh?: boolean }): Promise<void>
   setScriptEnabled(scriptId: string, enabled: boolean): Promise<void>
   /**
    * Record the user's answer to the run-scripts question.
@@ -1139,6 +1190,49 @@ export interface IrisActions {
    * `regexScripts` last showed.
    */
   setRegexScripts(scripts: readonly RegexScriptView[]): Promise<void>
+  /**
+   * Fetch one card's own regex tier and the user's decisions about it.
+   *
+   * Not `guard`-wrapped, for `loadRegex`'s reason: the expected failure is a
+   * host with no script policy, which the panel reads as absence.
+   */
+  loadScopedRegex(characterId: string): Promise<void>
+  /** Allow or refuse one card's own regex tier. */
+  setScopedRegexAllowed(characterId: string, allowed: boolean): Promise<void>
+  /** The user's own on/off for one of a card's regex rules. */
+  setScopedRegexEnabled(characterId: string, scriptId: string, enabled: boolean): Promise<void>
+  /**
+   * Fetch the user's script library.
+   *
+   * With a character, that card's repository beside the global one. Not
+   * `guard`-wrapped, for `loadRegex`'s reason.
+   */
+  loadLibrary(characterId?: string): Promise<void>
+  /**
+   * Read one library script whole — its body included.
+   *
+   * The one call that carries a body, and it is on demand rather than in the
+   * listing for the reason the listing has no `content` at all: a library of
+   * webpack output would make opening the panel the most expensive call in the
+   * product. Rejects rather than notifying, because both callers — the editor
+   * and the export — need to know they have nothing.
+   */
+  readLibraryScript(scope: 'global' | 'character', characterId: string | undefined, id: string): Promise<UserScript>
+  /** Create or replace one library script. Returns the id that was written. */
+  saveLibraryScript(
+    scope: 'global' | 'character',
+    characterId: string | undefined,
+    script: UserScriptDraft,
+  ): Promise<string | undefined>
+  /** Remove one library script. */
+  deleteLibraryScript(scope: 'global' | 'character', characterId: string | undefined, id: string): Promise<void>
+  /** Switch one library script on or off. */
+  setLibraryScriptEnabled(
+    scope: 'global' | 'character',
+    characterId: string | undefined,
+    id: string,
+    enabled: boolean,
+  ): Promise<void>
   notify(kind: Notice['kind'], text: string): void
   /** A failure of the event channel itself — resolvable, unlike a host refusal. */
   notifyTransportError(text: string): void
@@ -1344,6 +1438,11 @@ export function createIrisStore(
       presetInstall: undefined,
       presetManager: undefined,
       regexScripts: undefined,
+      scopedRegex: undefined,
+      scopedRegexFor: undefined,
+      scopedRegexAllowed: true,
+      library: undefined,
+      libraryFor: undefined,
       backups: undefined,
 
       async boot(): Promise<void> {
@@ -2066,7 +2165,7 @@ export function createIrisStore(
         })
       },
 
-      async loadCharacterDetail(characterId: string): Promise<void> {
+      async loadCharacterDetail(characterId: string, options?: { refresh?: boolean }): Promise<void> {
         /*
          * Held per card, and this line is the budget.
          *
@@ -2075,8 +2174,14 @@ export function createIrisStore(
          * comparison is against the *held* card rather than a "loading" flag, so
          * a second ask while the first is in flight is also refused — the set
          * below happens before the first await.
+         *
+         * `refresh` is the one caller that must get past it: the page can now
+         * *add* a script to this card's repository, and a write whose own page
+         * kept showing the list from before it would read as the write having
+         * failed. It is an explicit opt-in rather than an invalidation rule
+         * because the page has exactly one write and knows when it made it.
          */
-        if (get().characterDetail?.characterId === characterId) return
+        if (options?.refresh !== true && get().characterDetail?.characterId === characterId) return
         // Cleared to this card first: the previous card's books and scripts must
         // not sit under the new card's name for the length of a round trip, and
         // `loading` is what lets the page say "reading the card" rather than
@@ -2723,6 +2828,128 @@ export function createIrisStore(
         await guard(async () => {
           const answer = await client.call('regex.set', { scripts: [...scripts] })
           set({ regexScripts: answer.scripts })
+        })
+      },
+
+      async loadScopedRegex(characterId: string): Promise<void> {
+        // Cleared and re-attributed **before** the round trip, the same shape
+        // `loadScripts` uses: the previous card's rules must not sit under the
+        // new card's name for the length of a call, because the one thing this
+        // panel answers is "what does THIS card rewrite".
+        set({ scopedRegex: undefined, scopedRegexFor: characterId, scopedRegexAllowed: true })
+        try {
+          const answer = await client.call('regex.scopedList', { characterId })
+          // Dropped if the reader has moved on. Without this, a slow answer for
+          // the card they left lands under the card they are looking at.
+          if (get().scopedRegexFor !== characterId) return
+          set({ scopedRegex: answer.scripts, scopedRegexAllowed: answer.allowed })
+        } catch {
+          // A host with no script policy, saying so. Read as absence, like
+          // `regexScripts === undefined`.
+          if (get().scopedRegexFor !== characterId) return
+          set({ scopedRegex: undefined })
+        }
+      },
+
+      async setScopedRegexAllowed(characterId: string, allowed: boolean): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('regex.setScopedAllowed', { characterId, allowed })
+          if (get().scopedRegexFor !== characterId) return
+          set({ scopedRegex: answer.scripts, scopedRegexAllowed: answer.allowed })
+        })
+      },
+
+      async setScopedRegexEnabled(characterId: string, scriptId: string, enabled: boolean): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('regex.setScopedEnabled', { characterId, scriptId, enabled })
+          if (get().scopedRegexFor !== characterId) return
+          set({ scopedRegex: answer.scripts, scopedRegexAllowed: answer.allowed })
+        })
+      },
+
+      async loadLibrary(characterId?: string): Promise<void> {
+        set({ libraryFor: characterId })
+        try {
+          const answer = await client.call(
+            'scriptLibrary.list',
+            characterId === undefined ? {} : { characterId },
+          )
+          if (get().libraryFor !== characterId) return
+          set({ library: answer.scripts })
+        } catch {
+          if (get().libraryFor !== characterId) return
+          set({ library: undefined })
+        }
+      },
+
+      async readLibraryScript(
+        scope: 'global' | 'character',
+        characterId: string | undefined,
+        id: string,
+      ): Promise<UserScript> {
+        // Deliberately not `guard`-wrapped: the editor about to open on this
+        // body and the export about to write it both need the rejection. A
+        // refusal turned into a notice would resolve as though the host had
+        // handed over an empty script, and the editor would then save that
+        // emptiness over the real one.
+        const answer = await client.call('scriptLibrary.read', {
+          scope,
+          ...characterId === undefined ? {} : { characterId },
+          id,
+        })
+        return answer.script
+      },
+
+      async saveLibraryScript(
+        scope: 'global' | 'character',
+        characterId: string | undefined,
+        script: UserScriptDraft,
+      ): Promise<string | undefined> {
+        let written: string | undefined
+        await guard(async () => {
+          const answer = await client.call('scriptLibrary.save', {
+            scope,
+            ...characterId === undefined ? {} : { characterId },
+            script,
+          })
+          written = answer.id
+          if (get().libraryFor === characterId) set({ library: answer.scripts })
+        })
+        // `undefined` when the write was refused, so a caller cannot mistake a
+        // failure for a create: the notice has already gone out, and an editor
+        // that closed on a refusal would lose whatever the user had typed.
+        return written
+      },
+
+      async deleteLibraryScript(
+        scope: 'global' | 'character',
+        characterId: string | undefined,
+        id: string,
+      ): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('scriptLibrary.delete', {
+            scope,
+            ...characterId === undefined ? {} : { characterId },
+            id,
+          })
+          if (get().libraryFor === characterId) set({ library: answer.scripts })
+        })
+      },
+
+      async setLibraryScriptEnabled(
+        scope: 'global' | 'character',
+        characterId: string | undefined,
+        id: string,
+        enabled: boolean,
+      ): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call('scriptLibrary.setEnabled', {
+            scope,
+            ...characterId === undefined ? {} : { characterId },
+            id,
+            enabled,
+          })
+          if (get().libraryFor === characterId) set({ library: answer.scripts })
         })
       },
 
