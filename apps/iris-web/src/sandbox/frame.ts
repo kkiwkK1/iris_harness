@@ -27,6 +27,9 @@ import type { MemberTable } from './members-contract.ts'
 import { MEMBER_KINDS, SHARED_ORIGINAL, identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
 import { SCRIPT_REGISTRY, WINDOW_GLOBAL, withPreamble } from './preamble.ts'
+// Names only. Every value in this API is built in the fetched member table
+// (`popup-api.ts`), so nothing but this one list is inlined per frame.
+import { POPUP_MEMBERS } from './popup.ts'
 import { EventBus, MVU_EVENTS, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
 import type { Listener } from '@iris/compat-tavernhelper-core'
 import type { ScriptContext } from '@iris/protocol'
@@ -577,6 +580,26 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (property === 'saveSettingsDebounced') return saveSettingsDebouncedFn
 
       /*
+       * The popup API, all five names ([ST] `st-context.js:192-225`).
+       *
+       * Together, because a card reads them together: the enums are only ever
+       * read to be compared against what the call returns, and a surface
+       * carrying `callGenericPopup` without `POPUP_TYPE` fails at the argument
+       * rather than at the call. MagVarUpdate's cleanup — the measured crash
+       * this closes — reads `SillyTavern.POPUP_TYPE.CONFIRM` as the second
+       * argument of the same expression that calls `callGenericPopup`.
+       *
+       * `callPopup` is upstream's deprecated one and has a **different return
+       * contract** (`true`/`false`, or the input text), which is why it is its
+       * own function here rather than an alias.
+       */
+      if (property === 'POPUP_TYPE') return popupApi.POPUP_TYPE
+      if (property === 'POPUP_RESULT') return popupApi.POPUP_RESULT
+      if (property === 'callGenericPopup') return popupApi.callGenericPopup
+      if (property === 'callPopup') return popupApi.callPopup
+      if (property === 'Popup') return popupApi.Popup
+
+      /*
        * The bus, reachable through `getContext()` as well as through `parent`.
        *
        * Measured: two cards read `ctx.eventSource` and `ctx.event_types` across
@@ -902,6 +925,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         // the same get/has consistency the rest of this trap exists to keep.
         property === 'saveSettings' ||
         property === 'saveSettingsDebounced' ||
+        // The popup API answers `get` above, so `in` has to agree — a card
+        // feature-testing with `'callGenericPopup' in ctx` would otherwise be
+        // told no about a member it can call.
+        (typeof property === 'string' && POPUP_MEMBERS.includes(property)) ||
         // Built here rather than routed to the host, so `isCardMethod` does not
         // know about it and a card feature-testing with `in` would be told no.
         property === 'updateChatMetadata' ||
@@ -1368,6 +1395,37 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       env.post({ iris: env.token, type: 'slash', id, command: String(command) })
     })
   }
+
+  /*
+   * SillyTavern's popup API — `callGenericPopup`, `callPopup`, `Popup`,
+   * `POPUP_TYPE`, `POPUP_RESULT`.
+   *
+   * **Built in the fetched member table**, not here, and that placement is a
+   * measurement rather than a preference: this file is inlined into every
+   * frame's `srcdoc`, so 7 KiB of popup runtime would be charged once per
+   * interface on screen — `FRAME_OVERHEAD_BYTES` is that cost, and the reading
+   * window's count gate is derived from it. `popup-api.ts` carries the argument
+   * and the numbers; what is left here is five property reads on the surface
+   * below and the `popup:answer` arm.
+   *
+   * The dialog itself is the **shell's** to draw. A message frame is clipped to
+   * its message's height and a script frame's surface is the reading column, so
+   * a modal drawn inside either is one the reader cannot see.
+   */
+  const popupApi = env.members.createPopupApi({
+    ask: (id, plan) => {
+      env.post({ iris: env.token, type: 'popup', id, plan })
+    },
+    withdraw: id => {
+      env.post({ iris: env.token, type: 'popup:done', id })
+    },
+    report: message => {
+      reportGap(message)
+    },
+    // What `parent.document.body` answers here, which is the frame's own
+    // container — see `PopupIo.topmostLayer`.
+    topmostLayer: () => env.container,
+  })
 
   /*
    * The frame-side half of the same-origin fetch bridge.
@@ -2119,6 +2177,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       else waiting.reject(new Error(message.message))
       return
     }
+    if (message.type === 'popup:answer') {
+      /*
+       * Handed straight over: which button was pressed, what it means and
+       * whether it closes the dialog are all upstream's rules, and they live in
+       * `popup-api.ts` beside the promise they resolve. A second reading of
+       * them here would be a second place for them to be wrong.
+       */
+      popupApi.answer(message.id, message)
+      return
+    }
     if (message.type === 'fetch:ok' || message.type === 'fetch:error') {
       const waiting = pendingFetch.get(message.id)
       if (waiting === undefined) return
@@ -2193,6 +2261,16 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         if (failed) reportFault(text)
         else reportGap(text)
       })
+      /*
+       * Immediately after, and on every snapshot for the same reason: MVU's
+       * one-time variable cleanup is **ported natively** in Iris — the host
+       * asks, sweeps and backs up — and its in-frame copy can carry out none of
+       * its own three answers here. Closing upstream's own fourth gate stops
+       * two dialogs asking one question, where one of them cannot act. The full
+       * argument, the three measurements behind it and why the mark is
+       * non-enumerable are on `sealLegacyCleanup`.
+       */
+      env.members.sealLegacyCleanup(context.chat)
       extensionSettings = settingsProxy({ ...message.context.extensionSettings })
       /*
        * An interface frame published its surface at install, when neither of

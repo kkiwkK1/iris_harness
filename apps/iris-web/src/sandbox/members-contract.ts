@@ -44,6 +44,8 @@ export interface MemberTable {
   createFrameTavernHelper: typeof import('./tavern-helper.ts').createFrameTavernHelper
   createEventSource: typeof import('./tavern-helper.ts').createEventSource
   restoreFloorTables: typeof import('./tavern-helper.ts').restoreFloorTables
+  sealLegacyCleanup: typeof import('./tavern-helper.ts').sealLegacyCleanup
+  createPopupApi: typeof import('./popup-api.ts').createPopupApi
   settledEvents: typeof import('./tavern-helper.ts').settledEvents
   STARTED_EVENTS: readonly string[]
   SETTLED_EVENT_NAMES: readonly string[]

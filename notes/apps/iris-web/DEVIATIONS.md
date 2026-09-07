@@ -812,6 +812,70 @@ rather than incidental — a comment, an issue, a changelog line saying a
 dismissal is meant to decline. `legacy_chat.ts:27-33` has none: `CANCELLED` is
 simply not distinguished from `NEGATIVE` in the condition.
 
+### Addendum (2026-09-08): the card's own copy of this dialog was also running
+
+This entry described the host's dialog and never asked what MagVarUpdate's
+in-frame copy does. **It was running in parallel, and it only looked otherwise
+because it crashed.** The frame projects the chat faithfully — floor 1 really
+does carry `stat_data`, deliberately, because MVU's restore path reads it — so
+all four of upstream's gates (`legacy_chat.ts:7-14`) pass inside the frame too,
+on exactly the chats where the host's own gates pass. What stopped it was the
+missing popup API: `SillyTavern.POPUP_TYPE.CONFIRM` threw (§57). The crash was
+hiding a double-ask, so building the popup API alone would have produced two
+dialogs asking one question.
+
+**The host's copy keeps this path, and the card's stands down.** Three
+measurements decide it, and each is about MVU's copy being unable to carry out
+its own answers here rather than about which dialog is nicer:
+
+- **"Clean only" cleans nothing durable.** `cleanupMessageVariables` writes
+  `chat[i].variables` on the frame's **snapshot** and then calls `saveChat()` —
+  which in Iris is `callAction('saveChat', {})` and carries no rows. The
+  deletion is discarded at the next context push.
+- **"Back up and clean" cannot back up.** It POSTs to `/api/chats/export`,
+  which Iris refuses (§19); the branch toasts an export failure and returns
+  without cleaning.
+- **"Do not remind me again" does not persist.** It writes
+  `_.set(SillyTavern.chat, [1,'variables',0,'ignore_cleanup'], true)` on that
+  same snapshot, so it does not even achieve the permanent refusal this entry is
+  about.
+
+So letting MVU's dialog through the new API would offer the reader three
+answers, none of which can happen, beside a host dialog where all three can. The
+ruling above holds unchanged: **the dismissal-defers rule is the host dialog's,
+and there is no second dialog to lose it in.**
+
+**How it is enforced, and where the smell is.** Not by intercepting a popup
+whose content matches MVU's — that would be a per-card patch. Iris closes
+upstream's **own fourth gate**: the frame marks `chat[1].variables[0]` with
+upstream's `ignore_cleanup` key (`sealLegacyCleanup`, `sandbox/tavern-helper.ts`).
+In upstream's vocabulary that says "this chat's in-card cleanup is already
+answered", and in Iris it is true — the question has an answer path and it is
+not the card's. It is still MVU-shaped, and it is named as such rather than
+dressed up: the key is upstream's, one extension writes it and one reads it.
+
+**The mark is non-enumerable**, which is the part that took thinking rather than
+typing. A card that reads floor 1's table and writes it back through
+`replaceVariables({type:'message', message_id:1})` would otherwise persist a
+fabricated key into the real chat file and disable the **host's** offer for that
+chat forever, silently — and MVU's restore path does write floors from
+`snapshot + 1` upward, a bound that can be floor 1. `JSON.stringify`, spread,
+`Object.keys` and structured clone all skip a non-enumerable property; `_.has`,
+`hasOwnProperty` and `in` — which is what the gate uses — all see it. A refusal
+the user really recorded is left exactly as it is, enumerable and durable.
+
+**What the addendum costs.** Floor 1's tables are parsed eagerly once per
+snapshot, the one row the lazy getters would have left alone (0.01 ms against
+the 7.75 ms the laziness exists to avoid). And gate three is deliberately left
+open: `stat_data` on floor 1 stays visible, because hiding it to buy silence
+would break restoring.
+
+**What would overturn the addendum.** A durable path for a card's own chat-file
+writes — if `saveChat` ever carried rows, MVU's sweep would work and the
+question of which copy owns the path reopens. Or a second extension reading
+`ignore_cleanup` for a different purpose, which would make the mark a lie to
+someone.
+
 ## 18. The periodic trim is announced; upstream's is silent
 
 **Kind:** deliberate improvement.
@@ -2259,3 +2323,133 @@ from the previous round.
 `limit`/`cursor` on `worldbook.charDigest`, not a per-book call). Or a decision
 that the page should edit rather than list, which would move the entry rows onto
 the world book panel's editor and make this page a launcher again.
+
+## 58. A card's popup is drawn by the shell, says a card is asking, and queues
+
+**Kind:** deliberate improvement — and it closes a **compatibility gap** that
+was a hard crash, so the two halves are separated below.
+
+### The gap it closes, and what it cost
+
+The card surface carried none of SillyTavern's popup API: no `POPUP_TYPE`, no
+`POPUP_RESULT`, no `callGenericPopup`, no `callPopup`, no `Popup`
+(`[ST] public/scripts/st-context.js:192-225` exposes all five). Reading an
+unbuilt member yields `undefined` and a report (§1) — which is right for a
+member a card *guards*, and useless for one it reads **through**:
+
+```js
+// [MVU] cleanup/legacy_chat.ts:16-25, live in artifact/bundle.js
+await SillyTavern.callGenericPopup(text, SillyTavern.POPUP_TYPE.CONFIRM, '', {…})
+```
+
+`SillyTavern.POPUP_TYPE` is `undefined`, `.CONFIRM` throws, and the throw lands
+inside MagVarUpdate's `jQuery(async …)` as an unhandled rejection:
+
+```
+card scripts: 失败:an unhandled rejection after a card body ran:
+TypeError: Cannot read properties of undefined (reading 'CONFIRM')
+  at …/MagVarUpdate/artifact/bundle.js:2:205599
+```
+
+**Reported by a user on 2026-09-08**, on a 26-message chat, reproducing on main
+and on the PR branch. Every MVU card past 25 messages reaches it, because the
+gate is `chat.length > keepRecent + 5`.
+
+**Where the API is exercised, measured rather than assumed.** Over the local
+corpus — 47 card scripts, 70 card interface fields and 1,451 world-book entries,
+1,559 distinct bodies after content dedup — the five names appear **zero** times
+(control: `SillyTavern` and `toastr` fire in the hundreds through the same
+reader, so the zero is a reading and not a broken scan). The population that
+uses this API is the **imported bundle**: MagVarUpdate's `artifact/bundle.js`
+calls `callGenericPopup` six times in four distinct shapes, and five corpus
+cards import it. So a per-card judgement would have found nothing to build.
+
+### Iris
+
+**The dialog is the shell's, not the frame's**, and that is forced rather than
+chosen: a message frame is clipped to its message's height and a script frame's
+surface is the reading column, so a modal drawn inside either is a modal nobody
+can see. The frame reduces the card's four arguments to a *plan* — the buttons
+in upstream's render order, the `POPUP_RESULT` each carries, the value `show()`
+resolves to (`sandbox/popup.ts`, checked line by line against `popup.js` in
+`tests/popup.test.ts`) — and the shell draws the plan and reports the press. The
+shell never computes a result.
+
+**Return values are upstream's, including the parts that read like bugs:**
+
+| call | upstream | Iris |
+| --- | --- | --- |
+| ok | `AFFIRMATIVE` = 1 | same |
+| cancel | `NEGATIVE` = 0 | same |
+| Esc, click outside | `CANCELLED` = **`null`** | same |
+| string `customButtons[i]` | `i + 2` (`popup.js:55`, `:284`) | same |
+| object custom with `result` | that value | same |
+| object custom **without** `result` | does not close (`popup.js:69`) | same |
+| INPUT, `result >= 1` | the input text | same |
+| INPUT, `NEGATIVE` / `CANCELLED` | `false` / `null` | same |
+| `callPopup` ok / cancel | `true` / `false`, text for `'input'` | same |
+| CONFIRM default captions | Yes / No | same, translated |
+| INPUT ok caption | Save | same, translated |
+| CROP | a cropped data URL | **`null`**, refused by name |
+
+Three deviations, and all three are on this list because they are visible:
+
+1. **The dialog says a card is asking.** Upstream's popups are
+   indistinguishable from SillyTavern's own, because upstream has no boundary
+   there — the extension *is* the application. Here a card is content, and a
+   modal that might be Iris asking about the user's data or might be a card
+   asking about its own is one the reader cannot answer safely. Cost: one line
+   of chrome upstream does not have.
+2. **Popups queue; upstream stacks them.** Upstream opens a second `<dialog>`
+   over the first. Iris draws the oldest and holds the rest in order. No result
+   changes — every popup still gets its own answer — and it keeps the shell from
+   reasoning about a modal over a modal it also owns. Cost: a card that opens
+   two at once shows them one at a time.
+3. **Options accepted and ignored, by name.** `transparent`,
+   `allowHorizontalScrolling`, `animation`, `customInputs`, `onClosing`,
+   `cropAspect`/`cropImage`, and per-button `classes`/`icon`. Each is reported
+   once on the card's durable channel when a card actually passes it, so a
+   dialog that behaves differently from upstream's is on the record rather than
+   discovered. `onClosing` is the one with teeth: it is a close **veto**, and
+   honouring it would mean reopening a dialog the shell has already dismissed —
+   so a card's veto is dropped and it sees a closed popup rather than a hung
+   one. Corpus and bundle use of all of them: zero.
+
+**The content is the first card-authored HTML the shell renders into its own
+DOM.** Everything else a card draws goes into a sandboxed frame. A modal cannot,
+so `app/sanitize-html.ts` installs the policy `app/inline-html.ts` has carried
+since `INLINE-HTML.md` ruling ③ and had no consumer for: DOMPurify with the
+stated forbidden tags and attributes and an allow-list for every URI-bearing
+attribute, then the independent audit over the tree that actually came back. It
+**fails closed** — where DOMPurify cannot run (a server render) or the audit
+finds anything, the markup is escaped to text and the dialog says so. Measured:
+all four of the bundle's contents are plain text, one of them a DOM `<span>`
+built with `textContent`, so nothing in the measured population needs markup at
+all.
+
+**Not `window.alert`.** The bridged `alert`/`confirm`/`prompt` (§ the dialog
+bridge) answer *for* the card, because upstream answers those synchronously and
+a message boundary cannot. `callGenericPopup` is asynchronous upstream too, so
+this one carries the reader's real answer — and no real blocking dialog is ever
+opened, which would freeze browser automation and is not ST's behaviour either.
+
+### What it costs elsewhere
+
+The popup runtime lives in the **fetched member table**
+(`sandbox/popup-api.ts`), not in the per-frame bootstrap. Its first shape put it
+in the bootstrap and grew it 7.1 KiB — a seventh of an artifact that is inlined
+into every frame's `srcdoc` — which needs `FRAME_OVERHEAD_BYTES` at 57 KiB, at
+which the frame budget's own invariant forces `FRAME_COUNT_LIMIT` from 20 live
+interfaces down to 17. Split out, the bootstrap grows 0.9 KiB and the constant
+moves one KiB with the gate untouched. `FRAME_OVERHEAD_BYTES` is now within
+about a kilobyte of the artifact (it was within 0.8 before this change), so the
+next thing that grows the bootstrap faces the same choice: the member table, or
+the gate.
+
+**What would overturn it.** For the attribution line: a measurement that readers
+find it noise, which is a claim about the line and not about the boundary. For
+the queue: a card that legitimately needs two dialogs at once — a confirm raised
+*from* a popup's own content. For the sanitizer's install: a decision that the
+shell must never hold card markup at all, which would mean answering popups with
+text-only content and saying so.
+

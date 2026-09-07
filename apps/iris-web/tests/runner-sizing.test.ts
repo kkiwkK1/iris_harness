@@ -115,6 +115,11 @@ function harness(host?: Partial<RunnerHost>): {
       onSettings: () => undefined,
       onSlash: async () => '',
       onDialog: () => undefined,
+      // Never exercised here, and a no-op rather than an answer on purpose: a
+      // popup this harness left unanswered would hang the card, which is what
+      // makes an accidental one visible instead of quietly passing.
+      onPopup: () => undefined,
+      onPopupWithdrawn: () => undefined,
       onCall: async () => undefined,
       onError: () => undefined,
       onBlocked: () => undefined,

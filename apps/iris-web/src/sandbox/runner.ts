@@ -18,11 +18,30 @@
 import type { ScriptContext } from '@iris/protocol'
 
 import { frameSandbox } from './policy.ts'
+import type { PopupAnswer, PopupPlan } from './popup.ts'
 import { mintToken, parseFromFrame, type FromFrame, type ToFrame } from './protocol.ts'
 import { sameOriginTarget } from './same-origin.ts'
 import { buildSrcdoc } from './srcdoc.ts'
 import { rewriteViewportUnits } from './viewport-units.ts'
 import { rewriteBundleImports } from './bundle-proxy.ts'
+
+/**
+ * One popup a card raised, and the one way back to it.
+ *
+ * `answer` may be called **more than once** for a single request: upstream's
+ * custom button declared without a `result` fires its action and leaves the
+ * dialog open ([ST] `popup.js:69`), which is an answer with `closed: false`.
+ * Every call after a `closed: true` one is ignored by the frame, which has
+ * already resolved the card's promise and forgotten the id.
+ */
+export interface PopupRequest {
+  /** The frame's own handle for this popup. */
+  id: string
+  /** What to draw, already reduced to upstream's semantics by `sandbox/popup.ts`. */
+  plan: PopupPlan
+  /** Report what the reader did. */
+  answer: (answer: PopupAnswer) => void
+}
 
 /** What one running card needs from the shell. */
 export interface RunnerHost {
@@ -112,6 +131,28 @@ export interface RunnerHost {
    * read: the notice bar and the card's durable report list.
    */
   onDialog: (kind: 'alert' | 'confirm' | 'prompt', text: string) => void
+  /**
+   * The card raised one of SillyTavern's own popups and is waiting for an answer.
+   *
+   * **Required, and for a stronger reason than `onDialog`'s.** A card awaiting
+   * `callGenericPopup` is stopped: MagVarUpdate's cleanup does not merely lose a
+   * message, it never reaches its sweep. A host with nowhere to draw the dialog
+   * would leave the promise pending forever, which is the one failure this
+   * bridge cannot report on the card's behalf — so the host has to say what it
+   * does about it, even if what it does is answer `CANCELLED` at once.
+   *
+   * The dialog is the **shell's** to draw. A card frame is clipped to its
+   * message's height, so a modal drawn inside one is invisible.
+   */
+  onPopup: (request: PopupRequest) => void
+  /**
+   * The card closed its own popup — `popup.complete()` and friends.
+   *
+   * Required rather than optional, because the failure of omitting it is a modal
+   * left on screen that nothing is waiting for: the reader is stuck behind a
+   * dialog whose every answer goes nowhere.
+   */
+  onPopupWithdrawn: (id: string) => void
   /**
    * The card invoked one of its facade's actions.
    *
@@ -613,6 +654,34 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
          * later.
          */
         host.onDialog(message.kind, message.text)
+        return
+      case 'popup': {
+        /*
+         * The id is the frame's; the answer is posted straight back on it. No
+         * bookkeeping here on purpose — this file is the untestable one, so the
+         * only state it may own is what a `postMessage` needs, and "which popup
+         * is on screen" is the shell's question.
+         */
+        const id = message.id
+        host.onPopup({
+          id,
+          plan: message.plan,
+          answer: answer => {
+            post({
+              iris: token,
+              type: 'popup:answer',
+              id,
+              closed: answer.closed,
+              result: answer.result,
+              ...(answer.button === undefined ? {} : { button: answer.button }),
+              ...(answer.input === undefined ? {} : { input: answer.input }),
+            })
+          },
+        })
+        return
+      }
+      case 'popup:done':
+        host.onPopupWithdrawn(message.id)
         return
       case 'error':
         host.onError(message.message, message.member, message.scriptId)

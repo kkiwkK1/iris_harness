@@ -61,6 +61,17 @@ test('the ladder orders content under shell, and shell under the cleaning offer'
   // has to clear that too, or the toggle would poke through the drawer.
   assert.ok((z['--iris-overlay-z'] ?? 0) + 5 < (z['--iris-drawer-z'] ?? 0), 'the drawer does not clear the overlay toggle')
   step('--iris-overlay-z', '--iris-drawer-z')
+  /*
+   * A card's own popup sits between the two halves of the rule, so both halves
+   * are asserted. Over the overlay **and its toggle**, because a card's
+   * fullscreen interface would otherwise cover the question that same card is
+   * blocked on; under the drawer, because it is content asking.
+   */
+  assert.ok(
+    (z['--iris-overlay-z'] ?? 0) + 5 < (z['--iris-card-popup-z'] ?? 0),
+    'a card popup does not clear the overlay toggle',
+  )
+  step('--iris-card-popup-z', '--iris-drawer-z')
   step('--iris-drawer-z', '--iris-cleanup-z')
 })
 

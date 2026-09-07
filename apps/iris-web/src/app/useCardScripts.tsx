@@ -26,6 +26,7 @@ import type { ReactElement } from 'react'
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
 import { actionsOf, tapHostEvents } from '../client/store.ts'
 import { startCardScripts } from '../sandbox/card-scripts.ts'
+import { cardPopupBridge } from './card-popups.ts'
 import { registerCardEmitter } from './card-bus.ts'
 import { broadcastWindowEvent, registerWindowEventSink } from './window-events.ts'
 import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
@@ -216,6 +217,14 @@ export function CardScriptFrames(): ReactElement {
       return `${window.location.origin}${resolvedAssets.members}`
     }
 
+    /*
+     * This run's popup channel, made **before** the frame and released in this
+     * effect's cleanup. A card blocked on `callGenericPopup` when the reader
+     * switches chats leaves a dialog on screen that no frame is listening to
+     * any more, and `release()` is what takes it down.
+     */
+    const popups = cardPopupBridge('scripts')
+
     const running = startCardScripts(
       {
         /*
@@ -335,6 +344,17 @@ export function CardScriptFrames(): ReactElement {
                 )
                 actionsOf(store).notify(kind === 'alert' ? 'error' : 'info', text)
               },
+              /*
+               * SillyTavern's own popup, which is a different thing from the
+               * three above: it is asynchronous upstream too, so the reader's
+               * real answer can be carried back instead of being answered
+               * "cancel" on their behalf. It is drawn by the shell — this frame
+               * is the overlay surface and a modal inside it would be under the
+               * card's own interface — and the queue lives in
+               * `app/card-popups.ts`.
+               */
+              onPopup: popups.onPopup,
+              onPopupWithdrawn: popups.onPopupWithdrawn,
               /*
                * A settings report is the card's extension settings partition —
                * the whole object, posted on every proxied write and on
@@ -704,6 +724,10 @@ export function CardScriptFrames(): ReactElement {
       unregisterWindowEvents()
       surfaceWatcher?.disconnect()
       untap()
+      // Before `dispose()`, so a dialog is never on screen for a frame that has
+      // already been torn down — the window between the two is small and it is
+      // exactly the window in which a reader could press a button.
+      popups.release()
       running.dispose()
       actionsOf(store).setRunStates([])
       /*

@@ -2084,6 +2084,144 @@
   margin-top: 4px;
 }
 
+/*
+ * A card's own popup (`CardPopup.tsx`) — SillyTavern's `callGenericPopup`.
+ *
+ * The cleaning offer's panel, deliberately: they are the same object to a
+ * reader — a modal question they must answer before going on — and giving a
+ * card's question its own visual language would be inventing a second dialogue
+ * idiom for the same act. What differs is the ladder rung (content, so under
+ * the shell) and the head line, which says a *card* is asking.
+ *
+ * Three measures, because upstream has three: `wide`/`wider` collapse to one
+ * and `large` is its own. Upstream's `wide` is a 1/1 aspect box and `large` is
+ * 90% of the screen; here they are widths with a height ceiling, because the
+ * shell's panels grow with their content and clamp rather than reserve.
+ */
+.iris-popup {
+  position: fixed;
+  inset: 0;
+  z-index: var(--iris-card-popup-z);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--iris-scrim);
+}
+
+.iris-popup__panel {
+  display: grid;
+  gap: 10px;
+  width: min(440px, 100%);
+  max-height: calc(100vh - 48px);
+  padding: 18px 20px;
+  background: var(--iris-bg-page);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  box-shadow: var(--iris-shadow);
+}
+
+.iris-popup__panel--wide {
+  width: min(640px, 100%);
+}
+
+.iris-popup__panel--large {
+  width: min(900px, 100%);
+  max-height: calc(100vh - 24px);
+}
+
+/* The head carries the attribution and, on a DISPLAY popup, the corner close —
+   upstream's only control for that kind. */
+.iris-popup__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.iris-popup__close {
+  padding: 0 4px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--iris-ink-secondary);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.iris-popup__close:hover {
+  color: var(--iris-ink);
+}
+
+/*
+ * The card's own markup lands here. Two rules matter and neither is cosmetic:
+ * the reading face, because this is a sentence to read rather than a label to
+ * scan; and `min-width: 0` with `overflow-wrap`, because card content is
+ * frequently one unbroken string and a panel it cannot fit inside is a panel
+ * whose buttons leave the screen.
+ */
+.iris-popup__body {
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--iris-ink);
+  overflow-wrap: anywhere;
+}
+
+/* Upstream's `allowVerticalScrolling`. The panel keeps its measure and the
+   content scrolls inside it, which is the shell's rule for every wide or tall
+   thing a card hands over. */
+.iris-popup__body--scroll {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.iris-popup__body--left {
+  text-align: left;
+}
+
+/* Anything the card's own markup put in the body still has to obey the panel. */
+.iris-popup__body img,
+.iris-popup__body table,
+.iris-popup__body pre {
+  max-width: 100%;
+}
+
+.iris-popup__body pre {
+  overflow-x: auto;
+}
+
+/*
+ * Upstream's `POPUP_TYPE.INPUT` box. The shell's own textarea treatment, minus
+ * the monospace face: `.iris-textarea` is monospace because it edits stored
+ * bytes, and this is a reader answering a question in prose.
+ */
+.iris-popup__input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--iris-ink);
+  background: var(--iris-bg-raised);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius-field);
+  resize: vertical;
+}
+
+.iris-popup__input:focus-visible {
+  outline: none;
+  border-color: var(--iris-accent-quiet);
+  box-shadow: 0 0 0 3px var(--iris-accent-wash);
+}
+
+.iris-popup__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* The notice history. Same row treatment as the report list — they are the same
    kind of thing read at the same moment — with its own list container so the
    two can be told apart in the DOM by anyone verifying from outside. */

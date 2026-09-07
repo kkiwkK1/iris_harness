@@ -29,12 +29,14 @@ import {
 } from '../src/sandbox/overlay-regions.ts'
 import { createNestedFrame, virtualiseNestedFrames } from '../src/sandbox/nested-frame.ts'
 import { createReportingToastr } from '../src/sandbox/toastr-report.ts'
+import { createPopupApi } from '../src/sandbox/popup-api.ts'
 import {
   SETTLED_EVENT_NAMES,
   STARTED_EVENTS,
   createEventSource,
   createFrameTavernHelper,
   restoreFloorTables,
+  sealLegacyCleanup,
   settledEvents,
 } from '../src/sandbox/tavern-helper.ts'
 
@@ -43,6 +45,7 @@ export const MEMBERS: MemberTable = {
   createFrameTavernHelper,
   createEventSource,
   restoreFloorTables,
+  sealLegacyCleanup,
   settledEvents,
   STARTED_EVENTS,
   SETTLED_EVENT_NAMES,
@@ -58,4 +61,5 @@ export const MEMBERS: MemberTable = {
   createNestedFrame,
   virtualiseNestedFrames,
   createReportingToastr,
+  createPopupApi,
 }

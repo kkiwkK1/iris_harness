@@ -22,6 +22,7 @@ import type { MessageStyle } from './html-regions.ts'
 
 import { actionsOf, tapHostEvents } from '../client/store.ts'
 import { describeRefusal } from './blocked-line.ts'
+import { cardPopupBridge } from './card-popups.ts'
 import { useIris, useIrisStore } from '../client/provider.tsx'
 import {
   SANDBOX_MANIFEST_PATH,
@@ -267,6 +268,13 @@ export function MessageInterfaces({
         throw new Error('a message frame was started before its build assets resolved')
       }
       let painted = false
+      /*
+       * This interface's popup channel. Released with the frame below, because
+       * a message frame is unmounted whenever the reading window scrolls past
+       * it — far more often than a script host is — and a dialog outliving its
+       * frame is a question with nobody left to hear the answer.
+       */
+      const popups = cardPopupBridge('interface')
       const card = runCard(
         {
           bootstrap: current.bootstrap,
@@ -312,6 +320,14 @@ export function MessageInterfaces({
             )
             actionsOf(store).notify(kind === 'alert' ? 'error' : 'info', text)
           },
+          /*
+           * SillyTavern's own popup, drawn by the shell. Asynchronous upstream
+           * too, so unlike the three above the reader's real answer reaches the
+           * card. An interface frame is clipped to this message's height, which
+           * is the sharpest form of why the dialog cannot be drawn inside it.
+           */
+          onPopup: popups.onPopup,
+          onPopupWithdrawn: popups.onPopupWithdrawn,
           /*
            * A fault: an interface frame reporting an error is the one channel
            * here that always describes something broken. The channel is a
@@ -398,7 +414,12 @@ export function MessageInterfaces({
         emit: (event, args) => {
           card.emit(event, [...args])
         },
-        dispose: card.dispose,
+        dispose: () => {
+          // The queue first: a dialog on screen for a disposed frame is one the
+          // reader can still press.
+          popups.release()
+          card.dispose()
+        },
       }
     },
     watchContext: (push, emit) =>

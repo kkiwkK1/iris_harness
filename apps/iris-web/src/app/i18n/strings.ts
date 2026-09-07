@@ -932,6 +932,24 @@ export const en = {
   cleanupCounts: '{layers} of the messages between {from} and {to} still hold old variables ({lines} lines in the file).',
   cleanupDeferNote: 'Closing this without choosing asks again next time — it does not decline.',
 
+  /**
+   * A card's own popup (`CardPopup.tsx`).
+   *
+   * The six captions are upstream's own defaults, which it keeps as attributes
+   * on its popup template (`[ST] public/index.html:6455`) for its i18n to
+   * translate — so translating them here is what upstream does, not an
+   * embellishment. Which caption a control falls back to is decided frame-side
+   * in `sandbox/popup.ts`; this is only the wording.
+   */
+  popupCardAsks: 'A card is asking',
+  popupOk: 'OK',
+  popupYes: 'Yes',
+  popupNo: 'No',
+  popupCancel: 'Cancel',
+  popupSave: 'Save',
+  popupCrop: 'Crop',
+  popupMarkupRefused: 'This card’s formatting was refused, so its words are shown as plain text.',
+
   /** Error copy (`describeError`) and the store's own notices. */
   errNotFound: 'That is not there any more. The sidebar may be out of date — reload to catch up.',
   errInvalidRequest: 'Iris would not send that.',
@@ -1822,6 +1840,23 @@ export const zh: Record<StringKey, string> = {
   cleanupDoNotRemind: '不再提醒',
   cleanupCounts: '第 {from} 到 {to} 条消息中，有 {layers} 条仍保留旧变量（文件中共 {lines} 行）。',
   cleanupDeferNote: '不做选择直接关闭，下次还会询问——这不算拒绝。',
+
+  /**
+   * 卡片自己的弹窗（`CardPopup.tsx`）。
+   *
+   * 六个默认按钮文案取自上游 popup 模板上的属性（`[ST]
+   * public/index.html:6455`）——上游本来就把它们交给自己的 i18n 翻译，
+   * 所以这里翻译它们是照抄机制，不是加戏。哪个控件回落到哪个文案由帧侧的
+   * `sandbox/popup.ts` 决定，这里只管措辞。
+   */
+  popupCardAsks: '卡片正在询问',
+  popupOk: '确定',
+  popupYes: '是',
+  popupNo: '否',
+  popupCancel: '取消',
+  popupSave: '保存',
+  popupCrop: '裁剪',
+  popupMarkupRefused: '这张卡片的格式被拒绝了，因此只显示它的文字。',
 
   /** 错误文案与仓库自己的通知。 */
   errNotFound: '它已经不在了。侧栏可能过期了——刷新页面即可跟上。',

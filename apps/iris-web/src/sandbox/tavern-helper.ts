@@ -617,6 +617,81 @@ export function restoreFloorTables(
 }
 
 /**
+ * The key upstream writes at `chat[1].variables[0]` when its one-time variable
+ * cleanup has been answered ([MVU] `cleanup/legacy_chat.ts:27-33`).
+ *
+ * Copied rather than invented, for the same reason the host copies it
+ * (`packages/iris-app-service/src/prune.ts`): a chat carried between the two
+ * applications has to keep its answer.
+ */
+export const IGNORE_CLEANUP_KEY = 'ignore_cleanup'
+
+/**
+ * Tell a card's MagVarUpdate that this chat's legacy cleanup is already
+ * answered, so it never raises its own offer.
+ *
+ * **This exists because Iris already ports that whole path natively, and the
+ * two were running in parallel.** The host raises the same offer on
+ * `chat.open` — the same four gates, the same three buttons, upstream's own
+ * labels and order (`app/CleanupOffer.tsx`, `notes/apps/iris-web/DEVIATIONS.md`
+ * 17) — and it is the copy with an implementation behind it: it sweeps the chat
+ * file, it exports a real backup, and it persists the refusal. MVU's in-frame
+ * copy can do none of those three here, and each failure is measured rather
+ * than assumed:
+ *
+ * - its sweep writes `chat[i].variables` on the **snapshot**, and `saveChat()`
+ *   carries no rows (`frame.ts`: `callAction('saveChat', {})`), so the deletion
+ *   is discarded at the next context push;
+ * - its "back up and clean" POSTs to `/api/chats/export`, which Iris refuses
+ *   (DEVIATIONS 19) — so the branch toasts an export failure and returns
+ *   without cleaning;
+ * - its "do not remind me again" writes `_.set(SillyTavern.chat, [1,
+ *   'variables', 0, 'ignore_cleanup'], true)` on that same snapshot, so it does
+ *   not even achieve upstream's permanent refusal.
+ *
+ * Two dialogs asking one question, one of which cannot carry out any of its
+ * three answers, is worse than either alone — so this closes upstream's own
+ * fourth gate instead. It is upstream's vocabulary, and in Iris it is **true**:
+ * the question has an answer path, and it is not the card's.
+ *
+ * **Non-enumerable, and that is the load-bearing detail.** A card that reads
+ * floor 1's table and writes it back through `replaceVariables({type:
+ * 'message', message_id: 1})` would otherwise persist this fabricated key into
+ * the real chat file and silently disable the host's offer forever — and MVU's
+ * restore path does write floors from `snapshot + 1` upward, which can be
+ * floor 1. `JSON.stringify`, object spread, `Object.keys` and structured clone
+ * all skip a non-enumerable property, while `_.has`, `hasOwnProperty` and `in`
+ * — which is what the gate uses — all see it. So the mark is visible exactly
+ * where it is read and invisible everywhere it could escape.
+ *
+ * **The cost.** Floor 1's tables are parsed eagerly, once per snapshot, which
+ * is the one row `restoreFloorTables` would otherwise have left lazy. Measured
+ * at 0.01 ms per floor against the 7.75 ms the laziness exists to avoid for a
+ * 677-row chat.
+ * @param chat - the snapshot's chat array, mutated in place.
+ */
+export function sealLegacyCleanup(chat: readonly ScriptChatMessage[]): void {
+  const floor = chat[1]
+  if (floor === undefined) return
+  const tables = floor['variables']
+  if (!Array.isArray(tables)) return
+  const first: unknown = tables[0]
+  if (typeof first !== 'object' || first === null) return
+  /*
+   * Already there is left alone: the chat may genuinely carry upstream's key
+   * because someone answered "do not remind me again" in SillyTavern, and
+   * redefining it would be a write over the user's real answer.
+   */
+  if (Object.prototype.hasOwnProperty.call(first, IGNORE_CLEANUP_KEY)) return
+  Object.defineProperty(first, IGNORE_CLEANUP_KEY, {
+    value: true,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  })
+}
+
+/**
  * Normalise a floor's per-swipe variables to one table per swipe.
  *
  * The data is already in the snapshot — the same position upstream keeps it — so

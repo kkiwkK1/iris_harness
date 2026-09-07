@@ -4063,3 +4063,288 @@ test('a script that starts before the publisher never gets the name, not even la
     'the name was backfilled after the fact, which is more than upstream gives',
   )
 })
+
+/*
+ * The popup API on the card surface.
+ *
+ * The measured crash: MagVarUpdate's bundle opens its one-time variable cleanup
+ * with `SillyTavern.callGenericPopup(text, SillyTavern.POPUP_TYPE.CONFIRM, …)`
+ * on every chat past 25 messages, and this surface carried none of the five
+ * names — so `SillyTavern.POPUP_TYPE` read `undefined` and `.CONFIRM` threw
+ * inside a `jQuery(async …)` as an unhandled rejection. Reported by a user on a
+ * real 26-message chat, 2026-09-08.
+ */
+
+test('the five popup names are on the surface, through both entry points', () => {
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  /*
+   * **Read inside the body, asserted outside it**, and this shape was bought
+   * with a teeth check. Written the obvious way — `assert` inside the
+   * `evaluate` body — deleting `POPUP_TYPE` from the surface did **not** turn
+   * this test red: the read `types['CONFIRM']` throws a `TypeError` before any
+   * assertion runs, and a TypeError raised in a card body is caught by the
+   * frame's own try/catch and posted as a card error, which is correct in
+   * production and fatal to a test. `evaluate` re-throws `AssertionError` only.
+   *
+   * So the body collects, with optional chaining so nothing throws, and every
+   * judgement is made out here where a failure has nowhere to be swallowed.
+   */
+  const seen: Record<string, unknown> = {}
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    const viaContext = (bare['getContext'] as () => Record<string, unknown>)()
+
+    for (const name of ['callGenericPopup', 'callPopup', 'Popup']) {
+      seen[`bare:${name}`] = typeof bare[name]
+      seen[`ctx:${name}`] = typeof viaContext[name]
+    }
+    for (const name of ['callGenericPopup', 'callPopup', 'Popup', 'POPUP_TYPE', 'POPUP_RESULT']) {
+      seen[`in:${name}`] = name in bare
+    }
+    /*
+     * **The enums, read the way the crash read them.** The failing expression
+     * was `SillyTavern.POPUP_TYPE.CONFIRM` — a member read off a member — so
+     * recording only that `POPUP_TYPE` is an object would not describe it.
+     */
+    const types = bare['POPUP_TYPE'] as Record<string, unknown> | undefined
+    const results = bare['POPUP_RESULT'] as Record<string, unknown> | undefined
+    seen['CONFIRM'] = types?.['CONFIRM']
+    seen['AFFIRMATIVE'] = results?.['AFFIRMATIVE']
+    seen['NEGATIVE'] = results?.['NEGATIVE']
+    seen['CANCELLED'] = results?.['CANCELLED']
+    seen['CUSTOM1'] = results?.['CUSTOM1']
+  })
+
+  for (const name of ['callGenericPopup', 'callPopup', 'Popup']) {
+    assert.equal(seen[`bare:${name}`], 'function', `${name} missing from the facade`)
+    assert.equal(seen[`ctx:${name}`], 'function', `${name} missing from getContext()`)
+  }
+  // `get` and `in` have to agree: a card feature-testing with `in` would
+  // otherwise be told no about a member it can call.
+  for (const name of ['callGenericPopup', 'callPopup', 'Popup', 'POPUP_TYPE', 'POPUP_RESULT']) {
+    assert.equal(seen[`in:${name}`], true, `${name} answers a read but not an \`in\` probe`)
+  }
+  assert.equal(seen['CONFIRM'], 2, 'the member the reported crash read')
+  assert.equal(seen['AFFIRMATIVE'], 1)
+  assert.equal(seen['NEGATIVE'], 0)
+  assert.equal(seen['CANCELLED'], null, 'a dismissal is null, which MVU compares against')
+  assert.equal(seen['CUSTOM1'], 1001)
+})
+
+test('callGenericPopup posts a plan and resolves with the reader’s answer', async () => {
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  let answered: unknown = 'not settled'
+  evaluate(scope, globals => {
+    const st = globals['SillyTavern'] as Record<string, unknown>
+    const call = st['callGenericPopup'] as (
+      content: unknown, type: unknown, input: unknown, options: unknown,
+    ) => Promise<unknown>
+    void call('清理旧变量？', 2, '', {
+      okButton: '仅清理',
+      cancelButton: '不再提醒',
+      customButtons: ['备份并清理'],
+    }).then(value => {
+      answered = value
+    })
+  })
+
+  const asked = scope.posted.find(message => message.type === 'popup')
+  assert.ok(asked?.type === 'popup', 'the frame never asked the shell')
+  assert.equal(asked.plan.kind, 2)
+  assert.deepEqual(
+    asked.plan.buttons.map(button => button.text),
+    ['备份并清理', '仅清理', '不再提醒'],
+  )
+
+  // The reader pressed the leading custom button, which is MVU's "back up and
+  // clean" and carries result 2 — the value its branch tests for.
+  scope.send({ iris: 'tok', type: 'popup:answer', id: asked.id, closed: true, result: 2 })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(answered, 2, 'a CONFIRM resolves with the result itself')
+})
+
+test('an INPUT popup resolves with the text, and a dismissal with null', async () => {
+  // Upstream's value rule ([ST] popup.js:755-758) is the frame's, not the
+  // shell's: the shell reports a result and the text, and this side decides
+  // which of them the promise carries.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  const settled: unknown[] = []
+  evaluate(scope, globals => {
+    const st = globals['SillyTavern'] as Record<string, unknown>
+    const call = st['callGenericPopup'] as (
+      content: unknown, type: unknown, input: unknown, options: unknown,
+    ) => Promise<unknown>
+    void call('Name it', 3, 'draft', {}).then(value => settled.push(value))
+    void call('Name it', 3, 'draft', {}).then(value => settled.push(value))
+  })
+
+  const asked = scope.posted.filter(message => message.type === 'popup')
+  assert.equal(asked.length, 2, 'two popups, two ids')
+  const first = asked[0]
+  const second = asked[1]
+  assert.ok(first?.type === 'popup' && second?.type === 'popup')
+  assert.notEqual(first.id, second.id, 'two popups sharing an id would answer each other')
+
+  scope.send({ iris: 'tok', type: 'popup:answer', id: first.id, closed: true, result: 1, input: 'typed' })
+  scope.send({ iris: 'tok', type: 'popup:answer', id: second.id, closed: true, result: null, input: 'typed' })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(settled, ['typed', null])
+})
+
+test('a non-closing custom button runs its action and leaves the popup open', async () => {
+  /*
+   * [ST] popup.js:69 — a custom button with no `result` does not close the
+   * popup — and :317-319, where its `action` is a plain click listener. The
+   * action cannot cross a `postMessage`, so it stays frame-side and the plan
+   * carries the button's declaration index to find it again.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  const acted: string[] = []
+  let settled = false
+  evaluate(scope, globals => {
+    const st = globals['SillyTavern'] as Record<string, unknown>
+    const call = st['callGenericPopup'] as (
+      content: unknown, type: unknown, input: unknown, options: unknown,
+    ) => Promise<unknown>
+    void call('pick one', 2, '', {
+      customButtons: [
+        { text: 'Copy', action: () => acted.push('copy') },
+        { text: 'Use', result: 5 },
+      ],
+    }).then(() => {
+      settled = true
+    })
+  })
+
+  const asked = scope.posted.find(message => message.type === 'popup')
+  assert.ok(asked?.type === 'popup')
+  assert.equal(asked.plan.buttons[0]?.result, undefined, 'the copy button must not close it')
+
+  scope.send({ iris: 'tok', type: 'popup:answer', id: asked.id, closed: false, result: 0, button: 0 })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(acted, ['copy'], 'the card’s own action never ran')
+  assert.equal(settled, false, 'a button with no result must not resolve the promise')
+
+  scope.send({ iris: 'tok', type: 'popup:answer', id: asked.id, closed: true, result: 5, button: 1 })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(settled, true)
+})
+
+test('callPopup keeps its own deprecated contract rather than borrowing the new one', async () => {
+  /*
+   * [ST] `public/script.js:9007` and `:11312-11341`: a **string** type, and it
+   * resolves `true`/`false` — the input's text for `'input'`. Aliasing it onto
+   * `callGenericPopup` would hand a card `1` where it tests `=== true`, which
+   * passes a truthiness check and fails an equality one.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  const settled: unknown[] = []
+  evaluate(scope, globals => {
+    const st = globals['SillyTavern'] as Record<string, unknown>
+    const call = st['callPopup'] as (
+      text: unknown, type: unknown, input?: unknown, options?: unknown,
+    ) => Promise<unknown>
+    void call('sure?', 'confirm').then(value => settled.push(value))
+    void call('sure?', 'confirm').then(value => settled.push(value))
+    void call('name it', 'input', 'draft').then(value => settled.push(value))
+  })
+
+  const asked = scope.posted.flatMap(message => (message.type === 'popup' ? [message] : []))
+  assert.equal(asked.length, 3)
+  scope.send({ iris: 'tok', type: 'popup:answer', id: asked[0]?.id ?? '', closed: true, result: 1 })
+  scope.send({ iris: 'tok', type: 'popup:answer', id: asked[1]?.id ?? '', closed: true, result: null })
+  scope.send({ iris: 'tok', type: 'popup:answer', id: asked[2]?.id ?? '', closed: true, result: 1, input: 'typed' })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(settled, [true, false, 'typed'], 'booleans, not POPUP_RESULT numbers')
+})
+
+test('Popup.show.confirm and .input build upstream’s content and return types', async () => {
+  // [ST] popup.js:99-145 with `PopupUtils.BuildTextWithHeader` (:888-898): the
+  // header becomes an `<h3>` above the text, and `input` turns every falsy
+  // value except the empty string into `null`.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  const settled: unknown[] = []
+  evaluate(scope, globals => {
+    const st = globals['SillyTavern'] as Record<string, unknown>
+    const popup = st['Popup'] as {
+      show: {
+        confirm: (header: unknown, text?: unknown) => Promise<unknown>
+        input: (header: unknown, text?: unknown, value?: unknown) => Promise<unknown>
+      }
+    }
+    void popup.show.confirm('Delete it?', 'This cannot be undone.').then(value => settled.push(value))
+    void popup.show.input('Name it', undefined, 'draft').then(value => settled.push(value))
+  })
+
+  const asked = scope.posted.flatMap(message => (message.type === 'popup' ? [message] : []))
+  assert.equal(asked.length, 2)
+  assert.match(asked[0]?.plan.content ?? '', /^<h3>Delete it\?<\/h3>/)
+  assert.match(asked[0]?.plan.content ?? '', /This cannot be undone\./)
+  assert.equal(asked[0]?.plan.kind, 2)
+  assert.equal(asked[1]?.plan.kind, 3)
+  assert.equal(asked[1]?.plan.inputValue, 'draft')
+
+  scope.send({ iris: 'tok', type: 'popup:answer', id: asked[0]?.id ?? '', closed: true, result: 0 })
+  scope.send({ iris: 'tok', type: 'popup:answer', id: asked[1]?.id ?? '', closed: true, result: 0, input: 'x' })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(settled, [0, null], 'confirm yields the result; input turns false into null')
+})
+
+test('a card closing its own popup tells the shell, so no modal is orphaned', async () => {
+  // `popup.complete()` resolves the card's promise frame-side. Without the
+  // withdrawal message the shell would hold a modal nobody is waiting for,
+  // which for the reader means a dialog whose every answer goes nowhere.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  let settled: unknown = 'not settled'
+  evaluate(scope, globals => {
+    const st = globals['SillyTavern'] as Record<string, unknown>
+    const Popup = st['Popup'] as new (
+      content: unknown, type: unknown, input?: unknown, options?: unknown,
+    ) => { show: () => Promise<unknown>, completeNegative: () => Promise<unknown> }
+    const popup = new Popup('waiting', 2, '', {})
+    void popup.show().then(value => {
+      settled = value
+    })
+    void popup.completeNegative()
+  })
+
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(settled, 0, 'complete() resolves the card’s own promise')
+  const done = scope.posted.find(message => message.type === 'popup:done')
+  assert.ok(done?.type === 'popup:done', 'the shell was never told to take it down')
+})
+
+test('an option this surface ignores is reported by name, once', () => {
+  // A dialog that behaves differently from upstream's with nothing on the
+  // record is the failure this whole surface keeps choosing against. `onClosing`
+  // is a close **veto** that cannot be honoured across the boundary.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    const st = globals['SillyTavern'] as Record<string, unknown>
+    const call = st['callGenericPopup'] as (
+      content: unknown, type: unknown, input: unknown, options: unknown,
+    ) => Promise<unknown>
+    void call('x', 2, '', { onClosing: () => false })
+  })
+
+  const notes = scope.posted.flatMap(message =>
+    message.type === 'note' && message.message.includes('does not honour') ? [message.message] : [])
+  assert.equal(notes.length, 1, 'the dropped option was not reported exactly once')
+  assert.match(notes[0] ?? '', /onClosing/)
+})
