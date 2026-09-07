@@ -193,6 +193,29 @@ async function lines(dir: string, chatId: string): Promise<SillyTavernMessage[]>
   return parseChatFile(text).messages
 }
 
+/**
+ * The cost half of a line's stored entries, with the request fingerprint
+ * checked off and taken out of the way.
+ *
+ * Each entry is **one object holding two records** — what the provider charged,
+ * and which body it charged for (`../src/fingerprint.ts`). The tests below are
+ * about the costs and about the *positional* shape of the array, so the hashes
+ * are asserted here once, by shape, and removed; what is then compared is still
+ * an exact `deepEqual`, so a stray field nobody meant to write still fails.
+ * @param stored - the value the file's usage key holds.
+ * @returns one usage object per swipe, `null` where that swipe reported nothing.
+ */
+function costs(stored: unknown): (TurnUsage | null)[] {
+  assert.ok(Array.isArray(stored), 'the line carries no usage array')
+  return stored.map((entry) => {
+    if (entry === null || entry === undefined) return null
+    const { promptHash, prefixHash, ...usage } = entry as Record<string, unknown>
+    assert.match(String(promptHash), /^[0-9a-f]{16}$/, 'a recorded cost carries no prompt hash')
+    assert.match(String(prefixHash), /^[0-9a-f]{16}$/, 'a recorded cost carries no prefix hash')
+    return usage as unknown as TurnUsage
+  })
+}
+
 const CACHED: TurnUsage = {
   inputTokens: 232,
   outputTokens: 50,
@@ -318,7 +341,7 @@ test('every swipe is on the file, so the total survives a restart too', async (t
   assert.ok(reply !== undefined && reply.is_user === false, 'the reply is the third line')
   // One entry per swipe, in swipe order — the same positional shape this file
   // format already uses for per-swipe variable tables.
-  assert.deepEqual(reply[USAGE_FIELD], [first, second])
+  assert.deepEqual(costs(reply[USAGE_FIELD]), [first, second])
   assert.equal((reply['swipes'] as string[]).length, 2, 'the array is as wide as the swipe list')
 
   const restarted = await open(fix.dir, [])
@@ -341,7 +364,7 @@ test('a swipe that reported nothing keeps its place in the array without becomin
   await regenerate(fix, chatId)
 
   const stored = await lines(fix.dir, chatId)
-  assert.deepEqual(stored[2]?.[USAGE_FIELD], [paid, null, third])
+  assert.deepEqual(costs(stored[2]?.[USAGE_FIELD]), [paid, null, third])
 
   const restarted = await open(fix.dir, [])
   const { view } = await restarted.handlers['chat.open']({ chatId })
@@ -370,7 +393,7 @@ test('a regenerate after a swipe back bills the new reading, not the one selecte
   await regenerate(fix, chatId)
 
   const stored = await lines(fix.dir, chatId)
-  assert.deepEqual(stored[2]?.[USAGE_FIELD], [first, second, third])
+  assert.deepEqual(costs(stored[2]?.[USAGE_FIELD]), [first, second, third])
   // And the conversation total is all three, once each.
   const restarted = await open(fix.dir, [])
   const { view } = await restarted.handlers['chat.open']({ chatId })

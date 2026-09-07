@@ -217,3 +217,46 @@ test('on real data, one world-info entry is most of the prompt', {
     `expected world info to dominate, got ${biggest.id} at ${String(Math.round(share * 100))}%`,
   )
 })
+
+test('a marker slot that had nothing to put in it appears as a zero, not as an absence', async (t) => {
+  const fix = await fixture(t)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId: created.view.chatId })
+
+  // This chat has no world book at all, so `worldInfoBefore` fired nothing.
+  // `itemize` promises that a part which contributed nothing "still appears
+  // with a zero — a user looking for why a section is missing is better served
+  // by a zero than by an absence", and the missing row was the exact question
+  // the panel gets opened to answer.
+  const ids = itemization.entries.map(entry => entry.id)
+  for (const slot of ['worldInfoBefore', 'worldInfoAfter', 'personaDescription', 'charPersonality', 'scenario']) {
+    const row = itemization.entries.find(entry => entry.id === slot)
+    assert.ok(row !== undefined, `no ${slot} row among ${ids.join(', ')}`)
+    assert.equal(row.tokens, 0, `${slot} is not empty on this chat`)
+    assert.equal(row.kind, 'system')
+  }
+
+  // A zero row is a row and nothing else: it contributes no text, so the
+  // arithmetic the panel shows is unchanged.
+  const summed = itemization.entries.reduce((total, entry) => total + entry.tokens, 0)
+  assert.equal(summed, itemization.tokens)
+
+  // One row per slot, not one per read: the walk must not append a second copy.
+  assert.equal(ids.filter(id => id === 'worldInfoBefore').length, 1)
+})
+
+test('a slot this generation never offered is not zeroed', async (t) => {
+  const fix = await fixture(t)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId: created.view.chatId })
+
+  // `dialogueExamples` is a marker the default preset orders and this card
+  // leaves empty, so it is zeroed like the rest — but `nsfw` and
+  // `enhanceDefinitions` are not in this preset's list at all, and a row for
+  // them would claim a slot the generation never had.
+  assert.ok(itemization.entries.some(entry => entry.id === 'dialogueExamples'))
+  assert.equal(itemization.entries.some(entry => entry.id === 'nsfw'), false)
+  assert.equal(itemization.entries.some(entry => entry.id === 'enhanceDefinitions'), false)
+})

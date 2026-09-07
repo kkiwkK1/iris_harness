@@ -408,3 +408,52 @@ test('continue_postfix spells the boundary on the announce, the request and the 
     'A reply.\n\nAnd the scene goes on.',
   )
 })
+
+test('a reroll does not feed the reply it is replacing back to the model', async (t) => {
+  const fixed = await fixture(t, { replies: ['FIRST-READING.', 'SECOND-READING.'] })
+  const chatId = (await fixed.handlers['chat.create']({ characterId: 'aria' })).view.chatId
+
+  await fixed.handlers['chat.send']({ chatId, text: 'Hello?' })
+  await fixed.settled()
+  await fixed.handlers['chat.regenerate']({ chatId })
+  await fixed.settled()
+
+  // Upstream drops it on both paths — `chat.length = chat.length - 1` before a
+  // regenerate's prompt is built (script.js:4347) and `coreChat.pop()` for a
+  // swipe (:4438-4440). Iris fed it back, so the model was shown its own
+  // previous answer and asked for a different one.
+  const reroll = fixed.seen[fixed.seen.length - 1]
+  assert.equal(whole(reroll).includes('FIRST-READING.'), false,
+    'the reroll carried the reply it was replacing')
+  assert.equal(textsOf(reroll).includes('Hello?'), true, 'the reroll lost the user line it answers')
+
+  // The dropped reading is not deleted — it is still a swipe, which is what
+  // keeps its per-candidate records (`iris_usage`, the variable table)
+  // addressable. Upstream's regenerate really does splice it off `chat`; here
+  // it survives as an alternate, and only the prompt leaves it out.
+  const view = (await fixed.handlers['chat.open']({ chatId })).view
+  const last = view.messages[view.messages.length - 1]
+  assert.equal(last?.text, 'SECOND-READING.')
+  assert.deepEqual(last?.swipes, { count: 2, index: 1 })
+  const entry = await fixed.chats.open(chatId)
+  const line = entry.toFile().messages.at(-1) as { swipes?: string[] }
+  assert.deepEqual(line.swipes, ['FIRST-READING.', 'SECOND-READING.'])
+})
+
+test('the next send after a reroll carries the whole conversation again', async (t) => {
+  const fixed = await fixture(t, { replies: ['FIRST-READING.', 'SECOND-READING.', 'THIRD.'] })
+  const chatId = (await fixed.handlers['chat.create']({ characterId: 'aria' })).view.chatId
+
+  await fixed.handlers['chat.send']({ chatId, text: 'Hello?' })
+  await fixed.settled()
+  await fixed.handlers['chat.regenerate']({ chatId })
+  await fixed.settled()
+  await fixed.handlers['chat.send']({ chatId, text: 'And then?' })
+  await fixed.settled()
+
+  // The projection belongs to the generation, not to the chat: the reply the
+  // reroll produced is ordinary history for every request after it.
+  const next = fixed.seen[fixed.seen.length - 1]
+  assert.equal(whole(next).includes('SECOND-READING.'), true, 'the reroll’s own reply went missing')
+  assert.equal(whole(next).includes('FIRST-READING.'), false, 'the swiped-away reading came back')
+})

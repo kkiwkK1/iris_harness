@@ -17,6 +17,7 @@ import { listCandidates, selectedCandidate } from '@iris/chat'
 import type { ChatView, MessageView, TurnUsage } from '@iris/protocol'
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 
+import type { PromptFingerprint } from './fingerprint.ts'
 import { runScripts } from './regex.ts'
 import { conversationUsage, usageBySeq } from './usage.ts'
 
@@ -43,6 +44,16 @@ export interface PendingTurn {
    * facts, and the whole point of this figure is that it is the exact one.
    */
   usage?: TurnUsage
+  /**
+   * Which request this generation sent (`./fingerprint.ts`), parked here for
+   * the same reason `usage` is: it is known before the candidate it belongs to
+   * exists.
+   *
+   * **Never projected onto a message.** `MessageView` carries no hashes — the
+   * protocol is unchanged by this record — and a reader meets them on the
+   * report line each generation emits, or in the chat file beside the cost.
+   */
+  fingerprint?: PromptFingerprint
 }
 
 /** Plain text of a message's content blocks. */

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { renderSystem, type Contribution } from '@iris/pipeline'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
@@ -386,4 +387,93 @@ test('a run this chat never saw is named, without reading its shape', async (t) 
   // The real run is untouched by a stranger's end.
   const entry = await fixed.chats.open(fixed.chatId)
   assert.equal(entry.extensionPrompts.has('a'), true, 'a mismatched end cleared a live injection')
+})
+
+/**
+ * A preset's system sections, ten apart, the way `resolvePreset` numbers them.
+ * @param mainOrder - where `main` sits in the list.
+ * @returns three sections, `main` in the middle.
+ */
+function presetSections(mainOrder = 20): Contribution[] {
+  return [
+    { id: 'nsfw', placement: { kind: 'system', order: mainOrder - 10 }, text: 'FIRST-SECTION' },
+    { id: 'main', placement: { kind: 'system', order: mainOrder }, text: 'MAIN-PROMPT' },
+    { id: 'jailbreak', placement: { kind: 'system', order: mainOrder + 10 }, text: 'LAST-SECTION' },
+  ]
+}
+
+test('a before/after injection is anchored to the preset’s main prompt, not to the end of the block', async (t) => {
+  const fixed = await fixture(t)
+
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'ahead', value: 'AHEAD-OF-MAIN', position: 'before', depth: 0, runId: RUN,
+  })
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'behind', value: 'BEHIND-MAIN', position: 'after', depth: 0, runId: RUN,
+  })
+
+  const entry = await fixed.chats.open(fixed.chatId)
+  const preset = presetSections()
+  const injected = injectedContributions(entry, preset)
+
+  // Upstream's `before` is `getPromptPosition(BEFORE_PROMPT) === 'start'`
+  // (`openai.js:1131-1140`), and the only consumer of that word is
+  // `injectToMain` → `chatCompletion.insert(message, 'main', 'start')`, which
+  // unshifts the message into the **main prompt's own collection**
+  // (`openai.js:1256-1300`, `:3940-3960`). So the text sits immediately before
+  // the main prompt and `after` immediately behind it — both near the TOP of a
+  // default order, not after every preset section.
+  assert.deepEqual(
+    injected.map(item => [item.id, (item.placement as { order: number }).order]),
+    [['script.ahead', 19], ['script.behind', 21]],
+  )
+
+  // The claim in the form a reader can check: the rendered system prompt.
+  assert.equal(
+    renderSystem([...preset, ...injected]),
+    ['FIRST-SECTION', 'AHEAD-OF-MAIN', 'MAIN-PROMPT', 'BEHIND-MAIN', 'LAST-SECTION'].join('\n\n'),
+  )
+})
+
+test('a main prompt the preset moved into the conversation takes its injections with it', async (t) => {
+  const fixed = await fixture(t)
+
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'ahead', value: 'AHEAD-OF-MAIN', position: 'before', depth: 0, runId: RUN,
+  })
+
+  // `injection_position: 'absolute'` on `main` — the `else` branch of
+  // `injectToMain`, which copies main's depth, role and order onto the
+  // injection rather than leaving it in the system block on its own.
+  const entry = await fixed.chats.open(fixed.chatId)
+  const preset: Contribution[] = [
+    { id: 'main', placement: { kind: 'depth', depth: 4, role: 'user', order: 7 }, text: 'MAIN-PROMPT' },
+  ]
+
+  assert.deepEqual(injectedContributions(entry, preset)[0]?.placement, {
+    kind: 'depth', depth: 4, role: 'user', order: 6,
+  })
+})
+
+test('with no main prompt the injection keeps the end of the system block rather than vanishing', async (t) => {
+  const fixed = await fixture(t)
+
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'ahead', value: 'AHEAD-OF-MAIN', position: 'before', depth: 0, runId: RUN,
+  })
+  await fixed.handlers['script.setExtensionPrompt']({
+    chatId: fixed.chatId, key: 'behind', value: 'BEHIND-MAIN', position: 'after', depth: 0, runId: RUN,
+  })
+
+  // Upstream loses both of these: `injectToMain` finds no main message and no
+  // absolute main prompt, and returns. **A documented divergence** — deleting a
+  // card's text is the one outcome the prompt panel cannot explain, so the old
+  // ends of the system block are kept for a preset that has no main section.
+  const entry = await fixed.chats.open(fixed.chatId)
+  assert.deepEqual(
+    injectedContributions(entry, [
+      { id: 'nsfw', placement: { kind: 'system', order: 10 }, text: 'FIRST-SECTION' },
+    ]).map(item => (item.placement as { order: number }).order),
+    [850, 950],
+  )
 })

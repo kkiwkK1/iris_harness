@@ -215,12 +215,21 @@ test('no persona changes nothing: the marker stays empty and {{persona}} expands
   const withEmpty = assemble({ description: '', position: 'inprompt', depth: 2, role: 'system' })
 
   for (const { contributions } of [bare, withEmpty]) {
-    const system = contributions.filter(item => item.placement.kind === 'system').map(item => item.text).join('\n')
+    // Empty contributions are dropped before the join, which is what
+    // `renderSystem` does with them (`@iris/pipeline`): a slot that rendered
+    // nothing is offered as a zero-token row so the itemization can show it,
+    // and must not put a blank paragraph in the prompt.
+    const system = contributions
+      .filter(item => item.placement.kind === 'system')
+      .map(item => item.text)
+      .filter(text => text.length > 0)
+      .join('\n')
     assert.doesNotMatch(system, /hooded/)
     assert.match(system, /User is: $/, 'the {{persona}} macro expanded to the empty string it always was')
-    // The marker slot itself contributed nothing — no persona-specific
-    // contribution exists at all.
+    // The `personaDescription` slot is offered and empty; what must not exist
+    // is a persona-specific contribution of any kind.
     assert.equal(contributions.some(item => item.id === 'persona.depthPrompt'), false)
+    assert.equal(contributions.find(item => item.id === 'personaDescription')?.text, '')
   }
 })
 
