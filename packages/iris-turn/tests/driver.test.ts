@@ -170,10 +170,13 @@ test('continueTurn rejoins the continued reading and keeps its siblings', async 
   assert.equal(session.events.some(event => event.type === 'turn/start' && event.data.turn === 1), false)
 
   // The nudge is the request's LAST message — after the depth-0 injection,
-  // which is where depth 0 lands by convention.
+  // which is where depth 0 lands by convention — and its role is untouched by
+  // the impersonation fix: the continue's own path, unchanged.
   const texts = seen[1]?.messages.map(message =>
     message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
+  const continueTail = seen[1]?.messages.at(-1)
   assert.equal(texts.at(-1), 'carry the scene on')
+  assert.equal(continueTail?.role, 'user', 'the continue nudge changed role')
 })
 
 test('continueTurn without a nudge still closes on the conversation', async () => {
@@ -189,7 +192,7 @@ test('continueTurn refuses a log whose newest turn has no reply', async () => {
   await assert.rejects(() => driver.continueTurn(session), TurnError)
 })
 
-test('impersonate records a user line, no reply, and the instruction last', async () => {
+test('impersonate records a user line, no reply, and the instruction last as a system message', async () => {
   const { driver, session, seen } = harness(['The maps are in the vault.', 'I will look for it myself.'])
   await driver.send(session, 'Where are the maps?')
 
@@ -201,6 +204,16 @@ test('impersonate records a user line, no reply, and the instruction last', asyn
   // instruction closed the request.
   assert.equal(texts.includes('I will look for it myself.'), false, 'the generated line was in its own context')
   assert.equal(texts.at(-1), 'write as the traveller')
+
+  // The instruction's ROLE is its authority, and it is upstream's: the
+  // impersonation prompt is built role system (`openai.js:1373`) and appended
+  // after the whole chat history with the control prompts (`:1213-1216`), so
+  // the model reads a direction rather than a user turn to talk past. Delivered
+  // as a user line on an assistant-ended conversation, a strong preset reads it
+  // as license to continue the character's last floor — the copy-the-reply bug
+  // this pins shut.
+  const tail = seen[1]?.messages.at(-1)
+  assert.equal(tail?.role, 'system', 'the impersonation instruction did not ride as a system message')
 
   // It settled as a user line opening its own turn, with no reply after it.
   assert.equal(text, 'I will look for it myself.')
