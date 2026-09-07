@@ -44,7 +44,7 @@ import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, 
 import { scriptsOf } from './regex.ts'
 import { parseFingerprint, type PromptFingerprint } from './fingerprint.ts'
 import { fingerprintBySeq, parseUsage, usageBySeq, usageFieldOf, USAGE_FIELD } from './usage.ts'
-import { projectMessages, textOf, toChatView, type Names, type PendingTurn } from './views.ts'
+import { projectMessages, textOf, toChatView, type Names, type PendingTurn, type UsageRoute } from './views.ts'
 
 /**
  * One generation's per-candidate record, as the log holds it and the file
@@ -1032,6 +1032,24 @@ export class ChatEntry {
   }
 
   /**
+   * Hold which route this generation went out on, and when, until there is a
+   * candidate to hang it on.
+   *
+   * The third field parked on `pending` under the same guard as the two above,
+   * and noted at the same site as the fingerprint because that is the one place
+   * the composed request is in hand. Without it a stored cost names neither a
+   * model nor a moment, which is exactly the state the 12 records in the real
+   * corpus are in: their tokens can be added up and nothing can be said about
+   * *what* spent them or *when*.
+   * @param turn - the turn the request was assembled for.
+   * @param route - the model, the provider, and the moment the request went out.
+   */
+  noteRoute(turn: number, route: UsageRoute): void {
+    if (this.pending === undefined || this.pending.turn !== turn) return
+    this.pending.route = route
+  }
+
+  /**
    * Attach a generation's cost to the candidate it produced.
    *
    * **The newest candidate of the turn, not the selected one.** A generation
@@ -1051,6 +1069,15 @@ export class ChatEntry {
    * together (a prefix hash beside a cache figure), and half of it persisted
    * alone would answer nothing while looking like an answer. The report line
    * this generation emitted still carries both.
+   *
+   * **The route is merged onto the usage object, not stored beside it.** The
+   * model, the provider and the moment go where the buckets go — see
+   * `USAGE_FIELD` for the measurement that decided a chat file may carry one
+   * object per swipe and not two parallel arrays — which is also what carries
+   * them through the log rebuild and out to `MessageView.usage` for free. The
+   * merge is under the noted route, not over it: a caller that passed a usage
+   * already naming its own model is describing a generation it knows more about
+   * than `pending` does.
    * @param turn - the turn that just settled.
    * @param usage - what it cost; the noted value when absent.
    * @returns whether a record was appended.
@@ -1064,9 +1091,10 @@ export class ChatEntry {
     // dropped rather than parked on a neighbouring reply.
     if (candidate === undefined) return false
     const fingerprint = this.pending?.turn === turn ? this.pending.fingerprint : undefined
+    const route = this.pending?.turn === turn ? this.pending.route : undefined
     this.session.append('iris/usage', {
       candidateSeq: candidate.seq,
-      usage,
+      usage: route === undefined ? usage : { ...route, ...usage },
       ...fingerprint === undefined ? {} : { fingerprint },
     })
     return true

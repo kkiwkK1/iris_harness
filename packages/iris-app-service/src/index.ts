@@ -701,6 +701,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.delete', handlers['chat.delete']),
       ctx.irisRpc.register('chat.rename', handlers['chat.rename']),
       ctx.irisRpc.register('chat.search', handlers['chat.search']),
+      // Beside `chat.search` because it is the same file scan; it is not a
+      // `chat.` method because it is not about a chat — it answers across every
+      // conversation in the profile.
+      ctx.irisRpc.register('usage.summary', handlers['usage.summary']),
       ctx.irisRpc.register('chat.answerCleanup', handlers['chat.answerCleanup']),
       ctx.irisRpc.register('chat.send', handlers['chat.send']),
       ctx.irisRpc.register('chat.regenerate', handlers['chat.regenerate']),

@@ -194,25 +194,55 @@ async function lines(dir: string, chatId: string): Promise<SillyTavernMessage[]>
 }
 
 /**
- * The cost half of a line's stored entries, with the request fingerprint
- * checked off and taken out of the way.
+ * The route half of one record: asserted by shape, then taken out of the way.
  *
- * Each entry is **one object holding two records** — what the provider charged,
- * and which body it charged for (`../src/fingerprint.ts`). The tests below are
- * about the costs and about the *positional* shape of the array, so the hashes
- * are asserted here once, by shape, and removed; what is then compared is still
- * an exact `deepEqual`, so a stray field nobody meant to write still fails.
+ * A stored entry is **one object holding three records** — what the provider
+ * charged, which body it charged for (`../src/fingerprint.ts`), and which route
+ * spent it and when (`model` / `provider` / `at`). The tests below are about
+ * the costs and about the positional shape of the array, so the identity is
+ * checked here once and removed; what is then compared is still an exact
+ * `deepEqual`, so a stray field nobody meant to write still fails.
+ *
+ * Asserted rather than merely deleted, and that is the difference between this
+ * helper and a `delete`: these three fields are what makes a cost answerable
+ * across conversations at all, and a host that stopped writing them would leave
+ * every bucket assertion below green.
+ * @param usage - one usage object, from a file entry or from a view.
+ * @param what - names the site, for the failure message.
+ * @returns the same object without the three identity fields.
+ */
+function withoutRoute(usage: Record<string, unknown>, what: string): TurnUsage {
+  const { model, provider, at, ...buckets } = usage
+  assert.equal(typeof model, 'string', `${what}: no model was recorded`)
+  assert.equal(typeof provider, 'string', `${what}: no provider was recorded`)
+  assert.equal(typeof at, 'number', `${what}: no moment was recorded`)
+  assert.ok(Number.isFinite(at) && (at as number) > 0, `${what}: the recorded moment is not a moment`)
+  return buckets as unknown as TurnUsage
+}
+
+/** A view-side usage object, buckets only. */
+function viewBuckets(usage: TurnUsage | undefined, what: string): TurnUsage {
+  assert.ok(usage !== undefined, `${what}: the row carries no usage`)
+  return withoutRoute(usage as unknown as Record<string, unknown>, what)
+}
+
+/**
+ * The cost half of a line's stored entries, with the request fingerprint and
+ * the route checked off and taken out of the way.
+ *
+ * See {@link withoutRoute}: each entry is one object holding three records, and
+ * only the buckets are what these tests compare.
  * @param stored - the value the file's usage key holds.
  * @returns one usage object per swipe, `null` where that swipe reported nothing.
  */
 function costs(stored: unknown): (TurnUsage | null)[] {
   assert.ok(Array.isArray(stored), 'the line carries no usage array')
-  return stored.map((entry) => {
+  return stored.map((entry, at) => {
     if (entry === null || entry === undefined) return null
-    const { promptHash, prefixHash, ...usage } = entry as Record<string, unknown>
+    const { promptHash, prefixHash, ...rest } = entry as Record<string, unknown>
     assert.match(String(promptHash), /^[0-9a-f]{16}$/, 'a recorded cost carries no prompt hash')
     assert.match(String(prefixHash), /^[0-9a-f]{16}$/, 'a recorded cost carries no prefix hash')
-    return usage as unknown as TurnUsage
+    return withoutRoute(rest, `stored entry ${String(at)}`)
   })
 }
 
@@ -247,7 +277,7 @@ test('one generation: the candidate carries the cost, and so does the view it se
 
   // The reply's own row, from `stream.end`'s view — no second event, no second
   // request: the number rides the view the shell already renders from.
-  assert.deepEqual(last(view).usage, CACHED)
+  assert.deepEqual(viewBuckets(last(view).usage, 'the settled row'), CACHED)
   // Every bucket the provider reported, none it did not. `deepEqual` rather
   // than a field check, because the failure guarded against here is a
   // zero-filled `cacheWriteTokens` appearing beside the real numbers.
@@ -271,7 +301,7 @@ test('the cost survives a restart, because the chat file carries it', async (t) 
   const restarted = await open(fix.dir, [CACHED])
   const { view } = await restarted.handlers['chat.open']({ chatId })
 
-  assert.deepEqual(last(view).usage, CACHED)
+  assert.deepEqual(viewBuckets(last(view).usage, 'the settled row'), CACHED)
   assert.deepEqual(view.usage, CACHED_AGGREGATE)
 })
 
@@ -303,7 +333,7 @@ test('two regenerations: the total is all three, the row is the one selected', a
   assert.deepEqual(last(view).swipes, { count: 3, index: 2 }, 'three readings, the newest showing')
   // The row shows the selected candidate's own bill, not the turn's total —
   // this is the distinction the whole per-candidate storage exists for.
-  assert.deepEqual(last(view).usage, third)
+  assert.deepEqual(viewBuckets(last(view).usage, 'the third reading'), third)
   // The conversation total counts the two the user swiped away from: they were
   // generated and charged, and swiping does not refund them.
   assert.deepEqual(view.usage, {
@@ -323,7 +353,7 @@ test('two regenerations: the total is all three, the row is the one selected', a
 
   // Swiping back moves the row's figure with the text it belongs to.
   const swiped = await fix.handlers['chat.swipe']({ chatId, turn: 1, index: 0 })
-  assert.deepEqual(last(swiped.view).usage, first)
+  assert.deepEqual(viewBuckets(last(swiped.view).usage, 'the swiped-to reading'), first)
   assert.deepEqual(swiped.view.usage, view.usage, 'the conversation total does not move')
 })
 
@@ -347,7 +377,7 @@ test('every swipe is on the file, so the total survives a restart too', async (t
   const restarted = await open(fix.dir, [])
   const { view } = await restarted.handlers['chat.open']({ chatId })
   assert.deepEqual(view.usage, { inputTokens: 300, outputTokens: 30, cacheReadTokens: 20 })
-  assert.deepEqual(last(view).usage, second, 'and the selected reading keeps its own')
+  assert.deepEqual(viewBuckets(last(view).usage, 'the selected reading'), second, 'and the selected reading keeps its own')
 })
 
 test('a swipe that reported nothing keeps its place in the array without becoming a zero', async (t) => {
@@ -368,7 +398,7 @@ test('a swipe that reported nothing keeps its place in the array without becomin
 
   const restarted = await open(fix.dir, [])
   const { view } = await restarted.handlers['chat.open']({ chatId })
-  assert.deepEqual(last(view).usage, third, 'the third swipe, not the second')
+  assert.deepEqual(viewBuckets(last(view).usage, 'the third swipe'), third, 'the third swipe, not the second')
   const middle = await restarted.handlers['chat.swipe']({ chatId, turn: 1, index: 1 })
   assert.equal(last(middle.view).usage, undefined, 'and the silent one is still silent')
 })
@@ -413,7 +443,7 @@ test('an editing rebuild does not lose the record it was written beside', async 
   // statement after the usage is recorded.
   const edited = await fix.handlers['chat.editMessage']({ chatId, id, text: 'A hand-edited reply.' })
   assert.equal(last(edited.view).text, 'A hand-edited reply.')
-  assert.deepEqual(last(edited.view).usage, CACHED)
+  assert.deepEqual(viewBuckets(last(edited.view).usage, 'the edited row'), CACHED)
   assert.deepEqual(edited.view.usage, CACHED_AGGREGATE)
 })
 
@@ -483,7 +513,7 @@ test('a DeepSeek wire response reaches the view through the real translator', as
   }
   // The row keeps the provider's exact total. The wire sent no `total_tokens`,
   // so this is the adapter's own aggregate of counters that agreed — 4000 + 12.
-  assert.deepEqual(last(view).usage, { ...buckets, totalTokens: 4_012 })
+  assert.deepEqual(viewBuckets(last(view).usage, 'the translated row'), { ...buckets, totalTokens: 4_012 })
   // The conversation reports the four buckets and no total, even here where it
   // holds a single generation and the two would have agreed. The rule does not
   // depend on how many generations there are, so neither does the test.
@@ -596,4 +626,37 @@ test('a malformed entry is dropped rather than summed into a NaN', async () => {
   // The total is a real number: this is the assertion that fails if a string
   // or a missing bucket ever reaches the summation.
   assert.deepEqual(entry.toView().usage, { inputTokens: 10, outputTokens: 1 })
+})
+
+test('a conversation total carries no route, however many its generations named', async (t) => {
+  /*
+   * The identity fields describe **one generation**, and an aggregate must have
+   * all three absent — a conversation can have run on several models across
+   * several days, so a `model` on its total would name one of them as if it
+   * named all of them. `sumUsage` builds from a fresh object over the four
+   * optional buckets, which is what makes this true; asserted because it is
+   * true by construction today and a construction can change.
+   *
+   * This is the one assertion in the file that would still pass if the host
+   * stopped recording routes altogether, so it is paired with `withoutRoute`
+   * above, which fails in that case at eight sites.
+   */
+  const fix = await fixture(t, [CACHED, CACHED])
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+  await send(fix, chatId)
+  const view = await send(fix, chatId)
+
+  assert.ok(view.usage !== undefined, 'the conversation reported no total at all')
+  for (const field of ['model', 'provider', 'at'] as const) {
+    assert.equal(
+      field in view.usage,
+      false,
+      `the conversation total carries ${field}, which describes one generation`,
+    )
+  }
+  // The premise: the generations it was summed from *did* name a route, so the
+  // absence above is the sum dropping it rather than nothing having been recorded.
+  const named = view.messages.filter(row => row.usage?.model !== undefined)
+  assert.ok(named.length >= 2, `only ${String(named.length)} rows named a model; the sum has nothing to drop`)
 })

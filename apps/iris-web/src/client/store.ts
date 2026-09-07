@@ -37,6 +37,7 @@ import type {
   RpcResponse,
   ScriptContext,
   ScriptView,
+  UsageGranularity,
   WorldbookEntry,
   WorldbookSettingsView,
   WorldbookSummary,
@@ -63,6 +64,11 @@ export type ItemizationResult =
 /** A script body, or why there is not one. */
 export type ScriptBodyResult =
   | { ok: true, content: string }
+  | { ok: false, error: import('@iris/protocol').RpcError }
+
+/** The profile's usage aggregate, or why there is not one. */
+export type UsageSummaryResult =
+  | { ok: true, summary: import('@iris/protocol').UsageSummary }
   | { ok: false, error: import('@iris/protocol').RpcError }
 
 /** Text arriving for a turn that has not settled yet. */
@@ -948,6 +954,25 @@ export interface IrisActions {
    * would mean holding a stale answer that looks current.
    */
   itemize(turn?: number): Promise<ItemizationResult>
+  /**
+   * What the whole profile has cost, cut by time and by model.
+   *
+   * **Returned rather than stored**, for the reason `itemize` is: the answer is
+   * *about the parameters it was asked with*, and a store field holding one
+   * range's aggregate while the reader switches to another is a stale answer
+   * that looks current — which on a chart is invisible, because a line drawn
+   * from last week's numbers is still a line. The panel keeps the reply beside
+   * the controls that produced it.
+   *
+   * A host with no `usage.summary` refuses it, and the panel says so in its own
+   * body rather than through a global notice: an entry the reader deliberately
+   * opened is the right place to explain why it is empty.
+   */
+  usageSummary(params: {
+    since?: number
+    until?: number
+    granularity?: import('@iris/protocol').UsageGranularity
+  }): Promise<UsageSummaryResult>
   /**
    * Run a slash command a card invoked.
    *
@@ -2806,6 +2831,23 @@ export function createIrisStore(
             ...(turn === undefined ? {} : { turn }),
           })
           return { ok: true, itemization }
+        } catch (error: unknown) {
+          return { ok: false, error: asRpcError(error) }
+        }
+      },
+
+      async usageSummary(params: {
+        since?: number
+        until?: number
+        granularity?: UsageGranularity
+      }): Promise<UsageSummaryResult> {
+        try {
+          const { summary } = await client.call('usage.summary', {
+            ...params.since === undefined ? {} : { since: params.since },
+            ...params.until === undefined ? {} : { until: params.until },
+            ...params.granularity === undefined ? {} : { granularity: params.granularity },
+          })
+          return { ok: true, summary }
         } catch (error: unknown) {
           return { ok: false, error: asRpcError(error) }
         }

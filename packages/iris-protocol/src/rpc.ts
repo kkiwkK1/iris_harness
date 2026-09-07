@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, UsageSummary, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -1472,6 +1472,38 @@ export const requestSchemas = {
   'backup.delete': z.object({
     backupId: z.string().min(1).max(400),
   }),
+
+  /**
+   * What every conversation in the profile has cost, cut by time and by model.
+   *
+   * **Aggregated on the host, on purpose.** The shape a browser reaches for is
+   * `chat.list` and then a `chat.open` per conversation, and that is wrong twice:
+   * it ships every floor of every conversation across the wire to compute a
+   * dozen sums, and `chat.open` is a *stateful* call here — it loads the entry,
+   * composes its scripts and can raise a cleanup offer. Reading a statistic must
+   * not have side effects. So this scans the profile's chat files the way
+   * `chat.search` does — a substring check per line, `JSON.parse` only on the
+   * lines that carry a usage array — and returns rows, never floors.
+   *
+   * No pagination and no cap. A summary is a claim about a total, so a cap would
+   * make it a claim about an unstated fraction; what makes that safe is that the
+   * reply's size is set by (buckets x models) and by the number of
+   * conversations, never by their length — see `UsageSummary`.
+   */
+  'usage.summary': z.object({
+    /**
+     * Earliest moment to count, Unix epoch milliseconds, inclusive.
+     *
+     * Absent means "from the first record there is", which is what the
+     * interface's "all" range sends — rather than a zero every reader would
+     * have to recognise as a sentinel.
+     */
+    since: z.number().int().min(0).optional(),
+    /** Latest moment to count, exclusive. Absent means "up to now". */
+    until: z.number().int().min(0).optional(),
+    /** How finely to cut time. Default `'day'`. */
+    granularity: z.enum(['day', 'hour']).optional(),
+  }),
 } as const
 
 /** Every callable method. */
@@ -1624,6 +1656,9 @@ export interface RpcResponseMap {
    */
   'backup.restore': { chat: ChatSummary, previous?: BackupSummary }
   'backup.delete': Record<string, never>
+
+  /** The aggregate, and only the aggregate. */
+  'usage.summary': { summary: UsageSummary }
 
   /**
    * The saved profiles, and the connection the host itself was started with.

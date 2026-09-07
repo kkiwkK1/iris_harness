@@ -32,6 +32,7 @@ import { PresetPanel } from './PresetPanel.tsx'
 import { PersonaPanel } from './PersonaPanel.tsx'
 import { RegexPanel } from './RegexPanel.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
+import { UsageSection } from './UsageSection.tsx'
 import { WorldbookPanel } from './WorldbookPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
@@ -461,6 +462,19 @@ export function SettingsDrawer({
           in front of, so the card is where "can I undo this" is answered.
         */}
         <BackupPanel />
+
+        {/*
+          The usage page's entry, beside the backups card because both are
+          profile-wide readings that work with no conversation open: what the
+          host has copied, and what the host has spent. It is the third usage
+          surface and the only one that can answer *across* conversations — the
+          composer's line is one chat, and a reply's reading is one turn.
+
+          `onNavigate` is the drawer's own close: a subtotal row opens a
+          conversation, and leaving the settings panel standing over the chat
+          the reader just asked for would hide it.
+        */}
+        <UsageSection onNavigate={onClose} />
 
         {/*
           The host's own reports, **outside** the `settings === undefined`

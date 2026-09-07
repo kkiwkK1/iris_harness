@@ -54,6 +54,38 @@ export interface PendingTurn {
    * report line each generation emits, or in the chat file beside the cost.
    */
   fingerprint?: PromptFingerprint
+  /**
+   * Which route this generation went out on, and when.
+   *
+   * Parked here for the third time for the same reason `usage` and
+   * `fingerprint` are: it is known at the moment the request is composed and
+   * the candidate it belongs to does not exist until the turn settles. Noted at
+   * the same site as the fingerprint — the one place where the request body is
+   * in hand — so the model, the provider and the moment are one reading of one
+   * request rather than three guesses taken at three times.
+   *
+   * **Never projected onto a message either.** It lands on the stored
+   * `TurnUsage` when the turn settles, which is where a statistics surface
+   * reads it from; a route shown on a streaming row would be a fourth place for
+   * the same fact to disagree with itself.
+   */
+  route?: UsageRoute
+}
+
+/**
+ * The route a generation went out on, stamped once.
+ *
+ * `at` is when the **request** went out, not when the reply settled. One site
+ * rather than two, and for a figure bucketed by hour or by day the difference
+ * is not observable — while a second `Date.now()` taken at settle time would
+ * make a turn that streamed across midnight land in a different bucket from the
+ * fingerprint recorded beside it.
+ */
+export interface UsageRoute {
+  model?: string
+  provider?: string
+  /** Unix epoch milliseconds. */
+  at: number
 }
 
 /** Plain text of a message's content blocks. */

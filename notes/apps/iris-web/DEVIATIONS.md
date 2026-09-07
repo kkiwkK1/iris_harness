@@ -2453,3 +2453,99 @@ the queue: a card that legitimately needs two dialogs at once — a confirm rais
 shell must never hold card markup at all, which would mean answering popups with
 text-only content and saying so.
 
+
+## 60. A usage page: what the whole profile has cost, cut by time and by model
+
+**Kind:** deliberate improvement, with no upstream counterpart and a named
+limit on what it can say about the past.
+
+**Upstream** has no such surface, and could not build this one from what it
+stores. SillyTavern keeps its own *estimate* of each message's text
+(`extra.token_count`, written by `getTokenCountAsync`) and shows that; it never
+records what the provider said it charged, so a cache hit — the thing that
+decides what a long chat costs on DeepSeek — is invisible there, and a question
+across conversations has nothing to be asked of. §47 records the per-turn half
+of this difference; this entry is the profile-wide half.
+
+**Iris** already stored the provider's own figure per generation (§47, host
+§22), and that was still not enough to answer "what am I spending, and on
+what": a `TurnUsage` named **no model and carried no moment**. Measured over the
+16 real conversations on this machine, 2026-09-08
+(`apps/iris/data/default-user/chats`, 566,905 bytes): **12 usage records, and
+every one of them has neither field** — seven carry the five token buckets
+alone, five carry a request fingerprint as well. No message line can date them
+either, because Iris's own export writes no `send_date`.
+
+So three optional fields join the record on the same stored object as the
+buckets (`model`, `provider`, `at`; protocol `TurnUsage`, host §28), a host RPC
+`usage.summary` aggregates across the profile's chat files, and this page reads
+it:
+
+| what | where |
+| --- | --- |
+| Entry, in the settings drawer beside the backups card | `apps/iris-web/src/app/UsageSection.tsx` |
+| The page, a dialog rather than a drawer card | `apps/iris-web/src/app/UsagePanel.tsx` |
+| Every figure, colour and coordinate on it, pure | `apps/iris-web/src/app/usage-stats.ts` |
+| Styles | `apps/iris-web/src/app/panels.css`, `.iris-usage*` |
+
+**A dialog and not a drawer card**, measured: the drawer is 392px and the chart
+keeps a legible column per time bucket, so a 30-day range needs about 1.7 of
+those widths before it has to scroll. The dialog carries `min(880px, 100%)` —
+the prompt breakdown's 640px was still not enough — and the SVG scrolls inside
+`.iris-usage__plot`, which is the one layout rule the page has: **the chart
+must never be the thing that makes the page scroll sideways.**
+
+**One line per model, colour assigned by name and not by position.** The chart
+is redrawn on every range and metric change, and a model whose line was gold in
+"7 days" and grey in "30 days" would make the two readings uncomparable — so the
+style comes from a hash of the model name, with collisions probed in sorted-name
+order so the assignment depends only on the *set* of names. The palette is six
+existing theme tokens times four dash patterns; the six are the tokens that
+clear the 3:1 WCAG 1.4.11 floor for a meaning-carrying non-text mark against
+`--iris-bg-raised` in all three themes, and `tests/contrast.test.ts` now
+computes that rather than trusting it. Two candidates were rejected on the
+measurement — `--iris-accent-quiet` at 2.93:1 and `--iris-tick` at 2.79:1, both
+in 墨. Past six the colours run out and a dash takes over, because a seventh hue
+this palette cannot distinguish is worse than a dashed repeat, and a dash is
+also the one distinction that survives a colour-blind reader.
+
+**What it costs.** Three things, and the first is the one that matters.
+
+**Every record that exists today is unattributed and undated.** A model with no
+name is drawn as its own line labelled "unknown model" — counted, because those
+tokens were spent and dropping them would understate a bill — and an undated
+record is placed at its conversation's own last activity. That is a
+*reconstruction*: every undated record in a chat lands in one bucket, so an old
+conversation reads as a single spike at its last activity rather than as the
+sessions it really was. The page says so, with the count
+(`usageUndated`: "N of M generations carried no timestamp…"), rather than
+smoothing it — smoothing would invent a distribution the files do not contain.
+On the corpus above that note currently reads 12 of 12. It stops being the whole
+story one generation after this ships, and never stops being true of the history
+before it.
+
+**The hit rate is over a narrower population than the tokens beside it.** It is
+`cacheRead / cachePrompt`, both restricted to the generations that reported a
+cache bucket, so a route that says nothing about caching cannot dilute one that
+does. The consequence a reader must not be surprised by: the percentage is *not*
+`cacheRead` over the "billed input" card above it, and on a mixed range the two
+denominators differ by a lot — on a two-generation fixture, 75% against 19%.
+`cacheTurns` of zero shows a dash, never `0%`.
+
+**The reply is a whole-corpus scan with no cap.** Measured through the host's own
+reader against a read-only copy of the profile, 2026-09-08: **1,300 bytes** at
+day granularity and **1,446** at hour, over 16 conversations and 566,905 bytes of
+chat files; 爱衣 alone (9 records) is **629 bytes**. The bound that makes an
+uncapped answer safe is that the reply's size is set by (buckets × models) and by
+the number of conversations, never by their length — but a profile of thousands
+of conversations pays a linear file read per request, and there is no cache
+because the files are the truth (host §28 states the same reasoning
+`chat.search` does).
+
+**What would overturn it.** A host that recorded a per-message timestamp in the
+chat file would retire the reconstruction and its note. A profile large enough
+for the scan to be felt would make the uncapped reply the wrong shape, and the
+answer then is a host-side index with invalidation on write, not a cap — a
+summary of an unstated fraction of the corpus is not a summary. And a palette
+with six genuinely distinguishable hues in all three themes would retire the
+dash axis.

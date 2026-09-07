@@ -1000,6 +1000,59 @@ export const en = {
   usageDetailOutput: 'Output',
   /** Reasoning is part of the output it follows, not a fourth bucket beside it. */
   usageDetailReasoning: ' ({tokens} reasoning)',
+
+  /*
+   * The usage page: the whole profile's cost, cut by time and by model.
+   *
+   * Same wording rules as the rows above, which it extends rather than restates
+   * — 「用量」 is the provider's bill and never the prompt panel's estimate, and
+   * 「未缓存」 is not 「输入」 because the three prompt-side buckets are
+   * disjoint. `usageCardPrompt` is the sum of all three and is the one that may
+   * be called "input"; `usageCardCacheMiss` is `inputTokens` alone, which is
+   * what a DeepSeek route reports as `prompt_cache_miss_tokens`.
+   *
+   * Two of these are caveats about the data rather than labels for it.
+   * `usageUndated` says how many counted generations had their moment
+   * reconstructed from their conversation's header — every record written
+   * before the field existed, which is all 12 in the real corpus — and
+   * `usageSkipped` says how many chat files could not be read at all. Both
+   * have to read as caveats, because the figures above them otherwise look
+   * like a complete total.
+   */
+  usageEntry: 'Usage',
+  usageEntrySummary: 'Spending by model, over time',
+  usageOpen: 'Open the usage page',
+  usagePageTitle: 'Usage',
+  usageCounting: 'Adding up every conversation…',
+  usageEmpty: 'Nothing has been billed in this range.',
+  /** The empty state's second line: what was looked at, so "nothing" reads as a reading rather than a failure. */
+  usageScanned: '{chats} conversations scanned.',
+  usageRangeAria: 'Time range',
+  usageRangeToday: 'Today',
+  usageRangeWeek: '7 days',
+  usageRangeMonth: '30 days',
+  usageRangeAll: 'All',
+  usageMetricAria: 'Which figure the lines draw',
+  usageMetricTotal: 'Total',
+  usageMetricCacheRead: 'Cache hit',
+  usageMetricCacheMiss: 'Uncached',
+  usageMetricOutput: 'Output',
+  /** The headline cards. `usageCardPrompt` is the three prompt buckets added; `usageCardCacheMiss` is the uncached one alone. */
+  usageCardTotal: 'Total tokens',
+  usageCardPrompt: 'Billed input',
+  usageCardCacheRead: 'Cache hit',
+  usageCardCacheMiss: 'Uncached input',
+  usageCardOutput: 'Output',
+  usageCardHitRate: 'Hit rate',
+  usageCardTurns: 'Generations',
+  /** The chart's own description, for a reader who cannot see it. */
+  usageChartAria: '{metric} per time bucket, {lines} model lines',
+  /** The line for records that name no model — not a model called "unknown". */
+  usageUnknownModel: 'Unknown model',
+  usageByChat: 'By conversation',
+  usageTurnCount: '{n} generations',
+  usageUndated: '{n} of {turns} generations carried no timestamp and are placed at their conversation’s last activity.',
+  usageSkipped: '{n} conversation files could not be read and are not counted.',
 } as const
 
 /** The key union: every translation has to cover exactly these. */
@@ -1889,6 +1942,38 @@ export const zh: Record<StringKey, string> = {
   usageDetailCacheWrite: '缓存写入',
   usageDetailOutput: '输出',
   usageDetailReasoning: '（其中推理 {tokens}）',
+
+  /** 用量页。口径见 en 一侧：「用量」只指提供方计费，「未缓存输入」不是「计费输入」。 */
+  usageEntry: '用量',
+  usageEntrySummary: '按模型看花费随时间的变化',
+  usageOpen: '打开用量页',
+  usagePageTitle: '用量',
+  usageCounting: '正在合计所有对话……',
+  usageEmpty: '这段时间内没有产生计费。',
+  usageScanned: '已扫描 {chats} 个对话。',
+  usageRangeAria: '时间范围',
+  usageRangeToday: '今天',
+  usageRangeWeek: '7 天',
+  usageRangeMonth: '30 天',
+  usageRangeAll: '全部',
+  usageMetricAria: '折线画哪个指标',
+  usageMetricTotal: '总量',
+  usageMetricCacheRead: '缓存命中',
+  usageMetricCacheMiss: '未缓存',
+  usageMetricOutput: '输出',
+  usageCardTotal: '总 token',
+  usageCardPrompt: '计费输入',
+  usageCardCacheRead: '缓存命中',
+  usageCardCacheMiss: '未缓存输入',
+  usageCardOutput: '输出',
+  usageCardHitRate: '命中率',
+  usageCardTurns: '生成次数',
+  usageChartAria: '每个时间桶的{metric}，共 {lines} 条模型折线',
+  usageUnknownModel: '未知模型',
+  usageByChat: '按对话',
+  usageTurnCount: '{n} 次生成',
+  usageUndated: '{turns} 次生成中有 {n} 次没有时间戳，被记在其对话最后活动的时间上。',
+  usageSkipped: '有 {n} 个对话文件读不出来，未计入。',
 }
 
 /** Both dictionaries, keyed by language. */

@@ -49,7 +49,10 @@ import {
   FAKE_WORLDBOOKS,
   type FakeWorldbook,
 } from './worldbooks.ts'
-import { selected, toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
+import {
+  selected, summariseFakeUsage, toChatSummary, toChatView,
+  type FakeChat, type FakeMessage,
+} from './state.ts'
 
 /** How the fake is tuned for a given consumer. */
 export interface FakeClientOptions {
@@ -1313,6 +1316,22 @@ class InMemoryClient implements FakeClient {
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 
+      case 'usage.summary': {
+        // Implemented rather than refused, unlike the backup methods above:
+        // those need a file store the fake does not have, while this one is
+        // arithmetic over the log the fake already keeps — and the usage page
+        // is a chart, which is the one kind of surface that cannot be designed
+        // against an `unsupported`.
+        const { since, until, granularity } = params as RpcRequest<'usage.summary'>
+        return {
+          summary: summariseFakeUsage(this.#chats, {
+            ...since === undefined ? {} : { since },
+            ...until === undefined ? {} : { until },
+            ...granularity === undefined ? {} : { granularity },
+          }),
+        }
+      }
+
       case 'persona.list':
       case 'persona.get':
       case 'persona.set':
@@ -1602,6 +1621,16 @@ class InMemoryClient implements FakeClient {
       cacheReadTokens: cacheRead,
       ...reasoning === undefined ? {} : { reasoningTokens: reasoning },
       totalTokens: prompt + output + (reasoning ?? 0),
+      // The route and the moment. The host takes both from the composed
+      // request; the fake has no request, so it takes them from the same
+      // settings a request would have been built from — which is what makes a
+      // generation started in the interface appear on the usage chart under the
+      // model the capsule beside the composer is showing. A blank model is
+      // dropped rather than carried, for the reason the host drops it: an
+      // unlabelled series is the unknown case in a known case's clothes.
+      ...chat.settings.model === '' ? {} : { model: chat.settings.model },
+      ...chat.settings.provider === '' ? {} : { provider: chat.settings.provider },
+      at: Date.now(),
     }
   }
 

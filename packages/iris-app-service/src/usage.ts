@@ -142,6 +142,13 @@ const OPTIONAL_BUCKETS = ['totalTokens', 'cacheReadTokens', 'cacheWriteTokens', 
  * "the total" — a distinction {@link conversationUsage} refuses to ship, for
  * the reason given there. This function is the arithmetic; the ruling about
  * which buckets a *conversation* may show lives one layer up.
+ *
+ * **The identity fields are not summed and not carried.** `model`, `provider`
+ * and `at` describe one generation, and the total is built from a fresh object
+ * over {@link OPTIONAL_BUCKETS} alone — so a sum has all three absent, which is
+ * the honest reading for a conversation that may have run on several models
+ * across several days. A consumer that finds `model` on an aggregate has found
+ * a bug rather than a route.
  * @param usages - one entry per generation.
  * @returns the sum, or `undefined` when there was nothing to add.
  */
@@ -202,6 +209,16 @@ export function conversationUsage(usages: Iterable<TurnUsage>): TurnUsage | unde
  * a total that is `NaN` or a concatenated string — a wrong number rather than a
  * missing one, and the arithmetic would go out on the wire looking like a
  * measurement.
+ *
+ * The three **identity** fields (`model`, `provider`, `at`) are read under the
+ * same rule and are the reason a summary across conversations is possible at
+ * all. They are read leniently in one direction only: a missing one is the
+ * ordinary case — every record written before they existed has none, which is
+ * all 12 records in the 16 real conversations on this machine — and a *present*
+ * one of the wrong type is dropped rather than carried, so nothing downstream
+ * has to defend against a model name that is a number or a moment that is a
+ * string. A blank model string is dropped too: it would draw a chart series
+ * with no label, which is the unknown case wearing a known case's clothes.
  * @param value - one array entry from the file.
  * @returns the usage, or `undefined` when the entry carries none.
  */
@@ -220,6 +237,12 @@ export function parseUsage(value: unknown): TurnUsage | undefined {
     const entry = record[bucket]
     if (typeof entry === 'number' && Number.isFinite(entry)) usage[bucket] = entry
   }
+  for (const field of ['model', 'provider'] as const) {
+    const entry = record[field]
+    if (typeof entry === 'string' && entry.length > 0) usage[field] = entry
+  }
+  const at = record['at']
+  if (typeof at === 'number' && Number.isFinite(at) && at >= 0) usage.at = Math.round(at)
   return usage
 }
 

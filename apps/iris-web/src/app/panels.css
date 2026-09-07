@@ -2927,3 +2927,221 @@
   font-family: inherit;
   font-variant-numeric: normal;
 }
+
+/* ------------------------------------------------------------------ usage
+   The usage page: profile-wide spend, one line per model.
+
+   Wider than the prompt breakdown's 640px because the chart keeps a legible
+   column per time bucket; below that a 30-day range spends its whole measure
+   inside a scroller. `min()` so the card still fits a phone, where the
+   scroller is the intended outcome rather than the fallback. */
+.iris-usage-dialog {
+  width: min(880px, 100%);
+  max-height: calc(100vh - 48px);
+}
+
+.iris-usage {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The headline figures. `flex-wrap` and no media query: the row has seven
+   cards and reflows on its own, and a width breakpoint here would be a fourth
+   interval in a shell that documents exactly three (`tests/breakpoints.test.ts`). */
+.iris-usage__cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.iris-usage__card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 88px;
+}
+
+/* Tabular figures, like every other number in this interface: seven cards
+   whose digits do not line up read as seven unrelated facts. */
+.iris-usage__figure {
+  font-family: var(--iris-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--iris-ink);
+}
+
+.iris-usage__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* **The one layout rule the chart has to honour.** The SVG keeps a real column
+   per bucket, so on a narrow window it is wider than the dialog — and it
+   scrolls *inside here* rather than making the page scroll sideways. */
+.iris-usage__plot {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--iris-bg-raised);
+  border: var(--iris-hairline) solid var(--iris-rule-faint);
+  border-radius: var(--iris-radius);
+}
+
+.iris-usage__svg {
+  display: block;
+}
+
+/* The axis numerals. 10px is below the body's floor on purpose: these are not
+   read, they are referred to — the figures a reader actually reads are the
+   cards above and the tooltip. */
+.iris-usage__axis {
+  font-family: var(--iris-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+
+/* Pinned to the plot's top-right, out of the way of the lines, which rise to
+   the left far more often than they end high. */
+.iris-usage__tip {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  pointer-events: none;
+  background: var(--iris-bg-page);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  padding: 6px 10px;
+  font-size: 12px;
+  max-width: 60%;
+}
+
+.iris-usage__tip ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.iris-usage__tip li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.iris-usage__tip-name {
+  color: var(--iris-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.iris-usage__legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.iris-usage__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  color: var(--iris-ink-secondary);
+}
+
+/* A hidden series stays legible rather than fading to nothing: it is still the
+   control that brings the line back, and a control nobody can read is a line
+   nobody can restore. */
+.iris-usage__legend-item--off {
+  color: var(--iris-ink-faint);
+}
+
+.iris-usage__legend-item--off .iris-usage__swatch {
+  opacity: 0.35;
+}
+
+.iris-usage__legend-item:focus-visible {
+  outline: none;
+  text-decoration: underline;
+}
+
+/* 10px, so a dashed swatch has room for two dashes — the dash is what tells a
+   seventh model from the first, and one dash is a solid square. */
+.iris-usage__swatch {
+  width: 14px;
+  height: 3px;
+  border-radius: var(--iris-radius-pill);
+  flex: none;
+}
+
+.iris-usage__legend-name {
+  overflow-wrap: anywhere;
+}
+
+/* The caveats: how much of the reading is a reconstruction, and how much of
+   the corpus was unreadable. `--iris-warn` rather than `--iris-danger`:
+   nothing is broken, the figures above are simply less complete than they look. */
+.iris-usage__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--iris-warn);
+}
+
+.iris-usage__chats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.iris-usage__chat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  background: none;
+  border: 0;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+  padding: 6px 2px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  color: var(--iris-ink);
+  text-align: left;
+}
+
+.iris-usage__chat:hover {
+  background: var(--iris-bg-sunken);
+}
+
+.iris-usage__chat:focus-visible {
+  outline: none;
+  background: var(--iris-bg-sunken);
+}
+
+.iris-usage__chat-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-usage__chat-total {
+  font-family: var(--iris-font-mono);
+  font-variant-numeric: tabular-nums;
+}

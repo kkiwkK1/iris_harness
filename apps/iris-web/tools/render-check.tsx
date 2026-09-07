@@ -35,8 +35,13 @@ import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView } from '@iris/protocol'
 import { contributing, discrepancy, rowsFor } from '../src/app/itemization.ts'
 import {
-  billedInputTokens, cacheHitPercent, formatTokens, totalTokens, usageDetailText,
+  billedInputTokens, cacheHitPercent, formatExactTokens, formatTokens, totalTokens, usageDetailText,
 } from '../src/app/token-format.ts'
+import { UsageReport } from '../src/app/UsagePanel.tsx'
+// Aliased: `totalTokens` above is the one-generation reader, and this is the
+// aggregate one. Two functions of the same name over different types is exactly
+// the confusion the protocol drops `totalTokens` from every aggregate to avoid.
+import { hitRate, totalTokens as usageTotal } from '../src/app/usage-stats.ts'
 import type { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 
 /**
@@ -983,6 +988,142 @@ async function main(): Promise<void> {
     render(wired.store, slots.core),
     /class="iris-popup"/,
     'the dialog outlived its queue entry',
+  )
+
+  // ------------------------------------------------------- usage page
+  /*
+   * The profile-wide usage page: the chart, its legend, and the caveat that
+   * says how much of the reading is a reconstruction.
+   *
+   * Rendered from `UsageReport` rather than from `UsagePanel`, and not for
+   * convenience: the panel's shell is the borrowed `Modal`, which is a
+   * `createPortal`, and `react-dom/server` refuses to render one. The report is
+   * the half that draws, so it is the half that has to be checked here.
+   *
+   * The summary comes through the **real store action and the fake's own
+   * aggregation** — not a hand-written fixture — so what is checked is the path
+   * a browser takes. `since` is left off so the seeded records nine days back
+   * are in range.
+   */
+  const usageResult = await wired.store.getState().usageSummary({ granularity: 'day' })
+  assert.ok(usageResult.ok, 'the fake no longer answers usage.summary')
+  const usage = usageResult.summary
+
+  /*
+   * The fixture's premises, asserted before anything is concluded from it. Each
+   * of these is a branch of the page, and a seed that stopped exercising one
+   * would leave the check quietly reporting on a simpler page than the one that
+   * ships.
+   */
+  assert.ok(usage.models.length >= 2, `the seed reports ${String(usage.models.length)} models; the chart needs more than one line`)
+  assert.ok(
+    usage.buckets.some(one => one.model === undefined),
+    'the seed no longer carries a cost that names no model, so the unknown line is not drawn here',
+  )
+  assert.ok(
+    new Set(usage.buckets.map(one => one.bucket)).size >= 2,
+    'every seeded cost is in one time bucket, so the time axis is not exercised',
+  )
+  assert.ok(usage.totals.cacheTurns > 0 && usage.totals.cacheTurns < usage.totals.turns,
+    'the seed should mix a cache-reporting route with a silent one, or the hit-rate population is untested')
+  const usageShare = hitRate(usage.totals)
+  assert.ok(usageShare !== null, 'the seeded range should report a cache share')
+  assert.ok(
+    Number(usageShare) > 0 && Number(usageShare) < 100,
+    `the seeded cache share is ${usageShare}%, which no longer exercises the computation`,
+  )
+
+  const usagePage = render(
+    wired.store,
+    slots.core,
+    <UsageReport summary={usage} onOpenChat={() => { /* not clicked here */ }} />,
+  )
+
+  // The chart itself. A `<path>` per showing line, and the axis it is scaled
+  // against — the elements, not a screenshot, because this renderer has no
+  // layout and the geometry is unit-tested in `tests/usage-stats.test.ts`.
+  assert.match(usagePage, /class="iris-usage__svg"/, 'the chart did not render')
+  const drawn = usagePage.match(/<path /g)?.length ?? 0
+  assert.ok(
+    drawn >= usage.models.length + 1,
+    `the chart drew ${String(drawn)} lines for ${String(usage.models.length)} models plus the unattributed one`,
+  )
+  // Every stroke is a token. A literal colour here would silently opt out of
+  // the three-theme contrast floor `tests/contrast.test.ts` computes.
+  assert.doesNotMatch(usagePage, /stroke="#/, 'a chart line was drawn with a literal colour')
+  assert.match(usagePage, /stroke="var\(--iris-/, 'the chart lines are not token-coloured')
+
+  // The legend, one entry per line, each one a control that can hide it.
+  assert.match(usagePage, /class="iris-usage__legend"/, 'the legend did not render')
+  for (const model of usage.models) {
+    assert.ok(usagePage.includes(model), `the legend does not name ${model}`)
+  }
+  // English, because `getLanguage()` under node is `en` and nothing here
+  // switches it; `tests/i18n.test.ts` holds both columns.
+  assert.ok(
+    usagePage.includes('Unknown model'),
+    'the records that name no model are not labelled on the page',
+  )
+  const swatches = usagePage.match(/class="iris-usage__swatch"/g)?.length ?? 0
+  assert.equal(swatches, usage.models.length + 1, 'a line has no legend swatch, or a swatch has no line')
+
+  // The headline cards, and the figures they are supposed to carry. Computed
+  // here from the same summary rather than pasted, so the check follows the
+  // seed instead of pinning a number that a seed change would make a lie.
+  assert.match(usagePage, /class="iris-usage__cards"/, 'the headline cards did not render')
+  assert.ok(
+    usagePage.includes(formatExactTokens(usageTotal(usage.totals))),
+    'the total-tokens card does not carry the total',
+  )
+  assert.ok(usagePage.includes(`${usageShare}%`), 'the hit-rate card does not carry the share')
+
+  /*
+   * The caveat. Every usage record in the real corpus is undated, so this note
+   * is not an edge case — it is what anyone's existing history renders as, and
+   * a page that omitted it would present a reconstructed time axis as a
+   * measured one.
+   *
+   * **The premise is asserted, not used as a guard.** This block first read
+   * `if (usage.totals.undatedTurns > 0)`, and the seed had no undated record —
+   * so the assertion never ran and stayed green while the note was deleted. A
+   * teeth check found it. The seed now carries one, and if it stops the failure
+   * says the check went blind rather than that the page broke.
+   */
+  assert.ok(
+    usage.totals.undatedTurns > 0,
+    'the seed no longer carries an undated cost, so the reconstruction note is not rendered here',
+  )
+  assert.match(usagePage, /class="iris-usage__note"/, 'undated generations were counted without saying so')
+  assert.ok(
+    usagePage.includes(String(usage.totals.undatedTurns)),
+    'the note does not say how many generations had their moment reconstructed',
+  )
+
+  // Per-conversation subtotals, one clickable row each.
+  assert.match(usagePage, /class="iris-usage__chats"/, 'the per-conversation subtotals did not render')
+  const chatRows = usagePage.match(/class="iris-usage__chat"/g)?.length ?? 0
+  assert.equal(chatRows, usage.chats.length, 'a conversation subtotal is missing a row')
+
+  /*
+   * The empty state, which is a different page rather than a chart of zeros.
+   * Driven by asking for a range nothing falls in — the same request the "today"
+   * control sends on a day with no generations.
+   */
+  const quiet = await wired.store.getState().usageSummary({ granularity: 'hour', since: Date.now() + 60_000 })
+  assert.ok(quiet.ok, 'usage.summary refused a forward range')
+  assert.equal(quiet.summary.totals.turns, 0, 'the forward range should contain nothing')
+  const quietPage = render(
+    wired.store,
+    slots.core,
+    <UsageReport summary={quiet.summary} onOpenChat={() => { /* not clicked here */ }} />,
+  )
+  assert.doesNotMatch(quietPage, /class="iris-usage__svg"/, 'an empty range still drew a chart')
+  assert.ok(quietPage.includes('Nothing has been billed'), 'the empty range does not say so')
+  // The denominator is still reported: "nothing" has to read as a reading of
+  // the corpus rather than as a failure to look at it.
+  assert.ok(
+    quietPage.includes(String(quiet.summary.scannedChats)),
+    'the empty state does not say how many conversations were scanned',
   )
 
   wired.dispose()

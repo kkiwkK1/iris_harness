@@ -73,6 +73,55 @@ export interface TurnUsage {
   reasoningTokens?: number
   /** Present only when the provider's aggregate counters were exact and agreed. */
   totalTokens?: number
+
+  /*
+   * The three fields below are **not** buckets and are **not** summed. They
+   * identify the one generation this record describes, which is what makes a
+   * usage record answerable across conversations: "what did this model cost
+   * last week" cannot be asked of numbers that carry neither a model nor a
+   * moment.
+   *
+   * They are on this type rather than beside it because they must ride in the
+   * same stored object as the buckets — see `@iris/app-service`'s
+   * `USAGE_FIELD`, which explains why a parallel array in a SillyTavern chat
+   * file is a record that silently shifts. `PromptFingerprint`'s hashes ride
+   * there for the same reason, and are deliberately NOT here: those are
+   * host-side evidence and nothing on the wire reads them.
+   *
+   * **A sum never carries them.** `sumUsage` builds its total from the buckets
+   * alone, so a conversation-level or bucket-level aggregate has all three
+   * absent — which is the honest reading, since a conversation can have run on
+   * several models over several days. Only a single generation's record carries
+   * an identity. A consumer that finds `model` on an aggregate has found a bug,
+   * not a route.
+   */
+
+  /**
+   * The model this generation was routed to, as configured — never normalised,
+   * because the string a provider bills under is the string a user typed.
+   *
+   * Absent on every record written before this field existed, and on any
+   * generation whose route the host could not name. A statistics surface must
+   * render that as "unknown model" and keep counting the tokens: they were
+   * spent either way, and dropping them would understate a bill. Iris's own
+   * `usage.summary` groups by exactly this string.
+   */
+  model?: string
+  /** The provider behind {@link model}; same absence rule. Recorded because one model name can be served by more than one route, and not part of any grouping key. */
+  provider?: string
+  /**
+   * When the request went out, Unix epoch milliseconds.
+   *
+   * The request, not the reply: it is the moment fixed by the host at the point
+   * it already knows the route, one site rather than two, and for a figure
+   * bucketed by hour or day the difference from the settle time is not
+   * observable. Absent on records written before the field existed — a chat
+   * file carries no per-message date either (Iris's own export writes no
+   * `send_date`, measured over the 16 real chats on this machine), so a reader
+   * that needs to place an undated record in time has to fall back to the
+   * chat's own header and say that it did.
+   */
+  at?: number
 }
 
 /** One open conversation. */
@@ -1561,4 +1610,141 @@ export interface BackupPreview {
   floors: BackupPreviewFloor[]
   /** How many floors the snapshot holds in full. */
   totalFloors: number
+}
+
+/**
+ * How finely a usage summary is cut in time.
+ *
+ * Two, not a free interval: the day is the unit a bill is read in and the hour
+ * is the unit a single long session is read in, and any third would need a rule
+ * for how the chart labels it. Both are cut on **local** boundaries, because
+ * the reader's own midnight is the boundary they mean — the same reasoning
+ * `parseCreateDate` writes down for reading a chat's `create_date` back.
+ */
+export type UsageGranularity = 'day' | 'hour'
+
+/**
+ * What a set of generations cost, in the buckets that are safe to add up.
+ *
+ * The four token fields are the protocol's own **disjoint** prompt-and-output
+ * buckets, summed under `sumUsage`'s rule: a required bucket sums plainly, an
+ * optional one is summed only over the generations that reported it and stays
+ * **absent** when none did. That is what makes `cacheRead` readable as a fact
+ * rather than a claim — a bucket zero-filled from providers that never spoke
+ * about caching would say "the cache never helped" about generations that were
+ * never asked.
+ *
+ * **`cacheMiss` is `TurnUsage.inputTokens`, and it is the "uncached" figure.**
+ * The adapter derives it by subtraction — `inputTokens = prompt_tokens -
+ * cached_tokens` (`@iris/llm-openai-compat`'s `mapUsage`) — and DeepSeek
+ * documents `prompt_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens`,
+ * so on a DeepSeek route this bucket *is* `prompt_cache_miss_tokens`. It is
+ * named for the meaning rather than for the wire field because the same
+ * subtraction covers the endpoints that only report `cached_tokens`.
+ *
+ * There is deliberately no `input` or `total` field. Billed prompt tokens are
+ * `cacheMiss + cacheRead + cacheWrite` and the total is that plus `output`;
+ * both are one addition a reader can defend, and a stored field that duplicates
+ * a stored field is a number that can disagree with itself.
+ */
+export interface UsageTotals {
+  /** Prompt tokens the cache did not serve. Always present: it is a required bucket. */
+  cacheMiss: number
+  /** Output tokens, reasoning included — reasoning is part of the output it is reported inside. Always present. */
+  output: number
+  /** Prompt tokens the cache served; absent when no generation here reported caching. */
+  cacheRead?: number
+  /** Prompt tokens written into the cache; absent when no generation here reported it. */
+  cacheWrite?: number
+  /** The reasoning share of {@link output}; absent when no generation here reported it. Never added to `output` — it is already inside it. */
+  reasoning?: number
+  /** Generations counted. */
+  turns: number
+  /**
+   * Of {@link turns}, how many reported any cache bucket.
+   *
+   * The hit rate's **population**, and the reason it can be stated honestly:
+   * the share is {@link cacheRead} over {@link cachePrompt}, both restricted to
+   * these generations, so a route that says nothing about caching cannot dilute
+   * a route that does. `cacheTurns` of `0` means there is no hit rate to show —
+   * not a hit rate of zero.
+   */
+  cacheTurns: number
+  /** Billed prompt tokens over the {@link cacheTurns} generations only: the hit rate's denominator. */
+  cachePrompt: number
+  /**
+   * Of {@link turns}, how many carried no `TurnUsage.at` and were placed in
+   * time by their conversation's own header instead.
+   *
+   * Surfaced rather than hidden because it is the one number that says how much
+   * of a time-sliced reading is a reconstruction. Every record written before
+   * `at` existed is one of these, and they all land in the bucket holding their
+   * chat's last activity — so a chart over old data shows spikes at chat
+   * boundaries, and a reader who is not told that will read the spikes as
+   * sessions.
+   */
+  undatedTurns: number
+}
+
+/**
+ * One (time bucket, model) cell of a usage summary — a point on one line.
+ *
+ * Keyed by the model alone and not by the provider: the model is the line the
+ * chart draws, and a user asking "which model is costing me this" is asking
+ * about the name they configured. `TurnUsage.provider` is still recorded per
+ * generation, so a route can be recovered from the conversation; it is simply
+ * not a grouping key here.
+ */
+export interface UsageBucket extends UsageTotals {
+  /** The bucket's start, Unix epoch milliseconds, aligned to the summary's granularity. */
+  bucket: number
+  /**
+   * The model, exactly as recorded. **Absent** for generations written before
+   * `TurnUsage.model` existed, which is one line of its own labelled as unknown
+   * rather than tokens quietly dropped.
+   */
+  model?: string
+}
+
+/** One conversation's share of a usage summary, for the per-chat subtotal list. */
+export interface UsageChat extends UsageTotals {
+  chatId: string
+  title: string
+  characterId?: string
+  /** The conversation's own last-activity time, as the sidebar list reports it. */
+  updatedAt: number
+}
+
+/**
+ * Everything a statistics surface needs, aggregated **on the host**.
+ *
+ * The alternative was `chat.list` followed by a `chat.open` per conversation,
+ * which is how a browser would naturally do it and is the wrong shape twice
+ * over: it ships every floor of every conversation to compute a dozen sums, and
+ * `chat.open` is a *stateful* call on this host — it loads the entry, runs the
+ * card's scripts and can raise a cleanup offer. Reading a statistic must not
+ * have side effects. So this scans the files the way `chat.search` does and
+ * returns only rows.
+ */
+export interface UsageSummary {
+  /** The cells, ordered by bucket then by model, so a chart can walk them once. */
+  buckets: UsageBucket[]
+  /** Per-conversation subtotals, newest activity first — the sidebar's order. */
+  chats: UsageChat[]
+  /** Every model name that appears in {@link buckets}, sorted; the absent-model line is not in here. */
+  models: string[]
+  /** The whole range's totals, so the header cards do not re-add the cells. */
+  totals: UsageTotals
+  /** The granularity the buckets are cut on, echoed so a stale reply cannot be mistaken for a fresh one. */
+  granularity: UsageGranularity
+  /** Conversations whose file was read and scanned. */
+  scannedChats: number
+  /**
+   * Conversations whose file could not be read or parsed and were skipped.
+   *
+   * Reported rather than swallowed, unlike `chat.list`'s silent skip: a summary
+   * is a claim about a total, and a total computed over an unknown fraction of
+   * the corpus is not one.
+   */
+  skippedChats: number
 }

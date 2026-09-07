@@ -15,6 +15,11 @@ import type {
   GenerationSettings,
   MessageView,
   TurnUsage,
+  UsageBucket,
+  UsageChat,
+  UsageGranularity,
+  UsageSummary,
+  UsageTotals,
   ViewRole,
 } from '@iris/protocol'
 
@@ -241,4 +246,147 @@ export function toChatSummary(chat: FakeChat): ChatSummary {
     updatedAt: chat.updatedAt,
     messageCount: chat.messages.length,
   }
+}
+
+/**
+ * The whole store's usage, cut by time and by model.
+ *
+ * **A second implementation of the host's summariser**, and deliberately so,
+ * for exactly the reason {@link sumUsage} is one: this package's only
+ * dependency is `@iris/protocol`, which is what lets the interface be built and
+ * tested with no host at all. The alternative is not sharing the function, it
+ * is the fake depending on the host.
+ *
+ * What keeps the two from drifting is that the rules are written down where
+ * both can read them — `UsageTotals` on the wire type states the optional-bucket
+ * rule, the two hit-rate populations and the `undatedTurns` reconstruction —
+ * and the same properties are asserted on both halves. What is deliberately
+ * *not* reproduced is the host's file scan: the fake has no files, so a
+ * conversation is scanned exactly when it exists and nothing is ever skipped.
+ * @param chats - the fake's conversations.
+ * @param options - range and granularity, as the wire method takes them.
+ * @returns the summary the wire method resolves with.
+ */
+export function summariseFakeUsage(
+  chats: readonly FakeChat[],
+  options: { since?: number, until?: number, granularity?: UsageGranularity } = {},
+): UsageSummary {
+  const granularity = options.granularity ?? 'day'
+  const cells = new Map<string, UsageBucket>()
+  const rows: UsageChat[] = []
+  const models = new Set<string>()
+  const totals = blankTotals()
+
+  for (const chat of chats) {
+    const perChat = blankTotals()
+    for (const message of chat.messages) {
+      // Every candidate, not the visible one: a reading the reader swiped away
+      // from was generated and charged. The same walk `toChatView` takes for
+      // the conversation total, so the page's per-chat subtotal and the
+      // composer's line are readings of one set rather than two.
+      for (const candidate of message.candidates) {
+        const usage = candidate.usage
+        if (usage === undefined) continue
+        // The undated fallback, named where the host names it: a record with no
+        // `at` is placed at its conversation's last activity, which clusters
+        // every old record of a chat into one bucket. Counted as such below.
+        const at = usage.at ?? chat.updatedAt
+        if (options.since !== undefined && at < options.since) continue
+        if (options.until !== undefined && at >= options.until) continue
+        const bucket = bucketOf(at, granularity)
+        // JSON, so no separator or sentinel character is needed: `null` and
+        // `""` are distinct JSON values, which keeps a model named after the
+        // empty string from merging with the records that name none. The host
+        // keys its cells the same way.
+        const key = JSON.stringify([bucket, usage.model ?? null])
+        let cell = cells.get(key)
+        if (cell === undefined) {
+          cell = {
+            bucket,
+            ...usage.model === undefined ? {} : { model: usage.model },
+            ...blankTotals(),
+          }
+          cells.set(key, cell)
+        }
+        if (usage.model !== undefined) models.add(usage.model)
+        for (const into of [cell, perChat, totals]) foldUsage(into, usage, usage.at === undefined)
+      }
+    }
+    // A conversation with nothing in range is not a row of zeros: a zero row
+    // reads as "this chat cost nothing", which is a different claim from
+    // "this chat spent nothing in the week you are looking at".
+    if (perChat.turns > 0) {
+      rows.push({
+        chatId: chat.chatId,
+        title: chat.title,
+        ...chat.characterId === undefined ? {} : { characterId: chat.characterId },
+        updatedAt: chat.updatedAt,
+        ...perChat,
+      })
+    }
+  }
+
+  return {
+    buckets: [...cells.values()].sort((left, right) =>
+      left.bucket - right.bucket
+      || (left.model ?? '').localeCompare(right.model ?? '')
+      || Number(left.model === undefined) - Number(right.model === undefined)),
+    chats: rows.sort((left, right) => right.updatedAt - left.updatedAt),
+    models: [...models].sort((left, right) => left.localeCompare(right)),
+    totals,
+    granularity,
+    scannedChats: chats.length,
+    skippedChats: 0,
+  }
+}
+
+/** An empty accumulator; the optional buckets stay absent until one is reported. */
+function blankTotals(): UsageTotals {
+  return { cacheMiss: 0, output: 0, turns: 0, cacheTurns: 0, cachePrompt: 0, undatedTurns: 0 }
+}
+
+/**
+ * The start of the bucket a moment falls in, on **local** boundaries.
+ *
+ * Local because the reader's own midnight is the boundary they mean; the host
+ * cuts the same way and says so at greater length.
+ * @param at - the moment.
+ * @param granularity - day or hour.
+ * @returns the bucket's start.
+ */
+function bucketOf(at: number, granularity: UsageGranularity): number {
+  const when = new Date(at)
+  if (granularity === 'hour') when.setMinutes(0, 0, 0)
+  else when.setHours(0, 0, 0, 0)
+  return when.getTime()
+}
+
+/**
+ * Fold one generation into an accumulator, by the wire type's rule.
+ *
+ * Required buckets add plainly; an optional one is added only over the
+ * generations that reported it and stays absent when none did. `cacheTurns` and
+ * `cachePrompt` restrict the hit rate's numerator and denominator to the same
+ * population, so a route that never mentions caching cannot dilute one that
+ * does. Reasoning is added but never added *into* `output` — the provider
+ * reports it as the reasoning share of the completion it is already inside.
+ * @param into - the accumulator, mutated.
+ * @param usage - one generation.
+ * @param undated - whether this generation's moment was reconstructed.
+ */
+function foldUsage(into: UsageTotals, usage: TurnUsage, undated: boolean): void {
+  into.turns += 1
+  if (undated) into.undatedTurns += 1
+  into.cacheMiss += usage.inputTokens
+  into.output += usage.outputTokens
+  if (usage.cacheWriteTokens !== undefined) {
+    into.cacheWrite = (into.cacheWrite ?? 0) + usage.cacheWriteTokens
+  }
+  if (usage.reasoningTokens !== undefined) {
+    into.reasoning = (into.reasoning ?? 0) + usage.reasoningTokens
+  }
+  if (usage.cacheReadTokens === undefined) return
+  into.cacheRead = (into.cacheRead ?? 0) + usage.cacheReadTokens
+  into.cacheTurns += 1
+  into.cachePrompt += usage.inputTokens + usage.cacheReadTokens + (usage.cacheWriteTokens ?? 0)
 }
