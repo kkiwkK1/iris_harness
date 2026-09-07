@@ -15,9 +15,10 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-import { claimFrontendBlocks } from '../src/sandbox/frontend-blocks.ts'
+import { claimFrontendBlocks, claimMessageSurfaces } from '../src/sandbox/frontend-blocks.ts'
 import {
   describeInterface,
+  encodedBytes,
   runMessageInterfaces,
   type InterfaceState,
   type MessageFramesEnv,
@@ -661,4 +662,118 @@ test('no gate at all builds everything, which is what a caller without a budget 
   // does not decide, and every other test in this file relies on that default.
   assert.deepEqual(scope.started().map(call => call.instance), [0, 1])
   running.dispose()
+})
+
+test('the message’s sheet reaches every region frame, and no fenced one', () => {
+  /*
+   * Upstream is one DOM per floor, so a message's `<style>` covers everything
+   * the floor drew. Here each region is its own frame and the frames cannot see
+   * each other — a rule in one of them cannot reach a `<details>` in the next,
+   * which is exactly how 爱衣's panel came out as a collapsed 88px frame beside
+   * an empty 812px one. The copy into each region frame **is** the message-wide
+   * scope; there is no other construction available.
+   *
+   * A fenced block is deliberately not one of them: upstream renders that in an
+   * iframe of its own, and its message sheet does not reach inside one either.
+   */
+  const source = [
+    oneInterface('<body><h1>fenced</h1></body>'),
+    '',
+    '<div>region one</div>',
+    '',
+    '<div>region two</div>',
+    '',
+    '<style>.panel{color:red}</style>',
+  ].join(NL)
+  const { blocks, css } = claimMessageSurfaces(source)
+  assert.deepEqual(blocks.map(block => block.kind), ['fenced', 'bare-html', 'bare-html'])
+
+  const scope = harness()
+  const running = runMessageInterfaces(blocks, 4, scope.env, css)
+  const started = scope.started()
+
+  assert.equal(started.length, 3)
+  assert.doesNotMatch(started[0]?.markup ?? '', /data-iris-message-css/, 'a fenced document is not a message region')
+  for (const call of started.slice(1)) {
+    assert.match(call.markup, /^<style data-iris-message-css>/, `instance ${String(call.instance)} got no sheet`)
+    assert.match(call.markup, /@scope \(body\) \{\s*\.panel \{color:red\}/, 'the confined sheet is what travels')
+    assert.match(call.markup, /<div>region (one|two)<[/]div>$/, 'the region’s own markup must follow the sheet')
+  }
+
+  /*
+   * And the cost is still the card's block, not the shell's copy of the sheet:
+   * `bytes` is what the reader sees under an interface and what the budget
+   * spends, so charging every region of a message for the same couple of
+   * kilobytes would report this mechanism's weight as the card's.
+   */
+  const states = scope.states()
+  assert.equal(states[1]?.bytes, encodedBytes('<div>region one</div>'))
+
+  running.dispose()
+})
+
+test('the hook hands the claim’s own sheet to the controller', () => {
+  /*
+   * The seam between the two, read at the source because that is the only place
+   * it exists. Every assertion above stays green if the hook simply stops
+   * passing the sheet: the controller copies whatever it is given, and it would
+   * be given nothing. Producer tested, consumer tested, hand-off tested by
+   * nobody — the shape this project has now hit more than once.
+   *
+   * `css` from the **same** `claimMessageSurfaces` call as `blocks`, too: a
+   * second claim of one text is a second reading, and the reading that decides
+   * which characters leave the prose has to be the reading that decides which
+   * frames get the CSS.
+   */
+  const hook = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'app', 'useMessageInterfaces.tsx'),
+    'utf8',
+  )
+  assert.match(
+    hook,
+    /const \{ blocks, css \} = claimMessageSurfaces\(input\.text\)/u,
+    'the sheet must come from the same claim as the blocks',
+  )
+  const from = hook.indexOf('runMessageInterfaces(')
+  assert.ok(from !== -1, 'the hook no longer runs the controller')
+  const call = hook.slice(from, hook.indexOf('const unwatch', from))
+  assert.match(call, /\bcss\)/u, 'the controller is handed no sheet, so every region frame goes without it')
+})
+
+test('a message with no sheet builds exactly what it built before', () => {
+  // The common case, and the one a new parameter can quietly change: no CSS
+  // means the markup reaches the frame byte-identical.
+  const { blocks, css } = claimMessageSurfaces(['<div>plain</div>'].join(NL))
+  assert.equal(css, '')
+
+  const scope = harness()
+  const running = runMessageInterfaces(blocks, 5, scope.env, css)
+  assert.equal(scope.started()[0]?.markup, '<div>plain</div>')
+  running.dispose()
+})
+
+test('a details element opening is a change the height reporter can see', () => {
+  /*
+   * The other half of the panel's fault. With the sheet in the frame, clicking
+   * the summary makes the body visible — and the frame is only as tall as the
+   * last height it reported, so something has to notice.
+   *
+   * A `<details>` toggle changes **no box the body owns and adds no node**: it
+   * flips one attribute on an element inside it. So the `ResizeObserver` on the
+   * body cannot see it and neither can a `childList` mutation observer; what
+   * sees it is `attributes: true` with `subtree: true`, which is why those two
+   * options are the assertion rather than an implementation detail. Asserted
+   * against the source, the convention this file already uses for the browser
+   * entry — there is no unit harness in there, and the property worth
+   * protecting is that the options do not go away.
+   */
+  const entry = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
+    'utf8',
+  )
+  const observer = /new MutationObserver\([\s\S]*?\}\)\.observe\(document\.body, \{([\s\S]*?)\}\)/u.exec(entry)
+  assert.ok(observer !== null, 'the height reporter has no mutation observer on the body')
+  const options = observer[1] ?? ''
+  assert.match(options, /subtree: true/u, 'a toggle inside the body would be invisible')
+  assert.match(options, /attributes: true/u, 'a <details> open flips an attribute and nothing else')
 })

@@ -249,6 +249,73 @@ export function unblockFontStylesheets(body: string): string {
 }
 
 /**
+ * The attribute that marks a `<style>` element as the *message's* own sheet.
+ *
+ * A message frame renders one region of one message, and the message's
+ * `<style>` blocks belong to the whole message — upstream prefixes them with
+ * `.mes_text ` and they cover panel and prose alike. So every region frame of
+ * that message gets a copy in its `<head>` (`message-frames.ts` composes it,
+ * `card-css.ts` confines it).
+ *
+ * **Why it travels attached to the markup instead of as its own option.** The
+ * only path from the shell to this function is `runCard`, which forwards
+ * `markup` and nothing else; a sheet passed beside it would need a field in
+ * `runner.ts`. Marked, prefixed and lifted back out here, the transport costs
+ * one literal and the sheet still lands where a document's stylesheets belong —
+ * which matters for more than tidiness: a `<style>` left in the body is a body
+ * child, so it shifts `body.children[0]` under the card's own scripts and adds
+ * one to the count the blank-body detector reads as "did any CSS arrive"
+ * (`frame-entry.ts` `reportBodySummary`).
+ */
+export const MESSAGE_CSS_MARK = 'data-iris-message-css'
+
+/** The exact opening tag {@link withMessageCss} writes and {@link liftMessageCss} reads. */
+const MESSAGE_CSS_OPEN = `<style ${MESSAGE_CSS_MARK}>`
+
+/** Its closing tag. */
+const MESSAGE_CSS_CLOSE = '</style>'
+
+/**
+ * Attach a message's own CSS to the markup of one of its region frames.
+ *
+ * `</style` inside the CSS is escaped, because a card's sheet is card-authored
+ * and model-influenced text and a literal closer would end the element early —
+ * the same hole `buildSrcdoc` escapes `</script` for. The escape is CSS's own:
+ * inside a string (`content: "</style>"`, the only place the sequence can
+ * legally appear) a backslash before the solidus yields the solidus, so the
+ * meaning is unchanged and nothing has to be decoded again later. The backslash
+ * is built from its code point for the reason `script-source.ts` records — a
+ * literal one has gone missing in transit here before, and the collapsed
+ * version is a silent no-op.
+ * @param markup - the region's markup, as the author wrote it.
+ * @param css - the message's CSS, already confined by `card-css.ts`.
+ * @returns the markup with the sheet prefixed, or the markup unchanged.
+ */
+export function withMessageCss(markup: string, css: string): string {
+  if (css.trim() === '') return markup
+  const BACKSLASH = String.fromCharCode(92)
+  const safe = css.replace(/<[/](?=style)/gi, `<${BACKSLASH}/`)
+  return `${MESSAGE_CSS_OPEN}${safe}${MESSAGE_CSS_CLOSE}${markup}`
+}
+
+/**
+ * Take that sheet back off the body, for the head.
+ *
+ * Only at the very start, and only the exact literal the writer emits: a card's
+ * own `<style>` — wherever it sits and whatever attributes it carries — is never
+ * moved, because moving a card's elements is not this function's business.
+ * @param body - the frame's body markup.
+ * @returns the sheet's element (empty when there is none) and the rest.
+ */
+function liftMessageCss(body: string): { sheet: string, rest: string } {
+  if (!body.startsWith(MESSAGE_CSS_OPEN)) return { sheet: '', rest: body }
+  const close = body.indexOf(MESSAGE_CSS_CLOSE, MESSAGE_CSS_OPEN.length)
+  if (close === -1) return { sheet: '', rest: body }
+  const past = close + MESSAGE_CSS_CLOSE.length
+  return { sheet: body.slice(0, past), rest: body.slice(past) }
+}
+
+/**
  * Build a frame's document.
  *
  * The bootstrap arrives as text and is inlined. Nothing is fetched: an
@@ -289,6 +356,9 @@ export function buildSrcdoc(
      * messages, because a script *is* code and can be handed over a channel. A
      * message frame's block is **markup**, and markup only runs by being parsed,
      * so it has to be in the document from the start.
+     *
+     * May carry the message's own sheet as a marked prefix, which is lifted
+     * into the head rather than left in the body — see {@link MESSAGE_CSS_MARK}.
      */
     body?: string
     /**
@@ -324,6 +394,13 @@ export function buildSrcdoc(
   // and `'</script'` look almost identical and the second is a silent no-op,
   // which is exactly the bug this line shipped with until a test caught it.
   const { body, context } = options
+  /*
+   * The message's own sheet, taken off the body and held for the head. See
+   * `MESSAGE_CSS_MARK` for why it arrives this way; `sheet` is empty for every
+   * frame that was handed no message CSS, which is every script frame and every
+   * message frame of a message without a `<style>` of its own.
+   */
+  const message = liftMessageCss(body ?? '')
   const BACKSLASH = String.fromCharCode(92)
   const escapeClose = (source: string): string =>
     source.split('</script').join(`<${BACKSLASH}/script`)
@@ -419,6 +496,17 @@ export function buildSrcdoc(
       : '<style>*,*::before,*::after{box-sizing:border-box}' +
         'html,body{margin:0!important;padding:0;overflow:hidden!important;max-width:100%!important;' +
         `background:transparent;color-scheme:light}${NESTED_FRAME_RESET}</style>`,
+    /*
+     * The message's own sheet, last in the head and therefore **before every
+     * style the card itself writes** — its inline `style=` attributes, its
+     * `<style>` elements inside the markup, anything a script installs later.
+     * That is the order upstream produces for free: its message sheet sits in
+     * the message DOM ahead of the panel it decorates, so a rule the panel
+     * writes for itself wins a tie against the message's. It comes *after* the
+     * reset above for the same reason the reset exists — the reset is this
+     * frame's floor, and a card's message sheet is allowed to stand on it.
+     */
+    message.sheet,
     /*
      * A marker on the body when this frame holds a card **interface**.
      *
@@ -533,7 +621,10 @@ export function buildSrcdoc(
      * them its buttons, hostage to the network. See
      * `unblockFontStylesheets` for the reasoning and the scope.
      */
-    body === undefined ? '' : unblockFontStylesheets(body),
+    // `message.rest`, not `body`: the message's sheet has moved to the head, and
+    // leaving a copy here would apply it twice and put a `<style>` element in
+    // the card's own body.
+    body === undefined ? '' : unblockFontStylesheets(message.rest),
     '</body></html>',
   ].join('')
 }

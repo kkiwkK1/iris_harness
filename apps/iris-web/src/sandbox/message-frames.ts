@@ -25,6 +25,10 @@
  *    time; see `srcdoc.ts`. The pushed channel still carries updates.
  * 3. **Libraries are the message preset.** Upstream injects eight into a message
  *    frame against two into a script frame, so this is a different bundle.
+ * 4. **The message's own `<style>` comes with it.** A floor is one DOM upstream
+ *    and one frame per region here, so the sheet is copied into each of them
+ *    (`runMessageInterfaces`); a script frame has no message to belong to and
+ *    gets none.
  *
  * ## What is instrumented, and why these three
  *
@@ -44,6 +48,7 @@
  * @module iris-web/sandbox/message-frames
  */
 import type { FrontendBlock } from './frontend-blocks.ts'
+import { withMessageCss } from './srcdoc.ts'
 import type { Language } from '../app/i18n/strings.ts'
 import { translate } from '../app/i18n/strings.ts'
 
@@ -241,15 +246,27 @@ export interface RunningInterfaces {
 /**
  * Put every claimed block of one message into its own frame.
  *
+ * **The message's own sheet goes into every region frame.** One frame per
+ * region means the frames cannot see each other, so a rule in one of them
+ * cannot reach a `<details>` in the next — which is exactly how 爱衣's variable
+ * panel came out as an empty 812px frame beside a collapsed one. Upstream needs
+ * no copying because a floor is one DOM; here the copy *is* the message-wide
+ * scope. Only the bare-HTML regions get it: a fenced block is upstream's own
+ * iframe, and its message sheet does not reach inside one either.
+ *
  * @param blocks - the claimed blocks, from `claimFrontendBlocks`.
  * @param floor - which message these belong to.
  * @param env - the world.
+ * @param messageCss - the message's confined sheet, from
+ *   `claimMessageSurfaces`. Absent or empty for a message that wrote no
+ *   `<style>` of its own, which is the common case and costs nothing.
  * @returns a handle that tears the whole set down.
  */
 export function runMessageInterfaces(
   blocks: readonly FrontendBlock[],
   floor: number,
   env: MessageFramesEnv,
+  messageCss = '',
 ): RunningInterfaces {
   const states = new Map<number, InterfaceState>()
   const running: StartedInterface[] = []
@@ -297,8 +314,17 @@ export function runMessageInterfaces(
     }
 
     const painted = new Set<number>()
+    /*
+     * The sheet rides with the markup and is lifted into the frame's head by
+     * `buildSrcdoc` — see `MESSAGE_CSS_MARK` for why that is the transport. The
+     * bytes are counted **without** it (`states` above), because the number
+     * under an interface answers "how big is this card's block" and the budget
+     * spends the same quantity; a couple of kilobytes of the message's own CSS
+     * charged to every region of it would be this shell's weight, reported as
+     * the card's.
+     */
     const started = env.start({
-      markup: block.body,
+      markup: block.kind === 'bare-html' ? withMessageCss(block.body, messageCss) : block.body,
       floor,
       instance,
       onReady: () => move(instance, { phase: 'live' }),

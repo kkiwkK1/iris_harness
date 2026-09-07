@@ -1809,3 +1809,105 @@ So on this profile the strong ownership rule — what this host materialised, an
 - A per-chat override survives in `settings.json` under that chat's id and is not visible from the settings drawer's "this conversation" section as an override (the drawer shows merged values, like everything else did before this entry). The drawer is the obvious next consumer of `overrides`.
 
 **What would reopen it.** A decision to give the capsule the global scope as well — a modifier, or a second row — which would need the drawer's "defaults for new conversations" wording to reach the composer too, or the two surfaces would be two ways to write different layers with no visible difference.
+
+---
+
+## 51. A message's own `<style>` is copied into every frame its regions became
+
+**Kind:** compatibility gap, closed — with a named remainder.
+
+**Upstream is one DOM per floor.** A message's `<style>` blocks are pulled out
+by `decodeStyleTags`, every selector is prefixed with `.mes_text `, and the
+sheet is re-inserted into the message element — so it covers the whole floor,
+panel and prose alike, and a rule written for a panel three lines below it
+lands on that panel. There is nothing to copy because there is nowhere else to
+copy it to.
+
+**Iris is one frame per region** (entry 25). A `<style>` block at the start of a
+line opened a region of its own — `style` is on the split's block-tag list — so
+the message came out as two frames: one holding the panel, one holding only
+CSS. That second frame styles nothing (there is nothing in it) and its rules
+cannot reach the first (an opaque-origin frame is not the neighbour's
+stylesheet). Measured on 爱衣's `[美化]完整变量更新`, on the 8787 host: the
+`<details>` frame 88px and collapsed, the sheet's frame **812px of empty
+black**, and clicking the summary opened a panel whose body stayed invisible —
+its `.thinking-description[open]>div { opacity: 1 !important }` was in the other
+frame, and so was the `::after { content: attr(data-close) }` that writes the
+summary's own label, which is why the title read 「变量更新 -」 and stopped.
+
+**The population.** Read through the pipeline's own claimer over the card
+corpus (25 cards decoded from `E:/sillyTavern/.../characters` plus
+`iris_分支/测试用卡`; one candidate text = one regex `replaceString`, one
+`first_mes`, one alternate greeting; 220 texts): **13 texts in 9 cards** emit an
+HTML fragment, one blank line and a `<style>` — 爱衣, 可攻略女主拒绝被攻略,
+暗渊：地下城领主, 2.1.0 (two each), 【Sgw】又看一集, 创世回廊1.3, 银麒赎世,
+魔法少女是不会败北恶堕的吧！, 魔法少女的扣扣审判1.0 (one each). All 13 are
+`replaceString`s, all 13 are variable-update panels, and in all 13 the gap is
+exactly one blank line. No text in the corpus is a sheet with no fragment
+beside it.
+
+**The wiring.** `splitHtmlRegions` returns a run that is nothing but `<style>`
+elements as a `MessageStyle` (span plus CSS) instead of a region;
+`claimMessageSurfaces` joins the message's sheets, confines them once through
+`card-css.ts`, and hands back both the spans and the CSS;
+`runMessageInterfaces` attaches the sheet to each **bare-HTML** region's markup
+and `buildSrcdoc` lifts it into that frame's `<head>`; the row passes the same
+spans to `splitAroundInterfaces` as dropped, so the characters reach neither a
+frame nor the renderer. After the change the corpus produces **0** style-only
+frames and each of those 13 texts builds 1 frame instead of 2.
+
+**Copying is the equivalence, not a shortcut.** With one frame per region and no
+frame able to see another's stylesheet, installing the sheet in each region
+frame is the only construction that reproduces a message-wide scope. The scope
+root inside the frame is `body` — upstream's `.mes_text ` prefix expressed in
+the frame's terms, and measured to be safe: none of the 13 sheets carries a rule
+for `html`, `body` or `:root`, and none reaches for a SillyTavern container.
+
+**A fenced block deliberately gets no copy.** Upstream renders a fenced
+document in an iframe of its own, which its `.mes_text`-prefixed message sheet
+does not reach either; copying ours in would be a divergence rather than a fix.
+
+**What it costs.**
+
+- **The sheet is parsed once per region frame.** 11.9 KiB of confined CSS across
+  the 13 corpus texts (~940 B each), and every one of the 13 has exactly one
+  region, so today the multiplier is 1. A message with three regions pays it
+  three times. It is not counted in an interface's reported `bytes`: that number
+  is the card's block, and the budget spends the same quantity.
+- **A selector that crosses regions still cannot match, and this is the
+  remainder.** `.panel ~ .footer`, `.a .b` with `.a` in one region and `.b` in
+  the next, `:has()` across them, sibling and child combinators over a region
+  boundary — the sheet is in both frames, but each frame holds only its own
+  region, so a combinator that needs both elements matches in neither. Upstream
+  matches these, because the floor is one tree. Nothing in the corpus's 13
+  sheets does it (every one of them selects inside a single fragment), and there
+  is no fix available inside the frame model: it would take the inline
+  sanitizer path of `INLINE-HTML.md` §三, where a floor is one tree again.
+- **A message's sheet can no longer reach the message's prose.** Upstream's
+  `.mes_text `-prefixed rule can style the narrative around a panel; a frame's
+  head cannot. Same cause, same remainder, same fix if it is ever wanted.
+- **`@keyframes` names are kept, not renamed** (`KeyframePolicy`). In a shared
+  document renaming prevents two cards' `pulse` from colliding; in a frame there
+  is nothing to collide with, and renaming would break 5 of the 13 sheets, whose
+  keyframes are named from `style=` attributes in the markup (爱衣's `shimmer`,
+  可攻略女主 and 暗渊 with `moon-halo`, `moon-pulse`, `stars-drift`,
+  `moonlight-sweep`) — the rewrite reaches `animation` declarations only inside
+  the sheet it renames. The refusal list is untouched: `@import`, `@font-face`,
+  `@namespace`, `@charset` and every `url()` fetch are refused in a frame's
+  sheet exactly as in a message's (entry 41), and nothing in the corpus's 13 is
+  refused today.
+- **A sheet with no region frame is dropped and said out loud** — "a `<style>`
+  block in this message has nothing to style" on the durable card-report
+  channel. Zero occurrences in the corpus; the note exists because the corpus
+  has cards that print their own explanation when a resource goes missing, and
+  an unexplained absence loses that race.
+- **An unclosed `<style>` now takes the rest of the message as CSS** and reports
+  it, where the unclosed-region fallback used to frame it as HTML — which was a
+  frame whose entire content was a stylesheet's text.
+
+**What would overturn it.** A card that needs a message sheet to match across
+two regions or into the prose (none in the corpus) — which is not a knob on this
+entry but the inline path of `INLINE-HTML.md` §三, where the remainder above
+disappears because the floor is one tree again. Or a message whose sheets are
+large enough that copying them per region is measurable; 940 B against a
+360 KiB interface says that is not today's problem.

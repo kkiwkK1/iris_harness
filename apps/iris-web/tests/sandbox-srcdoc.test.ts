@@ -3,7 +3,13 @@ import { test } from 'node:test'
 
 import { readFileSync } from 'node:fs'
 
-import { FA_SENTINEL, buildSrcdoc, framePolicy, unblockFontStylesheets } from '../src/sandbox/srcdoc.ts'
+import {
+  FA_SENTINEL,
+  buildSrcdoc,
+  framePolicy,
+  unblockFontStylesheets,
+  withMessageCss,
+} from '../src/sandbox/srcdoc.ts'
 
 /** Iris's own origin, as the runner supplies it. */
 const SELF = 'http://127.0.0.1:5173'
@@ -273,6 +279,75 @@ test('a message frame cannot scroll itself, which is why height sync is existenc
   // itself expecting no inner scrollbar lays out differently.
   assert.ok(doc.includes('overflow:hidden!important'))
   assert.ok(doc.includes('box-sizing:border-box'))
+})
+
+test('a message’s own sheet is lifted into the head, ahead of the card’s markup', () => {
+  /*
+   * The sheet belongs to the message, so it belongs in the document's head:
+   * before every style the card writes for itself (the order upstream produces
+   * for free, since its message sheet sits in the message DOM ahead of the
+   * panel it decorates), and out of the card's `body.children`, which its own
+   * scripts index and the blank-body detector counts.
+   *
+   * It arrives attached to the markup because `runCard` forwards markup and
+   * nothing else — see `MESSAGE_CSS_MARK`. This is that round trip: attached at
+   * one end, lifted at the other, and never rendered twice.
+   */
+  const doc = buildSrcdoc('tok', '', {
+    networkGranted: false,
+    libraries: [],
+    selfOrigin: SELF,
+    body: withMessageCss(
+      '<div id="panel"><style>#panel{color:blue}</style></div>',
+      '@scope (body) { .a{color:red} }',
+    ),
+  })
+
+  const sheetAt = doc.indexOf('.a{color:red}')
+  const headEnd = doc.indexOf('</head>')
+  const panelAt = doc.indexOf('id="panel"')
+  assert.ok(sheetAt !== -1, 'the message sheet is not in the document at all')
+  assert.ok(sheetAt < headEnd, 'the sheet stayed in the body, where it is a child of the card’s own root')
+  assert.ok(headEnd < panelAt, 'the card’s markup must still be the body')
+  assert.equal(doc.split('.a{color:red}').length - 1, 1, 'the sheet was applied twice')
+
+  // The card's own `<style>` is untouched and still inside its element.
+  assert.ok(doc.indexOf('#panel{color:blue}') > headEnd, 'a card’s own sheet was moved out of its markup')
+
+  // The reset is this frame's floor and the message sheet stands on it.
+  assert.ok(doc.indexOf('overflow:hidden!important') < sheetAt, 'the reset would override the message’s sheet')
+})
+
+test('a closing style tag inside the CSS cannot end the element', () => {
+  /*
+   * A card's sheet is card-authored, model-influenced text: a `</style` that a
+   * `content:` string may legitimately contain would otherwise close the
+   * element early and drop the rest of the CSS into the document as markup —
+   * the hole the bootstrap escapes `</script` for, one element over. The escape
+   * is CSS's own, so the string still means what the author wrote.
+   */
+  const attached = withMessageCss('<div>x</div>', 'a{content:"</style><img onerror=bad()>"}')
+
+  assert.equal(attached.split('</style>').length - 1, 1, 'the CSS closed the element itself')
+  assert.ok(attached.includes('img onerror=bad()'), 'the author’s own characters must survive')
+  assert.ok(attached.endsWith('<div>x</div>'), 'the markup must follow the sheet whole')
+
+  const doc = buildSrcdoc('tok', '', {
+    networkGranted: false, libraries: [], selfOrigin: SELF, body: attached,
+  })
+  assert.ok(doc.indexOf('img onerror=bad()') < doc.indexOf('</head>'), 'the payload escaped into the body')
+})
+
+test('a frame handed no message sheet is exactly the frame it was before', () => {
+  // The common case: `withMessageCss` with nothing to attach must not touch the
+  // markup, and `buildSrcdoc` must not invent an empty style element.
+  assert.equal(withMessageCss('<div>x</div>', ''), '<div>x</div>')
+  assert.equal(withMessageCss('<div>x</div>', '   \n  '), '<div>x</div>')
+
+  const doc = buildSrcdoc('tok', '', {
+    networkGranted: false, libraries: [], selfOrigin: SELF, body: '<div>x</div>',
+  })
+  assert.ok(!doc.includes('data-iris-message-css'))
 })
 
 test('a script frame keeps the minimal reset and gets no markup', () => {

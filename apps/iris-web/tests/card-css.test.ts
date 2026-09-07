@@ -96,6 +96,74 @@ test('a keyframe name is not rewritten outside an animation declaration', () => 
   assert.match(css, /@keyframes iris-c2-spin/, 'while the definition is still renamed')
 })
 
+test('a comment above an at-rule does not turn it into a selector', () => {
+  /*
+   * A defect found by reading this function's real output on a real card, not
+   * by a failing test — which is why it had survived: everything about it looks
+   * right.
+   *
+   * `topLevelPieces` hands back everything between the previous block and this
+   * one as the prelude, so a card that labels its animation puts a comment at
+   * the front of it. `atRuleName` read that as "not an at-rule" and the piece
+   * went in as a selector — and a `@keyframes` **inside `@scope` defines
+   * nothing**, so the animation simply never ran. 爱衣's `[美化]变量更新中`
+   * labels its `@keyframes shimmer` exactly this way and its markup carries
+   * `animation: shimmer 2s linear infinite`, so this was a dead animation on a
+   * corpus card — and the same hole was under the nested-frame path before any
+   * message sheet went through here.
+   */
+  const labelled = [
+    '/* 流光动画 Keyframes */',
+    '@keyframes shimmer { 100% { transform: translateX(100%) } }',
+    '.shimmer-effect { animation: shimmer 2s linear infinite }',
+  ].join('\n')
+
+  for (const policy of ['rename', 'keep'] as const) {
+    const { css } = scopeCardCss(labelled, '6', 'body', policy)
+    const keyframesAt = css.indexOf('@keyframes')
+    const scopeAt = css.indexOf('@scope')
+    assert.ok(keyframesAt !== -1, `${policy}: the definition is gone`)
+    assert.ok(scopeAt !== -1, `${policy}: nothing was scoped`)
+    assert.ok(keyframesAt < scopeAt, `${policy}: a keyframe inside @scope defines nothing`)
+  }
+
+  // And the rename still finds it, which is the other half of the same read:
+  // a definition that never reached the keyframes branch was never collected,
+  // so its reference was never rewritten either.
+  const { css } = scopeCardCss(labelled, '6')
+  assert.match(css, /@keyframes iris-c6-shimmer/)
+  assert.match(css, /animation: iris-c6-shimmer 2s linear infinite/)
+})
+
+test('a keyframe keeps its name where nothing can collide with it', () => {
+  /*
+   * `keep` is for a document holding one card's CSS — a message frame — and it
+   * exists because of a measurement, not a preference: **5 of the corpus's 13
+   * message-level sheets define keyframes that the message's own markup names
+   * from a `style=` attribute** (爱衣's `shimmer`, 可攻略女主's `moon-halo` and
+   * `stars-twinkle`, 暗渊's `moon-pulse`, `stars-drift`, `moonlight-sweep`).
+   * The rewrite only reaches `animation` declarations inside the sheet being
+   * renamed, so renaming would leave those attributes naming an animation
+   * nobody defines — a decoration that stops with no error attached. Renaming
+   * is a collision measure, and inside a frame there is nothing to collide
+   * with.
+   *
+   * The lift is not optional either way: `@keyframes` cannot live inside
+   * `@scope`, so it comes out of the block whatever its name is.
+   */
+  const { css } = scopeCardCss(
+    '@keyframes moon-halo { from { opacity: 0 } }\n.dot { animation: moon-halo 3s infinite }',
+    '9',
+    'body',
+    'keep',
+  )
+
+  assert.match(css, /@keyframes moon-halo/, 'the markup’s style attribute names this animation')
+  assert.ok(!css.includes('iris-c9-moon-halo'), css)
+  assert.match(css, /animation: moon-halo 3s infinite/, 'the sheet’s own reference must still match')
+  assert.ok(css.indexOf('@keyframes') < css.indexOf('@scope'), 'a keyframe inside @scope defines nothing')
+})
+
 test('fetching at-rules are refused by name', () => {
   const { css, refused } = scopeCardCss(
     '@import url("https://cdn.example/x.css");\n@font-face { font-family: X; src: url(https://cdn.example/x.woff2) }\n.p{color:red}',

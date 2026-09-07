@@ -49,6 +49,11 @@ const BLOCK_TAGS: ReadonlySet<string> = new Set([
   'title', 'tr', 'track', 'ul',
   // Not in CommonMark's list, but each is a container a card actually opens a
   // region with, and each is meaningless as markdown text.
+  //
+  // `style` is here for a different reason since message sheets existed: a run
+  // it opens is not a region at all (see `MessageStyle`), and this list is what
+  // makes the walk *recognise* the run instead of handing a stylesheet's text
+  // to the markdown renderer.
   'style', 'script', 'canvas', 'svg', 'video', 'audio', 'template', 'pre',
 ])
 
@@ -64,6 +69,38 @@ const VOID_TAGS: ReadonlySet<string> = new Set([
   'area', 'base', 'basefont', 'br', 'col', 'embed', 'hr', 'img', 'input',
   'link', 'meta', 'param', 'source', 'track', 'wbr',
 ])
+
+/**
+ * A `<style>` block a message wrote outside any fence.
+ *
+ * **Not a region, because it has nothing to render.** Upstream is one DOM per
+ * floor: `decodeStyleTags` prefixes every selector with `.mes_text ` and the
+ * sheet then applies to the whole message, panel and prose alike. Iris is one
+ * frame per region, and a region carrying only CSS became a frame with nothing
+ * in it — measured at 812px of empty black on 爱衣's variable panel, whose own
+ * `[open]>div` rule was in that frame while the `<details>` it unhides was in
+ * the next one.
+ *
+ * So a style block leaves the region sequence here, carrying its span so the
+ * caller can take it out of the prose as well, and the pipeline copies its CSS
+ * into every frame the message's *other* regions become
+ * (`frontend-blocks.ts`, `message-frames.ts`).
+ */
+export interface MessageStyle {
+  /** Offset of the block's first character in the input. */
+  start: number
+  /** Offset just past the block's last character. */
+  end: number
+  /**
+   * The CSS between the tags, exactly as written.
+   *
+   * Unscoped and unfiltered on purpose: this file decides *what is a style
+   * block*, and `card-css.ts` decides what a card's CSS may do. Two files
+   * deciding the second question is how they come to disagree about
+   * `@font-face`.
+   */
+  css: string
+}
 
 /** One run of a message, and which renderer it belongs to. */
 export interface Region {
@@ -87,6 +124,73 @@ export interface SplitMessage {
   regions: readonly Region[]
   /** Deduplicated notes — an unclosed region, and nothing else so far. */
   refused: readonly string[]
+  /**
+   * The message's own `<style>` blocks, in source order.
+   *
+   * Never also a region: a block that lands here has left the sequence, so a
+   * caller that renders `regions` and splices out `styles` shows neither a
+   * frame for it nor its source text.
+   */
+  styles: readonly MessageStyle[]
+}
+
+/** A `<style>` element's opening tag. */
+const STYLE_OPEN = /<style\b[^>]*>/i
+
+/**
+ * A `<style>` element's closing tag.
+ *
+ * The solidus is written as a character class so no escape has to survive being
+ * written — the convention `script-source.ts` records, and this file's own
+ * patterns are the ones a collapsed escape would silently widen.
+ */
+const STYLE_CLOSE = /<[/]style\s*>/i
+
+/** An HTML comment: neither content a renderer needs nor CSS. */
+const COMMENT = /<!--[\s\S]*?-->/g
+
+/**
+ * The CSS of a run that is `<style>` elements and nothing else.
+ *
+ * Answering "is this whole run just CSS" rather than "does it contain a style
+ * tag", because a card's panel routinely carries a `<style>` **inside** it —
+ * that one belongs to the panel's own frame and must stay exactly where the
+ * author put it. Only a run with nothing outside its style elements (blank
+ * space and comments aside) is a message-level sheet.
+ *
+ * An unclosed `<style>` takes the rest of the run as CSS. That is the author's
+ * intent read the only way it can be: what follows an opening style tag is
+ * declarations, and handing them to a renderer would put a stylesheet's text on
+ * screen.
+ * @param text - one region's text.
+ * @returns the CSS, or undefined when the run is not a style block.
+ */
+function cssOnly(text: string): string | undefined {
+  let css = ''
+  let outside = ''
+  let found = false
+  let rest = text
+
+  for (;;) {
+    const open = STYLE_OPEN.exec(rest)
+    if (open === null) {
+      outside += rest
+      break
+    }
+    found = true
+    outside += rest.slice(0, open.index)
+    const after = rest.slice(open.index + open[0].length)
+    const close = STYLE_CLOSE.exec(after)
+    if (close === null) {
+      css += after
+      break
+    }
+    css += after.slice(0, close.index)
+    rest = after.slice(close.index + close[0].length)
+  }
+
+  if (!found) return undefined
+  return outside.replace(COMMENT, '').trim() === '' ? css : undefined
 }
 
 /** The tag a line opens, if it opens one. */
@@ -122,11 +226,17 @@ function depthDelta(line: string, tag: string): number {
  * and swallow the rest of the message. Depth pairing is the mechanism the clause
  * describes; "line-initial" describes what the common case looks like.
  *
+ * **One kind of region is not one.** A run that is nothing but `<style>`
+ * elements is a *message-level sheet* (`MessageStyle`), not a panel: it comes
+ * back in `styles` with its span and never as a region, because a frame built
+ * for it renders nothing and takes its rules out of reach of the panel they
+ * were written for.
+ *
  * @param text - the message text, after display regex.
- * @returns the regions in order, and any notes.
+ * @returns the regions in order, the message's own style blocks, and any notes.
  */
 export function splitHtmlRegions(text: string): SplitMessage {
-  if (text === '') return { regions: [], refused: [] }
+  if (text === '') return { regions: [], refused: [], styles: [] }
 
   const lines = text.split('\n')
 
@@ -140,6 +250,7 @@ export function splitHtmlRegions(text: string): SplitMessage {
 
   const regions: Region[] = []
   const refused = new Set<string>()
+  const styles: MessageStyle[] = []
 
   let pending: string[] = []
   let pendingFrom = 0
@@ -194,6 +305,21 @@ export function splitHtmlRegions(text: string): SplitMessage {
     }
 
     if (!closed) {
+      const tail = lines.slice(at).join('\n')
+      /*
+       * An unclosed `<style>` is CSS, not a frame full of CSS text. Reported,
+       * because what follows it is gone from the reading surface either way and
+       * the author is the only one who can put the closing tag back.
+       */
+      const unclosedCss = cssOnly(tail)
+      if (unclosedCss !== undefined) {
+        refused.add(
+          'a <style> block is never closed — its CSS is applied to this message,'
+          + ' and nothing after it reaches the reader',
+        )
+        styles.push({ start: starts[at] ?? 0, end: text.length, css: unclosedCss })
+        return { regions, refused: [...refused], styles }
+      }
       /*
        * The documented fallback: take the rest and say so. Reported rather than
        * silently rendered, because a card author whose panel swallowed the
@@ -202,19 +328,31 @@ export function splitHtmlRegions(text: string): SplitMessage {
        * card's raw tags on screen, which is the fault we started from.
        */
       refused.add(`an HTML block opened with <${tag}> is never closed — the rest of the message is treated as HTML`)
-      regions.push({ kind: 'html', text: lines.slice(at).join('\n'), start: starts[at] ?? 0, end: text.length })
-      return { regions, refused: [...refused] }
+      regions.push({ kind: 'html', text: tail, start: starts[at] ?? 0, end: text.length })
+      return { regions, refused: [...refused], styles }
     }
 
-    regions.push({
-      kind: 'html',
-      text: lines.slice(at, end + 1).join('\n'),
-      start: starts[at] ?? 0,
-      end: (starts[end] ?? 0) + (lines[end] ?? '').length,
-    })
+    const claimed = lines.slice(at, end + 1).join('\n')
+    const from = starts[at] ?? 0
+    const to = (starts[end] ?? 0) + (lines[end] ?? '').length
+
+    /*
+     * A style block leaves the sequence here — no region, and therefore no
+     * frame and no prose. `MessageStyle` carries the reasoning; the span is
+     * what lets the caller take the same characters out of the text it hands
+     * the renderer.
+     */
+    const css = cssOnly(claimed)
+    if (css !== undefined) {
+      styles.push({ start: from, end: to, css })
+      at = end + 1
+      continue
+    }
+
+    regions.push({ kind: 'html', text: claimed, start: from, end: to })
     at = end + 1
   }
 
   flushMarkdown()
-  return { regions, refused: [...refused] }
+  return { regions, refused: [...refused], styles }
 }

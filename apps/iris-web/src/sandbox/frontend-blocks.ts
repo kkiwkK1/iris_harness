@@ -29,8 +29,9 @@
  * @module iris-web/sandbox/frontend-blocks
  */
 
-import { splitHtmlRegions } from '../app/html-regions.ts'
+import { splitHtmlRegions, type MessageStyle } from '../app/html-regions.ts'
 import { unwrapUnknownTags } from '../app/inline-html.ts'
+import { scopeCardCss } from '../app/card-css.ts'
 
 /** What upstream looks for, verbatim (`src/util/is_frontend.ts:1-3`). */
 const MARKERS: readonly string[] = ['html>', '<head>', '<body']
@@ -271,7 +272,51 @@ export interface ClaimedSurfaces {
    * than swallowed. Empty when every region closed.
    */
   refused: readonly string[]
+  /**
+   * The message's own `<style>` spans, which are neither frames nor prose.
+   *
+   * Handed back so the row can splice the same characters out of the text it
+   * gives the renderer. Leaving them in would trade an empty frame for a
+   * screenful of escaped CSS in the middle of the message — `MarkdownText`
+   * disables raw HTML, so a `<style>` element reaching it arrives as *text*.
+   */
+  styles: readonly MessageStyle[]
+  /**
+   * Those styles, confined and ready for a region frame's head.
+   *
+   * One string for the whole message, because the message is the scope: every
+   * region frame gets this same sheet, which is the only construction that
+   * reproduces upstream's one-DOM-per-floor behaviour across frames that cannot
+   * see each other. Empty when the message wrote no style of its own, and empty
+   * when everything it wrote was refused.
+   */
+  css: string
 }
+
+/**
+ * The message's identity, as `card-css.ts` names a scope.
+ *
+ * A constant rather than the floor or a sequence number, and the reason is that
+ * **the scope is not a message here, it is a document**: the sheet is installed
+ * in a frame that holds one region of one message, so there is nothing else in
+ * that document for it to collide with or leak onto. The seq's usual job —
+ * keeping two messages' sheets apart in one shared DOM — is done by the frame
+ * boundary before this string is read.
+ */
+const MESSAGE_SCOPE_SEQ = 'msg'
+
+/**
+ * The scope root a message's sheet is confined to inside a frame.
+ *
+ * `body`, which is upstream's rule expressed in this document's terms:
+ * `decodeStyleTags` prefixes every selector with `.mes_text `, the element that
+ * holds the message's markup, so a message sheet upstream cannot reach the page
+ * root either. Measured on the corpus's 13 message sheets: **none** carries a
+ * rule for `html`, `body` or `:root`, and none reaches for a SillyTavern
+ * container (`.mes_text`, `#chat`) — so the root a `@scope` cannot match is not
+ * a root any of them tries to style.
+ */
+const MESSAGE_SCOPE_ROOT = 'body'
 
 /**
  * Claim every frameable surface of a message: fenced blocks **and** bare HTML.
@@ -304,8 +349,20 @@ export interface ClaimedSurfaces {
  *   overlapped region falls back to the renderer, which is the behaviour the
  *   message had before this pipeline existed.
  *
+ * **A `<style>` block is a third thing, and it is not a surface.** Upstream is
+ * one DOM per floor: a message's sheet is prefixed with `.mes_text ` and covers
+ * the whole message. Iris is one frame per region, and the frames cannot see
+ * each other — so a sheet that became its own region became a frame with
+ * nothing to style, while the panel it was written for sat in the next frame
+ * without it (爱衣's variable panel: 812px of empty black, a `<details>` that
+ * opened onto `opacity:0`). The sheet therefore leaves the region sequence, is
+ * confined once for the message, and is copied into **every** region frame of
+ * it. Copying is not an optimisation to remove later: with one frame per region
+ * it is the only construction equivalent to a message-wide scope.
+ *
  * @param source - the message text, after display regex.
- * @returns the claimed surfaces, in source order, with any split notes.
+ * @returns the claimed surfaces, in source order, the message's own style
+ *   spans, the sheet to install in their frames, and any notes.
  */
 export function claimMessageSurfaces(source: string): ClaimedSurfaces {
   const scanned = scanCodeBlocks(source)
@@ -313,16 +370,17 @@ export function claimMessageSurfaces(source: string): ClaimedSurfaces {
 
   const regions: FrontendBlock[] = []
   const notes: string[] = []
+  const styles: MessageStyle[] = []
 
   // Fences — claimed or not — bound the prose the split may read. `cursor`
   // walks the source and collects one split per gap between them.
   let cursor = 0
   for (const span of scanned) {
     if (span.kind !== 'fenced') continue
-    if (span.start > cursor) collectRegions(source, cursor, span.start, regions, notes)
+    if (span.start > cursor) collectRegions(source, cursor, span.start, regions, notes, styles)
     if (span.end > cursor) cursor = span.end
   }
-  if (cursor < source.length) collectRegions(source, cursor, source.length, regions, notes)
+  if (cursor < source.length) collectRegions(source, cursor, source.length, regions, notes, styles)
 
   /*
    * A claimed code block outranks a region that reaches into it — the fence
@@ -336,7 +394,46 @@ export function claimMessageSurfaces(source: string): ClaimedSurfaces {
   )
   const blocks = [...claimed, ...safe].sort((left, right) => left.start - right.start)
 
-  return { blocks, refused: notes }
+  /*
+   * The message's sheet, confined once for the whole message.
+   *
+   * Through `card-css.ts` and not a private copy of its rules: `@import` and
+   * `@font-face` fetch, and a second implementation of that refusal list is how
+   * the two would come to disagree about which one of them still refuses.
+   * Keyframes keep their names here — see `KeyframePolicy` and the 5-of-13
+   * measurement behind it.
+   */
+  const written = styles.map(style => style.css).join(NEWLINE)
+  const scoped = written.trim() === ''
+    ? { css: '', refused: [] as readonly string[] }
+    : scopeCardCss(written, MESSAGE_SCOPE_SEQ, MESSAGE_SCOPE_ROOT, 'keep')
+  for (const refusal of scoped.refused) notes.push(refusal)
+
+  /*
+   * A sheet with nothing to style is dropped and said out loud.
+   *
+   * The frames a message sheet is copied into are the ones that stand in for
+   * the message's own DOM — its bare-HTML regions. A **fenced** block is a
+   * different thing: upstream renders that one in an iframe of its own, which
+   * its `.mes_text`-prefixed message sheet does not reach either, so copying
+   * ours in would be a divergence rather than a fix. When a message has no
+   * region frame at all, the sheet has no equivalent destination, and silence
+   * would leave a card author looking for a panel whose CSS simply evaporated.
+   */
+  const reachable = blocks.some(block => block.kind === 'bare-html')
+  if (styles.length > 0 && !reachable) {
+    notes.push(
+      'a <style> block in this message has nothing to style —'
+      + ' the message has no HTML of its own, so the CSS was dropped',
+    )
+  }
+
+  return {
+    blocks,
+    refused: notes,
+    styles,
+    css: reachable ? scoped.css : '',
+  }
 }
 
 /**
@@ -347,6 +444,8 @@ export function claimMessageSurfaces(source: string): ClaimedSurfaces {
  * @param to - gap end, exclusive.
  * @param out - where claimed regions accumulate.
  * @param notes - where the split's unclosed-region notes accumulate.
+ * @param styles - where the message's own `<style>` spans accumulate, in
+ *   source offsets like everything else here.
  */
 function collectRegions(
   source: string,
@@ -354,9 +453,13 @@ function collectRegions(
   to: number,
   out: FrontendBlock[],
   notes: string[],
+  styles: MessageStyle[],
 ): void {
   const split = splitHtmlRegions(source.slice(from, to))
   for (const note of split.refused) notes.push(note)
+  for (const style of split.styles) {
+    styles.push({ start: from + style.start, end: from + style.end, css: style.css })
+  }
   for (const region of split.regions) {
     if (region.kind !== 'html') continue
     out.push({
@@ -475,25 +578,52 @@ export type MessageSegment =
  * they left. That also puts each interface **where its block was**, which
  * matters for a message that has prose on both sides of it.
  *
+ * **Spans can also be removed without anything taking their place.** A
+ * message's own `<style>` block is neither a frame nor prose: its CSS has gone
+ * into the frames the message's other regions became, and the characters
+ * themselves must not reach the renderer, which disables raw HTML and would
+ * print the stylesheet as text. So it is dropped here, in the same walk that
+ * places the interfaces — a second pass that rewrote the text would move every
+ * offset the claims are named by.
+ *
  * @param source - the message text, after display regex.
  * @param blocks - the claimed blocks, from `claimFrontendBlocks`.
+ * @param dropped - spans to remove from the prose and replace with nothing,
+ *   from `claimMessageSurfaces`'s `styles`.
  * @returns the pieces, in order, with empty prose dropped.
  */
 export function splitAroundInterfaces(
   source: string,
   blocks: readonly FrontendBlock[],
+  dropped: readonly { start: number, end: number }[] = [],
 ): MessageSegment[] {
+  /*
+   * The instance number is fixed **before** the two lists are merged, and that
+   * ordering is the whole reason this is written as a map and not as a counter:
+   * `instance` is the block's index within `blocks`, which is what the budget
+   * plans over and what the controller builds frames for. A number assigned
+   * while walking a list that also contains style spans would drift from theirs
+   * on any message that has one — every interface after the first style landing
+   * in its neighbour's slot, with nothing reporting anything.
+   */
+  const claims: { start: number, end: number, block?: FrontendBlock, instance: number }[] = [
+    ...blocks.map((block, instance) => ({ start: block.start, end: block.end, block, instance })),
+    ...dropped.map(span => ({ start: span.start, end: span.end, instance: -1 })),
+  ].sort((left, right) => left.start - right.start)
+
   const segments: MessageSegment[] = []
   let at = 0
 
-  blocks.forEach((block, instance) => {
-    const before = source.slice(at, block.start)
+  for (const claim of claims) {
+    const before = source.slice(at, Math.max(at, claim.start))
     // Trimmed only for the emptiness test: a gap of whitespace between two
     // interfaces is not prose, and rendering it would add a blank paragraph.
     if (before.trim() !== '') segments.push({ kind: 'text', text: before })
-    segments.push({ kind: 'interface', block, instance })
-    at = block.end
-  })
+    if (claim.block !== undefined) {
+      segments.push({ kind: 'interface', block: claim.block, instance: claim.instance })
+    }
+    at = Math.max(at, claim.end)
+  }
 
   const rest = source.slice(at)
   if (rest.trim() !== '') segments.push({ kind: 'text', text: rest })
