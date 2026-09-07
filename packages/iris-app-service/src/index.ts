@@ -19,7 +19,8 @@ import { existsSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { ChatCompletionPreset } from '@iris/preset'
-import { OpenAiCompatAdapter } from '@iris/llm-openai-compat'
+import { DEFAULT_TIMEOUTS, OpenAiCompatAdapter } from '@iris/llm-openai-compat'
+import { versionRoute } from './version.ts'
 
 import { BackupStore, DEFAULT_BACKUP_KEEP } from './backups.ts'
 import { ChatStore } from './chats.ts'
@@ -214,6 +215,20 @@ export interface Config {
    * @default false
    */
   pruneVariables?: boolean
+  /**
+   * Milliseconds to wait for a provider's response headers. `0` disables it.
+   *
+   * The three budgets below have **no SillyTavern equivalent** — upstream's
+   * generation fetch runs with `timeout: 0` and an abort wired to the browser
+   * socket closing, which works there because a hung request always has a
+   * person and a Stop button at the other end. See `notes/packages/iris-app-service/DEVIATIONS.md`.
+   * @default 30000
+   */
+  connectTimeoutMs?: number
+  /** Milliseconds to wait for the stream's first payload. `0` disables it. @default 120000 */
+  firstByteTimeoutMs?: number
+  /** Milliseconds of provider silence mid-stream before giving up. `0` disables it. @default 120000 */
+  idleTimeoutMs?: number
   /** Keep every table on a turn that is a multiple of this. @default 50 */
   pruneSnapshotInterval?: number
   /** Never trim the newest this many turns. @default 20 */
@@ -268,6 +283,11 @@ export const Config: z<Config> = z.object({
   sandboxPath: z.string().default('/sandbox'),
   templates: z.boolean().default(false),
   pruneVariables: z.boolean().default(false),
+  // Defaults deferred to the adapter's own `DEFAULT_TIMEOUTS` rather than
+  // restated: two schemas that each name 30000 are two places to change it.
+  connectTimeoutMs: z.natural().default(DEFAULT_TIMEOUTS.connectMs),
+  firstByteTimeoutMs: z.natural().default(DEFAULT_TIMEOUTS.firstByteMs),
+  idleTimeoutMs: z.natural().default(DEFAULT_TIMEOUTS.idleMs),
   pruneSnapshotInterval: z.natural().default(50),
   pruneKeepRecent: z.natural().default(20),
   templateDeadlineMs: z.natural().default(2000),
@@ -530,6 +550,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         ...endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey },
         ...endpoint.apiKeyHeader === undefined ? {} : { apiKeyHeader: endpoint.apiKeyHeader },
         models: [],
+        // Absent stays absent — `exactOptionalPropertyTypes` is on, and the
+        // adapter resolves a missing budget to its own default, so an explicit
+        // `undefined` would be both a type error and a second way to say the
+        // same thing. Per route because a self-hosted endpoint and a cloud one
+        // are exactly the pair a profile distinguishes; the per-profile
+        // override is a protocol change and is not this batch.
+        ...config.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: config.connectTimeoutMs },
+        ...config.firstByteTimeoutMs === undefined ? {} : { firstByteTimeoutMs: config.firstByteTimeoutMs },
+        ...config.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: config.idleTimeoutMs },
       })),
       `irisApp: adapter ${route}`,
     ))
@@ -761,6 +790,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }),
     `irisApp: GET ${avatarPath}`,
   )
+
+  // The route object is built in `version.ts` so a test can hold the same one
+  // the server gets; this line is the only part no test can reach.
+  ctx.effect(() => ctx.webServer.register(versionRoute()), 'irisApp: GET /version')
 
   const bundlePath = config.scriptBundlePath ?? '/iris/script-bundle'
   const bundles = new ScriptCache({

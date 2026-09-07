@@ -488,8 +488,14 @@ plugin never passed.
 
 ### The default is on, and the cost of that is not symmetric with upstream
 
-It defaults **on**, matching upstream, whose `启用: true` reaches every install
-through a `.prefault({})`. That is not only a reading of a schema: on the corpus,
+> **Overturned 2026-09-06. The periodic sweep defaults OFF.** The paragraphs
+> below are kept because their *measurements* stand and the asymmetry they
+> describe is exactly what decided it — but their conclusion is reversed. The
+> ruling is at the end of this subsection; read it before acting on anything
+> here.
+
+~~It defaults **on**, matching upstream, whose `启用: true` reaches every install
+through a `.prefault({})`.~~ That is not only a reading of a schema: on the corpus,
 every chat long enough to qualify has already been cleaned — the 677-message file
 keeps 31 of 344 layers with a median layer of 39 bytes — and nobody turned that
 on by hand.
@@ -506,8 +512,44 @@ is the part worth reading twice.** Upstream can afford to delete because
 `restoreVariables` folds `updateVariables` forward from the nearest snapshot: its
 cleanup discards a cache. **This host does not replay**, so a trimmed floor here
 is gone, and what remains is a report naming the nearest intact floor below it.
-Copying the default is right; copying it while implying the consequences match
-would not be.
+~~Copying the default is right; copying it while implying the consequences match
+would not be.~~
+
+#### The ruling: an opt-out, never a silent opt-in (2026-09-06)
+
+**The paragraph above got the asymmetry right and then drew the wrong
+conclusion from it.** "Upstream discards a cache, we discard the only copy" is
+not a footnote to copying the default — it is the reason not to. Upstream's
+`启用: true` is cheap for upstream *because* `restoreVariables` can rebuild what
+it deletes. Nothing here can. A default that deletes unrecoverable state on a
+user's behalf has to be something they chose, so `Config.pruneVariables` is
+`false` and the periodic sweep runs only for someone who asked for it.
+
+That also settles a contradiction that had been sitting in one file: the schema
+said `.default(true)` while its own docstring three lines above said "Off by
+default … `@default false`". The docstring was the half nothing pinned, and it
+was the half that was right.
+
+**Two consequences to keep straight, because they read like a contradiction:**
+
+- **The `cleanup.offer` still fires on every `chat.open`** while the four gates
+  hold, exactly as before and exactly as upstream asks. The offer is not part of
+  this switch. A user who wants the space back presses a button and gets it;
+  gating the question behind the automatic sweep would turn "we do not delete
+  without asking" into "we never ask", which loses the feature instead of the
+  data. Pinned by `tests/legacy-cleanup.test.ts` — *cleanup is off by default,
+  and the offer is still made*.
+- **The divergent shape the old paragraph warned about is real and is accepted.**
+  A profile can now hold chats whose early history SillyTavern trimmed and whose
+  later history Iris kept whole. That is the arithmetic of two defaults meeting,
+  it grows with chat length, and it is the price of not deleting silently. It
+  is also self-correcting in the direction that matters: the offer keeps asking,
+  and one answer cleans the whole file.
+
+**What would overturn this.** A measurement showing the untrimmed growth is what
+users actually hit — chats large enough that the storage, not the deletion, is
+the complaint. The reports name the sizes, so that evidence would arrive on its
+own rather than needing a census.
 
 ### The legacy path: offered, and performed only on an answer
 
@@ -878,7 +920,7 @@ out of it. **Structurally inapplicable rather than withheld**: it depends on
 another *extension* being installed, not on a host capability, so there is
 nothing for this host to implement. The card already degrades on its own —
 its guard resolves `false` — so nothing is broken by the absence. Source:
-`apps/iris-web/UPSTREAM-FRAME-ORIGIN.md` §六.
+`notes/apps/iris-web/UPSTREAM-FRAME-ORIGIN.md` §六.
 
 **What would overturn this.** Iris growing an extension ecosystem of its own, at
 which point "read another extension's data" becomes a capability question rather
@@ -1151,6 +1193,88 @@ a user expects to fire, or a card whose scripts a user wants runnable only
 after a per-feature allow — then the tier gets its storage and the gate gets
 re-examined against the consent flow, in that order.
 
+## 20. A generation that goes silent is given up on; upstream waits for ever
+
+**Upstream has no timeout on a generation, on either side of its own wire, and
+that is a reading of the code rather than an inference.** Its browser calls
+`sendOpenAIRequest` with a signal that defaults to `new AbortController()
+.signal` (`public/scripts/openai.js:3047`) — a signal nothing ever aborts —
+and forwards it verbatim at `:3059`. The only abort that exists is the Stop
+button (`script.js:5555`, `abortController.abort('Clicked stop button')`). Its
+server then fetches the provider with a bare `AbortController` wired to
+`request.socket.on('close')` (`src/endpoints/backends/chat-completions.js
+:2531-2535`, signal at `:2585`) and, on two routes, an explicit `timeout: 0`
+(`:894`, `:993`; `text-completions.js:331`, `:608`). **Across the whole of
+`src/` there is exactly one `AbortSignal.timeout`: 5 s at
+`chat-completions.js:130`, on the OpenRouter *model-list* probe** — metadata,
+not a generation.
+
+**Why that is sound there and not here.** Upstream's hung request always has a
+person and a Stop button at the other end of it, and pressing Stop closes the
+socket that the server's abort is wired to. This host serves several pages and
+can still be generating for one that was closed an hour ago, so nothing outside
+the host is guaranteed to end the silence. Copying upstream here would not be
+compatibility; it would be importing the absence of a mechanism upstream gets
+from its own topology.
+
+**Iris.** `@iris/llm-openai-compat` runs each call under three budgets, and the
+adapter owns them rather than the turn driver — the driver holds only an
+`AsyncIterable` and cannot tell "no chunk yet" from "chunk in flight", and
+every other consumer (`connection.test`, model probes) needs the same
+guarantee.
+
+| phase | default | expires when |
+| --- | --- | --- |
+| connect | 30 s | no response headers (and no error body) |
+| first byte | 120 s | headers arrived, no payload yet |
+| idle | 120 s | payloads arrived, then silence |
+
+`0` disables a budget — **not "expire immediately"**, which is the reading that
+would hand an operator with a slow local endpoint the opposite of what they
+asked for.
+
+**The first-byte budget is the generous one on purpose.** A reasoning model on
+a long context legitimately produces nothing for minutes before its first
+token, so it is the budget that would manufacture failures if it were tight.
+The idle clock measures the *provider's* silence only: it stands down while the
+consumer works a payload and re-arms when the host is waiting on the socket
+again, because a consumer that hangs is our own defect and dressing it as "the
+provider went quiet" points the next reader at the wrong side of the boundary.
+
+One `AbortController` the adapter owns, with timers it can stand down —
+**not `AbortSignal.timeout()` composed with `AbortSignal.any()`**. A timeout
+signal cannot be disarmed, so the connect budget would keep running underneath
+a healthy long stream and kill it on schedule. Being able to end each phase is
+the whole mechanism, and `tests/timeouts.test.ts`'s control (*a stream that
+keeps talking is left alone*) is what holds it: three tests that all assert
+"it gave up" pass equally against an implementation that gives up on
+everything.
+
+**The failure is reported as `timeout`, not `provider-error`.** The two ask a
+reader for different things — retry, versus go look at the endpoint — and the
+provider did not error here, it stopped speaking. The message names the phase
+and the elapsed budget because the shell renders it verbatim and never reads
+the code. `TIMEOUT` is the harness's own code (already in `dsh-llm`'s default
+retryable set), read rather than minted.
+
+**The severity this fixes is not one lost reply.** `ChatEntry.begin()` claims
+the chat and only `#settle`/`#fail` release it, and both sit downstream of the
+awaited stream — so a silent endpoint left `#abort` set for ever and **every
+later send on that chat was refused `busy` until the host restarted**. The
+conversation was bricked for the life of the process. Pinned by
+`tests/service.test.ts` — *a timed-out turn releases the chat*.
+
+**What it costs.** A provider that legitimately takes longer than a budget is
+cut off where SillyTavern would have waited. The report says which budget and
+how long, so the answer is a number in the config rather than a mystery — but
+the number is ours, and the first user to meet one on a slow self-hosted
+endpoint is how we learn whether 120 s is right.
+
+**What would overturn this.** Real endpoints tripping the first-byte budget on
+healthy long thinks — the reports would name it, and the fix is per-connection
+budgets (a `connection.save` field), which is deliberately not built until
+something asks for it.
+
 ---
 
 # Upstream bugs, deliberately not reproduced
@@ -1317,6 +1441,44 @@ have looked identical from the outside while being a different operation.
 
 ## Host
 
+**`GET /version` answers `pkgVersion: "1.18.0"` — SillyTavern's version, not
+Iris's.** Upstream's route (`src/server-main.js:272` → `getVersion`,
+`src/util.js:136-164`) returns `{agent, pkgVersion, gitRevision, gitBranch,
+commitDate, isLatest}`, and cards read `pkgVersion` to ask **which behaviour
+set they are talking to**. The honest answer to that question is the version of
+the behaviour set, which is the release this host reproduces. **What the user
+sees:** a host that reports itself as SillyTavern 1.18.0, which reads as Iris
+pretending to be something else. **Not fixed because** the alternative is worse
+*and* less true: MagVarUpdate opens with
+`fetch('/version').then(e => e.json()).then(e => e.pkgVersion).catch(() => '1.0.0')`,
+so reporting `0.1.0` — or not answering at all, which was the state until now
+and cost two red reports per MVU card per chat — pushes every version-gated
+card onto a branch written for a SillyTavern older than any that shipped. A
+card asking whether `getCharWorldbookNames` exists gets a right answer from
+`1.18.0` and a wrong one from `0.1.0`.
+
+Nothing is concealed by it: the payload carries an extra `iris: {version}`
+field upstream has no equivalent for, so "which host is this" has its own
+answer rather than being crammed into the field that answers a different
+question. Two divergences inside the reproduction, both deliberate:
+
+- **`agent` keeps upstream's shape but not its maintainer.** Upstream's literal
+  is `SillyTavern:${pkgVersion}:Cohee#1207`; this host sends
+  `SillyTavern:1.18.0:Iris`. That string exists to identify a client to the
+  **Horde API** — reproducing a version number states which behaviour we
+  implement, while reproducing a named person's handle in a string built to be
+  sent to a third party is a different act, and nothing here talks to the Horde.
+  Measured **0 reads** of this field across the fetched bundles, so the
+  substitution costs no observed consumer.
+- **The three git fields are `null` and `isLatest` is `true`.** Not invented:
+  that is precisely what upstream returns when `git` is absent (`util.js:159`'s
+  catch leaves them at their initial values), which is what a release-zip
+  install reports.
+
+**What would overturn this.** A card that branches on `agent`'s third segment,
+or one that treats `pkgVersion` as "which program" rather than "which
+behaviour" — the second would show up as a card refusing to run at all rather
+than degrading.
 
 **Injection order inside a group is the keys' lexicographic order.**
 Upstream walks `Object.keys(extension_prompts).sort()` (`script.js:3249`), so

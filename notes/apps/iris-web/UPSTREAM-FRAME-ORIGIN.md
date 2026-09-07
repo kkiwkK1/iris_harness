@@ -68,7 +68,7 @@ result = result.merge(_.pick(window.parent, ['EjsTemplate','TavernHelper','YAML'
 上游没有前缀约定（TH 全仓零存储调用），但 **ST 做过一次反方向的动作**：
 
 ```js
-// [ST] scripts/util/AccountStorage.js:50-61   #migrateLocalStorage()
+// [ST] public/scripts/util/AccountStorage.js:50-61   #migrateLocalStorage()
 if (MIGRATABLE_KEYS.some(k => k.test(key))) {
     this.#state[key] = globalThis.localStorage.getItem(key);
     globalThis.localStorage.removeItem(key);          // ← 从 localStorage 删掉
@@ -84,9 +84,9 @@ if (MIGRATABLE_KEYS.some(k => k.test(key))) {
 
 | 出处 | 键 | 性质 |
 | --- | --- | --- |
-| `scripts/i18n.js:4-5` | `language` | 语言覆盖 |
+| `public/scripts/i18n.js:4-5` | `language` | 语言覆盖 |
 | `script.js:10970-10971` | `eventTracing` | 调试开关 |
-| `scripts/f-localStorage.js:7/15/39` | —— | `SaveLocal`/`LoadLocal`/**`ClearLocal`** 辅助函数 |
+| `public/scripts/f-localStorage.js:7/15/39` | —— | `SaveLocal`/`LoadLocal`/**`ClearLocal`** 辅助函数 |
 
 **`ClearLocal()` 是 `localStorage.clear()`**（`f-localStorage.js:39`）——**清空整个源，
 会连同每一张卡的数据一起抹掉**。**全仓无调用者**（我搜过），是遗留的调试辅助。
@@ -255,7 +255,7 @@ if (indexedDB.databases) {                                   // ← Chromium-onl
 **要确认得拿一张空 profile 实跑，那是浏览器验收的事，语料回答不了。**
 
 > **反例在别处**：`typeof` 在这里会抛，但**在另一种缺席上它恰恰是有效防护**——
-> 见 `apps/iris-web/UPSTREAM-ESM-DEPS.md` §三之二。
+> 见 `notes/apps/iris-web/UPSTREAM-ESM-DEPS.md` §三之二。
 > **判据是「名字存在但读它会抛」还是「名字压根没创建」。**
 
 ---

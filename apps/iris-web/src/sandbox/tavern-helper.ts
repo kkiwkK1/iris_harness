@@ -412,7 +412,7 @@ function flattenWorldbookEntry(entry: unknown): unknown {
  *
  * Distinct from `ScriptChatMessage`, which is SillyTavern's storage shape and is
  * what `context.chat` correctly still carries. Two surfaces, two vocabularies;
- * conflating them is `DEVIATIONS.md` §6.
+ * conflating them is `notes/apps/iris-web/DEVIATIONS.md` §6.
  */
 export interface CardChatMessage {
   message_id: number
@@ -613,7 +613,7 @@ export function restoreFloorTables(
  * Normalise a floor's per-swipe variables to one table per swipe.
  *
  * The data is already in the snapshot — the same position upstream keeps it — so
- * this is derivation with no new transport, per `FLOOR-VARIABLES.md`. Holes are
+ * this is derivation with no new transport, per `notes/packages/iris-app-service/FLOOR-VARIABLES.md`. Holes are
  * filled with `{}` rather than left sparse: a swipe nobody has written variables
  * for has an empty table, and `undefined` would make "no variables yet"
  * indistinguishable from "out of range".
@@ -862,7 +862,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
        * No card, no table to write to. Reported rather than thrown for the same
        * reason the failure path is: this is reachable while a chat is closing,
        * and upstream's own writer returns silently in exactly this window
-       * (`script.ts:76-78`, the four TODOs) — which `SCRIPT-BUTTONS.md` records
+       * (`script.ts:76-78`, the four TODOs) — which `notes/apps/iris-web/SCRIPT-BUTTONS.md` records
        * as the thinnest part of upstream's observability. Silent is what we are
        * copying behaviourally; named is what we add.
        */
@@ -997,7 +997,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * no floor label — but it is not the only thing the snapshot carries.
      * `ScriptContext.chat` is built by `toFile()`, which attaches
      * `chat[i].variables[swipe_id]` to **every** row: 677 of 677 on the corpus's
-     * longest chat [49, `FLOOR-ADDRESSED-VARIABLES.md` §一]. The data was in
+     * longest chat [49, `notes/packages/iris-app-service/FLOOR-ADDRESSED-VARIABLES.md` §一]. The data was in
      * hand the whole time; only this function was looking in the wrong place.
      *
      * That distinction is the lesson worth keeping over the fix. The refusal
@@ -1422,7 +1422,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * reported and then rejects with the same error. A success value is returned
      * **unchanged** — no wrapping — in both branches.
      *
-     * **One deliberate difference, worth its line in `DEVIATIONS.md`:** upstream
+     * **One deliberate difference, worth its line in `notes/apps/iris-web/DEVIATIONS.md`:** upstream
      * double-writes, a `toastr.error` for the reader and a `_log` for its panel.
      * This reports to the panel only. Upstream's toast passes the message with
      * `escapeHtml: false`, and `error.message` can carry model-authored text —
@@ -1723,7 +1723,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * `context.chat` use `mes`), and that measurement is still correct — about
      * `context.chat`, which **is** SillyTavern's own array and still carries
      * SillyTavern's names. It was applied one surface too far. See
-     * `DEVIATIONS.md` §6.
+     * `notes/apps/iris-web/DEVIATIONS.md` §6.
      */
     getChatMessages: (
       range: string | number,
@@ -1742,7 +1742,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
          * vanish from every filtered read. That silent drop is upstream's — the
          * filter's parameter type cannot express `'unknown'`, so there is no
          * argument that returns those floors — and it is inherited rather than
-         * repaired. Noted in `DEVIATIONS.md` so it is not read as ours.
+         * repaired. Noted in `notes/apps/iris-web/DEVIATIONS.md` so it is not read as ours.
          */
         if (wanted !== 'all' && shaped.role !== wanted) return []
         return [shaped]
@@ -1867,7 +1867,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * The host implements the primitive and this composes the wrapper, which is
      * upstream's own division: `injectPrompts` is a thin layer over
      * `setExtensionPrompt` whose **key is the handle**, and `uninject()` is the
-     * removal of that key [`DEVIATIONS.md` §11]. So nothing new goes on the
+     * removal of that key [`notes/apps/iris-web/DEVIATIONS.md` §11]. So nothing new goes on the
      * wire; what goes here is the composition, the lifetime, and three things a
      * frame cannot do that the composition has to say something about.
      *
@@ -1875,7 +1875,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * message: it is a run of text the card can revoke and re-add at will,
      * depth 0, role `user` in the one measured use — and the card revokes it
      * around a wrapped `withIsolatedRawGeneration`, so two prompt-assembly
-     * states exist within one chat on purpose [`OVERLAY-CARDS.md` §四].
+     * states exist within one chat on purpose [`notes/apps/iris-web/OVERLAY-CARDS.md` §四].
      *
      * **`once` defaults to false and the measured card relies on that.** It
      * passes one argument, so the injection survives the generation that
@@ -1900,7 +1900,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * The lifetime Iris gives them is **one chat session** — narrower than
      * upstream's page, which lets an injection leak across a chat switch until
      * the page itself goes. That is a deliberate divergence in the safer
-     * direction and belongs in `DEVIATIONS.md`; the clearing is host-side, on
+     * direction and belongs in `notes/apps/iris-web/DEVIATIONS.md`; the clearing is host-side, on
      * chat teardown, not here.
      * @param prompts - upstream's `InjectionPrompt[]`.
      * @param options - upstream's `{ once }`, default false.
@@ -1935,7 +1935,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
          * removes nothing: an id-less injection upstream **cannot be revoked**.
          * Storing it makes the handle work. The card never sees the difference
          * except that `uninject()` does what it says, so this is compatible in
-         * every direction a card can observe — noted in `DEVIATIONS.md` as a bug
+         * every direction a card can observe — noted in `notes/apps/iris-web/DEVIATIONS.md` as a bug
          * not reproduced.
          *
          * Not a UUID, deliberately: upstream's own contract comment records that

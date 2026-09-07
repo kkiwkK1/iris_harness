@@ -1,7 +1,7 @@
 /**
  * What a card's inline HTML is allowed to be, and how we check afterwards.
  *
- * The design is `INLINE-HTML.md` (3c). This module holds the parts that can be
+ * The design is `notes/apps/iris-web/INLINE-HTML.md` (3c). This module holds the parts that can be
  * decided without a DOM: the sanitizer's configuration, and an audit of what
  * came back out of it.
  *
@@ -22,7 +22,7 @@
 /**
  * Tags that never survive, stated rather than inherited.
  *
- * [INLINE-HTML.md §4.1 / checklist item 3] Upstream writes only `ADD_TAGS`
+ * [notes/apps/iris-web/INLINE-HTML.md §4.1 / checklist item 3] Upstream writes only `ADD_TAGS`
  * because it trusts the sanitizer's default allow-list. **We are tightening, so
  * the tightening has to be on paper** — a default that widens in a later
  * release would otherwise widen us with it, silently, in a dependency bump.
@@ -158,7 +158,7 @@ export function auditSanitized(root: AuditNode): Violation[] {
 /**
  * Name a refused target so the report is more specific than the card's own.
  *
- * [TEST-CARDS.md / `OBSERVABILITY.md` gap 8] Cards print their own message when
+ * [notes/TEST-CARDS.md / `docs/OBSERVABILITY.md` gap 8] Cards print their own message when
  * a resource does not arrive — one blames the reader's installation. A report
  * that says only "something was refused" loses to that, because the card's
  * explanation is the more specific of the two and specific is what gets

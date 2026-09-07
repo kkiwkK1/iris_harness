@@ -1029,7 +1029,7 @@ test('a button write with no character open is reported, not thrown', () => {
   /*
    * Reachable while a chat is closing, and upstream's writer returns **silently**
    * in exactly this window (`script.ts:76-78`, the four identical TODOs), which
-   * `SCRIPT-BUTTONS.md` records as the thinnest part of upstream's
+   * `notes/apps/iris-web/SCRIPT-BUTTONS.md` records as the thinnest part of upstream's
    * observability. The silence is what is copied; the name is what is added.
    *
    * Not thrown, because upstream's member returns `void` and cards call it

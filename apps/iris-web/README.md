@@ -41,7 +41,7 @@ tests (they are also picked up by the root `pnpm test`).
 
 ## Why this app is npm-managed
 
-pnpm cannot extract esbuild in this environment (see `spike/RESULTS.md`), so this
+pnpm cannot extract esbuild in this environment (see `notes/spike/RESULTS.md`), so this
 app sits outside the pnpm workspace — `pnpm-workspace.yaml` excludes it — and
 reaches workspace code through Vite aliases rather than `workspace:*`. The Node
 test files rely on the same thing indirectly: they only import modules whose
@@ -105,7 +105,7 @@ on top with no ceiling.
 
 ## The card-script sandbox, browser side
 
-Policy is `SANDBOX.md`. What lives here is its implementation, plus one
+Policy is `docs/SANDBOX.md`. What lives here is its implementation, plus one
 architectural decision that document leaves open.
 
 **The frame is cross-origin.** `sandbox="allow-scripts"` with no
@@ -372,14 +372,14 @@ reported, any refusal) is shown beside the frame.
   that block stops being syntax-highlighted page content, so the likeliest fix is
   a pipeline that is already planned. Worth re-checking rather than pre-emptively
   optimising.
-- The lorebook editor is not built; `PLAN.md` schedules it after the core path.
+- The lorebook editor is not built; `notes/PLAN.md` schedules it after the core path.
 - **Card scripts start when a chat opens**, once the user has answered the
   run-scripts question for that card. The frame set's lifetime is "this chat is
   in the foreground"; leaving tears it down completely. Grants are re-resolved
   from the host at the moment of running rather than read from the store, because
   that cache is keyed on a character id and character ids are reused. Failures
   land in the panel and the notice bar, never in the conversation. The policy is
-  `AUTORUN.md` and the reasoning behind its permission clauses is `GRANTS.md`.
+  `docs/AUTORUN.md` and the reasoning behind its permission clauses is `notes/apps/iris-web/GRANTS.md`.
 
   **Verified on a real host.** The consent gate (wording, real byte count, both
   answers, the decision surviving a reload). The declined path on a nine-script
@@ -409,7 +409,7 @@ reported, any refusal) is shown beside the frame.
   built first, and several of those instruments were wrong on their first
   attempt — the timing check compared against a URL the browser was never asked
   for, and the preset check ran where Node's `process` exists. What is written in
-  `METHODS.md` about verifying that a check can fail was paid for here.
+  `notes/METHODS.md` about verifying that a check can fail was paid for here.
 
   **Still not exercised in a browser**: the notice bar, and the `silent` timeout
   firing. No run has yet gone quiet rather than failing loudly, and those two are
@@ -435,9 +435,13 @@ reported, any refusal) is shown beside the frame.
   more durable than the rendered message — the harness already does this the
   right way for its own reasons (the frame lives until Stop, not until the panel
   unmounts) and that is the shape to copy.
-- `character.import` reads PNG and JSON well enough for the library row. `.charx`
-  is passed through as base64 and falls back to the filename, because real
-  decoding belongs to the host's `@iris/character`.
+- `character.import` takes the host's four extensions — `.png`, `.jpg`, `.jpeg`,
+  `.json` — and reads PNG and JSON well enough for the library row; a JPEG falls
+  back to the filename, because real decoding belongs to the host's
+  `@iris/character`. `.charx` is refused with the host's own `unsupported`
+  message rather than named after its file: the picker, both copy strings and
+  the fake all derive from `src/app/card-files.ts`, and `tests/card-files.test.ts`
+  holds that table to the host's `EXTENSIONS`.
 - `src/client/store.ts` narrows on `event.type` directly instead of the
   protocol's `isEvent`, which leaves it with no value imports from
   `@iris/protocol` — that is what lets the streaming state machine be tested

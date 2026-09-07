@@ -92,6 +92,24 @@ export class CharacterLibrary {
   }
 
   /**
+   * Which ids a new card may not take, compared without regard to case.
+   *
+   * An id is a filename, and two of the three desktop filesystems fold case:
+   * on Windows and macOS `Aria.json` and `aria.json` are **one file**, so an id
+   * that differs from an existing one only by case would overwrite that card
+   * on those systems and sit beside it on Linux. `toId` keeps the name's case
+   * (a card called "Aria" is `Aria`, as upstream keeps the avatar filename), so
+   * the uniqueness check is where the folding has to happen. The first test
+   * that caught this passed on every Windows machine and failed on every Linux
+   * runner: it deleted `aria`, imported "Aria", and asked for `aria` again.
+   * @returns a predicate for {@link uniqueId}.
+   */
+  async #takenIds(): Promise<(id: string) => boolean> {
+    const lowered = new Set((await this.refs()).map(ref => ref.characterId.toLowerCase()))
+    return id => lowered.has(id.toLowerCase())
+  }
+
+  /**
    * Locate one card file.
    * @param characterId - the id from the request.
    * @returns the file reference.
@@ -214,8 +232,8 @@ export class CharacterLibrary {
     const card = decode(bytes, extension)
 
     await this.ensure()
-    const existing = new Set((await this.refs()).map(ref => ref.characterId))
-    const characterId = uniqueId(toId(card.data.name.length > 0 ? card.data.name : filename), id => existing.has(id))
+    const taken = await this.#takenIds()
+    const characterId = uniqueId(toId(card.data.name.length > 0 ? card.data.name : filename), taken)
     const path = fileFor(this.#dir, characterId, extension)
     await writeFile(path, bytes)
 
@@ -297,8 +315,7 @@ export class CharacterLibrary {
   async duplicate(characterId: string): Promise<CharacterSummary> {
     const ref = await this.ref(characterId)
     const card = await this.load(characterId)
-    const existing = new Set((await this.refs()).map(row => row.characterId))
-    const freshId = uniqueId(toId(characterId), id => existing.has(id))
+    const freshId = uniqueId(toId(characterId), await this.#takenIds())
     const path = fileFor(this.#dir, freshId, ref.extension)
     // Verbatim bytes: the copy is the source card, not a re-encoding of what
     // this build happens to model about it.

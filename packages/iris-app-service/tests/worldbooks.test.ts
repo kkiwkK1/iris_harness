@@ -27,6 +27,8 @@ import { charWorldbookNames, toWorldbookEntry, WorldbookStore } from '../src/wor
 // nobody is watching a number.
 const CORPUS = `${process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern'}/data/default-user`
 const hasCorpus = existsSync(join(CORPUS, 'worlds'))
+/** Why the three corpus tests below skip, when they do: what is missing and where it comes from. */
+const NO_CORPUS = !hasCorpus && `no world books at ${CORPUS}/worlds; point IRIS_CORPUS at a SillyTavern install`
 
 /** One entry as a real file stores it — every field the mapping reads. */
 function storedEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -172,7 +174,7 @@ test('an unknown position or role falls back rather than reaching a card as unde
 
 // ---------------------------------------------------------------- corpus facts
 
-test('real book names survive as ids but would not survive toId', { skip: !hasCorpus }, async () => {
+test('real book names survive as ids but would not survive toId', { skip: NO_CORPUS }, async () => {
   const names = (await readdir(join(CORPUS, 'worlds')))
     .filter(name => name.endsWith('.json'))
     .map(name => name.slice(0, -'.json'.length))
@@ -192,7 +194,7 @@ test('real book names survive as ids but would not survive toId', { skip: !hasCo
   )
 })
 
-test('every real book parses through the store', { skip: !hasCorpus }, async () => {
+test('every real book parses through the store', { skip: NO_CORPUS }, async () => {
   const store = new WorldbookStore(join(CORPUS, 'worlds'))
   const names = await store.names()
   let entries = 0
@@ -205,7 +207,7 @@ test('every real book parses through the store', { skip: !hasCorpus }, async () 
   assert.ok(entries > 0, 'every real book parsed to zero entries')
 })
 
-test('cards bind books by a name the store can resolve', { skip: !hasCorpus }, async () => {
+test('cards bind books by a name the store can resolve', { skip: NO_CORPUS }, async () => {
   const store = new WorldbookStore(join(CORPUS, 'worlds'))
   const available = new Set(await store.names())
   const dir = join(CORPUS, 'characters')

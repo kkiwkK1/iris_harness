@@ -55,6 +55,12 @@ try {
   // the bare minimum: anything more and the check starts proving that the stubs
   // work rather than that the app does.
   const stored = new Map()
+  // The assertions below are written against the English copy. With nothing
+  // stored, language.ts follows navigator.language, and Node has exposed the
+  // OS locale there since v21 - so on a zh-CN machine the whole page rendered in
+  // Chinese and the rail assertion failed while CI's en runner passed. Pin the
+  // stored choice, which is what wins over detection in the product too.
+  stored.set('iris.language', 'en')
   globalThis.window = {
     localStorage: {
       getItem: key => (stored.has(key) ? stored.get(key) : null),
@@ -66,7 +72,10 @@ try {
   }
   globalThis.localStorage = globalThis.window.localStorage
   globalThis.matchMedia = globalThis.window.matchMedia
-  globalThis.document = { documentElement: { style: { setProperty() {} }, setAttribute() {} } }
+  // The overrides layer in theme.ts clears a token with removeProperty and sets
+  // one with setProperty; the stand-in needs both or the module's import-time
+  // applyThemeDocument() throws before any component renders.
+  globalThis.document = { documentElement: { style: { setProperty() {}, removeProperty() {} }, setAttribute() {} } }
 
   createRequire(pathToFileURL(bundle))(bundle)
   assert.ok(true)

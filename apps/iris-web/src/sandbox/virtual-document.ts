@@ -1,7 +1,7 @@
 /**
  * `parent.document`, virtualized.
  *
- * The policy is `SANDBOX.md`; this is its implementation. Two members are real
+ * The policy is `docs/SANDBOX.md`; this is its implementation. Two members are real
  * — the viewport size and a container the card owns — and behind them is a wall.
  * That shape comes from measurement rather than from caution: across the 47
  * scripts in the local corpus, ten of the fourteen `parent.document` sites read

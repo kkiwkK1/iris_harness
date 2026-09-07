@@ -6,13 +6,13 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 /**
- * The dependency rules from `ARCHITECTURE.md`, enforced.
+ * The dependency rules from `docs/ARCHITECTURE.md`, enforced.
  *
  * These are the kind of rule that holds only while someone is watching, and
  * "someone" has already been the wrong answer once in this repo. Each one was
  * decided for a reason recorded beside it; a failure here means either the
  * import is wrong or the reason has changed, and the second case belongs in
- * `ARCHITECTURE.md` before it belongs in code.
+ * `docs/ARCHITECTURE.md` before it belongs in code.
  *
  * Lives at the composition root because that is the only place entitled to know
  * the whole tree exists.

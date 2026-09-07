@@ -50,7 +50,9 @@ async function findRealPatch(): Promise<unknown[] | undefined> {
 
 const REAL = await findRealPatch()
 
-test('a reply a real model wrote is understood, and folds', { skip: REAL === undefined }, async () => {
+test('a reply a real model wrote is understood, and folds', {
+  skip: REAL === undefined && `no reply in the JSON Patch dialect under ${CHATS}; point IRIS_CORPUS at the install whose 爱衣 chats have one`,
+}, async () => {
   // Re-scanned here rather than trusting the search above, so the assertion is
   // about the dialect reader and not about the helper that found the file.
   const commands = REAL as { type: string, args: string[] }[]

@@ -6,6 +6,12 @@
  * rect intersection plus elementFromPoint sampling, watches for height
  * oscillation by continuous sampling, and screenshots each state.
  *
+ * Conversations are **resolved at run time** from a character-name prefix (see
+ * `CARDS`), not read from a table of chat ids — those ids carried timestamps and
+ * belonged to a single profile. The run then asserts how much it actually
+ * measured and **exits non-zero** when it measured less than that floor, because
+ * the alternative reading of a missing cell is "that cell is fine".
+ *
  * Usage: node qa/measure-frame-fit.mjs <baseline|fixed> [chatKey ...]
  *   chatKey: shibian | zhengjing | hanren | shenyin | quanzhi
  */
@@ -16,18 +22,52 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const BASE = 'http://127.0.0.1:8821/'
-const DEBUG_PORT = 9341
+// Every host, browser and path this script needs comes from the environment
+// with a default, so a run on another machine is a variable away rather than an
+// edit. Defaults are this script's own: the CDP port is unique per script so two
+// QA runs can overlap (9341 used to be shared by three of them).
+const CHROME = process.env.IRIS_CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8821/'
+// Default CDP port is offset by the pid: two runs back to back would
+// otherwise fight over one debug port, and the loser dies as
+// "chrome never came up" — which reads as a broken environment, not as a
+// collision. An explicit CDP_PORT is honoured verbatim (see qa/README.md).
+const DEBUG_PORT = Number(process.env.CDP_PORT ?? 9342) + (process.env.CDP_PORT === undefined ? process.pid % 100 : 0)
 const OUT = join(fileURLToPath(new URL('.', import.meta.url)), 'results')
 
-const CHATS = {
-  shibian: { chat: '尸变纪元-v0-20260903-194944', title: '尸变纪元 v0.5（NSFW）', card: '尸变纪元' },
-  zhengjing: { chat: '新架空政治经济模拟器-20260905-061145', title: '新·架空政治经济模拟器', card: '政经博弈' },
-  hanren: { chat: '哈人冰恋世界-20260903-194925', title: '哈人冰恋世界', card: '哈人冰恋' },
-  shenyin: { chat: '不要被神隐挑战-V1.5-20260904-124737', title: '不要被神隐挑战 V1.5.4 测试版', card: '神隐挑战' },
-  quanzhi: { chat: '全职高手-20260905-111826', title: '全职高手', card: '全职高手' },
+/**
+ * The heavy cards this check measures, as **character-name prefixes**.
+ *
+ * This was a table of chat ids carrying timestamps
+ * (`尸变纪元-v0-20260903-194944`). Those ids belong to **one** profile: on any
+ * other profile every row missed, and a missed row was skipped with a
+ * `console.error` and a `continue` — so the JSON report came out looking
+ * complete while that card had been measured zero times. A missing cell and a
+ * clean cell were the same reading.
+ *
+ * Names are stable where timestamps are not, so the conversation is resolved at
+ * run time and the number of cards that resolved is **asserted**, not assumed.
+ */
+const CARDS = {
+  shibian: '尸变纪元',
+  zhengjing: '新·架空政治经济模拟器',
+  hanren: '哈人冰恋世界',
+  shenyin: '不要被神隐挑战',
+  quanzhi: '全职高手',
 }
+
+/**
+ * Explicit chat ids, for a run that must pin exactly which conversation it reads.
+ *
+ * Empty by default; a key here bypasses name resolution for that card. Filling
+ * in **any** key also raises the floor of the first assertion from "at least one
+ * card resolved" to "every requested card resolved", because writing this table
+ * is a statement about what the profile in front of you holds.
+ */
+const EXPLICIT_CHATS = {}
+
+/** The viewports every resolved card is measured at. Cell count depends on it. */
+const VIEWPORTS = [[1920, 1080], [1366, 768]]
 
 const wanted = process.argv.slice(2).filter(a => !['baseline', 'fixed'].includes(a))
 const tag = process.argv[2] === 'fixed' || process.argv[3] === 'fixed' ? 'fixed' : 'baseline'
@@ -177,6 +217,123 @@ for (let i = 0; i < 60; i++) {
   if (ready) break
 }
 
+/** One RPC call that throws on a named error frame and unwraps the result. */
+async function callRpc(method, params = {}) {
+  const frame = await rpc(method, params)
+  if (frame.ok === false) throw new Error(`${method}: ${frame.error?.code ?? '?'} ${frame.error?.message ?? ''}`)
+  return frame.result
+}
+
+/**
+ * Resolve each requested card to the one conversation this run will measure.
+ *
+ * Newest wins (`updatedAt`), so a profile used more than once still names a
+ * conversation deterministically. The chosen `chatId` rides every reading:
+ * two runs that happened to measure different conversations of the same card
+ * must not look identical in the report.
+ *
+ * A card that cannot be resolved lands in `missing` **with the reason**, and the
+ * caller turns that into a hard failure. It is deliberately not skipped here:
+ * skipping is what made the old report unreadable.
+ * @param requested - card keys, from argv or the default three.
+ * @returns the resolved conversations and, separately, what did not resolve.
+ */
+async function resolveChats(requested) {
+  const { characters } = await callRpc('character.list')
+  const { chats } = await callRpc('chat.list')
+  /*
+   * Enough of the profile to tell two runs apart in the file.
+   *
+   * Two reports with the same name can come from different profiles — the host
+   * is a variable and the ids carry timestamps — and nothing inside the old
+   * report said which one it read. Cheap to record, impossible to reconstruct
+   * afterwards.
+   */
+  const fingerprint = {
+    base: BASE,
+    characters: characters.length,
+    chats: chats.length,
+    characterIds: characters.map(character => character.characterId).slice(0, 20),
+    firstChatId: chats[0]?.chatId ?? null,
+  }
+  const resolved = []
+  const missing = []
+
+  for (const key of requested) {
+    const prefix = CARDS[key]
+    if (prefix === undefined) {
+      missing.push({ key, why: `no such card key; known keys are ${Object.keys(CARDS).join(', ')}` })
+      continue
+    }
+
+    const explicitId = EXPLICIT_CHATS[key]
+    if (explicitId !== undefined) {
+      const pinned = chats.find(chat => chat.chatId === explicitId)
+      if (pinned === undefined) {
+        missing.push({ key, why: `EXPLICIT_CHATS names ${explicitId}, which this profile does not hold` })
+        continue
+      }
+      resolved.push({ key, prefix, chatId: pinned.chatId, title: pinned.title, source: 'explicit', titleAmbiguous: false })
+      continue
+    }
+
+    /*
+     * More than one character can carry the same name.
+     *
+     * `character.import` neither overwrites nor refuses: it derives the id from
+     * the card's *name* and de-duplicates it (`library.ts` `uniqueId(toId(…))`),
+     * so importing a card the profile already holds leaves two characters with
+     * one name under different ids. Measured, not predicted: importing three
+     * cards into a six-card profile produced `1_5` beside `哈人冰恋世界`,
+     * `v0.5NSFW` beside `尸变纪元-v0`, `Lights_ON` beside `人偶演出Lights-ON`.
+     *
+     * Recorded, not resolved — the same treatment as an ambiguous chat title one
+     * level down. Picking silently would make two runs that measured different
+     * cards produce indistinguishable reports, and there is no honest rule for
+     * which of two identically named cards was meant.
+     */
+    const matches = characters.filter(character => (character.name ?? '').startsWith(prefix))
+    const card = matches[0]
+    if (card === undefined) {
+      missing.push({ key, why: `no character whose name starts with ${JSON.stringify(prefix)}` })
+      continue
+    }
+    const mine = chats.filter(chat => chat.characterId === card.characterId)
+    if (mine.length === 0) {
+      missing.push({ key, why: `character ${JSON.stringify(card.name)} has no conversation in this profile` })
+      continue
+    }
+
+    const newest = [...mine].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0]
+    /*
+     * Two conversations of one card can carry the same title, and the row is
+     * clicked **by title** — so the click cannot tell them apart. Recorded
+     * rather than resolved: the reading says which chatId was aimed at and
+     * whether the aim was ambiguous, which is the honest answer. Silently
+     * picking one would make two different measurements look like one.
+     */
+    const sameTitle = mine.filter(chat => chat.title === newest.title).length
+    resolved.push({
+      key,
+      prefix,
+      chatId: newest.chatId,
+      title: newest.title,
+      character: card.name,
+      characterId: card.characterId,
+      source: 'newest',
+      titleAmbiguous: sameTitle > 1,
+      ...(sameTitle > 1 ? { sharingThisTitle: sameTitle } : {}),
+      // The character-level twin of `titleAmbiguous`. Both ids are listed
+      // because "it picked one of these two" is the honest reading, and the
+      // next run may pick the other one.
+      characterAmbiguous: matches.length > 1,
+      ...(matches.length > 1 ? { charactersSharingThisName: matches.map(match => match.characterId) } : {}),
+    })
+  }
+
+  return { resolved, missing, fingerprint }
+}
+
 async function openChat(spec) {
   // Row buttons carry the chat title inside a .iris-row__title span. The list
   // loads asynchronously, so retry until the row exists.
@@ -272,15 +429,48 @@ function analyse(m) {
   return findings
 }
 
-const report = {}
+// Resolution talks to the host, so it can fail on its own. Named and killed
+// cleanly rather than left as an unhandled rejection with a live Chrome behind
+// it: "the host never answered" and "no card resolved" are different findings.
+let resolution
+try {
+  resolution = await resolveChats(keys)
+} catch (error) {
+  chrome.kill()
+  console.error(`measure-frame-fit: could not resolve any conversation — ${String(error.message ?? error)}`)
+  console.error(`Is a host answering on ${BASE}? Nothing was measured, so this run says nothing about the frames.`)
+  process.exit(2)
+}
+const { resolved, missing, fingerprint } = resolution
+console.log(`resolved ${resolved.length} of ${keys.length} requested card(s) on ${fingerprint.base} (${String(fingerprint.characters)} character(s), ${String(fingerprint.chats)} chat(s))`)
+for (const spec of resolved) {
+  const flags = [
+    spec.characterAmbiguous ? `CHARACTER AMBIGUOUS: ${spec.charactersSharingThisName.join(' / ')}` : '',
+    spec.titleAmbiguous ? 'TITLE AMBIGUOUS' : '',
+  ].filter(flag => flag !== '')
+  console.log(`  ${spec.key} -> ${spec.chatId} (char ${spec.characterId}, ${spec.source}${flags.length === 0 ? '' : `, ${flags.join(', ')}`})`)
+}
+for (const miss of missing) console.log(`  ${miss.key} -> UNRESOLVED: ${miss.why}`)
 
-for (const [W, H] of [[1920, 1080], [1366, 768]]) {
+/** Cells actually measured, per card key. The floor assertions read this. */
+const measured = new Map(resolved.map(spec => [spec.key, 0]))
+
+const startedAt = new Date()
+const report = {
+  // The header says which host and which profile this run read. Without it two
+  // reports are distinguishable only by their contents, which is exactly what
+  // is in question when two runs disagree.
+  run: { tag, at: startedAt.toISOString(), viewports: VIEWPORTS, profile: fingerprint },
+  resolution: { requested: keys, resolved, missing },
+  cells: {},
+}
+
+for (const [W, H] of VIEWPORTS) {
   await setViewport(W, H)
-  for (const key of keys) {
-    const spec = CHATS[key]
-    if (!spec) continue
+  for (const spec of resolved) {
+    const key = spec.key
     const opened = await openChat(spec)
-    if (!opened) { console.error(`row for ${spec.chat} not found`); continue }
+    if (!opened) { console.error(`row titled ${JSON.stringify(spec.title)} (${spec.chatId}) never appeared`); continue }
     // Wait until the row actually switched.
     for (let i = 0; i < 40; i++) {
       await sleep(500)
@@ -308,18 +498,104 @@ for (const [W, H] of [[1920, 1080], [1366, 768]]) {
     await sleep(400)
     await shot(`u-${tag}-${key}-${W}x${H}.png`)
 
-    report[`${key}@${W}x${H}`] = {
+    report.cells[`${key}@${W}x${H}`] = {
+      // Which conversation this cell read. Without it two runs that opened
+      // different chats of the same card produce indistinguishable reports.
+      chatId: spec.chatId,
+      title: spec.title,
+      ...(spec.titleAmbiguous ? { titleAmbiguous: true } : {}),
       measure: m,
       findings: a,
       oscillation: { distinctStates: distinct.length, states: distinct.slice(0, 4) },
     }
-    console.log(`measured ${key}@${W}x${H}: frames=${a.frames.length} occlusions=${a.occlusions.length} oscStates=${distinct.length}`)
+    measured.set(key, (measured.get(key) ?? 0) + 1)
+    console.log(`measured ${key}@${W}x${H} (${spec.chatId}): frames=${a.frames.length} occlusions=${a.occlusions.length} oscStates=${distinct.length}`)
   }
 }
 
-const outName = `u-frame-fit-${tag}-report.json`
+/*
+ * Two assertions, and both are needed.
+ *
+ * The second one alone is a **universal quantifier over a possibly empty set**:
+ * "every resolved card was measured" is vacuously true when nothing resolved, so
+ * an empty profile, a mistyped prefix, or an `rpc` that answered nothing would
+ * all pass the very check written to catch a missing cell.
+ *
+ * The first one alone cannot see "resolved five, measured two".
+ *
+ *   1. how many cards resolved  — the positive control: **0 is also what a
+ *      completely blind resolver returns**, so a floor above 0 is what proves
+ *      the calliper sees anything at all;
+ *   2. every resolved card measured at least one cell — the original floor.
+ *
+ * Frame count is deliberately NOT asserted: whether a cell contains frames is a
+ * reading, not a gate. This script's job is "was this cell measured", and a card
+ * whose conversation happens to carry no interface block is not a defect.
+ */
+const explicitGiven = Object.keys(EXPLICIT_CHATS).length > 0
+const floor = explicitGiven ? keys.length : 1
+const cellsMeasured = [...measured.values()].reduce((sum, n) => sum + n, 0)
+const expectedCells = resolved.length * VIEWPORTS.length
+const unmeasured = resolved.filter(spec => (measured.get(spec.key) ?? 0) === 0)
+
+report.floors = {
+  requested: keys.length,
+  resolved: resolved.length,
+  floorForResolved: floor,
+  explicitTableGiven: explicitGiven,
+  cellsMeasured,
+  expectedCells,
+  unmeasured: unmeasured.map(spec => spec.key),
+}
+
+/*
+ * One file per run, never overwritten.
+ *
+ * The name used to be `u-frame-fit-<tag>-report.json` and nothing else, so the
+ * next run replaced the last one — including a *failing* run replacing a good
+ * one, which is how a teeth check erased a first run's geometry. A reading is
+ * history, not a snapshot; a failing run's report is kept too, because its
+ * `resolution.missing` is the diagnosis.
+ */
+const stamp = startedAt.toISOString().replace(/[:.]/g, '-').slice(0, 19)
+const outName = `u-frame-fit-${tag}-${stamp}-report.json`
 writeFileSync(join(OUT, outName), JSON.stringify(report, null, 2))
 console.log('report:', join(OUT, outName))
 
+const failures = []
+// A typo'd key is operator error, not a profile fact, so it fails on its own
+// rather than riding on the floor: with two good keys beside it the floor is
+// met and the typo would otherwise pass as "that card just isn't here".
+for (const key of keys.filter(name => CARDS[name] === undefined)) {
+  failures.push(`${key} is not a card key; known keys are ${Object.keys(CARDS).join(', ')}`)
+}
+if (resolved.length < floor) {
+  failures.push(
+    `resolved ${resolved.length} of ${keys.length} requested card(s), floor is ${floor}`
+    + (explicitGiven ? ' (EXPLICIT_CHATS is filled in, so every requested card must resolve)' : ''),
+  )
+}
+for (const spec of unmeasured) {
+  failures.push(`${spec.key} resolved to ${spec.chatId} but no cell was ever measured for it`)
+}
+
 chrome.kill()
+
+if (failures.length > 0) {
+  console.error(
+    `\nmeasure-frame-fit: resolved ${resolved.length} of ${keys.length} card(s), `
+    + `measured ${cellsMeasured} of ${expectedCells} cell(s).\n`
+    + failures.map(line => `  - ${line}`).join('\n') + '\n\n'
+    + 'A card that did not resolve, or resolved but was never measured, is NOT a clean cell:\n'
+    + 'it is a card this profile does not hold, or a row the page never showed. Cards resolve by\n'
+    + 'character-name prefix at run time (CARDS); the chat ids this file used to carry were\n'
+    + 'timestamped and belonged to one profile.\n'
+    + 'This is a one-off acceptance instrument (METHODS §二十七), not a CI gate, so it fails hard\n'
+    + 'rather than warning: its old failure mode — console.error then continue — is\n'
+    + 'indistinguishable in the report from "that cell is fine".',
+  )
+  process.exit(1)
+}
+
+console.log(`\nmeasure-frame-fit: resolved ${resolved.length} of ${keys.length} card(s), measured ${cellsMeasured} of ${expectedCells} cell(s).`)
 process.exit(0)

@@ -107,7 +107,14 @@
 .iris-drawer {
   position: fixed;
   inset: 0 0 0 auto;
-  z-index: 30;
+  /*
+   * Above a card's overlay surface, from the ladder in `theme/tokens.css`. The
+   * drawer is shell — the reader's own controls — and the overlay is content;
+   * at the old literal 30 a full-column card (surface at 40) painted over the
+   * drawer's inner 88px, so the one panel that could have collapsed the card
+   * was itself half under it.
+   */
+  z-index: var(--iris-drawer-z);
   display: flex;
   flex-direction: column;
   /* The token, not a literal: the drawer's one width decision, shared with
@@ -464,7 +471,7 @@
 .iris-drop {
   position: absolute;
   inset: 0;
-  z-index: 25;
+  z-index: var(--iris-drop-z);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -487,7 +494,7 @@
   .iris-sidebar {
     position: fixed;
     inset: 0 auto 0 0;
-    z-index: 20;
+    z-index: var(--iris-sidebar-z);
     width: 288px;
     background: var(--iris-bg-base);
     box-shadow: var(--iris-shadow);
@@ -1029,15 +1036,23 @@
 }
 
 /*
- * The frame is given a light ground of its own regardless of theme: a card draws
- * with its own colours and most of them assume a light page, so showing it on the
- * app's dark paper would make a working card look broken.
+ * The probe shows a card on the ground it will actually get.
+ *
+ * A message's interface frame is transparent over the reading sheet
+ * (`reading.css` `.iris-interfaces__slot iframe` sets no background), so a card
+ * that paints nothing sits on `--iris-bg-page` in whatever theme is on. This
+ * used to be a literal `#fff` "regardless of theme", on the reasoning that most
+ * cards assume a light page — which made the probe the one surface in the app
+ * that disagreed with the product: a card that looked fine here on white then
+ * rendered on dark paper in the chat, and the probe had certified a ground it
+ * does not use. It was also the only hard-coded colour in the app's CSS. Same
+ * token as the sheet, so what the probe certifies is what the reader sees.
  */
 .iris-probe__frame {
   margin-top: 12px;
   border: var(--iris-hairline) solid var(--iris-rule-strong);
   border-radius: var(--iris-radius);
-  background: #fff;
+  background: var(--iris-bg-page);
   overflow: hidden;
   min-height: 32px;
 }
@@ -1485,10 +1500,11 @@
 /*
  * The cleaning offer.
  *
- * **Above everything, including the card overlay surface** (`z-index: 40`) and
- * the settings drawer (30). It asks whether to delete the open chat's data, and
- * a card's own full-screen panel must not be able to sit on top of the one
- * question in this interface that destroys something.
+ * **Above everything, including the card overlay surface and the settings
+ * drawer** — the top of the ladder in `theme/tokens.css`. It asks whether to
+ * delete the open chat's data, and a card's own full-screen panel must not be
+ * able to sit on top of the one question in this interface that destroys
+ * something.
  *
  * No dimming animation and no entrance transition: it appears in response to
  * opening a chat, and a question that slides in is a question someone answers
@@ -1497,7 +1513,7 @@
 .iris-cleanup {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--iris-cleanup-z);
   display: grid;
   place-items: center;
   padding: 24px;
@@ -1511,7 +1527,8 @@
  * a click on a control above the overlay surface's layer. Its `z` is the
  * surface's own variable plus five, so the two can never be reordered by
  * tuning one of them and forgetting the other — and both stay under the
- * cleaning offer (60), which must top everything.
+ * settings drawer and the cleaning offer (`theme/tokens.css` ladder), which
+ * are shell and must top content.
  *
  * `position:absolute` inside `.iris-card-stage`: the control hugs the reading
  * column's top-right corner wherever the layout puts it, and never strays over

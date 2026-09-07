@@ -58,6 +58,75 @@ export function getLorebookSettings(): LorebookSettings {
 - **`context_percentage` 的源是 `world_info_budget`**。上游那个字段名叫 budget，
   值是**百分比**；真正的字节上限叫 `budget_cap`。**两个 budget，一个是比例一个是绝对值。**
 
+### 附：这 13 个 `world_info_*` 的上游默认值（正读，2026-09-06）
+
+**证据等级升级。**上面那张表原先只映射字段**名**，没有值；`match_whole_words` 的默认
+此前只以**转述**形式存在（另一支的文档声称 `world-info.js:69-82` 为 `false`）。下面是
+我们自己在 `E:/sillyTavern/SillyTavern`（`package.json` `"version": "1.18.0"`）上
+**正读**的结果，行号是这个装机上的行号。
+
+模块初值全在一个连续块里，`[ST] world-info.js:69-82`，逐条打出来（METHODS §十九
+「凡是『某类有 N 个』，把那 N 个逐条打出来看一眼」）：
+
+| 行 | 变量 | 出厂初值 | 本机 `settings.json` |
+| --- | --- | --- | --- |
+| 69 | `world_info_depth` | 2 | 2 |
+| 70 | `world_info_min_activations` | 0 | 0 |
+| 71 | `world_info_min_activations_depth_max` | 0 | 0 |
+| 73 | `world_info_budget` | **25** | **100** ⚠ |
+| 74 | `world_info_include_names` | **true** | **false** ⚠ |
+| 75 | `world_info_recursive` | **false** | **true** ⚠ |
+| 76 | `world_info_overflow_alert` | false | false |
+| 77 | `world_info_case_sensitive` | false | false |
+| 78 | **`world_info_match_whole_words`** | **false** | false |
+| 79 | `world_info_use_group_scoring` | false | false |
+| 80 | `world_info_character_strategy` | `insertion_strategy.character_first` = **1** | 1 |
+| 81 | `world_info_budget_cap` | 0 | 0 |
+| 82 | `world_info_max_recursion_steps` | 0 | 0 |
+
+策略枚举在 `[ST] world-info.js:27-31`：`evenly: 0`、`character_first: 1`、`global_first: 2`。
+
+**三条要点：**
+
+1. **「默认」在这里有两层，而这个文件里它们恰好一致。**模块初值（`:69-82`）与「设置里
+   没有这个键时的结果」是同一个值，因为 loader 逐字段写成
+   `if (settings.X !== undefined) X = Boolean(settings.X)`（`match_whole_words` 在
+   `:934-935`，同族逐条排在 `:920-940` 区间），**键缺失就保留模块初值，没有第二套默认表**。
+   所以这一次 `key-missing` 与 `false` 同解——**但这是读出来的，不是从省略推出来的**。
+2. **这台机器改过三个**：`budget` 25→**100**（四倍）、`include_names` true→false、
+   `recursive` false→**true**。**「schema 默认值答不了这台机器改没改」（METHODS §十九
+   的清单）在这里一次命中三条**，其中 budget 那条会让任何按 25% 做的预算估算差四倍。
+3. **逐条覆盖用 `??`，不是 `||`**：`entry.matchWholeWords ?? world_info_match_whole_words`
+   （`:347`）、`entry.caseSensitive ?? world_info_case_sensitive`（`:269`）。
+   **条目上显式写 `false` 会被尊重，只有 `null`/`undefined` 才落到全局值。**
+
+4. **⚠ 顺带查出一条与本仓注释相反的事实：`world_info_include_names` 不是死的。**
+   `packages/iris-app-service/src/worldbook-settings.ts:14-17` 的注释写着它
+   「verified dead in ST 1.18.0's Chat Completion path (exported, set, never read
+   while building the prompt)」。**正读结果是它有且只有一个功能性读点**——
+   `[ST] script.js:4565`：
+
+   ```js
+   const chatForWI = coreChat.map(x => world_info_include_names ? `${x.name}: ${x.mes}` : x.mes).reverse();
+   ```
+
+   下一步 `:4576` 就把 `chatForWI` 交给 `getWorldInfoPrompt(chatForWI, …)`。这一段在
+   `Generate()` 函数体的顶层（四空格缩进，`:4400`–`:4580` 之间没有 `main_api == 'openai'`
+   的分支把它罩住），**CC 路径照走**。全仓其余命中都是声明/映射/loader/UI 绑定
+   （`world-info.js:74, 802, 828, 926-927, 979, 6143-6144`），没有第二个消费点。
+
+   **它决定的是扫描缓冲里带不带 `名字: ` 前缀**，也就是「键里含说话人名字的条目会不会
+   命中」——不进最终提示词的文本，但改变哪些条目进。而**本机把它改成了 `false`**（出厂
+   `true`），所以在这台机器上按名字写键的条目不会命中，在出厂设置的机器上会。
+   *（只报事实与位置：那条注释在 `iris-app-service` 域，我不改。）*
+
+**我们这一侧（main @ `b50c354`）的对账**：`packages/iris-lorebook/src/activate.ts:284` 的
+`defaultActivationSettings.matchWholeWords` 现在是 `false`；`:610` 的回退写法
+`entry.matchWholeWords ?? settings.matchWholeWords` 与上游 `:347` 同构；`:266-275` 的注释
+记着它曾被翻成 `true` 当作本仓的 house default，而卡面 `getLorebookSettings()` 一直报
+上游的 `false`。`packages/iris-lorebook/src/matching.ts:84` 直呼时的独立缺省也是 `?? false`。
+**三处与上游一致，本条无待改项。**
+
 ### MVU 在哪调、拿它决定什么
 
 ```
@@ -950,12 +1019,12 @@ const result = await SillyTavern.callGenericPopup(
 | cancel | `doNotRemindButton` | `不再提醒` | `Do not remind me again` | `POPUP_RESULT.NEGATIVE` |
 | custom[0] | `backupAndCleanButton` | `备份并清理` | `Back up and clean` | **`2`（= `CUSTOM1`）** |
 
-**返回值来源**：[ST] `scripts/popup.js:55` 的 JSDoc——
+**返回值来源**：[ST] `public/scripts/popup.js:55` 的 JSDoc——
 「If only strings are provided, the buttons will be added with default options,
 **and their result will be in order from `2` onward**」。
 MVU 的判据写成 `result === POPUP_RESULT.CUSTOM1 || result === 2`，**两个是同一个值**。
 
-**渲染顺序**：[ST] `scripts/popup.js:73` 的 JSDoc——
+**渲染顺序**：[ST] `public/scripts/popup.js:73` 的 JSDoc——
 「by default it will be **prepended**」；实现在 `:312-315`：
 
 ```js
@@ -975,3 +1044,324 @@ MVU 传的是纯字符串（无 `appendAtEnd`），**所以「备份并清理」
 1. **周期窗口照做。**
 2. **legacy 全量路径本批不自动做**——**只报告 + 照抄 `ignore_cleanup` 键**。
 3. **三按钮弹窗与导出备份归后续**（记 ROADMAP）。
+
+---
+
+## 附录四：脚本帧里**不 await** 就同步读 `Mvu`，在上游拿不拿得到
+
+**问题**（2026-09-06，为一条「补齐兼容 vs 我们多给」的裁决）：TavernHelper 4.9.1 的
+**脚本帧**里，一段从不 `await waitGlobalInitialized('Mvu')` 的代码同步读 `Mvu` /
+`window.Mvu`，能不能拿到对象？
+
+**口径升级**：本附录读的是**已安装的 TH 源码**
+（`E:/sillyTavern/SillyTavern/data/default-user/extensions/JS-Slash-Runner`，
+`manifest.json` / `package.json` 均为 **4.9.1**，`src/` 目录完整，不只是 `dist/`）。
+附录二里那段 `predefine.js:38-45` 的引文来自更早的一次阅读，**行号在 4.9.1 上是
+`:37-44`**，内容一致。静态读，没有运行。
+
+### 答案
+
+> **能——但只在 MVU 已经发布之后建起来的帧里，而且靠的是一个在帧启动那一刻
+> 只判一次的条件。** 上游的语义不是「总能拿到」，是
+> **「帧 bootstrap 时父页已经有 `Mvu`，就装一个活 getter；否则什么都不装」**。
+
+### ① 那个活 getter 装在哪个 window、由谁、什么时机
+
+**装在每个帧自己的 window 上**，由 `predefine.js` 在**帧 bootstrap** 时装，
+**条件是父页此刻已经有 `Mvu`**：
+
+```js
+// [TH] src/iframe/predefine.js:36-44
+// 其实应该用 waitGlobalInitialized 来等待 Mvu 初始化完毕, 这里设置 window.Mvu 只是为了兼容性
+if (_.has(window.parent, 'Mvu')) {
+  Object.defineProperty(window, 'Mvu', {
+    get: () => _.get(window.parent, 'Mvu'),
+    // Mvu 脚本自己还会 `_.set()` 自己的变量, 所以这里设置一个空 set
+    set: () => {},
+    configurable: true,
+  });
+}
+```
+
+三条要点：
+
+- **`window` 是帧自己的**（`predefine.js` 在帧内以经典脚本执行），
+  **不是** ST 页面顶层；每个帧各装一份。
+- **getter 是活的**：每次读都重新 `_.get(window.parent, 'Mvu')`，
+  所以帧拿到的永远是 ST 页面上那一个对象（附录二「单例靠共享 parent」的机制）。
+- **`if` 只在 bootstrap 求值一次。**父页当时没有 `Mvu`，
+  这个属性**根本不会被定义**——之后 MVU 再发布也不会回填这个帧。
+- 上游作者自己在注释里把它定性为**兼容性补丁**，并指明正道是 `waitGlobalInitialized`。
+
+**`Mvu` 是谁放到父页上的**：MVU 自己**也跑在一个脚本帧里**，往 `window.parent` 写：
+
+```js
+// [MVU] .reference/MagVarUpdate/src/function/global/index.ts:165-177   initGlobals()
+const stop = watch(() => store.should_enable, should_enabled => {
+    if (should_enabled) {
+        _.set(window.parent, 'Mvu', mvu);      // ← 写在 ST 页面上
+        eventEmit('global_Mvu_initialized');
+    }
+}, { immediate: true });
+```
+
+卸载时 `_.unset(window.parent, 'Mvu')`（`:180-183`）。
+**所以「父页有没有 `Mvu`」是另一个帧的运行结果**，帧与帧之间的先后决定这件事。
+
+### ② 脚本帧的 srcdoc 头有没有把父页 globals 转发进来
+
+**有，但是按名单逐个转发，而 `Mvu` 不在名单里。**没有 `with(parent)`，没有 Proxy。
+
+```js
+// [TH] src/iframe/predefine.js:1              window._ = window.parent._;
+// [TH] src/iframe/predefine.js:11-19
+let result = _(window);
+result = result.merge(_.pick(window.parent, ['EjsTemplate', 'TavernHelper', 'YAML', 'showdown', 'toastr', 'z']));
+result = result.merge(_.omit(_.get(window.parent, 'TavernHelper'), '_bind'));
+result = result.merge(...Object.entries(_.get(window.parent, 'TavernHelper')._bind)
+  .map(([key, value]) => ({ [key.replace('_', '')]: value.bind(window) })));
+result.value();
+// [TH] src/iframe/predefine.js:26-34          Object.defineProperty(window, 'SillyTavern', { get })
+```
+
+**名单是六个**：`EjsTemplate` `TavernHelper` `YAML` `showdown` `toastr` `z`，
+外加 `_`（`:1`）、TavernHelper 的成员平铺、`_bind` 成员**绑到帧的 window**、
+以及 `SillyTavern` 的自建 getter。**`Mvu` 走的是 `:37-44` 自己那个条件块。**
+
+**装载点是两个，不是一个。**第二个是 `waitGlobalInitialized` 的 `_` 版：
+
+```ts
+// [TH] src/function/global.ts:28-42   _waitGlobalInitialized(this: Window, global)
+if (_.has(window, global)) {                    // ← 这个 window 是 ST 页面（函数的模块作用域）
+  Object.defineProperty(this, global, {         // ← this 是调用方那个帧的 window
+    get: () => _.get(window, global),
+    configurable: true,
+  });
+  if (global === 'Mvu') {
+    try { await waitUntil(() => _.has(get_variables_without_clone({ type: 'message', message_id: 0 }), 'stat_data')); }
+    catch (error) { /** 只是作为保险, 忽略超时时的报错 */ }
+  }
+  return;
+}
+return new Promise(resolve => {
+  _eventOnce.call(this, `global_${global}_initialized`, async () => { /* 同上，再 resolve */ });
+});
+```
+
+对照的发布侧：
+
+```ts
+// [TH] src/function/global.ts:7-10
+export function initializeGlobal(global, value) { _.set(window, global, value); eventSource.emit(`global_${global}_initialized`); }
+```
+
+**两个装载点的差别值得记**：predefine 的 getter 读 `window.parent`，
+`_waitGlobalInitialized` 的 getter 读 ST 页面的 `window`——上游这两者是同一个对象。
+predefine 那个是 `configurable: true`，所以后来的 `defineProperty` 能覆盖它。
+**另外 `'Mvu'` 这一支还多等一件事**：0 楼的 message 变量里出现 `stat_data`
+（`waitUntil`，超时被吞）。**裸读拿到的对象没有这一层保证。**
+
+### ③ 若裸 `Mvu` 在上游能同步解析，是靠哪一层
+
+靠 ① 那个 getter，**而它成立的前提是执行顺序**：
+
+```html
+<!-- [TH] src/panel/script/iframe.ts:6-21  脚本帧的 srcdoc -->
+<head>
+${third_party}
+<script src="${parent_jquery_url}"></script>     <!-- :11 -->
+<script src="${predefine_url}"></script>          <!-- :12 -->
+…
+</head>
+<body>
+<script type="module">                            <!-- :17 -->
+${…卡的脚本正文…}
+</script>
+</body>
+```
+
+**`predefine.js` 是 `<head>` 里的经典脚本（同步、阻塞、按序），
+卡的正文是 `<body>` 里的 `type="module"`（天然 defer）**——
+**所以 predefine 一定先跑完**。界面帧同理（`src/panel/render/iframe.ts:94` 同一个
+`predefine_url`）。因此在同一个帧内，「不 await 就读」与「await 之后读」
+**看到的是同一个 getter**，不存在竞态。
+
+**竞态在帧之间**：`:37` 那个 `if` 判的是**这个帧建起来的那一刻**父页有没有 `Mvu`，
+而那由 MVU 所在的**另一个帧**何时跑到 `_.set(window.parent, 'Mvu', mvu)` 决定。
+
+**没装上时的两种失败形态不一样，照抄时要分清**：属性根本没定义 ⇒
+`window.Mvu` 读作 **`undefined`**（静默），而裸标识符 `Mvu` 抛
+**`ReferenceError`**（响亮）。同一份卡代码用哪种写法，决定它是静默降级还是当场炸。
+
+### 一句话给裁决用
+
+> 上游的行为是**「bootstrap 时若已存在则装活 getter」**，不是「总是可用」。
+> 所以「在帧启动时按父页现状装一次」是**补齐兼容**；
+> 而「无条件、任何时候都能同步拿到」**比上游更强**，属于我们多给——
+> 上游在 MVU 尚未发布时建起来的帧里，同样拿不到，且没有回填。
+> *（我们语料里那三个从不 await 的单元——魔法少女监视器 / 灭仇家气泡面板 /
+> 绿茵好莱坞状态栏——在上游能不能跑，取决于它们所在的帧是否晚于 MVU 发布；
+> **这一条我没有观测**，只能由运行时序回答。）*
+---
+
+## 附录五：上游能不能回看历史楼层的 `stat_data`
+
+**问题**（2026-09-06，为 `ACTION-PLAN.md` §二 第 4 项「状态面板只显示最新 turn 的变量」）：
+上游的变量查看面能不能回看历史楼层？入口在哪、按什么寻址、显示的是候选表还是行级表。
+
+**口径**：正读已安装的 TavernHelper **4.9.1**
+（`E:/sillyTavern/SillyTavern/data/default-user/extensions/JS-Slash-Runner`，`src/` 完整）
+与 `.reference/MagVarUpdate`。只读，没有打开 ST，没有点开任何面板——
+**以下全部是静态读，没有一条经过运行确认。**
+
+### 答案
+
+> **能。**上游有一个能按楼号回看的变量面，但它**不在 MVU 里**，在 **TavernHelper 的
+> 「变量管理器 → 消息楼层」**。它按 `message_id` 寻址、可以给一个**楼号区间**、
+> 显示的是**行级表**（那一楼**当前 swipe** 的那一格），**而且可写**。
+
+### ① 入口：TH 面板 → 工具 → 变量管理器 → 消息楼层
+
+| 层 | 位置 |
+| --- | --- |
+| TH 面板的「工具」页签 | `[TH] src/Panel.vue:116`　`{ key: 'toolbox', name: t\`工具\`, icon: 'fa-solid fa-toolbox', component: Toolbox }` |
+| 「变量管理器」按钮 → 对话框 | `[TH] src/panel/Toolbox.vue:17`（按钮）、`:72-78`（`<Dialog storage-id="variable-manager" :title="t\`变量管理器\`">`） |
+| 五个页签 | `[TH] src/panel/toolbox/VariableManager.vue:30-40`：全局 / 预设 /（有角色时）角色 / 聊天 / **消息楼层** |
+| 楼层页 | `[TH] src/panel/toolbox/variable_manager/Message.vue`（128 行）+ `MessageItem.vue`（149 行） |
+
+**MVU 自己没有变量查看面。**`.reference/MagVarUpdate/src/panel/` 的七个区块是
+Button / CharacterOverride / Cleanup / Compatibility / Notification / Update / Version
+（`Panel.vue:21-27`），**`src/panel/` 下没有任何文件提到 `stat_data`**（grep 零命中）。
+所以「MVU 的状态视图」这个东西**不存在**；查看变量在上游是 TavernHelper 的职责。
+
+### ② 寻址：楼号区间 + 一个「追踪最新」开关，负数是从末尾数
+
+```js
+// [TH] src/panel/toolbox/variable_manager/Message.vue:110-121
+const messages = computed(() => {
+  if (chat_length.value === 0) return [];
+  const range = from.value > to.value ? _.range(to.value, from.value + 1) : _.range(from.value, to.value + 1);
+  const result = sync_bottom.value ? range.toReversed() : range;
+  return result.map(value => ({
+    message_id: sync_bottom.value ? value - chat_length.value : value,   // ← 追踪模式下是负数
+  }));
+});
+```
+
+- **两个数字输入框 `from` / `to`**（`:24-33`），`min=0`、`max=chat_length - 1`，
+  中间一个 `~`，右侧常驻显示「最新楼层号: {chat.length - 1}」。
+  **初值是最后三楼**：`to = chat_length - 1`，`from = max(0, to - 2)`（`:80-81`）。
+- **`sync_bottom`（「追踪最新」/「正序显示」）**（`:19-20`、`:78`）：
+  开着时楼号写成**负数**（`value - chat_length`），也就是**相对末尾**寻址，
+  新楼到达时窗口自动跟着走（`:82-91` 的 watch 保持区间宽度不变）；
+  关掉则是绝对楼号，`to` 输入框被禁用。
+- 渲染用 `VirtList`（虚拟列表，`item-key="message_id"`），所以区间开大也不铺满 DOM。
+- 每个 `MessageItem` 自己把负数折回绝对楼号：
+  `normalized_message_id = messageId < 0 ? chatLength + messageId : messageId`
+  （`MessageItem.vue:49-51`），标题写「第 N 楼」，旁边有一个「重新渲染第 N 楼」的按钮
+  （`refreshOneMessage`，`:82-85`）。
+
+**所以 `swipe` 不是寻址的一维**：面板只传 `message_id`，没有 swipe 参数。
+
+### ③ 显示的是**行级表**——那一楼**当前 swipe** 的那一格
+
+数据来自 `getVariables({ type: 'message', message_id })`（`MessageItem.vue:87`），
+刷新时走同一族的 `get_variables_without_clone`（`:127`）：
+
+```ts
+// [TH] src/function/variables.ts:56-70   get_variables_without_clone(option)
+case 'message': {
+  const normalized_message_id =
+    option.message_id === undefined || option.message_id === 'latest' ? -1 : option.message_id;
+  if (!_.inRange(normalized_message_id, -chat.length, chat.length)) {
+    throw Error(`提供的消息楼层号 '${option.message_id}' 超出了范围 [${-chat.length}, ${chat.length})`);
+  }
+  let chat_message;
+  if (option.message_id === undefined || option.message_id === 'latest') {
+    chat_message = chat.filter(chat_message => !chat_message.is_system).at(normalized_message_id);
+  } else {
+    chat_message = chat.at(normalized_message_id);
+  }
+  return chat_message?.variables?.[chat_message?.swipe_id ?? 0] ?? {};
+}
+```
+
+**三条要点：**
+
+1. **返回的是 `variables[swipe_id]`，不是 `variables` 整个数组。**
+   `variables` 在盘上是**按 swipe 下标的数组**（附录三「逐 swipe 重建」那条），
+   而这里只取**当前选中的那一格**，缺省 `0`。
+   **所以面板给的是行级表，不是候选表**；同一楼的其它 swipe 的 `stat_data`
+   **在这个面板上看不到**，要看只能去聊天里把那一楼切到那个 swipe——
+   切完会发 `MESSAGE_SWIPED`，`MessageItem` 监听到就重读（`:52-66`）。
+2. **显式楼号与 `'latest'` 走的是两条不同的取法**：显式楼号是
+   `chat.at(id)`——**原始下标，包含 `is_system` 行**；`'latest'`/不传才先
+   `filter(m => !m.is_system)` 再 `.at(-1)`。**面板传的永远是显式楼号**
+   （追踪模式下是负数，仍走 `chat.at`），**所以它看的是含 system 行的原始下标。**
+3. **越界抛错而不是返回空**：`_.inRange(id, -chat.length, chat.length)`，
+   消息是中文原文（上面那句）。
+
+**`stat_data` 就在这个对象里**：MVU 把它写在
+`chat[i].variables[swipe].stat_data`（附录三的删法 `_.omit(chat_message.variables[i],
+'initialized_lorebooks', 'stat_data', 'display_data', 'delta_data', 'schema')` 是同一处），
+所以这个面板显示的 JSON 里 `stat_data` / `display_data` / `delta_data` 是同级的键。
+渲染用 `JsonEditor`（`MessageItem.vue:26`），带 `schemas_store.message` 的 schema。
+
+### ④ 它是**可写的**，而且写回会落盘
+
+```ts
+// [TH] src/panel/toolbox/variable_manager/MessageItem.vue:145-147
+const { ignoreUpdates } = watchIgnorable(variables, new_variables => {
+  replaceVariables(klona(new_variables), { type: 'message', message_id: props.messageId });
+});
+```
+
+```ts
+// [TH] src/function/variables.ts:130-149   replaceVariables 的 message 分支
+const chat_message = chat.at(option.message_id);
+if (!_.has(chat_message, 'variables')) {
+  _.set(chat_message, 'variables', _.times(chat_message.swipes?.length ?? 1, _.constant({})));
+}
+if (_.isPlainObject(_.get(chat_message, 'variables'))) {          // ← 旧的对象形状就地转成数组
+  _.set(chat_message, 'variables', _.range(0, chat_message.swipes?.length ?? 1).map(i => chat_message.variables[i] ?? {}));
+}
+_.set(chat_message, ['variables', _.get(chat_message, 'swipe_id', 0)], variables);
+saveChatConditionalDebounced();
+```
+
+**写也只写当前 swipe 那一格**，并 `saveChatConditionalDebounced()` 落盘。
+**所以这个面板不是只读视图，是一个历史楼层变量的编辑器。**
+
+### ⑤ 刷新节奏：2 秒轮询 + 按楼号过滤的事件，流式期间暂停
+
+- **外层**：`useIntervalFn(() => refresh_key = Symbol(), 2000)`（`Message.vue:96-98`）；
+  收到 `STREAM_TOKEN_RECEIVED` 就 `pause()`，等 `MESSAGE_RECEIVED` 再 `resume()`
+  （`:99-104`）；`CHAT_CHANGED` 强制刷一次（`:105-107`）。
+- **每个楼层项**：监听 `MESSAGE_UPDATED` / **`MESSAGE_SWIPED`** /
+  `CHARACTER_MESSAGE_RENDERED` / `USER_MESSAGE_RENDERED`，**只在事件带的楼号等于
+  自己那一楼时**才重读（`MessageItem.vue:52-66`）。
+- 重读时先 `_.isEqual` 比对，不同才写进 ref（`:126-135`），避免编辑器被无谓重建。
+
+### 一句话给裁决用
+
+> **上游没有「只能看最新一楼」这个限制**：TavernHelper 的变量管理器有一个按楼号区间
+> 回看的「消息楼层」页，可回看、可编辑、可落盘。**但它的粒度是「楼 × 当前 swipe」，
+> 不是「楼 × 全部候选」**——同一楼其它 swipe 的表在上游也看不到，
+> 除非把那一楼切过去。
+> *（另：这个面在 TavernHelper 里，不在 MVU 里；MVU 的设置面板七个区块没有一个碰
+> `stat_data`。所以按「MVU 的状态视图」去找会找不到东西。）*
+
+### 未查 / 限定
+
+1. **没有运行确认**：没有打开过这个面板，以上全部从源码读出。
+   能廉价证伪的观测是在**我们自己的实例**上开 TH 面板 → 工具 → 变量管理器 → 消息楼层，
+   把区间调到历史楼看有没有 `stat_data`。**不在用户的 ST 上做**（它是可写面板，
+   点进去就有改状态的风险）。
+2. **`VariableManager_deprecated.vue` / `variable_manager_deprecated/` 我没有读**——
+   4.9.1 里两套并存，我只读了现役那套；哪一套在用户界面上真正挂着，没有核。
+3. **`JsonEditor` 与 `schemas_store.message` 的 schema 内容没有读**，
+   所以「面板会不会对 `stat_data` 做特殊呈现」这一格没有答案；
+   从 `MessageItem.vue` 看它就是一个通用 JSON 编辑器。
+4. **`getVariables` 的 clone 语义没有在本附录复核**（附录二记过：`getVariables` 返回
+   `klona` 深拷贝，而 `get_variables_without_clone` 不拷贝）。面板初值用前者、
+   刷新用后者，这个差别对显示无影响，对「编辑器改的是不是活对象」有影响，未展开。

@@ -79,7 +79,7 @@ export async function triggerSlash(command: string): Promise<string> {
 ## 三、管道：`|` 传值，`||` 不传
 
 ```js
-// [ST] scripts/slash-commands/SlashCommandClosure.js:438
+// [ST] public/scripts/slash-commands/SlashCommandClosure.js:438
 this.scope.pipe = await executor.command.callback(args, value ?? '');   // 每条的返回值成为 pipe
 
 // :557-562   substituteUnnamedArgument

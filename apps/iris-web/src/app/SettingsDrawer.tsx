@@ -402,7 +402,7 @@ export function SettingsDrawer({
           {/*
             The interface language. Lives beside the theme because it is the same
             kind of thing — a per-device choice about the shell's own surface
-            (SETTINGS-IA.md 意图 #4, 界面本地) — and takes effect on the spot,
+            (notes/SETTINGS-IA.md 意图 #4, 界面本地) — and takes effect on the spot,
             like the theme does.
           */}
           <ChoiceField

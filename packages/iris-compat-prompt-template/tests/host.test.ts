@@ -151,7 +151,29 @@ test('saveMetadata comes back as a described write', () => {
   })
 })
 
-test('a runaway template is killed, and what finished first is kept', () => {
+/**
+ * How many trivial batches a runaway batch's deadline is allowed to span.
+ *
+ * The runaway test used to pass `deadlineMs: 400` — a wall clock. What it
+ * needs from the deadline is only that the item **before** the hang has
+ * finished when the kill lands, and "finished within 400 ms" is a fact about
+ * one machine (`notes/METHODS.md` §二): fork plus ready plus one item is ~70 ms
+ * idle here, and a peer running headless Chrome alongside can multiply that.
+ * So the deadline is now a multiple of a trivial batch measured in this same
+ * process, through the same fork path; a uniformly slower machine moves both.
+ *
+ * Five is far enough from one that the first item cannot be caught short by
+ * ordinary jitter, and close enough that the test still ends in well under a
+ * second when idle. Same shape as the chat-search proportionality bound
+ * (commit 21eb3cc).
+ *
+ * **This is a smoke bound.** It cannot measure how promptly the kill lands —
+ * a hung template never finishes, so any finite deadline catches it — only
+ * that it lands and that what finished first is kept.
+ */
+const RUNAWAY_SLACK = 5
+
+test('a runaway template is killed, and what finished first is kept', async () => {
   // The deadline is enforced here, by killing the process. `vm`'s own `timeout`
   // bounds only synchronous execution and the corpus awaits, so it would not
   // have caught this — and a synchronous spin like this one cannot be
@@ -159,23 +181,37 @@ test('a runaway template is killed, and what finished first is kept', () => {
   //
   // Streaming per item is what makes the kill survivable: `before` has already
   // been sent by the time the third item hangs.
-  return evaluateBatch({
+
+  // Baseline first: one trivial item through the same fork path, so the
+  // deadline below is a ratio of what this process just did rather than a
+  // number that was true of another machine.
+  const baselineStarted = performance.now()
+  const baseline = await evaluateBatch({ items: [item('probe', '<%= 1 %>')], snapshot: snapshot() })
+  const baselineMs = performance.now() - baselineStarted
+  assert.deepEqual(baseline.results[0]?.result, { ok: true, text: '1' }, 'the baseline batch must do real work to be a baseline')
+  const deadlineMs = Math.ceil(baselineMs * RUNAWAY_SLACK)
+
+  const outcome = await evaluateBatch({
     items: [
       item('before', '<%= 1 %>'),
       item('hang', '<%_ while (true) { } _%>'),
       item('after', '<%= 2 %>'),
     ],
     snapshot: snapshot(),
-    deadlineMs: 400,
-  }).then((outcome) => {
-    assert.equal(outcome.timedOut, true)
-    assert.deepEqual(outcome.results[0]?.result, { ok: true, text: '1' })
-    for (const id of ['hang', 'after']) {
-      const result = outcome.results.find(entry => entry.id === id)?.result
-      assert.equal(result?.ok, false, `${id} should be reported as a failure`)
-      assert.match((result as { error: string }).error, /timed out after 400ms/)
-    }
+    deadlineMs,
   })
+  assert.equal(outcome.timedOut, true)
+  assert.deepEqual(
+    outcome.results[0]?.result,
+    { ok: true, text: '1' },
+    `the item before the hang must have finished inside ${String(deadlineMs)}ms `
+    + `(${String(RUNAWAY_SLACK)}× the ${baselineMs.toFixed(0)}ms baseline batch)`,
+  )
+  for (const id of ['hang', 'after']) {
+    const result = outcome.results.find(entry => entry.id === id)?.result
+    assert.equal(result?.ok, false, `${id} should be reported as a failure`)
+    assert.match((result as { error: string }).error, new RegExp(`timed out after ${String(deadlineMs)}ms`))
+  }
 })
 
 test('the default deadline is the measured one', () => {

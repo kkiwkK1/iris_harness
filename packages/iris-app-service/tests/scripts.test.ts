@@ -247,25 +247,29 @@ test('a deleted card does not leave its document grant for the next card to inhe
   const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
-  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+  // The card is called "Aria", so the id a fresh import mints is `Aria` - and
+  // the file here has to carry that exact id for the re-import to *reuse* it,
+  // which is the whole scenario. Writing `aria.json` made the test pass only on
+  // case-folding filesystems, where `aria` and `Aria` are one file.
+  await writeFile(join(dir, 'characters', 'Aria.json'), CARD, 'utf8')
   const { handlers, policyPath } = makeService(dir)
 
-  await handlers['script.setDocumentGrant']({ characterId: 'aria', granted: true })
-  await handlers['script.setEnabled']({ characterId: 'aria', scriptId: 'core', enabled: false })
-  await handlers['script.setScriptsAllowed']({ characterId: 'aria', allowed: true })
-  const before = await handlers['script.list']({ characterId: 'aria' })
+  await handlers['script.setDocumentGrant']({ characterId: 'Aria', granted: true })
+  await handlers['script.setEnabled']({ characterId: 'Aria', scriptId: 'core', enabled: false })
+  await handlers['script.setScriptsAllowed']({ characterId: 'Aria', allowed: true })
+  const before = await handlers['script.list']({ characterId: 'Aria' })
   assert.equal(before.documentGranted, true)
   assert.equal(before.scriptsAllowed, true)
 
-  await handlers['character.delete']({ characterId: 'aria' })
+  await handlers['character.delete']({ characterId: 'Aria' })
 
   // Ids are minted from the card's name against the cards that exist, so
   // deleting "Aria" frees `aria` and the next card named Aria takes it. A
   // policy left behind is not orphaned — it is inherited, and it carries the
   // grant the user gave to a card that no longer exists.
-  await handlers['character.import']({ filename: 'aria.json', content: Buffer.from(CARD, 'utf8').toString('base64') })
+  await handlers['character.import']({ filename: 'Aria.json', content: Buffer.from(CARD, 'utf8').toString('base64') })
 
-  const after = await handlers['script.list']({ characterId: 'aria' })
+  const after = await handlers['script.list']({ characterId: 'Aria' })
   assert.equal(after.documentGranted, false, 'a new card inherited a grant the user never gave it')
   // Back to the third state, not to `false`: the user has never been asked
   // about *this* card, and the shell has to ask. `false` here would silently
@@ -276,7 +280,7 @@ test('a deleted card does not leave its document grant for the next card to inhe
     [true, true, false],
     'a new card inherited the previous card’s script switches',
   )
-  assert.equal((await readFile(policyPath, 'utf8')).includes('aria'), false)
+  assert.equal((await readFile(policyPath, 'utf8')).includes('Aria'), false)
 })
 
 test('every per-character store forgets, not just the two that were checked', async (t) => {

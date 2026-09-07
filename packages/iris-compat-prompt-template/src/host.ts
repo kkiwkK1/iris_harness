@@ -8,7 +8,7 @@
  * wrong, no cache to invalidate.
  *
  * Two upstream behaviours are given up by that, both measured to have zero sites
- * in the corpus and both recorded in `DEVIATIONS.md`: `define()` no longer
+ * in the corpus and both recorded in `notes/packages/iris-compat-prompt-template/DEVIATIONS.md`: `define()` no longer
  * persists across generations, and EJS's template cache is gone (upstream's own
  * cache is off in the user's live settings).
  *

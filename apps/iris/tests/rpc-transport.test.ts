@@ -51,11 +51,43 @@ const ARIA = JSON.stringify({
   },
 })
 
+/**
+ * How many boots a wait may outlast before it counts as a hang.
+ *
+ * The wait used to be a wall clock — `Date.now() + 5000` — which is a
+ * measurement of one machine wearing a constant's clothes (`notes/METHODS.md`
+ * §二): it goes red on a loaded runner for a transport that did not change,
+ * and a red that gets read as noise protects nothing. The yardstick is now the
+ * boot of this same composition, measured in this same process: a uniformly
+ * slower machine slows the boot and the wait together, so the ratio survives
+ * what the constant did not. Same shape as the chat-search proportionality
+ * bound (commit 21eb3cc).
+ *
+ * Measured, three runs, idle machine: boot 409–430 ms, socket connect 15–23 ms,
+ * a whole turn through the mock provider 26–28 ms — about 0.065 of a boot. Five
+ * boots is therefore some 75× the longest thing waited for, and a genuine hang
+ * (an event that never arrives) still fails in seconds rather than never.
+ *
+ * **This is a smoke bound.** It turns a hang into a failure; it cannot see a
+ * slow transport, because nothing here compares the turn to anything. That is
+ * the honest scope of the old 5-second constant too — it just did not say so.
+ */
+const WAIT_SLACK = 5
+
+/** How long the composition took to boot, in this process; the unit every wait is measured in. */
+let bootMs: number
+
 /** Wait for a condition the transport reaches asynchronously. */
 async function waitUntil(predicate: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 5000
+  const budget = bootMs * WAIT_SLACK
+  const started = performance.now()
   while (!predicate()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
+    if (performance.now() - started > budget) {
+      throw new Error(
+        `timed out waiting for ${what}: ${budget.toFixed(0)}ms, `
+        + `${String(WAIT_SLACK)}× the ${bootMs.toFixed(0)}ms this composition took to boot`,
+      )
+    }
     await new Promise(resolve => setTimeout(resolve, 5))
   }
 }
@@ -71,7 +103,9 @@ before(async () => {
   process.env.IRIS_TEST_BASE_URL = mock.baseURL
   process.env.IRIS_TEST_DATA_DIR = dataDir
 
+  const bootStarted = performance.now()
   ctx = await boot('iris-transport', fileURLToPath(new URL('./fixtures/transport.cordis.yml', import.meta.url)))
+  bootMs = performance.now() - bootStarted
   origin = `http://127.0.0.1:${String(ctx.webServer.port)}`
   client = new IrisHttpClient({ baseUrl: origin })
   await waitUntil(() => client.connected, 'the event socket to connect')
@@ -399,7 +433,7 @@ test('the third state crosses the wire as an absent key, not a present undefined
 /**
  * The composition neither half can see from inside its own boundary.
  *
- * `GRANTS.md` §1 asks for exactly this path — *deleted card → reimport → open* —
+ * `notes/apps/iris-web/GRANTS.md` §1 asks for exactly this path — *deleted card → reimport → open* —
  * because the leak it describes lived on the seam: the host forgot its grants
  * and was correct, the browser's cache never asked and was also defensible, and
  * both suites stayed green. This one runs the real id minting against real files
@@ -442,7 +476,7 @@ test('a reused character id inherits no answer the user gave about the card befo
   // Before any `setScriptsAllowed` on this card: the third state, not `false`.
   // `false` would mean the shell never asks, so the scripts never run, with
   // nothing reported anywhere — and a card may not have its consent pre-filled
-  // (`AUTORUN.md` §1), including pre-filled as a refusal.
+  // (`docs/AUTORUN.md` §1), including pre-filled as a refusal.
   assert.equal(
     'scriptsAllowed' in after,
     false,

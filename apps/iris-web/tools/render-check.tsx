@@ -22,7 +22,8 @@ import { App } from '../src/app/App.tsx'
 import { StoreProvider } from '../src/client/provider.tsx'
 import { createIrisStore, type IrisStore } from '../src/client/store.ts'
 import { SlotProvider } from '../src/slots/Slot.tsx'
-import { createIrisSlots, type IrisSlotName } from '../src/slots/slots.ts'
+import { createIrisSlots } from '../src/slots/slots.ts'
+import { registerMessageAction } from '../src/slots/message-actions.ts'
 import { RAIL_MAX_TICKS, railMode } from '../src/app/rail.ts'
 import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView } from '@iris/protocol'
@@ -314,22 +315,32 @@ async function main(): Promise<void> {
   assert.ok(withConnections.includes(unnamed.summary), 'an unnamed profile should fall back to its summary')
 
   // ------------------------------------------------------------------ slots
-  const registered = slots.core.register(
-    { name: 'iris.message.actions' satisfies IrisSlotName, id: 'probe', registrant: 'render-check' },
-    () => 'PROBE',
-  )
-  assert.match(render(wired.store, slots.core), /PROBE/, 'a slot contribution did not render')
+  // `iris.message.actions` is projected as one folded menu per floor
+  // (`MessageActions.tsx`): the projection reads each entry's `.action`
+  // descriptor, so a bare component registered through `core.register` is not
+  // an action and renders nothing — which is what this check used to do, and
+  // why it went red the moment the projection folded. Register the way a
+  // provider does. The menu is closed under renderToString, so the label itself
+  // is not in the markup; what is renderable is the folded button, which exists
+  // only while at least one action is registered.
+  const registered = registerMessageAction(slots.core, 'render-check', {
+    id: 'probe',
+    label: () => 'PROBE',
+    run: () => undefined,
+  })
+  const FOLDED = /aria-haspopup="menu"[^>]*>Actions</
+  assert.match(render(wired.store, slots.core), FOLDED, 'a registered floor action did not produce the folded menu')
   registered()
   assert.doesNotMatch(
     render(wired.store, slots.core),
-    /PROBE/,
-    'a disposed slot contribution still rendered — reversibility is broken',
+    FOLDED,
+    'a disposed floor action still produced the folded menu — reversibility is broken',
   )
 
 
   // ------------------------------------------------------- reading window
   /*
-   * Acceptance 1 of `WINDOWING.md` §七, pinned here rather than looked at.
+   * Acceptance 1 of `notes/apps/iris-web/WINDOWING.md` §七, pinned here rather than looked at.
    *
    * The criterion is about the **DOM**: a 677-floor chat opens with 100
    * messages mounted, not 677. `reading-window.ts` is unit-tested, but that

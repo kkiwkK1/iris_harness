@@ -19,7 +19,7 @@ test('ordinary rules are confined to the one message', () => {
 
 test('the scope root is the candidate, not the floor', () => {
   /*
-   * [INLINE-HTML.md §4.4] Upstream deletes a floor with `chat.splice(index, 1)`,
+   * [notes/apps/iris-web/INLINE-HTML.md §4.4] Upstream deletes a floor with `chat.splice(index, 1)`,
    * which shifts every later floor. Styles hung off a floor number would land on
    * a different message after one deletion — a card's CSS reaching someone
    * else's text is exactly what the scoping is for.
@@ -122,7 +122,7 @@ test('a rule that fetches is refused, one that references the document is kept',
 
   /*
    * **The host is named, and that is a requirement rather than a nicety.**
-   * [TEST-CARDS.md / `OBSERVABILITY.md` gap 8] the corpus has cards that print
+   * [notes/TEST-CARDS.md / `docs/OBSERVABILITY.md` gap 8] the corpus has cards that print
    * their own message when a resource fails to load — one blames the user's
    * tavern. An unnamed refusal loses to that: the reader believes the card and
    * goes to check their installation. Ours has to be the more specific of the

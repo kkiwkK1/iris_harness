@@ -54,7 +54,7 @@ test('a card that built elements is reported, with what it built', () => {
 
 test('the zero viewport is named as one cause, not left to be inferred', () => {
   /*
-   * [OVERLAY-CARDS.md] The script frame is 0×0 on purpose — `hidden` would be
+   * [notes/apps/iris-web/OVERLAY-CARDS.md] The script frame is 0×0 on purpose — `hidden` would be
    * `display:none`, which a card can detect — so all of the card's code runs
    * and every measurement it takes comes back zero.
    *

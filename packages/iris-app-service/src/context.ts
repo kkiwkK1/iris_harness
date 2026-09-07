@@ -11,7 +11,7 @@
  * What lives here is only the part the host can answer. Rendering
  * (`addOneMessage`, `printMessages`) has no meaning in a process with no DOM,
  * and the event bus is presented in the frame; both belong to the browser
- * stream. See `SANDBOX.md` for the split.
+ * stream. See `docs/SANDBOX.md` for the split.
  *
  * @module @iris/app-service/context
  */
@@ -172,7 +172,7 @@ function withCurrentCardData(
  * 3. **The projected table is the turn's, which is half a turn newer than
  *    upstream's.** Upstream's user row holds the state as the turn *began*;
  *    this host has only the state the turn *settled on*. That is a difference in
- *    what a read means, not in what a write does — see `FLOOR-VARIABLES.md`.
+ *    what a read means, not in what a write does — see `notes/packages/iris-app-service/FLOOR-VARIABLES.md`.
  * @param entry - the open conversation.
  * @returns the message lines, with user rows filled in.
  */

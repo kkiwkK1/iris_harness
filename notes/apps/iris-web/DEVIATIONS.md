@@ -5,7 +5,7 @@ what SillyTavern does, and what each difference was measured to cost. A deviatio
 with no measurement is a guess, so every entry names what it read and **what
 would overturn it**.
 
-The host keeps its own ledger at `packages/iris-app-service/DEVIATIONS.md`; this
+The host keeps its own ledger at `notes/packages/iris-app-service/DEVIATIONS.md`; this
 one covers `apps/iris-web` — the shell, the frames, and the card-facing surface
 inside them. Render-pipeline differences that need their surrounding argument are
 worked out in `RENDER.md` and referenced from here rather than restated.
@@ -1571,3 +1571,98 @@ windows where it used to run full width — under the prose, which is the
 point. The lane's width is the UA's thin scrollbar, not a token, so the
 *reserved* amount is not project-owned; the *parity* is, because both
 surfaces ask the same question of the same browser.
+
+---
+
+## 41. A card's remote stylesheet is refused, and its font never arrives
+
+**Kind:** compatibility gap — the mechanism that closes it is ruled and queued, not built.
+
+**Upstream.** There is no policy layer here at all. SillyTavern mounts helmet with the CSP switched off — `app.use(helmet({ contentSecurityPolicy: false }))`, `[ST] src/server-main.js:103-106` — and that is its only CSP source: `public/index.html` carries no `<meta http-equiv>`, and the string `Content-Security-Policy` occurs nowhere under `public/` or `src/` (excluding `third-party/` and `lib/`). The message frame adds none either: TavernHelper's generated document (`[TH] src/panel/render/iframe.ts:78-103`) is a charset meta, a viewport meta, an optional `<base>`, one `<style>`, the third-party head block and four scripts — no CSP meta, and no `sandbox` attribute anywhere in `src/panel/render/` or `src/panel/script/`. **And the host frame is itself doing the thing in question**: `[TH] src/iframe/third_party_message.html` links two remote stylesheets and five remote scripts from `testingcf.jsdelivr.net`, plus a sixth remote script at `iframe.ts:95`. So a card adding one more `<link rel="stylesheet">` to any host is doing what the frame around it already does. (Read from the operator's install: ST `1.18.0`, TH `4.9.1`.)
+
+**Iris** refuses it. `style-src` admits `fonts.googleapis.com` and `'unsafe-inline'` by default and widens to `https:` only under a per-card network grant; `font-src` is `data: https://fonts.gstatic.com` **unconditionally** (`sandbox/srcdoc.ts:120-124`, `:156`). The refusal is named rather than silent: the bootstrap listens for `securitypolicyviolation` and posts the blocked host to the shell, which shows it beside the frame with the directive that refused it.
+
+**Why not an allow-list entry.** Ruled, 2026-09-06: `fontsapi.zeoseven.com` is one card and the next card is a different host, so a list keyed on hosts observed in the corpus is a per-card fix wearing a policy's clothes. This is one family — *a card referencing a remote stylesheet or font* — and the mechanism-layer answer is a **host-side proxy for remote stylesheets**, on the route the script bundles already take, rewriting the fetched CSS's own `@font-face` `src` to proxy URLs so `style-src`/`font-src` stay at `self`. Queued in `ROADMAP.md`; the reading behind it is in `SANDBOX.md`.
+
+**Measured, not inferred.** `Lights_ON.png`, read through `decodeCardPng`: the font link is **not in the greeting**. `first_mes` is three characters (`嘎嘎嘎`) and `alternate_greetings[0]` is three more (`咕咕咕`); the 30 188-character document is produced by the card's regex layer at display time. `data.extensions.regex_scripts` holds five scripts, all enabled, all `placement: [2]` (`AI_OUTPUT`, `[ST] public/scripts/extensions/regex/engine.js:281-287`), and **all five** carry the same pair of lines in a `<head>` they write themselves:
+
+```html
+<link href="https://fontsapi.zeoseven.com/925/main/result.css" onload="this.rel='stylesheet'" rel="preload" as="style" crossorigin />
+<noscript><link rel="stylesheet" href="https://fontsapi.zeoseven.com/925/main/result.css" /></noscript>
+```
+
+for `body { font-family: "Ark Pixel 12px Prop latin", sans-serif; font-size: 8px; }`. Ten references across five emission points, in one card — which is why this is filed as a family and not as a card.
+
+**Four gates sit on those two lines, and only the first has been observed.**
+`style-src` governs the `as="style"` preload — that is the refusal in the report. `font-src` governs the faces named inside that CSS, which resolve against the CSS's own URL and may live on a **different host**; this is the shape already encoded for Google at `srcdoc.ts:88-91` (*"`fonts.googleapis.com` serves the CSS, `fonts.gstatic.com` the faces — both are needed or neither works"*). `script-src` governs the `onload` rel-swap, and that gate is already open (`'unsafe-inline'`, `srcdoc.ts:153`) — the `<noscript>` twin is inert in a scripted frame, so it is a no-JS fallback and not a second path. And the preload carries **`crossorigin`**, making it a CORS-mode fetch from an **opaque origin**, so the response must answer `Access-Control-Allow-Origin: null` or `*` or the browser discards it *after* CSP has allowed it. **A host-side proxy meets none of the four; a per-host allow-list would open only the first.**
+
+**What it costs.** The document typesets in the fallback `sans-serif` at 8px and the card's pixel font never arrives. The handoff note for that card records a second-order effect — the late/absent font as a disturbance source in the height loop (`NOTES-handoff.md` §2, their observation, not re-measured here). **And the existing per-card network grant does not close it**: a granted card gets the stylesheet, because the grant widens `style-src` to `https:`, and still gets no faces, because `font-src` has no grant branch — so the visible outcome moves from "no font, `style-src` named" to "no font, `font-src` named, pointing at a host nobody has seen yet". Out of scope here and unchanged: the same card's eight `img.remit.ee` images, which ride `img-src` and the existing grant.
+
+**What would overturn it.** The stylesheet proxy landing. At that point a card's remote stylesheet loads with `style-src`/`font-src` still at `self`, this entry closes, and what replaces it is a note on what the proxy rewrites and what it does not.
+
+---
+
+## 42. `Mvu` is predefined per script, not per frame, and is never backfilled
+
+**Kind:** faithful reproduction across a structural difference — the behaviour is upstream's, the placement cannot be.
+
+**Upstream.** `predefine.js:36-44` runs at a script iframe's bootstrap and asks once whether the shared parent already holds `Mvu`. On a hit it defines a live accessor on that frame's own window (`get: () => _.get(window.parent,'Mvu')`, empty `set`, `configurable`); on a miss it installs nothing and never revisits. One name, conditionally — the other members ride the `_.pick` allow-list at `predefine.js:11-19`. The author's own comment calls it a compatibility patch and points at `waitGlobalInitialized` as the supported route.
+
+**Iris** does the same thing at a different moment, because the moment upstream uses does not exist here. Upstream gives **every script its own iframe**, so "when the frame boots" is "when the script starts". Iris runs all of a card's scripts in **one** frame, so frame bootstrap happens once — and always before the card's own MVU script, which is what publishes `Mvu`. Checking there would be a guard that can never fire. The check therefore runs immediately before **each script body** (`frame.ts`, the `run` handler): if the card's shared namespace already holds `Mvu`, install the accessor through `definePredefined`; otherwise install nothing, and do not revisit.
+
+`definePredefined` is a separate door from `defineForwarding` on purpose. The two upstream sites differ in exactly one thing: `predefine.js` writes an empty setter, so a card assigning the name is ignored; `waitGlobalInitialized` writes a getter alone, so the same assignment throws in a module's strict mode. Folding them into one door with a flag would file that difference where nobody reads it.
+
+**Why the wait path is still the thing that has to work.** `waitGlobalInitialized` is what actually installs the name for the cards that ask properly, and it is unchanged. This entry is only about the cards that never ask.
+
+**Measured: who this can reach.** Three script units in the corpus read `Mvu` and never await it. In all three, the reading unit is declared **after** its card's MVU publisher:
+
+| card | script order (publisher ▸ reader) |
+| --- | --- |
+| 魔法少女是不会败北恶堕的吧！ | `#1 [MVU变量框架]var_update` ▸ `#3 魔法少女-MVU变量维护监视器` |
+| 灭仇家满门之后，我收养了想对我复仇的孤女 | `#1 MVU` ▸ `#3 气泡面板` |
+| 绿茵好莱坞 | `#2 MVUbeta` ▸ `#3 状态栏` |
+
+**And declaration order is not the boundary — this is the part that matters.** The runner posts every `run` message in one loop without awaiting (`runner.ts`, *"Sent together rather than awaited one at a time"*), and a module body evaluates asynchronously. So when a later script's `run` is handled, the earlier MVU script has begun a dynamic import and has **not** published yet: the bundle is fetched through the host proxy, and its own `fetch('/version')` was measured arriving 3–8 s after the chat opened. For a module-mode card — which every MVU card is, since the publisher is an `import` — the check will therefore usually **miss**, and these three units keep reading `undefined`.
+
+That is inference from the runner's own comment plus those timings, **not** a direct reading of the namespace at each script's dispatch. It is cheap to settle: re-run the script-frame probe on 绿茵好莱坞 after a build and read `Object.getOwnPropertyDescriptor(window,'Mvu')` in the script frame without awaiting — `present` means the check fired, `absent` means it did not.
+
+**What it costs.** Nearly nothing today, and that is the honest summary: the mechanism is upstream's and correctly placed, and the population it currently rescues is probably empty. It is here so that the conditional exists in the right shape when something does publish early enough — a classic-mode publisher, or a future change that lets a provider settle before its siblings start.
+
+**What would overturn it.** Either half. A reading showing the check does fire for a module-mode card retires the paragraph above. A ruling that Iris should serialise a card's scripts, or publish `Mvu` into the script frame's globals unconditionally, would replace this entry with a deliberate-improvement one — both give cards more than upstream, which is why neither was taken here.
+
+
+## 43. The page root carries SillyTavern's theme variable names, aliased to Iris tokens
+
+**Kind:** compatibility gap, closed.
+
+**Upstream.** A card's HTML that is not inside a fenced full document lands in `.mes_text`, in the page's own DOM (`UPSTREAM-THEME-VARS.md` §三之二: `decodeStyleTags` scopes selectors under `.mes_text ` and rewrites class names to `custom-*`, but leaves declarations alone). Such a card can write `color: var(--SmartThemeBodyColor)` and it resolves against the sixteen `--SmartTheme*` names ST defines on `:root` (`style.css:71-89`), plus `--mainFontFamily`, `--monoFontFamily`, `--mainFontSize`, `--fontScale`, `--sheldWidth`, `--blurStrength`, `--shadowWidth`. It cannot redefine them at the root — `.mes_text :root{}` matches nothing — so the relationship is read-only.
+
+**Iris** renders the same family into its own page DOM (`inline-html.ts`, `card-css.ts`), so the same `var()` used to resolve to nothing. `theme/tokens.css` now defines every one of those names, per theme, as an alias of the Iris token with the same meaning (body → ink, quote → warn, blur tint → raised paper, and so on; the three unitless multipliers stay unitless because upstream multiplies them in `calc()`). The list is pinned by `tests/st-theme-aliases.test.ts` against §七 of the upstream note.
+
+**Measured.** 0 of 29 deduplicated corpus cards read any of these names today (§八, whole-JSON grep with a positive control). The gap is closed anyway because the mechanism is upstream's and a card family that uses it exists in the wild; the corpus is the oracle for what breaks, not for what is allowed to work.
+
+**What it costs.** Twenty-odd custom properties on `:root`, and a second name for each colour a future theme author has to keep in step — the test makes that a red build rather than a silent drift.
+
+**What would overturn it.** Nothing about the aliases themselves; the open question is the frames, which is entry 45.
+
+## 44. Card frames are `color-scheme: light`, whatever the page theme
+
+**Kind:** faithful reproduction.
+
+**Upstream.** `style.css:167` puts `color-scheme: only light` on `body`, and the TavernHelper frame documents declare nothing, so a card's frame renders its form controls and scrollbars in the light scheme on every ST theme, including the dark default (§六). A card author who styled a dark panel saw light `<select>` arrows and a light scrollbar inside it, and shipped it that way.
+
+**Iris** frames used to follow the page theme — `reading.css` said `normal`, which the spec defines as "the page's scheme", and every Iris theme declares one at the root; the overlay frame inherited the same way. Both kinds now say `light`: the slot rule, the overlay `attach`, and the two `srcdoc` resets, pinned by `tests/frame-color-scheme.test.ts`.
+
+**Open detail.** Upstream writes `only light`; Iris writes `light`. Chromium does not auto-darken under either, so no visible difference is expected, but `only` on a frame element was not verified in a browser. Recorded here so the difference is a decision and not an oversight.
+
+**What would overturn it.** A ruling that Iris frames should look native under the 墨 theme — that would move this to a deliberate improvement, with the cost that cards designed against light controls change appearance.
+
+## 45. No theme information is pushed into card frames
+
+**Kind:** deliberate improvement, declined for now.
+
+**Upstream** hands a frame exactly one variable, `--TH-viewport-height`, and nothing about colours, fonts, or dark/light (§二). Iris injects the same one variable and no more; the `--SmartTheme*` aliases of entry 43 stop at the page root, and `tests/st-theme-aliases.test.ts` asserts that `src/sandbox/**` never mentions them.
+
+**Why declined.** A bridge into the frame would give cards something upstream does not — that is the improvement ledger, and it needs a consumer. The corpus has none: the eight cards that theme themselves with variables define their own (`--bg-color`, `--main-bg`, `--bg`), and eleven hard-code colours (§八). Two cards hard-code light text on a transparent ground and are unreadable on a light host theme; they are unreadable on ST's light themes too, and a bridge they do not read would not help them.
+
+**What would reopen it.** A card that reads `--SmartTheme*` inside a fenced document, or a decision to offer card authors an Iris-specific theme contract — in which case the aliases already defined at the root are the obvious thing to mirror.

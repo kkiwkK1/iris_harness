@@ -595,7 +595,7 @@ if (chatEl) observer.observe(chatEl, { childList: true, subtree: true });
 | **`#mes_stop`** | `.is(':visible')` 当"正在生成" | 系统面板 `:9525-9526` |
 
 **`#send_form` / `#sheld` 语料里零命中。**（`#tavern_helper` 是 MVU 的选举用，不是卡挂靶，见
-`packages/iris-app-service/UPSTREAM-MVU-INIT-PATH.md` §三之六。）
+`notes/packages/iris-app-service/UPSTREAM-MVU-INIT-PATH.md` §三之六。）
 
 ### 二 · `.mes` 的结构（`[ST] index.html:7377-7378`）
 
@@ -942,6 +942,189 @@ if (window.parent !== window) { … window.parent.innerWidth … }
 - **未查**：srcdoc 的 `<meta name="viewport" … viewport-fit=cover>` 虚拟化后**没有对应物**，
   而 `viewport-fit=cover` 正是让 `env(safe-area-inset-*)` 返回非零的开关。
   **卡 frame 自己的 meta viewport 带不带它，我没验**——不带的话上面那条"更对"要打折。
+
+---
+
+## 六之五、两张卡的挂靶与出生时机（谁 append 到哪、什么时候可见）
+
+§六之三 列的是**宿主要提供什么**。这一节列的是**卡实际怎么伸手去拿**——
+因为两张卡拿的方式不一样，虚拟化要挡的东西也就不一样。
+
+### 一 · 银麒赎世 / 手机UI：`$("body")`，落点由 `$` 的 realm 决定
+
+```js
+$("head").append(phoneStyles);                    // 样式
+const triggerBtn = $("<button>", {
+  id: "mobile-trigger-btn",
+  html: '📱<span id="phone-float-badge" style="display:none;position:absolute;…">',
+});
+…
+$("body").append(triggerBtn);                     // 浮动按钮
+$("body").append(phoneOverlay);                   // 手机面板
+setTimeout(() => { bindPhoneEvents(); }, 0);
+```
+
+**全脚本计数**：`$("body")` 22、`.append(` 37、`appendTo(` 1、`document.body` 9；
+**`_pd.body` / `_pw.document` / `$p('body')` 全为 0**——
+它**不**走 银麒系统面板 那套 `var _pw = window.parent || window` 的显式取父路径（§六之二）。
+`#send_form` / `#sheld` 在全脚本 **0 命中**，`#chat` 也不是它的挂靶。
+
+> **同一张卡的两个脚本用了两种取父方式**：
+> 「银麒系统面板」显式 `_pw = window.parent || window` + `$p()`（§六之二），
+> 「手机UI」只写 `$("body")`。
+> **上游两者等价**（`parent_jquery.js` 让 `$` 就是父页面那份，见 UPSTREAM-FRAME-ORIGIN.md），
+> **我们这里不等价**：frame 用自己那份 jQuery 时 `$("body")` 落到 frame 自己的 body。
+
+### 二 · ⚠ 但同一脚本里有一处**显式**父路径，还带了理由
+
+```js
+// body（而不是 iframe 内），这样即使手机关闭弹窗仍可见
+const targetBody = window.parent !== window ? $(window.parent.document.body) : $("body");
+$confirm.appendTo(targetBody);          // ← 全脚本唯一一处 appendTo
+```
+
+这是「自定义确认弹窗」。**作者知道 frame 内和 frame 外是两个地方**，
+但**只为这一个元素写了显式路径**，浮动按钮和手机面板留给了 `$` 的 realm 绑定。
+
+**对我们的意思**：虚拟化如果只处理 `window.parent.document`，
+会把这个弹窗接住、却漏掉按钮和面板（或者反过来）——
+**两条路径要在同一个替身 document 上汇合**，否则同一张卡的三个元素会散在两层。
+
+### 三 · 手机UI 的出生时机：三道门，两道是软的
+
+```js
+$(() => {
+  (async () => {
+    const MAX_WAIT_TIME = 30000, CHECK_INTERVAL = 100;
+    while (typeof waitGlobalInitialized !== "function") {         // ① 轮询等函数出现
+      if (Date.now() - startTime > MAX_WAIT_TIME) {
+        console.error("[手机界面] 等待 waitGlobalInitialized 超时，尝试直接初始化");
+        initializeMobilePhone(); return;                          // ← 超时也照建
+      }
+      await new Promise(r => setTimeout(r, CHECK_INTERVAL));
+    }
+    await waitGlobalInitialized("Mvu");                           // ② 再等 Mvu
+    initializeMobilePhone();
+  })().catch(e => { console.error("[手机界面] 初始化失败:", e); /* 即使出错也尝试 */ });
+});
+```
+
+- **①（函数不存在）软**：30 秒后照建。
+- **②（`await waitGlobalInitialized("Mvu")`）硬**：这个 promise 不 resolve，**界面永远不出现**，
+  而且**不打日志**——和「卡坏了」在屏幕上长一个样。
+  MVU 自禁用的那几条路（UPSTREAM-MVU-INIT-PATH.md §三之四/三之五/三之六）会**从这里**变成一块空白。
+- **③（抛异常）软**：catch 里仍尝试。
+
+> 所以「手机按钮没出来」这个现象，**在上游只有一个成因是沉默的**，就是 Mvu 没 ready。
+> 验收时要能把这一条和「挂错 body」分开——两者都表现为按钮不在屏幕上。
+
+**⚠ 我先写了「建议给 `waitGlobalInitialized` 加一条可观测」，这条要撤：我们已经有了，而且更强。**
+
+`apps/iris-web/src/sandbox/frame.ts:1496` 与 `:1513-1521` 各 post 一条 `waiting`，
+**带 `global` 名字**，第一条 `elapsedMs: 0` 立刻发，第二条在 `WAIT_NOTICE_MS = 5_000`
+（`frame.ts:1229`）后补发用时；`script-run-state.ts:152-167` 把它渲成
+`still waiting for Mvu (5s)`。`frame.ts:1508-1511` 的注释已经把取舍写清楚了——
+**说出来，但不放弃等待**：上游对一次等待既沉默也从不放弃，这个帧不愿意沉默，
+但「五秒后放弃」是上游没有的行为，不替上游发明。
+
+**这条信号已经判过一次案**：协调者报，V1.5.4 的面板**没有**出 5 秒 still-waiting note，
+**所以那次 Mvu 这道门是过的，零面积发生在「建之后」，不是「没建」**。
+
+> 这正好是本节想要的那把尺：**沉默的成因（没 ready）和不沉默的成因（挂错层/零面积）
+> 现在在屏幕上不再长一个样了。** 排障顺序应当反过来——
+> **先看有没有 still-waiting note，没有就直接跳过 MVU 那一整支。**
+> （教训归档：`grep-our-own-code-before-asking-upstream`——
+> 「我们是不是该加 X」在问出口之前先 grep 自己的代码。）
+
+### 四 · V1.5.4 / 论坛覆盖层：**没有 wrapper div**，且**一挂上就可见**
+
+```
+$('<div>') / $("<div>")  = 0        $('<iframe>')  = 1        appendTo(  = 1
+```
+
+iframe **直接 append 到 body**，中间没有包装元素。创建时的内联样式：
+
+```js
+$('<iframe>').attr({ frameborder: '0', srcdoc: '…' })
+  .css({ position:'fixed', top:'0', left:'0', width:'100%', height:'100%',
+         'z-index':'9999', border:'none' })          // ← 没有 display / visibility
+  .on('load', …)
+  .appendTo('body');
+```
+
+挂上之后**立刻**再钉一遍，七条全部 `!important`：
+
+```js
+const i = o[0];
+window.__forumOverlayIframe = i;
+i.style.setProperty('display','block','important');
+i.style.setProperty('position','fixed','important');
+i.style.setProperty('top','0','important');
+i.style.setProperty('left','0','important');
+i.style.setProperty('width','100vw','important');    // ← 不是 .css() 里那个 100%
+i.style.setProperty('height','100vh','important');
+i.style.setProperty('z-index','9999','important');
+```
+
+**结论：它不等任何按钮或事件，`_A()` 一跑完就是全屏可见。**
+`GA()` / `WA()` / `jA()` 是**之后**的开关（`jA()` 设 `display:none !important`，
+`WA()` 移除 `display`/`visibility` 再由 `OA()` 校正）。
+
+**尺寸被设了两遍、单位不同**：`.css()` 里 `100%`，`setProperty` 里 `100vw`/`100vh` 且 `!important`
+——**生效的是后者**。这就是 §六之三 说它对「frame 几何要对」敏感的地方：
+`100vw`/`100vh` 量的是**它所在文档的视口**，虚拟化后那是卡 frame 的视口，不是屏幕。
+
+### 五 · 两张卡的差别，一句话
+
+| | 挂靶 | 显式取父？ | 出生门 | 默认可见 |
+|---|---|---|---|---|
+| 手机UI | `$("body")` / `$("head")` | 否（弹窗除外） | `await waitGlobalInitialized("Mvu")` | 是 |
+| 论坛覆盖层 | `'body'`（`appendTo`） | 否 | `await waitGlobalInitialized('Mvu')` | 是，且 `!important` 钉死 |
+
+**两张卡都卡在同一个 `waitGlobalInitialized('Mvu')` 上**，
+**都不写 wrapper**，**都默认可见**——
+所以「界面没出来」这个报障，第一个要排的永远是 MVU 有没有 ready，不是 CSS。
+
+### 六 · 覆盖层这条路上有三个盒子，`16a07b9` 统一了前两个
+
+卡写的 `100vw`/`100vh` 要落在哪，取决于三个数，而它们**不是同一次测量**：
+
+| # | 盒子 | 谁写的 | 谁读它 |
+|---|---|---|---|
+| ① | 覆盖层面元素 `.iris-overlay-surface` 的内容盒 | `useCardScripts.tsx`：`position:absolute; inset:0; width/height:100%`，装在 `App.tsx` 的 `.iris-card-stage` 里 | `overlay-surface.ts` 的 `overlayViewport` 读它的 `clientWidth/clientHeight`，发给卡 |
+| ② | 帧元素自己的盒 | 同上，`attach` 里显式 `width/height:100%`（iframe 是替换元素，`inset:0` 不给它定尺寸，不写就退回 300×150） | 浏览器 |
+| ③ | **帧内** `document.documentElement.client*` | 没有人写——它是 ② 被布局之后的结果 | `describeFrameViewport`，以及卡里每一个 `vw`/`vh` |
+
+**① 与 ② 由构造统一**：两者都是同一个面元素的盒，发给卡的数字和帧真正占的地方出自同一个来源。
+这正是 `16a07b9` 的裁定（`overlay-surface.ts` 模块注释），它换掉的是 `window.innerWidth/innerHeight` ——
+用户量到过 **1449px 帧 vs 1218px viewport** 的两源现象。
+
+**③ 与前两个没有任何代码把它们绑在一起**，它只是 ② 被浏览器布局之后的产物。已知会不同的四种时刻：
+
+1. **帧还没被布局过**（隐藏标签，或从未 paint 过的帧）——③ 是 `0x0` 而 ①② 是真数。
+   顶层文档被强制读取时会同步布局，**子帧不会**（METHODS §二十三）。零视口的读数就出在这里。
+2. **① 变了而 ③ 还没跟上**——`ResizeObserver` 已经把新数发给卡，帧内布局落后至多一帧。
+   这正是 `frame-entry.ts` 里 `visibilitychange` 第二趟 `forceMeasure` 覆盖的那一种。
+3. **帧内出现滚动条**——③ 的宽度比 ② 少一条滚动条宽（`clientWidth` 不含它）。
+4. **折叠**——`visibility:hidden` 是**为了不让它们分开**才选的：盒子照样参与布局，③ 保持为真；
+   换成 `display:none` 会让 ③ 塌成 0 而 ①② 不变（该理由已写在 `useCardScripts.tsx` 的注释里）。
+
+> **所以读到 ③ 是 0 时，唯一成立的结论是「这一刻帧内没有布局」，不能推出屏幕为什么空。**
+> `describeFrameViewport` 因此只报数字、不再附诊断句——它知道自己量的是哪个盒子，
+> 不知道那个盒子为什么是那么大。
+
+**范围**：以上只管**覆盖层**这条路。消息帧走的是**第四个盒子** ——
+阅读滚动器的 `clientHeight`，由 `ChatPane` 发布成 CSS 变量 `--iris-app-frame-height`
+（`frame-fit.ts`），`max-height` 在计算值层面压过内联 `height`；那条路上**没有** `viewport` 消息，
+`overlayViewport` 一次都不经过。两条路不要合并成一件事。
+
+### 口径
+
+- 语料：`E:/sillyTavern/SillyTavern/data/default-user/characters` 下 `银麒赎世`，
+  与 `测试用卡/新增-20260902/V1.5.4_.png`，经 `decodeCardPng` + `extractScripts` 取脚本正文。
+- 计数用 `s.split(n).length - 1`（子串计数，不过正则，见 METHODS 的反斜杠条）。
+- **只读**：没有打开 ST，没有运行这两张卡，以上全部是静态读出来的。
+  §七 那条「静态预测不是观测」同样适用于本节。
 
 ---
 

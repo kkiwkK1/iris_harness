@@ -16,10 +16,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+import { answerConsentExpr } from './locators.mjs'
+
+const CHROME = process.env.IRIS_CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8825/'
-const DEBUG_PORT = Number(process.env.CHROME_DEBUG_PORT ?? 9338)
-const CARD = 'D:/workspace/小项目/iris_分支/测试用卡/v0.5NSFW.png'
+// `CDP_PORT` is the name the other QA scripts use; `CHROME_DEBUG_PORT` still
+// answers so an existing invocation of this one keeps working.
+// Default CDP port is offset by the pid: two runs back to back would
+// otherwise fight over one debug port, and the loser dies as
+// "chrome never came up" — which reads as a broken environment, not as a
+// collision. An explicit CDP_PORT is honoured verbatim (see qa/README.md).
+const DEBUG_PORT = Number(process.env.CDP_PORT ?? process.env.CHROME_DEBUG_PORT ?? 9338) + (process.env.CDP_PORT === undefined && process.env.CHROME_DEBUG_PORT === undefined ? process.pid % 100 : 0)
+const CORPUS = process.env.IRIS_CORPUS ?? 'D:/workspace/小项目/iris_分支/测试用卡'
+const CARD = `${CORPUS}/v0.5NSFW.png`
 
 const require = createRequire(import.meta.url)
 const wsPath = new URL('../node_modules/.pnpm/ws@8.21.3/node_modules/ws/index.js', import.meta.url).href
@@ -153,25 +162,16 @@ console.log('opened row:', JSON.stringify(opened))
 // render after the chat opens — but the answer is remembered per profile, so a
 // re-run on a host that already granted sees no banner at all. Both are fine:
 // poll briefly, click if it shows up, carry on if it does not.
-const consent = await evaluate(`(() => {
-  const buttons = [...document.querySelectorAll('.iris-grant__actions button')]
-  const run = buttons.find(b => b.textContent.includes('运行') && !b.textContent.includes('不'))
-    ?? buttons[0]
-  run?.click()
-  return run?.textContent ?? null
-})()`)
-for (let i = 0; i < 12 && consent === null; i++) {
+// Run is the first button in `.iris-grant__actions`, decline the second
+// (qa/locators.mjs). It used to be found by `textContent.includes('运行')`,
+// which reads the decline button correctly only because 不运行 was excluded by
+// hand — and misses both the moment the shell is in English.
+let consent = await evaluate(answerConsentExpr)
+for (let i = 0; i < 12 && consent?.asked !== true; i++) {
   await sleep(250)
-  const clicked = await evaluate(`(() => {
-    const buttons = [...document.querySelectorAll('.iris-grant__actions button')]
-    const run = buttons.find(b => b.textContent.includes('运行') && !b.textContent.includes('不'))
-      ?? buttons[0]
-    run?.click()
-    return run?.textContent ?? null
-  })()`)
-  if (clicked !== null) break
+  consent = await evaluate(answerConsentExpr)
 }
-console.log('consent:', consent ?? 'already granted (no banner)')
+console.log('consent:', consent?.asked === true ? `answered run (button read ${JSON.stringify(consent.label)})` : 'already granted (no banner)')
 let frameSessionId = null
 for (let i = 0; i < 60; i++) {
   await sleep(500)

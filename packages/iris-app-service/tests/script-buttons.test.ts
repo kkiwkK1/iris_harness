@@ -24,7 +24,7 @@ import { SettingsStore } from '../src/settings.ts'
  *
  * The consequence worth knowing, and it is a real cost rather than a detail: a
  * card exported back to SillyTavern carries what it declared, not what a script
- * rearranged. Recorded in `DEVIATIONS.md` so it is met on purpose.
+ * rearranged. Recorded in `notes/packages/iris-app-service/DEVIATIONS.md` so it is met on purpose.
  */
 
 const BUTTONS = [{ name: '显示', visible: true }, { name: '隐藏', visible: false }]

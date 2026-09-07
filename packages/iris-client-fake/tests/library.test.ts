@@ -115,3 +115,25 @@ test('the empty option produces the empty states, not a crash', async () => {
 
   client.dispose()
 })
+
+test('a .charx is refused the way the host refuses it, not named after its file', async () => {
+  // The host's `library.import` refuses `.charx` by name (no zip reader is
+  // bundled). A fake that imported one as "card" would let the drop target
+  // look like it worked exactly where a host says no.
+  const client = testClient()
+  const before = (await client.call('character.list', {})).characters.length
+  await assert.rejects(
+    () => client.call('character.import', { filename: 'card.charx', content: 'eA==' }),
+    (error: unknown) => (error as { code?: string }).code === 'unsupported',
+  )
+  assert.equal((await client.call('character.list', {})).characters.length, before)
+  client.dispose()
+})
+
+test('the filename fallback strips exactly the extensions the host stores', () => {
+  // `.jpeg` is one of them (DEVIATIONS §18 of the app service); `.charx` is
+  // not, and a name that keeps its `.charx` is the visible sign the fake did not
+  // pretend to read it.
+  assert.equal(readCard('Guest.JPEG', 'eA==').name, 'Guest')
+  assert.equal(readCard('Guest.charx', 'eA==').name, 'Guest.charx')
+})

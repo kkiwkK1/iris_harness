@@ -7,8 +7,14 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 
-const BASE = process.argv[2] ?? 'http://127.0.0.1:8814'
-const CDP_PORT = 9341
+import { openDrawerExpr } from './locators.mjs'
+
+const BASE = process.argv[2] ?? process.env.IRIS_BASE ?? 'http://127.0.0.1:8814'
+// Default CDP port is offset by the pid: two runs back to back would
+// otherwise fight over one debug port, and the loser dies as
+// "chrome never came up" — which reads as a broken environment, not as a
+// collision. An explicit CDP_PORT is honoured verbatim (see qa/README.md).
+const CDP_PORT = Number(process.env.CDP_PORT ?? 9341) + (process.env.CDP_PORT === undefined ? process.pid % 100 : 0)
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
 const outDir = new URL('./results/r-cards/', import.meta.url)
 mkdirSync(outDir, { recursive: true })
@@ -70,15 +76,17 @@ try {
     }
     await delay(1500)
   }
+  /*
+   * The masthead's last button, confirmed by `.iris-drawer--open` — not by its
+   * label. `Masthead.tsx` gives it no `aria-label` and no id, so the old
+   * `aria-label === 'Settings'` arm never matched and the run depended entirely
+   * on the English text arm beside it. This script sets the language itself, so
+   * it was not the one that broke; the locator was still keyed on a translation.
+   */
   const openDrawer = async () => {
-    const r = await evaluate(`(() => {
-      const b = [...document.querySelectorAll('button')].find(x => x.getAttribute('aria-label') === 'Settings' || x.textContent.trim() === 'Settings')
-      if (b === undefined) return 'no settings button'
-      b.click()
-      return 'ok'
-    })()`)
+    const r = await evaluate(openDrawerExpr)
     await delay(600)
-    return r
+    return r?.opened === true ? 'ok' : (r?.error ?? 'no settings button')
   }
   const cardState = () => evaluate(`(() => {
     const cards = [...document.querySelectorAll('.iris-card')]

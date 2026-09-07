@@ -9,7 +9,7 @@ import { test } from 'node:test'
  * **Written as a gate because the alternative is remembering.** Three files had
  * carried one for months: a NUL in `key-order.test.ts`, a NUL in
  * `unit.test.ts`, and — the one that was not merely untidy — a `\1`
- * backreference in `LONG-CHAT-VARIABLES.md` that had collapsed into a `0x01`,
+ * backreference in `notes/packages/iris-app-service/LONG-CHAT-VARIABLES.md` that had collapsed into a `0x01`,
  * so the document printed a **different regex** from the one it was documenting.
  *
  * All three type-checked, kept every test green, and rendered without a mark.

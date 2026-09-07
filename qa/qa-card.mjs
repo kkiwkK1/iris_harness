@@ -7,13 +7,19 @@
 //   B. Browser (CDP over a private headless Chrome) — open the app, start a
 //      chat from the character library, watch the greeting's interface frames,
 //      send one real turn, watch the reply's frames for stability, and capture
-//      notices, panel lines and console errors.
+//      notices, report rows and console errors.
 //   C. RPC post — MVU variable scopes, diagnostic-report delta.
+//
+// Report rows are read from the rows themselves and then SPLIT by the known
+// wording, not selected by it: `panel.unlisted` holds the rows no known word
+// matched, and it is printed first. A word list can only speak about the names
+// on it, so selecting by one turns a newly worded report into an empty column.
 //
 // Usage: node qa/qa-card.mjs <characterId> "<library display name>" [probeTurnText]
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
+import { clickTabExpr } from './locators.mjs'
 import { call, rpc, eventWatcher, debugReports, BASE } from './rpc.mjs'
 
 const [, , characterId, displayName, turnTextArg] = process.argv
@@ -24,7 +30,11 @@ if (characterId === undefined || displayName === undefined) {
 const TURN_TEXT = turnTextArg
   ?? '（连通性测试）请用一两句话保持角色感打个招呼，不要推进剧情。'
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-const CDP_PORT = process.env.CDP_PORT ?? '9333'
+// Default CDP port is offset by the pid: two runs back to back would
+// otherwise fight over one debug port, and the loser dies as
+// "chrome never came up" — which reads as a broken environment, not as a
+// collision. An explicit CDP_PORT is honoured verbatim (see qa/README.md).
+const CDP_PORT = String(Number(process.env.CDP_PORT ?? 9333) + (process.env.CDP_PORT === undefined ? process.pid % 100 : 0))
 const HARD_DEADLINE = setTimeout(() => {
   console.log('HARD TIMEOUT')
   process.exit(3)
@@ -126,9 +136,72 @@ const captureStateExpr = `(() => {
       iframes: s.querySelectorAll('iframe').length,
     })),
     notices: text('.iris-notices__list p, .iris-notices__list span.iris-reports__message'),
-    panelLines: (document.body.innerText ?? '').split('\\n')
-      .filter(l => /blocked|height sources|interface after|drawn nothing|timed out|failed|UnsupportedApiError|refused| KB of markup/.test(l))
-      .map(l => l.trim().slice(0, 300)).slice(0, 40),
+    /*
+     * Every row the three report surfaces are showing, read from the ROWS —
+     * and then split by the old filter's vocabulary instead of being selected
+     * by it.
+     *
+     * It used to scan the whole page's innerText for a word list
+     * (blocked|height sources|interface after|drawn nothing|timed out|failed|
+     * UnsupportedApiError|refused| KB of markup). A list can only speak about
+     * the names on it: a report worded any other way produced no line, and that
+     * column then read as "nothing was reported" — the failure that does not
+     * produce output, which is the side every silent failure grows on.
+     *
+     * So the vocabulary is kept, because triage wants it, but it no longer
+     * decides what is SEEN. \`unlisted\` is the point of the reversal: rows that
+     * match none of the known words are exactly what the old filter dropped on
+     * the floor, and now they are the ones printed first.
+     *
+     * \`present\` is separate from an empty row list: a surface that is not on
+     * the page and a surface with nothing to say are different findings, and
+     * folding them together turns a missing container into a clean zero.
+     */
+    panel: (() => {
+      const VOCABULARY = /blocked|height sources|interface after|drawn nothing|timed out|failed|UnsupportedApiError|refused| KB of markup/
+      const clip = s => (s ?? '').trim().replaceAll('\\n', ' ⏎ ').slice(0, 300)
+      const ownText = el => [...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent ?? '').join('')
+      const rows = []
+      const card = document.querySelector('#iris-card-scripts')
+      // Scoped to the scripts card: .iris-script__report is also the notice
+      // log's row class, so an unscoped selector describes two lists at once.
+      for (const row of card === null ? [] : card.querySelectorAll('.iris-script__report')) {
+        rows.push({
+          source: 'card',
+          channel: row.querySelector('.iris-reports__area')?.textContent ?? null,
+          fault: String(row.className).includes('iris-script__report--fault'),
+          text: clip(ownText(row)),
+        })
+      }
+      for (const row of document.querySelectorAll('.iris-notices__list li')) {
+        rows.push({
+          source: 'notice',
+          channel: null,
+          fault: String(row.className).includes('--error'),
+          text: clip(row.querySelector('.iris-reports__message')?.textContent ?? row.textContent),
+        })
+      }
+      for (const row of document.querySelectorAll('.iris-reports__list li')) {
+        rows.push({
+          source: 'host',
+          channel: row.querySelector('.iris-reports__area')?.textContent ?? null,
+          fault: String(row.className).includes('--fault'),
+          text: clip(row.querySelector('.iris-reports__message')?.textContent ?? row.textContent),
+        })
+      }
+      return {
+        present: {
+          card: card !== null,
+          notices: document.querySelector('.iris-notices__list') !== null,
+          host: document.querySelector('.iris-reports__list') !== null,
+        },
+        rows: rows.slice(0, 60),
+        // Rows the old word list would have shown.
+        matched: rows.filter(r => VOCABULARY.test(r.text)).map(r => r.text).slice(0, 40),
+        // Rows it would have swallowed. Read this column first.
+        unlisted: rows.filter(r => !VOCABULARY.test(r.text)).map(r => r.text).slice(0, 40),
+      }
+    })(),
     hostReportsSection: (document.querySelector('.iris-reports')?.textContent ?? '').trim().replaceAll('\\n', ' ⏎ ').slice(0, 1200),
   }
 })()`
@@ -230,21 +303,30 @@ result.browser = await withPage(async pageUrl => {
   // per-card judgement subtracts whatever the boot chat announced.
   const noticesBaseline = await page.evaluate(captureStateExpr)
 
-  const clickFlow = await page.evaluate(`(async () => {
-    const sleep = ms => new Promise(r => setTimeout(r, ms))
+  /*
+   * The tab is found by order and confirmed structurally (qa/locators.mjs); the
+   * character row is found by its name, which is user data and the only handle.
+   *
+   * It used to find the tab by `textContent.includes('Characters')`. The shell
+   * follows `navigator.language`, so on a Chinese machine the tabs read
+   * 阅读 / 角色库 and every run of this script died at
+   * `no Characters tab: 阅读|角色库` — loudly, but for every card.
+   */
+  const tabbed = await page.evaluate(clickTabExpr('characters'))
+  const clickFlow = tabbed?.error !== undefined ? tabbed : await page.evaluate(`(() => {
     const wanted = ${JSON.stringify(displayName)}
-    const tabs = [...document.querySelectorAll('[role=tab]')]
-    const charTab = tabs.find(b => (b.textContent ?? '').includes('Characters'))
-    if (charTab === undefined) return { error: 'no Characters tab: ' + tabs.map(t => t.textContent).join('|') }
-    charTab.click()
-    await sleep(500)
-    const rows = [...document.querySelectorAll('button, [role=button], a, li')]
-    const hit = rows.filter(el => (el.textContent ?? '').includes(wanted))
-    if (hit.length === 0) return { error: 'character row not found for ' + wanted }
+    const hit = [...document.querySelectorAll('.iris-list .iris-row')]
+      .filter(el => (el.querySelector('.iris-row__title')?.textContent ?? '').includes(wanted))
+    if (hit.length === 0) {
+      return {
+        error: 'no character row named ' + wanted,
+        names: [...document.querySelectorAll('.iris-list .iris-row .iris-row__title')].map(t => (t.textContent ?? '').trim()).slice(0, 20),
+      }
+    }
     hit[0].click()
     return { clicked: hit.length }
   })()`)
-  console.log('click flow:', JSON.stringify(clickFlow))
+  console.log('click flow:', JSON.stringify({ tab: tabbed, ...clickFlow }))
   if (clickFlow?.error !== undefined) throw new Error(`UI navigation failed: ${clickFlow.error}`)
   await delay(10_000) // script frames boot (V1.5.4 boots 9-12s)
 
@@ -345,4 +427,19 @@ console.log(`greeting: ${JSON.stringify(result.greeting)}`)
 console.log(`frames stable: greeting=${result.browser.greeting.frames.stable ?? 'n/a'} reply=${result.browser.reply.frames.stable ?? 'n/a'}`)
 console.log(`new host reports: ${result.newReports.length}`)
 for (const r of result.newReports) console.log(`  - #${r.seq} [${r.kind}] ${r.message.slice(0, 160)}`)
+
+/*
+ * The unlisted rows are printed, not just written to the JSON.
+ *
+ * They are the ones the old word list would have dropped, so they are the ones
+ * nobody has ever seen for this card — and a column that exists only in a file
+ * nobody opens is the same silence the filter produced.
+ */
+const panel = result.browser?.reply?.state?.panel
+if (panel === undefined) {
+  console.log('panel: not captured')
+} else {
+  console.log(`panel rows: ${panel.rows.length} (known wording ${panel.matched.length}, UNLISTED ${panel.unlisted.length}) surfaces present: ${JSON.stringify(panel.present)}`)
+  for (const line of panel.unlisted.slice(0, 10)) console.log(`  ? ${line}`)
+}
 console.log(`results -> qa/results/${slug}.json`)

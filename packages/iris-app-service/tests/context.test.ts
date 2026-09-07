@@ -175,7 +175,7 @@ const DERIVED = new Set(['getCurrentChatId', 'variables'])
 /** Names ordinary enough that a hit is not evidence of context use. */
 const AMBIGUOUS = new Set(['chat', 'characters', 'groups', 'tags', 't', 'translate', 'generate'])
 
-test('every context field the real corpus reads is accounted for', { skip: !existsSync(CORPUS) }, async () => {
+test('every context field the real corpus reads is accounted for', { skip: !existsSync(CORPUS) && `no characters folder at ${CORPUS}; point IRIS_CORPUS at a SillyTavern install` }, async () => {
   const source = await readFile(ST_CONTEXT, 'utf8')
   const start = source.indexOf('export function getContext()')
   const body = source.slice(start, source.indexOf('\n}', start))
@@ -355,13 +355,13 @@ test('the played character carries its own book; the others stay summaries', () 
   assert.equal(other?.data, undefined)
 })
 
-test('real cards decode their embedded book to an array', { skip: !existsSync(CORPUS) }, async () => {
+test('real cards decode their embedded book to an array', { skip: !existsSync(CORPUS) && `no characters folder at ${CORPUS}; point IRIS_CORPUS at a SillyTavern install` }, async () => {
   /*
    * The two tests above pin the MIRROR: hand it an array and it does not
    * helpfully normalise it into the disk shape. Neither can pin the DECODER,
    * because both build their own `character_book`. So the premise the card's
    * `.length` / `[i]` walk actually rests on — that a real card decodes to an
-   * array — was recorded only in prose (`TEST-CARDS.md` §七), and prose cannot
+   * array — was recorded only in prose (`notes/TEST-CARDS.md` §七), and prose cannot
    * notice when it goes stale.
    *
    * SillyTavern's own disk world books key `entries` by uid; the V2/V3 card spec

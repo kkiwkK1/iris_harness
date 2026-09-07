@@ -245,6 +245,12 @@ function reportRegions(
 ): void {
   let scheduled = false
   let last = ''
+  /*
+   * Set by the two events that mean "the last measurement may have been taken
+   * against a viewport that no longer exists": a tab coming forward, and a
+   * resize. See `forceMeasure`.
+   */
+  let forced = false
 
   const measure = (node: Element): { measured: Measured, children: readonly Element[] } => {
     const rect = node.getBoundingClientRect()
@@ -262,7 +268,31 @@ function reportRegions(
        * those silently unclickable.
        */
       visibility = {
-        label: `${node.tagName.toLowerCase()}${node.id === '' ? '' : `#${node.id}`}`,
+        /*
+         * Tag, id **and class**, because a card's overlay wrapper usually has
+         * no id and the class is the only handle a reader can match against the
+         * card's own CSS.
+         */
+        label: `${node.tagName.toLowerCase()}${node.id === '' ? '' : `#${node.id}`}`
+          + (node.className === '' || typeof node.className !== 'string'
+            ? ''
+            : `.${node.className.trim().split(/\s+/).slice(0, 3).join('.')}`),
+        /*
+         * The box itself, and the two things that explain a zero one. A live
+         * reading had `clip-path: path("M 0 0 Z")` with two elements built and
+         * no way to tell whether they were hidden, detached, or sized zero by
+         * the card — four repairs behind one sentence.
+         */
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        display: style.display,
+        connected: node.isConnected,
+        /*
+         * Trimmed and capped, not reformatted: `!important` has to survive into
+         * the report verbatim, because it is what says whether a `display:none`
+         * came from the card's own hide path.
+         */
+        inline: (node.getAttribute('style') ?? '').trim().slice(0, 200),
+        standIn: node.hasAttribute('data-iris-nested-frame'),
         opacity: style.opacity,
         visibility: style.visibility,
         text: (node.textContent ?? '').trim() !== '',
@@ -310,8 +340,49 @@ function reportRegions(
     )
     const seen: Visibility[] = []
     const clip = members.clipPathFor(members.collectRegions(roots, measure, seen))
-    if (clip === last) return
-    last = clip
+    /*
+     * **The dedup key is the clip *and* what was measured**, not the clip alone.
+     *
+     * A card whose elements are all zero-area produces the same empty clip on
+     * every pass, so keying on the clip meant the diagnosis was sent once —
+     * before the card had finished building — and never again as elements
+     * appeared and stayed empty. The one state that most needs re-reporting was
+     * the one state that could not.
+     *
+     * `roots.length` and the zero-count are enough to catch "the DOM changed
+     * and the answer did not", without re-sending on every animation frame of a
+     * card that is merely animating.
+     */
+    const zero = seen.filter(
+      it => it.rect !== undefined && (it.rect.width <= 0 || it.rect.height <= 0),
+    ).length
+    /*
+     * **The frame's own viewport, because `100vh` is measured against it.**
+     *
+     * A frame that has never been laid out reports `clientHeight === 0`, and
+     * every `vh`/`vw` length inside it resolves to zero — so a card that sizes
+     * its overlay `width:100vw; height:100vh !important` builds a full-screen
+     * element that measures nothing, with correct CSS and a correct box. That
+     * is one reading of the intermittency seen on one card (empty once, full
+     * screen once, same card and same chat); the other is that the card hid
+     * itself. These two numbers separate them without another round trip:
+     * zero here means the frame had no layout, non-zero means it did and the
+     * emptiness came from somewhere else.
+     */
+    const root = document.documentElement
+    const viewport = { width: root.clientWidth, height: root.clientHeight }
+    const key = members.regionsKey(clip, roots.length, zero, viewport)
+    /*
+     * A forced pass reports even when the key is unchanged. The dedup exists to
+     * keep a still card quiet, but after a resize or a return to the foreground
+     * "unchanged" is itself the finding — it says the re-measure happened and
+     * the answer really is the same, which is what nobody could tell from a
+     * report that was simply never sent.
+     */
+    const bypass = forced
+    forced = false
+    if (key === last && !bypass) return
+    last = key
     /*
      * The summary rides the same message and the same deduplication: it changes
      * only when the clip does, so a still card sends nothing at all. That does
@@ -319,10 +390,31 @@ function reportRegions(
      * accepted, because the alternative is a diagnostic that posts on every
      * animation frame of every card.
      */
-    const detail = seen
+    /*
+     * The conclusion first, then the evidence. A reader arrives at this line
+     * from a blank screen, and "all of them measured zero, so the clip is
+     * empty" is the sentence that turns that into something to act on; the
+     * per-element boxes are what they read next to find out which one.
+     */
+    const summary = members.describeEmptySurface(zero, seen.length)
+    const lines = seen
       .map(it => members.describeVisibility(it))
       .filter((line): line is string => line !== undefined)
-      .join('; ')
+    /*
+     * Capped, because this string crosses a message boundary on every mutation
+     * and a card is free to build two hundred top-level nodes. The first dozen
+     * are what a reader acts on; the count says how much was left out, so the
+     * cap can never be mistaken for "that was all of them".
+     */
+    const shown = lines.slice(0, 12)
+    const detail = [
+      ...(summary === undefined ? [] : [summary]),
+      members.describeFrameViewport(viewport),
+      ...shown,
+      ...(lines.length > shown.length
+        ? [`and ${String(lines.length - shown.length)} more element(s) not listed`]
+        : []),
+    ].join('; ')
     post({
       iris: run,
       type: 'regions',
@@ -370,6 +462,20 @@ function reportRegions(
     setTimeout(() => {
       if (scheduled) send()
     }, 500)
+  }
+
+  /**
+   * Measure again and report **even if nothing changed**.
+   *
+   * Deliberately a separate zero-argument function rather than a parameter on
+   * `schedule`: `schedule` is handed straight to `MutationObserver` and
+   * `ResizeObserver`, which call it with `(records, observer)`, so a
+   * `force = false` parameter would arrive truthy on every mutation and turn
+   * the dedup off for good.
+   */
+  const forceMeasure = (): void => {
+    forced = true
+    schedule()
   }
 
   /*
@@ -448,8 +554,43 @@ function reportRegions(
    * message and removes a whole class of "it only works if I was looking".
    */
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) schedule()
+    if (document.hidden) return
+    /*
+     * **Twice: now, and again shortly after.**
+     *
+     * The immediate pass is not enough on its own, and this is the whole
+     * mechanism of the bug it was written for. A frame built while the tab was
+     * hidden has never been laid out, so its `documentElement.clientHeight` is
+     * 0 and every `vh` length inside it resolves to 0. When the tab comes
+     * forward the browser lays the frame out — but not necessarily before this
+     * handler's animation frame runs, so the forced pass can still read the
+     * same zeros, and then nothing schedules another: this reporter is
+     * event-driven and one-shot per trigger, not a polling loop. A card that
+     * builds its overlay once and never touches the DOM again would sit at a
+     * zero-area clip for as long as the chat stays open, invisible and
+     * unclickable, with the correct answer one measurement away.
+     *
+     * So a second pass, late enough to be after layout and forced so the
+     * unchanged key cannot suppress it. The cost is one extra message per
+     * foreground transition; the alternative is a card that only works if you
+     * were already looking at it.
+     */
+    forceMeasure()
+    setTimeout(forceMeasure, 500)
   })
+
+  /*
+   * And on a resize, forced.
+   *
+   * The frame gets one of these from the host when the shell hands it a new
+   * viewport, and one from the browser when the window changes. Both are
+   * moments when a `vh`-sized card's boxes become computable for the first
+   * time, and the reading that prompted this had exactly that shape: empty at
+   * first open, full-screen after the window height changed. Without the force
+   * the recovery is measured and then discarded by the dedup whenever the clip
+   * happens to hash the same.
+   */
+  document.defaultView?.addEventListener('resize', forceMeasure)
 
   // Once up front, so a card that builds everything before the first frame and
   // never touches the DOM again is still clipped correctly.
@@ -1215,7 +1356,7 @@ function reportBodySummary(run: string, post: (message: FromFrame) => void): voi
    * permanent line under every card saying that the frame which was never going
    * to draw has not drawn.
    *
-   * But [OVERLAY-CARDS.md] found a third class of card that draws *into* the
+   * But [notes/apps/iris-web/OVERLAY-CARDS.md] found a third class of card that draws *into* the
    * script frame: it never touches `parent.*`, and upstream's `parent_jquery.js`
    * makes its `$` the page's, so `.appendTo('body')` lands on the host page.
    * Here `$` is the frame's own, so the card's whole interface is built in a
@@ -1634,6 +1775,29 @@ try {
    * and a consumer holding a copy would never notice. Configurable so a later
    * wait on the same name can redefine it.
    */
+  /**
+   * The same accessor upstream's `predefine.js` installs, empty setter included.
+   *
+   * Separate from `defineForwarding` because the setter is the difference and it
+   * is not a detail. `predefine.js:36-44` writes `set () {}`, so a card
+   * assigning the name is silently ignored; `waitGlobalInitialized` writes a
+   * getter alone, so the same assignment throws in a module's strict mode. Both
+   * are upstream, at different sites, and folding them into one door with a flag
+   * would file that difference where nobody reads it.
+   */
+  definePredefined: (name, read) => {
+    try {
+      Object.defineProperty(window, name, { get: read, set: () => {}, configurable: true })
+    } catch {
+      post({
+        iris: run,
+        type: 'error',
+        scriptId: undefined,
+        message: `could not predefine "${name}" in this frame from the card's shared namespace`,
+      })
+    }
+  },
+
   defineForwarding: (name, read) => {
     try {
       Object.defineProperty(window, name, { get: read, configurable: true })

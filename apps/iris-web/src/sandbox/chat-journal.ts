@@ -13,7 +13,7 @@
  * recognised and journalled, or refused by name at the call site, inside the
  * card's own stack, where the line that did it is visible.
  *
- * **Order is load-bearing.** See `CHAT-WRITES.md`: one measured card processes
+ * **Order is load-bearing.** See `notes/apps/iris-web/CHAT-WRITES.md`: one measured card processes
  * its work back to front to keep indices valid, mixing splices and rewrites in
  * one loop and saving at the end. Entries therefore replay in the order they
  * were made, and must never be sorted, batched across a structural operation, or

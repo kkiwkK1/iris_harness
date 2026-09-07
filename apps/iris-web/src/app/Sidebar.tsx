@@ -25,6 +25,7 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { since, toBase64 } from './format.ts'
+import { CARD_FILE_ACCEPT } from './card-files.ts'
 import type { Language } from './i18n/strings.ts'
 import type { ChatSearchHit } from '@iris/protocol'
 
@@ -147,11 +148,27 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
         <span className="iris-brand__name">Iris</span>
       </div>
 
+      {/*
+       * `data-tab` carries the tab's identity in the state's own vocabulary.
+       *
+       * Everything else that distinguishes these two buttons is translated text:
+       * the class and the role are identical, so an instrument reaching for
+       * "Characters" finds it on an English profile and finds `角色库` on this
+       * one. Every acceptance script that located a tab by its label broke the
+       * day the shell learned to speak the reader's language, and located-by-
+       * position is the alternative nobody wants to debug.
+       *
+       * The value is the state value passed to `setTab` beside it, deliberately
+       * — one vocabulary for the store, the DOM and the scripts — and a test
+       * pins that they agree, because two spellings of one identity is the
+       * failure this exists to prevent.
+       */}
       <div className="iris-tabs" role="tablist">
         <button
           type="button"
           role="tab"
           className="iris-tab"
+          data-tab="chats"
           aria-selected={tab === 'chats'}
           onClick={() => setTab('chats')}
         >
@@ -161,6 +178,7 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
           type="button"
           role="tab"
           className="iris-tab"
+          data-tab="characters"
           aria-selected={tab === 'characters'}
           onClick={() => setTab('characters')}
         >
@@ -324,7 +342,7 @@ export function Sidebar({ open }: { open: boolean }): ReactElement {
         <input
           ref={picker}
           type="file"
-          accept=".png,.jpg,.jpeg,.json,.charx"
+          accept={CARD_FILE_ACCEPT}
           multiple
           hidden
           onChange={async event => {

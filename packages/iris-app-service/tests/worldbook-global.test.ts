@@ -129,7 +129,9 @@ test('no selection leaves every card exactly as it was', async () => {
 
 // ---------------------------------------------------------------- corpus facts
 
-test('the measured selection reaches every card but is not doubled', { skip: !hasCorpus }, async () => {
+test('the measured selection reaches every card but is not doubled', {
+  skip: !hasCorpus && `no world books at ${CORPUS}/worlds; point IRIS_CORPUS at a SillyTavern install`,
+}, async () => {
   const settings = JSON.parse(await readFile(join(CORPUS, 'settings.json'), 'utf8')) as {
     world_info_settings?: { world_info?: { globalSelect?: string[] } }
   }

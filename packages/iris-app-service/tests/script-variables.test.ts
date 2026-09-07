@@ -159,7 +159,7 @@ const KNOWN_KEYS = new Set([
 ])
 
 test('no card on this machine accumulates runtime state in its script data', {
-  skip: !existsSync(CHARACTERS),
+  skip: !existsSync(CHARACTERS) && `no characters folder at ${CHARACTERS}; point IRIS_CORPUS at a SillyTavern install`,
 }, async () => {
   let scripts = 0
   const found: string[] = []
@@ -242,7 +242,7 @@ test('a corrupt store is not silently the same as a first run', async (t) => {
  */
 
 test('a button block has the shape upstream defines, whatever cards are present', {
-  skip: !existsSync(CHARACTERS),
+  skip: !existsSync(CHARACTERS) && `no characters folder at ${CHARACTERS}; point IRIS_CORPUS at a SillyTavern install`,
 }, async () => {
   // No counts here on purpose. Transcribed from
   // `JS-Slash-Runner/src/type/scripts.ts:4-33`: the wrapper is exactly
@@ -282,7 +282,7 @@ test('a button block has the shape upstream defines, whatever cards are present'
 })
 
 test('the button census still matches the library it was taken from', {
-  skip: !existsSync(CHARACTERS),
+  skip: !existsSync(CHARACTERS) && `no characters folder at ${CHARACTERS}; point IRIS_CORPUS at a SillyTavern install`,
 }, async () => {
   // A snapshot of **this** library, measured 2026-09-01 by two of us on
   // independent paths — one walking the cards, one through `extractScripts` —

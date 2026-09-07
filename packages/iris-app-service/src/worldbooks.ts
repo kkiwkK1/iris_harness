@@ -7,7 +7,7 @@
  * cards bind a named book** through `data.extensions.world`, 16 of those names
  * resolve to a file, and the 18 book files hold **1478 entries** between them —
  * an *upper bound*, not a working figure: only 288 of those are always injected
- * and 336 are reachable by no path at all. `WORLDBOOKS.md §2b` carries the
+ * and 336 are reachable by no path at all. `notes/packages/iris-app-service/WORLDBOOKS.md §2b` carries the
  * funnel.
  * 17 cards carry *both* an embedded book and a binding, so for those the host
  * was assembling prompts from half of each card's world info.
@@ -688,7 +688,7 @@ export async function resolveCardWorldbook(
   // produced (1122 of 2246 entries) is what the old "choose one" rule existed
   // to paper over. Materialisation happens on the import and open paths, before
   // this runs; by the time resolution asks, an embedded book is already a named
-  // one. See `materialise.ts` and `EMBEDDED-BOOK-MATERIALISATION.md`.
+  // one. See `materialise.ts` and `notes/packages/iris-app-service/EMBEDDED-BOOK-MATERIALISATION.md`.
   return { entries: [], source: 'none', world: fallbackName, additional, global }
 }
 

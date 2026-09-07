@@ -1,7 +1,7 @@
 /**
  * How much of a long conversation the reading view mounts.
  *
- * Layer ② of three, and the only one this module touches. `WINDOWING.md` names
+ * Layer ② of three, and the only one this module touches. `notes/apps/iris-web/WINDOWING.md` names
  * all three, which is worth repeating here because finishing this one looks like
  * finishing the job:
  *
@@ -69,7 +69,7 @@ export interface ReadingWindow<T> {
  * showing the newest messages with no recalculation. That is also why nothing
  * here tracks scroll position: the anchor is the end of the conversation, which
  * is where a reader of a live chat already is.
- * **The boundary rounds outward to a turn.** [WINDOWING.md 回合边界] A turn is
+ * **The boundary rounds outward to a turn.** [notes/apps/iris-web/WINDOWING.md 回合边界] A turn is
  * what swipe and regenerate address, and the view groups by it, so a boundary
  * falling inside one leaves an assistant reply mounted with the line it answers
  * hidden above the window — a reply to nothing, at the top of the page, and no

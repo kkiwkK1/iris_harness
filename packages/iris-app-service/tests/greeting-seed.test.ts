@@ -20,7 +20,7 @@ import { seedGreeting } from '../src/chats.ts'
  * The second half is what the reading view's behaviour rests on: one of those
  * cards stores an 8-character placeholder and renders to 9741, because the
  * expansion happens at render time. That premise lived only in prose
- * (`TEST-CARDS.md` §七), and prose cannot notice when it stops being true.
+ * (`notes/TEST-CARDS.md` §七), and prose cannot notice when it stops being true.
  */
 
 /** A card whose greeting carries both a macro and text a regex would rewrite. */

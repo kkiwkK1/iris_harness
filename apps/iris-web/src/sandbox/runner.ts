@@ -427,7 +427,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
    * Two routes, split by who is being asked. A request aimed at Iris's own
    * origin — which any relative path resolves to, since a srcdoc frame inherits
    * the shell page's base — is fetched by this page with its own credentials:
-   * the same-origin bridge (`SANDBOX.md`), which lets an upstream-frequent
+   * the same-origin bridge (`docs/SANDBOX.md`), which lets an upstream-frequent
    * `fetch('/version')` answer without widening `connect-src` by a character.
    * The origin check runs **here**, not only in the frame, because the frame is
    * the untrusted side and the shell is what actually holds the credentials;

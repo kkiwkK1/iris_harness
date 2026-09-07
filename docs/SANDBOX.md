@@ -289,6 +289,157 @@ stylesheets and fonts (`fonts.googleapis.com` — six cards), images and texture
   grant that would allow it. A refusal the user cannot see is indistinguishable
   from a bug in whatever the card does next.
 
+### Upstream has no policy here at all — and its own frames load remote stylesheets
+
+(Added 2026-09-06, for `ACTION-PLAN.md` §二 item 3, the zeoseven font domain.
+**Facts and locations only.** Read directly from the operator's install:
+SillyTavern `1.18.0`, TavernHelper `4.9.1`
+(`data/default-user/extensions/JS-Slash-Runner`). Static reading, nothing run.
+
+**Ruled**: no per-host allow-list. `fontsapi.zeoseven.com` is one card; the next
+card is a different host, and a list keyed on card-observed hosts is the shape
+this project refuses. It is one family — *a card referencing a remote stylesheet
+or font* — so the mechanism-layer answer is a **host-side proxy for remote
+stylesheets**, on the same route the script bundles already take, rewriting the
+CSS's own `@font-face` `src` to proxy URLs so `style-src`/`font-src` stay at
+`self`. Until that exists, a remote stylesheet is refused and **named** in the
+report (host + directive). Recorded as a deliberate divergence; the mechanism is
+queued in `ROADMAP.md`.)
+
+**1. SillyTavern sends no Content-Security-Policy.** It mounts helmet with the
+CSP explicitly switched off:
+
+```js
+// [ST] src/server-main.js:103-106
+const app = express();
+app.use(helmet({
+    contentSecurityPolicy: false,
+}));
+```
+
+That is the only CSP source in the server. `public/index.html` carries **no**
+`<meta http-equiv>` of any kind, and the string `Content-Security-Policy` does
+not occur anywhere under `public/` or `src/` (excluding `third-party/` and
+`lib/`). **So there is no policy layer to pass: any host, any directive.**
+
+**2. The message frame does not add one either.** TavernHelper builds the frame
+document in `createSrcContent` (`[TH] src/panel/render/iframe.ts:78-103`): a
+charset meta, a viewport meta, an optional `<base>`, one `<style>`, the
+third-party head block, and four scripts. **No CSP meta, and no `sandbox`
+attribute on the iframe** — `sandbox` and `csp` appear nowhere in
+`src/panel/render/` or `src/panel/script/`. The frame is srcdoc by default
+(`use_blob_url` defaults to `false`, `[TH] src/type/settings.ts:66`; this
+install has `false`), and a srcdoc frame inherits the parent's policy — which
+is none.
+
+**3. Upstream's own frame head is nine remote assets from a public CDN.**
+`[TH] src/iframe/third_party_message.html` (injected verbatim at
+`iframe.ts:93`) is:
+
+| kind | host |
+| --- | --- |
+| `<link rel="stylesheet">` FontAwesome `all.min.css` | `testingcf.jsdelivr.net` |
+| `<link rel="stylesheet">` jQuery-UI `theme.min.css` | `testingcf.jsdelivr.net` |
+| `<script>` tailwind | **local** (`/scripts/extensions/third-party/JS-Slash-Runner/lib/`) |
+| `<script>` jQuery, jQuery-UI, touch-punch, Vue, vue-router | `testingcf.jsdelivr.net` |
+
+plus a sixth remote script at `iframe.ts:95`
+(`.../gh/N0VI028/JS-Slash-Runner/src/iframe/node_modules/log.js`, same host).
+**Two remote stylesheets and seven remote scripts, on every message frame.**
+
+> So the answer to "what is upstream's policy on a card loading a remote
+> stylesheet or font" is: **it has none, and the host frame the card runs in is
+> itself doing exactly that.** A card adding one more `<link rel="stylesheet">`
+> to any domain is not doing anything upstream's own injection layer does not
+> already do. Note also that ST's *page* loads no remote CSS or fonts (28
+> `<link>` tags in `index.html`, all local) — the remote-asset habit belongs to
+> the frame layer, not to SillyTavern's shell.
+
+**4. The card, read directly (2026-09-06) — and the transcription was wrong about
+where the markup lives.**
+
+*(An earlier revision of this section said the card was not on this machine. It
+is: `D:/workspace/小项目/iris_分支/测试用卡/Lights_ON.png`, copied to
+`apps/iris/data/qa-frame-fit/default-user/characters/Lights_ON.png`. Read through
+`decodeCardPng` — the product's own reader — so the following is first-hand, not
+transcription.)*
+
+**The font link is not in the greeting. The greeting is three characters.**
+
+```
+first_mes             = "嘎嘎嘎"                     (3 chars)
+alternate_greetings[0] = "咕咕咕"                     (3 chars)
+```
+
+The 30 188-character HTML document is produced **by the card's regex layer at
+display time**. `data.extensions.regex_scripts` holds **five** scripts, all
+enabled, all `placement: [2]` — `AI_OUTPUT` in
+`[ST] public/scripts/extensions/regex/engine.js:281-287`:
+
+| # | scriptName | findRegex | replaceString | zeoseven refs | img.remit.ee |
+| --- | --- | --- | --- | --- | --- |
+| 0 | `嘎嘎嘎` | `嘎嘎嘎` | 30 188 | 2 | **8** |
+| 1 | `咕咕咕` | `咕咕咕` | 24 477 | 2 | 0 |
+| 2 | `人偶偶像状态栏` | `/(?:```[a-z]*\n)?<unified_dashboard>([\s\S]*?)<\/unified_dashboard>(?:\n```)?/gi` | 18 326 | 2 | 0 |
+| 3 | `经纪人状态栏` | `/<mobile_ui>\s*([\s\S]*?)\s*<\/mobile_ui>/gi` | 12 094 | 2 | 0 |
+| 4 | `跟踪狂状态栏` | `<room_interface>([\s\S]*?)<\/room_interface>` | 23 806 | 2 | 0 |
+
+**So "the Lights ON greeting frame" is really "a regex-produced document frame"**,
+and the font reference is carried by **all five** of the card's regex outputs, not
+by one greeting.
+
+**The two lines, verbatim** (identical in all five `replaceString`s, inside a
+`<head>` the card writes itself):
+
+```html
+    <!-- 用户指定的字体引用 -->
+    <link href="https://fontsapi.zeoseven.com/925/main/result.css" onload="this.rel='stylesheet'" rel="preload" as="style" crossorigin />
+    <noscript><link rel="stylesheet" href="https://fontsapi.zeoseven.com/925/main/result.css" /></noscript>
+```
+
+and the family it is for:
+
+```css
+body { font-family: "Ark Pixel 12px Prop latin", sans-serif; font-weight: normal; font-size: 8px; }
+```
+
+**Three hosts in the whole card**, all in `regex_scripts[].replaceString`:
+`fontsapi.zeoseven.com` (10 references = the pair × 5 scripts),
+**`img.remit.ee` (8 distinct image URLs, all in script 0)**, and `cutie.wiki`
+(2, one of them a template literal `https://cutie.wiki/${pageId}`).
+
+**5. Allow-listing by host would have been two entries, not one — and the second
+refusal cannot be seen until the first is lifted.**
+*(Recorded because it is why the ruling went the other way: the remote-stylesheet
+family gets a host-side proxy at the mechanism layer, not a per-host allow-list.
+See the deviations ledger.)* Four separate gates sit on those two lines:
+
+- the preload is fetched with destination *style*, so **`style-src`** governs it
+  — that is the refusal `NOTES-handoff.md` observed;
+- the `@font-face` `src` inside that CSS resolves against the CSS's own URL and
+  is governed by **`font-src`**, and it may name a **different host**. This is
+  the same shape already encoded for Google in
+  `apps/iris-web/src/sandbox/srcdoc.ts:88-91` — *"`fonts.googleapis.com` serves
+  the CSS, `fonts.gstatic.com` the faces — both are needed or neither works"*;
+- the `onload` rel-swap is an inline handler, governed by **`script-src`**.
+  Checked rather than assumed: our `script-src` carries `'unsafe-inline'`
+  (`srcdoc.ts:153`), **so this gate is already open** and the swap would fire
+  once the stylesheet arrives. The `<noscript>` twin is inert in a scripted
+  frame, so it is not a second path — it is the no-JS fallback only;
+- the preload carries **`crossorigin`**, so it is a CORS-mode fetch. Our frames
+  have an **opaque origin**, so the request's `Origin` is `null` and the response
+  must answer `Access-Control-Allow-Origin: null` or `*` or the browser discards
+  it *after* CSP has already allowed it. A proxy on the host side never meets
+  this gate at all, which is one more reason it is the cheaper mechanism.
+
+> **The later gates are invisible from the current reading.** Only the
+> `style-src` refusal has been observed, because the request never got far enough
+> to ask for a face or to read a CORS header. Adding `fontsapi.zeoseven.com` to
+> `style-src` alone would have moved the failure rather than fixed it, and the new
+> failure would have looked like a *different* bug. Which host serves zeoseven's
+> faces is **still not known here** — reading the CSS would answer it, and that is
+> an outbound request deliberately not made (the ruling made it unnecessary).
+
 ### Same-origin fetches ride a bridge, not a widened `connect-src`
 
 (Added 2026-09-03.) Upstream's card scripts share SillyTavern's origin, so

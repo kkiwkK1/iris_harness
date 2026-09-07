@@ -26,8 +26,8 @@
 - 前端块 / frame 楼:`npm run census:frontend-blocks`
 - 世界书来源与重复:`scripts/worldbook-source-census.mjs`
 - 脚本按钮:`npm run census:card-scripts`
-- 渲染后的 frame / 片段分布、`<pre>` 归属:见 `apps/iris-web/RENDER.md` 与
-  `apps/iris-web/INLINE-HTML.md`
+- 渲染后的 frame / 片段分布、`<pre>` 归属:见 `notes/apps/iris-web/RENDER.md` 与
+  `notes/apps/iris-web/INLINE-HTML.md`
 
 一句总结这批的形状:**所有 frame 楼都来自 display 正则展开**,界面由正则生成、由文档标记
 识别。下面那张 `V1.5.4_` 是第一张不属于这一族的卡。
@@ -827,7 +827,7 @@ if (typeof toastr !== "undefined") toastr.success("已设为壁纸");   // ← �
 
 ### 谓词与它依据的 realm 规则
 
-取自 `apps/iris-web/OVERLAY-CARDS.md` §二:上游 `parent_jquery.js` 全文两行
+取自 `notes/apps/iris-web/OVERLAY-CARDS.md` §二:上游 `parent_jquery.js` 全文两行
 (`window.$ = window.parent.$`),所以脚本 frame 里的 `$` **就是宿主页面的 jQuery**,
 其默认查找上下文是宿主 document。于是:
 
@@ -1583,6 +1583,11 @@ class RA {
 > 操作表,不是论证。**只写已量到的事实**,没量到的写「未量」。
 > 每族四行:代表卡(**按组件去重后**)/ 必测变体 / **打开后该看到什么** / **最近的错误实现会怎样也绿**。
 > 「最近错误实现」那行按 §十九:**一个所有候选实现都满足的观察,不构成验收。**
+> **引用别处的盘点时,带上它的坐标(提交号 + 日期)。** `ST-COMPARE.md` 的差距表定在
+> `3cf858d`(2026-09-05 01:09),而分支 tip 一天后已推进,**至少八行被后续提交关掉**
+> (persona / 宏词表 / 聊天导入导出 / 聊天搜索 / 全局正则层 / 角色管理 / 生成类型 /
+> 世界书条目编辑器——逐个 `git merge-base --is-ancestor` 核过,全部晚于 Task K)。
+> **不带坐标引它,等于照一张过期的盘面排优先级。**
 
 ### 三条通则(每一格都适用)
 
@@ -1658,10 +1663,27 @@ class RA {
 | 通道 | 缺席意味着什么 | 判据形态 |
 |---|---|---|
 | **瞬时**(toast,3.2 s) | **什么都不意味着** —— 可能只是过期了 | 找**持久记录**;报否定结果必须带观察窗口 |
-| **持久**(报告缓冲 / Notices) | **永远不会缺席** —— 旧行留到滚掉 | **末次时刻 + 此后 N 周期无新增** |
+| **持久**(报告缓冲 / Notices) | **永远不会缺席** —— 旧行留到滚掉 | 问「旧的还在不在」:**末次时刻 + 此后 N 周期无新增**;问「这次新增了没有」:**基线 + 增量** |
+
+**持久那一行为什么是两种形态,而不是一种。** 两种问的不是同一件事,错法也不同:
+
+- **「旧的还在不在」**(修法有没有生效)——缺席永远等不到,所以判据是**时刻 + 增量为零**;
+- **「这次新增了没有」**(这一次跑产生了那条报告吗)——**有无**分不开「本次产生」与「上次残留」,
+  所以判据是**先取基线、再判新增**。
+
+实例(2026-09-06,`qa/bare-html-check.mjs`):它用 `body.textContent.includes('never closed')` 判
+「未闭合块被报告了」。那条 note 走的确实是持久通道(`addCardReport` → `cardReports` → 设置抽屉,
+体内没有 `notify()`,无寿命),**通道读对了**;但 `cardReports` **只在换卡时清空**
+(`store.ts` `loadScripts` 首行 `if (scriptsFor === characterId) return`),而它那两个夹具聊天
+**是同一张卡**。于是「B 局有未闭合块」与「A 局上次留下的那行还在」**在一次 `includes()` 里取同一个值**。
+它当前不出错,靠的是「每次 render 新开一个 Chrome」这个**没写下来的前提**,不是判据本身。
+
+> **判据要问的不只是通道记多久,还有它_在哪个边界清空_**——清空边界比你正在变动的那个量**更粗**时,
+> **有无**就不成其为判据。上面那处的边界是**卡**,而实验变的是**聊天**,差一级。
 
 > **两头都错在同一个假设上:「现在看不到 = 没有发生」。** 瞬时通道让它假阳,
 > 持久通道让它永远等不到。**先问这条通道记多久,再决定判据长什么样。**
+> **一句话记法:瞬时通道要写_窗口_,持久通道要写_增量_。**
 
 **与「一条关于某时刻的报告被读成常驻事实」同族,方向相反**:那次是**旧记录被当成现状**
 (于是追了三轮幻影);这次是**旧记录不肯消失**(于是害了一条验收标准)。
@@ -1777,7 +1799,7 @@ class RA {
 等真人手点。**注意 `elementFromPoint` 已命中 IFRAME**,所以"点不到"这一层已经排除,
 剩下的是合成事件本身还是卡的处理器,**目前分不出来,不要先归因**。
 
-#### 方案 C 验收单(对 `apps/iris-web/OVERLAY-HOST.md` b82ac8f)
+#### 方案 C 验收单(对 `notes/apps/iris-web/OVERLAY-HOST.md` b82ac8f)
 
 方案 C = **脚本 frame 自己就是全视口覆盖层表面**(`position:fixed; inset:0;
 pointer-events:none; background:transparent`)。路线 ①(`$('body')` 落自身 body)与
@@ -2909,6 +2931,81 @@ ST 最后一次清理发生在文件 **675 行**时,那时窗口是 `[612, 654]`
 - **也会绿 / 也会红**:在带 Pro 图标的卡上,「预置没生效」和「图标本来就不存在」**截图完全一样**。
   **必须指名是哪个图标**,或直接用上面那张干净卡。
 - **状态**:7b 实测中。
+
+### 11. 仪器自身的读数(`qa/`,不是卡族)
+
+**这一节不验卡,验的是_量卡的那些东西_。** 放在本单里,是因为上面每一格的可信度都以它们为前提;
+`qa/README.md` 是操作面,这里只留**定案读数与口径**。
+
+#### `qa/measure-frame-fit.mjs` —— 定案读数(2026-09-06,8791)
+
+报告:`qa/results/u-frame-fit-baseline-2026-09-06T12-02-21-report.json`。`run` 头原文:
+
+```json
+{ "tag": "baseline", "at": "2026-09-06T12:02:21.058Z",
+  "viewports": [[1920,1080],[1366,768]],
+  "profile": { "base": "http://127.0.0.1:8791", "characters": 9, "chats": 10,
+    "characterIds": ["1_5","2","2.1.0","哈人冰恋世界","人偶演出Lights-ON","尸变纪元-v0","Lights_ON","v0.5NSFW","V1.5.4_"],
+    "firstChatId": "尸变纪元-v0-20260906-194748" } }
+```
+
+结果 `resolved 3 of 5, measured 6 of 6`,exit 0;两张缺卡**被点名并带原因**
+(`no character whose name starts with "新·架空政治经济模拟器"` / `"全职高手"`)。
+
+**两处同名歧义在同一跑里选了_相反_的一侧**,这是「取列表第一个是任意的」最直接的证据:
+
+| key | 前缀 | 选中 | 同名的两个 id |
+|---|---|---|---|
+| `shibian` | 尸变纪元 | **`尸变纪元-v0`**(新导入那张) | `尸变纪元-v0` / `v0.5NSFW` |
+| `hanren` | 哈人冰恋世界 | **`1_5`**(原有那张) | `1_5` / `哈人冰恋世界` |
+| `shenyin` | 不要被神隐挑战 | `V1.5.4_` | —(`characterAmbiguous: false`,阴性对照) |
+
+成因是 `character.import` **不覆盖也不拒绝**,而是按**卡名**派生 id 再去重
+(`library.ts` 的 `uniqueId(toId(name))`),所以往一个已有该卡的 profile 里再导一次,
+就多出一张**同名不同 id**的卡。歧义**只记不解**(记 `characterAmbiguous` 与
+`charactersSharingThisName`),与下层的 `titleAmbiguous` 对称。
+
+**`frames` 2 / 0 落在同一跑的两侧,把「同意门不是几何」坐实:**
+
+```
+shibian@1920 frames=2 occlusions=2 | hanren@1920 frames=0 | shenyin@1920 frames=0
+shibian@1366 frames=2 occlusions=2 | hanren@1366 frames=0 | shenyin@1366 frames=0
+```
+
+`shibian` 解析到的是**已授脚本权**的新卡,`hanren` 解析到的是**未授权**的旧卡。
+首跑六格全 0 时我按 `script.list` 查出是同意门未答;这一跑把同一个结论摆在**同一次运行的两侧**,
+不再依赖另一次查询。**`occlusions=2` 是读数不是缺陷** —— 那一格量的是被塞了裸 HTML 的夹具局。
+
+> **下界断言的两条,缺一条都能被绕过**:`K ≥ 1`(**0 也是一个完全瞎掉的解析器会给的答案**)
+> 与「每张解析到的卡至少量到一格」(**单独用是空集上的全称量词,恒真**)。**帧数不进门禁**。
+> 齿检:`node qa/measure-frame-fit.mjs baseline nosuchkey` → 两条失败行同时点火,exit 1。
+
+#### `qa/bare-html-check.mjs` —— settle 基线的读数与齿检
+
+判据是**卡报告行的增量**,基线取在**列表安静之后**(1.5 s 无新行,15 s 上限)。
+
+| | CHAT_B(碎片与未闭合) | CHAT_A(裸组件) | **噪声启动局的齿检** |
+|---|---|---|---|
+| `settled` / `settleWaitedMs` | true / 1577 ms | true / 1573 ms | true / **3939 ms** |
+| boot → settled 基线行数 | 26 → 26 | 28 → 28 | **33 → 35** |
+| `arrivedBeforeSettle` | `[]` | `[]` | **2 行,非空** |
+| `neverClosedAddedThisRun` | **true**(channel `interface`) | **false** | false(正确) |
+
+**前两跑不是齿检,是"不碍事"**:`settleWaitedMs` 恰好是静默期加一次轮询,说明列表本来就安静。
+齿检的做法是**先 render 一张脚本多的卡**(`G验收-冰恋基线`,4 脚本、已授权)把它顶成启动局,
+再 render 目标 —— 于是四个数一起动,方向都对,被挡下的两行是启动局自己的帧流水:
+
+```
+"the frame's own viewport is 1038x870"
+"interface after 6s: 12 children, 53 descendants, 48 of them with a visible box, 2 style elements in …"
+```
+
+**旧版本会把这两行记成目标局「本次新增」。**
+
+> **口径两条,读数时必须带上:**
+> ① `channel` 取自**行自己的标签元素**,不是「页面某处出现 interface 这个词」;
+> ② **基线与终读不是包含关系** —— 换角色会清空 `cardReports`,所以 `rowsNow` 可能比基线小
+> (实测 35 → 28),差集仍然正确,**但默认「终读 ⊇ 基线」的读者会以为仪器坏了**。
 
 ### 未列进本单的
 按钮以外的 TavernHelper API 面、`injectPrompts`(n=1,V1.5.4_)、世界书写(n=1,V1.5.4_)、

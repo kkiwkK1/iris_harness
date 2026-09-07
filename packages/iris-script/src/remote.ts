@@ -23,7 +23,7 @@
  * would also cover user-content hosts that serve arbitrary uploads.
  *
  * Exported so the drift test can compare **this list** against the `script-src`
- * line in `SANDBOX.md`, rather than against a copy of it written in the test. A
+ * line in `docs/SANDBOX.md`, rather than against a copy of it written in the test. A
  * test holding its own literal pins the document to the test and leaves the code
  * free: widening this array would then change what the host fetches while every
  * assertion stayed green, which is the one direction that matters.

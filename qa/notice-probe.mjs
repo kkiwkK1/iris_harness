@@ -7,7 +7,9 @@
 //   NoticeSilent      — no scripts, no interface (the quiet switch partner).
 import { readFileSync, writeFileSync } from 'node:fs'
 
-const BASE = 'http://127.0.0.1:8824'
+// Must match the host `notice-center-baseline.mjs` reads, since this script
+// only sets that one's scenario up.
+const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8824'
 let seq = 0
 async function call(method, params = {}) {
   const res = await fetch(new URL('/iris/rpc', BASE), {

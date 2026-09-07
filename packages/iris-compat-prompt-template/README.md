@@ -56,7 +56,7 @@ refuses that by design. Conversely, a realm escape is a known class of bug and
 never a boundary alone, so `--permission` and an empty environment decide what an
 escape is worth.
 
-`DEVIATIONS.md` lists every deliberate difference from upstream, what each was
+`notes/packages/iris-compat-prompt-template/DEVIATIONS.md` lists every deliberate difference from upstream, what each was
 measured to cost, and the residual risk that is *not* zero.
 
 ## Using it

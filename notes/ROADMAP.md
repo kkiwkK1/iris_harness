@@ -12,6 +12,19 @@ ST 的功能面规模：14 个内置扩展、43 组 API 端点、约 290 个斜�
 
 ## 当前状态（2026-09-02 深夜，本节替代文末旧"建议顺序"与本节自身的上一版）
 
+**2026-09-06 合并**:用户的 `dev/iris-exploration`(84 提交,起点 575c659,自带 ACTION-PLAN / QA-REPORT / ST-COMPARE / IMPLEMENTATION-CHECKLIST 与 qa/**)
+以 `b50c354` 合入 main;冲突仅 frame-budget(取 48 KiB)与 overlay-regions.test(两边都留)。dev 已修的:V1.5.4 覆盖层空白的真因
+(`acb85bf`:零面积 clip 的帧 Chrome 不绘制 → 帧内 rAF 永不触发 → 测量从未被发起;修法 rAF 旁 500ms 救援定时器)、
+覆盖表面限于阅读列(`16a07b9`)、高度回声与接口帧 Mvu(`999dbdf`)、同源 fetch 桥(`f22c0b7`)、ready 握手(`1cbe515`)、消息帧限高(`ea98fc4`)。
+main 相对 dev 独有的只有 overlay 测量仪器 + OVERLAY-CARDS §六之五。dev 的状态账在 IMPLEMENTATION-CHECKLIST.md / ACTION-PLAN.md,
+本文件下述条目凡与之重叠者以那两份为准;`ST-COMPARE.md` 基线是 `3cf858d`,引用须带坐标。合并后待收:ACTION-PLAN §二 五项、
+qa/** 判别力四条(D/A/C/E)、frame-entry 两条 500ms 的源码断言、dev 声称的上游事实正读复核。构建:bootstrap-b46bb40c / members-75a59bef / index-BU8bF8D-。
+**远程样式表/字体族(2026-09-06 裁)**:上游无 CSP、其帧头自装九个远程资源;卡引用远程 CSS 是一族(Lights ON 五条 regex 产出各带一份),
+不按 host 加白名单;机制解 = 远程样式表走宿主代理(与 script bundle 同路由,代理重写 `@font-face src`,`style-src`/`font-src` 仍只 self),
+一次盖住 style-src / font-src / script-src(onload) / CORS(不透明源 preload)四道门;落地前具名拒绝并报告。事实见 SANDBOX.md 该节。
+**世界书扫描的说话人前缀(2026-09-06)**:`include_names` 已接成真实旋钮(eb9ee2c),但前缀名按 role 派生;从 ST 导入、行上带自己说话人的聊天,
+上游用的是行上存的 `name`——待改投影让扫描读行上说话人(与 dev 的 MODELLED_KEYS 5→4 同一处)。
+
 **已完成**（每项都在真卡/真语料上验收过）：Tier 0 全部——卡片脚本沙箱（共居 realm、
 虚拟 parent、按卡授权、自动运行，实际位置 `apps/iris-web/src/sandbox/`）✅；正则脚本
 （引擎 + 提示词/显示两向接线）✅；EJS 模板（子进程围栏、差分 195/196）✅。Tier 1——
@@ -420,7 +433,7 @@ ST 的 prompt itemization：点开一条消息，看到这次请求里每个部�
 
 `parent.document` 那 7 处的处理，当时给了三选一，**已裁为推荐案（2 + 3）并建成**：
 默认虚拟 parent 代理，个别需要真实访问的卡按卡显式授权（GRANTS.md）。策略、实测与
-边界见 `SANDBOX.md` 与 `apps/iris-web/COHABITATION.md`。保留本节骨架是因为三个选项的
+边界见 `SANDBOX.md` 与 `notes/apps/iris-web/COHABITATION.md`。保留本节骨架是因为三个选项的
 利弊分析对将来同类裁决仍有参照价值；**但它已经不是问题,别再答一遍。**
 ## 待补的一件基础设施:`@iris/protocol` 在 web 里没有运行时链接
 

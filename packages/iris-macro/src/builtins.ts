@@ -233,7 +233,7 @@ function registerChat(registry: MacroRegistry): (() => void)[] {
     // Upstream reads the first `.mes` element in the chat DOM, and it renders
     // the whole log, so the first displayed floor is floor 0. Iris's shell does
     // the same — `ChatPane` maps every message; the reading-window design
-    // (apps/iris-web/WINDOWING.md) windowed only the inner frames. When that
+    // (notes/apps/iris-web/WINDOWING.md) windowed only the inner frames. When that
     // changes, this is the macro that has to learn the viewport.
     registry.register('firstDisplayedMessageId', invocation => {
       const chat = invocation.context.chat

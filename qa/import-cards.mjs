@@ -7,7 +7,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { call, rpc } from './rpc.mjs'
 
-const dir = process.argv[2] ?? 'D:/workspace/小项目/iris_分支/测试用卡'
+const dir = process.argv[2] ?? process.env.IRIS_CORPUS ?? 'D:/workspace/小项目/iris_分支/测试用卡'
 
 // The six cards under acceptance, by file name (order = report order).
 const CARDS = new Set([

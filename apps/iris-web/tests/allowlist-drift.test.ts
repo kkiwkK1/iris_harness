@@ -4,7 +4,7 @@
  * The set of CDNs a card may import from exists in three places and three
  * notations: the host's `checkScriptFetch`, which enforces it; this half's
  * `REMOTE_ALLOWLIST`, from which the frame's `script-src` is derived; and the
- * `script-src` line recorded in `SANDBOX.md`. Nothing levelled them.
+ * `script-src` line recorded in `docs/SANDBOX.md`. Nothing levelled them.
  *
  * The drift is asymmetric and both directions are bad. **CSP wider than the
  * host**: a card's import passes in the browser and the proxy answers 403,
@@ -32,13 +32,13 @@ import { BUNDLE_PROXY_PATH } from '../src/sandbox/bundle-proxy.ts'
 /** The frozen policy, read whole. */
 function sandboxDoc(): string {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-  return readFileSync(join(root, 'SANDBOX.md'), 'utf8')
+  return readFileSync(join(root, 'docs', 'SANDBOX.md'), 'utf8')
 }
 
 /** The `script-src` line as the frozen policy records it. */
 function documentedScriptSrc(): string {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-  const doc = readFileSync(join(root, 'SANDBOX.md'), 'utf8')
+  const doc = readFileSync(join(root, 'docs', 'SANDBOX.md'), 'utf8')
   const line = doc.split('\n').find(row => row.trim().startsWith('script-src '))
   assert.ok(line !== undefined, 'SANDBOX.md no longer records a script-src line')
   return line

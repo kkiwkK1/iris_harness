@@ -7,7 +7,7 @@
  * production: MVU's bundle is 307,765 B and takes 9–12 s from jsDelivr, against
  * a 15 s import ceiling — four of six chat opens timed out. Upstream does not
  * have this problem because its frames are same-origin and share the page's warm
- * cache; ours cannot be, for the reasons in `SANDBOX.md`.
+ * cache; ours cannot be, for the reasons in `docs/SANDBOX.md`.
  *
  * So the host fetches it once and serves it from disk afterwards. The route is
  * same-origin with the frame's existing `script-src`, so no CSP changes.
@@ -196,7 +196,7 @@ const FAILURE_MEMORY_MS = 30_000
  * that header is the shell, which is same-origin and needs no exemption. Anyone
  * concluding from "failures carry CORS too" that the frame can now fetch its own
  * reason would be wrong, and would be tempted to delete the shell's path for
- * doing it. `SANDBOX.md` carries the same warning; it is repeated here because
+ * doing it. `docs/SANDBOX.md` carries the same warning; it is repeated here because
  * this is where someone editing the header is standing.
  */
 const CORS_HEADER = {

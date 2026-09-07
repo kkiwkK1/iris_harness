@@ -29,6 +29,7 @@ import {
 import type { InsertionStrategy } from '@iris/protocol'
 import type { ResolvedWorldbook } from './worldbooks.ts'
 import type { ActivePersona } from './persona.ts'
+import { DEFAULT_WORLDBOOK_SETTINGS } from './worldbook-settings.ts'
 import { createMacroContext, expandMacros, type MacroMessage } from '@iris/macro'
 import type { Contribution, HistoryEntry, Role, TokenCounter } from '@iris/pipeline'
 import { resolvePreset, type ChatCompletionPreset, type MarkerSources, type PromptItem } from '@iris/preset'
@@ -165,6 +166,16 @@ export interface PromptInput {
    * caller that has settings passes them through untouched.
    */
   activationSettings?: Partial<ActivationSettings>
+  /**
+   * `world_info_include_names` — whether the scan buffer carries speaker names.
+   *
+   * Its own input rather than a field of {@link activationSettings}, because
+   * it is not an engine knob: it shapes the buffer *before* the engine sees
+   * it, exactly as upstream applies it while building `chatForWI` rather than
+   * inside `getWorldInfoPrompt`. Absent takes ST's shipped `true`
+   * (`world-info.js:74`).
+   */
+  includeNames?: boolean
   /**
    * How the global and character books interleave, from the same stored
    * settings. Defaults to `character_first`, which is both ST's shipped value
@@ -448,10 +459,29 @@ export function buildPrompt(input: PromptInput): PromptResult {
   })
   const expand = input.substitute ?? ((text: string): string => expandMacros(text, macros))
 
+  const includeNames = input.includeNames ?? DEFAULT_WORLDBOOK_SETTINGS.includeNames
   const scan = activateEntries({
     entries: scanEntriesOf(input.card, input.worldbook, input.chatLore, input.insertionStrategy),
-    // The engine wants the conversation newest-first, the order ST scans in.
-    chat: [...input.history].reverse().map(entry => entry.text),
+    // Upstream's own line, both branches of it (`script.js:4565`):
+    //
+    //   coreChat.map(x => world_info_include_names ? `${x.name}: ${x.mes}` : x.mes).reverse()
+    //
+    // Newest-first, the order ST scans in. The prefix goes only into the scan
+    // buffer — the model never sees it — so this changes which entries fire,
+    // not a single token of the request. An entry keyed on a character's name
+    // fires on every line that character spoke when it is on, and only on
+    // lines that say the name when it is off.
+    //
+    // **The name is derived from the role**, as `historyFromSession` derives
+    // it, rather than read from the line's stored `name`. For a one-to-one
+    // chat those agree; for a chat imported from an install whose lines carry
+    // their own speakers they can differ, and upstream would use the stored
+    // one. Named rather than fixed here because every other consumer of
+    // `HistoryEntry.name` already has this shape, and changing it is a change
+    // to the projection rather than to this line.
+    chat: [...input.history].reverse().map(entry => (
+      includeNames && entry.name !== undefined ? `${entry.name}: ${entry.text}` : entry.text
+    )),
     budget: input.worldInfoBudget,
     countTokens: input.count,
     substituteMacros: expand,

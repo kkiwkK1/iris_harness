@@ -3,7 +3,7 @@
 # into the product tree.
 #
 # `apps/iris-web` is excluded because pnpm cannot extract esbuild in this
-# environment (see spike/RESULTS.md): the rename step it uses races something
+# environment (see notes/spike/RESULTS.md): the rename step it uses races something
 # holding the freshly written binary, deterministically. npm writes in place and
 # succeeds, so the browser app is npm-managed and reaches workspace code through
 # Vite aliases rather than `workspace:*`.

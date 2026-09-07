@@ -4,7 +4,7 @@
  * The first version of this lived only in the settings panel. That panel renders
  * inside a drawer which is closed by default and `aria-hidden` when closed, so
  * opening a chat with an unanswered card produced nothing at all: no question,
- * no scripts, and no hint that a decision was pending. `AUTORUN.md` §1 asks for
+ * no scripts, and no hint that a decision was pending. `docs/AUTORUN.md` §1 asks for
  * the question to be put once, and a question nobody can see has not been put.
  *
  * It was verified against a card whose drawer happened to be open, which is why
@@ -13,7 +13,7 @@
  *
  * Three properties this surface has to keep:
  *
- * - **Not modal.** `AUTORUN.md` §3.4 keeps prompts off the conversation. This
+ * - **Not modal.** `docs/AUTORUN.md` §3.4 keeps prompts off the conversation. This
  *   sits above it and never blocks reading or writing.
  * - **No timer.** Notices expire; a question must not. A prompt that disappears
  *   on its own has answered itself, and the answer it gives is the one nobody

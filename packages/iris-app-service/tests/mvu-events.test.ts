@@ -10,7 +10,7 @@ import { extractScripts } from '@iris/script'
 /**
  * The premise under which this host emits no `VARIABLE_UPDATE_ENDED`.
  *
- * `DEVIATIONS.md §3` records the decision: the host's fold path does not emit
+ * `notes/packages/iris-app-service/DEVIATIONS.md §3` records the decision: the host's fold path does not emit
  * the event, because every card that listens to it ships the MagVarUpdate bundle
  * itself, and the bundle emits it from its own trunk. A second emitter would
  * fire an **interception** twice — the listener mutates the variables and the
@@ -83,7 +83,9 @@ test('the detector speaks — it finds a listener that ships no bundle', () => {
   assert.equal(shipsBundle(withBundle), true)
 })
 
-test('every card that listens for the end of an update ships the bundle', { skip: !hasCorpus }, async () => {
+test('every card that listens for the end of an update ships the bundle', {
+  skip: !hasCorpus && `no characters folder at ${CORPUS}; point IRIS_CORPUS at a SillyTavern install`,
+}, async () => {
   const offenders: string[] = []
   let listeners = 0
 

@@ -10,7 +10,7 @@
  *
  * The document grant lives here too, for the same reason and one more: a grant
  * is the user's, and nothing a card can write may create, request, or survive
- * the revocation of one. See `SANDBOX.md`.
+ * the revocation of one. See `docs/SANDBOX.md`.
  *
  * The line to hold is: **when the thing a permission was granted to is no longer
  * the thing in front of you, re-anchor the permission.** *Content re-binds by

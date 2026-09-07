@@ -103,7 +103,10 @@ export const en = {
   /** App shell. */
   notConnected: 'Not connected to the Iris host. Nothing you write will be sent.',
   dismiss: 'Dismiss',
-  dropCard: 'Drop a character card — PNG, JSON or .charx — to add it to the library.',
+  /* The formats named here are `card-files.ts` `CARD_FILE_LABELS`; a test holds
+     both languages to that table, because this row once promised `.charx` after
+     the host had stopped taking it. */
+  dropCard: 'Drop a character card — PNG, JPG or JSON — to add it to the library.',
 
   /** Chat pane. */
   openingLastChat: 'Opening your last conversation…',
@@ -844,7 +847,7 @@ export const zh: Record<StringKey, string> = {
   /** 外壳。 */
   notConnected: '未连接到 Iris 宿主。你写下的内容不会被发送。',
   dismiss: '关闭',
-  dropCard: '拖入角色卡——PNG、JSON 或 .charx——即可加入角色库。',
+  dropCard: '拖入角色卡——PNG、JPG 或 JSON——即可加入角色库。',
 
   /** 阅读区。 */
   openingLastChat: '正在打开你上次的对话…',

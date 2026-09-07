@@ -349,7 +349,10 @@ async function realChats(): Promise<{ name: string, path: string }[]> {
 
 const INSTALL = await realChats()
 
-test('every real chat imports floor-for-floor equivalent', { skip: INSTALL.length === 0 }, async (t) => {
+/** Why the two install-wide tests below skip, when they do: what is missing and where it comes from. */
+const NO_INSTALL = INSTALL.length === 0 && `no chats under ${CHATS_DIR}; point IRIS_CORPUS at a SillyTavern install`
+
+test('every real chat imports floor-for-floor equivalent', { skip: NO_INSTALL }, async (t) => {
   const fix = await fixture(t)
   assert.ok(INSTALL.length >= 31, `expected the whole install, found ${String(INSTALL.length)} files`)
 
@@ -387,7 +390,7 @@ test('every real chat imports floor-for-floor equivalent', { skip: INSTALL.lengt
   }
 })
 
-test('imported real branches report the parent their main_chat names', { skip: INSTALL.length === 0 }, async (t) => {
+test('imported real branches report the parent their main_chat names', { skip: NO_INSTALL }, async (t) => {
   const fix = await fixture(t)
   let branches = 0
   for (const file of INSTALL) {

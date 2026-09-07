@@ -14,9 +14,14 @@ import assert from 'node:assert/strict'
 import {
   type Measured,
   type Region,
+  type Visibility,
   clipPathFor,
   collectRegions,
+  describeEmptySurface,
+  describeFrameViewport,
+  describeVisibility,
   mergeRegions,
+  regionsKey,
 } from '../src/sandbox/overlay-regions.ts'
 
 const at = (x: number, y: number, width: number, height: number): Region =>
@@ -164,6 +169,238 @@ test('the path a real card shape produces is short', () => {
   ])
   assert.ok(path.length < 60, `${String(path.length)} characters: ${path}`)
 })
+/*
+ * ── The zero-area instrument ────────────────────────────────────────────────
+ *
+ * All of the following exist because of one live reading: a card's overlay came
+ * back `clip-path: path("M 0 0 Z")` — zero area, a blank screen — beside a
+ * report that said only "this card built 2 element(s)". Four different repairs
+ * fit that sentence (hidden, detached, sized zero, measured before layout) and
+ * nothing in the report chose between them. Each test below pins the one fact
+ * that eliminates one of those repairs.
+ */
+
+/** A measured element with the fields the tests under study care about. */
+const shown = (over: Partial<Visibility>): Visibility => ({
+  label: 'div',
+  rect: { x: 0, y: 0, width: 100, height: 50 },
+  display: 'block',
+  connected: true,
+  // `text` and `paints` are required, and spreading a `Partial` over them would
+  // reintroduce `undefined` under `exactOptionalPropertyTypes`.
+  text: over.text ?? true,
+  paints: over.paints ?? true,
+  ...over,
+})
+
+test('a zero box is reported even though nothing about it is unusual', () => {
+  /*
+   * The rest of this description lists deviations — an opacity that is not 1, a
+   * display that is not block. A zero box is not a deviation from anything; it
+   * is the finding, so it is unconditional, and it is marked so a reader
+   * scanning a row of numbers cannot slide past it.
+   */
+  const line = describeVisibility(shown({ rect: { x: 12, y: 34, width: 0, height: 0 } }))
+  assert.ok(line !== undefined, 'a zero-area element must produce a line')
+  assert.match(line, /ZERO BOX 0x0 at 12,34/)
+})
+
+test('a healthy box still reports its size, so a reader can compare', () => {
+  const line = describeVisibility(shown({}))
+  assert.ok(line !== undefined && line.includes('100x50'), `no box in: ${String(line)}`)
+  assert.ok(!line.includes('ZERO BOX'), `a 100x50 box was called zero: ${line}`)
+})
+
+test('display:none and being detached are told apart, because the fixes differ', () => {
+  const hidden = describeVisibility(
+    shown({ display: 'none', rect: { x: 0, y: 0, width: 0, height: 0 } }),
+  )
+  const detached = describeVisibility(
+    shown({ connected: false, rect: { x: 0, y: 0, width: 0, height: 0 } }),
+  )
+  assert.match(hidden ?? '', /display none/)
+  assert.ok(!(hidden ?? '').includes('NOT IN THE DOCUMENT'), 'a hidden node is in the document')
+  assert.match(detached ?? '', /NOT IN THE DOCUMENT/)
+})
+
+test('the inline style rides along on a zero box, and only there', () => {
+  /*
+   * **This is the field that decides the card under investigation.** It sets
+   * seven properties on its overlay frame with `!important` after appending it
+   * (`display:block`, `width:100vw`, `height:100vh`), and hides itself later
+   * with `display:none !important`. The computed `display` cannot say which of
+   * those happened; the attribute text can, because `!important` survives in it
+   * verbatim.
+   *
+   * And only on a zero box: it is long, and a healthy element does not need it.
+   */
+  const style = 'display: none !important; width: 100vw !important'
+  const empty = describeVisibility(
+    shown({ inline: style, rect: { x: 0, y: 0, width: 0, height: 0 } }),
+  )
+  assert.ok((empty ?? '').includes(style), `the attribute text was dropped: ${String(empty)}`)
+  const healthy = describeVisibility(shown({ inline: style }))
+  assert.ok(
+    !(healthy ?? '').includes('style="'),
+    `a healthy element carried its inline style: ${String(healthy)}`,
+  )
+})
+
+test('our stand-in is named as ours, so the owner of the bug is not guessed', () => {
+  const ours = describeVisibility(shown({ standIn: true }))
+  assert.match(ours ?? '', /our nested-frame stand-in/)
+  const theirs = describeVisibility(shown({}))
+  assert.ok(
+    !(theirs ?? '').includes('stand-in'),
+    `a card's own element was claimed as ours: ${String(theirs)}`,
+  )
+})
+
+test('the empty-surface sentence fires only when every element is empty', () => {
+  /*
+   * `zero < total` and not `zero > 0`: one empty element among four is normal
+   * (a spacer, a collapsed panel), and saying "the clip is empty" then would be
+   * false — the clip has the other three in it.
+   */
+  assert.match(
+    describeEmptySurface(2, 2) ?? '',
+    /all 2 element\(s\).*measured zero area.*clip is empty/,
+  )
+  assert.equal(describeEmptySurface(1, 4), undefined)
+  assert.equal(describeEmptySurface(0, 0), undefined, 'a card that built nothing is not this')
+})
+
+test('the viewport is reported as a number, and a zero one draws no conclusion', () => {
+  /*
+   * **This test used to assert the opposite, and the reversal is the point.**
+   *
+   * It pinned a second clause on a zero viewport — `THE FRAME HAS NO LAYOUT, so
+   * every vw/vh length inside it is 0` — written from a blank screen on the
+   * reasoning that the elements measured zero because the frame was never laid
+   * out. Measured afterwards on that same card, the frame *was* laid out and its
+   * content correct; the screen was blank because no measurement had been asked
+   * for at all. The clause was a cause this number cannot establish, and it sent
+   * a reader to debug layout.
+   *
+   * A zero viewport is still a real state worth printing — one foreground
+   * reading caught a 0x0 — so the number keeps its place in the report. What it
+   * may not do is explain itself. Hence a zero and a healthy box differ only in
+   * their digits.
+   */
+  assert.match(describeFrameViewport({ width: 2498, height: 1353 }), /viewport is 2498x1353/)
+  const unlaid = describeFrameViewport({ width: 2498, height: 0 })
+  assert.match(unlaid, /viewport is 2498x0/, 'a zero viewport must still be reported')
+  assert.equal(
+    unlaid,
+    describeFrameViewport({ width: 2498, height: 1353 }).replace('1353', '0'),
+    'a zero viewport says something a healthy one does not — that extra clause is a diagnosis',
+  )
+})
+
+test('the dedup key changes when the viewport does, so recovery is reported', () => {
+  /*
+   * The failure this prevents is subtle and was real: keyed on the clip alone,
+   * the empty diagnosis is sent once and then suppressed forever, because an
+   * all-zero card produces the identical empty clip on every pass. The states
+   * that must re-report are exactly the ones that keep the clip the same.
+   */
+  const box = { width: 2498, height: 1297 }
+  const same = regionsKey('path("M0 0Z")', 2, 2, box)
+  assert.equal(same, regionsKey('path("M0 0Z")', 2, 2, box), 'a still card must stay quiet')
+  assert.notEqual(
+    same,
+    regionsKey('path("M0 0Z")', 2, 2, { width: 2498, height: 1353 }),
+    'the frame was laid out at a new size and the report was suppressed',
+  )
+  assert.notEqual(
+    same,
+    regionsKey('path("M0 0Z")', 3, 2, box),
+    'a third element appeared and the report was suppressed',
+  )
+  assert.notEqual(
+    same,
+    regionsKey('path("M0 0Z")', 2, 1, box),
+    'one element gained area and the report was suppressed',
+  )
+})
+/*
+ * ── The gap the tests above could not see ───────────────────────────────────
+ *
+ * Every test above hands `describeVisibility` a `Visibility` directly, so they
+ * prove the *formatter* handles a zero box. They cannot prove anything about
+ * whether a zero box ever **reaches** it, and it did not: the collector took
+ * the record only on the branch that accepts a region, so an all-zero card
+ * produced an empty clip, an empty `seen`, a zero count of 0 and no sentence.
+ * The instrument built to explain a blank screen was silent on a blank screen,
+ * with nine green teeth-checks behind it.
+ *
+ * These tests go through `collectRegions`, which is where that decision lives.
+ */
+
+/** A node for the walk: a box, a visibility record, and children. */
+interface Labelled {
+  rect: Region
+  label: string
+  children?: Labelled[]
+}
+
+const walk = (roots: Labelled[]): { regions: Region[], seen: Visibility[] } => {
+  const seen: Visibility[] = []
+  const regions = collectRegions<Labelled>(roots, node => ({
+    measured: {
+      rect: node.rect,
+      interactive: true,
+      visibility: shown({ label: node.label, rect: node.rect }),
+    },
+    children: node.children ?? [],
+  }), seen)
+  return { regions, seen }
+}
+
+test('a zero-area root is still described, or nothing explains the blank screen', () => {
+  const { regions, seen } = walk([
+    { rect: at(0, 0, 0, 0), label: 'div#app' },
+    { rect: at(0, 0, 0, 0), label: 'iframe' },
+  ])
+  assert.deepEqual(regions, [], 'two empty boxes clip to nothing')
+  assert.deepEqual(
+    seen.map(it => it.label),
+    ['div#app', 'iframe'],
+    'both roots must be described even though neither became a region',
+  )
+  // And the two together are what the reader actually gets.
+  assert.match(describeEmptySurface(seen.length, seen.length) ?? '', /clip is empty/)
+})
+
+test('a descendant is described only when it becomes a region', () => {
+  /*
+   * The anti-flood half of the same rule. The walk descends through anything
+   * that is not a usable region, so describing every node it touches would put
+   * a card's entire subtree — hundreds of lines — through a message channel on
+   * every mutation.
+   */
+  const { seen } = walk([
+    {
+      rect: at(0, 0, 0, 0),
+      label: 'div#wrapper',
+      children: [
+        { rect: at(0, 0, 0, 0), label: 'div.empty-inner' },
+        { rect: at(5, 5, 40, 40), label: 'button' },
+      ],
+    },
+  ])
+  assert.deepEqual(
+    seen.map(it => it.label),
+    ['div#wrapper', 'button'],
+    'the zero-area descendant must not be listed, the real button must',
+  )
+})
+
+test('a healthy root is described too, so the report is comparable', () => {
+  const { regions, seen } = walk([{ rect: at(0, 0, 390, 844), label: 'div#app' }])
+  assert.equal(regions.length, 1)
+  assert.deepEqual(seen.map(it => it.label), ['div#app'])
+})
 
 test('the reporter survives a frame Chrome refuses to paint', () => {
   /*
@@ -196,4 +433,112 @@ test('the reporter survives a frame Chrome refuses to paint', () => {
     'the rescue timer is gone — a zero-area clip then seals its own silence forever',
   )
   assert.match(schedule, /, 500\)/u, 'the rescue interval no longer matches the height fallback')
+})
+
+test('the foreground pass measures twice, because the rescue timer cannot cover it', () => {
+  /*
+   * **A second 500ms timer that is not the one above, and the difference is
+   * the whole reason both exist.**
+   *
+   * The rescue timer fires `if (scheduled)` — that is, only when the animation
+   * frame it rescues *never ran*. Coming back to a foreground tab is the other
+   * failure: the `rAF` does run, but the browser has not necessarily laid the
+   * frame out before it does, so the forced pass reads the same zeros a hidden
+   * frame reported. `send` clears `scheduled` on the way in, so by the time the
+   * rescue timer checks, the latch is false and it no-ops. Nothing else
+   * schedules another pass — this reporter is event-driven and one-shot per
+   * trigger, not a polling loop — and the card sits at a zero-area clip, with
+   * the correct answer one measurement away, for as long as the chat is open.
+   *
+   * The two were nearly merged into one on the grounds that they share an
+   * interval and sit ten lines apart. They share nothing else: their triggers
+   * are disjoint, and deleting either one leaves a real failure uncovered.
+   *
+   * Pinned against the source for the same reason as the test above — the entry
+   * has no DOM harness — but against **its own slice**. The rescue timer lives
+   * in `schedule`, which ends at the observers; this handler is registered well
+   * below them, so the slice above cannot see it, and a single slice covering
+   * both would let either half satisfy an assertion meant for the other.
+   */
+  const entry = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
+    'utf8',
+  )
+  const opens = entry.indexOf("document.addEventListener('visibilitychange'")
+  const closes = entry.indexOf('And on a resize, forced.')
+  /*
+   * Both anchors, before the slice. `indexOf` answers -1 for a string that is
+   * not there, and `slice(-1, …)` is a cheerful empty string that every
+   * `assert.match` below would fail against with a message about the wrong
+   * thing entirely — a renamed handler would read as a deleted guard.
+   */
+  assert.ok(opens >= 0, 'the visibilitychange handler was renamed or removed')
+  assert.ok(closes > opens, 'the resize comment no longer follows the handler')
+  const foreground = entry.slice(opens, closes)
+
+  assert.match(
+    foreground,
+    /forceMeasure\(\)/u,
+    'the immediate foreground pass is gone — a tab that was hidden keeps the clip it measured while nobody could see it',
+  )
+  assert.match(
+    foreground,
+    /setTimeout\(forceMeasure, 500\)/u,
+    'the second foreground pass is gone — when the rAF runs before layout it reads the hidden tab\'s zeros,'
+    + ' and the rescue timer cannot help because send already cleared the latch',
+  )
+  /*
+   * And that this really is the other slice. If the two ever overlap, both
+   * tests start passing on one guard and the pair silently becomes one.
+   */
+  assert.doesNotMatch(
+    foreground,
+    /if \(scheduled\) send\(\)/u,
+    'the two slices overlap, so neither test is pinning what its name says',
+  )
+})
+
+test('a resize measures forced, because the clip can be right for a box that is gone', () => {
+  /*
+   * **The third decision, and it is not either of the two above.**
+   *
+   * The frame gets a resize from the host when the shell hands it a new
+   * viewport, and one from the browser when the window changes. Both are
+   * moments when a `vh`-sized card's boxes become computable for the first
+   * time — the reading that prompted it was a card empty at first open and
+   * full-screen after the window height changed. What makes it its own guard is
+   * the **force**: a plain `schedule()` here is measured and then thrown away
+   * whenever the new clip happens to hash the same as the old one, and "the
+   * same clip against a different viewport" is exactly the state the dedup key
+   * was widened to notice. Neither timer above helps: the rescue timer fires
+   * only when the animation frame never ran, and the foreground pair is bound
+   * to `visibilitychange`, which a resize does not raise.
+   *
+   * Its own slice again, for the reason the slice above needed one — this
+   * listener is registered after both of them, so neither existing slice
+   * reaches it.
+   */
+  const entry = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sandbox', 'frame-entry.ts'),
+    'utf8',
+  )
+  const opens = entry.indexOf('And on a resize, forced.')
+  const closes = entry.indexOf('Once up front')
+  assert.ok(opens >= 0, 'the resize comment was renamed or removed')
+  assert.ok(closes > opens, 'the up-front schedule no longer follows the resize listener')
+  const resize = entry.slice(opens, closes)
+
+  assert.match(
+    resize,
+    /addEventListener\('resize', forceMeasure\)/u,
+    'the resize listener is gone, or no longer forced — an unforced pass is discarded by the dedup'
+    + ' whenever the new clip hashes the same, which is the recovery this exists to report',
+  )
+  // Disjoint from both slices above, so three guards keep three tests.
+  assert.doesNotMatch(resize, /if \(scheduled\) send\(\)/u, 'this slice reaches the rescue timer')
+  assert.doesNotMatch(
+    resize,
+    /setTimeout\(forceMeasure, 500\)/u,
+    'this slice reaches the foreground pair',
+  )
 })

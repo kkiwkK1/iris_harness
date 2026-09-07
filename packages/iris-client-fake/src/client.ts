@@ -28,7 +28,7 @@ import {
 } from '@iris/protocol'
 
 import { chunk, replyFor, reasoningFor } from './corpus.ts'
-import { readCard } from './card.ts'
+import { cardFileExtension, readCard } from './card.ts'
 import { fakeItemization } from './prompt.ts'
 import {
   activateConnection,
@@ -500,6 +500,12 @@ class InMemoryClient implements FakeClient {
 
       case 'character.import': {
         const { filename, content } = params as RpcRequest<'character.import'>
+        // The same refusal, in the same words, as the host's `library.import`:
+        // a `.charx` dropped on the fake must fail the way it fails against a
+        // host, or the shell's refusal notice can only be seen with one running.
+        if (cardFileExtension(filename) === '.charx') {
+          throw new FakeRpcError('unsupported', '.charx cards are not supported yet')
+        }
         const card = readCard(filename, content)
         const character: CharacterSummary = {
           /*
@@ -984,20 +990,6 @@ class InMemoryClient implements FakeClient {
           'unsupported',
           'the fake client cannot persist script buttons: their only readable effect is'
             + ' the next script.context snapshot, which this client refuses',
-        )
-      }
-
-      case 'debug.reports': {
-        // Placeholder in this client's existing refusal pattern, so the tree
-        // compiles; the sandbox half is 7b's to design. Refused rather than
-        // answered with an empty page for the same reason the host refuses when
-        // it holds no buffer: declaring the kinds with no records reads as
-        // "collected, nothing happened", and a fake that has collected nothing
-        // would be asserting all-clear about a host that is not there.
-        throw new FakeRpcError(
-          'unsupported',
-          'the fake client retains no diagnostic reports: it has no host bus to collect them from,'
-            + ' and an empty page would read as "nothing went wrong" rather than "nothing was watching"',
         )
       }
 

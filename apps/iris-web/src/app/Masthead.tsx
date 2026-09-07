@@ -62,7 +62,19 @@ export function Masthead({
         </button>
         <ChatTitle />
         <span className="iris-masthead__spacer" />
-        <Button variant="ghost" size="sm" onClick={onOpenSettings}>
+        {/*
+         * `data-control` for the same reason the sidebar tabs carry `data-tab`:
+         * this button's only identity was its translated label, so every
+         * acceptance script reaching for "Settings" stopped matching the day the
+         * shell learned to speak the reader's language.
+         *
+         * No `aria-label` here on purpose. The button has visible text, which is
+         * already its accessible name; an `aria-label` would *override* that for
+         * a screen reader, and if it were a translated string it would vary with
+         * the language exactly like the text does — so it buys the instrument
+         * nothing and costs the reader the name they can see.
+         */}
+        <Button variant="ghost" size="sm" data-control="settings" onClick={onOpenSettings}>
           {t('settings')}
         </Button>
       </div>

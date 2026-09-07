@@ -15,7 +15,7 @@
  * `node_modules/ejs/lib/ejs.js`.
  *
  * Every patch here has **zero sites in the local corpus**. That is stated rather
- * than hidden: `ARCHITECTURE.md` says the corpus is the oracle for
+ * than hidden: `docs/ARCHITECTURE.md` says the corpus is the oracle for
  * compatibility work, and when the corpus is silent the honest substitute is a
  * test pinned to upstream's source, not a guess dressed as a measurement.
  *

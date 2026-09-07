@@ -641,7 +641,7 @@ export interface IrisActions {
    *
    * Iris sends **nothing**, which the protocol already defines as a complete
    * outcome: nothing is cleaned, nothing is recorded, and the offer comes back
-   * next time. Recorded in `DEVIATIONS.md`.
+   * next time. Recorded in `notes/apps/iris-web/DEVIATIONS.md`.
    */
   dismissCleanupOffer(): void
   withdrawReportsFor(scriptId: string): void
@@ -1657,7 +1657,7 @@ export function createIrisStore(
           // (The profile's `backups/` directory is not reachable from here —
           // the host owns no worldbook backup RPC yet — so the pre-write
           // snapshot lands in the reader's downloads folder instead, recorded
-          // as a debt in DEVIATIONS.md.)
+          // as a debt in notes/apps/iris-web/DEVIATIONS.md.)
           const { book } = await client.call('worldbook.load', { name: state.book })
           if (book === null || book === undefined) throw new Error(`world book "${state.book}" could not be read`)
           const stamp = new Date().toISOString().replace(/[:.]/g, '-')

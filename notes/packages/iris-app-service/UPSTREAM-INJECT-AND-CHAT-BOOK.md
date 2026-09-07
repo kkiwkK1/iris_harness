@@ -176,7 +176,7 @@ Object.keys(extension_prompts)
 ### 二之一 存哪、名字怎么铸
 
 ```js
-// [ST] scripts/world-info.js:94
+// [ST] public/scripts/world-info.js:94
 export const METADATA_KEY = 'world_info';
 ```
 

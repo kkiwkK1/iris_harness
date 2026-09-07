@@ -132,7 +132,7 @@ export function App(): ReactElement {
 
           It used to live only in the settings drawer, which is closed by
           default — so a card's scripts sat unasked and unrun, and the interface
-          said nothing about a decision waiting. `AUTORUN.md` §1 requires the
+          said nothing about a decision waiting. `docs/AUTORUN.md` §1 requires the
           question to be put once, and a question nobody can see has not been put.
 
           Not a modal: §3.4 keeps prompts off the conversation, and this must not

@@ -9,7 +9,7 @@ import { FA_SENTINEL, buildSrcdoc, framePolicy, unblockFontStylesheets } from '.
 const SELF = 'http://127.0.0.1:5173'
 
 test('the frame policy allows eval and pins where code comes from', () => {
-  // The distinction SANDBOX.md now draws: CSP cannot forbid `eval` here, because
+  // The distinction docs/SANDBOX.md now draws: CSP cannot forbid `eval` here, because
   // the card blobs are webpack output that evals per module. Restricting the
   // ORIGIN of code is a separate capability and it is fully available.
   const policy = framePolicy(false, SELF)
@@ -281,7 +281,8 @@ test('a script frame keeps the minimal reset and gets no markup', () => {
   // Script bodies arrive as `run` messages, so there is nothing to place — and
   // `overflow:hidden` would be a rule about a document nobody looks at.
   assert.ok(!doc.includes('overflow:hidden'))
-  assert.ok(doc.includes('color-scheme:inherit'))
+  // Light as upstream (`frame-color-scheme.test.ts` carries the reasoning).
+  assert.ok(doc.includes('color-scheme:light'))
 })
 
 test('the inlined snapshot is a string literal, so card data cannot become code', () => {

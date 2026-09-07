@@ -8,6 +8,7 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
+import { clickTabExpr } from './locators.mjs'
 import { BASE } from './rpc.mjs'
 
 const [, , target, widthArg, heightArg] = process.argv
@@ -18,7 +19,11 @@ if (target === undefined) {
 const WIDTH = Number(widthArg ?? 1680)
 const HEIGHT = Number(heightArg ?? 1050)
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-const CDP_PORT = process.env.CDP_PORT ?? '9334'
+// Default CDP port is offset by the pid: two runs back to back would
+// otherwise fight over one debug port, and the loser dies as
+// "chrome never came up" — which reads as a broken environment, not as a
+// collision. An explicit CDP_PORT is honoured verbatim (see qa/README.md).
+const CDP_PORT = String(Number(process.env.CDP_PORT ?? 9334) + (process.env.CDP_PORT === undefined ? process.pid % 100 : 0))
 const HARD_DEADLINE = setTimeout(() => { console.log('HARD TIMEOUT'); process.exit(3) }, 180_000)
 
 const outDir = new URL('./results/', import.meta.url)
@@ -67,20 +72,30 @@ try {
   await send('Page.navigate', { url: BASE })
   await delay(7000)
 
-  const opened = await evaluate(`(async () => {
-    const sleep = ms => new Promise(r => setTimeout(r, ms))
+  // The tab by order and confirmation (qa/locators.mjs), the chat by its title.
+  const tabbed = await evaluate(clickTabExpr('chats'))
+  const opened = tabbed?.error !== undefined ? tabbed : await evaluate(`(() => {
     const wanted = ${JSON.stringify(target)}
-    const tabs = [...document.querySelectorAll('[role=tab]')]
-    const readingTab = tabs.find(b => (b.textContent ?? '').includes('Reading'))
-    if (readingTab === undefined) return { error: 'no Reading tab' }
-    readingTab.click()
-    await sleep(500)
-    const rows = [...document.querySelectorAll('button, [role=button], a, li')].filter(el => (el.textContent ?? '').includes(wanted))
-    if (rows.length === 0) return { error: 'chat row not found for ' + wanted }
+    const rows = [...document.querySelectorAll('.iris-list .iris-row')]
+      .filter(el => (el.querySelector('.iris-row__title')?.textContent ?? '').includes(wanted))
+    if (rows.length === 0) {
+      return {
+        error: 'no chat row titled ' + wanted,
+        titles: [...document.querySelectorAll('.iris-list .iris-row .iris-row__title')].map(t => (t.textContent ?? '').trim()).slice(0, 20),
+      }
+    }
     rows[0].click()
     return { clicked: rows.length }
   })()`)
-  console.log('open:', JSON.stringify(opened))
+  console.log('open:', JSON.stringify({ tab: tabbed, ...opened }))
+  // Nothing below would describe `target` if the row never opened; a reading
+  // pinned to the wrong chat is worse than no reading.
+  if (opened?.error !== undefined) {
+    console.error(`render-only: never opened ${JSON.stringify(target)} — ${opened.error}`)
+    chrome.kill()
+    await delay(500)
+    process.exit(2)
+  }
   await delay(12_000) // script frames boot
 
   const series = await evaluate(`(async () => {
