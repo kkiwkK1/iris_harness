@@ -531,8 +531,6 @@ export const en = {
   themeImported: 'Restored the theme package (palette and user.css).',
   themeTransferNote: 'The file carries the theme’s full token palette and this device’s user.css.',
   proseSize: 'Prose size',
-  lineLength: 'Line length',
-  lineLengthNote: 'Characters per line. Around 66 is what a book uses.',
   hostDefault: 'host default',
   useHostDefault: 'use host default',
   /** Option labels are proper names and stay in their own language everywhere. */
@@ -1289,8 +1287,6 @@ export const zh: Record<StringKey, string> = {
   themeImported: '已恢复主题包（配色与 user.css）。',
   themeTransferNote: '该文件携带主题的完整 token 配色表与本机的 user.css。',
   proseSize: '正文字号',
-  lineLength: '每行长度',
-  lineLengthNote: '每行字符数。书籍排版约 66。',
   hostDefault: '宿主默认',
   useHostDefault: '使用宿主默认',
   langEn: 'English',
