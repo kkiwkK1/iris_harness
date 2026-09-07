@@ -695,3 +695,15 @@
   font-size: 12px;
   color: var(--iris-ink-secondary);
 }
+
+/* The description band: the one fact that is prose. The artboard sets it at
+   62ch under the name, and the host already clips it to 200 code points, so
+   this is a measure for reading, not a guard against a wall of text. */
+.iris-fact--prose .iris-fact__value {
+  max-width: 62ch;
+  margin: 0;
+  line-height: 1.6;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+  text-wrap: pretty;
+}

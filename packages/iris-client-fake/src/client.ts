@@ -37,22 +37,8 @@ import {
   saveConnection,
 } from './connections.ts'
 import { mergeSettings } from './settings.ts'
-import { DEFAULT_SETTINGS, seedCharacters, seedChats } from './seed.ts'
+import { DEFAULT_SETTINGS, FAKE_SCRIPTS, seedCharacters, seedChats } from './seed.ts'
 import { selected, toChatSummary, toChatView, type FakeChat, type FakeMessage } from './state.ts'
-
-/**
- * Scripts the fake reports for every character.
- *
- * Shaped after what the real corpus holds — one large webpack bundle, one small
- * hand-written script, one the card's own author disabled — so a list built
- * against this meets the cases that exist rather than three identical rows. The
- * byte sizes are real orders of magnitude: card scripts run to megabytes.
- */
-const FAKE_SCRIPTS: { id: string, name: string, info?: string, enabledByCard: boolean, bytes: number }[] = [
-  { id: 'f0f993f6', name: 'ERA 核心', info: '状态栏与变量写入', enabledByCard: true, bytes: 1_792_316 },
-  { id: 'acf69655', name: 'ERA 经验值系统', enabledByCard: true, bytes: 4_820 },
-  { id: '3fc1e259', name: 'ERA 以上待修改', info: '', enabledByCard: false, bytes: 0 },
-]
 
 /** How the fake is tuned for a given consumer. */
 export interface FakeClientOptions {
@@ -527,6 +513,11 @@ class InMemoryClient implements FakeClient {
           name: card.name,
           tags: card.tags,
           ...(card.creator === undefined ? {} : { creator: card.creator }),
+          // What a host would summarise off the same file, as far as a reader
+          // with no card decoder can get — see `readCard` for why `scriptCount`
+          // is not among them.
+          ...(card.description === undefined ? {} : { description: card.description }),
+          ...(card.bookEntryCount === undefined ? {} : { bookEntryCount: card.bookEntryCount }),
         }
         this.#characters = [character, ...this.#characters]
         return { character }
@@ -590,7 +581,10 @@ class InMemoryClient implements FakeClient {
       case 'script.setEnabled': {
         const { characterId, scriptId, enabled } = params as RpcRequest<'script.setEnabled'>
         this.#requireCharacter(characterId)
-        if (!FAKE_SCRIPTS.some(script => script.id === scriptId)) {
+        // Against *this card's* list, not the whole pack: a card that ships no
+        // scripts has no script to switch, and answering otherwise would let a
+        // caller store an override the list it reads back never shows.
+        if (!this.#scriptViews(characterId).some(script => script.id === scriptId)) {
           throw new FakeRpcError('not-found', `no script "${scriptId}"`)
         }
         this.#scriptOverrides.set(`${characterId}/${scriptId}`, enabled)
@@ -1148,9 +1142,19 @@ class InMemoryClient implements FakeClient {
     }
   }
 
-  /** The script list, with both switches reported as the contract asks. */
+  /**
+   * The script list, with both switches reported as the contract asks.
+   *
+   * Answered from the card's own summary, so `character.list`'s `scriptCount`
+   * and this list are two readings of one fact rather than two facts that can
+   * drift. A card carrying no count carries no scripts — which is the state a
+   * plain V1 card and every card imported into the fake are in, and the state
+   * the panel's "this card ships no scripts" branch exists for.
+   */
   #scriptViews(characterId: string): ScriptView[] {
-    return FAKE_SCRIPTS.map(script => ({
+    const summary = this.#characters.find(row => row.characterId === characterId)
+    const count = summary?.scriptCount ?? 0
+    return FAKE_SCRIPTS.slice(0, count).map(script => ({
       id: script.id,
       name: script.name,
       ...script.info === undefined ? {} : { info: script.info },

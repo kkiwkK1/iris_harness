@@ -133,6 +133,79 @@ export interface CharacterSummary {
   /** Whether the profile has starred this character. Absent means not starred. */
   favorite?: boolean
   /**
+   * The opening of the card's `data.description`, at most 200 **code points**.
+   *
+   * Three facts a character page shows — this, {@link bookEntryCount} and
+   * {@link scriptCount} — are counts and one short string, deliberately, and the
+   * deliberation is the same one {@link data} argues below: a whole card costs a
+   * median of 494 KiB and up to 2.8 MiB, so nothing here may be a whole
+   * anything. A clipped description and two integers cost about as much as the
+   * `tags` array beside them.
+   *
+   * **200 is a clip, and on this corpus it is the normal case, not the edge.**
+   * Measured over the 19 local cards: 15 carry an *empty* description (the
+   * modern Chinese cards put everything in the world book), and the four that
+   * carry one run 730, 779, 1744 and 2851 code points — every one of them
+   * clipped. So a reader must not treat this as the description; it is its
+   * first paragraph-ish worth. No ellipsis is added: whether the clip is marked
+   * is the interface's decision, and a host that added one would put a character
+   * in the data that the card never had.
+   *
+   * Code points rather than UTF-16 units, so the clip never lands between the
+   * halves of a surrogate pair and produces a lone surrogate — which survives
+   * `structuredClone`, reaches the DOM, and renders as a replacement character
+   * for exactly the emoji-bearing cards nobody tests with. Combining marks and
+   * ZWJ sequences can still be cut; that costs one glyph, not a broken string.
+   *
+   * **Absent when the card's description is empty**, which as measured is most
+   * of them — so a page must render "no description" as *nothing*, not as a
+   * blank line under a heading.
+   */
+  description?: string
+  /**
+   * How many entries the card's **embedded** `character_book` holds.
+   *
+   * The count of the same book {@link data} carries in full for the character
+   * being played, so the two cannot disagree — this one is carried for every
+   * card because a count is 8 bytes and a book is up to 1.1 MiB. Measured over
+   * the local corpus: 17 of 19 cards embed a book, holding 4 to 168 entries.
+   *
+   * **Absent means the card embeds no book at all; `0` means it embeds an empty
+   * one.** Those are different facts about a card — an author who shipped a book
+   * and emptied it did something an author who never shipped one did not — and
+   * folding them together is a one-way loss. This is the one field here that
+   * carries a zero; the others treat zero as absent, for the reason
+   * {@link scriptCount} gives.
+   *
+   * It counts *only* the embedded book. A card's world-info bindings by name
+   * (`data.extensions.world`, and what the host resolved them to) are a separate
+   * question, deliberately not answered here — see `ScriptContext.charWorldbooks`.
+   */
+  bookEntryCount?: number
+  /**
+   * How many script units the card carries, in `extractScripts`' reckoning.
+   *
+   * The same number `script.list` would return rows for — every script the card
+   * declares, including the ones its author shipped switched off, because that
+   * is what a user is being told the card *contains*. Deriving it any other way
+   * would let a page say "3 scripts" over a panel listing 5: the format stores
+   * scripts under two extension keys and in three shapes (see
+   * `@iris/script/extract`), and a hand-rolled walk of the obvious one missed 7
+   * of 15 cards the first time it was tried. Measured over the local corpus: 14
+   * of 19 cards carry at least one script, between 1 and 9 each.
+   *
+   * **Absent means none.** Zero and unknown are the same sentence to a reader —
+   * a page says nothing about scripts either way — and every other optional
+   * field on this summary already reads that way (`creator` absent when blank,
+   * `favorite` absent when not starred, `avatarUrl` absent when there is no
+   * picture). {@link bookEntryCount} is the deliberate exception, and says why.
+   *
+   * It reports what the card holds, never what the user allowed: consent is per
+   * card and lives in `script.list`'s own answer, which a library listing has no
+   * business anticipating.
+   */
+  scriptCount?: number
+  /**
    * The card's own data, carried **only for the character being played**.
    *
    * Upstream's `characters[this_chid]` is a whole card, and a card script reads
@@ -290,7 +363,15 @@ export interface ScriptContext {
   name2: string
   characterId?: string
   chatId?: string
-  /** The library, for a card that offers to switch or reference another. */
+  /**
+   * The library, for a card that offers to switch or reference another.
+   *
+   * Whole summaries, so this carries the three content facts a summary
+   * carries — a clipped `description` and the two counts. Measured on the
+   * 19-card corpus, they add 2003 bytes of JSON to a 4026-byte list (1.96 KiB),
+   * and they are strictly *less* than upstream hands a card here, which is the
+   * whole `characters` array with every card's full description in it.
+   */
   characters: CharacterSummary[]
   /**
    * This card's extension settings, partitioned per card.
