@@ -527,11 +527,12 @@ async function main(): Promise<void> {
    * says the check went blind, not that the interface broke.
    * `tests/token-format.test.ts` pins the rule unconditionally.
    */
-  assert.ok(
-    chatUsage.totalTokens !== undefined
-      && chatUsage.totalTokens < billed + chatUsage.outputTokens,
-    'the seed lost its bucket-only generation, so a line built on the summed total would pass here',
-  )
+  // The ruling behind the line's arithmetic: a conversation's summed usage
+  // never carries totalTokens (a total summed only over the generations that
+  // reported one is smaller than the buckets beside it once providers mix), so
+  // the line has nothing to read but the buckets. Pinned here because a host
+  // that started filling it would make the shortcut available again.
+  assert.equal(chatUsage.totalTokens, undefined, 'the conversation total must stay absent; the usage line adds buckets')
 
   // Per-reply readings: exactly the replies whose generation reported a cost.
   const pricedFloors = costed.messages.flatMap(row =>

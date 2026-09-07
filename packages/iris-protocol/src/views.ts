@@ -89,6 +89,21 @@ export interface ChatView {
    * until one generation has reported usage. Optional buckets are summed only
    * over generations that reported them; a bucket no generation reported stays
    * absent, so the hit rate is never diluted by providers that say nothing.
+   *
+   * **{@link TurnUsage.totalTokens} is always absent here**, on purpose and by
+   * ruling. Summed under the rule above it would cover only the generations
+   * that carried an exact total, coming out *smaller* than the buckets printed
+   * beside it whenever a conversation mixed providers — and a field named
+   * `totalTokens` sitting next to four buckets it does not total is a number
+   * every consumer reads wrong, silently. So a conversation reports the four
+   * buckets and no total; a surface that wants one adds the buckets it is
+   * showing. One generation keeps its own `totalTokens`, where the provider's
+   * aggregate is exactly what it claims to be — see {@link MessageView.usage}.
+   *
+   * A generation the host could not attach to a reply is not counted: an
+   * impersonation writes a *user* line, so it has no candidate to carry a cost
+   * and its tokens are absent from this sum. The host records why (see
+   * `@iris/app-service`'s `recordUsage`).
    */
   usage?: TurnUsage
 }

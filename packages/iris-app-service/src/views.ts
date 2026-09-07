@@ -14,10 +14,11 @@
 import type { Message } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { listCandidates, selectedCandidate } from '@iris/chat'
-import type { ChatView, MessageView } from '@iris/protocol'
+import type { ChatView, MessageView, TurnUsage } from '@iris/protocol'
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 
 import { runScripts } from './regex.ts'
+import { conversationUsage, usageBySeq } from './usage.ts'
 
 /** Speaker names, as the surface shows them. */
 export interface Names {
@@ -32,6 +33,16 @@ export interface PendingTurn {
   text: string
   /** Reasoning accumulated so far. */
   reasoning: string
+  /**
+   * What the provider said this generation cost, once it has said it.
+   *
+   * Parked here for the rest of the turn because the `usage` chunk arrives
+   * before the candidate it belongs to exists — see `ChatEntry.noteUsage`. It
+   * is deliberately **not** projected onto the streaming row: a number that
+   * appears mid-reply and then moves to the settled row reads as two different
+   * facts, and the whole point of this figure is that it is the exact one.
+   */
+  usage?: TurnUsage
 }
 
 /** Plain text of a message's content blocks. */
@@ -74,6 +85,10 @@ export function projectMessages(
   },
 ): MessageView[] {
   const pending = options.pending
+  // One pass over the log for the whole projection rather than one per row: the
+  // walk below already visits every turn, and a per-row scan would make the
+  // cost of rendering a chat quadratic in its length.
+  const usages = usageBySeq(session)
   const keyAt = (index: number): string => options.keys[index] ?? `m-orphan-${String(index)}`
   const views: MessageView[] = []
   const seenTurns = new Set<number>()
@@ -107,6 +122,12 @@ export function projectMessages(
     if (current === undefined) continue
 
     const reasoning = reasoningOf(current.message)
+    // The **selected** candidate's own bill, so the number under the row belongs
+    // to the text in the row: swiping to a reply generated an hour ago shows
+    // what that reply cost, not what the newest one did. Absent when this
+    // candidate reported nothing — an imported reply, a provider that sends no
+    // usage, or a generation that failed before the usage chunk.
+    const usage = usages.get(current.seq)
     views.push({
       id: views.length,
       key: keyAt(views.length),
@@ -116,6 +137,7 @@ export function projectMessages(
       ...reasoning.length > 0 ? { reasoning } : {},
       swipes: { count: candidates.length, index: current.index },
       turn: messageTurn,
+      ...usage === undefined ? {} : { usage },
     })
   }
 
@@ -141,7 +163,13 @@ export function projectMessages(
     // existing line rather than appending a second one.
     const last = views[views.length - 1]
     if (last !== undefined && last.turn === pending.turn) {
-      views[views.length - 1] = { ...last, text: pending.text, streaming: true }
+      // The cost goes with the text it paid for. This row is showing the reply
+      // being generated now, while `usage` on it was the *previous* selected
+      // candidate's bill — leaving it would put a settled number under text
+      // that has not been charged yet, and it would even change as the user
+      // watched, since the new candidate becomes selected once it lands.
+      const { usage: _superseded, ...settled } = last
+      views[views.length - 1] = { ...settled, text: pending.text, streaming: true }
     }
   }
 
@@ -162,6 +190,46 @@ export function projectMessages(
 }
 
 /**
+ * Everything this conversation ever paid a provider for, added up.
+ *
+ * **Every candidate, not every selected candidate.** A regenerated reply was
+ * billed; the fact that the user swiped away from it does not refund it, and a
+ * running total that only counted the visible readings would understate a
+ * conversation the user swiped through by exactly the interesting amount.
+ *
+ * Carries **no `totalTokens`**: an aggregate total is summed only over the
+ * generations that reported one, so it undercounts a conversation that mixed
+ * providers and reads as the total anyway. `conversationUsage` is where that
+ * ruling lives.
+ *
+ * Walked by turn and candidate rather than by summing the `iris/usage` events
+ * directly: the events are keyed by candidate seq, and reading them through the
+ * candidate list is what guarantees the total describes replies this log still
+ * holds. (Nothing removes a candidate today — a deletion rebuilds the log
+ * instead — so the two agree; the walk is what keeps them agreeing if that
+ * changes.)
+ * @param session - the chat log.
+ * @returns the sum, or `undefined` when no generation here reported anything.
+ */
+function totalUsage(session: Session): TurnUsage | undefined {
+  const usages = usageBySeq(session)
+  if (usages.size === 0) return undefined
+  const found: TurnUsage[] = []
+  const seenTurns = new Set<number>()
+  for (const event of session.events) {
+    if (event.type !== 'assistant/message') continue
+    const turn = event.data.turn
+    if (seenTurns.has(turn)) continue
+    seenTurns.add(turn)
+    for (const candidate of listCandidates(session, turn)) {
+      const usage = usages.get(candidate.seq)
+      if (usage !== undefined) found.push(usage)
+    }
+  }
+  return conversationUsage(found)
+}
+
+/**
  * Build the whole open-conversation view.
  * @param input - identity, the log, speaker names and the newest turn's variables.
  * @returns the view to send.
@@ -178,6 +246,7 @@ export function toChatView(input: {
   substitute?: MacroSubstitute | undefined
   variables?: Record<string, unknown> | undefined
 }): ChatView {
+  const usage = totalUsage(input.session)
   return {
     chatId: input.chatId,
     title: input.title,
@@ -189,5 +258,6 @@ export function toChatView(input: {
       substitute: input.substitute,
     }),
     ...input.variables === undefined ? {} : { variables: input.variables },
+    ...usage === undefined ? {} : { usage },
   }
 }

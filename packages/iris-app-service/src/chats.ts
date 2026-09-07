@@ -348,8 +348,10 @@ export class ChatStore {
       ...this.#persona === undefined ? {} : { persona: this.#persona },
     })
     // The log carries the conversation; the variables ride alongside it and
-    // have to be put back explicitly.
+    // have to be put back explicitly. So does what each generation cost — the
+    // provider said it once and the file is the only place it survives.
     entry.hydrateVariables(file.messages)
+    entry.hydrateUsage(file.messages)
     this.#entries.set(chatId, entry)
     return entry
   }
@@ -492,6 +494,11 @@ export class ChatStore {
       ...this.#persona === undefined ? {} : { persona: this.#persona },
     })
     child.hydrateVariables(lines)
+    // A branch inherits the history it was cut from, and that history was paid
+    // for once. The parent keeps its own copy; the two are separate
+    // conversations from here, so the same figures appear in both totals — the
+    // alternative is a branch whose early turns look free.
+    child.hydrateUsage(lines)
 
     this.#entries.set(childId, child)
     await this.save(child)
