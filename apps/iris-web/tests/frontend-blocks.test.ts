@@ -555,3 +555,219 @@ test('every string the row hands the renderer goes through the rule', () => {
   assert.match(source, /unwrapUnknownTagsOutsideCode\(segment\.text\)/, 'segments must be cleaned before render')
 })
 
+/*
+ * A message's own `<style>`: one sheet for the message, copied into the frames
+ * its regions became, and gone from both the region list and the prose.
+ *
+ * The population, measured through this file's own claimer: **13 of 220
+ * candidate texts (regex `replaceString`, `first_mes`, alternate greetings) in
+ * 25 cards** put a bare HTML fragment, a blank line and a `<style>` in one
+ * output — 9 cards, all of them variable-update panels. None of the 13 is a
+ * sheet with no fragment beside it.
+ */
+
+/**
+ * 爱衣's `[美化]完整变量更新` shape, desensitised.
+ *
+ * The structure, not the conversation: the wrapper, the `<details>` whose body
+ * starts at `opacity: 0`, the blank line, and the sheet whose `[open]>div` rule
+ * is the only thing that ever unhides it. `$2` becomes placeholder text.
+ */
+function variablePanel(): string {
+  return [
+    '<div style="width: 80%; margin: 20px auto;">',
+    '  <details class="thinking-description" style="background: #2d2d2d;">',
+    '    <summary>变量更新 - <span class="thinking-summary" data-close="点击查看" data-open="点击隐藏"></span></summary>',
+    '    <div style="transform: translateY(-8px); opacity: 0;">',
+    '    占位正文',
+    '    </div>',
+    '  </details>',
+    '</div>',
+    '',
+    '<style>',
+    '  .thinking-description[open]>div { transform: translateY(0) !important; opacity: 1 !important; }',
+    '  .thinking-description[open] summary .thinking-summary::after { content: attr(data-open); }',
+    '</style>',
+  ].join(NL)
+}
+
+test('the panel and its sheet are one frame, and the sheet is what goes into it', () => {
+  const source = ['她把袖口卷起来。', '', variablePanel(), '', '然后继续。'].join(NL)
+  const { blocks, styles, css, refused } = claimMessageSurfaces(source)
+
+  assert.deepEqual(refused, [], refused.join(','))
+  assert.equal(blocks.length, 1, 'the sheet became a second frame again')
+  assert.equal(blocks[0]?.kind, 'bare-html')
+  assert.match(blocks[0]?.body ?? '', /<details class="thinking-description"/)
+  assert.doesNotMatch(blocks[0]?.body ?? '', /<style/, 'the frame carries the sheet as markup')
+
+  assert.equal(styles.length, 1, 'the sheet must come back with a span to splice')
+  assert.equal(
+    source.slice(styles[0]?.start ?? 0, styles[0]?.end ?? 0),
+    ['<style>',
+      '  .thinking-description[open]>div { transform: translateY(0) !important; opacity: 1 !important; }',
+      '  .thinking-description[open] summary .thinking-summary::after { content: attr(data-open); }',
+      '</style>'].join(NL),
+    'the span does not name the whole element',
+  )
+
+  // Confined by `card-css.ts`, not pasted raw: the frame is one document and
+  // the sheet is one message's, so the scope root is the body the markup went
+  // into. The rule that unhides the panel has to survive that.
+  assert.match(css, /@scope \(body\)/, 'the sheet reaches a frame unconfined')
+  assert.match(css, /\.thinking-description\[open\]>div/)
+  assert.match(css, /content: attr\(data-open\)/, 'the summary’s own text comes from this rule')
+})
+
+test('the sheet is neither a frame nor prose — the renderer never sees its text', () => {
+  /*
+   * The half that a region-list test cannot see. `MarkdownText` disables raw
+   * HTML, so a `<style>` element handed to it is printed as **text**: dropping
+   * the region without dropping the span would trade an empty 812px frame for a
+   * screenful of escaped CSS in the middle of the message.
+   */
+  const source = ['她把袖口卷起来。', '', variablePanel(), '', '然后继续。'].join(NL)
+  const { blocks, styles } = claimMessageSurfaces(source)
+  const segments = splitAroundInterfaces(source, blocks, styles)
+
+  const prose = segments.filter(segment => segment.kind === 'text').map(segment => segment.text).join('')
+  assert.doesNotMatch(prose, /<style/, 'the stylesheet’s source reached the renderer')
+  assert.doesNotMatch(prose, /thinking-description\[open\]/, 'its rules reached the renderer as text')
+  assert.match(prose, /她把袖口卷起来。/, 'the narrative went with it')
+  assert.match(prose, /然后继续。/)
+  assert.equal(segments.filter(segment => segment.kind === 'interface').length, 1)
+})
+
+test('the row actually hands the style spans over, and takes neither shortcut', () => {
+  /*
+   * Written after the test above failed to notice a real mutation. Removing the
+   * third argument at the row's call site left every assertion in this file
+   * green: the split does drop spans it is given, and the row simply stopped
+   * giving it any. Producer and consumer each tested, the hand-off between them
+   * tested by nothing — so this reads the seam itself.
+   *
+   * Two shortcuts, and both are silent. Dropping the argument prints the
+   * stylesheet as text in the middle of the message; leaving the early return
+   * on `blocks.length === 0` alone does the same for a message whose only
+   * markup *was* the sheet.
+   */
+  const source = readFileSync(
+    fileURLToPath(new URL('../src/app/MessageInterfaces.tsx', import.meta.url)),
+    'utf8',
+  )
+  const calls = [...source.matchAll(/splitAroundInterfaces\(([^)]*)\)/g)].map(hit => hit[1] ?? '')
+  assert.equal(calls.length, 1, `splitAroundInterfaces call sites: ${String(calls.length)}`)
+  assert.match(calls[0] ?? '', /\bstyles\b/, 'the row keeps the sheet’s characters in the prose')
+  assert.match(
+    source,
+    /blocks\.length === 0 && styles\.length === 0/,
+    'the no-block fast path would render a style-only message as source',
+  )
+})
+
+test('a style span does not renumber the interfaces after it', () => {
+  /*
+   * The failure the merged walk is written to avoid: `instance` is the block's
+   * index in `blocks`, and it is also the slot the row renders and the frame the
+   * controller builds. A number assigned while walking a list that also holds
+   * style spans would slip by one on any message with a sheet before a panel —
+   * every later interface rendering into its neighbour's slot, with nothing
+   * reporting anything.
+   */
+  const source = [
+    '<style>.a{color:red}</style>',
+    '',
+    '<div>one</div>',
+    '',
+    '中间。',
+    '',
+    '<div>two</div>',
+  ].join(NL)
+  const { blocks, styles } = claimMessageSurfaces(source)
+  const interfaces = splitAroundInterfaces(source, blocks, styles)
+    .filter(segment => segment.kind === 'interface')
+
+  assert.deepEqual(interfaces.map(segment => segment.instance), [0, 1])
+  assert.deepEqual(
+    interfaces.map(segment => segment.block.body),
+    ['<div>one</div>', '<div>two</div>'],
+    'an interface was built into a neighbour’s slot',
+  )
+})
+
+test('a sheet with no HTML of its own is dropped, and the drop is reported', () => {
+  /*
+   * The one shape the fix cannot serve: there is no region frame to copy the
+   * sheet into, so there is no equivalent of a message-wide scope. Silence here
+   * would leave a card author looking for a panel whose CSS evaporated — the
+   * corpus has cards that print their own explanation when a resource goes
+   * missing, and an unexplained absence loses that race.
+   */
+  const source = ['开场。', '', '<style>.a{color:red}</style>', '', '结尾。'].join(NL)
+  const { blocks, styles, css, refused } = claimMessageSurfaces(source)
+
+  assert.deepEqual(blocks, [], 'a sheet must never be a frame')
+  assert.equal(styles.length, 1, 'its characters still have to leave the prose')
+  assert.equal(css, '', 'CSS with no destination must not be handed to one')
+  assert.equal(refused.length, 1, refused.join(','))
+  assert.match(refused[0] ?? '', /nothing to style/)
+
+  const prose = splitAroundInterfaces(source, blocks, styles)
+    .filter(segment => segment.kind === 'text').map(segment => segment.text).join('')
+  assert.doesNotMatch(prose, /<style/, 'the dropped sheet was printed instead')
+})
+
+test('a fenced document keeps its own <style>, because upstream’s iframe keeps it too', () => {
+  /*
+   * A fenced block is not a message region: upstream renders it in an iframe of
+   * its own, which its `.mes_text`-prefixed message sheet does not reach either.
+   * So the `<style>` inside the fence is the card's document's, it stays exactly
+   * where the author put it, and nothing about it becomes a message sheet.
+   */
+  const source = guiWrappedOpening()
+  const { blocks, styles, css } = claimMessageSurfaces(source)
+
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0]?.kind, 'fenced')
+  assert.match(blocks[0]?.body ?? '', /<style>[\s\S]*#rvr-welcome/, 'the fence’s own sheet was taken out of it')
+  assert.deepEqual(styles, [], 'a fenced sheet is not a message sheet')
+  assert.equal(css, '')
+})
+
+test('the refusal list is the same list, and keyframe names are not', () => {
+  /*
+   * Two halves of "use `card-css.ts`, do not re-implement it".
+   *
+   * The refusals are unchanged: `@import` and `@font-face` fetch, and a frame's
+   * sheet is no more allowed to than a message's.
+   *
+   * The keyframe **rename** is off for this path, and that is a measurement
+   * rather than a preference: 5 of the 13 corpus sheets define keyframes their
+   * message's markup names from a `style=` attribute (爱衣's `shimmer`,
+   * 可攻略女主's `moon-halo` and `stars-twinkle`, …). The rewrite only reaches
+   * `animation` declarations inside the sheet it renames, so renaming would
+   * leave those attributes naming an animation nobody defines — a decoration
+   * that stops with no error attached.
+   */
+  const source = [
+    '<div style="animation: moon-halo 3s ease-in-out infinite;">panel</div>',
+    '',
+    '<style>',
+    '@import url(https://fonts.example.test/x.css);',
+    '@font-face { font-family: X; src: url(https://fonts.example.test/x.woff2) }',
+    '@keyframes moon-halo { from { opacity: 0 } to { opacity: 1 } }',
+    '.panel { animation: moon-halo 2s linear infinite }',
+    '</style>',
+  ].join(NL)
+  const { css, refused } = claimMessageSurfaces(source)
+
+  assert.ok(refused.includes('@import'), refused.join(','))
+  assert.ok(refused.includes('@font-face'), refused.join(','))
+  assert.doesNotMatch(css, /@import/)
+  assert.doesNotMatch(css, /@font-face/)
+
+  assert.match(css, /@keyframes moon-halo/, 'the markup’s style attribute names this animation')
+  assert.doesNotMatch(css, /iris-cmsg-moon-halo/, 'a renamed keyframe strands the markup’s own reference')
+  assert.match(css, /animation: moon-halo 2s linear infinite/, 'the sheet’s own reference must still match')
+})
+

@@ -199,7 +199,7 @@ export function useMessageInterfaces(input: MessageInterfacesInput): {
      * text, or the instance a slot is named by stops being the instance a frame
      * was built for.
      */
-    const { blocks } = claimMessageSurfaces(input.text)
+    const { blocks, css } = claimMessageSurfaces(input.text)
     if (blocks.length === 0) {
       adopted?.disposeNow()
       setSwapping(false)
@@ -276,7 +276,14 @@ export function useMessageInterfaces(input: MessageInterfacesInput): {
         if (!mute.muted) setStates(next)
         drive(next)
       },
-    })
+    },
+    /*
+     * The message's own sheet, from the **same claim** as the blocks. Claiming
+     * it separately would be a second reading of one text, and the reading that
+     * decides which characters leave the prose has to be the reading that
+     * decides which frames get the CSS.
+     */
+    css)
 
     /*
      * The chat keeps moving under a mounted interface, and an interface is a

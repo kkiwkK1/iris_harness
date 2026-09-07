@@ -46,6 +46,29 @@ const IMAGE_SET = 'image-set()'
 /** The custom-property prefix a card may not redefine. */
 const RESERVED_PREFIX = '--iris-'
 
+/**
+ * Whether `@keyframes` names are made unique or left as the author wrote them.
+ *
+ * `rename` is the default, and it is why this function is careful at all:
+ * keyframe names are **global**, so two cards that both define `pulse`
+ * overwrite each other in a shared document.
+ *
+ * `keep` is for CSS installed into a document where there is no second card to
+ * collide with — a message frame, which holds one region of one message. It
+ * relaxes nothing: renaming is a collision measure, and inside a frame it has
+ * no collision left to prevent while it *does* have something to break.
+ * **Measured on the corpus: 5 of the 13 message-level sheets define keyframes
+ * the message's own markup names from a `style=` attribute** (爱衣's `shimmer`;
+ * 可攻略女主 and 暗渊 with `moon-halo`, `moon-pulse`, `stars-drift`,
+ * `moonlight-sweep`). The rewrite below only reaches `animation` declarations
+ * *in the sheet being renamed*, so those attributes would go on naming an
+ * animation nobody defines any more — a decoration that stops with no error
+ * attached, which is the failure shape this project keeps removing. The other
+ * direction stays renamed and stays correct: a name referenced from inside the
+ * same sheet (`contentSlideIn`) is rewritten along with its definition.
+ */
+export type KeyframePolicy = 'rename' | 'keep'
+
 /** What one scoping pass produced. */
 export interface ScopedCss {
   /** The CSS to install, already confined. */
@@ -136,6 +159,40 @@ function topLevelPieces(css: string): { prelude: string, block: string }[] {
   const rest = css.slice(preludeStart).trim()
   if (rest !== '') pieces.push({ prelude: rest, block: '' })
   return pieces
+}
+
+/**
+ * A prelude with its leading comments removed, which is where its rule starts.
+ *
+ * **A comment before an at-rule used to hide the at-rule.** `topLevelPieces`
+ * hands back everything between the last block and this one as the prelude, so
+ * a card that writes a CSS comment on the line above `@keyframes shimmer` — as
+ * cards do, to label the animation — produced a prelude whose first characters
+ * are the comment's. `atRuleName` then said "not an at-rule", and the whole
+ * piece was pushed in as if it were a selector — which for `@keyframes` means
+ * **inside `@scope`, where it defines nothing at all**. Measured on 爱衣's
+ * `[美化]变量更新中`: its `@keyframes shimmer` is labelled exactly like that,
+ * and the `animation: shimmer 2s linear infinite` in the markup had nothing to
+ * run. The same hole sat under the nested-frame path, silently, before a
+ * message's sheet ever went through here.
+ *
+ * The comment is dropped from an at-rule's own output (a comment changes no
+ * behaviour) and kept on a plain selector, which is the caller's choice, not
+ * this function's.
+ * @param prelude - the text between the previous block and this one.
+ * @returns the prelude from its first non-comment character.
+ */
+function ruleHead(prelude: string): string {
+  let at = 0
+  for (;;) {
+    while (at < prelude.length && /\s/.test(prelude[at] ?? '')) at += 1
+    if (!prelude.startsWith('/*', at)) return prelude.slice(at)
+    const close = prelude.indexOf('*/', at + 2)
+    // An unterminated comment swallows the rest, which is what a CSS parser
+    // does too — there is no rule left in it to name.
+    if (close === -1) return ''
+    at = close + 2
+  }
 }
 
 /** The at-rule's name, lowercased, or undefined for a plain selector. */
@@ -237,12 +294,17 @@ function stripReserved(block: string, refused: Set<string>): string {
  * upstream deletes a floor with `chat.splice(index, 1)`, which shifts every
  * later floor, so styles hung off a floor number land on someone else's message
  * after one deletion.
+ * @param scopeSelector - the scope root; defaults to this message's element.
+ * @param keyframes - whether keyframe names are made unique. See
+ * {@link KeyframePolicy}: `keep` is for a document with only one card's CSS in
+ * it, where the rename has nothing to prevent and something to break.
  * @returns the confined CSS and what was refused.
  */
 export function scopeCardCss(
   css: string,
   candidateSeq: string,
   scopeSelector?: string,
+  keyframes: KeyframePolicy = 'rename',
 ): ScopedCss {
   const refused = new Set<string>()
   const prefix = `iris-c${candidateSeq}`
@@ -265,7 +327,14 @@ export function scopeCardCss(
   const scoped: string[] = []
 
   for (const piece of topLevelPieces(css)) {
-    const name = atRuleName(piece.prelude)
+    /*
+     * The rule's own start, past any comment a card put above it. Read through
+     * `ruleHead` and not from `piece.prelude` directly, because a labelled
+     * `@keyframes` otherwise reads as a selector and lands inside `@scope`,
+     * where it defines nothing — see `ruleHead`.
+     */
+    const head = ruleHead(piece.prelude)
+    const name = atRuleName(head)
 
     if (name !== undefined && REFUSED_AT_RULES.includes(name)) {
       refused.add(`@${name}`)
@@ -280,9 +349,18 @@ export function scopeCardCss(
 
     if (name !== undefined && name.endsWith('keyframes')) {
       // `@-webkit-keyframes` counts: the name it defines is just as global.
-      const declared = piece.prelude.replace(/^@[A-Za-z-]+\s*/, '').trim()
+      const declared = head.replace(/^@[A-Za-z-]+\s*/, '').trim()
       if (declared === '') {
         refused.add('@keyframes with no name')
+        continue
+      }
+      /*
+       * Lifted either way — `@keyframes` cannot live inside `@scope` — and
+       * renamed only when something could collide with it. See
+       * `KeyframePolicy` for the 5-of-13 measurement behind the second half.
+       */
+      if (keyframes === 'keep') {
+        lifted.push(`@${name} ${declared} ${piece.block}`)
         continue
       }
       const fresh = `${prefix}-${declared}`
@@ -295,7 +373,7 @@ export function scopeCardCss(
       // A statement at-rule that is not on the refusal list, or a stray
       // fragment. Neither is a rule, and passing it through would put text of
       // unknown shape inside `@scope`.
-      refused.add(`a statement this scoper does not model: ${piece.prelude.slice(0, 40)}`)
+      refused.add(`a statement this scoper does not model: ${head.slice(0, 40)}`)
       continue
     }
 

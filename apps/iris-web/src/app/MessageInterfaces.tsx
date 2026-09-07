@@ -18,6 +18,8 @@ import { useEffect, useRef, useState, type ReactElement } from 'react'
 
 import type { ScriptContext } from '@iris/protocol'
 
+import type { MessageStyle } from './html-regions.ts'
+
 import { actionsOf, tapHostEvents } from '../client/store.ts'
 import { snapshotFor } from './shared-snapshot.ts'
 import { describeRefusal } from './blocked-line.ts'
@@ -417,8 +419,8 @@ export function MessageInterfaces({
    * interface rebuilt per token is not a feature, and a half-arrived block shown
    * as source is honest about what has come so far.
    */
-  const { blocks, refused } = streaming
-    ? { blocks: [], refused: [] as readonly string[] }
+  const { blocks, refused, styles } = streaming
+    ? { blocks: [], refused: [] as readonly string[], styles: [] as readonly MessageStyle[] }
     : claimMessageSurfaces(text)
 
   /*
@@ -456,7 +458,16 @@ export function MessageInterfaces({
    * Applied here rather than inside the claim pipeline: claims are offsets into
    * the message as stored (see `unwrapUnknownTagsOutsideCode`).
    */
-  if (blocks.length === 0) {
+  /*
+   * `styles` as well as `blocks`, because a message can have nothing to frame
+   * and still have characters that must not be rendered. A `<style>` element
+   * reaching `MarkdownText` arrives as **text** — the renderer disables raw HTML
+   * — so this fast path would print the stylesheet where the panel's CSS used to
+   * be, which is a louder version of the fault this change is about. The
+   * segmented path below removes those spans; this one is only for a message
+   * with neither.
+   */
+  if (blocks.length === 0 && styles.length === 0) {
     return <MarkdownText text={unwrapUnknownTagsOutsideCode(text)} streaming={streaming} />
   }
 
@@ -468,7 +479,13 @@ export function MessageInterfaces({
    * the wrapper used to be. Same rule `splitAroundInterfaces` already applies
    * to whitespace between two interfaces, one transform later.
    */
-  const segments = splitAroundInterfaces(text, blocks)
+  /*
+   * The style spans go in as **dropped**: no frame, no prose, nothing in their
+   * place. Their CSS has already gone into the region frames (through the same
+   * claim, in `useMessageInterfaces`), and the characters themselves have no
+   * reader left.
+   */
+  const segments = splitAroundInterfaces(text, blocks, styles)
     .map(segment =>
       segment.kind === 'text'
         ? { ...segment, text: unwrapUnknownTagsOutsideCode(segment.text) }

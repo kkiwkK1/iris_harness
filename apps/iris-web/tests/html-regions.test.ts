@@ -138,7 +138,118 @@ test('whitespace between two regions is not emitted as prose', () => {
 })
 
 test('an empty message produces no regions', () => {
-  assert.deepEqual(splitHtmlRegions(''), { regions: [], refused: [] })
+  assert.deepEqual(splitHtmlRegions(''), { regions: [], refused: [], styles: [] })
+})
+
+/**
+ * 爱衣's `[美化]完整变量更新` shape, desensitised.
+ *
+ * The card's own structure — a wrapper div, a `<details class=
+ * "thinking-description">` whose body starts at `opacity: 0`, a blank line, and
+ * a `<style>` whose `[open]>div` rule is the only thing that unhides it — with
+ * the regex's `$2` replaced by placeholder text and the decoration trimmed to
+ * the rules that carry behaviour. Measured on the corpus: **13 of 220 candidate
+ * texts across 9 cards have this shape**, and in every one of the 13 the gap
+ * between the fragment and the sheet is exactly one blank line.
+ */
+function variablePanel(): string {
+  return [
+    '<div style="width: 80%; margin: 20px auto;">',
+    '  <details class="thinking-description" style="background: #2d2d2d;">',
+    '    <summary>变量更新 - <span class="thinking-summary" data-close="点击查看" data-open="点击隐藏"></span></summary>',
+    '    <div style="transform: translateY(-8px); opacity: 0; white-space: pre-wrap;">',
+    '    占位正文',
+    '    </div>',
+    '  </details>',
+    '</div>',
+    '',
+    '<style>',
+    '  .thinking-description[open]>div { transform: translateY(0) !important; opacity: 1 !important; }',
+    '  .thinking-description[open] summary .thinking-summary::after { content: attr(data-open); }',
+    '</style>',
+  ].join('\n')
+}
+
+test('a style block is not a region — it comes back as the message’s own sheet', () => {
+  /*
+   * The fault this rule exists for, at the level where it is decided. The panel
+   * and the sheet are separated by a blank line, so the split made two regions
+   * and the pipeline two frames: one 88px collapsed `<details>`, and one frame
+   * holding only CSS — measured at 812px of empty black, with the `[open]>div`
+   * rule that unhides the panel's body sitting inside it, out of reach of the
+   * `<details>` next door.
+   */
+  const { regions, styles, refused } = splitHtmlRegions(variablePanel())
+
+  assert.deepEqual(regions.map(region => region.kind), ['html'], 'the sheet is still a region')
+  assert.match(regions[0]?.text ?? '', /^<div style="width: 80%/, 'the panel is the region')
+  assert.doesNotMatch(regions[0]?.text ?? '', /<style/, 'the sheet was folded into the panel')
+  assert.equal(styles.length, 1, 'the message has one sheet')
+  assert.match(styles[0]?.css ?? '', /\.thinking-description\[open\]>div/)
+  assert.doesNotMatch(styles[0]?.css ?? '', /<style/, 'the tags come off; only CSS is handed on')
+  assert.deepEqual(refused, [])
+})
+
+test('the sheet’s span carves its own characters out of the source, tags and all', () => {
+  /*
+   * The span is what lets the row take the same characters out of the prose. If
+   * it named anything less than the whole element, the row would print the
+   * leftovers — a lone `</style>` — as **text**, because the renderer disables
+   * raw HTML.
+   */
+  const source = variablePanel()
+  const { styles } = splitHtmlRegions(source)
+  const span = styles[0]
+  assert.ok(span !== undefined)
+  const carved = source.slice(span.start, span.end)
+  assert.match(carved, /^<style>/)
+  assert.match(carved, /<[/]style>$/)
+})
+
+test('a style inside a panel belongs to the panel, not to the message', () => {
+  /*
+   * The distinction that keeps this from being a `includes('<style')` rule: a
+   * card's widget routinely carries its own `<style>` **inside** it, and that
+   * one is already in the right document — its own region's frame. Only a run
+   * with nothing outside its style elements is a message-level sheet.
+   */
+  const text = ['<div class="widget">', '<style>.widget{color:red}</style>', '<span>x</span>', '</div>'].join('\n')
+  const { regions, styles } = splitHtmlRegions(text)
+
+  assert.deepEqual(regions.map(region => region.kind), ['html'])
+  assert.match(regions[0]?.text ?? '', /<style>\.widget\{color:red\}<[/]style>/, 'the widget lost its own CSS')
+  assert.deepEqual(styles, [], 'a panel’s own sheet must not be lifted to the message')
+})
+
+test('two sheets around a panel are both collected, in source order', () => {
+  const text = [
+    '<style>.a{color:red}</style>',
+    '',
+    '<div>panel</div>',
+    '',
+    '<style>.b{color:blue}</style>',
+  ].join('\n')
+  const { regions, styles } = splitHtmlRegions(text)
+
+  assert.deepEqual(regions.map(region => region.kind), ['html'], 'only the panel is a region')
+  assert.deepEqual(styles.map(style => style.css), ['.a{color:red}', '.b{color:blue}'])
+})
+
+test('an unclosed style block is CSS, and the reader is told so', () => {
+  /*
+   * The alternative was the unclosed-region fallback, which frames the rest of
+   * the message as HTML — a frame whose entire content is a stylesheet's text.
+   * What follows an opening `<style>` is declarations either way; what the
+   * author needs is the note.
+   */
+  const { regions, styles, refused } = splitHtmlRegions('<style>\n.a{color:red}\n\n后面还有叙事')
+
+  assert.deepEqual(regions, [], 'a stylesheet became a frame again')
+  assert.equal(styles.length, 1)
+  assert.match(styles[0]?.css ?? '', /后面还有叙事/, 'the tail is CSS, which is what an unclosed sheet means')
+  assert.equal(refused.length, 1, refused.join(','))
+  assert.match(refused[0] ?? '', /never closed/)
+  assert.match(refused[0] ?? '', /<style>/, 'the note has to name what did not close')
 })
 
 test('every region reports offsets that carve its exact text out of the source', () => {
