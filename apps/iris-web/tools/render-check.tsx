@@ -540,6 +540,137 @@ async function main(): Promise<void> {
   assert.match(withScripts, /A card has no way to ask/, 'the panel does not say a card cannot request this')
   assert.doesNotMatch(withScripts, /document access/i, 'the grant is worded as an API, not a consequence')
 
+  // ------------------------------------------------- regex, both tiers
+  /*
+   * The two regex sections and the editor, rendered.
+   *
+   * Both panels return `null` until their data is in, and their effects do not
+   * run in a server render — so the loads are driven here. That is also what
+   * makes the check meaningful: the failure this pins is a section that renders
+   * *nothing*, which for a panel whose absent state is also `null` is
+   * indistinguishable from a host that has no store.
+   *
+   * The fake answers `regex.list` and `regex.scopedList` from memory for
+   * exactly this reason. It refused both until this round, so the whole regex
+   * panel had never been rendered by anything in the repository, and the
+   * editor added here would have had nowhere to be checked.
+   */
+  await wired.store.getState().loadRegex()
+  await wired.store.getState().loadScopedRegex(character)
+  const regexHeld = wired.store.getState()
+  assert.ok(
+    (regexHeld.regexScripts ?? []).length > 0,
+    'the fake no longer seeds a global regex tier, so the panel cannot render',
+  )
+  assert.ok(
+    (regexHeld.scopedRegex ?? []).length > 0,
+    'the fake no longer seeds a scoped regex tier for the open chat’s card',
+  )
+
+  const withRegex = render(wired.store, slots.core)
+  assert.match(withRegex, /Global regex/, 'the global regex section is missing')
+  // Same hazard as the library names below, and the same handle: the global
+  // list renders a per-row delete label, the scoped list does not (its rules
+  // belong to the card and cannot be deleted here), so the two are told apart
+  // by which control appears beside the name.
+  assert.match(withRegex, /Delete the script 隐藏思考块/, 'the seeded global rule has no row')
+  assert.match(withRegex, /This character’s regex/, 'the card’s own regex section is missing')
+  assert.match(withRegex, /状态栏隐藏/, 'the seeded scoped rule is not listed')
+  assert.doesNotMatch(
+    withRegex,
+    /Delete the script 状态栏隐藏/,
+    'the card’s own rule is offered a delete, which would rewrite the card',
+  )
+  // The two switches, reported separately — the whole reason the scoped view
+  // carries `enabledByCard` beside `enabled`.
+  assert.match(withRegex, /off by the card/, 'a card-disabled rule is not distinguished')
+  // The permission that did not exist before this round. Its absence was the
+  // compatibility gap: upstream gates this tier on `character_allowed_regex`
+  // and this host ran it unconditionally.
+  assert.match(withRegex, /Stop them running/, 'the card’s regex tier has no allow switch')
+  assert.match(withRegex, /Write a rule/, 'there is no way to author a rule')
+  // And the editor is not open until it is asked for: a form that rendered
+  // unconditionally would put a dozen fields in the drawer for every reader.
+  assert.doesNotMatch(withRegex, /Trim out/, 'the rule editor is open before anyone opened it')
+
+  // ------------------------------------------------------- the script library
+  /*
+   * The library section, both repositories.
+   *
+   * Loaded with the open chat's character, so the per-character repository has
+   * something in it — with no character the panel renders the global half and
+   * says where the other one is, which is a different assertion and belongs to
+   * `script-library.test.ts` rather than here.
+   */
+  await wired.store.getState().loadLibrary(character)
+  const libraryHeld = wired.store.getState().library ?? []
+  assert.ok(
+    libraryHeld.some(row => row.scope === 'global'),
+    'the fake no longer seeds a global library script',
+  )
+  assert.ok(
+    libraryHeld.some(row => row.scope === 'character'),
+    'the fake no longer seeds a per-character library script',
+  )
+
+  const withLibrary = render(wired.store, slots.core)
+  assert.match(withLibrary, /Your scripts/, 'the script library section is missing')
+  /*
+   * Matched on the row's **own** control, not on the script's name.
+   *
+   * A library script's name is on this page twice: once in this section and
+   * once in the card-script panel, because `script.list` merges the
+   * repositories and that merge is the point. So `/快捷骰子/` passed with the
+   * library's global list emptied — one match describing two lists. The
+   * per-row delete label is rendered only by a library row, so it is the
+   * handle that discriminates.
+   */
+  assert.match(
+    withLibrary,
+    /Delete the script 快捷骰子/,
+    'the seeded global library script has no row in the library section',
+  )
+  assert.match(
+    withLibrary,
+    /Delete the script 络络的天气面板/,
+    'the seeded per-character library script has no row in the library section',
+  )
+  assert.match(withLibrary, /Every conversation/, 'the global repository has no heading')
+  assert.match(withLibrary, /This character only/, 'the per-character repository has no heading')
+  // Both button figures, because 58 of the corpus's 89 buttons are hidden and
+  // "2 buttons" over a bar showing one is the ordinary case.
+  assert.match(withLibrary, /2 buttons, 1 shown/, 'the button figures are not both reported')
+  assert.match(withLibrary, /Write a script/, 'there is no way to author a script')
+
+  /*
+   * And the same rows reach the card-script panel, labelled by source.
+   *
+   * This is the assertion that the two features are one run path rather than
+   * two: `script.list` answers with the user's scripts beside the card's, so
+   * the panel that governs consent, the document grant and the run states
+   * governs all of them. A separate list for the library would have been
+   * easier to build and would have left the user's own scripts outside every
+   * one of those.
+   */
+  await wired.store.getState().loadScripts(character)
+  const merged = wired.store.getState().scripts
+  assert.ok(
+    merged.some(row => row.source === 'global'),
+    'a global library script does not reach the runnable script list',
+  )
+  assert.ok(
+    merged.some(row => row.source === 'card'),
+    'the card’s own scripts fell out of the runnable script list',
+  )
+  // Run order, not listing order: the user's global scripts run before the
+  // card's, as upstream merges its own three repositories.
+  assert.equal(merged[0]?.source, 'global', 'the merged list does not open with the global repository')
+  assert.equal(
+    merged.at(-1)?.source,
+    'character',
+    'the merged list does not close with this character’s repository',
+  )
+
   // ------------------------------------------------------------ world books
   /*
    * The panel's grouping, rendered — and this is the only place it is.

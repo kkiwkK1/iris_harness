@@ -2291,3 +2291,229 @@ ruling that Iris should reproduce upstream's extension *as well* — a summary a
 depth 2 over an intact history — which is a different entry: it is a different
 artefact (periodic, 200 words, injected near the end) doing a different job,
 and the two would need different words in the interface.
+
+## 30. A card's own regex tier runs until the user refuses it; upstream refuses it until asked
+
+**Kind: deliberate divergence in the *default*, with the switch itself a
+compatibility fix.**
+
+**Upstream** gates the scoped tier behind `extension_settings.character_allowed_regex`,
+a flat list of avatar filenames. `getRegexScripts()` defaults to
+`{ allowedOnly: false }`, and the **one** caller that passes `true` is
+`getRegexedString` — the engine (`extensions/regex/engine.js:35`, `:98-100`,
+`:346`, gate at `:115`). So the panel, the debugger and `/regex` all *see* a
+card's rules while the conversation does not *run* them. Membership starts
+empty, and the extension asks once per avatar on `CHAT_CHANGED`
+(`checkCharEmbeddedRegexScripts`, `index.js:1606-1633`) with a one-shot
+`AlertRegex_<avatar>` key; accepting calls `allowScopedScripts` and reloads the
+chat, declining leaves the key set so the question never returns.
+
+**Iris before this round had no gate at all.** `scriptsOf` pushed
+`card.data.extensions.regex_scripts` into the composed list unconditionally, so
+a user could neither refuse a card's rules nor switch one of them off short of
+editing the card. **That is the compatibility gap, and it is now closed**:
+`regex.setScopedAllowed` is upstream's membership, per character, and
+`regex.setScopedEnabled` is the per-rule switch.
+
+**The default diverges, deliberately.** `ScriptPolicyStore.regexAllowed` absent
+means **allowed** (`!== false`), where upstream's absent means refused. Three
+reasons, in the order they carried weight:
+
+1. **A regex rule rewrites text; it cannot execute.** The consent question this
+   host already asks — 「这张卡的脚本要不要跑」, three-state, stored — is about
+   arbitrary JavaScript in the page. Putting a second modal in front of a
+   text substitution would spend the user's attention on the cheaper risk and
+   teach them to click through both.
+2. **Refusing by default visibly corrupts the reading.** Measured over the 19
+   local cards: **15 carry this tier, 173 rules in total**, and every one of
+   those 173 carries all 13 fields. **Eleven of the fifteen** use that tier to
+   strip the card's own `<UpdateVariable>` blocks out of the transcript and out
+   of the next request, and **all fifteen** carry at least one live
+   display-only rule — so refusing the tier by default changes what the reader
+   sees on every one of them. A "safe" default that prints command blocks into
+   eleven of nineteen conversations until the user finds a switch is not the
+   safe one — and the same install's `character_allowed_regex` already held
+   **15 entries**, i.e. the operator had said yes to every one of them.
+3. **It is the behaviour this host already had.** The divergence is the *lock on
+   a door that had none*, not a new opening.
+
+**Absent and "allowed" are genuinely one state here, because nothing asks.**
+`true` deletes the key and `false` is written — the opposite of `scriptsAllowed`
+in the same record, where absent and `false` must stay distinguishable because
+the difference *is* the feature. **A later round that adds the question has to
+add the third state first**, and both the field and the RPC say so.
+
+**What would overturn it.** A card observed using its own regex tier to hide
+something from the reader rather than from the model — an instruction rewritten
+on the way to the page, say. That is an argument for asking, and the change
+would be the third state plus a one-shot question keyed on the character, which
+is exactly upstream's shape.
+
+## 31. The user's switches over a card's regex rules are stored beside the card, not written into it
+
+**Kind: deliberate improvement, and the same ruling `script-variables.ts` and
+`script-buttons.ts` already made.**
+
+**Upstream** writes a scoped rule's `disabled` back into the character with
+`writeExtensionField(this_chid, 'regex_scripts', scripts)`
+(`engine.js:148`, called from the row's disable checkbox at
+`index.js:653-657`), which mutates `data.extensions.regex_scripts` on the live
+object *and* patches `character.json_data`
+(`public/scripts/extensions.js:2061-2091`).
+
+**Iris keeps them in `script-policy.json`**, as `regexEnabled: Record<ruleId, boolean>`
+per character, and hands the composed rule to the engine with `disabled`
+folded in (`regex.ts`'s `withUserSwitch`).
+
+**Why.** A card is a document people share. The card's own `disabled` is a fact
+about the card and travels with it through export and re-import; the user's
+switch is a decision about this installation, and fusing them lets a re-import
+quietly revive a rule the user had turned off — the argument
+`ScriptPolicyStore`'s own docblock makes about card scripts, applied to the
+tier beside them. It also means this host never rewrites a card file to record
+a preference, which is the property that makes a card's bytes stable enough to
+fingerprint.
+
+**The cost, stated.** A rule switched off here and then exported carries the
+*card's* `disabled`, not the user's. That is correct — the export is the card
+author's rule, and the file is meant to be one an install accepts — but it means
+"what I see in the panel" and "what my export says" can differ on that one
+field, and nothing reports it.
+
+**An unnamed rule keeps the card's word.** A switch is addressed by the rule's
+`id`, so a rule carrying none cannot be overridden; the panel renders the row
+without a control and says why. Upstream assigns ids lazily (on render, on
+save, on migration), so this is reachable in principle — though all 173 rules
+in the local corpus carry one.
+
+**What would overturn it.** A decision that Iris should write cards back at all,
+at which point this becomes one field of a larger question rather than its own.
+
+## 32. The user's own scripts live in a file of their own; upstream's per-character repository lives in the card
+
+**Kind: deliberate improvement — the third instance of one ruling.**
+
+**Upstream** (酒馆助手 4.9.1, read from
+`data/default-user/extensions/JS-Slash-Runner/src/`) keeps three script
+repositories:
+
+| repository | where the scripts live | where "this repository may run" lives |
+| --- | --- | --- |
+| global | `extension_settings.tavern_helper.script.scripts` (`store/settings/global.ts:22,43`) | `…script.enabled.global`, a boolean |
+| preset | `preset.extensions.tavern_helper.scripts` (`store/settings/preset.ts:9,33`) | `…script.enabled.presets`, preset **names** |
+| character | `character.data.extensions.tavern_helper.scripts` (`store/settings/character.ts:34,47`, via `writeExtensionField`) | `…script.enabled.characters`, character **names** |
+
+and merges them global → preset → character at run time
+(`store/iframe_runtimes/script.ts:26-32`).
+
+**Iris keeps two of them, in `script-library.json`**: `{ global, characters }`.
+The preset repository is absent for the reason the preset *regex* tier is
+absent — this host's preset library is read-only, and a repository the user
+could see but not write would be a promise of edits that do nothing.
+
+**The character repository is not in the card, and that is the load-bearing
+difference.** Upstream's is: sharing a card ships the sharer's own scripts inside
+it, and — because upstream's script-variable table is the `data` field of the
+script object, persisted by a deep watcher (`store/settings/character.ts:152-160`)
+— ships whatever those scripts have accumulated as well. This is the same
+argument `script-variables.ts` and `script-buttons.ts` already made for their own
+fields, and it is stronger here because the payload is arbitrary code rather
+than a few kilobytes of state.
+
+**Kept apart from `script-policy.json` too.** That file is the user's
+*decisions* about someone else's code; this one is the code. A settings reset
+must not be able to delete the user's work, and a library restore must not be
+able to hand a card a document grant.
+
+**Dropped when the character is deleted** (`ScriptLibraryStore.forget`, called
+from `character.delete`). Ids are minted from a card's name against the cards
+**present**, so deleting "Aria" frees the id and the next card imported under
+that name takes it. A repository left behind would not be orphaned — it would be
+**inherited**, and what it holds would then start running in a stranger's
+conversations. This is the strongest case in that handler's list.
+
+**What would overturn it.** A user asking to share a card *with* their scripts,
+which would be an export decision (a card export that folds the repository in on
+request) rather than a change of where it lives.
+
+## 33. A library script's variable table is stored and round-tripped, but is not the live `script` scope
+
+**Kind: known gap, recorded rather than closed.**
+
+**Upstream's script variables *are* the script object's `data` field**:
+`getVariables({ type: 'script', script_id })` reads
+`useScriptIframeRuntimesStore().get(script_id)?.data` and a write assigns
+`script.data = variables` (`function/variables.ts:88`, `:178-182`), which the
+deep watcher then persists into whichever file the repository lives in.
+
+**This host keeps the `script` scope in `script-variables.json`**, partitioned
+`Record<characterId, Record<scriptId, Variables>>`, seeded from a card's
+`scripts[].data` on first open (`script-variables.ts`). A library script's
+`data` is **stored and round-tripped** by `ScriptLibraryStore` — an import
+carries it in and an export carries it out — but nothing seeds the variable
+store from it, and nothing writes it back.
+
+**So there are two consequences, and both are real:**
+
+1. A script imported *with* a populated table starts with an empty `script`
+   scope. Its first read sees nothing and it re-initialises, which is a state
+   every such script already handles on a fresh install.
+2. A **global** library script's `script` scope is per character here, because
+   the partition is keyed by character; upstream's is one table shared across
+   every conversation. A global script that counts something would count
+   separately per card.
+
+The second is the one that could surprise someone. It is not fixed in this
+round because the fix is a decision about `ScriptVariableStore`'s partition key
+rather than about the library — a `.global` section beside the character ones,
+with the same leading-dot reservation `ExtensionSettingsStore` uses — and that
+touches the scope every card script already reads.
+
+**What would overturn it.** A global library script observed to need one table:
+the change is a reserved partition in `script-variables.json` plus a
+`scriptIdOf` selector that routes to it by source.
+
+## 34. A script created or imported here arrives switched off — which is upstream's default, and not this host's for card scripts
+
+**Kind: compatibility, and worth writing down because the *neighbouring*
+default is the other way.**
+
+**Upstream**: `Script.enabled` is `z.boolean().default(false)`
+(`type/scripts.ts:20`), `ScriptFolder.enabled` likewise (`:38`), and the
+importer forces `script_tree.enabled = false` again after parsing
+(`panel/script/Toolbar.vue:94`). A newly created or imported script does not
+run.
+
+**This host's card-script extractor defaults the same field the other way**:
+`@iris/script`'s `extract.ts:104` reads an absent `enabled` as `true`, "because
+the field was added to the format after cards existed". That is right for a
+legacy card — a card whose scripts all read as off would appear broken — and
+wrong for a library the user writes into, where the author's silence is not a
+historical accident.
+
+**One field, two justified defaults, and the discriminator is who wrote the
+script.** `ScriptLibraryStore.save` uses `input.enabled ?? previous?.enabled ?? false`,
+so a create arrives off, and an **edit** keeps whatever the user last chose —
+otherwise fixing a typo in a running script would switch it off.
+
+## 35. Correction: the regex tier run order was read off the constants' values instead of upstream's iteration order
+
+**Kind: compatibility fix. Nothing in this host could observe it.**
+
+Upstream declares `SCRIPT_TYPES = { GLOBAL: 0, PRESET: 2, SCOPED: 1 }` and
+iterates it with `Object.values(SCRIPT_TYPES)` — **key insertion order** —
+so the run order is global, then the preset's, then the character's own
+(`extensions/regex/engine.js:11-16`, consumed at `:99`; the source's own comment
+there is "ORDER MATTERS: defines the regex script priority"). The numeric values
+deliberately do not match that order.
+
+`@iris/regex`'s `orderScripts` sorted by `type`, which gives global, character,
+preset — the last two swapped — and its docblock and its test both stated that
+order as if it were upstream's. **The bug was unobservable**: this host has no
+preset tier to pass in, so every input that exists produces the same list under
+either rule, and the test agreed with the implementation. It would have shipped
+with the preset tier, green.
+
+The fix is `TIER_ORDER`, a rank kept separate from `SCRIPT_TYPE` precisely
+because the two disagree, and the test now asserts that they still disagree —
+so a future renumbering cannot silently make the case stop discriminating.

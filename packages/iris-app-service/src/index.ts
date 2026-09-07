@@ -46,6 +46,7 @@ import { DEFAULT_PRUNE } from './prune.ts'
 import { serveSandboxAsset } from './sandbox-assets.ts'
 import { ScriptCache } from './script-cache.ts'
 import { ScriptPolicyStore } from './scripts.ts'
+import { ScriptLibraryStore } from './script-library.ts'
 import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
 
@@ -90,7 +91,7 @@ export {
   type PromptInput,
   type PromptResult,
 } from './prompt.ts'
-export { placementFor, runScripts, scriptsOf, substituteFor } from './regex.ts'
+export { placementFor, runScripts, scriptsOf, substituteFor, type ScopedRegexPolicy } from './regex.ts'
 export {
   DiagnosticBuffer,
   DEFAULT_LIMITS,
@@ -119,7 +120,8 @@ export {
   type PersonaPosition,
 } from './persona.ts'
 export { ScriptCache, cacheKey, nodeFetch, type CacheFailure, type FetchLike, type ScriptCacheOptions } from './script-cache.ts'
-export { ScriptPolicyStore } from './scripts.ts'
+export { ScriptPolicyStore, scopedRegexRows } from './scripts.ts'
+export { ScriptLibraryStore, viewOf as userScriptViewOf, scriptRowOf, type LibraryScope, type OwnedUserScript, type UserScriptInput } from './script-library.ts'
 export { ScriptVariableStore, scriptIdOf } from './script-variables.ts'
 export { SettingsStore, sanitize, type SettingsPatch } from './settings.ts'
 export { applyOps, buildSnapshot, scalarsOf, worldInfoOf, writePath } from './template.ts'
@@ -490,6 +492,18 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     onError: error => { ctx.logger.warn(`backups: ${error.message}`) },
   })
 
+  // Its own file, not a section of `settings.json`: sampling is a preference and
+  // this is a permission record. Keeping them apart means a settings reset
+  // cannot hand a card the page document.
+  //
+  // Constructed **before** the chat store, because the chat store composes each
+  // conversation's regex from it: the user's allow switch for a card's own tier
+  // and their switches over its individual rules.
+  const scripts = new ScriptPolicyStore(paths.scriptPolicy)
+  // The user's own scripts. Beside the policy file rather than inside it, and
+  // beside the cards rather than inside them — see `paths.scriptLibrary`.
+  const scriptLibrary = new ScriptLibraryStore(paths.scriptLibrary)
+
   const chats = new ChatStore(
     paths.chats, library, scriptVariables, globalScope, worldbooks,
     // Read through a closure rather than captured: the selection is a setting
@@ -511,11 +525,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // The snapshot store, shared with the service below — one retention
     // setting, one directory layout, wherever a copy is taken from.
     backups,
+    // The user's decisions about the card's own regex tier, read at open time
+    // and again on every `refreshRegex`. A closure for the reason the global
+    // list above is one: both are edited while the host runs.
+    characterId => scripts.scopedRegex(characterId),
   )
-  // Its own file, not a section of `settings.json`: sampling is a preference and
-  // this is a permission record. Keeping them apart means a settings reset
-  // cannot hand a card the page document.
-  const scripts = new ScriptPolicyStore(paths.scriptPolicy)
   // Kept apart from `script-policy.json` because they answer to different
   // owners: the policy file is the user's decisions, this is data cards wrote.
   const extensionSettings = extensionSettingsStore
@@ -639,6 +653,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     chats,
     settings,
     scripts,
+    scriptLibrary,
     extensionSettings,
     scriptButtons,
     worldbooks,
@@ -758,6 +773,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('preset.importFile', handlers['preset.importFile']),
       ctx.irisRpc.register('regex.list', handlers['regex.list']),
       ctx.irisRpc.register('regex.set', handlers['regex.set']),
+      ctx.irisRpc.register('regex.scopedList', handlers['regex.scopedList']),
+      ctx.irisRpc.register('regex.setScopedAllowed', handlers['regex.setScopedAllowed']),
+      ctx.irisRpc.register('regex.setScopedEnabled', handlers['regex.setScopedEnabled']),
+      ctx.irisRpc.register('scriptLibrary.list', handlers['scriptLibrary.list']),
+      ctx.irisRpc.register('scriptLibrary.read', handlers['scriptLibrary.read']),
+      ctx.irisRpc.register('scriptLibrary.save', handlers['scriptLibrary.save']),
+      ctx.irisRpc.register('scriptLibrary.delete', handlers['scriptLibrary.delete']),
+      ctx.irisRpc.register('scriptLibrary.setEnabled', handlers['scriptLibrary.setEnabled']),
       ctx.irisRpc.register('script.list', handlers['script.list']),
       ctx.irisRpc.register('script.setEnabled', handlers['script.setEnabled']),
       ctx.irisRpc.register('script.body', handlers['script.body']),

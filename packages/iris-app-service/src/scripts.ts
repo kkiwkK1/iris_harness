@@ -42,9 +42,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import type { ScriptView } from '@iris/protocol'
+import type { RegexScriptView, ScopedRegexView, ScriptView } from '@iris/protocol'
 import { effectiveButtons, type ScriptButton } from './script-buttons.ts'
 import { extractScripts, type CardScript } from '@iris/script'
+import type { ScopedRegexPolicy } from './regex.ts'
 
 /** Per-character policy, keyed by character id. */
 interface PolicyFile {
@@ -53,6 +54,30 @@ interface PolicyFile {
     enabled?: Record<string, boolean>
     /** Whether this card may reach the real page document. */
     documentGranted?: boolean
+    /**
+     * Whether the card's own regex tier may run — upstream's
+     * `character_allowed_regex` membership.
+     *
+     * **Absent means allowed**, the third convention in this one record and the
+     * only one whose default is permissive. It is not upstream's default, and
+     * the reasoning is `notes/packages/iris-app-service/DEVIATIONS.md` §30: a
+     * regex rule rewrites text and cannot execute, this host already ran the
+     * tier unconditionally, and 15 of the 19 local cards carry one — 11 of
+     * those 15 use it to strip raw `<UpdateVariable>` blocks out of the
+     * reader's page, and all 15 carry at least one live display-only rule.
+     * Nothing asks, so absent and "allowed" genuinely are one state here;
+     * **a later round that adds the question has to add the third state
+     * first**, as `scriptsAllowed` above has.
+     */
+    regexAllowed?: boolean
+    /**
+     * The user's own switches over the card's regex rules, by the rule's `id`.
+     *
+     * The same two-switch shape as `enabled` above, and stored here rather than
+     * written back into the card — which is what upstream does
+     * (`writeExtensionField`, `engine.js:148`). See §31 of the same ledger.
+     */
+    regexEnabled?: Record<string, boolean>
     /**
      * Whether this card's scripts may run at all.
      *
@@ -157,6 +182,79 @@ export class ScriptPolicyStore {
   }
 
   /**
+   * The user's decisions about one card's own regex tier.
+   *
+   * Always answerable, because both halves have a default that is a real
+   * answer: the tier is allowed until the user says otherwise, and a rule with
+   * no switch is at whatever the card said.
+   * @param characterId - the card.
+   * @returns the policy the regex composer should run under.
+   */
+  async scopedRegex(characterId: string): Promise<ScopedRegexPolicy> {
+    await this.#load()
+    const record = this.#file.characters[characterId]
+    return {
+      // `!== false`, not `=== true`: absent is allowed here. See the field.
+      allowed: record?.regexAllowed !== false,
+      enabled: record?.regexEnabled ?? {},
+    }
+  }
+
+  /**
+   * Allow or refuse one card's own regex tier.
+   * @param characterId - the card.
+   * @param allowed - the user's choice.
+   * @returns the choice as stored.
+   */
+  async setScopedRegexAllowed(characterId: string, allowed: boolean): Promise<boolean> {
+    await this.#load()
+    const record = this.#file.characters[characterId] ?? {}
+    // `false` is written and `true` deletes, because absent already means
+    // allowed: a stored `true` would be a second spelling of the default, and
+    // two spellings of one state is how a reader eventually treats them
+    // differently. The opposite of `scriptsAllowed`, deliberately — there the
+    // difference between absent and `false` is the feature.
+    if (allowed) delete record.regexAllowed
+    else record.regexAllowed = false
+    this.#file.characters[characterId] = record
+    await this.#save()
+    return allowed
+  }
+
+  /**
+   * Override one of a card's regex rules, against the card's own `disabled`.
+   * @param characterId - the card.
+   * @param scriptId - the rule's id, as the card stores it.
+   * @param enabled - the user's choice.
+   */
+  async setScopedRegexEnabled(characterId: string, scriptId: string, enabled: boolean): Promise<void> {
+    await this.#load()
+    const record = this.#file.characters[characterId] ?? {}
+    record.regexEnabled = { ...record.regexEnabled, [scriptId]: enabled }
+    this.#file.characters[characterId] = record
+    await this.#save()
+  }
+
+  /**
+   * Project a card's own regex tier for a list view.
+   *
+   * Reads the card rather than a store: this tier lives in the card, and the
+   * only thing here is the user's opinion of it. The rules come back **verbatim**
+   * — unknown keys included — because a scoped rule is exportable and the export
+   * has to be the file an install would accept.
+   * @param characterId - the card.
+   * @param card - the decoded card.
+   * @returns one row per rule the card carries, and whether the tier may run.
+   */
+  async scopedRegexView(
+    characterId: string,
+    card: unknown,
+  ): Promise<{ scripts: ScopedRegexView[], allowed: boolean }> {
+    const policy = await this.scopedRegex(characterId)
+    return { scripts: scopedRegexRows(card, policy.enabled), allowed: policy.allowed }
+  }
+
+  /**
    * Whether a card may reach the real page document.
    * @param characterId - the card.
    * @returns the grant, defaulting to denied.
@@ -246,6 +344,11 @@ export class ScriptPolicyStore {
     return {
       id: script.id,
       name: script.name,
+      // Stated on the row rather than left to the reader. Every row this class
+      // produces came out of a card, and it stayed unsaid while that was the
+      // only possibility — which is exactly how the character page came to
+      // print a fixed 「卡内嵌」 under scripts from anywhere.
+      source: 'card',
       ...script.info === undefined || script.info === '' ? {} : { info: script.info },
       enabledByCard: script.enabled,
       // The user's choice wins when they have made one. Absent means the card
@@ -263,4 +366,60 @@ export class ScriptPolicyStore {
       bytes: Buffer.byteLength(script.content, 'utf8'),
     }
   }
+}
+
+/**
+ * Project one card's own regex tier, with the user's switches folded in.
+ *
+ * A free function rather than a method because it reads the *card* and a record
+ * of decisions, and nothing else — the store passes its own record in. The rules
+ * come back **verbatim**: a scoped rule is exportable, and a projection that
+ * kept only the fields this shell renders would write a lossy export file.
+ * @param card - the decoded card.
+ * @param enabled - the user's switches, by the rule's `id`.
+ * @returns one row per rule the card carries, in the card's own order.
+ */
+export function scopedRegexRows(
+  card: unknown,
+  enabled: Readonly<Record<string, boolean>>,
+): ScopedRegexView[] {
+  const scoped = scopedRegexOf(card)
+  return scoped.map(script => {
+    const byCard = script.disabled !== true
+    const id = script.id
+    return {
+      script,
+      enabledByCard: byCard,
+      // A rule with no `id` cannot be addressed by a switch, so it reports the
+      // card's word — the same rule `scriptsOf` applies when it runs them.
+      // Upstream assigns ids lazily, so a card really can arrive without one;
+      // all 173 rules in the local corpus carry one, but that is the corpus's
+      // fact and not the format's.
+      enabled: typeof id === 'string' ? enabled[id] ?? byCard : byCard,
+    }
+  })
+}
+
+/**
+ * A card's `extensions.regex_scripts`, if it has one that is a list.
+ * @param card - the decoded card, or anything at all.
+ * @returns the rules, empty when the card carries none.
+ */
+function scopedRegexOf(card: unknown): RegexScriptView[] {
+  if (typeof card !== 'object' || card === null) return []
+  const data = (card as { data?: unknown }).data
+  if (typeof data !== 'object' || data === null) return []
+  const extensions = (data as { extensions?: unknown }).extensions
+  if (typeof extensions !== 'object' || extensions === null) return []
+  const scoped = (extensions as { regex_scripts?: unknown }).regex_scripts
+  // Filtered, not trusted: `findRegex` and `replaceString` are what the engine
+  // reads on every run, and a row missing either is one upstream's own importer
+  // would have refused. Rows are dropped rather than repaired, because a
+  // repaired rule is a rule the card's author did not write.
+  return Array.isArray(scoped)
+    ? scoped.filter((row): row is RegexScriptView =>
+      typeof row === 'object' && row !== null && !Array.isArray(row)
+      && typeof (row as RegexScriptView).findRegex === 'string'
+      && typeof (row as RegexScriptView).replaceString === 'string')
+    : []
 }

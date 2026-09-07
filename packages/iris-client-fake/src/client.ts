@@ -25,8 +25,12 @@ import {
   type RpcError,
   type RpcMethod,
   type RpcRequest,
+  type RegexScriptView,
   type RpcResponse,
+  type ScopedRegexView,
   type ScriptView,
+  type UserScript,
+  type UserScriptView,
 } from '@iris/protocol'
 
 import { chunk, replyFor, reasoningFor } from './corpus.ts'
@@ -40,7 +44,16 @@ import {
   saveConnection,
 } from './connections.ts'
 import { mergeOverrides, mergeSettings } from './settings.ts'
-import { DEFAULT_SETTINGS, FAKE_SCRIPTS, FAKE_SUMMARY, seedCharacters, seedChats } from './seed.ts'
+import {
+  DEFAULT_SETTINGS,
+  FAKE_GLOBAL_REGEX,
+  FAKE_LIBRARY,
+  FAKE_SCOPED_REGEX,
+  FAKE_SCRIPTS,
+  FAKE_SUMMARY,
+  seedCharacters,
+  seedChats,
+} from './seed.ts'
 import {
   fakeBookEntries,
   fakeCardWorldbook,
@@ -114,6 +127,57 @@ export function createFakeClient(options?: FakeClientOptions): FakeClient {
   return new InMemoryClient(options ?? {})
 }
 
+/**
+ * One library script as a listing row.
+ *
+ * `bytes` is `Buffer.byteLength`'s answer where the host computes it; in the
+ * browser there is no `Buffer`, so this uses `TextEncoder`, which measures the
+ * same UTF-8 bytes. Not `String.length`: a JS string's length is UTF-16 code
+ * units, so a Chinese body reports about a third of its real size, and this
+ * number is shown to someone deciding whether to run that code.
+ * @param script - the stored script.
+ * @param scope - which repository it lives in.
+ * @returns the row.
+ */
+function libraryView(script: UserScript, scope: 'global' | 'character'): UserScriptView {
+  return {
+    id: script.id,
+    name: script.name,
+    ...script.info === undefined || script.info === '' ? {} : { info: script.info },
+    enabled: script.enabled,
+    scope,
+    ...script.button === undefined ? {} : {
+      buttons: script.button.buttons.map(button => ({ ...button })),
+      buttonsEnabled: script.button.enabled,
+    },
+    bytes: new TextEncoder().encode(script.content).length,
+  }
+}
+
+/**
+ * One library row as the runnable script list carries it.
+ *
+ * `enabledByCard: true` is a statement rather than a filler: there is no card
+ * author to disagree with about a script the user wrote, so the pair collapses.
+ * A `false` here would make the script panel hide the toggle on the user's own
+ * script and blame a card for it.
+ * @param row - the listing row.
+ * @returns the runnable-list row.
+ */
+function libraryRow(row: UserScriptView): ScriptView {
+  return {
+    id: row.id,
+    name: row.name,
+    source: row.scope,
+    ...row.info === undefined ? {} : { info: row.info },
+    enabledByCard: true,
+    enabled: row.enabled,
+    ...row.buttons === undefined ? {} : { buttons: row.buttons.map(button => ({ ...button })) },
+    ...row.buttonsEnabled === undefined ? {} : { buttonsEnabled: row.buttonsEnabled },
+    bytes: row.bytes,
+  }
+}
+
 class InMemoryClient implements FakeClient {
   #chats: FakeChat[]
   #characters: CharacterSummary[]
@@ -133,6 +197,31 @@ class InMemoryClient implements FakeClient {
   readonly #scriptsAllowed = new Map<string, boolean>()
   /** User overrides of a script's on/off, keyed `characterId/scriptId`. */
   readonly #scriptOverrides = new Map<string, boolean>()
+  /**
+   * The profile's global regex tier, in this fake's memory.
+   *
+   * **This arm used to refuse**, on the argument that a fake has no profile on
+   * disk and an imaginary list would let a panel believe an import had landed.
+   * The argument was about the wrong thing: an import into this list *does*
+   * land, and `regex.list` reports it — which is the same truthfulness the fake
+   * already claims for `scriptsAllowed` and the document grants, which are also
+   * host-side files it holds in memory. What the refusal actually did was leave
+   * the regex panel returning `null` in every render this repo can run without
+   * a host, so nothing pinned it and the editor added in this round would have
+   * had nowhere to be checked.
+   */
+  #globalRegex: RegexScriptView[] = FAKE_GLOBAL_REGEX.map(script => ({ ...script }))
+  /** Whether the user allows each card's own regex tier. Absent means allowed. */
+  readonly #regexAllowed = new Map<string, boolean>()
+  /** User overrides of a scoped regex rule, keyed `characterId/scriptId`. */
+  readonly #regexOverrides = new Map<string, boolean>()
+  /** The user's own script library: one global repository and one per card. */
+  readonly #library: { global: UserScript[], characters: Record<string, UserScript[]> } = {
+    global: FAKE_LIBRARY.global.map(script => ({ ...script })),
+    characters: Object.fromEntries(
+      Object.entries(FAKE_LIBRARY.characters).map(([id, rows]) => [id, rows.map(row => ({ ...row }))]),
+    ),
+  }
   #globalSettings: GenerationSettings
   #listeners = new Set<(event: IrisEvent) => void>()
   #connectionListeners = new Set<(connected: boolean) => void>()
@@ -690,7 +779,7 @@ class InMemoryClient implements FakeClient {
         this.#requireCharacter(characterId)
         const answered = this.#scriptsAllowed.get(characterId)
         return {
-          scripts: this.#scriptViews(characterId),
+          scripts: this.#runnableScripts(characterId),
           documentGranted: this.#grants.has(characterId),
           // Omitted when unanswered rather than sent as `false`, because the
           // reader is expected to test presence. A `false` here would mean "was
@@ -701,8 +790,15 @@ class InMemoryClient implements FakeClient {
       }
 
       case 'script.setEnabled': {
-        const { characterId, scriptId, enabled } = params as RpcRequest<'script.setEnabled'>
+        const { characterId, scriptId, enabled, source } = params as RpcRequest<'script.setEnabled'>
         this.#requireCharacter(characterId)
+        if (source !== undefined && source !== 'card') {
+          const mine = this.#libraryList(source, source === 'global' ? undefined : characterId)
+            .find(row => row.id === scriptId)
+          if (mine === undefined) throw new FakeRpcError('not-found', `no ${source} script "${scriptId}"`)
+          mine.enabled = enabled
+          return { scripts: this.#runnableScripts(characterId) }
+        }
         // Against *this card's* list, not the whole pack: a card that ships no
         // scripts has no script to switch, and answering otherwise would let a
         // caller store an override the list it reads back never shows.
@@ -710,7 +806,125 @@ class InMemoryClient implements FakeClient {
           throw new FakeRpcError('not-found', `no script "${scriptId}"`)
         }
         this.#scriptOverrides.set(`${characterId}/${scriptId}`, enabled)
-        return { scripts: this.#scriptViews(characterId) }
+        return { scripts: this.#runnableScripts(characterId) }
+      }
+
+      /*
+       * The regex tiers and the script library, held in memory.
+       *
+       * Answered rather than refused, on the line the fake already drew for
+       * `script.setScriptsAllowed`: these carry no merge rule and no assembly a
+       * fake would have to imitate — a list, two switches per card, and a small
+       * store the user writes. What a fake cannot honestly model is a script
+       * *body* or a remote fetch, and both of those stay refused below.
+       */
+      case 'regex.list':
+        return { scripts: this.#globalRegex.map(script => ({ ...script })) }
+
+      case 'regex.set': {
+        const { scripts } = params as RpcRequest<'regex.set'>
+        // Ids minted where an import has none, exactly as the host does: the
+        // panel's toggle and reorder are read-modify-writes over what it last
+        // read, and a row with no id would come back as a stranger each time.
+        this.#globalRegex = scripts.map(script => ({
+          ...script,
+          ...script.id === undefined ? { id: `fake-regex-${String(this.#nextId++)}` } : {},
+        }) as RegexScriptView)
+        return { scripts: this.#globalRegex.map(script => ({ ...script })) }
+      }
+
+      case 'regex.scopedList': {
+        const { characterId } = params as RpcRequest<'regex.scopedList'>
+        this.#requireCharacter(characterId)
+        return this.#scopedRegexView(characterId)
+      }
+
+      case 'regex.setScopedAllowed': {
+        const { characterId, allowed } = params as RpcRequest<'regex.setScopedAllowed'>
+        this.#requireCharacter(characterId)
+        // `true` deletes and `false` is written, because absent already means
+        // allowed here — the host's own convention, and two spellings of one
+        // state is how a reader eventually treats them differently.
+        if (allowed) this.#regexAllowed.delete(characterId)
+        else this.#regexAllowed.set(characterId, false)
+        return this.#scopedRegexView(characterId)
+      }
+
+      case 'regex.setScopedEnabled': {
+        const { characterId, scriptId, enabled } = params as RpcRequest<'regex.setScopedEnabled'>
+        this.#requireCharacter(characterId)
+        if (!(FAKE_SCOPED_REGEX[characterId] ?? []).some(script => script.id === scriptId)) {
+          throw new FakeRpcError('not-found', `no regex script "${scriptId}"`)
+        }
+        this.#regexOverrides.set(`${characterId}/${scriptId}`, enabled)
+        return this.#scopedRegexView(characterId)
+      }
+
+      case 'scriptLibrary.list': {
+        const { characterId } = params as RpcRequest<'scriptLibrary.list'>
+        if (characterId !== undefined) this.#requireCharacter(characterId)
+        return { scripts: this.#libraryViews(characterId) }
+      }
+
+      case 'scriptLibrary.read': {
+        const { scope, characterId, id } = params as RpcRequest<'scriptLibrary.read'>
+        this.#requireScope(scope, characterId)
+        const script = this.#libraryList(scope, characterId).find(row => row.id === id)
+        if (script === undefined) throw new FakeRpcError('not-found', `no ${scope} script "${id}"`)
+        return { script: { ...script } }
+      }
+
+      case 'scriptLibrary.save': {
+        const { scope, characterId, script } = params as RpcRequest<'scriptLibrary.save'>
+        this.#requireScope(scope, characterId)
+        const list = this.#libraryList(scope, characterId)
+        const index = script.id === undefined ? -1 : list.findIndex(row => row.id === script.id)
+        // Refused rather than turned into a create, the host's rule: an edit
+        // whose target has gone would otherwise reappear as a second copy.
+        if (script.id !== undefined && index === -1) {
+          throw new FakeRpcError('not-found', `no ${scope} script "${script.id}"`)
+        }
+        const previous = index === -1 ? undefined : list[index]
+        const { id: _id, ...fields } = script
+        const stored: UserScript = {
+          ...previous,
+          // Undefined-valued keys dropped, so a stored record has them absent
+          // rather than present-and-undefined: the request is a loose zod
+          // object, whose optional keys infer as `T | undefined`. The host's
+          // `script-library.ts` does the same, in `present`.
+          ...Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)),
+          type: 'script',
+          // Restated after the spread, because the filter above erases the
+          // required fields' types on its way through `Record<string, unknown>`.
+          name: script.name,
+          content: script.content,
+          id: previous?.id ?? `fake-script-${String(this.#nextId++)}`,
+          // Upstream's default and the safe direction: a script does not begin
+          // running because the user pressed Save.
+          enabled: script.enabled ?? previous?.enabled ?? false,
+        }
+        if (index === -1) list.push(stored)
+        else list[index] = stored
+        return { scripts: this.#libraryViews(characterId), id: stored.id }
+      }
+
+      case 'scriptLibrary.delete': {
+        const { scope, characterId, id } = params as RpcRequest<'scriptLibrary.delete'>
+        this.#requireScope(scope, characterId)
+        const list = this.#libraryList(scope, characterId)
+        const index = list.findIndex(row => row.id === id)
+        if (index === -1) throw new FakeRpcError('not-found', `no ${scope} script "${id}"`)
+        list.splice(index, 1)
+        return { scripts: this.#libraryViews(characterId) }
+      }
+
+      case 'scriptLibrary.setEnabled': {
+        const { scope, characterId, id, enabled } = params as RpcRequest<'scriptLibrary.setEnabled'>
+        this.#requireScope(scope, characterId)
+        const script = this.#libraryList(scope, characterId).find(row => row.id === id)
+        if (script === undefined) throw new FakeRpcError('not-found', `no ${scope} script "${id}"`)
+        script.enabled = enabled
+        return { scripts: this.#libraryViews(characterId) }
       }
 
       case 'script.setDocumentGrant': {
@@ -1334,10 +1548,6 @@ class InMemoryClient implements FakeClient {
       case 'preset.read':
       case 'preset.import':
       case 'preset.importFile':
-      // The global regex list is profile state on the host's disk; a fake has
-      // none, and an imaginary list would let a panel believe an import landed.
-      case 'regex.list':
-      case 'regex.set':
       // The character manager writes host-side files: a rename or a tag edit
       // rewrites a card on disk, a duplicate copies one, an export reads one
       // out, and a star lands in the profile's favorites file. The fake has no
@@ -1432,11 +1642,107 @@ class InMemoryClient implements FakeClient {
     return FAKE_SCRIPTS.slice(0, count).map(script => ({
       id: script.id,
       name: script.name,
+      source: 'card',
       ...script.info === undefined ? {} : { info: script.info },
       enabledByCard: script.enabledByCard,
       enabled: this.#scriptOverrides.get(`${characterId}/${script.id}`) ?? script.enabledByCard,
       bytes: script.bytes,
     }))
+  }
+
+  /**
+   * Every script that would run in this character's conversations, in run order.
+   *
+   * The user's global library, then the card's own, then the user's library for
+   * this card — upstream's own merge order for its three repositories, with the
+   * card's tier standing in for the preset one. The order is data: two scripts
+   * writing the same variable settle it by which ran last, so a fake that
+   * listed them in a different order would be teaching the shell a sequence the
+   * host does not use.
+   * @param characterId - whose conversations.
+   * @returns the rows, switched-off ones included.
+   */
+  #runnableScripts(characterId: string): ScriptView[] {
+    const mine = this.#libraryViews(characterId)
+    return [
+      ...mine.filter(row => row.scope === 'global').map(libraryRow),
+      ...this.#scriptViews(characterId),
+      ...mine.filter(row => row.scope === 'character').map(libraryRow),
+    ]
+  }
+
+  /**
+   * One card's own regex tier, with both switches reported.
+   *
+   * Listed whether or not the tier is allowed, as upstream's own panel lists it:
+   * a refused tier answering with an empty list would read as a card carrying no
+   * rules, and the control that changes the user's mind would have nothing to
+   * sit beside.
+   * @param characterId - whose card.
+   * @returns the rows and the allow state.
+   */
+  #scopedRegexView(characterId: string): { scripts: ScopedRegexView[], allowed: boolean } {
+    const scripts = (FAKE_SCOPED_REGEX[characterId] ?? []).map(script => {
+      const byCard = script.disabled !== true
+      return {
+        script: { ...script },
+        enabledByCard: byCard,
+        enabled: this.#regexOverrides.get(`${characterId}/${String(script.id)}`) ?? byCard,
+      }
+    })
+    // `!== false`: absent means allowed, the host's convention.
+    return { scripts, allowed: this.#regexAllowed.get(characterId) !== false }
+  }
+
+  /**
+   * One library repository, by reference.
+   * @param scope - which repository.
+   * @param characterId - required for `'character'`.
+   * @returns the live array.
+   */
+  #libraryList(scope: 'global' | 'character', characterId: string | undefined): UserScript[] {
+    if (scope === 'global') return this.#library.global
+    if (characterId === undefined) {
+      throw new FakeRpcError('invalid-request', 'a character script repository needs a character id')
+    }
+    return this.#library.characters[characterId] ??= []
+  }
+
+  /**
+   * Check a library request's scope against the id beside it.
+   *
+   * Refused rather than ignored: a caller sending a character id with a global
+   * write believes the write is scoped, and a store that dropped the id would
+   * put the script in every conversation while the panel said otherwise.
+   * @param scope - which repository the caller named.
+   * @param characterId - the id beside it, if any.
+   */
+  #requireScope(scope: 'global' | 'character', characterId: string | undefined): void {
+    if (scope === 'global') {
+      if (characterId !== undefined) {
+        throw new FakeRpcError('invalid-request', 'the global script repository takes no character id')
+      }
+      return
+    }
+    if (characterId === undefined) {
+      throw new FakeRpcError('invalid-request', 'a character script repository needs a character id')
+    }
+    this.#requireCharacter(characterId)
+  }
+
+  /**
+   * The library as a listing: global first, then this character's.
+   * @param characterId - whose repository to include beside the global one.
+   * @returns one row per stored script.
+   */
+  #libraryViews(characterId?: string): UserScriptView[] {
+    const rows = this.#library.global.map(script => libraryView(script, 'global'))
+    if (characterId !== undefined) {
+      for (const script of this.#library.characters[characterId] ?? []) {
+        rows.push(libraryView(script, 'character'))
+      }
+    }
+    return rows
   }
 
 

@@ -42,7 +42,7 @@ import { scriptIdOf } from './script-variables.ts'
 import { readCompaction } from './compaction.ts'
 import { busy } from './errors.ts'
 import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
-import { scriptsOf } from './regex.ts'
+import { scriptsOf, type ScopedRegexPolicy } from './regex.ts'
 import { parseFingerprint, type PromptFingerprint } from './fingerprint.ts'
 import { fingerprintBySeq, parseUsage, usageBySeq, usageFieldOf, USAGE_FIELD } from './usage.ts'
 import { projectMessages, textOf, toChatView, type Names, type PendingTurn, type UsageRoute } from './views.ts'
@@ -382,8 +382,10 @@ export class ChatEntry {
   #initVars: MvuData | undefined
   #initialVariables: Record<string, unknown> | undefined
   #scripts: RegexScript[] | undefined
-  /** The global regex tier this chat opened with; replaced by `setGlobalScripts`. */
+  /** The global regex tier this chat opened with; replaced by `setRegex`. */
   #globalScripts: readonly RegexScript[]
+  /** The user's decisions about this card's own regex tier; replaced by `setRegex`. */
+  #scopedRegex: ScopedRegexPolicy | undefined
   /** Storage for the `script` scope; outlives `rebuild`, so it is held here. */
   readonly #scriptScope: ScopeBackend
   /** Storage for the `global` scope; outlives `rebuild`, so it is held here. */
@@ -464,10 +466,20 @@ export class ChatEntry {
      * The profile's global regex scripts, as they stand at open time.
      *
      * A snapshot rather than a live provider because the getter below is
-     * synchronous and feeds three directions; {@link setGlobalScripts} is how a
+     * synchronous and feeds three directions; {@link setRegex} is how a
      * change reaches entries that are already open.
      */
     globalScripts?: readonly RegexScript[]
+    /**
+     * The user's decisions about the card's own regex tier, at open time.
+     *
+     * A snapshot for `globalScripts`' reason, and **absent means allowed** —
+     * the reading `scriptsOf` gives an absent policy, and the behaviour this
+     * host had before the tier could be refused at all. A construction path
+     * that forgets to pass one therefore keeps working rather than silently
+     * switching a card's rules off.
+     */
+    scopedRegex?: ScopedRegexPolicy
   }) {
     this.chatId = input.chatId
     this.header = input.header
@@ -476,6 +488,7 @@ export class ChatEntry {
     this.worldbook = input.worldbook
     this.#persona = input.persona
     this.#globalScripts = input.globalScripts ?? []
+    this.#scopedRegex = input.scopedRegex
     // Sticky and cooldown windows outlive the process in upstream: they live in
     // `chat_metadata.timedWorldInfo`, which is saved with the chat file. Restored
     // here rather than by the caller because every construction path — open,
@@ -512,20 +525,28 @@ export class ChatEntry {
    * work proportional to the square of the conversation.
    */
   get scripts(): readonly RegexScript[] {
-    this.#scripts ??= scriptsOf(this.card, this.#globalScripts)
+    this.#scripts ??= scriptsOf(this.card, this.#globalScripts, this.#scopedRegex)
     return this.#scripts
   }
 
   /**
-   * Replace the global tier and drop the composed list.
+   * Replace both regex tiers' inputs and drop the composed list.
    *
-   * This is how a `regex.set` reaches chats that are already open: the snapshot
+   * This is how a regex edit reaches chats that are already open: the snapshot
    * each entry composed at open time is otherwise a fact about the past, and a
-   * script the user just switched off would keep rewriting every page until the
+   * rule the user just switched off would keep rewriting every page until the
    * chat happened to be reopened.
+   *
+   * **Both at once, not two setters.** The composed list is one value derived
+   * from both, so a second setter would be a second place to forget to
+   * invalidate it — and a stale composition is invisible: the text is simply
+   * still the old text.
+   * @param scripts - the profile's global tier as it stands now.
+   * @param scoped - the user's decisions about this card's tier.
    */
-  setGlobalScripts(scripts: readonly RegexScript[]): void {
+  setRegex(scripts: readonly RegexScript[], scoped: ScopedRegexPolicy): void {
     this.#globalScripts = scripts
+    this.#scopedRegex = scoped
     this.#scripts = undefined
   }
 

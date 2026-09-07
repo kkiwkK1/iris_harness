@@ -387,7 +387,25 @@ export interface CharacterSummary {
 }
 
 /**
- * One of a card's scripts, as a script list shows it.
+ * Which repository a runnable script came out of.
+ *
+ * TavernHelper's three repositories, minus the one this host has no place for:
+ * `'card'` is `character.data.extensions.tavern_helper.scripts` (what the card
+ * shipped), `'global'` is `extension_settings.tavern_helper.script.scripts`
+ * (the user's own, running in every conversation), and `'character'` is the
+ * user's own kept against one card. Upstream's fourth, `preset`, is absent for
+ * the same reason the preset regex tier is: this host's preset library is
+ * read-only.
+ *
+ * **Reported, never inferred.** "Where is this from" is the first question a
+ * list of runnable code raises, and until this round the character page
+ * answered it with a fixed 「卡内嵌」 — correct while the card was the only
+ * source, and a lie the moment it stopped being.
+ */
+export type ScriptSource = 'card' | 'global' | 'character'
+
+/**
+ * One runnable script, as a script list shows it.
  *
  * Carries no `content`. A script body runs in the page, but it reaches the
  * frame through the runner, not through this view: putting 3 MB of webpack
@@ -398,9 +416,27 @@ export interface CharacterSummary {
 export interface ScriptView {
   id: string
   name: string
+  /**
+   * Which repository this row came out of.
+   *
+   * Required, not defaulted. An optional field read as `'card'` when absent
+   * would label the user's own scripts as the card's on any client that had not
+   * been updated, which is the one mistake this field exists to prevent — and
+   * an absent key would be indistinguishable from a host that genuinely has no
+   * library.
+   */
+  source: ScriptSource
   /** Author's notes, when the card carries them. */
   info?: string
-  /** What the card's author shipped it as. Not the user's decision. */
+  /**
+   * What the card's author shipped it as. Not the user's decision.
+   *
+   * **Always `true` on a library row** (`source !== 'card'`), and that is a
+   * statement rather than a filler: there is no second party to disagree with
+   * on a script the user wrote, so the pair collapses and every reader that
+   * asks "did the card switch this off" correctly gets no. A `false` here would
+   * make `ScriptPanel` hide the toggle on the user's own script.
+   */
   enabledByCard: boolean
   /**
    * Whether it will actually run: the card's switch and the user's, combined.
@@ -1116,6 +1152,107 @@ export interface RegexScriptView {
   substituteRegex?: number
   minDepth?: number | null
   maxDepth?: number | null
+  [key: string]: unknown
+}
+
+/**
+ * One of a card's own regex rules, with the user's opinion of it beside it.
+ *
+ * Upstream's second tier: `data.extensions.regex_scripts`
+ * (`extensions/regex/engine.js:118`), which travels inside the card and runs
+ * only for a character the user put on `character_allowed_regex` (`:115`).
+ * **Measured over the 19 local cards: 15 carry this tier, 173 rules in total**,
+ * every one of them with all 13 fields present — so this is the *dominant*
+ * regex tier in practice, not the exotic one, and the global tier the settings
+ * drawer already edited was empty in the same install.
+ *
+ * The two switches are separate for the reason {@link ScriptView}'s are: the
+ * rule's own `disabled` is a fact about the card and survives re-import, and
+ * the user's is a decision about this installation.
+ */
+export interface ScopedRegexView {
+  /**
+   * The rule as the card stores it, **verbatim** — unknown keys included.
+   *
+   * Whole rather than projected, because a scoped rule is exportable: the
+   * export has to be the file a SillyTavern install would accept, and a view
+   * that kept only the fields this shell renders would write a lossy one.
+   */
+  script: RegexScriptView
+  /** What the card's author shipped it as: `!script.disabled`. */
+  enabledByCard: boolean
+  /** Whether it will actually run, once both switches are read. */
+  enabled: boolean
+}
+
+/**
+ * One script in the user's own library, as a listing shows it.
+ *
+ * TavernHelper's script repositories, in the two shapes this host keeps: a
+ * global one that runs in every conversation and one per character
+ * (`store/scripts.ts:19-24` and `store/settings/character.ts:34`, read from
+ * the 酒馆助手 4.9.1 source at
+ * `data/default-user/extensions/JS-Slash-Runner/`).
+ *
+ * Carries no `content`, for {@link ScriptView}'s reason — a listing must not
+ * cost what the bodies cost. `scriptLibrary.read` is how the editor gets one.
+ *
+ * **Not a `ScriptView`.** It is missing `enabledByCard` on purpose: the user
+ * wrote these, so there is no second party whose switch could disagree, and a
+ * field reporting the author's intent about the reader's own script would be
+ * answering a question nobody asked. It carries {@link scope} instead, which a
+ * `ScriptView` cannot: a `ScriptView` reports where a *running* script came
+ * from, and this reports which repository a *stored* one lives in.
+ */
+export interface UserScriptView {
+  id: string
+  name: string
+  /** The author's own notes — TavernHelper's `info`. */
+  info?: string
+  /** Whether the user has switched it on. New scripts arrive off, as upstream's do. */
+  enabled: boolean
+  /** Which repository it lives in. */
+  scope: 'global' | 'character'
+  /** Upstream's `button.buttons`, unchanged: `{ name, visible }`, addressed by position. */
+  buttons?: { name: string, visible: boolean }[]
+  /** Upstream's `button.enabled` — the author's switch for the whole group. */
+  buttonsEnabled?: boolean
+  /** Size of the body in **UTF-8 bytes**, so a listing can say what it would run. */
+  bytes: number
+}
+
+/**
+ * One library script whole, as the editor and the export file carry it.
+ *
+ * TavernHelper's `Script` (`src/type/scripts.ts:18-33`), field for field, with
+ * its own defaults noted. The index signature is the actual contract, for
+ * {@link RegexScriptView}'s reason: a script exported from a 酒馆助手 install
+ * and imported here must survive a round trip with every key it arrived with —
+ * `data` (the script's variable table) and `export_with` among them — or the
+ * export half of that cycle would silently strip it.
+ */
+export interface UserScript {
+  /** Upstream's discriminator against `'folder'`. Folders are not carried; see the ledger. */
+  type?: 'script'
+  id: string
+  name: string
+  /** The JS body. */
+  content: string
+  info?: string
+  /** Upstream's default is `false`: a newly created script arrives switched off. */
+  enabled: boolean
+  button?: { enabled: boolean, buttons: { name: string, visible: boolean }[] }
+  /**
+   * Upstream's script-variable table.
+   *
+   * Stored and round-tripped, **not** read as the live `script` scope: this host
+   * keeps script variables in a file of its own rather than in the document a
+   * user shares (`packages/iris-app-service/src/script-variables.ts`), and
+   * seeding that store from a library entry is not part of this round. See the
+   * host ledger §33.
+   */
+  data?: Record<string, unknown>
+  export_with?: { data: boolean, button: boolean }
   [key: string]: unknown
 }
 

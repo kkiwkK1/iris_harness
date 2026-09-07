@@ -185,7 +185,7 @@ provider counted」是另一件事（上游 ST 每条消息显示的 `token_coun
 | `CharacterPage.tsx` 世界书栏 | 每本书一行摘要，展开才列条目（`<details>`）。摘要是三个数：条目数 / 启用数 / 常驻数——实测本机 841 条里 622 启用、309 常驻，只报总数会把一本书说得比实际在跑的大三成 | `faceBookFigures faceBookNoEntries` |
 | `CharacterPage.tsx` 书来源注记 | 只在需要解释时出现：卡里还没落盘的内嵌书、宿主物化时撞名改过的名字、绑了名字但本机没有这本书（实测 18 条绑定里 2 条如此）、以及你自己加绑的附加书。寻常那本（卡自己的、在磁盘上、名字没变）不加注——每行都注等于没注 | `faceBookEmbedded faceBookMinted faceBookMissing faceBookExtra` |
 | `CharacterPage.tsx` 条目行 | 一行名字（`comment`）＋一行 meta：常驻 / 触发键 / 位置（八种 ST 位置，只有 `at_depth` 带深度）/ 副键计数 / 已停用。「没有触发键——永远不会触发」是给非常驻却无键的条目的：本机 841 条里 307 条无键，页面上没有别的东西说得出这件事 | `faceEntryConstant faceEntryKeys faceEntryNoKeys faceEntrySecondary faceEntryOff facePlaceBeforeChar facePlaceAfterChar facePlaceBeforeExamples facePlaceAfterExamples facePlaceBeforeNote facePlaceAfterNote facePlaceAtDepth facePlaceOutlet` |
-| `CharacterPage.tsx` 脚本行 | 一行名字＋一行 meta：来源（`script.list` 只答卡内嵌，本机 42 个脚本的 `type` 全是 ST 的 `'script'`，没有第二档）/ 两个开关分开成句 / 体积 / 按钮数与其中可见数（89 个按钮里 58 个作者设为不可见）。末尾一句说开关在哪——这一页只报告，`script.setEnabled` 的作用域是**正在对话的那张卡** | `faceScriptInCard faceScriptOn faceScriptOffByCard faceScriptOffByYou faceScriptOnByYou faceScriptButtons faceScriptSwitchNote` |
+| `CharacterPage.tsx` 脚本行 | 一行名字＋一行 meta：来源（当时 `script.list` 只答卡内嵌，所以这一格是常量 `faceScriptInCard`——脚本库任务已把它改成读 `script.source`，见下节）/ 两个开关分开成句 / 体积 / 按钮数与其中可见数（89 个按钮里 58 个作者设为不可见）。末尾一句说开关在哪——这一页只报告，`script.setEnabled` 的作用域是**正在对话的那张卡** | `faceScriptInCard faceScriptOn faceScriptOffByCard faceScriptOffByYou faceScriptOnByYou faceScriptButtons faceScriptSwitchNote` |
 | `CharacterPage.tsx` 在读一句 | 两份清单按需拉取（`worldbook.charDigest` ＋ `script.list`），在途时栏里说「正在读取卡片…」；落地后仍然缺就什么都不说——宿主不存世界书是处境，空清单会被读成「这张卡没有书」。这一键与 `ScriptPanel.tsx` 共用 | （`readingCard` 复用） |
 
 任务（用量统计页，`dev/usage-stats`）追加：
@@ -235,3 +235,24 @@ safeRead/safeWrite 容错。理由：`notes/SETTINGS-IA.md` 把「屏幕上有�
 行长）标为 界面本地 🟢，语言属于同一意图；宿主 `settings.*` 是生成路由，且按对话生效，
 放语言会把 per-device 的选择做歪。默认跟随 `navigator.language`（`zh*` → 中文），
 仅当用户手动切换才落盘——不选不存，换设备仍可各自作答。
+任务（单独导入正则与酒馆助手脚本库，`dev/regex-scripts-library`）追加与改写：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `RegexPanel.tsx` 新建按钮 | 这一节此前只能导入、开关、排序、导出、删除，**不能写**。一条正则的拼写错误要回 SillyTavern 装机去改 | `regexNew` |
+| `RegexEditor.tsx` 字段 | 对着 ST `editor.html` 逐项：名称 / 查找 / 替换为 / 剔除。占位符里写的是 `{{match}}`、`$1`、`$<名字>` 和「一行一条」，因为这两个框的语法是这个编辑器里唯一没法从界面猜出来的部分 | `regexFieldName regexFieldFind regexFieldFindNote regexFieldReplace regexFieldReplacePlaceholder regexFieldTrim regexFieldTrimPlaceholder` |
+| `RegexEditor.tsx`「作用于」 | ST 的五个复选框，值 1/2/3/5/6。措辞按**读者的动作**而不是按枚举名：`USER_INPUT` → 「你发出的消息」。0（已弃用的 MD_DISPLAY）与 4（退役的 sendAs）没有控件，和 ST 一致 | `regexFieldAffects regexPlaceUser regexPlaceAi regexPlaceSlash regexPlaceWorldInfo regexPlaceReasoning` |
+| `RegexEditor.tsx`「改动的是」 | ST 叫 Ephemerality，可见文案是 Alter Chat Display / Alter Outgoing Prompt，i18n 键却是字段名 Only Format Display / Only Format Prompt。三种说法都没说出读者在选的那件事：**存盘的对话会不会变**。所以这里是两句「你读到的文本 / 模型读到的文本」，底下的注按状态换句——勾任一个就不动存盘，两个都不勾就直接改写且不可撤销 | `regexFieldWhere regexAlterDisplay regexAlterPrompt regexEphemeralNote regexPermanentNote` |
+| `RegexEditor.tsx` 其余字段 | 运行时机、关闭、宏处理三档、深度上下限。深度那一句把「从结尾往前数、0 是最后一条」写出来，因为 0 与留空是两个不同的答案，而界面上看不出来 | `regexFieldOther regexRunOnEdit regexDisabledField regexFieldMacros regexMacroNone regexMacroRaw regexMacroEscaped regexFieldMinDepth regexFieldMaxDepth regexDepthUnlimited regexDepthNote regexNameRequired` |
+| `RegexEditor.tsx` 四句「这条规则不会生效」 | 全都是引擎那一个门（`getRegexedString`，`engine.js:348-355`）与各调用点传的标志推出来的，不是猜的。ST 对前两种在**保存之后**弹 toast，第三种只写在 checkbox 的 title 里，第四种一个字都没有——而第四种恰好被 ST 自己的新建默认值预先做错了（默认勾「仅显示」，而斜杠命令的四个调用点都不传标志）。只报告、不拒绝：半成品正则是正常要存的东西，ST 也存 | `regexProblemNoPlacement regexProblemNoPattern regexProblemWorldInfo regexProblemSlash` |
+| `ScopedRegexPanel.tsx` | 卡自带的正则那一档。实测本机 19 张卡里 **15 张带 173 条**，而同一台装机的全局档是 0 条——此前 Iris 只看得见全局档。摘要分两句（在跑几条 / 已拒绝），因为被拒绝的一档仍然列出来（ST 自己也列），空清单会被读成「这张卡没有正则」 | `sectionScopedRegex scopedRegexSummary scopedRegexRefusedSummary scopedRegexNote` |
+| `ScopedRegexPanel.tsx` 允许开关 | ST 的 `character_allowed_regex`，此前 Iris 完全没有这个闸门。拒绝那一句把代价说出来：有些卡靠自带正则藏掉自己写的记账块，关掉之后那些块会直接显示——这是四张 MVU 卡的实际情形，不是假设 | `scopedRegexAllowLabel scopedRegexAllowedNote scopedRegexRefusedNote scopedRegexAllow scopedRegexRefuse` |
+| `ScopedRegexPanel.tsx` 两个开关的标注 | 卡作者关掉的 / 无标识不能开关。后者不是理论情形：ST 是懒分配 id 的，虽然本机 173 条全都带 id | `scopedRegexOffByCard scopedRegexUnaddressable` |
+| `ScriptLibraryPanel.tsx` | 酒馆助手脚本库。总注一句把三件事一起说清：同一个沙箱、同一个对话级授权、同样那两个远程域名——因为这三件事是读者会问的，也是这个功能唯一可能被误解成「我自己的脚本更受信任」的地方 | `sectionScriptLibrary librarySummary libraryNote` |
+| `ScriptLibraryPanel.tsx` 两个仓 | 「所有对话」与「只在这个角色」，按运行顺序排（ST 自己的合并顺序）。没开对话时后一个仓缺席而不是空着——仓属于一张卡，这时候没有卡可指名，所以那一句指向角色页 | `libraryGlobalHeading libraryGlobalNote libraryCharacterHeading libraryCharacterNote libraryCharacterNeedsChat libraryNoScripts` |
+| `ScriptLibraryPanel.tsx` 新建/导入/导出 | 导入注把两件事说出来：默认关闭、标识全新（所以同一文件导入两次是两份）。失败那句额外提一句文件夹导出不能在这里导入——那是另一种形状，把外层当脚本导进来会把里面的脚本全丢掉 | `libraryNew libraryImport libraryImportNote libraryImportFailed libraryImported libraryReadFailed libraryDeleteNamed` |
+| `ScriptLibraryPanel.tsx` 按钮计数 | 两个数都报。语料里 89 个按钮有 58 个作者设为不可见，所以「2 个按钮，显示 1 个」是常态而不是异常 | `libraryButtonCount` |
+| `ScriptEditor.tsx` | 名称 / 备注 / 内容 / 按钮表。体积那一行是实时的，跟同意问句和清单引用的是同一个数——正在打字的人就是将来会被问「要不要跑这么多代码」的人。「新建的脚本保存后默认是关闭的」写在保存按钮旁边，因为那是 ST 的默认值，也是安全的方向，而它会让人以为保存没生效 | `libraryFieldName libraryFieldInfo libraryFieldInfoPlaceholder libraryFieldContent libraryFieldContentPlaceholder libraryBodyBytes libraryNameRequired libraryArrivesOff` |
+| `ScriptEditor.tsx` 按钮表 | 一行一个按钮：名字、是否显示、删除。注里说清隐藏的按钮**仍然会发事件**——脚本常把它们当成自己调用的命令，这是 58/89 那个比例的来由 | `libraryFieldButtons libraryButtonsEnabled libraryButtonName libraryButtonVisible libraryButtonRemove libraryAddButton libraryButtonsNote` |
+| `CharacterPage.tsx` 脚本来源 | **改写**：来源那一格原本是常量 `faceScriptInCard`，旁边还有一条注释说「`script.list` 只答卡内嵌，没有第二档」。那句话写的时候是真的，脚本库一出现就不再是真的，而常量在错误前提下照样渲染得很好——没有任何东西会发现。现在读 `script.source`，多出两句 | `faceScriptGlobal faceScriptCharacter` |
+| `CharacterPage.tsx` 脚本栏新增 | 「其中 N 个是你自己的」只在有非卡内嵌行时出现：上面那个计数是 `character.scriptCount`，一张卡的事实，三个仓合起来之后「3」压在五行上面会被读成数错了。加脚本的按钮在这一页——这一页**拒绝**改卡内嵌脚本的开关（§57），区别在于写到哪个库：`script.setEnabled` 的作用域是正在对话的那张卡，而脚本库的写入自己指名角色 | `faceScriptsOfYours faceAddScript` |

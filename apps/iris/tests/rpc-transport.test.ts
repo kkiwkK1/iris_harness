@@ -315,6 +315,18 @@ const PROBES: Record<string, unknown> = {
   // unsupported refusal still proves the handler is registered.
   'regex.list': {},
   'regex.set': { scripts: [] },
+  'regex.scopedList': { characterId: 'no-such-card' },
+  'regex.setScopedAllowed': { characterId: 'no-such-card', allowed: true },
+  'regex.setScopedEnabled': { characterId: 'no-such-card', scriptId: 'nope', enabled: true },
+  'scriptLibrary.list': {},
+  'scriptLibrary.read': { scope: 'global', id: 'nope' },
+  // Deliberately the invalid pairing (a character repository with no character
+  // named), so this probe proves reachability without writing a script into the
+  // probe host's library. `regex.set` above writes because an empty list is the
+  // only shape it has; this method has a refusal that is not a missing handler.
+  'scriptLibrary.save': { scope: 'character', script: { name: 'probe', content: '' } },
+  'scriptLibrary.delete': { scope: 'global', id: 'nope' },
+  'scriptLibrary.setEnabled': { scope: 'global', id: 'nope', enabled: true },
   'script.list': { characterId: 'no-such-card' },
   'script.setEnabled': { characterId: 'no-such-card', scriptId: 'x', enabled: true },
   'script.body': { characterId: 'no-such-card', scriptId: 'x' },

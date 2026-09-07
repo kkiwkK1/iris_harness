@@ -152,6 +152,18 @@ export interface ProfilePaths {
   settings: string
   /** The user's decisions about card scripts, including document grants. */
   scriptPolicy: string
+  /**
+   * The user's own scripts: a global repository and one per character.
+   *
+   * Its own file, and **not** inside the cards, which is where upstream's
+   * character repository lives (`store/settings/character.ts:34`, through
+   * `writeExtensionField`). The same reason `scriptVariables` and
+   * `scriptButtons` are files here: a card is a document people share, and a
+   * user's own code riding out inside one is a disclosure nobody asked for.
+   * Kept apart from `script-policy.json` as well — that file holds the user's
+   * *decisions* about someone else's code; this one holds their code.
+   */
+  scriptLibrary: string
   /** What cards have stored under `extension_settings`. */
   extensionSettings: string
   /**
@@ -241,6 +253,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     chats: join(root, 'chats'),
     settings: join(root, 'settings.json'),
     scriptPolicy: join(root, 'script-policy.json'),
+    scriptLibrary: join(root, 'script-library.json'),
     extensionSettings: join(root, 'extension-settings.json'),
     scriptVariables: join(root, 'script-variables.json'),
     scriptButtons: join(root, 'script-buttons.json'),
