@@ -205,6 +205,85 @@ test('an empty query is refused, not answered with everything', async (t) => {
 const SCAN_SLACK = 3
 
 /**
+ * How many times each side of the comparison is measured.
+ *
+ * **Five, and the number is the fix.** The bound used to rest on a *single*
+ * baseline scan of about 8 ms. One sample of 8 ms is not a measurement of this
+ * machine, it is a measurement of one 8 ms window: land it in a quiet slot
+ * while the large scan lands in a busy one and the ratio is manufactured, with
+ * no defect anywhere. That is not hypothetical — `352ms for 11.0× the bytes,
+ * against 8ms baseline` on the synthetic case, and `622ms for 20.6× the bytes,
+ * against 10ms baseline (allowed 600ms)` on the corpus case, both on code that
+ * had not changed.
+ *
+ * Five is chosen for what the median of five survives: two arbitrarily bad
+ * samples on either side. Three would survive one. Seven would survive three
+ * and cost two more scans of a 10–19 MiB file, which is where the time in this
+ * file actually goes. Anything even would have to average the middle pair,
+ * which re-admits an outlier's magnitude.
+ */
+const SCAN_ROUNDS = 5
+
+/** The middle sample, which is the point of taking several. */
+function median(samples: readonly number[]): number {
+  const sorted = [...samples].sort((left, right) => left - right)
+  // Odd by construction (`SCAN_ROUNDS`), so this is a real sample rather than
+  // the mean of two — an outlier can move a mean and cannot move a median.
+  return sorted[Math.floor(sorted.length / 2)] as number
+}
+
+/** One scan, timed. */
+async function timed(scan: () => Promise<void>): Promise<number> {
+  const started = performance.now()
+  await scan()
+  return performance.now() - started
+}
+
+/**
+ * Measure the small and the large scan **against each other**, alternating.
+ *
+ * The invariant being held is a ratio, so the only thing that can corrupt it is
+ * load that falls on one side and not the other. Measuring the baseline once,
+ * up front, is exactly that shape: everything that happens later — another
+ * suite starting, a browser being driven by the person running acceptance —
+ * lands entirely on the large scan. Alternating small, large, small, large
+ * makes any such load land on both sides in turn, so a slower machine moves
+ * both medians and the ratio survives, which is the property the bound needs
+ * and a single up-front baseline cannot provide.
+ * @param small - performs one baseline scan.
+ * @param big - performs one scan of the large corpus.
+ * @returns each side's median and every sample, for the failure message.
+ */
+async function alternatingMedians(
+  small: () => Promise<void>,
+  big: () => Promise<void>,
+): Promise<{ small: number, big: number, smalls: number[], bigs: number[] }> {
+  const smalls: number[] = []
+  const bigs: number[] = []
+  for (let round = 0; round < SCAN_ROUNDS; round += 1) {
+    smalls.push(await timed(small))
+    bigs.push(await timed(big))
+  }
+  // A loop that measured fewer rounds than it claims would produce a median of
+  // one sample and look identical from outside.
+  assert.equal(smalls.length, SCAN_ROUNDS, 'the baseline was not measured every round')
+  assert.equal(bigs.length, SCAN_ROUNDS, 'the large scan was not measured every round')
+  return { small: median(smalls), big: median(bigs), smalls, bigs }
+}
+
+/** The failure message for a scan that outgrew its bytes, with every sample in it. */
+function degraded(
+  measured: { small: number, big: number, smalls: number[], bigs: number[] },
+  ratio: number,
+  allowed: number,
+): string {
+  const show = (samples: readonly number[]): string => samples.map(value => value.toFixed(0)).join('/')
+  return `scan grew faster than its bytes: median ${measured.big.toFixed(0)}ms for ${ratio.toFixed(1)}× the bytes, `
+    + `against a median ${measured.small.toFixed(0)}ms baseline (allowed ${allowed.toFixed(0)}ms); `
+    + `baselines ${show(measured.smalls)}ms, large scans ${show(measured.bigs)}ms`
+}
+
+/**
  * Write one synthetic chat and return its size on disk.
  * @param dir - the fixture's profile directory.
  * @param stem - the chat id.
@@ -250,6 +329,15 @@ async function writeChat(dir: string, stem: string, floors: number, marker: stri
  * the store) that the ratio then credits to the large scan, so the bound is
  * **looser than pure linearity** — an error in the safe direction.
  *
+ * **The two sides are measured alternately, in one round of five each**, and
+ * that replaced a single up-front baseline scan of about 8 ms. See
+ * {@link SCAN_ROUNDS}: with the baseline taken once, before the large file even
+ * exists, every later disturbance falls on the large scan alone, and this test
+ * went red at `352ms for 11.0× the bytes, against 8ms baseline` with nothing
+ * wrong. Two profiles rather than one, because a search scans every chat it can
+ * see: the baseline profile holds only the small file, so it can be re-measured
+ * at any point in the round instead of only before the large one is written.
+ *
  * **And this test on its own does not discriminate a degradation — measured,
  * not assumed.** Making the scan quadratic (re-folding every earlier line on
  * each step) leaves it green: `small=19.6ms big=311.1ms allowed=645.7ms`,
@@ -265,38 +353,43 @@ async function writeChat(dir: string, stem: string, floors: number, marker: stri
  * here would catch the scan degrading.
  */
 test('a 10 MiB-scale chat scans in proportion to its bytes', async (t) => {
-  const fix = await fixture(t)
+  // One profile holding the baseline alone, one holding the baseline and the
+  // large file. A search scans every chat in its profile, so this is what makes
+  // the two measurements interleavable at all.
+  const baseline = await fixture(t)
+  const scaled = await fixture(t)
 
-  // Baseline first, and alone in the profile: a search scans every chat it can
-  // see, so the small measurement has to be taken before the large file exists.
-  const smallBytes = await writeChat(fix.dir, 'baseline', 40, 'thalassocracy-of-tyre')
-  const smallStarted = performance.now()
-  const small = await fix.handlers['chat.search']({ query: 'thalassocracy-of-tyre' })
-  const smallElapsed = performance.now() - smallStarted
-  assert.equal(small.hits.length, 1, 'the baseline scan must do real work to be a baseline')
-
+  const smallBytes = await writeChat(baseline.dir, 'baseline', 40, 'thalassocracy-of-tyre')
+  await writeChat(scaled.dir, 'baseline', 40, 'thalassocracy-of-tyre')
   // ~400 floors of ~25 KiB each: past the acceptance line in size, with the
   // marker deep in the file so the scan has to earn the hit.
-  const bigBytes = await writeChat(fix.dir, 'weighted', 400, 'quinquireme-of-nineveh')
+  const bigBytes = await writeChat(scaled.dir, 'weighted', 400, 'quinquireme-of-nineveh')
 
-  const started = performance.now()
-  const { hits } = await fix.handlers['chat.search']({ query: 'quinquireme-of-nineveh' })
-  const elapsed = performance.now() - started
+  let located: { messageId: number } | undefined
+  let scans = 0
+  const measured = await alternatingMedians(
+    async () => {
+      const small = await baseline.handlers['chat.search']({ query: 'thalassocracy-of-tyre' })
+      assert.equal(small.hits.length, 1, 'the baseline scan must do real work to be a baseline')
+      scans += 1
+    },
+    async () => {
+      const { hits } = await scaled.handlers['chat.search']({ query: 'quinquireme-of-nineveh' })
+      const hit = hits[0]
+      assert.ok(hit !== undefined, 'the large scan found nothing, so it was not scanning')
+      located = hit.matches[0]
+      scans += 1
+    },
+  )
+  assert.equal(scans, SCAN_ROUNDS * 2, 'a scan was skipped, so the medians are not over what they claim')
+  assert.equal(located?.messageId, 200)
 
-  const hit = hits[0]
-  assert.ok(hit !== undefined)
-  assert.equal(hit.matches[0]?.messageId, 200)
-
-  // The second scan reads both files; the ratio is over total bytes for that
+  // The large profile holds both files; the ratio is over total bytes for that
   // reason, not over the large file alone.
   const ratio = (smallBytes + bigBytes) / smallBytes
   assert.ok(ratio > 8, `the two corpora must differ enough to discriminate (ratio ${ratio.toFixed(1)})`)
-  const allowed = smallElapsed * ratio * SCAN_SLACK
-  assert.ok(
-    elapsed <= allowed,
-    `scan grew faster than its bytes: ${elapsed.toFixed(0)}ms for ${ratio.toFixed(1)}× the bytes, `
-    + `against ${smallElapsed.toFixed(0)}ms baseline (allowed ${allowed.toFixed(0)}ms)`,
-  )
+  const allowed = measured.small * ratio * SCAN_SLACK
+  assert.ok(measured.big <= allowed, degraded(measured, ratio, allowed))
 })
 
 // ---------------------------------------------------------------------------
@@ -329,18 +422,18 @@ const LONG_CHAT = await findLongChat()
 test('the real 677-floor chat is found by a message fragment, located, and scans in proportion',
   { skip: LONG_CHAT === undefined && `no 677-floor chat under ${CHATS}; point IRIS_CORPUS at the SillyTavern install that has it` },
   async (t) => {
+    // Two profiles, so the baseline can be re-measured *between* the large
+    // scans instead of once before them: the baseline profile never receives
+    // the real file. This is the same change as on the 10 MiB test, and this
+    // test is why it is not optional — with one up-front baseline it went red
+    // at `622ms for 20.6× the bytes, against 10ms baseline (allowed 600ms)`
+    // under a second suite running alongside, on unchanged code.
+    const baseline = await fixture(t)
     const fix = await fixture(t)
     const longChat = LONG_CHAT as string
 
-    // The baseline is measured **before** the real file is copied in: a search
-    // scans every chat in the profile, so the only moment a small corpus can be
-    // timed alone is before the large one exists. See the proportionality note
-    // on the 10 MiB test for why this replaced an absolute wall clock.
-    const smallBytes = await writeChat(fix.dir, 'baseline', 40, 'thalassocracy-of-tyre')
-    const smallStarted = performance.now()
-    const small = await fix.handlers['chat.search']({ query: 'thalassocracy-of-tyre' })
-    const smallElapsed = performance.now() - smallStarted
-    assert.equal(small.hits.length, 1, 'the baseline scan must do real work to be a baseline')
+    const smallBytes = await writeChat(baseline.dir, 'baseline', 40, 'thalassocracy-of-tyre')
+    await writeChat(fix.dir, 'baseline', 40, 'thalassocracy-of-tyre')
 
     // Copy, never point: the corpus stays read-only and the store sees a
     // profile of its own.
@@ -374,9 +467,20 @@ test('the real 677-floor chat is found by a message fragment, located, and scans
     const gibberish = await fix.handlers['chat.search']({ query: 'zzz-nothing-real-zzz' })
     assert.deepEqual(gibberish.hits, [], 'the real file invents no hits either')
 
-    const started = performance.now()
-    const { hits } = await fix.handlers['chat.search']({ query: fragment })
-    const elapsed = performance.now() - started
+    let hits: Awaited<ReturnType<Handlers['chat.search']>>['hits'] = []
+    let scans = 0
+    const measured = await alternatingMedians(
+      async () => {
+        const small = await baseline.handlers['chat.search']({ query: 'thalassocracy-of-tyre' })
+        assert.equal(small.hits.length, 1, 'the baseline scan must do real work to be a baseline')
+        scans += 1
+      },
+      async () => {
+        hits = (await fix.handlers['chat.search']({ query: fragment })).hits
+        scans += 1
+      },
+    )
+    assert.equal(scans, SCAN_ROUNDS * 2, 'a scan was skipped, so the medians are not over what they claim')
 
     assert.equal(hits.length, 1)
     const hit = hits[0]
@@ -389,13 +493,11 @@ test('the real 677-floor chat is found by a message fragment, located, and scans
     )
     const located = hit.matches.find(match => match.messageId === floor)
     assert.ok(located?.snippet.includes(fragment), 'the snippet carries the fragment')
+    // The large profile holds the baseline file as well as the real one, so the
+    // ratio is over the bytes that scan actually reads.
     const ratio = (smallBytes + bigBytes) / smallBytes
     assert.ok(ratio > 8, `the two corpora must differ enough to discriminate (ratio ${ratio.toFixed(1)})`)
-    const allowed = smallElapsed * ratio * SCAN_SLACK
-    assert.ok(
-      elapsed <= allowed,
-      `scan grew faster than its bytes: ${elapsed.toFixed(0)}ms for ${ratio.toFixed(1)}× the bytes, `
-      + `against ${smallElapsed.toFixed(0)}ms baseline (allowed ${allowed.toFixed(0)}ms)`,
-    )
+    const allowed = measured.small * ratio * SCAN_SLACK
+    assert.ok(measured.big <= allowed, degraded(measured, ratio, allowed))
 })
 

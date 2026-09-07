@@ -8,6 +8,7 @@ import type { IrisEvent, RpcResponseFrame } from '@iris/protocol'
 import { WebSocket } from 'ws'
 
 import IrisRpcHost, { type Config } from '../src/index.ts'
+import { onFetchablePort } from '../../iris-app-service/tests/support/fetchable-port.ts'
 
 /**
  * The transport, exercised over a real socket.
@@ -19,45 +20,25 @@ import IrisRpcHost, { type Config } from '../src/index.ts'
  */
 
 /**
- * Ports `fetch` refuses to open, whatever is listening on them.
- *
- * WHATWG Fetch blocks a fixed list of ports, and undici enforces it: the
- * request never leaves, and the error is `TypeError: fetch failed` with
- * `[cause] Error: bad port` — which reads as a host bug rather than as a
- * refusal by the client.
- *
- * **That is not a hypothetical.** Windows' default dynamic range here is
- * 1024–15000 (`netsh int ipv4 show dynamicport tcp`: start 1024, 13977 ports),
- * so `port: 0` can and does hand out a blocked one. Nineteen of the list's
- * entries fall in that range — verified by fetching each on this machine and
- * keeping the ones refused with `bad port`, with 1499 and 13000 as controls
- * that were not. Measured cost: one full-suite run in six, run two at a time,
- * failed *this file* on it (a second failed `iris-llm-openai-compat`'s
- * `timeouts.test.ts`, which binds `listen(0)` the same way and drew 1723).
- * Sub-1024 entries are omitted because no ephemeral allocator hands them out.
- */
-const BLOCKED_PORTS = new Set([
-  1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061,
-  6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080,
-])
-
-/**
  * Boot the carrier on a port `fetch` will actually talk to.
  *
- * Retries the bind rather than picking a port itself: asking for a specific
- * free port means a window between finding it and claiming it, and a collision
- * there is how a test ends up talking to somebody else's server.
+ * `port: 0` can hand out one of the ports WHATWG Fetch refuses outright, and
+ * the resulting `bad port` reads as a host bug rather than as the client
+ * declining to dial — it failed this file once in six paired full-suite runs.
+ * The table and the retry live in
+ * `iris-app-service/tests/support/fetchable-port.ts`, shared with
+ * every other test that binds an ephemeral port and then fetches itself; the
+ * retry is a re-bind rather than a search for a free port, because looking one
+ * up and then claiming it leaves a window in which somebody else claims it.
  * @param ctx - the context to plug the carrier into.
  * @returns the port it settled on.
  */
 async function startCarrier(ctx: Context): Promise<number> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  const { port } = await onFetchablePort(async () => {
     const fiber = await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
-    const port = ctx.webServer.port
-    if (!BLOCKED_PORTS.has(port)) return port
-    await fiber.dispose()
-  }
-  throw new Error('twenty ephemeral ports in a row were on fetch’s blocked list, which is not luck')
+    return { value: fiber, port: ctx.webServer.port, release: () => fiber.dispose() }
+  })
+  return port
 }
 
 /** A booted host and the facts a test needs to talk to it. */
