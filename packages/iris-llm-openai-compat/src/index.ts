@@ -24,6 +24,19 @@ import { translate } from './translate.ts'
 
 export type { IrisSampling } from './serialize.ts'
 
+/**
+ * The wire form, exported so the layer that *assembles* a request can check
+ * what the request becomes.
+ *
+ * Not a new capability — {@link apply} has always sent
+ * `JSON.stringify(serializeRequest(options))` — but the one thing a prompt
+ * cache cares about is bytes, and only this function knows them. Without the
+ * export, a determinism check at the assembly layer has to compare harness
+ * objects and hope the serializer agrees, which is exactly the seam where a
+ * difference would hide (`packages/iris-app-service/tests/assembly-determinism.test.ts`).
+ */
+export { serializeMessages, serializeRequest } from './serialize.ts'
+
 /** Cordis plugin name. */
 export const name = 'iris-llm-openai-compat'
 
