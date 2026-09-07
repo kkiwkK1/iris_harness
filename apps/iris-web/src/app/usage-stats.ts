@@ -184,6 +184,28 @@ export interface SeriesStyle {
   dash?: string
 }
 
+/**
+ * The unattributed line's own style: a token, and always dashed.
+ *
+ * **Not `--iris-tick`, which is what it used to be**, and the reason is the
+ * measurement `SERIES_TOKENS` above already records: `--iris-tick` is 2.79:1 on
+ * the chart card in 墨, which is why it is not in the palette. Drawing *this*
+ * line with it was the same mistake one step to the side, and worse than a
+ * rejected candidate — on every history that exists today every record is
+ * unattributed, so the failing colour was the only line most readers would ever
+ * see. `--iris-ink-tertiary` is the palette's own quietest passing token
+ * (3.96:1 in 宣, its worst theme), and `tests/contrast.test.ts` measures this
+ * constant beside the palette rather than trusting the sentence.
+ *
+ * It can therefore collide in colour with a *named* model that hashes to the
+ * same token, and the dash is what still tells them apart — the degradation
+ * {@link DASH_PATTERNS} is there for, arrived at one series earlier than usual.
+ */
+export const UNATTRIBUTED_STYLE: SeriesStyle = {
+  color: 'var(--iris-ink-tertiary)',
+  dash: '3 3',
+}
+
 /** Every distinct way a line can be drawn before the scheme has to repeat. */
 const STYLE_SLOTS = SERIES_TOKENS.length * DASH_PATTERNS.length
 
@@ -264,6 +286,33 @@ export function styleForSlot(slot: number): SeriesStyle {
   const color = SERIES_TOKENS[index % SERIES_TOKENS.length] ?? SERIES_TOKENS[0] ?? 'currentColor'
   const dash = DASH_PATTERNS[Math.floor(index / SERIES_TOKENS.length) % DASH_PATTERNS.length]
   return dash === undefined ? { color } : { color, dash }
+}
+
+/**
+ * One line's style: the model's own, or the unattributed line's.
+ *
+ * Here rather than in the panel because in the panel it was written *three*
+ * times — the stroke, the dot, and the legend swatch — from two different
+ * spellings that did not agree: the stroke drew the unattributed line dashed
+ * `--iris-tick`, and the swatch drew it solid. A line and its own swatch
+ * disagreeing is the one thing a legend cannot survive.
+ * @param series - the line.
+ * @param styles - the assignment from {@link assignSeriesStyles}.
+ * @returns the colour and dash to draw it with.
+ */
+export function styleFor(
+  series: UsageSeries,
+  styles: ReadonlyMap<string, SeriesStyle>,
+): SeriesStyle {
+  if (series.model === undefined) return UNATTRIBUTED_STYLE
+  /*
+   * A named model the assignment does not carry takes its *unprobed* slot
+   * rather than the unattributed style. It is only reachable by drawing a chart
+   * from one series set and an assignment from another, and a real model wearing
+   * the "no model" dash would be a false statement, where a colour that skipped
+   * collision probing is merely arbitrary.
+   */
+  return styles.get(series.model) ?? styleForSlot(hashSlot(series.model))
 }
 
 /*
@@ -385,6 +434,28 @@ export function seriesDomKey(series: UsageSeries): string {
 }
 
 /**
+ * Whether there is anything on this chart to draw.
+ *
+ * **A metric with no spend is not a chart of zeros.** Three of the four metrics
+ * can be legitimately empty over a range that billed plenty — a profile whose
+ * providers never mentioned caching has no `cacheRead` anywhere — and drawing
+ * that as a flat line along the baseline of an axis labelled `0` is a picture
+ * of a measurement, where the truth is that there was nothing to measure. The
+ * surface draws a sentence instead.
+ *
+ * Read off the series totals rather than off `axisMax`, because they answer
+ * different questions: `axisMax` is scaled from the *showing* lines, so hiding
+ * every series through the legend would otherwise be indistinguishable from
+ * having nothing to show — one is the reader's own doing and must leave the
+ * empty grid standing.
+ * @param data - the lines, from {@link chartData}.
+ * @returns whether any bucket of any line carries a value.
+ */
+export function chartHasSpend(data: UsageChartData): boolean {
+  return data.axis.length > 0 && data.series.some(series => series.total > 0)
+}
+
+/**
  * A bucket's axis label.
  *
  * Digits only, in no language: `9-08` and `14:00` read the same for both
@@ -400,6 +471,91 @@ export function bucketLabel(bucket: number, granularity: 'day' | 'hour'): string
   const pad = (value: number): string => String(value).padStart(2, '0')
   if (granularity === 'hour') return `${pad(when.getHours())}:00`
   return `${String(when.getMonth() + 1)}-${pad(when.getDate())}`
+}
+
+/**
+ * A bucket's month, for an axis too long to label a day at a time.
+ *
+ * `2026-09`, four digits and two: the year is not decoration on this label.
+ * The "all" range is the one that reaches this format, and it is exactly the
+ * range that can span a year boundary — `9` above `9` a year apart is the kind
+ * of axis a reader draws a wrong conclusion from without ever suspecting the
+ * label.
+ * @param bucket - the bucket's start.
+ * @returns the label.
+ */
+export function monthLabel(bucket: number): string {
+  const when = new Date(bucket)
+  return `${String(when.getFullYear())}-${String(when.getMonth() + 1).padStart(2, '0')}`
+}
+
+/** One x-axis label: which bucket it sits under, and what it reads. */
+export interface AxisTick {
+  /** The bucket's position on {@link UsageChartData.axis}. */
+  index: number
+  /** The label's text. */
+  label: string
+}
+
+/** At most this many labels under one chart; past it they touch. */
+const MAX_AXIS_LABELS = 16
+
+/**
+ * How many day buckets it takes before the axis is labelled by month instead.
+ *
+ * 46, so a 30-day range — the longest the range switch offers by day — is never
+ * labelled by month: on 30 buckets a monthly axis is one or two labels under
+ * thirty columns, which is worse than every other day. Only "all" can exceed
+ * it, and only on a profile with more than a month and a half of days that
+ * actually billed.
+ */
+const MONTH_LABEL_FROM = 46
+
+/**
+ * Which buckets get a label, and what it says.
+ *
+ * **Three regimes, chosen by what the axis turns out to be** rather than by the
+ * range control — the axis is the buckets that *exist* (see {@link chartData}),
+ * so "30 days" on a profile used twice is two columns and gets both labels,
+ * while "all" on a busy year is hundreds and gets one per month:
+ *
+ * - by the hour: `14:00`, every bucket the label budget allows;
+ * - by the day: `9-08`, every bucket or every k-th;
+ * - past {@link MONTH_LABEL_FROM} day buckets: `2026-09`, at the first bucket
+ *   present in each calendar month.
+ *
+ * The month label marks **where that month starts on this axis**, which is not
+ * the first of the month — there may have been no generation that day, and the
+ * axis has no column for a day that billed nothing. That is the same
+ * concession the axis itself makes, said once more where it could mislead.
+ *
+ * Here rather than in the panel because it is arithmetic over a shared axis and
+ * the panel had it as `data.axis.length > 16 ? 2 : 1` inline — a rule with a
+ * measurement in it (54px holds one `12-08` and not two) that nothing could
+ * check.
+ * @param axis - the bucket starts, ascending, from {@link chartData}.
+ * @param granularity - which cut they came from.
+ * @returns the labels, in axis order; every index is a real position on `axis`.
+ */
+export function axisTicks(
+  axis: readonly number[],
+  granularity: UsageGranularity,
+): AxisTick[] {
+  if (axis.length === 0) return []
+  if (granularity === 'day' && axis.length > MONTH_LABEL_FROM) {
+    const ticks: AxisTick[] = []
+    let previous = ''
+    for (const [index, bucket] of axis.entries()) {
+      const month = monthLabel(bucket)
+      if (month === previous) continue
+      previous = month
+      ticks.push({ index, label: month })
+    }
+    return ticks
+  }
+  const stride = Math.max(1, Math.ceil(axis.length / MAX_AXIS_LABELS))
+  return axis.flatMap((bucket, index) =>
+    index % stride === 0 ? [{ index, label: bucketLabel(bucket, granularity) }] : [])
 }
 
 /*
@@ -427,18 +583,33 @@ const MIN_WIDTH = 460
 const HEIGHT = 220
 
 /**
- * The box for a given number of buckets.
+ * The box for a given number of buckets, and for the room it has to draw in.
  *
  * **Width grows with the data and the container scrolls.** A 30-day chart
  * squeezed into a 400px phone would put its labels on top of each other, so the
  * SVG keeps a legible column per bucket and its wrapper takes `overflow-x:
  * auto`. That is the one layout rule the page has to honour: the SVG must never
  * be the thing that makes the page scroll sideways.
+ *
+ * **And it grows to fill room it is given**, which the first version did not:
+ * three buckets is `MIN_WIDTH`, and a 460px chart on the left of a 950px card
+ * reads as a thumbnail somebody forgot to finish (seen in a static preview
+ * built from this page's real markup and stylesheets). Stretching cannot be
+ * done in CSS — the SVG has a `viewBox`, so `width: 100%` would scale the axis
+ * type up with the drawing — so the available width comes in here, as a number,
+ * and the geometry answers in its own units. The **data still wins**: a chart
+ * that needs more than the room it has takes what it needs and scrolls.
+ *
+ * `available` is a measurement and the caller's job (`UsagePanel`'s
+ * `ResizeObserver`); `0` means "not measured yet", which is what a server render
+ * and the first paint both see.
  * @param bucketCount - how many buckets are on the axis.
+ * @param available - the plot's own width in CSS pixels, or `0` when unmeasured.
  * @returns the layout.
  */
-export function chartLayout(bucketCount: number): ChartLayout {
-  const width = Math.max(MIN_WIDTH, PAD.left + PAD.right + Math.max(1, bucketCount) * BUCKET_WIDTH)
+export function chartLayout(bucketCount: number, available = 0): ChartLayout {
+  const needed = PAD.left + PAD.right + Math.max(1, bucketCount) * BUCKET_WIDTH
+  const width = Math.max(MIN_WIDTH, needed, Number.isFinite(available) ? available : 0)
   return {
     width,
     height: HEIGHT,

@@ -2493,7 +2493,32 @@ keeps a legible column per time bucket, so a 30-day range needs about 1.7 of
 those widths before it has to scroll. The dialog carries `min(880px, 100%)` —
 the prompt breakdown's 640px was still not enough — and the SVG scrolls inside
 `.iris-usage__plot`, which is the one layout rule the page has: **the chart
-must never be the thing that makes the page scroll sideways.**
+must never be the thing that makes the page scroll sideways.** The chart also
+**grows to fill the room it is given** (`chartLayout`'s second argument, a
+`ResizeObserver` reading in the panel): three buckets is the floor width, and a
+460px plot in the left half of a 950px card reads as a thumbnail nobody
+finished. It cannot be a CSS rule — the SVG has a `viewBox`, so `width: 100%`
+would scale the 10px axis type up with the drawing — and the data still wins,
+so a range that needs more columns than there is room for takes what it needs
+and scrolls.
+
+**The page's own shape**, after the appearance pass of 2026-09-08: one control
+row (the range switch left, the metric switch right, both the segmented
+`.iris-choice` the prompt breakdown uses), then three sheets of
+`--iris-bg-raised` paper on the dialog's sunken ground — the figures (one large
+total card beside a grid of six capsules, where seven equal cards had been seven
+unranked facts), the chart with its legend inside the same card under a
+hairline, and the conversations as hairline-separated rows. The plum accent is
+spent on exactly three things: the pressed option of a switch, the two share
+bars, and the caveat line's `?`. Two of the arrangements are measurements rather
+than choices, both taken from a static preview built out of this page's own
+server-rendered markup and stylesheets: the capsule grid's `minmax(160px, 1fr)`
+(at 104px it fitted five columns and orphaned the sixth) and the control strips'
+`flex: 0 0 auto` with `nowrap` (`space-between` had squeezed `7 days` onto two
+lines). The one width rule is a **container** query on the dialog body rather
+than a media query, because `tests/breakpoints.test.ts` pins the shell's three
+viewport breakpoints and this reflow is about how wide the dialog turned out,
+not how wide the window is.
 
 **One line per model, colour assigned by name and not by position.** The chart
 is redrawn on every range and metric change, and a model whose line was gold in
@@ -2509,6 +2534,15 @@ in 墨. Past six the colours run out and a dash takes over, because a seventh hu
 this palette cannot distinguish is worse than a dashed repeat, and a dash is
 also the one distinction that survives a colour-blind reader.
 
+**And the unattributed line was drawn in one of the two rejected tokens**, which
+the check could not see because it was reading the palette list and this colour
+was written into the panel — three times, in two spellings that disagreed about
+the dash. It is now `UNATTRIBUTED_STYLE` in `usage-stats.ts`, dashed
+`--iris-ink-tertiary` (3.96:1 in its worst theme), and `tests/contrast.test.ts`
+measures it beside the palette. This was the *worst* place for that mistake to
+sit rather than a marginal one: every usage record on this machine names no
+model, so the failing 2.79:1 grey was the only line most readers would ever see.
+
 **What it costs.** Three things, and the first is the one that matters.
 
 **Every record that exists today is unattributed and undated.** A model with no
@@ -2517,12 +2551,15 @@ tokens were spent and dropping them would understate a bill — and an undated
 record is placed at its conversation's own last activity. That is a
 *reconstruction*: every undated record in a chat lands in one bucket, so an old
 conversation reads as a single spike at its last activity rather than as the
-sessions it really was. The page says so, with the count
-(`usageUndated`: "N of M generations carried no timestamp…"), rather than
-smoothing it — smoothing would invent a distribution the files do not contain.
-On the corpus above that note currently reads 12 of 12. It stops being the whole
-story one generation after this ships, and never stops being true of the history
-before it.
+sessions it really was. The page says so, with the count — one line of small
+type under the chart carrying `usageUndatedShort` ("N/M undated"), whose hover
+is the whole sentence (`usageUndated`: "N of M generations carried no
+timestamp…") — rather than smoothing it, which would invent a distribution the
+files do not contain. **The count is the part that stays visible**, because
+"some of this is a reconstruction" is not a reading: on the corpus above the
+line reads 12 of 12, and 1 of 400 would be a different page. It stops being the
+whole story one generation after this ships, and never stops being true of the
+history before it.
 
 **The hit rate is over a narrower population than the tokens beside it.** It is
 `cacheRead / cachePrompt`, both restricted to the generations that reported a

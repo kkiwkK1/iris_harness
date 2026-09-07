@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 
-import { SERIES_TOKENS } from '../src/app/usage-stats.ts'
+import { SERIES_TOKENS, UNATTRIBUTED_STYLE } from '../src/app/usage-stats.ts'
 
 const TOKENS = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'theme', 'tokens.css'),
@@ -155,17 +155,45 @@ for (const theme of ['light', 'dark', 'parchment'] as const) {
     }
   })
 
+  test(`the unattributed line clears the same floor in ${theme}`, () => {
+    /*
+     * **The line every reader has today**, and it was outside this loop.
+     * `SERIES_TOKENS` is the palette for *named* models, and the records that
+     * name none were drawn in `--iris-tick` — one of the two tokens this file
+     * had already rejected from that palette, at 2.79:1 in 墨. Measured over
+     * the corpus on 2026-09-08 every usage record is unattributed, so the
+     * failing colour was the only line most readers would ever see, and the
+     * check that would have said so was reading the other list.
+     *
+     * The constant is imported rather than named here, so moving it moves this
+     * measurement with it.
+     */
+    const name = /^var\(--([a-z-]+)\)$/u.exec(UNATTRIBUTED_STYLE.color)?.[1]
+    assert.ok(name !== undefined, `${UNATTRIBUTED_STYLE.color} is not a plain token reference`)
+    const ratio = contrast(token(name, theme), token('iris-bg-raised', theme))
+    assert.ok(
+      ratio >= 3,
+      `--${name} is ${ratio.toFixed(2)}:1 on the chart card in ${theme}, below the 3:1 floor`,
+    )
+  })
+
   test(`the usage chart's gridlines stay quieter than its lines in ${theme}`, () => {
     // The gridlines are scaffolding and the series are the data. If a rule were
     // as loud as a line, the chart would read as more series than it has.
-    const rule = contrast(token('iris-rule-faint', theme), token('iris-bg-raised', theme))
-    const quietest = Math.min(...SERIES_TOKENS.map(reference => {
+    // Both rules the chart draws: the interior gridlines and the baseline, which
+    // is deliberately one step louder than they are and still must not reach the
+    // faintest line — including the unattributed one, which is quieter than
+    // every named model's colour and is therefore the binding case.
+    const quietest = Math.min(...[...SERIES_TOKENS, UNATTRIBUTED_STYLE.color].map(reference => {
       const name = /^var\(--([a-z-]+)\)$/u.exec(reference)?.[1] ?? ''
       return contrast(token(name, theme), token('iris-bg-raised', theme))
     }))
-    assert.ok(
-      quietest > rule,
-      `the faintest series (${quietest.toFixed(2)}:1) is no louder than a gridline (${rule.toFixed(2)}:1)`,
-    )
+    for (const name of ['iris-rule-faint', 'iris-rule']) {
+      const rule = contrast(token(name, theme), token('iris-bg-raised', theme))
+      assert.ok(
+        quietest > rule,
+        `the faintest line (${quietest.toFixed(2)}:1) is no louder than --${name} (${rule.toFixed(2)}:1)`,
+      )
+    }
   })
 }
