@@ -17,6 +17,7 @@
 import {
   BlockAssembler,
   createAssistantMessage,
+  createMessage,
   createUserMessage,
   type AssistantMessage,
   type GenerateOptions,
@@ -155,7 +156,9 @@ export class TurnDriver {
    * @param session - the chat log the chunks are journalled to.
    * @param turn - the turn the chunks belong to, for the journal.
    * @param events - streaming callbacks and cancellation.
-   * @param tail - a message appended after the assembled conversation.
+   * @param tail - a message appended after the assembled conversation, its
+   *   role preserved ({@link toTailMessage}): a continue's nudge rides user,
+   *   an impersonation's instruction rides system, upstream's own roles.
    * @param postfix - the separator a continue rides on the text being continued
    *   (upstream appends `continue_postfix` to `cyclePrompt`, script.js:4917).
    *   Absent leaves the request alone — only a continue has one.
@@ -208,7 +211,7 @@ export class TurnDriver {
     }
     const messages = tail === undefined
       ? base.map(toMessage)
-      : [...base.map(toMessage), toMessage(tail)]
+      : [...base.map(toMessage), toTailMessage(tail)]
 
     const assembler = new BlockAssembler()
     for await (const chunk of options.stream({
@@ -363,7 +366,10 @@ export class TurnDriver {
    * @param session - the chat log.
    * @param events - streaming callbacks and cancellation.
    * @param instruction - the instruction that closes the request (upstream's
-   *   impersonation prompt, with `{{user}}`/`{{char}}` already expanded).
+   *   impersonation prompt, with `{{user}}`/`{{char}}` already expanded). It
+   *   rides as a **system** message, upstream's own delivery: role system there
+   *   (`openai.js:1373`), appended after the whole chat history as the last
+   *   thing the model reads (`:1213-1216`).
    * @returns the text the user line was written with.
    * @throws {TurnError} when the provider ends the stream with a failure.
    */
@@ -373,7 +379,7 @@ export class TurnDriver {
     // `assistant/chunk` records only, which no projection reads as a message.
     const turn = lastTurn(session) + 1
     const run = await this.#run(session, turn, events,
-      instruction === undefined ? undefined : { role: 'user' as const, text: instruction })
+      instruction === undefined ? undefined : { role: 'system' as const, text: instruction })
     this.recordImpersonation(session, run.text)
     return run.text
   }
@@ -482,6 +488,39 @@ function toMessage(message: PipelineMessage) {
   // System-placed depth injections ride as user-role content: the system slot
   // is already spoken for, and providers vary on mid-conversation system turns.
   return createUserMessage({ content: [{ type: 'text', text: message.text }], source: { kind: 'user' } })
+}
+
+/**
+ * Turn the tail message into the harness message type, its role intact.
+ *
+ * The tail is a utility prompt that closes the request — a continue's nudge
+ * (user, upstream's `continueNudge`, `openai.js:899-904`) or an impersonation's
+ * instruction (system, upstream's `impersonate` control prompt, `openai.js:1373`
+ * built role system and `:1213-1216` appended after the whole chat history).
+ * The role IS the instruction's authority: upstream delivers the impersonation
+ * prompt as a system message, and flattening it to the user's voice makes it
+ * one more user turn the model talks past — for a strong preset that reads as
+ * license to continue the character's last floor instead of writing the user's
+ * next line. Unlike {@link toMessage}, which coerces history into the two
+ * roles a transcript may carry, this one is the wire speaking.
+ * @param tail - the message appended after the assembled conversation.
+ * @returns the harness message carrying the tail's own role.
+ */
+function toTailMessage(tail: PipelineMessage) {
+  if (tail.role === 'assistant') {
+    return createAssistantMessage({
+      content: [{ type: 'text', text: tail.text }],
+      source: { provider: 'iris', model: 'history' },
+    })
+  }
+  if (tail.role === 'system') {
+    return createMessage({
+      role: 'system',
+      content: [{ type: 'text', text: tail.text }],
+      source: { kind: 'plugin', plugin: 'iris-turn' },
+    })
+  }
+  return createUserMessage({ content: [{ type: 'text', text: tail.text }], source: { kind: 'user' } })
 }
 
 /**

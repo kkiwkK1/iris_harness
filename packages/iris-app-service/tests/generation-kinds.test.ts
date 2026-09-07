@@ -237,6 +237,15 @@ test('an impersonate writes the user line, not a reply', async (t) => {
   const texts = textsOf(fix.seen[0])
   assert.equal(texts.at(-1)?.includes('point of view of Traveller'), true, 'the impersonation prompt was not expanded')
   assert.ok(texts.slice(0, -1).every(text => !text.includes('I will look for it myself.')))
+
+  // And it reached the provider the way upstream delivers it: role system, the
+  // request's last message (`openai.js:1373` builds the prompt role system,
+  // `:1213-1216` appends it after the whole chat history). A user-voice
+  // instruction standing on an assistant-ended conversation is what made a
+  // strong preset continue the character's last floor instead of writing the
+  // user's next line.
+  const instruction = fix.seen[0]?.messages.at(-1)
+  assert.equal(instruction?.role, 'system', 'the expanded impersonation prompt did not ride as a system message')
 })
 
 test('an impersonate leaves the MVU pathway alone', async (t) => {
