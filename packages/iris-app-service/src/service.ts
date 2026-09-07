@@ -45,6 +45,19 @@ import {
   type HostProbeRecord,
 } from './connections.ts'
 import type { ChatStore } from './chats.ts'
+import {
+  applyCompaction,
+  compactionSpec,
+  frameSummary,
+  historyTokens,
+  rawCoverage,
+  readCompaction,
+  selectCompactableSpan,
+  SUMMARY_MAX_TOKENS,
+  SummaryNotSmallerError,
+  writeCompaction,
+} from './compaction.ts'
+import { COMPACTION_INSTRUCTION } from './compaction-prompt.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
 import { writeTimedEffects } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
@@ -880,7 +893,7 @@ export class IrisAppService {
       'chat.create': async ({ characterId }) => {
         const entry = await chats.create(characterId, this.#options.userName)
         await this.#announceChats()
-        return { view: entry.toView() }
+        return { view: this.#viewOf(entry) }
       },
 
       'chat.open': async ({ chatId }) => {
@@ -918,7 +931,7 @@ export class IrisAppService {
         if (offer !== undefined) {
           this.#options.broadcast({ type: 'cleanup.offer', chatId, ...offer })
         }
-        return { view: entry.toView() }
+        return { view: this.#viewOf(entry) }
       },
 
       'chat.delete': async ({ chatId }) => {
@@ -965,7 +978,7 @@ export class IrisAppService {
         const entry = await chats.open(chatId)
         entry.touch({ title })
         await chats.save(entry)
-        this.#options.broadcast({ type: 'chat.updated', chatId, view: entry.toView() })
+        this.#options.broadcast({ type: 'chat.updated', chatId, view: this.#viewOf(entry) })
         return { chats: await chats.list() }
       },
 
@@ -998,6 +1011,19 @@ export class IrisAppService {
       },
 
       'chat.regenerate': async ({ chatId }) => ({ turn: await this.#start(chatId, { kind: 'regenerate' }) }),
+
+      'chat.compact': async ({ chatId }) => {
+        const entry = await this.#idle(chatId, 'compacted')
+        // Retention zero, which is the harness's manual case: everything but
+        // the newest floor. A manual `/compact` is a reader saying "this is too
+        // long now", and honouring the automatic tail budget would answer a
+        // question they did not ask.
+        const compacted = await this.#compact(entry, 0)
+        // Announced rather than only returned: a compaction changes what every
+        // open view of this conversation says about its capacity, and the
+        // caller is not necessarily the only one looking.
+        return { view: this.#announceChat(entry), compacted }
+      },
 
       'chat.abort': ({ chatId }) => {
         // Deliberately tolerant of an unknown chat: stopping something that is
@@ -1322,8 +1348,8 @@ export class IrisAppService {
         // branch point somewhere the user did not choose.
         await this.#idle(chatId, 'branched')
         const child = await chats.branch(chatId, id, swipeId)
-        const view = child.toView()
-        this.#options.broadcast({ type: 'chat.updated', chatId, view: (await chats.open(chatId)).toView() })
+        const view = this.#viewOf(child)
+        this.#options.broadcast({ type: 'chat.updated', chatId, view: this.#viewOf(await chats.open(chatId)) })
         return { view, chats: await chats.list() }
       },
 
@@ -1374,7 +1400,7 @@ export class IrisAppService {
 
         entry.touch()
         await chats.save(entry)
-        this.#options.broadcast({ type: 'chat.updated', chatId, view: entry.toView() })
+        this.#options.broadcast({ type: 'chat.updated', chatId, view: this.#viewOf(entry) })
         return { variables: entry.variables.getVariables(option) }
       },
 
@@ -2074,7 +2100,7 @@ export class IrisAppService {
         else entry.header.chat_metadata['world_info'] = name
         entry.touch()
         await chats.save(entry)
-        this.#options.broadcast({ type: 'chat.updated', chatId, view: entry.toView() })
+        this.#options.broadcast({ type: 'chat.updated', chatId, view: this.#viewOf(entry) })
         const bound = entry.header.chat_metadata['world_info']
         return { name: typeof bound === 'string' ? bound : null }
       },
@@ -2387,7 +2413,7 @@ export class IrisAppService {
         // An open page sees the conversation come back: pushed, not left for
         // the next open to discover.
         const entry = await chats.open(intent.chatId)
-        this.#options.broadcast({ type: 'chat.updated', chatId: intent.chatId, view: entry.toView() })
+        this.#options.broadcast({ type: 'chat.updated', chatId: intent.chatId, view: this.#viewOf(entry) })
         await this.#announceChats()
         return {
           chat: entry.toSummary(),
@@ -2615,9 +2641,43 @@ export class IrisAppService {
     return entry
   }
 
+  /**
+   * What one conversation's next request may spend.
+   *
+   * The same resolution the assembler runs — the preset's own window when it
+   * has one, the composition's otherwise (`windowOf`) — and the host's reply
+   * reserve. Resolved per call rather than stored on the entry, so a preset
+   * switch or a per-chat override is in force on the next view without anyone
+   * having to remember to refresh a copy.
+   * @param chatId - the conversation.
+   * @returns the two figures the capacity meter divides by.
+   */
+  #chatBudget(chatId: string): { context: number, reserve: number } {
+    const settings: GenerationSettings = this.#options.settings.get(chatId)
+    return {
+      context: windowOf(settings, this.#options.contextWindow),
+      reserve: this.#options.reserveTokens,
+    }
+  }
+
+  /**
+   * One conversation's view, with the budget attached.
+   *
+   * Every view this service hands out goes through here rather than calling
+   * `entry.toView()` directly, which is what makes the capacity figure
+   * unconditional: a client that received one view with a budget and the next
+   * without would have a meter that blinks out whenever an unrelated write
+   * broadcast a fresh view.
+   * @param entry - the conversation.
+   * @returns the view to send.
+   */
+  #viewOf(entry: ChatEntry): ReturnType<ChatEntry['toView']> {
+    return entry.toView(this.#chatBudget(entry.chatId))
+  }
+
   /** Push a chat's settled view and return it. */
   #announceChat(entry: ChatEntry): ReturnType<ChatEntry['toView']> {
-    const view = entry.toView()
+    const view = this.#viewOf(entry)
     this.#options.broadcast({ type: 'chat.updated', chatId: entry.chatId, view })
     return view
   }
@@ -2666,6 +2726,16 @@ export class IrisAppService {
     if (request.kind === 'continue' && seed === undefined) {
       throw invalid('this chat has no reply to continue; its newest line is not a reply')
     }
+
+    // **Before the turn opens, and awaited**: the harness compacts at its
+    // `agent/pre-step` boundary, which is the same moment — the request has not
+    // been assembled yet, so the summary this produces is in the record the
+    // assembly will read. Sitting after the validation above so a refused
+    // request (a continue with nothing to continue) does not spend a
+    // summarization call on its way to being refused, and before
+    // `entry.begin(turn)` so the compaction's own save is not competing with a
+    // generation the entry already believes is running.
+    await this.#autoCompact(entry)
 
     const signal = entry.begin(turn)
     // A continue's buffer opens on the text being continued, because the deltas
@@ -2844,7 +2914,7 @@ export class IrisAppService {
         this.#report(message, { kind: 'variables', grade: 'fault', chatId: entry.chatId })
       })
       this.#options.broadcast({
-        type: 'stream.end', chatId: entry.chatId, turn, view: entry.toView(), reason,
+        type: 'stream.end', chatId: entry.chatId, turn, view: this.#viewOf(entry), reason,
       })
       await this.#announceChats()
     } catch (cause: unknown) {
@@ -3091,7 +3161,16 @@ export class IrisAppService {
       // history entries map one-to-one onto chat-file lines. This is
       // `chat_metadata.lastInContextMessageId` upstream and, like it, a real
       // turn's byproduct: a preview must not write it.
-      entry.firstIncludedMessageId = assembled.overflow.droppedHistory
+      //
+      // **Offset by the compaction**, because `droppedHistory` counts drops
+      // from the conversation the assembler was handed, and after a compaction
+      // that conversation starts with a summary standing for `count` real
+      // floors. Without the offset this macro would name a floor that is in the
+      // request only as a sentence inside the summary — the summary itself is
+      // pinned, so it is never the dropped one, and the arithmetic is a plain
+      // shift rather than a special case.
+      entry.firstIncludedMessageId
+        = (readCompaction(entry.header)?.count ?? 0) + assembled.overflow.droppedHistory
       entry.itemizations.set(turn, this.#itemizationOf(assembled, turn, false))
     }
 
@@ -3322,6 +3401,195 @@ export class IrisAppService {
   }
 
   /**
+   * Ask the model to condense one span of conversation.
+   *
+   * The call's **shape** is the harness's
+   * (`packages/compaction/compaction-basic/src/summarizer.ts`) and the shape is
+   * the mechanism: the conversation's own system prompt, then the span's own
+   * messages in order, then the compaction instruction as the **final user
+   * message**. That makes the auxiliary request a genuine prefix of the request
+   * this conversation was already sending, so the provider's KV cache is reused
+   * and only the trailing instruction is novel input — where a separate
+   * summarizer system prompt would invalidate the whole prefix and bill the
+   * full span again at uncached rates.
+   *
+   * The span is sent whole, against no budget, on purpose. It was part of a
+   * request that had *already* fitted the window — that is what made it
+   * compactable — so it cannot overflow on its own, and handing it to the
+   * trimmer would silently drop the oldest floors from the summary of the
+   * oldest floors.
+   *
+   * No `entry` is passed to {@link #stream}, following `#generateRaw`: this
+   * prompt is written by the host, so a card's templates must not evaluate in
+   * it, its residual macros are not a card's fault, and — the one that would
+   * actually corrupt a record — the estimator calibration and the turn's
+   * `actualTokens` must not be moved by a request that is not the turn.
+   * @param entry - the conversation.
+   * @param span - the floors to condense, oldest first.
+   * @param contributions - this turn's resolved contributions, for the system slot.
+   * @returns the summary text.
+   * @throws {AppError} `provider-error` when the stream fails or is cut off.
+   */
+  async #summarize(
+    entry: ChatEntry,
+    span: readonly HistoryEntry[],
+    contributions: readonly Contribution[],
+  ): Promise<string> {
+    const settings = this.#options.settings.get(entry.chatId)
+    // The system slot only. Assembled against an empty conversation because
+    // that is what isolates it: the depth injections (author's note, world-info
+    // `atDepth`, a card's `/inject`) belong beside the newest floors of a live
+    // request and have no place in a replay of the oldest ones.
+    const system = assemble({
+      contributions: [...contributions],
+      history: [],
+      budget: { context: Number.MAX_SAFE_INTEGER, reserve: 0, count: text => this.#counter.count(text) },
+    }).system
+
+    const assembler = new BlockAssembler()
+    for await (const chunk of this.#stream({
+      provider: settings.provider,
+      model: settings.model,
+      ...system === '' ? {} : { system },
+      messages: [
+        ...span.map(item => (item.role === 'assistant'
+          ? createAssistantMessage({
+            content: [{ type: 'text', text: item.text }],
+            source: { provider: 'iris', model: 'history' },
+          })
+          : createUserMessage({ content: [{ type: 'text', text: item.text }], source: { kind: 'user' } }))),
+        createUserMessage({
+          content: [{ type: 'text', text: COMPACTION_INSTRUCTION }],
+          source: { kind: 'user' },
+        }),
+      ],
+      maxTokens: SUMMARY_MAX_TOKENS,
+    })) {
+      assembler.push(chunk)
+    }
+
+    const finish = assembler.finish
+    if (finish.kind === 'error' || finish.kind === 'aborted') {
+      throw new AppError('provider-error', finish.failure?.message ?? 'the provider ended the summary with an error')
+    }
+    // A truncated checkpoint is worse than none: it is missing its last
+    // sections and nothing downstream can tell. The harness fails closed here
+    // too (`summarizer.ts`'s `finishError`, `MAX_TOKENS`).
+    if (finish.kind === 'max-tokens') {
+      throw new AppError(
+        'provider-error',
+        `the summary was cut off at the ${String(SUMMARY_MAX_TOKENS)}-token cap, so the checkpoint is incomplete`,
+      )
+    }
+    return assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('').trim()
+  }
+
+  /**
+   * Fold this conversation's older history into one summary, and record it.
+   *
+   * The transaction, in the harness's order: choose the span from the
+   * conversation **as the model currently sees it** (an earlier summary
+   * included, so a second compaction merges rather than nests), summarize it,
+   * refuse a replacement that is not smaller than what it replaces, then write
+   * the record and save. Nothing is written until the summary is in hand and
+   * has passed the shrink guard, so a failed compaction leaves the conversation
+   * exactly as it was.
+   * @param entry - the idle conversation.
+   * @param retainTokens - the verbatim tail to keep; `0` for a manual compaction.
+   * @returns what the compaction did, or `null` when there was nothing to compact.
+   * @throws {AppError} `provider-error` from the model, `unsupported` when the
+   *   summary would save nothing.
+   */
+  async #compact(
+    entry: ChatEntry,
+    retainTokens: number,
+  ): Promise<{ floors: number, spanTokens: number, summaryTokens: number } | null> {
+    const count = (text: string): number => this.#counter.count(text)
+    const previous = readCompaction(entry.header)
+    const effective = this.#history(entry, entry.session)
+    const keepFrom = selectCompactableSpan(effective, retainTokens, count)
+    if (keepFrom === null) return null
+
+    const span = effective.slice(0, keepFrom)
+    const spanTokens = historyTokens(span, count)
+    const contributions = await this.#contributions(entry, entry.session, count, false)
+    const summary = await this.#summarize(entry, span, contributions)
+    if (summary === '') {
+      throw new AppError('provider-error', 'the summarization produced no text to keep')
+    }
+
+    const summaryTokens = count(frameSummary(summary))
+    if (summaryTokens >= spanTokens) {
+      throw new AppError('unsupported', new SummaryNotSmallerError(summaryTokens, spanTokens).message)
+    }
+
+    const covered = rawCoverage(keepFrom, previous)
+    writeCompaction(entry.header, {
+      count: covered,
+      summary,
+      spanTokens,
+      summaryTokens,
+      at: Date.now(),
+      model: this.#options.settings.get(entry.chatId).model,
+    })
+    entry.touch()
+    await this.#options.chats.save(entry)
+    return { floors: covered - (previous?.count ?? 0), spanTokens, summaryTokens }
+  }
+
+  /**
+   * Compact before generating, if the next request is about to be too big.
+   *
+   * The harness's `compactIfNeeded` on its `agent/pre-step` listener, with its
+   * pressure reading translated: it measures the latest durable routed request
+   * envelope through its token meter, and the same fact here is the itemization
+   * this host already records for every real turn (`entry.itemizations`). So the
+   * reading is free — no second assembly — and, exactly as in the harness, it
+   * describes the **previous** request rather than the one about to be built.
+   * That lag is the point: a threshold at 80% of the budget leaves room for one
+   * more turn's growth, which is what makes measuring the previous request
+   * sufficient.
+   *
+   * **A conversation with no record yet is never compacted**, and that is a
+   * refusal rather than a gap: the only other available reading would be the
+   * provider's reported prompt size, which is a different measurement of a
+   * different assembly, and choosing between them per call would make the
+   * trigger fire at two different fullnesses depending on history nobody can
+   * see. The first real turn after opening a chat writes a record.
+   *
+   * Failures are swallowed into a report, not raised. The user asked to send a
+   * message; a compaction that could not run is a reason to send the message
+   * uncompacted (the budget trimmer still keeps the request legal), not a reason
+   * to refuse the turn.
+   * @param entry - the conversation about to generate.
+   */
+  async #autoCompact(entry: ChatEntry): Promise<void> {
+    const budget = this.#chatBudget(entry.chatId)
+    const spec = compactionSpec(budget.context - budget.reserve)
+    if (spec === null) return
+    const latest = entry.lastTurn
+    const recorded = latest < 0 ? undefined : entry.itemizations.get(latest)
+    if (recorded === undefined || recorded.tokens < spec.thresholdTokens) return
+    try {
+      const outcome = await this.#compact(entry, spec.retainTokens)
+      if (outcome === null) return
+      this.#report(
+        `compaction folded ${String(outcome.floors)} floor(s) into a summary `
+        + `(${String(outcome.spanTokens)} estimated tokens became ${String(outcome.summaryTokens)}); `
+        + `the previous request was ${String(recorded.tokens)} against a threshold of ${String(spec.thresholdTokens)}`,
+        { kind: 'prompt', grade: 'note', chatId: entry.chatId },
+      )
+      this.#announceChat(entry)
+    } catch (error: unknown) {
+      // Reported beside the successes rather than dropped. Copying the
+      // harness's "log and continue the turn" is behaviour parity; a failure
+      // that says nothing is indistinguishable from a threshold that is never
+      // reached, and those two send a reader to opposite places.
+      this.#report(error, { kind: 'prompt', grade: 'fault', chatId: entry.chatId })
+    }
+  }
+
+  /**
    * The conversation as the model should see it.
    *
    * The prompt direction of the chat's regex scripts runs here, which is what
@@ -3340,6 +3608,30 @@ export class IrisAppService {
    * @returns history entries, oldest first.
    */
   #history(entry: ChatEntry, session: Session, projection: HistoryProjection = {}): HistoryEntry[] {
+    return applyCompaction(this.#rawHistory(entry, session, projection), readCompaction(entry.header))
+  }
+
+  /**
+   * The conversation before any compaction is substituted.
+   *
+   * Split out for exactly one caller — the summarizer, which has to read the
+   * span it is about to replace and would otherwise be handed the summary
+   * standing in for it. Everything else wants {@link #history}: putting the
+   * substitution at that one choke point is what makes the real turn, the
+   * world-info scan, the itemization record, the preview and
+   * `TavernHelper.generate` agree about what the model is being shown, instead
+   * of five call sites each remembering to compact.
+   *
+   * The regex depths are computed here, on the **raw** conversation, and that
+   * is deliberate: a script scoped to "the newest three floors" must mean the
+   * newest three floors whether or not the head has been compacted, and
+   * compaction removes from the other end.
+   * @param entry - the conversation.
+   * @param session - the log to project.
+   * @param projection - what the generation this is for must not be shown.
+   * @returns history entries, oldest first, every floor verbatim.
+   */
+  #rawHistory(entry: ChatEntry, session: Session, projection: HistoryProjection = {}): HistoryEntry[] {
     const names = entry.names
     const entries = historyFromSession(session, {
       characterName: names.character,

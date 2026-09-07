@@ -124,12 +124,68 @@ export interface TurnUsage {
   at?: number
 }
 
+/**
+ * An early span of a conversation, standing in for itself as a summary.
+ *
+ * **No message was deleted.** {@link ChatView.messages} still carries every
+ * floor; this record says that the leading {@link ChatCompaction.count} of them
+ * are no longer sent to the model verbatim — one summary floor is sent in their
+ * place when the next request assembles. Upstream's Summarize extension has the
+ * same relationship to a chat (it injects a summary and leaves `context.chat`
+ * alone); the difference is that Iris also *stops sending* the span, which is
+ * what makes the context actually shrink.
+ * `notes/packages/iris-app-service/DEVIATIONS.md` §27.
+ */
+export interface ChatCompaction {
+  /**
+   * How many leading floors the summary stands for.
+   *
+   * A count rather than a message id, because a count is the unit the
+   * substitution is written in — the assembler is handed a list of history
+   * entries and the summary replaces its first `count`. An id would have to be
+   * converted at every read, and the conversion is where an off-by-one hides.
+   */
+  count: number
+  /** The model's summary, unframed — the framing is the host's and is added at assembly. */
+  summary: string
+  /** What the compacted span was estimated to cost when it was replaced. */
+  spanTokens: number
+  /** What the framed summary costs instead. Always less than {@link ChatCompaction.spanTokens}. */
+  summaryTokens: number
+  /** Unix epoch milliseconds. */
+  at: number
+  /** Which model wrote it, so a reader can tell a cheap summary from a careful one. */
+  model: string
+}
+
 /** One open conversation. */
 export interface ChatView {
   chatId: string
   title: string
   characterId?: string
   messages: MessageView[]
+  /**
+   * What this conversation's next request is allowed to spend.
+   *
+   * The same two numbers {@link PromptItemization.budget} carries, resolved the
+   * same way — the preset's own `openai_max_context` when it has one, the host
+   * composition's value otherwise — carried on the open chat so a surface can
+   * say how full the window is **without** asking for an itemization.
+   * Assembling one is not free (a full world-info scan and a macro pass), and a
+   * capacity readout that paid that on every keystroke is a readout nobody
+   * could afford to show.
+   *
+   * **Optional, and absent is a real state rather than a gap to fill in.** The
+   * projection is handed these two numbers by whoever resolves the settings;
+   * something that projects a conversation without them — a fixture, a
+   * transport test — gets a view that says nothing about capacity, and a
+   * surface reading it shows no meter. Zero-filling instead would put a `0`
+   * window on the wire, and every consumer that divides by it would report a
+   * conversation as infinitely full.
+   */
+  budget?: { context: number, reserve: number }
+  /** Present only when an early span of this conversation has been compacted. */
+  compaction?: ChatCompaction
   /** Variables of the newest turn, for a status-bar surface. */
   variables?: Record<string, unknown>
   /**

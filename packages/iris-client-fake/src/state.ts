@@ -10,6 +10,7 @@
  */
 
 import type {
+  ChatCompaction,
   ChatSummary,
   ChatView,
   GenerationSettings,
@@ -22,6 +23,8 @@ import type {
   UsageTotals,
   ViewRole,
 } from '@iris/protocol'
+
+import { FAKE_BUDGET } from './prompt.ts'
 
 /** One alternate reading of a message. */
 export interface Candidate {
@@ -81,6 +84,14 @@ export interface FakeChat {
   settingsOverride?: Partial<GenerationSettings>
   /** Per-chat variables, so a status-bar surface has something to render. */
   variables: Record<string, unknown>
+  /**
+   * The compaction this conversation has had, once `chat.compact` has run.
+   *
+   * Absent on a seeded chat: the interesting states are both before and after,
+   * and a fixture that arrived pre-compacted would leave the "no compaction
+   * yet" surface untested.
+   */
+  compaction?: ChatCompaction
 }
 
 /**
@@ -228,6 +239,8 @@ export function toChatView(chat: FakeChat, streamingTurn?: number): ChatView {
     messages: chat.messages.map((message, id) =>
       toMessageView(message, id, message.role === 'assistant' && message.turn === streamingTurn),
     ),
+    budget: { ...FAKE_BUDGET },
+    ...(chat.compaction === undefined ? {} : { compaction: chat.compaction }),
     variables: chat.variables,
     ...(usage === undefined ? {} : { usage }),
   }

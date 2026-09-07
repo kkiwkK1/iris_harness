@@ -61,6 +61,20 @@ export type ItemizationResult =
   | { ok: true, itemization: import('@iris/protocol').PromptItemization }
   | { ok: false, error: import('@iris/protocol').RpcError }
 
+/**
+ * What one compaction did, or why it did nothing.
+ *
+ * Three outcomes, not two, and the middle one is why this is not a `void`
+ * action wrapped in `guard`: a compaction that found nothing left to compact is
+ * an **answer** — the conversation is already as short as this can make it —
+ * and reporting it as a failure would send a reader looking for a broken
+ * provider.
+ */
+export type CompactResult =
+  | { ok: true, compacted: { floors: number, spanTokens: number, summaryTokens: number } }
+  | { ok: true, compacted: null }
+  | { ok: false, error: import('@iris/protocol').RpcError }
+
 /** A script body, or why there is not one. */
 export type ScriptBodyResult =
   | { ok: true, content: string }
@@ -973,6 +987,14 @@ export interface IrisActions {
     until?: number
     granularity?: import('@iris/protocol').UsageGranularity
   }): Promise<UsageSummaryResult>
+  /**
+   * Fold this conversation's older history into a summary.
+   *
+   * The host chooses the span and writes the record; the fresh view comes back
+   * on the same call **and** arrives as a `chat.updated` broadcast, so a second
+   * open page is not left showing a capacity that is no longer true.
+   */
+  compactChat(): Promise<CompactResult>
   /**
    * Run a slash command a card invoked.
    *
@@ -2848,6 +2870,26 @@ export function createIrisStore(
             ...params.granularity === undefined ? {} : { granularity: params.granularity },
           })
           return { ok: true, summary }
+        } catch (error: unknown) {
+          return { ok: false, error: asRpcError(error) }
+        }
+      },
+
+      async compactChat(): Promise<CompactResult> {
+        const chatId = get().chatId
+        if (chatId === undefined) {
+          return { ok: false, error: { code: 'not-found', message: 'no chat is open' } }
+        }
+        try {
+          const answer = await client.call('chat.compact', { chatId })
+          // Taken even when nothing was compacted: the call resolved, so this
+          // view is newer than the one in hand either way, and the `chatId`
+          // recheck is the same last-write-wins guard `openChat` uses — a
+          // compaction is slow enough for the reader to have moved on.
+          if (get().chatId === chatId) set({ view: answer.view })
+          return answer.compacted === null
+            ? { ok: true, compacted: null }
+            : { ok: true, compacted: answer.compacted }
         } catch (error: unknown) {
           return { ok: false, error: asRpcError(error) }
         }

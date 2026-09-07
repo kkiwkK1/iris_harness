@@ -18,6 +18,7 @@ import { buttonEventName } from '../sandbox/button-event.ts'
 import { emitToCard } from './card-bus.ts'
 import { FRAME_BAND_VARIABLE, frameBandPixels } from './frame-fit.ts'
 import { FrameBudgetProvider, type BudgetedFloor } from './FrameBudget.tsx'
+import { CompactionNote } from './CompactionNote.tsx'
 import { Composer } from './Composer.tsx'
 import { PlumSpray } from './marks.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
@@ -222,6 +223,12 @@ export function ChatPane(): ReactElement {
     <>
       <div className="iris-scroll" ref={attachScroller} onScroll={onScroll}>
         <div className="iris-column">
+          {/*
+            First in the column, because what it describes is the beginning of
+            the conversation — `CompactionNote` says why it is not spliced in at
+            the boundary it names.
+          */}
+          {view.compaction === undefined ? null : <CompactionNote compaction={view.compaction} />}
           {window_.hidden === 0 ? null : (
             <button
               type="button"

@@ -14,7 +14,7 @@
 import type { Message } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { listCandidates, selectedCandidate } from '@iris/chat'
-import type { ChatView, MessageView, TurnUsage } from '@iris/protocol'
+import type { ChatCompaction, ChatView, MessageView, TurnUsage } from '@iris/protocol'
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 
 import type { PromptFingerprint } from './fingerprint.ts'
@@ -288,6 +288,8 @@ export function toChatView(input: {
   scripts?: readonly RegexScript[] | undefined
   substitute?: MacroSubstitute | undefined
   variables?: Record<string, unknown> | undefined
+  budget?: { context: number, reserve: number } | undefined
+  compaction?: ChatCompaction | undefined
 }): ChatView {
   const usage = totalUsage(input.session)
   return {
@@ -300,6 +302,8 @@ export function toChatView(input: {
       ...input.scripts === undefined ? {} : { scripts: input.scripts },
       substitute: input.substitute,
     }),
+    ...input.budget === undefined ? {} : { budget: input.budget },
+    ...input.compaction === undefined ? {} : { compaction: input.compaction },
     ...input.variables === undefined ? {} : { variables: input.variables },
     ...usage === undefined ? {} : { usage },
   }

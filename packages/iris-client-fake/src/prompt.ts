@@ -29,6 +29,17 @@
 
 import type { PromptItemEntry, PromptItemization } from '@iris/protocol'
 
+/**
+ * The budget the seeded conversation assembles under.
+ *
+ * One constant read by both the itemization and `ChatView.budget`, because a
+ * fixture where those two disagreed would make the composer's capacity meter
+ * and the prompt panel's percentage report different fullnesses for the same
+ * conversation — and the whole point of the two dividing by `context - reserve`
+ * is that they cannot.
+ */
+export const FAKE_BUDGET: { context: number, reserve: number } = { context: 8192, reserve: 1024 }
+
 /** The entries, in assembly order rather than sorted — sorting is the UI's business. */
 const ENTRIES: readonly PromptItemEntry[] = [
   { id: 'main', label: 'Main Prompt', kind: 'system', tokens: 148 },
@@ -71,7 +82,7 @@ export function fakeItemization(turn: number, preview: boolean): PromptItemizati
     // of showing both is to answer "is the estimate trustworthy", and a fixture
     // where they match exactly would hide the case the field exists for.
     ...(preview ? {} : { actualTokens: tokens + 46 }),
-    budget: { context: 8192, reserve: 1024 },
+    budget: { ...FAKE_BUDGET },
     droppedHistory: preview ? 0 : 3,
     overBudget: false,
     preview,

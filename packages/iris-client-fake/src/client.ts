@@ -40,7 +40,7 @@ import {
   saveConnection,
 } from './connections.ts'
 import { mergeOverrides, mergeSettings } from './settings.ts'
-import { DEFAULT_SETTINGS, FAKE_SCRIPTS, seedCharacters, seedChats } from './seed.ts'
+import { DEFAULT_SETTINGS, FAKE_SCRIPTS, FAKE_SUMMARY, seedCharacters, seedChats } from './seed.ts'
 import {
   fakeBookEntries,
   fakeCardWorldbook,
@@ -366,6 +366,53 @@ class InMemoryClient implements FakeClient {
         message.index = message.candidates.length - 1
         this.#beginTurn(chat, message.turn, at, message.index)
         return { turn: message.turn }
+      }
+
+      /*
+       * The fake compacts for real, minus the model.
+       *
+       * It picks the same span the host does with retention zero — everything
+       * but the newest floor — and writes a canned summary. That is enough for
+       * the surfaces to be exercised (the marker appears, the capacity meter
+       * moves, a second compaction folds in what the first left out) and it is
+       * honest about the one thing it cannot do: the summary text is a fixture,
+       * not a reading of the conversation, and the note below says so on screen.
+       */
+      case 'chat.compact': {
+        const { chatId } = params as RpcRequest<'chat.compact'>
+        const chat = this.#require(chatId)
+        if (this.#streams.has(chatId)) throw new FakeRpcError('busy', 'this chat is generating')
+        const covered = chat.messages.length - 1
+        const already = chat.compaction?.count ?? 0
+        if (covered <= already) return { view: toChatView(chat), compacted: null }
+        // Four characters to a token, the same crude ratio the fake's other
+        // token figures use — this is a fixture, not an estimator.
+        const spanTokens = Math.max(
+          1,
+          Math.ceil(chat.messages.slice(already, covered)
+            .reduce((sum, row) => sum + selected(row).text.length, 0) / 4),
+        )
+        const summary = FAKE_SUMMARY
+        chat.compaction = {
+          count: covered,
+          summary,
+          spanTokens,
+          // Held strictly under the span, because the host refuses a summary
+          // that is not smaller and a fixture violating that rule would let a
+          // surface render a state the host cannot produce.
+          summaryTokens: Math.min(Math.ceil(summary.length / 4), Math.max(1, spanTokens - 1)),
+          at: Date.now(),
+          model: chat.settings.model,
+        }
+        chat.updatedAt = Date.now()
+        return {
+          view: toChatView(chat),
+          compacted: {
+            floors: covered - already,
+            spanTokens,
+            summaryTokens: chat.compaction.summaryTokens,
+          },
+        }
       }
 
       case 'chat.abort': {

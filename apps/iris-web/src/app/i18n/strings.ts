@@ -1071,6 +1071,57 @@ export const en = {
   usageHitRateBasis: 'The share of prompt tokens the cache served, over the generations whose provider reported a cache bucket. Routes silent about caching are not in the denominator, so this is not the cache hit over the billed input beside it.',
   /** Nothing to draw, because this figure was never billed — not a chart of zeros. */
   usageChartEmpty: 'Nothing was billed to this figure in this range.',
+  /**
+   * The capacity capsule and its card (`ContextMeter.tsx`).
+   *
+   * **This family is 「估算」 vocabulary, not 「用量」.** Everything on the card
+   * except the cache-hit line is the host's own estimate of an assembly, where
+   * `usage*` above is only ever what a provider said it charged — `STRINGS.md`
+   * §三 pins that distinction, and this card is the one surface where the two
+   * kinds of number sit together.
+   */
+  contextPill: 'Context {used}/{total} · {percent}%',
+  /** Before the card has been opened for this conversation: the capacity alone. */
+  contextPillCapacity: 'Context {total}',
+  contextPillTitle: 'What is filling the context window',
+  contextCardTitle: 'Context capacity',
+  contextCardFigures: '{used} / {total} · {percent}%',
+  contextCardLoading: 'Working out what the next request would contain…',
+  contextCardFailed: 'Could not read the breakdown — {reason}',
+  contextCategoryMessages: 'Messages',
+  contextCategoryWorldbook: 'World books',
+  contextCategoryPreset: 'Prompt and preset',
+  contextCategoryCharacter: 'Character and persona',
+  contextCategoryScript: 'Script injections',
+  contextCategoryOther: 'Other',
+  contextRemaining: '{tokens} left',
+  contextReserve: '{tokens} held back for the reply',
+  /** Which of the two answers this is: a record of a sent request, or a preview. */
+  contextFromRecord: 'Measured on turn {turn}',
+  contextFromPreview: 'A preview of the next request',
+
+  /*
+   * The composer's command line (`commands.ts`).
+   *
+   * `commandRow` is the completion menu's row; `commandUnknown` is the refusal
+   * for a name neither Iris nor the host recognised, and it carries the host's
+   * own words because only the host knows which of the two refused.
+   */
+  commandRow: '/{name} — {summary}',
+  commandUnknown: '/{name} is not a command here — {reason}',
+  commandBusy: '/{name} cannot run while a reply is arriving',
+  commandHelpHeading: 'Commands:',
+  commandHelpUpstream: 'Anything else starting with a slash goes to the host, which runs SillyTavern’s own commands.',
+  commandHelpSummary: 'List the commands this composer knows',
+  commandCompactSummary: 'Fold older history into a summary to free up context',
+  commandCompactDone: 'Compacted {floors} floor(s): {before} tokens of history are now a {after}-token summary.',
+  commandCompactNothing: 'There is nothing left to compact — the history is already a summary plus the newest floor.',
+  commandCompactFailed: 'Compaction did not run — {reason}',
+
+  /* The marker at the top of a compacted conversation (`CompactionNote.tsx`). */
+  compactedTitle: '{floors} earlier floor(s) are sent as a summary',
+  compactedFigures: '{before} → {after}',
+  compactedKept: 'Nothing was deleted: every floor is still in this conversation and in its file. What changed is what the model is sent.',
 } as const
 
 /** The key union: every translation has to cover exactly these. */
@@ -1997,6 +2048,38 @@ export const zh: Record<StringKey, string> = {
   usageBasisAria: '这些数字的口径',
   usageHitRateBasis: '缓存替你省下的提示 token 占比，只在「提供方报告了缓存桶」的那些生成上计算。对缓存沉默的线路不进分母，所以这不是旁边那张「计费输入」的命中比例。',
   usageChartEmpty: '这段时间这个指标没有产生计费。',
+  contextPill: '上下文 {used}/{total} · {percent}%',
+  contextPillCapacity: '上下文 {total}',
+  contextPillTitle: '看上下文窗口被什么占满了',
+  contextCardTitle: '上下文容量',
+  contextCardFigures: '{used} / {total} · {percent}%',
+  contextCardLoading: '正在算下一条请求会装配成什么……',
+  contextCardFailed: '读不到明细 —— {reason}',
+  contextCategoryMessages: '消息历史',
+  contextCategoryWorldbook: '世界书',
+  contextCategoryPreset: '主提示词与预设段',
+  contextCategoryCharacter: '角色与人设',
+  contextCategoryScript: '脚本注入',
+  contextCategoryOther: '其他',
+  contextRemaining: '还剩 {tokens}',
+  contextReserve: '为回复留出 {tokens}',
+  contextFromRecord: '第 {turn} 回实测',
+  contextFromPreview: '下一条请求的预览',
+
+  commandRow: '/{name} —— {summary}',
+  commandUnknown: '/{name} 在这里不是命令 —— {reason}',
+  commandBusy: '正在出回复，/{name} 现在不能跑',
+  commandHelpHeading: '命令：',
+  commandHelpUpstream: '其他以斜杠开头的都交给宿主，由它按 SillyTavern 的语义执行。',
+  commandHelpSummary: '列出这个输入框认识的命令',
+  commandCompactSummary: '把较早的历史折成摘要，腾出上下文',
+  commandCompactDone: '已压缩 {floors} 条：{before} tok 的历史现在是一段 {after} tok 的摘要。',
+  commandCompactNothing: '没有可压的了 —— 历史已经只剩一段摘要加最新一条。',
+  commandCompactFailed: '压缩没有执行 —— {reason}',
+
+  compactedTitle: '较早的 {floors} 条以摘要形式发送',
+  compactedFigures: '{before} → {after}',
+  compactedKept: '什么都没删：每一条都还在这个对话里、也还在它的文件里。变的只是发给模型的内容。',
 }
 
 /** Both dictionaries, keyed by language. */

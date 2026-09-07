@@ -2146,3 +2146,148 @@ scan to be felt would make the uncapped reply the wrong shape — and the answer
 then is a host-side index invalidated on write, not a cap. A provider reporting
 a route per *block* rather than per request would make one `model` per record
 the wrong unit, the way the harness's `routes` array already anticipates.
+
+## 29. Older history is replaced by a summary **at assembly**, not deleted; upstream's Summarize injects a summary and sends the history anyway
+
+**Kind: deliberate improvement** (ROADMAP's second ledger), so this entry owes
+three things — what is better, what it costs, and why upstream does not do it.
+
+**Upstream, read rather than assumed.** SillyTavern ships a Summarize extension
+(`1_memory`) and it is a *near miss* for this: it produces the same artefact and
+puts it in the prompt, and then leaves the history it summarised in the request.
+
+| what | where |
+| --- | --- |
+| the summary is generated | `[ST 1.18.0] public/scripts/extensions/memory/index.js:681` — `summarizeChatMain`, through `generateQuietPrompt` |
+| its default prompt | `:105` — *"Summarize the most important facts and events in the story so far… Limit the summary to {{words}} words"*, `promptWords: 200` (`:118`) |
+| how it reaches the prompt | `:964-965` — `setMemoryContext` → `setExtensionPrompt(MODULE_NAME, formatMemoryValue(value), position, depth, scan, role)` |
+| where it lands | `:114-117` — `position: IN_PROMPT`, `role: SYSTEM`, `depth: 2`; template `[Summary: {{summary}}]` (`:106`) |
+| where it is stored | `:978-983` — `mes.extra.memory = value` on the pre-last message, then `saveChatDebounced()` |
+| how the newest one is found | `:365`, `:386` — walk the reversed chat (minus the last row) for the first `mes.extra.memory` |
+| **what it does to the history** | **nothing.** No path in the file touches `context.chat`; `getContext().chat` is read (`:597`) and never spliced |
+
+So on upstream a long conversation that has been summarised sends *both* — the
+summary at depth 2 **and** every floor it summarises — and the only thing that
+removes a floor from the request is the token budget silently dropping it off
+the front. The extension is off by default and asks for a summary every ten
+messages (`promptInterval: 10`, `:123`).
+
+**Iris.** The summary replaces the span it stands for, in the one place the
+conversation is projected for a request. `#history` is
+`applyCompaction(#rawHistory(…), readCompaction(entry.header))`, and every
+consumer goes through it — the real turn, the world-info scan, the itemization
+record, the preview, and `TavernHelper.generate`. The replacement is one
+`HistoryEntry` at the head of the conversation, `role: 'system'`,
+`pinned: true`, carrying the framed checkpoint. `src/compaction.ts`,
+`src/compaction-prompt.ts`, `tests/compaction.test.ts`.
+
+**No message is deleted, and that is the compatibility floor.** The chat file
+keeps every floor; `ChatView.messages` keeps every floor; a compacted chat
+opened in SillyTavern is a complete chat with one unknown header key. What
+changed is only what the model is sent — which is exactly the relationship
+upstream's own extension has to a chat, one step further.
+
+**Two triggers, both the harness's.** Automatic at 80% of the available budget
+(`agent/pre-step` in `dsh-compaction-basic`; here the top of `#start`, before
+`entry.begin`), retaining a 16% verbatim tail. Manual `chat.compact` with
+retention zero — everything but the newest floor. The pressure reading is the
+itemization this host already records for every real turn
+(`entry.itemizations`), so the trigger costs no second assembly; like the
+harness's, it describes the **previous** request, and the 80% threshold is what
+makes that lag affordable.
+
+**Where the record lives, and why not the three obvious places.** A top-level
+`iris_compaction` key on the chat **header**, beside `iris` and
+`chat_metadata`. All three alternatives lose it silently, which is this
+feature's worst outcome — a lost record means the next request quietly
+re-includes the whole span, the conversation gets more expensive, and nothing
+says why.
+
+- **Not a message's `extra`**, which is where upstream puts its own summary.
+  SillyTavern treats `extra` as per-swipe state it swaps **wholesale**:
+  `targetMessage.extra = structuredClone(targetSwipeInfo?.extra) ?? {}`
+  (`public/script.js:6956`). One swipe of that floor there and the record is
+  gone. `src/usage.ts` measured this first and `iris_usage` sits at the top
+  level for the same reason; this key follows its naming. *(It is also a live
+  hazard for upstream's own extension: a swipe on the floor carrying
+  `extra.memory` discards the summary, and the walk at `:365` then finds an
+  older one or none.)*
+- **Not `chat_metadata`**, even though that is upstream's home for chat-scoped
+  state and `timedWorldInfo` and `variables` already live there.
+  `commitChatMetadata` (`src/context.ts`) **replaces the block wholesale**
+  ("because that is what upstream's object semantics give a card") and is
+  reachable from the browser as `script.saveMetadata`. Any card that reads the
+  metadata, sets one key and saves would delete the record. The two existing
+  residents live under that hazard because upstream put them there and
+  compatibility is the floor; nothing forces a third.
+- **Not `header.iris`**, which survives save and open but not a round trip:
+  `ChatStore.importFile` re-mints that block wholesale.
+
+An unknown top-level header key survives all of it: `formatChatFile` writes the
+header verbatim, `parseChatFile` reads it verbatim, `importFile` does not touch
+unknown header keys, and SillyTavern ignores header keys it does not know —
+which is why `iris` is allowed to live there at all.
+
+**The unit is a count of leading floors, not a message id.** That is the unit
+the substitution is written in: the assembler is handed a list of history
+entries and the summary replaces its first `count`. An id would be converted at
+every read, and the conversion is where an off-by-one hides.
+
+**What it costs.**
+
+- **One extra model call per compaction, and the user pays for it.** The call
+  is shaped to be as cheap as it can be — the conversation's own system prompt,
+  the span replayed in order, then the instruction as the final user message —
+  so it is a genuine prefix of the request the conversation was already sending
+  and the provider's KV cache is reused. A separate summarizer system prompt
+  would have invalidated the prefix and billed the span again uncached.
+- **The prompt-cache prefix is invalidated once, on purpose.** The next request
+  after a compaction has a different message prefix, so
+  `fingerprintRequest`'s hash moves and that turn reads no cache. That is the
+  signal the fingerprint exists to give, and it is the price of the reduction
+  the compaction just bought.
+- **The summarization sends the preset's system prompt**, jailbreak included,
+  which is what buys the cache alignment and is also what upstream does
+  (`generateQuietPrompt` runs a full assembly). The risk it carries is a model
+  that stays in character and continues the story instead of summarising;
+  `compaction-prompt.ts` answers it with explicit rules ("do NOT continue the
+  story, do NOT write in character") rather than by stripping the system
+  prompt. **Not measured against a real provider** — the tests use a fake — so
+  this is the line most likely to need revisiting.
+- **A summary that is not smaller is refused**, with `unsupported`. It would
+  lower nothing and the next turn would ask again. The reader gets an error and
+  an unchanged conversation, which is the harness's behaviour too.
+- **The summary's cost is inside the `chatHistory` itemization row**, not a row
+  of its own, because it rides as a history entry. That is the right place —
+  the point of the feature is that the history row *shrinks* — but it means the
+  prompt panel cannot show "the summary costs N" separately. Making it visible
+  means either a fourth `kind` on `PromptItemEntry` or a `Contribution` with a
+  placement, and neither is worth a row.
+- **A stale count is clamped rather than trusted.** A reader who deletes a
+  covered floor leaves the count one too large; the clamp keeps at least one
+  verbatim floor, so the cost is one over-compacted turn instead of a
+  conversation with no present in it.
+- **`{{firstIncludedMessageId}}` had to learn about it.** The macro is
+  upstream's `chat_metadata.lastInContextMessageId`, set from
+  `droppedHistory` — which counts drops from the conversation the assembler was
+  *handed*, and after a compaction that starts with a summary. It is now
+  offset by the record's count. Removing the offset left the whole suite green
+  until a test was written for it.
+- **The automatic trigger never fires on a chat this process has not generated
+  in**, because the reading is the previous request's itemization and
+  `entry.itemizations` is in memory only. Refused rather than substituted with
+  the provider's reported prompt size: that is a different measurement of a
+  different assembly, and choosing between them per call would make the trigger
+  fire at two different fullnesses depending on history nobody can see.
+- **An automatic failure is reported and the turn continues.** The harness logs
+  and continues; copying that is behaviour parity, but silence would be
+  indistinguishable from a threshold that is never reached, so a failed attempt
+  lands as a `prompt`-kind fault beside the success's note.
+
+**What would overturn it.** A measurement showing the summarization call
+routinely produces in-character prose rather than a checkpoint, which would
+move the system prompt out of the call and cost the cache alignment. Or a
+ruling that Iris should reproduce upstream's extension *as well* — a summary at
+depth 2 over an intact history — which is a different entry: it is a different
+artefact (periodic, 200 words, injected near the end) doing a different job,
+and the two would need different words in the interface.

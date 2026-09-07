@@ -381,6 +381,269 @@
   color: var(--iris-rule-strong);
 }
 
+/* ------------------------------------------------------- context capacity */
+
+/*
+ * The capacity capsule's over-budget state.
+ *
+ * `--iris-danger`, not `--iris-warn`: at this point the assembler is dropping
+ * floors to make the request fit, which is data leaving the prompt. The border
+ * carries it as well as the ink so the capsule is findable without reading it,
+ * and the hover rule above still wins on colour because the capsule is a
+ * control first.
+ */
+.iris-composer__pill--over {
+  border-color: var(--iris-danger);
+  color: var(--iris-danger);
+}
+
+/*
+ * The breakdown card, above the composer.
+ *
+ * A sibling of the branch inside `.iris-composer`, which is `position:
+ * relative` and — deliberately — has no `overflow`. `__inner` is the scroll
+ * container (it reserves the scrollbar lane), and a scroll container clips its
+ * absolutely-positioned children, which is why this box is not in there and
+ * why it needs no portal.
+ *
+ * `bottom: 100%` puts it above the composer, over the reading area, where the
+ * harness puts its own panel. Left-aligned to the gutter so its edge is the
+ * field's edge rather than the panel's, the same alignment `__inner`'s padding
+ * makes for everything else in the composer.
+ */
+.iris-context-card {
+  position: absolute;
+  bottom: calc(100% - 6px);
+  left: var(--iris-gutter);
+  z-index: var(--iris-drop-z);
+  box-sizing: border-box;
+  width: min(340px, calc(100% - var(--iris-gutter) * 2));
+  padding: 14px 16px 12px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  background: var(--iris-bg-raised);
+  box-shadow: var(--iris-shadow);
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-secondary);
+  cursor: default;
+}
+
+.iris-context-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.iris-context-card__figures {
+  font-variant-numeric: tabular-nums;
+  color: var(--iris-ink);
+}
+
+/*
+ * The proportion bar.
+ *
+ * The track is the touched ground rather than a lower one, like every other
+ * inset surface on the page. `overflow: hidden` so the rounded ends clip the
+ * first and last slice.
+ */
+.iris-context-card__bar {
+  display: flex;
+  gap: 1px;
+  margin: 10px 0 10px;
+  height: 4px;
+  border-radius: var(--iris-radius-pill);
+  background: var(--iris-bg-sunken);
+  overflow: hidden;
+}
+
+/*
+ * A part that exists is never allowed to round to nothing — the same rule
+ * `.iris-prompt__slice` states, and the reason `meterSegments` drops a
+ * zero-width part instead of letting this minimum draw it.
+ */
+.iris-context-card__slice {
+  flex: none;
+  min-width: 2px;
+  height: 100%;
+  background: var(--iris-meter-tint, var(--iris-ink-faint));
+}
+
+.iris-context-card__rows {
+  margin: 0;
+}
+
+.iris-context-card__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.iris-context-card__row dt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-context-card__row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-context-card__share {
+  min-width: 3.5em;
+  text-align: right;
+  color: var(--iris-ink);
+}
+
+.iris-context-card__tokens {
+  min-width: 5.5em;
+  text-align: right;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-context-card__swatch {
+  display: inline-block;
+  margin-right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--iris-meter-tint);
+  vertical-align: baseline;
+}
+
+/*
+ * One tint per category, set on the shared custom property so a slice and its
+ * swatch cannot come to disagree: both read `--iris-meter-tint`, and these six
+ * rules are the only place a category is given a colour.
+ *
+ * Four come out of the existing palette and two are the rows `tokens.css` added
+ * for this card. Not `--iris-danger`, which means "this deletes something" on
+ * every other surface — a category wearing it would read as a warning about
+ * itself.
+ */
+.iris-context-card__slice--messages,
+.iris-context-card__swatch--messages { --iris-meter-tint: var(--iris-accent); }
+
+.iris-context-card__slice--worldbook,
+.iris-context-card__swatch--worldbook { --iris-meter-tint: var(--iris-warn); }
+
+.iris-context-card__slice--preset,
+.iris-context-card__swatch--preset { --iris-meter-tint: var(--iris-meter-celadon); }
+
+.iris-context-card__slice--character,
+.iris-context-card__swatch--character { --iris-meter-tint: var(--iris-accent-quiet); }
+
+.iris-context-card__slice--script,
+.iris-context-card__swatch--script { --iris-meter-tint: var(--iris-meter-slate); }
+
+.iris-context-card__slice--other,
+.iris-context-card__swatch--other { --iris-meter-tint: var(--iris-ink-faint); }
+
+.iris-context-card__note {
+  margin: 8px 0 0;
+  color: var(--iris-ink-tertiary);
+}
+
+/* Where the reading came from, one tier quieter than the readings themselves. */
+.iris-context-card__note--source {
+  margin-top: 4px;
+  color: var(--iris-ink-faint);
+}
+
+/* Nothing here takes pointer events away from the menu list above it. */
+.iris-composer__command-anchor {
+  display: none;
+}
+
+/* --------------------------------------------------- compacted-history note */
+
+/*
+ * The row at the head of a compacted conversation.
+ *
+ * Deliberately not a floor: no portrait, no rail, no ground of a message. It is
+ * a note about the conversation, so it takes the label tier and a hairline, and
+ * it sits inside `.iris-column` so its edges are the prose's edges.
+ */
+.iris-compacted {
+  margin: 0 0 18px;
+  border: var(--iris-hairline) solid var(--iris-rule-faint);
+  border-radius: var(--iris-radius);
+  background: var(--iris-bg-sunken);
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-compacted__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.iris-compacted__head:hover {
+  color: var(--iris-accent);
+}
+
+.iris-compacted__mark {
+  flex: none;
+  width: 1em;
+  font-variant-numeric: tabular-nums;
+  color: var(--iris-ink-faint);
+}
+
+.iris-compacted__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-compacted__figures {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--iris-ink-faint);
+}
+
+.iris-compacted__body {
+  padding: 0 12px 12px;
+}
+
+.iris-compacted__kept {
+  margin: 0 0 8px;
+  color: var(--iris-ink-secondary);
+}
+
+/*
+ * The checkpoint's own text.
+ *
+ * `pre` because the summary is Markdown the model wrote with its own line
+ * breaks and headings, and this surface is not a rendering of it — it is the
+ * text as it will be sent. `pre-wrap` so it still wraps to the column.
+ */
+.iris-compacted__summary {
+  margin: 0;
+  max-height: 40vh;
+  overflow: auto;
+  font-family: var(--iris-font-mono);
+  font-size: var(--iris-meta-size);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--iris-ink-secondary);
+}
+
 /* ------------------------------------------------------------------ drawer */
 
 /*

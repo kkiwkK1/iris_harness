@@ -206,6 +206,28 @@ provider counted」是另一件事（上游 ST 每条消息显示的 `token_coun
 路由的档上两个分母差得很远（两次生成的样例里 75% 对 19%）。不这样分，一条从不提缓存的路由就会
 把一条真的有缓存的路由稀释掉，而稀释出来的百分比看上去完全正常。
 
+任务（上下文容量表 + 命令体系，`dev/context-meter`）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `ContextMeter.tsx` 容量胶囊 | 输入框下第三枚胶囊。**按过之前只说容量**（`上下文 7.2K`），按过之后才带读数（`上下文 2.1K/7.2K · 29%`）——读数要一次装配预览，按下才付得起。分母是 `context - reserve`，和 `PromptPanel` 那句「占可用 N」同一个数，两处不能各除一个分母 | `contextPill contextPillCapacity contextPillTitle` |
+| `ContextMeter.tsx` 容量卡 | 标题、`用了/可用 · 百分比` 的数字行、读数还在算与算失败两句。失败那句原样转述宿主命名过的拒绝，不改写成「读取失败」 | `contextCardTitle contextCardFigures contextCardLoading contextCardFailed` |
+| `ContextMeter.tsx` 六个类别 | 按装配来源分，六行永远都在（空的那行读 `0%`，「我的世界书没进提示词」正是这么答出来的）。名字照 `PromptPanel` 已有的词汇：世界书、主提示词与预设段、角色与人设、脚本注入 | `contextCategoryMessages contextCategoryWorldbook contextCategoryPreset contextCategoryCharacter contextCategoryScript contextCategoryOther` |
+| `ContextMeter.tsx` 卡底三句 | 还剩多少、为回复留了多少、这份读数是第几回的实测还是下一条的预览。预留额单独说，因为它是分母里被扣掉的那部分，不说会显得窗口凭空少了一块 | `contextRemaining contextReserve contextFromRecord contextFromPreview` |
+| `commands.ts` 命令体系 | 补全菜单一行、未命中时的拒绝、生成中拒绝、`/help` 的表头与结尾。**结尾那句是必需的**：只列出两条 Iris 命令，读者会据此断定 `/trigger` 在这里不能用，而它能用——未命中的一律原样交给宿主 | `commandRow commandUnknown commandBusy commandHelpHeading commandHelpUpstream commandHelpSummary` |
+| `commands.ts` `/compact` | 三种结果各一句：压了多少、没有可压的、没执行。「没有可压的」不是失败，措辞上也不能像失败 | `commandCompactSummary commandCompactDone commandCompactNothing commandCompactFailed` |
+| `CompactionNote.tsx` 已压缩标记 | 对话顶端一行，展开看摘要原文。展开里那句「什么都没删」是这个功能最容易被误读的地方——改的只有发给模型的内容，文件里每一条都还在 | `compactedTitle compactedFigures compactedKept` |
+
+**这一族属于「估算」口径，不是「用量」口径。**卡上除了「缓存命中」那一行之外，每个数都是
+宿主对一次装配的估算；`usage*` 那一族只指提供方回报的实际计费（上一条任务的约定，
+`notes/apps/iris-web/DEVIATIONS.md` 47）。容量卡是全库唯一让两种数并列的界面，所以措辞上
+靠 `PromptPanel` 的「占可用 / 估算」，缓存命中那一行仍用 `usageCacheHit` 原键——它本来就是
+回报值，换个说法反而把两种口径搅在一起。
+
+三个键**不含中文**，按 `i18n.test.ts` 的 `neutral` 名单放行：`contextCardFigures`
+（`2,048 / 7,168 · 28%`）、`compactedFigures`（`4.1K → 780`）、`commandRow`
+（`/compact —— …`）。三个都只是数字与名字的排版，两栏都没有自己的词。
+
 ## 四、持久化决策（同 `language.ts` 文档）
 
 `localStorage` 键 `iris.language`，与 `iris.theme` / `iris.reading` 同一处、同一套

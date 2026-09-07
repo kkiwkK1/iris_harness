@@ -424,6 +424,24 @@
   --iris-danger-wash: rgb(164 71 47 / 10%);
   --iris-warn: #8a6420;
 
+  /*
+   * Two tints the context-capacity card needs and the palette did not have.
+   *
+   * That card names six sources and has to give each a mark a reader can tell
+   * apart. Four came out of the existing family — the plum accent, its lighter
+   * derivative, the gold warn and the faintest ink — and two hues were missing
+   * entirely, so these are the only new palette rows this feature adds. They
+   * are 青 and 石青: the two colours a 梅花 painting is allowed besides plum,
+   * ink and gold, muted to sit under the accent rather than compete with it.
+   *
+   * **A legend swatch is not the information carrier** — the row's own label
+   * and token count are — so these are not held to WCAG 1.4.11's 3:1 floor,
+   * and `tests/context-meter.test.ts` holds the property that actually
+   * matters: no two of the six categories share a tint in any theme.
+   */
+  --iris-meter-celadon: #5f8a7d;
+  --iris-meter-slate: #5a6f92;
+
   --iris-code-bg: #ece7e1;
   --iris-code-inline: #e7e1da;
   --iris-shadow: 0 1px 2px rgb(35 32 31 / 6%), 0 8px 24px rgb(35 32 31 / 10%);
@@ -509,6 +527,10 @@
   --iris-danger-wash: rgb(224 138 126 / 14%);
   --iris-warn: #d9b46a;
 
+  /* 青 and 石青 lifted for a dark ground, the same licence the accent takes. */
+  --iris-meter-celadon: #7fb3a2;
+  --iris-meter-slate: #8fa6c9;
+
   --iris-code-bg: #131114;
   --iris-code-inline: #262329;
   --iris-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 10px 30px rgb(0 0 0 / 46%);
@@ -580,6 +602,10 @@
   --iris-danger: #9a4526;
   --iris-danger-wash: rgb(154 69 38 / 10%);
   --iris-warn: #7d5c1e;
+
+  /* 青 and 石青 darkened instead of lifted, as this theme's plum is. */
+  --iris-meter-celadon: #4f7a63;
+  --iris-meter-slate: #4e6480;
 
   --iris-code-bg: #e7dbc9;
   --iris-code-inline: #e2d5c1;

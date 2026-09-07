@@ -25,10 +25,11 @@
  * @module iris-web/app/Composer
  */
 
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { PromptItemization } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import type { ResolvedButton } from './script-buttons.ts'
@@ -38,6 +39,14 @@ import { ScriptButtons } from './ScriptButtons.tsx'
 import { registerComposer } from './composer-bus.ts'
 import { usageLineGroups } from './token-format.ts'
 import { modelMenu } from './model-menu.ts'
+import { ContextCard, ContextPill } from './ContextMeter.tsx'
+import {
+  commandCompletions,
+  irisCommands,
+  resolveCommand,
+  unknownCommandNotice,
+  type CommandDescriptor,
+} from './commands.ts'
 import { describeError } from '../client/errors.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
@@ -134,6 +143,21 @@ export function Composer({
    */
   const usage = useIris(state => state.view?.usage)
   /*
+   * What the capacity capsule divides by, and the two facts that make its
+   * reading stale.
+   *
+   * `budget` is on the open chat rather than fetched, precisely so this capsule
+   * costs nothing to render (`ChatView.budget` says why). The other two are the
+   * **invalidation key**: a reading is an account of one assembly, and an
+   * assembly changes when the conversation gains a floor or when its head is
+   * folded into a summary. Selected as narrow fields, not as `view`, because
+   * this component re-renders on every keystroke and a streaming delta must not
+   * come through here.
+   */
+  const budget = useIris(state => state.view?.budget)
+  const floors = useIris(state => state.view?.messages.length ?? 0)
+  const compactedAt = useIris(state => state.view?.compaction?.at)
+  /*
    * What the model capsule needs to be a control rather than a readout: which
    * of the settings this conversation overrides, and the list the active
    * connection last reported. Selected narrowly (four fields, not the whole
@@ -158,6 +182,16 @@ export function Composer({
   const [listRead, setListRead] = useState<ModelListRead | undefined>(undefined)
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
+  const [meterOpen, setMeterOpen] = useState(false)
+  const [reading, setReading] = useState<{
+    key: string
+    itemization?: PromptItemization
+    state: 'loading' | 'ready' | { error: string }
+  } | undefined>(undefined)
+  const meterAnchor = useRef<HTMLButtonElement | null>(null)
+  /** The reading key a fetch is in flight for, or the last one that succeeded. */
+  const fetching = useRef<string | undefined>(undefined)
+  const [commandOpen, setCommandOpen] = useState(false)
   // Subscribed so a language switch re-renders the composer's words.
   const { lang } = useLanguage()
 
@@ -179,6 +213,104 @@ export function Composer({
 
   const empty = draft.trim() === ''
   const stats = usageLineGroups(usage, lang)
+
+  /*
+   * The invalidation key.
+   *
+   * A reading belongs to one conversation at one length with one compaction
+   * record. When any of those moves, the number the capsule is printing is an
+   * account of a request that would no longer be assembled — so it is dropped
+   * rather than kept with a caveat. Held as a string because that makes the
+   * comparison one `!==` and the effect below have one dependency.
+   */
+  const readingKey = `${chatId}:${String(floors)}:${String(compactedAt ?? 0)}`
+
+  /*
+   * Fetched when the card opens, and only then. An itemization is a full
+   * world-info scan and a macro pass, so a reading taken per render — or per
+   * keystroke, which is what this component does — would be unaffordable. A
+   * reading already held for this exact key is reused, so closing and
+   * reopening the card costs nothing.
+   *
+   * **The in-flight key is a ref, not the `reading` state, and that is a
+   * correction rather than a preference.** The first version guarded on
+   * `reading` and had `reading` in its dependencies, so writing the `loading`
+   * state re-ran the effect, its cleanup fired, and the fetch that was still in
+   * flight had its own result discarded — the card stayed on 「正在算……」
+   * forever. Nothing renders differently at first paint either way, which is
+   * why it needed reading rather than looking.
+   *
+   * A failed read clears the ref, so reopening the card retries; a successful
+   * one leaves it set, so reopening does not pay again.
+   */
+  useEffect(() => {
+    if (!meterOpen || fetching.current === readingKey) return
+    fetching.current = readingKey
+    setReading({ key: readingKey, state: 'loading' })
+    void actions.itemize().then((result) => {
+      // The conversation may have moved while this was in flight, in which case
+      // the answer describes an assembly that is no longer the next one.
+      if (fetching.current !== readingKey) return
+      if (!result.ok) fetching.current = undefined
+      setReading(result.ok
+        ? { key: readingKey, itemization: result.itemization, state: 'ready' }
+        : { key: readingKey, state: { error: `${result.error.code}: ${result.error.message}` } })
+    })
+  }, [actions, meterOpen, readingKey])
+
+  // A conversation that moved under a closed card drops the stale reading too,
+  // so the capsule stops printing a fullness that is no longer true rather
+  // than waiting to be pressed again.
+  useEffect(() => {
+    setReading(current => (current === undefined || current.key === readingKey ? current : undefined))
+    setMeterOpen(false)
+  }, [readingKey])
+
+  const shownReading = reading?.key === readingKey ? reading : undefined
+
+  /*
+   * Iris's own commands.
+   *
+   * Built here because `run` needs the store's actions and the table is the
+   * only thing that closes over them; `commands.ts` stays a plain module with
+   * the rules in it (the name grammar, the upstream fall-through, the
+   * completion filter) so `node --test` can load it without a DOM.
+   *
+   * Memoised on `actions`, which is identity-stable
+   * (`client/provider.tsx` — `useIrisActions` returns a stable object for
+   * exactly this reason), so the table is built once rather than on every
+   * keystroke of the draft.
+   */
+  const commands: CommandDescriptor[] = useMemo(() => irisCommands({
+    compact: async () => {
+      const result = await actions.compactChat()
+      if (!result.ok) {
+        actions.notify('error', t('commandCompactFailed', {
+          reason: `${result.error.code}: ${result.error.message}`,
+        }))
+        return
+      }
+      if (result.compacted === null) {
+        actions.notify('info', t('commandCompactNothing'))
+        return
+      }
+      actions.notify('info', t('commandCompactDone', {
+        floors: result.compacted.floors,
+        before: result.compacted.spanTokens,
+        after: result.compacted.summaryTokens,
+      }))
+    },
+  }), [actions])
+
+  /*
+   * The completion rows, and when the menu belongs.
+   *
+   * Open state is held separately from "there are completions": a reader who
+   * has dismissed the menu with Escape while `/comp` is still in the field
+   * should not have it spring back on the next keystroke of the same word.
+   */
+  const completions = commandCompletions(draft, commands)
+  const showCommands = commandOpen && completions.length > 0
 
   /*
    * The model capsule's menu, decided in `model-menu.ts` and dressed here.
@@ -303,11 +435,63 @@ export function Composer({
     })()
   }
 
-  const submit = (): void => {
-    const text = draft.trim()
-    if (text === '' || generating) return
+  /*
+   * What the composer does with a line that starts with `/`.
+   *
+   * **One function, two callers** — the send key and the card bus below — so a
+   * card that writes into the field and clicks send gets the same treatment a
+   * reader typing gets, which is what SillyTavern does with its own composer.
+   * The alternative, gating commands to the keyboard, would make the same text
+   * mean two different things depending on who typed it.
+   *
+   * The three outcomes are `commands.ts`'s resolution, and the third one is the
+   * rule this whole feature is subordinate to: a name Iris does not own goes to
+   * the host verbatim, where upstream's own parser decides. It is never
+   * rewritten here and never sent to the model as prose.
+   * @param text - the trimmed draft.
+   * @returns a refusal to report, or undefined when the line was acted on.
+   */
+  const dispatch = (text: string): string | undefined => {
+    if (text === '') return 'the composer is empty, so there was nothing to send'
+    const resolution = resolveCommand(text, commands)
+
+    if (resolution.kind === 'message') {
+      if (generating) return 'a generation is already running'
+      setDraft('')
+      onSend(text)
+      return undefined
+    }
+
+    setCommandOpen(false)
+    if (resolution.kind === 'iris') {
+      if (resolution.command.idleOnly === true && generating) {
+        actions.notify('error', t('commandBusy', { name: resolution.command.name }))
+        return 'a generation is already running'
+      }
+      setDraft('')
+      void Promise.resolve(resolution.command.run({
+        args: resolution.args,
+        chatId,
+        generating,
+        notify: (kind, message) => { actions.notify(kind, message) },
+      }))
+      return undefined
+    }
+
+    // Not Iris's. The host's parser answers — and its refusal names the
+    // command, which is the half a sentence written here could not know.
     setDraft('')
-    onSend(text)
+    void actions.runSlash(resolution.line).catch((error: unknown) => {
+      actions.notify(
+        'error',
+        unknownCommandNotice(resolution.line.replace(/^\/?/, '').split(/[\s|]/)[0] ?? '', describeError(error, lang)),
+      )
+    })
+    return undefined
+  }
+
+  const submit = (): void => {
+    dispatch(draft.trim())
   }
 
   /*
@@ -332,15 +516,12 @@ export function Composer({
     setDraft: text => {
       setDraft(text)
     },
-    send: () => {
-      if (generating) return 'a generation is already running'
-      const text = (field.current?.value ?? draft).trim()
-      if (text === '') return 'the composer is empty, so there was nothing to send'
-      setDraft('')
-      onSend(text)
-      return undefined
-    },
-  }), [generating, draft, onSend])
+    // Through `dispatch`, so a card writing `/compact` into the field and
+    // clicking send gets the command — the same thing SillyTavern's own
+    // composer does with a card's write, and the reason the resolution lives
+    // in one function rather than in the key handler.
+    send: () => dispatch((field.current?.value ?? draft).trim()),
+  }), [dispatch, draft])
 
   return (
     <div className="iris-composer">
@@ -349,6 +530,26 @@ export function Composer({
           scrollbar lane, and a scroll container clips what crosses its edge —
           `panels.css` says so where the two rules live. */}
       <PlumBranch />
+      {/*
+        The capacity card, above the composer.
+        *
+        * A sibling of the branch rather than a child of `__inner`, and for the
+        * same reason the branch is: `__inner` is the scroll container that
+        * reserves the scrollbar lane, and a scroll container clips its
+        * absolutely-positioned children. This box paints and positions and has
+        * no `overflow`, so a card anchored to its top edge can cross it — which
+        * is why there is no portal here.
+      */}
+      {meterOpen && budget !== undefined && (
+        <ContextCard
+          budget={budget}
+          itemization={shownReading?.itemization}
+          state={shownReading?.state ?? 'loading'}
+          usage={usage}
+          anchor={meterAnchor}
+          onClose={() => setMeterOpen(false)}
+        />
+      )}
       <div className="iris-composer__inner">
         {/*
           * Above the field, which is where upstream puts it — it prepends its bar
@@ -377,9 +578,37 @@ export function Composer({
               value={draft}
               placeholder={generating ? t('irisWriting') : t('writeYourPart')}
               aria-label={t('yourMessage')}
-              onChange={event => setDraft(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              onChange={(event) => {
+                const next = event.target.value
+                setDraft(next)
+                // The menu opens on the `/` that starts the line and closes
+                // when the line stops being one. It does not reopen on every
+                // keystroke of a name the reader has already dismissed — see
+                // `commandOpen`.
+                if (!next.startsWith('/')) setCommandOpen(false)
+                else if (draft === '') setCommandOpen(true)
+              }}
+              onKeyDown={(event) => {
+                // The IME guard stays exactly where it was, and now guards
+                // three keys instead of one: a Chinese reader composing a word
+                // presses Enter and Escape to commit and cancel *the
+                // composition*, and neither press is for this component.
+                if (event.nativeEvent.isComposing) return
+                if (event.key === 'Escape' && showCommands) {
+                  event.preventDefault()
+                  setCommandOpen(false)
+                  return
+                }
+                // Tab completes the single remaining candidate. Only when it is
+                // unambiguous: completing to the first of several would put a
+                // command the reader did not choose in their field.
+                if (event.key === 'Tab' && showCommands && completions.length === 1) {
+                  event.preventDefault()
+                  setDraft(`/${(completions[0] as CommandDescriptor).name} `)
+                  setCommandOpen(false)
+                  return
+                }
+                if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault()
                   submit()
                 }
@@ -424,6 +653,44 @@ export function Composer({
             </Button>
           )}
         </div>
+        {/*
+          The completion list for a `/` line.
+          *
+          * Anchored to the field's own rect through `getAnchorRect` rather than
+          * by wrapping it: the textarea sits inside the sheet that draws the
+          * paper and the seal, and wrapping it in the menu's anchor slot would
+          * put a layout box between the two. `portal` because `__inner` is a
+          * scroll container and would clip an in-place list; `side="top"`
+          * because the composer is at the bottom of the page.
+          *
+          * A display and a click target, not a keyboard surface: focus stays in
+          * the field so the reader keeps typing, which is what makes Tab the
+          * completion key here rather than the arrow keys.
+        */}
+        {/* Mounted only while it is open, unlike the model menu beside it: that
+            one's anchor *is* the capsule and has to be on the page either way,
+            while this one's anchor is a placeholder. Keeping it unmounted also
+            keeps its layout effect off every keystroke of an ordinary message. */}
+        {showCommands && (
+        <Menu
+          open
+          portal
+          align="start"
+          side="top"
+          anchor={<span className="iris-composer__command-anchor" aria-hidden="true" />}
+          getAnchorRect={() => field.current?.getBoundingClientRect() ?? null}
+          items={completions.map(row => ({
+            id: row.name,
+            label: t('commandRow', { name: row.name, summary: row.summary() }),
+          }))}
+          onSelect={(id) => {
+            setDraft(`/${id} `)
+            setCommandOpen(false)
+            field.current?.focus()
+          }}
+          onClose={() => setCommandOpen(false)}
+        />
+        )}
         <div className="iris-composer__row">
           {/*
             What is in force, as two controls. Each capsule states a fact and
@@ -480,6 +747,28 @@ export function Composer({
                 void actions.setChatModel(id === RESTORE_ID ? null : id)
               }}
               onClose={() => setModelOpen(false)}
+            />
+          )}
+          {/*
+            The third capsule: how full the window is.
+            *
+            * In this row rather than in the usage line below it, for two
+            * reasons the two boxes' own comments give. `__stats` is
+            * `display: block` so `text-overflow` can elide it, and a capsule
+            * inside it would fight that; and that row disappears whole until a
+            * generation has reported usage, while capacity is knowable on a
+            * conversation nobody has generated in yet.
+            *
+            * Before `__hint`, which is `flex: 1` and pushes itself to the right
+            * edge — anything after it lands past the hint.
+          */}
+          {budget === undefined ? null : (
+            <ContextPill
+              budget={budget}
+              itemization={shownReading?.itemization}
+              open={meterOpen}
+              anchor={meterAnchor}
+              onToggle={() => setMeterOpen(!meterOpen)}
             />
           )}
           <Slot name="iris.composer.actions" owner={{ chatId, generating }} />

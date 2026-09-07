@@ -213,6 +213,21 @@ export const requestSchemas = {
     }
   }),
   'chat.regenerate': z.object({ chatId: z.string().min(1) }),
+  /**
+   * Compact this conversation's older history into a summary, now.
+   *
+   * Takes no span: which floors are compacted is the host's decision, made
+   * from the same retained-tail rule the automatic trigger uses, with its
+   * retention set to zero — everything but the newest floor. A client that
+   * could name a span would be a client that has to know the token cost of
+   * every floor, and the host is the only side that does.
+   *
+   * Idle-only. A compaction rewrites what the *next* request assembles from, so
+   * running one while a reply is streaming would change the conversation under
+   * a request already in flight; the host refuses with `busy` rather than
+   * queueing, because a queued compaction is one the user has stopped watching.
+   */
+  'chat.compact': z.object({ chatId: z.string().min(1) }),
   'chat.abort': z.object({ chatId: z.string().min(1) }),
   'chat.swipe': z.object({
     chatId: z.string().min(1),
@@ -1546,6 +1561,32 @@ export interface RpcResponseMap {
    * deliberately absent rather than implied.
    */
   'chat.regenerate': { turn: number }
+  /**
+   * The conversation with its new compaction record, and what the compaction did.
+   *
+   * `compacted` is `null` for the one non-failure that produces no summary:
+   * there was nothing left to compact — a conversation of one floor, or one
+   * already compacted up to its newest. That is an answer, not a refusal, so it
+   * arrives as a result rather than as an error, and the view still comes back
+   * so a caller cannot end up holding a staler one than it started with.
+   *
+   * Every other outcome is a refusal with a code: the chat was generating
+   * (`busy`), the provider failed (`provider-error`), or the model's summary was
+   * not smaller than the history it would have replaced (`unsupported` — the
+   * request was well formed and the answer is that compacting this would save
+   * nothing).
+   */
+  'chat.compact': {
+    view: ChatView
+    compacted: null | {
+      /** Floors newly folded into the summary by this compaction. */
+      floors: number
+      /** What those floors were estimated to cost. */
+      spanTokens: number
+      /** What the summary costs instead. */
+      summaryTokens: number
+    }
+  }
   'chat.abort': Record<string, never>
   'chat.swipe': { view: ChatView }
   'chat.editMessage': { view: ChatView }
