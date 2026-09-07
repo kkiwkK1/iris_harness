@@ -168,6 +168,14 @@ provider counted」是另一件事（上游 ST 每条消息显示的 `token_coun
 | `WorldbookPanel.tsx` | **改写** `worldbookCharBind`：「绑定到当前角色」→「本卡的附加绑定」。这一节写的一直只是 `charLore` 的附加书；卡自带的那本挪到了第一节，标题再说「绑定到当前角色」就把两件事混成一件。`worldbookCharPrimary` / `worldbookCharPrimaryNone` 两键留用——宿主不存世界书时，卡文件自己绑了什么是唯一还答得出的事实，正是这两句 | （改写一键） |
 | `WorldbookPanel.tsx` 附加绑定计数 | 附加绑定那一节也从横向一排改成一行一本（带条目数与来自哪张卡），因为它原本同样把安装里全部的书铺成一排——18 本时正是「互相挤压」那件事。这一句是它的计数。整节不折叠：绑一本附加书是在短清单上的一次刻意操作，不是要滚动的选择器 | `worldbookCharBindCount` |
 
+任务（模型菜单读宿主默认连接，`dev/model-menu-host-default`）追加与改写：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `Composer.tsx` 模型菜单标题 | 列表来自宿主启动时那条连接（env 配置、还没存过 profile 时的常态）。两句分开是因为宿主可能不持凭据：持有时把**变量名**说出来，那是读者唯一能去改的地方；不持有时就不提。变量的名字，永远不是它的值 | `modelMenuFromHost modelMenuFromHostEnv` |
+| `Composer.tsx` 列表状态那一行 | 点开菜单时列表缺席就当场探一次，所以多了两种状态：在读、以及读失败。失败那句原样转述宿主命名过的拒绝（`unauthorized` / `network` / `no-endpoint` …），不改写成一句「获取失败」——那三种指向的下一步不同 | `modelMenuReading modelMenuReadFailed` |
+| `Composer.tsx` | **改写** `modelMenuNoList`：原文写「可在连接面板里探测一次」。现在点开菜单自己就会探，那句话把读者指向一条不再需要走的路；剩下的只说事实 | （改写一键） |
+
 ## 四、持久化决策（同 `language.ts` 文档）
 
 `localStorage` 键 `iris.language`，与 `iris.theme` / `iris.reading` 同一处、同一套

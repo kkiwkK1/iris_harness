@@ -164,11 +164,23 @@ export const en = {
   modelMenuOpen: 'Change the model for this conversation ({model})',
   modelMenuHeading: 'Model for this conversation',
   modelMenuFromConnection: 'From {connection}',
+  /**
+   * The heading when the list belongs to the host's own startup connection —
+   * where a host configured from its environment stays until the user saves a
+   * profile. The variable's *name* is named because that is where the reader
+   * goes to change the route; its value appears nowhere.
+   */
+  modelMenuFromHost: 'From the host’s own connection',
+  modelMenuFromHostEnv: 'From the host’s own connection ({keyEnv})',
   modelRestoreConnectionDefault: 'Back to the connection’s model ({model})',
   /** The dot beside the capsule: this chat is not on the connection's model. */
   modelOverriddenHere: 'This conversation overrides the model',
-  modelMenuNoList: 'No model list for the active connection yet — the connection panel can fetch one.',
+  modelMenuNoList: 'No model list for this connection yet.',
   modelMenuNoConnection: 'No connection is active, so there is no model list to offer.',
+  /** Opening the menu asked the endpoint for its list, and the answer is not back. */
+  modelMenuReading: 'Reading the model list…',
+  /** It came back a no. `reason` is the host's own named refusal, passed through. */
+  modelMenuReadFailed: 'Could not read the model list — {reason}',
 
   /** Message row. */
   save: 'Save',
@@ -1049,11 +1061,18 @@ export const zh: Record<StringKey, string> = {
   modelMenuOpen: '为本对话切换模型（当前 {model}）',
   modelMenuHeading: '本对话使用的模型',
   modelMenuFromConnection: '来自「{connection}」',
+  /** 列表来自宿主启动时的那条连接（env 配置、还没存过 profile 时的常态）。只说变量名，不说值。 */
+  modelMenuFromHost: '来自宿主默认连接',
+  modelMenuFromHostEnv: '来自宿主默认连接（{keyEnv}）',
   modelRestoreConnectionDefault: '恢复连接默认（{model}）',
   /** 胶囊旁的小点：本对话没有跟随连接的模型。 */
   modelOverriddenHere: '本对话覆盖了模型',
-  modelMenuNoList: '活动连接还没有模型列表——可在连接面板里探测一次。',
+  modelMenuNoList: '这个连接还没有模型列表。',
   modelMenuNoConnection: '没有活动连接，因此没有可选的模型列表。',
+  /** 打开菜单已经去问端点要列表了，答案还没回来。 */
+  modelMenuReading: '正在读取模型列表…',
+  /** 回来的是「不行」。{reason} 原样转述宿主自己那句命名过的拒绝。 */
+  modelMenuReadFailed: '读取模型列表失败——{reason}',
 
   /** 消息行。 */
   save: '保存',
