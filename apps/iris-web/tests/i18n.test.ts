@@ -32,9 +32,14 @@ test('every zh string is actually Chinese, and every en string is not', () => {
   // are number *formats*, not sentences: `12.2K`, `1,234`, `300 tok` read the
   // same in both columns. They sit in the dictionary because a third language
   // changes the separator before it changes anything else.
+  // `contextCardFigures` (`2,048 / 7,168 · 28%`), `compactedFigures`
+  // (`4.1K → 780`) and `commandRow` (`/compact —— …`) are the same kind of row:
+  // a layout for figures and names the surrounding copy supplies, with no words
+  // of their own in either column.
   const neutral = new Set([
     'topP', 'topK', 'minP', 'langEn',
     'tokensThousand', 'tokensMillion', 'thousandsSeparator', 'usageCount',
+    'contextCardFigures', 'compactedFigures', 'commandRow',
   ])
   for (const [key, value] of Object.entries(DICTIONARIES.zh)) {
     if (neutral.has(key)) continue
@@ -186,7 +191,7 @@ test('the components that show words subscribe to the language', async () => {
     'StatePanel.tsx', 'SettingsDrawer.tsx', 'ConnectionPanel.tsx', 'ScriptPanel.tsx',
     'HostReports.tsx', 'NoticeLog.tsx', 'PromptPanel.tsx', 'CleanupOffer.tsx',
     'ConsentAsk.tsx', 'MessageInterfaces.tsx', 'useCardScripts.tsx',
-    'PresetPanel.tsx', 'RegexPanel.tsx', 'CardPopup.tsx',
+    'PresetPanel.tsx', 'RegexPanel.tsx', 'CardPopup.tsx', 'ContextMeter.tsx', 'CompactionNote.tsx',
   ]
   for (const name of mustSubscribe) {
     const text = await readFile(`${app}/${name}`, 'utf8')

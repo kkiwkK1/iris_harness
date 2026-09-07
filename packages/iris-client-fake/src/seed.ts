@@ -138,6 +138,47 @@ export const DEFAULT_SETTINGS: GenerationSettings = {
  * `#scriptViews` answers with this array only for a card whose summary carries
  * a count — one source, two readings of it.
  */
+/**
+ * The summary `chat.compact` writes here.
+ *
+ * Shaped like the real one — the section headings
+ * `@iris/app-service/compaction-prompt` asks a model for, in the same order —
+ * because the surfaces that render it wrap it, clip it and scroll it, and a
+ * one-sentence fixture would leave all three untested. Its **first line says it
+ * is a fixture**, so a reader who meets it in the dev server is not left
+ * thinking the fake summarized anything.
+ */
+export const FAKE_SUMMARY: string = [
+  '（开发用的假摘要：本客户端不调用模型，正文是固定文本。）',
+  '',
+  '## Setting and Situation',
+  '- 雨夜，旧书店二层。店主已打烊，卷帘门未落。',
+  '',
+  '## Characters',
+  '- 络络：店主，话短，回避直接问句；知道读者在找哪本书。',
+  '- 读者：第一次来，带着写了书名的纸条。',
+  '',
+  '## Relationships and Feelings',
+  '- 络络对读者从戒备转为半信；读者仍不确定她是否在隐瞒。',
+  '',
+  '## What Has Happened',
+  '- 读者报出书名，络络否认库中有此书，随后上了二层。',
+  '- 二层的灯只亮了一半，架上第三格空着。',
+  '',
+  '## Open Threads',
+  '- 空着的那一格原本放的是什么。',
+  '- 络络答应「明天再说」，没说明天几点。',
+  '',
+  '## State and Records',
+  '- 好感度 12；持有物：纸条、湿透的外套。',
+  '',
+  '## Out-of-Character Instructions',
+  '- 读者要求：「别替我说话，也别写我的心理活动。」',
+  '',
+  '## Current Scene',
+  '- 两人站在空着的那一格前，轮到络络开口。',
+].join('\n')
+
 export const FAKE_SCRIPTS: { id: string, name: string, info?: string, enabledByCard: boolean, bytes: number }[] = [
   { id: 'f0f993f6', name: 'ERA 核心', info: '状态栏与变量写入', enabledByCard: true, bytes: 1_792_316 },
   { id: 'acf69655', name: 'ERA 经验值系统', enabledByCard: true, bytes: 4_820 },

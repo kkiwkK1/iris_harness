@@ -60,6 +60,11 @@ export const THEME_TOKENS = [
   '--iris-danger',
   '--iris-danger-wash',
   '--iris-warn',
+  // The two hues the context-capacity card's six categories needed and the
+  // rest of the palette did not have: 青 and 石青. `tokens.css` says why they
+  // are new rather than borrowed, and what they are not held to.
+  '--iris-meter-celadon',
+  '--iris-meter-slate',
   '--iris-code-bg',
   '--iris-code-inline',
   '--iris-shadow',
@@ -113,6 +118,8 @@ const light: ThemePreset = {
     '--iris-danger': '#a4472f',
     '--iris-danger-wash': 'rgb(164 71 47 / 10%)',
     '--iris-warn': '#8a6420',
+    '--iris-meter-celadon': '#5f8a7d',
+    '--iris-meter-slate': '#5a6f92',
     '--iris-code-bg': '#ece7e1',
     '--iris-code-inline': '#e7e1da',
     '--iris-shadow': '0 1px 2px rgb(35 32 31 / 6%), 0 8px 24px rgb(35 32 31 / 10%)',
@@ -156,6 +163,8 @@ const dark: ThemePreset = {
     '--iris-danger': '#e08a7e',
     '--iris-danger-wash': 'rgb(224 138 126 / 14%)',
     '--iris-warn': '#d9b46a',
+    '--iris-meter-celadon': '#7fb3a2',
+    '--iris-meter-slate': '#8fa6c9',
     '--iris-code-bg': '#131114',
     '--iris-code-inline': '#262329',
     '--iris-shadow': '0 1px 2px rgb(0 0 0 / 40%), 0 10px 30px rgb(0 0 0 / 46%)',
@@ -203,6 +212,8 @@ const parchment: ThemePreset = {
     '--iris-danger': '#9a4526',
     '--iris-danger-wash': 'rgb(154 69 38 / 10%)',
     '--iris-warn': '#7d5c1e',
+    '--iris-meter-celadon': '#4f7a63',
+    '--iris-meter-slate': '#4e6480',
     '--iris-code-bg': '#e7dbc9',
     '--iris-code-inline': '#e2d5c1',
     '--iris-shadow': '0 1px 2px rgb(43 36 28 / 8%), 0 8px 24px rgb(43 36 28 / 12%)',

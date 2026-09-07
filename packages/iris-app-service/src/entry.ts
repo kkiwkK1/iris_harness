@@ -39,6 +39,7 @@ import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore
 
 import { scriptIdOf } from './script-variables.ts'
 
+import { readCompaction } from './compaction.ts'
 import { busy } from './errors.ts'
 import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
 import { scriptsOf } from './regex.ts'
@@ -1411,8 +1412,18 @@ export class ChatEntry {
     }
   }
 
-  /** The open-conversation view. */
-  toView(): ChatView {
+  /**
+   * The open-conversation view.
+   *
+   * `budget` is passed in rather than read here because it is a fact about the
+   * *settings* this chat runs under — the preset's own `openai_max_context` and
+   * the host's reply reserve — and the entry holds neither. A caller that does
+   * not know it leaves it out, and the view then says nothing about capacity
+   * instead of reporting a zero window it made up.
+   * @param budget - the context window and reply reserve this chat assembles under.
+   * @returns the view.
+   */
+  toView(budget?: { context: number, reserve: number }): ChatView {
     const meta = this.meta
     return toChatView({
       chatId: this.chatId,
@@ -1425,6 +1436,11 @@ export class ChatEntry {
       scripts: this.scripts,
       substitute: this.substitute,
       variables: this.currentVariables(),
+      ...budget === undefined ? {} : { budget },
+      // Read off the header on every projection rather than cached: a
+      // compaction lands on the header and the next view has to show it, and a
+      // cache here would be a second copy of the one durable fact.
+      compaction: readCompaction(this.header),
     })
   }
 

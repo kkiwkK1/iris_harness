@@ -62,6 +62,7 @@ export type {
   CardBookDigest,
   CardBookRole,
   WorldbookEntryDigest,
+  ChatCompaction,
   ChatSearchHit,
   ChatSearchMatch,
   ChatSummary,

@@ -1183,6 +1183,57 @@ async function main(): Promise<void> {
     'the empty state does not say how many conversations were scanned',
   )
 
+  // ------------------------------------------------------- context capacity
+  /*
+   * The capacity capsule, and the marker a compaction leaves.
+   *
+   * A server render cannot press anything, so the card's own contents are
+   * pinned in `tests/context-meter.test.ts` and what is checked here is the
+   * wiring on either side of it: the capsule is on the page, it is a button
+   * that opens a dialog, and it states the capacity — which is what the
+   * capsule says before it has been pressed, because the reading costs a round
+   * trip. Same division as the model menu two sections up.
+   */
+  const capacity = wired.store.getState().view
+  assert.ok(capacity?.budget !== undefined, 'the fake no longer reports a budget on the open chat')
+  const available = capacity.budget.context - capacity.budget.reserve
+  assert.ok(available > 0, `the seeded budget leaves ${String(available)} for the prompt`)
+  const metered = render(wired.store, slots.core)
+  assert.match(metered, /data-control="context-meter"/, 'the capacity capsule is missing')
+  assert.match(
+    metered,
+    /aria-haspopup="dialog"[^>]*data-control="context-meter"/,
+    'the capsule does not announce the card it opens',
+  )
+  // Computed from the seeded budget, not spelled out, so a change to the fake
+  // moves the expectation instead of turning this into a wrong-answer check.
+  assert.ok(
+    metered.includes(`Context ${formatTokens(available)}`),
+    `the capsule does not state the capacity (${formatTokens(available)})`,
+  )
+  // Before any compaction there is no marker at all — the control for the
+  // assertion below, which would otherwise pass for a marker that is always on.
+  assert.doesNotMatch(metered, /data-control="compaction-note"/)
+
+  const compacted = await wired.store.getState().compactChat()
+  assert.ok(compacted.ok, 'the fake refused to compact')
+  assert.ok(compacted.compacted !== null, 'the seeded conversation had nothing to compact')
+  const folded = wired.store.getState().view?.compaction
+  assert.ok(folded !== undefined, 'the compaction record did not reach the store')
+  const withNote = render(wired.store, slots.core)
+  assert.match(withNote, /data-control="compaction-note"/, 'the compacted-history marker is missing')
+  assert.ok(
+    withNote.includes(`${String(folded.count)} earlier floor(s) are sent as a summary`),
+    'the marker does not say how many floors it stands for',
+  )
+  // The property the whole feature rests on, checked where a reader would see
+  // it: nothing was removed from the conversation.
+  assert.equal(
+    wired.store.getState().view?.messages.length,
+    capacity.messages.length,
+    'a compaction deleted a message from the conversation',
+  )
+
   wired.dispose()
   slots.dispose()
   console.log('render check: ok')

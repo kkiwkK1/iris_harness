@@ -238,6 +238,10 @@ const PROBES: Record<string, unknown> = {
   'chat.answerCleanup': { chatId: 'no-such-chat', answer: 'clean' },
   'chat.send': { chatId: 'no-such-chat', text: 'x' },
   'chat.regenerate': { chatId: 'no-such-chat' },
+  // Refused with not-found before any provider is reached, which is the
+  // reachability verdict this guard wants: a compaction that actually ran
+  // would need a chat, a preset and a model on the probe host.
+  'chat.compact': { chatId: 'no-such-chat' },
   'chat.abort': { chatId: 'no-such-chat' },
   'chat.swipe': { chatId: 'no-such-chat', turn: 0, index: 0 },
   'chat.editMessage': { chatId: 'no-such-chat', id: 0, text: 'x' },

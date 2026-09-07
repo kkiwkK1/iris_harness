@@ -193,7 +193,7 @@ Iris meets this project twice, and the two are separate obligations. As
 **dependencies** its published `@deepseek-ai/dsh-*` packages are listed under
 npm dependencies below. This section is about the **source checkout**, which is
 reference material here — the harness is the interface Iris's own shell is
-modelled on — and out of which one file was transcribed.
+modelled on — and out of which five files were transcribed.
 
 - **Project** — deepseek-harness ·
   `https://github.com/deepseek-ai/deepseek-harness`
@@ -211,7 +211,7 @@ modelled on — and out of which one file was transcribed.
   and that is a condition this file records rather than satisfies. See
   `notes/LICENSE-INVENTORY.md`.
 - **What Iris uses** —
-  - **Algorithm transcription (1):** `apps/iris-web/src/app/token-format.ts` —
+  - **Algorithm transcription (1 of 5):** `apps/iris-web/src/app/token-format.ts` —
     `formatTokens`, `formatExactTokens` and `formatCacheHitPercent` (including
     its helpers `roundedPercentUnits` and `displayPercentUnits`), from
     `packages/client/ui-chat/src/client/chat/token-format.ts`. Structure and
@@ -241,6 +241,59 @@ modelled on — and out of which one file was transcribed.
     token-based series palette and geometry
     (`apps/iris-web/src/app/usage-stats.ts`) are Iris's own, with nothing
     transcribed.
+
+  - **Algorithm transcription (4), added with the context meter and history
+    compaction:**
+    - `apps/iris-web/src/app/context-occupancy.ts` — `contextOccupancy`'s shape
+      (one bounded reading, `null` until both numerator and capacity are known)
+      from `packages/client/ui-conversation/src/client/context-occupancy.ts`,
+      and `meterSegments`' rule from
+      `packages/client/ui-conversation/src/client/skeleton/ContextMeter.tsx`:
+      the bar's overall length stays the exact occupancy while the breakdown
+      only proportions its coloured parts, and a zero-width part is dropped
+      rather than drawn at the hairline minimum. **Changed in the
+      transcription:** the harness's three buckets (system prompt, tools,
+      conversation) become six assembly sources read off the ids the host
+      mints, and the denominator is `context - reserve` rather than the whole
+      window, because Iris's assembler holds a reply reserve the harness's
+      formula has no term for.
+    - `apps/iris-web/src/app/ContextMeter.tsx` — the same file's panel: the
+      click-open breakdown, its headline/bar/legend order, and its dismissal on
+      outside pointerdown or Escape with one document listener each while open.
+      **Changed:** a capsule instead of the progress ring (the composer's row is
+      already a strip of capsules), and the panel is CSS-positioned against the
+      composer rather than portaled, because the box it hangs off already has
+      `position: relative` and no `overflow`.
+    - `apps/iris-web/src/app/CompactionNote.tsx` — the collapsed marker row and
+      its summary disclosure, from
+      `packages/client/ui-chat/src/client/chat/CompactionItem.tsx`, including the
+      property its opening comment names: a compaction marker does not replace
+      the rows it describes. **Changed:** it sits at the head of the column
+      rather than at the boundary it names, because Iris's reading surface mounts
+      a tail and a marker at that boundary would not render at all.
+    - `packages/iris-app-service/src/compaction.ts` and
+      `compaction-prompt.ts` — from
+      `packages/compaction/compaction-basic/src/{config,region,summarizer}.ts`
+      and `packages/compaction/command-compact/src/index.ts`: the two ratios
+      (`thresholdRatio` `0.8`, `retainRatio` `0.16`) and the validation that
+      retention must stay under the threshold; `selectCompactableRange`'s
+      accumulate-from-the-newest-end selection and its head anchoring; the
+      shrink guard that refuses a replacement no smaller than what it replaces;
+      `frameSummary`'s checkpoint framing and tags; the summarization call's
+      shape (the conversation's own system prompt, the span replayed, the
+      instruction as the **final user message**, for prefix-cache reuse); the
+      structure of `COMPACTION_INSTRUCTION` including "write every section,
+      `(none)` included" and the merge-a-prior-checkpoint rule; the
+      `agent/pre-step` trigger's order (measure, threshold, select, summarize,
+      commit, log and continue the turn on failure); and `/compact`'s
+      retention-zero manual case with its three outcomes. **Changed:** the
+      section headings are a scene's rather than a coding session's; the
+      threshold is scaled against `context - reserve`; the harness's
+      tool-pairing boundary walk is dropped because a roleplay log has no
+      tool-call/result pair to split; and the durable record is a top-level chat
+      header key (`iris_compaction`) instead of the harness's own append-only
+      session log, because the record has to survive being written to a
+      SillyTavern chat file and read back.
   - **Elsewhere in Iris:** the application framework and host harness as
     **published packages** — see npm dependencies below, same copyright line.
 - **Version read** — **0.1.3-alpha.1**, commit `d347e70`. That is the working
