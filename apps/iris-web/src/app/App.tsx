@@ -239,7 +239,10 @@ export function App(): ReactElement {
               not be able to restart a card.
             */}
             <div className="iris-card-stage">
-              <ChatPane />
+              {/* The drawer's open state lives here, so the composer's
+                  `/config` has to be handed the opener — the same reason
+                  `StatePanel` below is handed `drawerOpen`. */}
+              <ChatPane onOpenSettings={() => setSettingsOpen(true)} />
               <CardScriptFrames />
             </div>
           </div>

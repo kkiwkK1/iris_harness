@@ -41,11 +41,14 @@ import { usageLineGroups } from './token-format.ts'
 import { modelMenu } from './model-menu.ts'
 import { ContextCard, ContextPill } from './ContextMeter.tsx'
 import {
+  commandArgumentCompletions,
   commandCompletions,
+  commandLabel,
   irisCommands,
   resolveCommand,
   unknownCommandNotice,
   type CommandDescriptor,
+  type ModelChoices,
 } from './commands.ts'
 import { describeError } from '../client/errors.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
@@ -91,6 +94,7 @@ type ModelListRead =
  * @param props.onSend - called with the trimmed draft.
  * @param props.onStop - called to interrupt the reply in flight.
  * @param props.onPreviewPrompt - opens the breakdown of what would be sent next.
+ * @param props.onOpenSettings - opens the settings drawer, for `/config`.
  * @returns the composer.
  */
 export function Composer({
@@ -99,6 +103,7 @@ export function Composer({
   onSend,
   onStop,
   onPreviewPrompt,
+  onOpenSettings,
   onPressButton,
 }: {
   chatId: string
@@ -106,6 +111,14 @@ export function Composer({
   onSend: (text: string) => void
   onStop: () => void
   onPreviewPrompt: () => void
+  /**
+   * Open the settings drawer.
+   *
+   * A prop because the drawer's open state is the shell's — above 1200px it is
+   * a grid track, and only the shell can decide a track. `/config` is a
+   * keyboard entry to the masthead's gear, not a second owner of that state.
+   */
+  onOpenSettings: () => void
   /**
    * Press one of the card-script buttons.
    *
@@ -155,6 +168,13 @@ export function Composer({
    * come through here.
    */
   const budget = useIris(state => state.view?.budget)
+  /*
+   * Which card this conversation belongs to — read for `/new`, which starts
+   * another conversation with the same character. The field rather than the
+   * view, for the reason every other selector here is narrow: this component
+   * re-renders on every keystroke.
+   */
+  const characterId = useIris(state => state.view?.characterId)
   const floors = useIris(state => state.view?.messages.length ?? 0)
   const compactedAt = useIris(state => state.view?.compaction?.at)
   /*
@@ -269,12 +289,42 @@ export function Composer({
   const shownReading = reading?.key === readingKey ? reading : undefined
 
   /*
+   * What the command table reads at **call** time rather than at build time.
+   *
+   * The table is memoised on `actions` so that it is built once rather than on
+   * every keystroke — which means anything else a command needs would be
+   * captured from the render that built it. Four of the new commands need facts
+   * that move: which card this conversation belongs to, whether the host has
+   * reported a context window, the endpoint's model list (which arrives from a
+   * probe the reader fires *after* the table exists), and the shell's drawer
+   * opener (a fresh arrow function on every shell render).
+   *
+   * A ref reassigned every render, read through thunks, so each command sees
+   * the current values. Putting them in the memo's dependencies instead would
+   * rebuild the table whenever any of them moved and — for `menu`, which is a
+   * fresh object every render — on every keystroke, which is the cost the memo
+   * exists to avoid.
+   */
+  const live = useRef<{
+    characterId: string | undefined
+    hasBudget: boolean
+    choices: ModelChoices
+    openSettings: () => void
+  }>({
+    characterId: undefined,
+    hasBudget: false,
+    choices: { current: '', models: [], overridden: false, listed: false },
+    openSettings: () => {},
+  })
+
+  /*
    * Iris's own commands.
    *
    * Built here because `run` needs the store's actions and the table is the
    * only thing that closes over them; `commands.ts` stays a plain module with
    * the rules in it (the name grammar, the upstream fall-through, the
-   * completion filter) so `node --test` can load it without a DOM.
+   * completion filter, `/chat-model`'s keyword and its refusal policy) so
+   * `node --test` can load it without a DOM.
    *
    * Memoised on `actions`, which is identity-stable
    * (`client/provider.tsx` — `useIrisActions` returns a stable object for
@@ -282,6 +332,36 @@ export function Composer({
    * keystroke of the draft.
    */
   const commands: CommandDescriptor[] = useMemo(() => irisCommands({
+    newChat: async () => {
+      const id = live.current.characterId
+      if (id === undefined) {
+        actions.notify('error', t('commandNewNoCharacter'))
+        return
+      }
+      await actions.createChat(id)
+      actions.notify('info', t('commandNewDone'))
+    },
+    /*
+     * **The chat id is a parameter, not a capture.** `run` is given the chat
+     * that was open when the line was dispatched, and passing it through is
+     * what keeps this table memoisable: closing over the `chatId` prop instead
+     * would rename whichever conversation was open when the table was *built*,
+     * and the memo's `[actions]` dependency is exactly what makes that
+     * divergence possible.
+     */
+    rename: async (id, title) => { await actions.renameChat(id, title) },
+    // `exportChat` says so itself (`chatExported`, with the filename), so
+    // nothing is notified here — two notices for one action would be one of
+    // them repeating the other with less information.
+    exportChat: async (id) => { await actions.exportChat(id) },
+    setModel: async (model) => { await actions.setChatModel(model) },
+    modelChoices: () => live.current.choices,
+    showCapacity: () => {
+      if (!live.current.hasBudget) return false
+      setMeterOpen(true)
+      return true
+    },
+    openSettings: () => { live.current.openSettings() },
     compact: async () => {
       const result = await actions.compactChat()
       if (!result.ok) {
@@ -303,16 +383,6 @@ export function Composer({
   }), [actions])
 
   /*
-   * The completion rows, and when the menu belongs.
-   *
-   * Open state is held separately from "there are completions": a reader who
-   * has dismissed the menu with Escape while `/comp` is still in the field
-   * should not have it spring back on the next keystroke of the same word.
-   */
-  const completions = commandCompletions(draft, commands)
-  const showCommands = commandOpen && completions.length > 0
-
-  /*
    * The model capsule's menu, decided in `model-menu.ts` and dressed here.
    *
    * The heading names the connection the list came from, because the list is
@@ -326,6 +396,11 @@ export function Composer({
    * a sentence when the endpoint's own list is missing: reading, refused, or
    * absent. A menu that opened onto nothing would read as broken, and a menu
    * that opened onto model names alone would not say which of them is running.
+   *
+   * Computed **above** the completion rows rather than beside the rest of its
+   * own dressing, because `/chat-model`'s argument completions read it: this
+   * order is what makes the list the menu would show and the list the command
+   * would offer the same list in the same render, rather than one render apart.
    */
   const menu = modelMenu({
     model: model ?? '',
@@ -334,6 +409,43 @@ export function Composer({
     activeId: activeConnectionId,
     host: hostConnection,
   })
+
+  /*
+   * Hand this render's moving facts to the command table.
+   *
+   * `menu.empty === undefined` is the honest answer to "has the endpoint said
+   * anything" — `menu.models` always carries the model in force, so its length
+   * cannot answer that, and `/chat-model`'s refusal turns on the difference.
+   */
+  live.current = {
+    characterId,
+    hasBudget: budget !== undefined,
+    choices: {
+      current: menu.current,
+      models: menu.models,
+      overridden: menu.overridden,
+      listed: menu.empty === undefined,
+    },
+    openSettings: onOpenSettings,
+  }
+
+  /*
+   * The completion rows, and when the menu belongs.
+   *
+   * Open state is held separately from "there are completions": a reader who
+   * has dismissed the menu with Escape while `/comp` is still in the field
+   * should not have it spring back on the next keystroke of the same word.
+   *
+   * Two kinds of row, and they are computed apart because picking one means
+   * different things: a **name** row replaces the line with `/name `, an
+   * **argument** row completes the value the reader is already writing. Only
+   * one can apply — `commandArgumentCompletions` answers nothing until the name
+   * is settled, which is exactly when `commandCompletions` stops answering.
+   */
+  const completions = commandCompletions(draft, commands)
+  const argument = commandArgumentCompletions(draft, commands)
+  const showCommands = commandOpen && (completions.length > 0 || argument !== undefined)
+
   /** The heading's words: which connection this list belongs to. */
   const heading = menu.source === 'profile' && menu.connectionName !== undefined
     ? t('modelMenuFromConnection', { connection: menu.connectionName })
@@ -599,13 +711,33 @@ export function Composer({
                   setCommandOpen(false)
                   return
                 }
-                // Tab completes the single remaining candidate. Only when it is
-                // unambiguous: completing to the first of several would put a
-                // command the reader did not choose in their field.
-                if (event.key === 'Tab' && showCommands && completions.length === 1) {
+                /*
+                 * Tab completes the single remaining candidate — of whichever
+                 * menu is up. Only when it is unambiguous: completing to the
+                 * first of several would put a command, or a model, the reader
+                 * did not choose in their field. Ambiguous, Tab is left alone
+                 * and moves focus, as it did before there were commands.
+                 */
+                if (event.key === 'Tab' && showCommands) {
+                  if (argument !== undefined) {
+                    if (argument.values.length !== 1) return
+                    event.preventDefault()
+                    setDraft(`/${argument.command.name} ${argument.values[0] as string}`)
+                    setCommandOpen(false)
+                    return
+                  }
+                  if (completions.length !== 1) return
                   event.preventDefault()
-                  setDraft(`/${(completions[0] as CommandDescriptor).name} `)
-                  setCommandOpen(false)
+                  const only = completions[0] as CommandDescriptor
+                  setDraft(`/${only.name} `)
+                  /*
+                   * A command that takes an argument keeps the menu open, so
+                   * the values come up in place of the name just chosen. This
+                   * is the one place the menu reopens without a `/` being
+                   * typed, and it is not the case `commandOpen` guards against:
+                   * the reader just chose this command with this keystroke.
+                   */
+                  setCommandOpen(only.argumentCompletions !== undefined)
                   return
                 }
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -679,13 +811,35 @@ export function Composer({
           side="top"
           anchor={<span className="iris-composer__command-anchor" aria-hidden="true" />}
           getAnchorRect={() => field.current?.getBoundingClientRect() ?? null}
-          items={completions.map(row => ({
-            id: row.name,
-            label: t('commandRow', { name: row.name, summary: row.summary() }),
-          }))}
+          /*
+           * Names, or one command's values — never both. A value list gets the
+           * heading naming its command, for the reason the model menu has one:
+           * a bare column of model ids does not say whose they are, and here
+           * the reader has typed a name that is already off the top of the box.
+           */
+          items={argument === undefined
+            ? completions.map(row => ({
+              id: row.name,
+              label: t('commandRow', { command: commandLabel(row), summary: row.summary() }),
+            }))
+            : [
+              {
+                type: 'label' as const,
+                id: HEADING_ID,
+                text: t('commandArgHeading', { command: commandLabel(argument.command) }),
+              },
+              ...argument.values.map(value => ({ id: value, label: value })),
+            ]}
           onSelect={(id) => {
-            setDraft(`/${id} `)
-            setCommandOpen(false)
+            if (argument !== undefined) {
+              setDraft(`/${argument.command.name} ${id}`)
+              setCommandOpen(false)
+            } else {
+              setDraft(`/${id} `)
+              // Same rule Tab follows: a command with an argument keeps the
+              // menu, which then shows that command's values.
+              setCommandOpen(completions.find(row => row.name === id)?.argumentCompletions !== undefined)
+            }
             field.current?.focus()
           }}
           onClose={() => setCommandOpen(false)}

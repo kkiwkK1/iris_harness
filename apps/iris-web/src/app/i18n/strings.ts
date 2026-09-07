@@ -1199,20 +1199,57 @@ export const en = {
   /*
    * The composer's command line (`commands.ts`).
    *
-   * `commandRow` is the completion menu's row; `commandUnknown` is the refusal
-   * for a name neither Iris nor the host recognised, and it carries the host's
-   * own words because only the host knows which of the two refused.
+   * `commandRow` is the completion menu's row — its `command` slot is
+   * `commandLabel`'s output, so a command that takes an argument shows the
+   * placeholder (`/rename <title>`) before the reader has to guess. `commandArgHeading`
+   * names the command a value list belongs to, for the reason the model menu
+   * has a heading: a bare column of model ids does not say whose they are.
+   * `commandUnknown` is the refusal for a name neither Iris nor the host
+   * recognised, and it carries the host's own words because only the host knows
+   * which of the two refused.
    */
-  commandRow: '/{name} — {summary}',
+  commandRow: '{command} — {summary}',
+  commandArgHeading: 'Values for {command}',
   commandUnknown: '/{name} is not a command here — {reason}',
   commandBusy: '/{name} cannot run while a reply is arriving',
+  commandNeedsArgument: '/{name} needs something after it — {usage}',
   commandHelpHeading: 'Commands:',
+  commandGroupChat: 'This conversation:',
+  commandGroupContext: 'Model and context:',
+  commandGroupApp: 'Settings and help:',
   commandHelpUpstream: 'Anything else starting with a slash goes to the host, which runs SillyTavern’s own commands.',
   commandHelpSummary: 'List the commands this composer knows',
   commandCompactSummary: 'Fold older history into a summary to free up context',
   commandCompactDone: 'Compacted {floors} floor(s): {before} tokens of history are now a {after}-token summary.',
   commandCompactNothing: 'There is nothing left to compact — the history is already a summary plus the newest floor.',
   commandCompactFailed: 'Compaction did not run — {reason}',
+
+  /*
+   * The second batch of commands (`commands.ts`, `DEVIATIONS.md` §61).
+   *
+   * Three of them carry the rename the yielding rule forced: `/chat-model` is
+   * SillyTavern's `/model`, `/capacity` is its `/tokens` and `/context`. The
+   * copy says "this conversation" wherever the scope is the divergence worth
+   * stating — an override the reader thinks is global is one they will be
+   * surprised by in the next scene.
+   */
+  commandNewSummary: 'Start a new conversation with this character',
+  commandNewDone: 'Started a new conversation.',
+  commandNewNoCharacter: 'This conversation does not say which character it belongs to, so there is nothing to start a new one with.',
+  commandRenameSummary: 'Retitle this conversation',
+  commandRenameUsage: '<title>',
+  commandRenameDone: 'This conversation is now titled “{title}”.',
+  commandExportSummary: 'Save this conversation to a file',
+  commandModelSummary: 'Change the model for this conversation only',
+  commandModelUsage: '<name>|default',
+  commandModelCurrent: 'This conversation is on {model}. Available: {models}',
+  commandModelSet: 'This conversation is now on {model}. Other conversations are unchanged.',
+  commandModelCleared: 'This conversation is back on its connection’s model.',
+  commandModelAlreadyDefault: 'This conversation was already on its connection’s model ({model}) — there is no override to clear.',
+  commandModelUnknown: '{model} is not one of the models this connection offers: {models}',
+  commandCapacitySummary: 'Open the card that says how full the context window is',
+  commandCapacityNoBudget: 'The host has not reported this conversation’s context window, so there is no capacity to show yet.',
+  commandConfigSummary: 'Open the settings drawer',
 
   /* The marker at the top of a compacted conversation (`CompactionNote.tsx`). */
   compactedTitle: '{floors} earlier floor(s) are sent as a summary',
@@ -2248,16 +2285,39 @@ export const zh: Record<StringKey, string> = {
   contextFromRecord: '第 {turn} 回实测',
   contextFromPreview: '下一条请求的预览',
 
-  commandRow: '/{name} —— {summary}',
+  commandRow: '{command} —— {summary}',
+  commandArgHeading: '{command} 可以填的值',
   commandUnknown: '/{name} 在这里不是命令 —— {reason}',
   commandBusy: '正在出回复，/{name} 现在不能跑',
+  commandNeedsArgument: '/{name} 后面得跟点东西 —— {usage}',
   commandHelpHeading: '命令：',
+  commandGroupChat: '这个对话：',
+  commandGroupContext: '模型与上下文：',
+  commandGroupApp: '设置与帮助：',
   commandHelpUpstream: '其他以斜杠开头的都交给宿主，由它按 SillyTavern 的语义执行。',
   commandHelpSummary: '列出这个输入框认识的命令',
   commandCompactSummary: '把较早的历史折成摘要，腾出上下文',
   commandCompactDone: '已压缩 {floors} 条：{before} tok 的历史现在是一段 {after} tok 的摘要。',
   commandCompactNothing: '没有可压的了 —— 历史已经只剩一段摘要加最新一条。',
   commandCompactFailed: '压缩没有执行 —— {reason}',
+
+  commandNewSummary: '用这个角色新开一段对话',
+  commandNewDone: '已新开一段对话。',
+  commandNewNoCharacter: '这个对话没说自己属于哪张卡，没法据此新开一段。',
+  commandRenameSummary: '给这个对话改个标题',
+  commandRenameUsage: '<标题>',
+  commandRenameDone: '这个对话现在叫「{title}」。',
+  commandExportSummary: '把这个对话存成文件',
+  commandModelSummary: '只改这个对话用的模型',
+  commandModelUsage: '<模型名>|default',
+  commandModelCurrent: '这个对话在用 {model}。可选：{models}',
+  commandModelSet: '这个对话现在用 {model}，其他对话不受影响。',
+  commandModelCleared: '这个对话回到所属连接的模型了。',
+  commandModelAlreadyDefault: '这个对话本来就在用所属连接的模型（{model}），没有覆盖可清。',
+  commandModelUnknown: '{model} 不在这个连接给出的模型里：{models}',
+  commandCapacitySummary: '打开那张说上下文占了多少的卡',
+  commandCapacityNoBudget: '宿主还没报这个对话的上下文窗口，暂时没有容量可看。',
+  commandConfigSummary: '打开设置抽屉',
 
   compactedTitle: '较早的 {floors} 条以摘要形式发送',
   compactedFigures: '{before} → {after}',

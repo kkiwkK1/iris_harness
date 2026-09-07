@@ -214,8 +214,26 @@ provider counted」是另一件事（上游 ST 每条消息显示的 `token_coun
 | `ContextMeter.tsx` 容量卡 | 标题、`用了/可用 · 百分比` 的数字行、读数还在算与算失败两句。失败那句原样转述宿主命名过的拒绝，不改写成「读取失败」 | `contextCardTitle contextCardFigures contextCardLoading contextCardFailed` |
 | `ContextMeter.tsx` 六个类别 | 按装配来源分，六行永远都在（空的那行读 `0%`，「我的世界书没进提示词」正是这么答出来的）。名字照 `PromptPanel` 已有的词汇：世界书、主提示词与预设段、角色与人设、脚本注入 | `contextCategoryMessages contextCategoryWorldbook contextCategoryPreset contextCategoryCharacter contextCategoryScript contextCategoryOther` |
 | `ContextMeter.tsx` 卡底三句 | 还剩多少、为回复留了多少、这份读数是第几回的实测还是下一条的预览。预留额单独说，因为它是分母里被扣掉的那部分，不说会显得窗口凭空少了一块 | `contextRemaining contextReserve contextFromRecord contextFromPreview` |
-| `commands.ts` 命令体系 | 补全菜单一行、未命中时的拒绝、生成中拒绝、`/help` 的表头与结尾。**结尾那句是必需的**：只列出两条 Iris 命令，读者会据此断定 `/trigger` 在这里不能用，而它能用——未命中的一律原样交给宿主 | `commandRow commandUnknown commandBusy commandHelpHeading commandHelpUpstream commandHelpSummary` |
+| `commands.ts` 命令体系 | 补全菜单一行、未命中时的拒绝、生成中拒绝、`/help` 的表头与结尾。**结尾那句是必需的**：只列出 Iris 自己那几条命令，读者会据此断定 `/trigger` 在这里不能用，而它能用——未命中的一律原样交给宿主（写这一行时是两条，第二批之后是八条；条数越多这句越必要，长列表更像完整列表） | `commandRow commandUnknown commandBusy commandHelpHeading commandHelpUpstream commandHelpSummary` |
 | `commands.ts` `/compact` | 三种结果各一句：压了多少、没有可压的、没执行。「没有可压的」不是失败，措辞上也不能像失败 | `commandCompactSummary commandCompactDone commandCompactNothing commandCompactFailed` |
+
+任务（第二批命令，`dev/commands-dsh`）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `commands.ts` 补全菜单 | `commandRow` 的槽从 `{name}` 换成 `{command}`，填的是 `commandLabel()` 的输出——**带参数占位**（`/rename <标题>`），因为 `/rename` 单看不出后面要跟什么。`commandArgHeading` 给值列表一个表头，理由和模型菜单有表头一样：一列裸模型 id 不说自己是谁的 | `commandRow commandArgHeading` |
+| `commands.ts` `/help` 分组 | 三个表头，对应读者扫这张表时问的三件事：能对这个对话做什么、下一条请求里装了什么、设置在哪。空的分组**不出表头** | `commandHelpHeading commandGroupChat commandGroupContext commandGroupApp` |
+| `commands.ts` 参数缺失 | `/rename` 不带标题时的拒绝，句尾带上用法——只说「后面得跟点东西」而不说跟什么，读者只能猜语法 | `commandNeedsArgument` |
+| `commands.ts` `/new` `/rename` `/export` | 对话三条。`/new` 说不出角色时那句是真会发生的：`view.characterId` 缺失时没有卡可据。`/export` 自己不报——`exportChat` 已经用 `chatExported` 带文件名报过了 | `commandNewSummary commandNewDone commandNewNoCharacter commandRenameSummary commandRenameUsage commandRenameDone commandExportSummary` |
+| `commands.ts` `/chat-model` | 六句：读数、设好了、清掉了、本来就是默认、不在列表里、用法。**「其他对话不受影响」这半句是必需的**——读者以为自己改的是全局，下一场戏就会被自己的覆盖绊一下（同 `modelOverriddenHere` 那颗点的理由） | `commandModelSummary commandModelUsage commandModelCurrent commandModelSet commandModelCleared commandModelAlreadyDefault commandModelUnknown` |
+| `commands.ts` `/capacity` `/config` | 各一句说明；`/capacity` 另有「宿主还没报窗口」一句——卡片是靠 `view.budget` 渲染的，没有 budget 时命令看着像被忽略了 | `commandCapacitySummary commandCapacityNoBudget commandConfigSummary` |
+
+`commandModelUsage`（`<模型名>|default`）与 `commandRenameUsage`（`<标题>`）是**参数占位**，
+不是句子，但两栏都翻——尖括号里的词是给读者看的，`<title>` 对中文读者不说明任何东西。
+`default` 那个关键字不翻：它是命令行上要原样打出来的字。
+
+`commandRow` 仍**不含中文**（`/compact —— …`），仍在 `i18n.test.ts` 的 `neutral` 名单里；
+换槽名不改这一点，它还是只有排版没有词。
 | `CompactionNote.tsx` 已压缩标记 | 对话顶端一行，展开看摘要原文。展开里那句「什么都没删」是这个功能最容易被误读的地方——改的只有发给模型的内容，文件里每一条都还在 | `compactedTitle compactedFigures compactedKept` |
 
 **这一族属于「估算」口径，不是「用量」口径。**卡上除了「缓存命中」那一行之外，每个数都是
