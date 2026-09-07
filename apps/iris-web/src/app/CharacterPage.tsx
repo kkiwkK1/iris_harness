@@ -6,29 +6,29 @@
  * by hairlines. It exists because a library row used to *start a conversation on
  * click*, which made the library a launcher with no way to look at a card first.
  *
- * **What the artboards ask for and this page does not show, and why.** They draw
- * a 62ch 简介 and three fact columns: 对话 / 世界书 / 脚本. Of those five things
- * the library actually carries two:
+ * **The facts are now the artboards' own.** They draw a 简介 paragraph over
+ * three columns — 对话 / 世界书 / 脚本 — and until `CharacterSummary` grew
+ * `description`, `bookEntryCount` and `scriptCount` two of those three could
+ * only be filled for the one character being played, so the page stood in 标签
+ * and 卡片文件 instead. The protocol carries counts and one clipped string now,
+ * never contents, which is what makes them affordable for every row: a whole
+ * card is a median of 494 KiB and up to 2.8 MiB, and none of that is on the
+ * wire here.
  *
- * - **对话** — derivable. `ChatSummary.characterId` groups the chat list, so the
- *   count and the most recent one are real facts about any character.
- * - **标签 / 卡片文件** — `tags`, `creator` and `updatedAt` are on every summary.
- * - **简介** — *not carried*. `CharacterSummary` has no description field at all
- *   (`iris-protocol/src/views.ts`); the artboard's paragraph is invented prose.
- * - **世界书** — carried for **one** character only. `CharacterSummary.data`
- *   holds `character_book` and, by design, "only for the character being
- *   played": handing out every card's embedded book would put the whole
- *   library's world info in a page that asked about one card.
- * - **脚本** — `state.scripts` describes the **open chat's** character, guarded
- *   by `state.scriptsFor`. There is no per-character script count to show for a
- *   card nobody has opened.
+ * **Most cards will show fewer than three columns, by measurement.** Of the 19
+ * local cards, 15 carry no description at all, 2 embed no world book and 5 carry
+ * no scripts — the modern Chinese cards keep everything in the world book. So
+ * absence is the common case rather than the degenerate one: a missing fact
+ * removes its column (`没有的数据不编`), and the grid is `auto-fit`
+ * (`shell.css`) so the row reads as finished at one column, at two and at three.
+ * 对话 is the column that is always knowable — a count over `state.chats`,
+ * zero included — which is also why it stays: without it a plain V1 card would
+ * render a facts row with nothing in it.
  *
- * So this page shows what is knowable and says nothing where nothing is known,
- * per the standing rule: 没有的数据不编. Two of the artboards' columns are
- * therefore absent rather than filled with dashes, and the grid is `auto-fit`
- * (`shell.css`) so the row reads as finished at whatever count arrives. Adding
- * 简介, 世界书 and 脚本 needs protocol fields that do not exist; that is a
- * request for the host, not something a stylesheet can answer.
+ * What is still not shown: the 62ch measure the artboards give the 简介. It
+ * needs a rule in `shell.css`, which this page does not own; the paragraph
+ * currently takes the page's own width, and the host's 200-code-point clip is
+ * what keeps it from becoming a wall.
  *
  * @module iris-web/app/CharacterPage
  */
@@ -50,6 +50,18 @@ import { useLanguage, t } from './i18n/use-language.ts'
 export function CharacterPage({ characterId }: { characterId: string | undefined }): ReactElement {
   const characters = useIris(state => state.characters)
   const chats = useIris(state => state.chats)
+  /*
+   * The consent answer, and which card it was given about.
+   *
+   * Both, never just the answer: `scriptsAllowed` describes whatever card
+   * `scriptsFor` names, so reading it on a page about a different character
+   * would report one card's decision as another's — the same fault the store
+   * clears the field for when a chat opens. A card nobody has opened has no
+   * answer here, and this page then says nothing about authorisation rather
+   * than implying "not yet allowed".
+   */
+  const scriptsFor = useIris(state => state.scriptsFor)
+  const scriptsAllowed = useIris(state => state.scriptsAllowed)
   const actions = useIrisActions()
   // Subscribed so a language switch re-renders every word this page shows.
   const { lang } = useLanguage()
@@ -77,6 +89,28 @@ export function CharacterPage({ characterId }: { characterId: string | undefined
     (newest, row) => (newest === undefined || row.updatedAt > newest ? row.updatedAt : newest),
     undefined,
   )
+
+  /*
+   * The authorisation line under the script count, when there is one to draw.
+   *
+   * Written as an **allow-list of the two answered states**, not as a list of
+   * the states to skip. Three things print nothing here — a card this page's
+   * store holds no answer for, an answer still in flight (`unknown`) and a
+   * question never put (`unasked`) — and all three mean "the user has not
+   * decided", which a page must not render as a decision. A deny-list would
+   * hand a fourth state, added later to `ConsentState`, the *reported* branch by
+   * default; silence is the safe default for a permission.
+   *
+   * The two sentences are two literal `t('…')` calls rather than one call over a
+   * computed key: `i18n.test.ts` finds the shell's keys by scanning for exactly
+   * that form, so a key reached through a ternary *inside* `t()` is invisible to
+   * it and would be held by the compiler alone.
+   */
+  const decided = scriptsFor === character.characterId
+    && (scriptsAllowed === 'allowed' || scriptsAllowed === 'declined')
+  const authorised = !decided
+    ? undefined
+    : scriptsAllowed === 'allowed' ? t('faceScriptsAllowed') : t('faceScriptsDeclined')
 
   return (
     <div className="iris-face" aria-label={t('characterPageAria')}>
@@ -115,6 +149,24 @@ export function CharacterPage({ characterId }: { characterId: string | undefined
         </div>
       </div>
 
+      {/*
+        The 简介 as its own band above the columns, which is how the artboards
+        draw it. A one-column `iris-face__facts` rather than a bare paragraph:
+        the grid is what carries the page's gutter, so a paragraph outside it
+        would sit flush against the window edge. The empty string is refused
+        alongside `undefined` — the protocol drops the field when a card's
+        description is blank, and a client that sent one anyway would otherwise
+        get a heading over nothing.
+      */}
+      {character.description === undefined || character.description === '' ? null : (
+        <div className="iris-face__facts">
+          <section className="iris-fact iris-fact--prose">
+            <h2 className="iris-label iris-fact__head">{t('faceDescription')}</h2>
+            <p className="iris-fact__value">{character.description}</p>
+          </section>
+        </div>
+      )}
+
       <div className="iris-face__facts">
         <section className="iris-fact">
           <h2 className="iris-label iris-fact__head">{t('faceConversations')}</h2>
@@ -132,30 +184,36 @@ export function CharacterPage({ characterId }: { characterId: string | undefined
           )}
         </section>
 
-        <section className="iris-fact">
-          <h2 className="iris-label iris-fact__head">{t('faceTags')}</h2>
-          <p className="iris-fact__value">
-            {character.tags.length === 0
-              ? t('faceNoTags')
-              : t('faceTagCount', { n: character.tags.length })}
-          </p>
-        </section>
+        {/*
+          The embedded book's entry count. `0` is a real answer — a card that
+          ships an empty book is not a card that ships none, and the protocol
+          keeps those apart — so the zero case gets its own sentence rather than
+          reading as 「内嵌 0 条」.
 
-        <section className="iris-fact">
-          <h2 className="iris-label iris-fact__head">{t('faceCardFile')}</h2>
-          {/*
-            `updatedAt` is the card *file's* last modification and a rename or a
-            tag edit touches it, so the sentence says "changed" rather than
-            "added" — which is what the protocol's own comment insists the number
-            means. When the host reports none, the page says that instead of
-            drawing a dash.
-          */}
-          <p className="iris-fact__value">
-            {character.updatedAt === undefined
-              ? t('faceUpdatedUnknown')
-              : t('faceUpdated', { when: since(character.updatedAt, Date.now(), lang) })}
-          </p>
-        </section>
+          Only the *embedded* book. A card's bindings to books by name are a
+          different fact, not on this summary, and saying "N entries" over a
+          count that mixed them would be wrong in a way nobody could see.
+        */}
+        {character.bookEntryCount === undefined ? null : (
+          <section className="iris-fact">
+            <h2 className="iris-label iris-fact__head">{t('faceWorldbook')}</h2>
+            <p className="iris-fact__value">
+              {character.bookEntryCount === 0
+                ? t('faceBookEmpty')
+                : t('faceBookEntries', { n: character.bookEntryCount })}
+            </p>
+          </section>
+        )}
+
+        {character.scriptCount === undefined ? null : (
+          <section className="iris-fact">
+            <h2 className="iris-label iris-fact__head">{t('faceScripts')}</h2>
+            <p className="iris-fact__value">{t('faceScriptCount', { n: character.scriptCount })}</p>
+            {authorised === undefined ? null : (
+              <p className="iris-fact__note">{authorised}</p>
+            )}
+          </section>
+        )}
       </div>
     </div>
   )

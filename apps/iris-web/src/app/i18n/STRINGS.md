@@ -100,6 +100,8 @@
 | frame budget / markup | 帧预算 / 标记 |
 | overlay / card UI | 卡片界面（收起/显示） |
 | world book / entry | 世界书 / 条目 |
+| description（卡的 `data.description`） | 简介（角色页栏头用「简介」，不用「描述」——设计稿如此，且「描述」在世界书条目里另有所指） |
+| embedded book | 内嵌（世界）书——与「按名字绑定的书」区分，后者不在角色页上 |
 | key / secondary key | 关键词 / 次要关键词（ST 中文社区惯例；「键」易与按键混淆） |
 | comment（entry title） | 批注（条目标题） |
 | constant / normal / vectorized | 常驻 / 普通 / 向量化 |
@@ -126,6 +128,15 @@
 | `CharacterPage.tsx` | 角色页：aria、「开始新对话」、三栏事实（对话/标签/卡片文件）的标题与取值句、未选角色时的提示 | `characterPageAria startNewChat faceConversations faceNoConversations faceOneConversation faceOpenCount faceLatest faceTags faceNoTags faceTagCount faceCardFile faceUpdated faceUpdatedUnknown faceCreator facePickHint` |
 | `StatePanel.tsx` | 变量栏收起/展开的按钮标题。`stateHead` 由「状态 / State」改写为「变量 / Variables」——canvas.json 把这一栏定为宿主自己的变量管理器 | `stateCollapse stateExpand`（`stateHead` 改写） |
 | `AppearanceCard.tsx` | 三套主题改名「雪 / 墨 / 宣」（en: Snow / Ink / Xuan paper）。**id 不动**：`light` / `dark` / `parchment` 是存量用户 `localStorage` 里的值 | `themeLight themeDark themeParchment`（改写） |
+
+任务（角色页三栏事实落到协议上，`dev/plum-theme`）追加与删除：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `CharacterPage.tsx` 简介带 | `CharacterSummary.description`（宿主截到 200 个码位）的栏头。有则整带出现，无则连栏头都不出现——19 张真卡里 15 张没有简介 | `faceDescription` |
+| `CharacterPage.tsx` 世界书栏 | 内嵌书条目数。`0` 另给一句：卡带了一本空书与卡没带书是两件事，协议分开送，界面不能合 | `faceWorldbook faceBookEntries faceBookEmpty` |
+| `CharacterPage.tsx` 脚本栏 | 卡内可运行脚本单元数（`extractScripts` 口径，含作者关掉的）＋授权注记。授权只在 `scriptsFor` 正是这张卡、且答案是 allowed/declined 时才写——「还没问」不是一种状态 | `faceScripts faceScriptCount faceScriptsAllowed faceScriptsDeclined` |
+| `CharacterPage.tsx` | **删除**六键：`faceTags` `faceNoTags` `faceTagCount` `faceCardFile` `faceUpdated` `faceUpdatedUnknown`。标签与卡片文件时间是协议还没有三栏事实时的顶替；标签本来就在名字下面以胶囊呈现，重复一遍没有信息。对话栏留着——它是唯一对任何卡都答得出的一栏，纯 V1 卡（无简介/无书/无脚本）靠它才不至于渲染出一排空事实 | （无新增） |
 
 ## 四、持久化决策（同 `language.ts` 文档）
 

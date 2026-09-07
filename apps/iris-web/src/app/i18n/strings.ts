@@ -70,9 +70,12 @@ export const en = {
   sortByName: 'By name',
   sortByUpdated: 'By updated',
   sortByFavorite: 'Favorites first',
-  /* The character page. Only facts the library actually carries appear on it —
-     `Library.tsx` records which of the artboards' three columns are knowable
-     for an arbitrary card and which are not. */
+  /* The character page: the artboards' 简介 band over 对话 / 世界书 / 脚本.
+     A fact the summary does not carry removes its column rather than printing
+     an empty one, so every sentence here is written for a fact that is present
+     — the absent branches are `null`, not copy. The tag and card-file rows the
+     page stood in while the protocol carried no card contents are gone with
+     them. */
   characterPageAria: 'Character',
   startNewChat: 'Start a new conversation',
   faceConversations: 'Conversations',
@@ -80,12 +83,19 @@ export const en = {
   faceOneConversation: '1 open',
   faceOpenCount: '{n} open',
   faceLatest: 'Last {when}',
-  faceTags: 'Tags',
-  faceNoTags: 'None on this card',
-  faceTagCount: '{n} on this card',
-  faceCardFile: 'Card file',
-  faceUpdated: 'Changed {when}',
-  faceUpdatedUnknown: 'The host reports no date',
+  /** Heading over the card's own description, clipped by the host to 200 characters. */
+  faceDescription: 'Description',
+  faceWorldbook: 'World book',
+  /** The card's *embedded* book, never a book it is bound to by name. */
+  faceBookEntries: '{n} entries embedded',
+  /** A card that ships a book with nothing in it — distinct from shipping none. */
+  faceBookEmpty: 'An embedded book, no entries',
+  faceScripts: 'Scripts',
+  /** No plural noun: the count reads correctly at 1 in both languages. */
+  faceScriptCount: '{n} in this card',
+  /** Shown only when this card's consent answer is actually known. */
+  faceScriptsAllowed: 'You allowed these to run',
+  faceScriptsDeclined: 'You declined these',
   faceCreator: 'By {creator}',
   facePickHint: 'Pick a character on the left to see its card.',
   favorite: 'Add to favorites',
@@ -531,8 +541,6 @@ export const en = {
   themeImported: 'Restored the theme package (palette and user.css).',
   themeTransferNote: 'The file carries the theme’s full token palette and this device’s user.css.',
   proseSize: 'Prose size',
-  lineLength: 'Line length',
-  lineLengthNote: 'Characters per line. Around 66 is what a book uses.',
   hostDefault: 'host default',
   useHostDefault: 'use host default',
   /** Option labels are proper names and stay in their own language everywhere. */
@@ -853,12 +861,14 @@ export const zh: Record<StringKey, string> = {
   faceOneConversation: '1 个进行中',
   faceOpenCount: '{n} 个进行中',
   faceLatest: '最近 {when}',
-  faceTags: '标签',
-  faceNoTags: '这张卡没有标签',
-  faceTagCount: '这张卡有 {n} 个',
-  faceCardFile: '卡片文件',
-  faceUpdated: '{when}改动过',
-  faceUpdatedUnknown: '宿主没有报告日期',
+  faceDescription: '简介',
+  faceWorldbook: '世界书',
+  faceBookEntries: '内嵌 {n} 条',
+  faceBookEmpty: '内嵌了一本空书',
+  faceScripts: '脚本',
+  faceScriptCount: '{n} 个',
+  faceScriptsAllowed: '你已允许它们运行',
+  faceScriptsDeclined: '你已拒绝运行',
   faceCreator: '作者 {creator}',
   facePickHint: '在左边选一个角色，看它的卡片。',
   favorite: '收藏',
@@ -1289,8 +1299,6 @@ export const zh: Record<StringKey, string> = {
   themeImported: '已恢复主题包（配色与 user.css）。',
   themeTransferNote: '该文件携带主题的完整 token 配色表与本机的 user.css。',
   proseSize: '正文字号',
-  lineLength: '每行长度',
-  lineLengthNote: '每行字符数。书籍排版约 66。',
   hostDefault: '宿主默认',
   useHostDefault: '使用宿主默认',
   langEn: 'English',

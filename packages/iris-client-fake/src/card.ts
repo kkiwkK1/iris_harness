@@ -82,7 +82,23 @@ export interface ReadCard {
   name: string
   tags: string[]
   creator?: string
+  /** The card's description, clipped as the host clips it. Absent when empty. */
+  description?: string
+  /** Entries in the embedded book. Absent when the card embeds none. */
+  bookEntryCount?: number
 }
+
+/**
+ * The host's clip on a summary's description, in code points.
+ *
+ * A copy of `packages/iris-app-service/src/library.ts` `DESCRIPTION_POINTS`,
+ * for the same reason {@link CARD_FILE_EXTENSIONS} is a copy of its `EXTENSIONS`
+ * — the browser bundle cannot import the host — and honest for the same reason:
+ * `tests/card-facts.test.ts` reads the host's source and holds this number to
+ * it. Without the clip, dropping the corpus's longest card on the fake would
+ * put 2851 code points of description on a page a host would have given 200.
+ */
+export const DESCRIPTION_POINTS = 200
 
 /**
  * The card file extensions the host stores, lowercased, dot included.
@@ -140,5 +156,46 @@ export function readCard(filename: string, base64: string): ReadCard {
   const tags = Array.isArray(rawTags) ? rawTags.filter((tag): tag is string => typeof tag === 'string') : []
   const creator = typeof data['creator'] === 'string' && data['creator'].trim() !== '' ? data['creator'] : undefined
 
-  return { name, tags, ...(creator === undefined ? {} : { creator }) }
+  /*
+   * The two content facts a host would summarise. Read here rather than left to
+   * the seed, because the interesting import is a real card: a fake that showed
+   * a dropped card's name but never its description would leave the character
+   * page's dense form reachable only through the three seeded rows.
+   *
+   * The third fact — `scriptCount` — is deliberately NOT read. Scripts live
+   * under two extension keys in three shapes, and the only correct reading of
+   * them is `@iris/script`'s `extractScripts`, which this package does not
+   * depend on (it is aliased into the browser bundle and keeps its one
+   * dependency). A hand-rolled walk here would be a second, wrong opinion about
+   * the same question — reading only the obvious key once lost 7 of 15 cards — so
+   * an imported card reports no scripts, and the fake's `script.list` agrees
+   * with that by construction.
+   */
+  const rawDescription = typeof data['description'] === 'string' ? data['description'] : ''
+  const points = [...rawDescription]
+  const description = points.length === 0
+    ? undefined
+    : points.slice(0, DESCRIPTION_POINTS).join('')
+  const book = data['character_book']
+  // A book object with no `entries` array counts as an empty book, not as no
+  // book: the host's `normalizeBook` defaults the array in, so reporting the
+  // field absent here would disagree with a host over the same file.
+  const entries = !isRecord(book)
+    ? undefined
+    : Array.isArray(book['entries']) ? book['entries'].length : 0
+
+  return {
+    name,
+    tags,
+    ...(creator === undefined ? {} : { creator }),
+    ...(description === undefined ? {} : { description }),
+    // Present for an empty embedded book, absent for no book — the distinction
+    // `CharacterSummary.bookEntryCount` keeps, kept here too.
+    ...(entries === undefined ? {} : { bookEntryCount: entries }),
+  }
+}
+
+/** Whether a value is a plain keyed object rather than an array or primitive. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

@@ -24,7 +24,45 @@ export const DEFAULT_SETTINGS: GenerationSettings = {
   repetitionPenalty: 1.05,
 }
 
-/** The seeded character library. */
+/**
+ * Scripts the fake reports for a card that carries any.
+ *
+ * Shaped after what the real corpus holds — one large webpack bundle, one small
+ * hand-written script, one the card's own author disabled — so a list built
+ * against this meets the cases that exist rather than three identical rows. The
+ * byte sizes are real orders of magnitude: card scripts run to megabytes.
+ *
+ * It lives here, beside the library, because `CharacterSummary.scriptCount` and
+ * `script.list` have to agree about one card: a page saying "3 scripts" over a
+ * panel listing none is a contradiction the fake would be teaching the shell to
+ * tolerate. `seedCharacters` takes the count from this array's length, and
+ * `#scriptViews` answers with this array only for a card whose summary carries
+ * a count — one source, two readings of it.
+ */
+export const FAKE_SCRIPTS: { id: string, name: string, info?: string, enabledByCard: boolean, bytes: number }[] = [
+  { id: 'f0f993f6', name: 'ERA 核心', info: '状态栏与变量写入', enabledByCard: true, bytes: 1_792_316 },
+  { id: 'acf69655', name: 'ERA 经验值系统', enabledByCard: true, bytes: 4_820 },
+  { id: '3fc1e259', name: 'ERA 以上待修改', info: '', enabledByCard: false, bytes: 0 },
+]
+
+/**
+ * The seeded character library.
+ *
+ * The three cards deliberately differ in **which optional fields they carry**,
+ * not just in their values. Measured over the 19 real cards, the three facts a
+ * character page shows are absent far more often than present — 15 of 19 have
+ * no description, 2 embed no world book, 5 carry no scripts — so a fake whose
+ * every card carried all three would leave the page's absent branches
+ * unrendered, which is the half that a reviewer never sees and a card in the
+ * wild usually takes.
+ *
+ * - 络络 carries all three, and is the card the seeded conversation is open on,
+ *   so the dense form is what the dev server shows by default.
+ * - Aria Vance carries a description and nothing else: the mixed row.
+ * - The Archivist carries none of them, which is the shape of a plain V1 card:
+ *   the page must drop all three columns rather than draw three empty ones, and
+ *   fall back to the one fact it can always answer.
+ */
 export function seedCharacters(): CharacterSummary[] {
   return [
     {
@@ -32,12 +70,18 @@ export function seedCharacters(): CharacterSummary[] {
       name: '络络',
       tags: ['原创', '都市', '悬疑'],
       creator: '灯塔',
+      // Under the host's 200 code-point clip on purpose: a fake that shipped a
+      // pre-clipped 200 would hide whether the page can lay out a short one.
+      description: '巷口修灯的人。工具箱里没有一把是买来的，问她价钱她只说「看你带什么来换」。城里断电的那三天，只有她那条巷子亮着。',
+      bookEntryCount: 34,
+      scriptCount: FAKE_SCRIPTS.length,
     },
     {
       characterId: 'aria-vance',
       name: 'Aria Vance',
       tags: ['original', 'nautical', 'slow burn'],
       creator: 'saltmarsh',
+      description: 'Harbour pilot, third generation. Knows every sandbar between the light and the river mouth by the sound the hull makes over it.',
     },
     {
       characterId: 'the-archivist',
