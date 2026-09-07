@@ -55,6 +55,7 @@ export type {
   ChatSearchMatch,
   ChatSummary,
   ChatView,
+  CardWorldbookView,
   CharacterSummary,
   ConnectionProfile,
   ConnectionTestError,
@@ -84,6 +85,7 @@ export type {
   WorldbookEntry,
   WorldbookPosition,
   WorldbookSettingsView,
+  WorldbookSummary,
 } from './views.ts'
 
 export {

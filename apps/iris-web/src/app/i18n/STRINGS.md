@@ -156,6 +156,17 @@
 provider counted」是另一件事（上游 ST 每条消息显示的 `token_count` 属于前者的估算口径，见
 `notes/apps/iris-web/DEVIATIONS.md` 47）；**「未缓存输入」不是「输入」**——三个 prompt 侧
 桶是互斥的，`inputTokens` 不含缓存服务掉的部分，用量行上的「输入」是三桶之和。
+任务（世界书面板按卡分组，`dev/worldbook-panel-per-card`）追加与改写：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `WorldbookPanel.tsx`「本卡的世界书」 | 面板第一节：这张卡在用哪本书、多少条、来源是磁盘上的文件还是卡里还没落盘的内嵌书、以及都没有。三种来源分开成句，因为它们指向不同的下一步（就地编辑 / 打开一次对话 / 无事可做） | `worldbookThisCard worldbookEntryCount worldbookCardSourceNamed worldbookCardSourceEmbedded worldbookCardEmbeddedUnnamed worldbookCardNone` |
+| `WorldbookPanel.tsx` 改名注记 | 只在「屏幕上的书名」不是「卡要的书名」时出现——宿主物化时撞名，只好另起一个。实测这台开发档 `origin: 'minted'` 为 0 本，所以这句是给撞名那一种情况留的，不是常态 | `worldbookCardMinted` |
+| `WorldbookPanel.tsx` 机制句 | 用户原话的后半段：「世界书设置应该是每个对话自动优先绑定自己的世界书，而不是被其他的世界书污染」。宿主本来就是这样做的（`worldbooks.ts` 的 choose, never combine ＋ 全局书另加），面板从来没说出来。这一句不是承诺，是把既有规则写在读者正在看的地方 | `worldbookCardRule` |
+| `WorldbookPanel.tsx` 两种非答案 | 「没打开对话」与「这台宿主不存世界书」都不是 `none`。把它们说成「这张卡没有世界书」，是拿处境的话去回答关于卡的问题 | `worldbookNoChat worldbookCardNotLoaded` |
+| `WorldbookPanel.tsx`「全局启用」 | 默认折叠，已选的常在视野内，其余磁盘上的书折在 `Show all N books` 后面。折叠标签带总数——折起来的清单不带数就跟丢了一样。每行带条目数与「来自 ×× 卡」 | `worldbookGlobalHead worldbookGlobalCount worldbookGlobalNone worldbookGlobalExpand worldbookGlobalCollapse worldbookFromCard` |
+| `WorldbookPanel.tsx` | **改写** `worldbookCharBind`：「绑定到当前角色」→「本卡的附加绑定」。这一节写的一直只是 `charLore` 的附加书；卡自带的那本挪到了第一节，标题再说「绑定到当前角色」就把两件事混成一件。`worldbookCharPrimary` / `worldbookCharPrimaryNone` 两键留用——宿主不存世界书时，卡文件自己绑了什么是唯一还答得出的事实，正是这两句 | （改写一键） |
+| `WorldbookPanel.tsx` 附加绑定计数 | 附加绑定那一节也从横向一排改成一行一本（带条目数与来自哪张卡），因为它原本同样把安装里全部的书铺成一排——18 本时正是「互相挤压」那件事。这一句是它的计数。整节不折叠：绑一本附加书是在短清单上的一次刻意操作，不是要滚动的选择器 | `worldbookCharBindCount` |
 
 ## 四、持久化决策（同 `language.ts` 文档）
 

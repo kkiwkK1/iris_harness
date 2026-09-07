@@ -43,7 +43,7 @@ import { AppError, invalid, notFound } from './errors.ts'
 import { FavoriteStore } from './favorites.ts'
 import type { WorldbookBindingStore } from './materialise.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
-import { charWorldbookNames, WorldbookStore } from './worldbooks.ts'
+import { cardWorldbookView, charWorldbookNames, WorldbookStore } from './worldbooks.ts'
 import { activationSettingsOf } from './worldbook-settings.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
@@ -1715,7 +1715,30 @@ export class IrisAppService {
       // Reads only: the write half of this family is a ruling item, because
       // replacing a book is a whole-file replacement and the decision about
       // whether Iris performs one at a card's request has not been made.
-      'worldbook.names': async () => ({ names: await worldbooks?.names() ?? [] }),
+      // `withCounts` is the panel's call and nothing else's: it opens every
+      // book to count it, which is the cost this method's contract exists to
+      // keep off the bare listing. The provenance beside each count is read off
+      // the materialisation table — one small JSON file — and never by decoding
+      // cards, which on this corpus costs two seconds for nineteen of them.
+      'worldbook.names': async ({ withCounts }) => {
+        const names = await worldbooks?.names() ?? []
+        if (withCounts !== true || worldbooks === undefined) return { names }
+        const owners = new Map<string, string>()
+        for (const [characterId, binding] of Object.entries(await this.#options.worldbookBindings?.all() ?? {})) {
+          // First writer wins. Two cards cannot legitimately hold the same
+          // materialised name — minting exists to prevent it — so a collision
+          // here is a table this host did not write, and picking arbitrarily
+          // would make the answer depend on key order.
+          if (!owners.has(binding.name)) owners.set(binding.name, characterId)
+        }
+        return {
+          names,
+          books: (await worldbooks.summaries()).map(row => ({
+            ...row,
+            ...owners.has(row.name) ? { fromCharacterId: owners.get(row.name)! } : {},
+          })),
+        }
+      },
       'worldbook.load': async ({ name }) => {
         // Upstream's first line is `if (!name) return;` — an absent answer, not
         // an error and not a null. Mirrored, because MVU's caller reads the two
@@ -1790,9 +1813,26 @@ export class IrisAppService {
       'worldbook.setSettings': async patch => ({
         settings: await this.#options.settings.setWorldbookSettings(patch),
       }),
-      'worldbook.charNames': async ({ characterId }) => {
+      'worldbook.charNames': async ({ characterId, withCard }) => {
         const card = await library.load(characterId)
-        return charWorldbookNames(card, settings.charBooks(characterId))
+        const names = charWorldbookNames(card, settings.charBooks(characterId))
+        // `card` is added, never substituted: `primary` stays a fact about the
+        // card file, which is what a card script asking this reads it as. The
+        // panel's question — which book actually plays here, and how big is it —
+        // is a fact about this installation, and the two differ exactly when a
+        // materialisation had to mint a name.
+        //
+        // Asked for, because it costs a book read and a binding-table read that
+        // upstream's names-only member has no business charging. Omitted on a
+        // host with no store even when asked: "which book plays" has no answer
+        // there, and answering `none` would be a claim about the disk rather
+        // than an admission that there is no disk to look at.
+        if (withCard !== true || worldbooks === undefined) return names
+        const binding = await this.#options.worldbookBindings?.get(characterId)
+        return {
+          ...names,
+          card: await cardWorldbookView(card, worldbooks, binding?.name),
+        }
       },
 
       // The character's additional bindings, upstream's `world_info.charLore`.

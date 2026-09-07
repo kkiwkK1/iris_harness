@@ -18,6 +18,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 import type {
   BackupPreview,
   BackupSummary,
+  CardWorldbookView,
   CharacterSummary,
   ChatSearchHit,
   ChatSummary,
@@ -36,6 +37,7 @@ import type {
   ScriptView,
   WorldbookEntry,
   WorldbookSettingsView,
+  WorldbookSummary,
 } from '@iris/protocol'
 
 import { asRpcError, describeError, isHostError } from './errors.ts'
@@ -253,6 +255,61 @@ export interface CardReport {
   withdrawn?: boolean
 }
 
+/**
+ * Which card a named world book belongs to, if any.
+ *
+ * **Two rules, in this order, and the order is the point:**
+ *
+ * 1. **Provenance.** The host materialised this book *from* that card's
+ *    embedded copy, and recorded it in the binding table. This is the strong
+ *    rule: the table is the link between a card and its book, and the filename
+ *    deliberately is not — which is what lets a name be given up on a
+ *    collision. `WorldbookSummary.fromCharacterId` carries it.
+ * 2. **The card's own binding.** A book the user made in SillyTavern and bound
+ *    to a card by hand was never materialised here, so rule 1 knows nothing
+ *    about it, and the only link left is that the card's `extensions.world`
+ *    spells this name. Weaker — two cards may bind one book, and this reports
+ *    whichever `bindings` names — but it covers the ordinary imported profile,
+ *    where nothing was materialised at all.
+ *
+ * **What it cannot see, stated because the gap is not obvious from the call
+ * site:** rule 2 only reaches cards whose binding the *client* holds, and the
+ * client fetches one binding — the open chat's character. So a book bound by
+ * hand to a card that is not open goes unlabelled. Closing that means either
+ * a binding per card on `CharacterSummary` or a host-side sweep that decodes
+ * every card, which on the measured corpus costs about two seconds for
+ * nineteen of them; neither is worth a label.
+ *
+ * Pure, and separate from the panel that renders it, because it is the one
+ * piece of this that is a rule rather than a layout — and because a `.tsx`
+ * module cannot be reached by `node --test`, which cannot transform JSX.
+ * @param name - the book's name, exactly as the host spells it.
+ * @param books - the host's book summaries, carrying provenance.
+ * @param bindings - what each character's card itself binds, for the
+ *   characters the client knows about.
+ * @param characters - the library, for turning an id into a name.
+ * @returns the owning character's display name, or undefined when no rule
+ *   matches. Never an id: an id on screen is not an answer to "whose is this".
+ */
+export function bookOwner(
+  name: string,
+  books: readonly WorldbookSummary[],
+  bindings: readonly { characterId: string, primary: string | null }[],
+  characters: readonly CharacterSummary[],
+): string | undefined {
+  const displayName = (characterId: string): string | undefined =>
+    characters.find(row => row.characterId === characterId)?.name
+
+  const materialised = books.find(book => book.name === name)?.fromCharacterId
+  // Rule 1 wins even when it names a card the library no longer holds: falling
+  // through to rule 2 there would report a *different* card as the owner, which
+  // is worse than reporting none. So the lookup's failure ends the search.
+  if (materialised !== undefined) return displayName(materialised)
+
+  const bound = bindings.find(row => row.primary === name)?.characterId
+  return bound === undefined ? undefined : displayName(bound)
+}
+
 /** What a caller can say about a report besides its text. */
 export interface CardReportOptions {
   /** Which script it was about, so a corrected verdict can be found again. */
@@ -281,7 +338,21 @@ export interface IrisState {
    * loaded yet" and shows as such, because "no books exist" and "nobody asked"
    * are opposite answers that an empty list renders identically.
    */
-  worldbooks: { names: string[], globalSelect: string[], settings: WorldbookSettingsView } | undefined
+  worldbooks: {
+    names: string[]
+    globalSelect: string[]
+    settings: WorldbookSettingsView
+    /**
+     * The same books with their entry counts and provenance, when the host
+     * answered them.
+     *
+     * Empty rather than absent, because the panel treats "no count for this
+     * name" per book anyway — a host that could not parse one book still
+     * answers for the others — so one absent-vs-empty distinction at the top
+     * would buy nothing and add a branch.
+     */
+    books: WorldbookSummary[]
+  } | undefined
   /**
    * The open chat character's world book binding, as last fetched.
    *
@@ -290,8 +361,19 @@ export interface IrisState {
    * list the panel edits. `characterId` names whose binding this is, so a chat
    * switch can tell "stale" from "unbound" instead of rendering the previous
    * character's books onto the new one.
+   *
+   * `card` is the host's own answer to "which book actually plays for this
+   * character", which is **not** derivable from `primary`: a materialisation
+   * that had to mint a name makes the two differ, and that difference is the
+   * whole reason a reader cannot find their card's book in a flat list.
+   * Absent on a host with no book store.
    */
-  charBooks: { characterId: string, primary: string | null, additional: string[] } | undefined
+  charBooks: {
+    characterId: string
+    primary: string | null
+    additional: string[]
+    card?: CardWorldbookView
+  } | undefined
   /**
    * The entry editor's local draft for the one book it has open, or undefined
    * when none is open.
@@ -1491,11 +1573,21 @@ export function createIrisStore(
       async loadWorldbooks(): Promise<void> {
         await guard(async () => {
           const [names, selection, settings] = await Promise.all([
-            client.call('worldbook.names', {}),
+            // With counts: this is the panel, which is the one caller the
+            // expensive form of the call exists for. A card asking what books
+            // exist still gets the directory listing.
+            client.call('worldbook.names', { withCounts: true }),
             client.call('worldbook.globalSelect', {}),
             client.call('worldbook.settings', {}),
           ])
-          set({ worldbooks: { names: names.names, globalSelect: selection.names, settings: settings.settings } })
+          set({
+            worldbooks: {
+              names: names.names,
+              globalSelect: selection.names,
+              settings: settings.settings,
+              books: names.books ?? [],
+            },
+          })
         })
       },
 
@@ -1533,11 +1625,20 @@ export function createIrisStore(
           return
         }
         await guard(async () => {
-          const answer = await client.call('worldbook.charNames', { characterId })
+          // With the card's book: this is the panel, which is the one caller
+          // that needs to know which book actually plays and how big it is.
+          const answer = await client.call('worldbook.charNames', { characterId, withCard: true })
           // The chat can switch while the call is in flight; an answer for the
           // character that is no longer open is dropped, not shown.
           if (get().view?.characterId !== characterId) return
-          set({ charBooks: { characterId, primary: answer.primary, additional: answer.additional } })
+          set({
+            charBooks: {
+              characterId,
+              primary: answer.primary,
+              additional: answer.additional,
+              ...answer.card === undefined ? {} : { card: answer.card },
+            },
+          })
         })
       },
 
@@ -1549,7 +1650,19 @@ export function createIrisStore(
           // Held from the answer: the host collapses duplicates and answers the
           // binding as stored, which can differ from the list as asked.
           if (get().view?.characterId !== characterId) return
-          set({ charBooks: { characterId, primary: answer.primary, additional: answer.additional } })
+          // `card` is carried over rather than taken from this answer, which
+          // does not carry it: this write changes the *extra* bindings, and the
+          // card's own book is not one of them. Taking the answer wholesale
+          // would blank the panel's top section on every extra-book toggle.
+          const held = get().charBooks
+          set({
+            charBooks: {
+              characterId,
+              primary: answer.primary,
+              additional: answer.additional,
+              ...held?.characterId === characterId && held.card !== undefined ? { card: held.card } : {},
+            },
+          })
         })
       },
 

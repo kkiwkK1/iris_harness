@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { BackupPreview, BackupSummary, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView } from './views.ts'
+import type { BackupPreview, BackupSummary, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -1179,7 +1179,18 @@ export const requestSchemas = {
    * Names, not contents: upstream separates the two so listing books does not
    * read 1478 entries off the disk to answer a question about 18 names.
    */
-  'worldbook.names': z.object({}),
+  'worldbook.names': z.object({
+    /**
+     * Also count each book's entries, and say which card it was materialised
+     * from — `books` in the answer.
+     *
+     * Opt-in rather than always, because it is the exact cost the paragraph
+     * above exists to avoid: a count means opening the file, so this reads all
+     * 18 books where the bare call reads a directory listing. A panel showing a
+     * chooser pays it once per open; a card asking what books exist must not.
+     */
+    withCounts: z.boolean().optional(),
+  }),
   /**
    * One named world book's entries.
    *
@@ -1225,6 +1236,17 @@ export const requestSchemas = {
    */
   'worldbook.charNames': z.object({
     characterId: z.string().min(1),
+    /**
+     * Also report which book actually plays for this character — `card` in the
+     * answer.
+     *
+     * Opt-in for the same reason `worldbook.names`' `withCounts` is: it costs a
+     * read of the book file and of the materialisation table, and the caller
+     * this method exists for — upstream's `getCharWorldbookNames`, which
+     * returns names and makes you fetch contents yourself — must not pay for a
+     * panel's question.
+     */
+    withCard: z.boolean().optional(),
   }),
   /**
    * Replace a named world book's entire contents.
@@ -1454,7 +1476,19 @@ export interface RpcResponseMap {
   /** Upstream's `triggerSlash` resolves with the pipeline's result. */
   'script.slash': { result: string }
 
-  'worldbook.names': { names: string[] }
+  /**
+   * The names, and — only when `withCounts` was asked for — the same books
+   * with their entry counts and their materialisation provenance.
+   *
+   * `books` is absent rather than empty when it was not asked for: a caller
+   * that reads it as "no books have counts" would be reading the cheap call's
+   * silence as a fact about the disk.
+   *
+   * When present it is in `names`' order and may be **shorter**: a file that
+   * this host cannot parse is listed by name and left out here, so a broken
+   * book shows up as a book with no count rather than as a book with none.
+   */
+  'worldbook.names': { names: string[], books?: WorldbookSummary[] }
   /**
    * The raw book, and **three answers rather than two**.
    *
@@ -1470,8 +1504,27 @@ export interface RpcResponseMap {
   'worldbook.load': { book?: unknown }
 
   'worldbook.get': { entries: WorldbookEntry[] }
-  /** A name may be bound with no file behind it; 2 of 18 corpus bindings are. */
-  'worldbook.charNames': { primary: string | null, additional: string[] }
+  /**
+   * A name may be bound with no file behind it; 2 of 18 corpus bindings are.
+   *
+   * `card`, present only when `withCard` asked for it, is the host reporting
+   * **its own** resolution of that binding —
+   * which book actually plays, counted, and whether the name is one this host
+   * minted. Kept beside `primary` rather than replacing it because they answer
+   * different questions: `primary` is a fact about the card file, `card` is a
+   * fact about this installation. They differ exactly when a materialisation
+   * had to give the wanted name up, which is the case a reader cannot make
+   * sense of without being told.
+   *
+   * Absent when it was not asked for, and absent on a host that keeps no book
+   * store even when it was: "which book plays" has no answer there, and
+   * `{source: 'none'}` would be a claim rather than a silence.
+   */
+  'worldbook.charNames': {
+    primary: string | null
+    additional: string[]
+    card?: CardWorldbookView
+  }
   /** The book as stored, read back — so a writer sees what its partial produced. */
   'worldbook.replace': { entries: WorldbookEntry[] }
   'worldbook.globalSelect': { names: string[] }

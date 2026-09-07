@@ -1724,3 +1724,34 @@ What upstream *does* show per message is `extra.token_count`: **its own tokenize
 - The per-turn breakdown is a native `title`, so it is unreachable by touch and unreadable by a screen reader as a table. The harness shows the same rows in an anchored dialog; the rows are assembled in that dialog's order (`usageDetailText`) so the copy moves over unchanged when the dialog is built.
 
 **What would overturn it.** A ruling that Iris should also carry upstream's estimate — which is a *different* entry, not this one: it would mean computing a count for imported floors so that a migrated conversation is not blank, and it would need its own word in the interface. Or a provider population where the reported figures are unreliable enough that showing them is worse than showing nothing; nothing measured so far suggests that.
+## 48. The world book panel groups books by whose card they are; upstream lays every book out flat
+
+**Kind:** deliberate improvement.
+
+**Upstream.** SillyTavern's World Info panel has no notion of "this card's book". Its top block is `#WIMultiSelector` — one `<select multiple>` labelled *Active World(s) for all chats* (`public/index.html:4689`) — and its editor block is `#world_editor_select`, a *--- Pick to Edit ---* dropdown (`:4822`). Both are filled by **the same loop over the same flat name list**, in `world-info.js:1001-1011` and again in `:2072-2081`: `world_names.forEach` appends one `<option>` per book to each selector, sorted by name, with nothing said about where a book came from. The per-card binding lives in an entirely different panel — the character editor's globe button, `#world_button` (`:6060`), which opens the `character_world_template` popup (`:6728`) and writes the hidden `#character_world` field. So on upstream, "which book is this card's" is a question you answer by leaving the world-info panel and opening the card.
+
+**Iris, before.** The panel reproduced that shape one layer thinner: the global multi-select first, as one `.iris-choice` row of every book name; then, for the open chat's character, the extra-bindings row with the card's own binding as a `worldbookCharPrimary` note above it. Same flat list, same absence of provenance.
+
+**Iris, now.** Three sections, in this order: **this card's book** (which book, how many entries, whether it is a file or still only embedded in the card, and — when the two differ — why the name on screen is not the name on the card), **this card's extra books** (unchanged, still the only binding this panel writes), and **the global selection**, whose selected books stay in view while the rest of the disk folds behind *Show all N books*. Every book row carries its entry count and, when a card claims it, `from ⟨card⟩`.
+
+**The host's selection rule is untouched, and the panel now states it.** `@iris/app-service/worldbooks`' `resolveCardWorldbook` still chooses — the bound book, else the embedded copy, never both — and still *adds* the globally selected books on top, which is upstream's `[...chatLore, ...personaLore, ...characterLore, ...globalLore]` (`world-info.js:4478`). Nothing about which books reach a prompt changed in this round. What changed is that `worldbookCardRule` says so on screen, because the report this entry answers was half "I can't find my card's book" and half "conversations should bind their own book, not be polluted by other books" — and the second half was already true and entirely invisible.
+
+**What it was measured against.** The reporter's own profile, `apps/iris/data/default-user`:
+
+| reading | number |
+| --- | --- |
+| books in `worlds/` | 10 |
+| of those, with a materialisation record (`worldbook-bindings.json`) | **10** |
+| whose file name is not the card's own id | **8 of 10** |
+| minted after a name collision (`origin: 'minted'`) | **0** |
+
+So on this profile the strong ownership rule — what this host materialised, and out of which card — covers every book on disk, and eight of the ten needed it: `Sgw又看一集` → `【Sgw】『普通』和『理所当然』是什么呢 2.3（好感度x10版）`, `爱衣` → `爱衣妹妹v1.1`, `魔法少女的扣扣审判1` → `扣扣审判1.0`, `战锤群星闪耀` → `战锤群星闪耀_世界书`, and four more. The first of those is the exact row the report was about: 140 entries, a name sharing no visible prefix with the card, and nine strangers beside it in one flat control. The SillyTavern install measured alongside carries **18** books in `data/default-user/worlds`, which is the size this layout has to survive.
+
+**What it costs.**
+
+- **A second call shape.** Entry counts mean opening every book, which is precisely the cost `worldbook.names` documents itself as avoiding ("names, not contents … so listing books does not read 1478 entries off the disk"). So the counts are opt-in — `worldbook.names`' `withCounts` — and a card asking what books exist still pays for a directory listing. The panel pays 18 file reads once per drawer open.
+- **The weak ownership rule reaches one card.** A book the user made in SillyTavern and bound by hand has no materialisation record, so the only link left is that some card's `extensions.world` spells its name — and the client holds exactly one card's binding, the open chat's. On the profile above this costs nothing (10 of 10 have the strong record), but on a profile imported wholesale from SillyTavern it would leave books unlabelled. Closing it means either a binding per card on `CharacterSummary` or a host-side sweep that decodes every card, which `library.ts` measures at about two seconds for nineteen; neither is worth a label.
+- **The global list is one click further away.** A reader who came to change the global selection now opens a fold first. That is the trade the crowding complaint asks for, and the count in the fold's own label is what keeps a folded list from reading as a missing one.
+- **`source: 'embedded'` is a state upstream cannot be in.** Upstream reads the embedded `character_book` only at import, after a prompt; Iris materialises on the import and open paths, so a card that has never been opened here sits with entries and no file. The panel names that state rather than showing nothing, which is a small extra vocabulary a SillyTavern user has not met.
+
+**What would overturn it.** A ruling that the panel should be upstream-shaped for muscle memory — in which case the card's book belongs on the character page instead, beside the counts already there, and this panel goes back to being a book chooser. Or `CharacterSummary` growing the card's binding, which would make the weak rule cover the whole library and remove the one hedge above.
