@@ -33,7 +33,7 @@ import { rowFields,
   type SillyTavernChatHeader,
   type SillyTavernMessage,
 } from '@iris/persistence'
-import type { ChatSummary, ChatView, PromptItemization, ScriptPromptPosition } from '@iris/protocol'
+import type { ChatSummary, ChatView, PromptItemization, ScriptPromptPosition, TurnUsage } from '@iris/protocol'
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore, type ScopeBackend, type Variables } from '@iris/variables'
 
@@ -42,6 +42,7 @@ import { scriptIdOf } from './script-variables.ts'
 import { busy } from './errors.ts'
 import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
 import { scriptsOf } from './regex.ts'
+import { parseUsage, usageBySeq, usageFieldOf, USAGE_FIELD } from './usage.ts'
 import { projectMessages, textOf, toChatView, type Names, type PendingTurn } from './views.ts'
 
 /** Iris's own header block inside a SillyTavern chat file. */
@@ -980,6 +981,59 @@ export class ChatEntry {
     return result.data
   }
 
+  /**
+   * Hold what the provider charged until there is a candidate to hang it on.
+   *
+   * The `usage` chunk arrives while the reply is still streaming — before the
+   * driver has appended the candidate — so the number has nowhere to live for
+   * the length of one turn. It rides on `pending`, which is the host's own
+   * record of the generation in flight and is cleared by {@link finish}
+   * whatever the outcome: a turn that failed leaves nothing behind, which is
+   * correct, because no candidate was written either.
+   *
+   * Guarded on the turn rather than trusting the caller: a chunk arriving for
+   * a turn that is no longer pending belongs to a generation that has already
+   * settled or been abandoned, and attaching it would charge this turn for
+   * that one.
+   * @param turn - the turn the chunk arrived for.
+   * @param usage - what the provider reported.
+   */
+  noteUsage(turn: number, usage: TurnUsage): void {
+    if (this.pending === undefined || this.pending.turn !== turn) return
+    this.pending.usage = usage
+  }
+
+  /**
+   * Attach a generation's cost to the candidate it produced.
+   *
+   * **The newest candidate of the turn, not the selected one.** A generation
+   * always appends, so the newest candidate is by construction the one just
+   * paid for — while `selectedCandidate` answers with whatever the last
+   * `iris/swipe-select` chose, which after "swipe back, then regenerate" is an
+   * *older* candidate (measured: `selectedCandidate` returns index 0 after a
+   * third generation on a turn whose selection was moved to 0). Reading the
+   * selection here would file this turn's bill against a reply that was
+   * generated earlier and is already carrying its own.
+   *
+   * Nothing is recorded when the provider reported nothing — see the protocol's
+   * `TurnUsage`: no field may be invented, and a generation with no usage at
+   * all must produce no record rather than a zero-filled one.
+   * @param turn - the turn that just settled.
+   * @param usage - what it cost; the noted value when absent.
+   * @returns whether a record was appended.
+   */
+  recordUsage(turn: number, usage: TurnUsage | undefined = this.pending?.usage): boolean {
+    if (usage === undefined) return false
+    const candidates = listCandidates(this.session, turn)
+    const candidate = candidates[candidates.length - 1]
+    // An impersonation's text became a *user* line, so its turn has no
+    // candidate. Its cost is genuinely unrecordable in this shape and is
+    // dropped rather than parked on a neighbouring reply.
+    if (candidate === undefined) return false
+    this.session.append('iris/usage', { candidateSeq: candidate.seq, usage })
+    return true
+  }
+
   /** The newest turn's variables, for a status-bar surface. */
   currentVariables(): Record<string, unknown> | undefined {
     try {
@@ -1003,6 +1057,13 @@ export class ChatEntry {
    */
   rebuild(lines: SillyTavernMessage[], sourceOf: (index: number) => number | undefined): void {
     const before = this.#snapshotVariables()
+    // Costs travel with the same mapping as the variables, and for the same
+    // reason: `importChat` reassigns every seq, so a per-candidate record that
+    // is not carried across by position is lost. A reply-shaping trim rebuilds
+    // the log **immediately after** the usage was recorded, so dropping it here
+    // would make the number vanish for every chat with `trimSentences` on —
+    // visible only as "the numbers show up for some users and not others".
+    const beforeUsage = this.#snapshotUsage()
     // The floor projection is a view of the old log; every macro that reads it
     // after this point must see the rebuilt one.
     this.#macroChat = undefined
@@ -1028,17 +1089,24 @@ export class ChatEntry {
     for (let index = 0; index < lines.length; index += 1) {
       const source = sourceOf(index)
       if (source === undefined) continue
-      const saved = before.get(source)
-      if (saved === undefined) continue
-
       const turn = turns[index]
       if (turn === undefined) continue
       const candidates = listCandidates(rebuilt, turn)
-      for (let swipe = 0; swipe < saved.length; swipe += 1) {
-        const variables = saved[swipe]
+
+      const saved = before.get(source)
+      for (let swipe = 0; swipe < (saved?.length ?? 0); swipe += 1) {
+        const variables = saved?.[swipe]
         const candidate = candidates[swipe]
         if (variables === undefined || candidate === undefined) continue
         rebuilt.append('iris/variables', { candidateSeq: candidate.seq, variables })
+      }
+
+      const savedUsage = beforeUsage.get(source)
+      for (let swipe = 0; swipe < (savedUsage?.length ?? 0); swipe += 1) {
+        const usage = savedUsage?.[swipe]
+        const candidate = candidates[swipe]
+        if (usage === undefined || candidate === undefined) continue
+        rebuilt.append('iris/usage', { candidateSeq: candidate.seq, usage })
       }
     }
   }
@@ -1082,6 +1150,25 @@ export class ChatEntry {
       }
       line['variables'] = Array.from({ length: width }, (_unused, swipe) => tables[swipe] ?? {})
     }
+    // What each generation cost, in the same positional shape as the tables
+    // above: one entry per swipe, `null` where that swipe reported nothing.
+    // `null` rather than a gap, because a sparse array serialises to `null`s
+    // anyway and an explicit one says "this swipe was generated and its
+    // provider told us nothing" rather than leaving the reader to count.
+    //
+    // Written outside `extra` on purpose — see `USAGE_FIELD` for the
+    // measurement that decided it. SillyTavern's own `extra.token_count` is
+    // never read and never written here.
+    for (const [index, saved] of this.#snapshotUsage()) {
+      const line = messages[index]
+      // Assistant lines only, for the reason the tables give above: a turn's
+      // user line shares its turn number and would be charged for the reply.
+      if (line === undefined || line.is_user) continue
+      const swipes = line['swipes']
+      const width = Math.max(1, Array.isArray(swipes) ? swipes.length : 1)
+      line[USAGE_FIELD] = Array.from({ length: width }, (_unused, swipe) => saved[swipe] ?? null)
+    }
+
     // **Row-level trims, applied on the way out.** A user row’s table is not a
     // candidate in this log, so nothing above has touched it; the record says
     // which keys a sweep took from it. Applied here rather than at import
@@ -1173,6 +1260,60 @@ export class ChatEntry {
           continue
         }
         this.session.append('iris/variables', { candidateSeq: candidate.seq, variables: variables as Variables })
+      }
+    }
+  }
+
+  /**
+   * Put a loaded file's per-candidate costs back into the log.
+   *
+   * The same shape and the same drop rules as {@link hydrateVariables} beside
+   * it: entries are positional, a surplus entry has no candidate to belong to
+   * and is dropped with a report, and an entry that is not a well-formed usage
+   * object is dropped rather than carried (`parseUsage` says why).
+   *
+   * **Nothing is computed for a reply that carries none.** A conversation
+   * imported from SillyTavern, or one generated before this host recorded
+   * usage, has no provider figures and never will — the request was made and
+   * answered long ago. Estimating them here would put a number that looks like
+   * a measurement next to ones that are.
+   * @param lines - the message lines the log was rebuilt from.
+   * @param onReport - told about each dropped entry; absent means silence.
+   */
+  hydrateUsage(
+    lines: readonly SillyTavernMessage[],
+    onReport?: (message: string) => void,
+  ): void {
+    const turns = lineTurns(this.session)
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]
+      if (line === undefined || line.is_user) continue
+      const stored = usageFieldOf(line)
+      if (stored.length === 0) continue
+      const turn = turns[index]
+      if (turn === undefined) continue
+      const candidates = listCandidates(this.session, turn)
+      for (let swipe = 0; swipe < stored.length; swipe += 1) {
+        const usage = parseUsage(stored[swipe])
+        // A `null` entry is the ordinary case — that swipe reported nothing —
+        // and says nothing worth reporting.
+        if (usage === undefined) {
+          if (stored[swipe] !== null && stored[swipe] !== undefined) {
+            onReport?.(
+              `usage: line ${String(index)} entry ${String(swipe)} is not a usage record; dropped`,
+            )
+          }
+          continue
+        }
+        const candidate = candidates[swipe]
+        if (candidate === undefined) {
+          onReport?.(
+            `usage: line ${String(index)} carries ${String(stored.length)} entr(ies) `
+            + `but the turn has ${String(candidates.length)} candidate(s); entry ${String(swipe)} dropped`,
+          )
+          continue
+        }
+        this.session.append('iris/usage', { candidateSeq: candidate.seq, usage })
       }
     }
   }
@@ -1667,6 +1808,32 @@ export class ChatEntry {
       )
     }
     return applyPrune(this.session, plan, layers) + rowsTrimmed
+  }
+
+  /**
+   * Per-candidate costs, keyed by the chat-file line they belong to.
+   *
+   * The same projection {@link #snapshotVariables} makes, over the other
+   * per-candidate record: line index to one entry per swipe, in swipe order,
+   * `undefined` where that swipe reported nothing. Lines where no swipe
+   * reported anything are absent from the map entirely, so a chat that has
+   * never generated through a usage-reporting provider writes no new key into
+   * its file at all.
+   * @returns costs by line index, only for lines that have any.
+   */
+  #snapshotUsage(): Map<number, (TurnUsage | undefined)[]> {
+    const byCandidate = usageBySeq(this.session)
+    const snapshot = new Map<number, (TurnUsage | undefined)[]>()
+    const turns = lineTurns(this.session)
+    for (let index = 0; index < turns.length; index += 1) {
+      const turn = turns[index]
+      if (turn === undefined) continue
+      const candidates = listCandidates(this.session, turn)
+      if (candidates.length === 0) continue
+      const saved = candidates.map(candidate => byCandidate.get(candidate.seq))
+      if (saved.some(entry => entry !== undefined)) snapshot.set(index, saved)
+    }
+    return snapshot
   }
 
   /** Per-candidate variables, keyed by the chat-file line they belong to. */

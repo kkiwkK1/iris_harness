@@ -1739,3 +1739,93 @@ alike from a bug report, and they belong in opposite columns.
 即将剥掉的块」），而该卡的 prompt 正则恰好把最新一条用户输入从提示词里剥掉（其玩法
 就是首楼输入被界面吃掉）。ST 扫的是未过正则的原文，此处是 Iris 既有的投影裁决在此卡
 上的可见代价；是否改为「世界书扫原文」属跨任务裁定，未动。
+
+---
+
+## 22. What the provider charged is recorded per generation; upstream records only its own estimate
+
+**Kind: deliberate improvement** (ROADMAP's second ledger), so this entry owes
+three things — what is better, what it costs, and why upstream does not do it.
+
+**Upstream, read rather than assumed.** SillyTavern records a token count per
+message and it is **its own estimate of the message text**, not anything the
+provider said:
+
+| what | where |
+| --- | --- |
+| the number stored | `public/script.js:5830`, `:6629`, `:6654`, `:6676`, `:6705`, `:10242`, `:10945` — `message.extra.token_count = await getTokenCountAsync(tokenCountText, 0)` |
+| gated on a display switch | the same lines, each under `if (power_user.message_token_count_enabled)` |
+| whose default is off | `public/scripts/power-user.js:199` — `message_token_count_enabled: false` |
+| where it is shown | `public/script.js:2585` — `const tokenCount = mes.extra?.token_count` |
+| archived per swipe | `public/script.js:6738`, `:6748` — `extra: structuredClone(item.extra)` into `swipe_info[i]`, with `token_count` deliberately deleted for freshly arrived swipes (`:6754`, `:3706`) |
+
+**And the provider's own report is never read.** `prompt_tokens` appears in
+`public/` exactly once, as a CSS class in the prompt manager
+(`PromptManager.js:1761`, showing *calculated* tokens); `usage` does not appear
+in `public/scripts/openai.js` at all, and the chat-completions backend
+(`src/endpoints/backends/chat-completions.js`) passes the response through
+without reading it. So upstream cannot show a cache-hit share for any provider:
+the number is in every response it receives and nothing looks at it.
+
+**Iris.** The `usage` chunk is kept whole. It is attached to the **candidate**
+the generation produced (`iris/usage`, keyed by `candidateSeq` exactly as
+`iris/variables` is), projected onto `MessageView.usage` for the selected
+candidate and summed over every candidate for `ChatView.usage`, and carried in
+the chat file so it survives a restart. `src/usage.ts`, `src/entry.ts`
+(`noteUsage` / `recordUsage` / `hydrateUsage` / `toFile`), `src/views.ts`,
+`tests/usage-record.test.ts`.
+
+**Where it is stored, and why not in `extra`.** A **top-level** `iris_usage`
+key on the message line, an array parallel to `swipes` — the same positional
+shape this file format already uses for per-swipe variable tables. `extra` was
+the obvious choice and is measurably wrong: SillyTavern treats `extra` as
+per-swipe state it swaps wholesale, assigning
+`targetMessage.extra = structuredClone(targetSwipeInfo?.extra) ?? {}` on every
+swipe (`public/script.js:6956`) from a copy archived when the reply landed
+(`:6738`). One swipe in SillyTavern would therefore delete an array parked
+there, and a single object parked there would need `swipe_info` entries this
+host does not model. Upstream's core touches no other top-level key on that
+swap, so a parallel array survives a trip through an install that has never
+heard of Iris.
+
+**`extra.token_count` is neither read nor written.** It answers a different
+question (upstream's estimate of the text) by a different measurer, it is
+already in the user's files, and it is what upstream's own UI shows. Ours is
+what the provider charged for the request. Confusing the two would put a
+plausible number in the wrong place; `tests/usage-record.test.ts` asserts the
+field comes back byte-identical after a record-and-export.
+
+**What it costs.**
+
+- **Storage**: one array per generated reply, `null` for a swipe whose provider
+  said nothing. A full record is six small integers — about 90 bytes of JSON
+  per swipe. A line that has no record gets no key at all, so a chat played
+  through an endpoint that reports no usage is byte-identical to before.
+- **Coverage**: **only where the provider reports it.** Nothing is estimated
+  and nothing is back-filled — an imported SillyTavern history, and every chat
+  this host generated before this existed, carries no figures and never will.
+  A surface must render that absence as nothing rather than as zeros, which is
+  why no bucket is ever zero-filled (`TurnUsage`, and `sumUsage`'s rule).
+- **Two generations are not counted.** An impersonation costs tokens and has no
+  candidate to hang them on (its text becomes a *user* line), so its cost is
+  dropped rather than parked on a neighbouring reply. A generation that failed
+  or was aborted before the `usage` chunk arrived records nothing, which is
+  correct — no candidate settled either.
+- **One residual, inherited rather than added.** Deleting a swipe **in
+  SillyTavern** splices `swipes` and `swipe_info` and knows nothing about
+  parallel arrays, so the array is left one entry too long and shifted. That is
+  the same residual `variables` already carries in the same file for the same
+  reason; a surplus entry is dropped with a report on the next open rather than
+  reattached to the wrong swipe.
+
+**One shape decision, ruled after the first cut and worth recording as its
+own line.** `ChatView.usage` — the conversation aggregate — carries **no
+`totalTokens`**. Summed under the optional-bucket rule it would cover only the
+generations that reported an exact total, so on a conversation that mixed
+providers it comes out *smaller* than the buckets printed beside it (measured
+on the fake's seed: 5712 against 6064 + 826) while still reading as "the
+total". A conversation therefore reports the four buckets, and a reader wanting
+one figure adds the ones it is showing. One generation keeps its own
+`totalTokens`, where the provider's aggregate means exactly what it says. The
+split lives in `conversationUsage` (host) and its twin in `@iris/client-fake`,
+with the rule written on `ChatView.usage` in the protocol.

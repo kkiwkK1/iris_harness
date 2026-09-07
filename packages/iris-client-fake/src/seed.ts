@@ -9,9 +9,72 @@
  * @module @iris/client-fake/seed
  */
 
-import type { CharacterSummary, GenerationSettings } from '@iris/protocol'
+import type { CharacterSummary, GenerationSettings, TurnUsage } from '@iris/protocol'
 
 import type { FakeChat, FakeMessage } from './state.ts'
+
+/**
+ * Costs the seeded replies carry, and why they differ from one another.
+ *
+ * Four shapes, on purpose, because they are the four a real conversation mixes
+ * and each is a different branch in whatever renders them:
+ *
+ * - {@link CACHED} is a DeepSeek-style reply with most of its prompt served
+ *   from cache — a 76% hit rate, which is the ordinary case on a long chat and
+ *   the number the feature exists to show.
+ * - {@link UNCACHED} is the same provider on a cold prompt: it reports the
+ *   bucket and it is `0`. A surface must show 0%, not "no cache".
+ * - {@link SILENT_CACHE} is an endpoint that reports usage but **nothing about
+ *   caching**, and carries no exact total either. Its buckets are missing, not
+ *   zero, and a hit rate must not be computed for it at all — the distinction
+ *   this whole convention exists to preserve.
+ * - The greeting carries **nothing at all**: it was never generated through a
+ *   provider (nor was any imported V1 history), and a row like that must show
+ *   no figure rather than zeros — which is a fourth branch, not a variant of
+ *   the others.
+ */
+const CACHED: TurnUsage = {
+  inputTokens: 742,
+  outputTokens: 218,
+  cacheReadTokens: 2_368,
+  totalTokens: 3_328,
+}
+
+/**
+ * A cold prompt on a cache-reporting provider: reported, and zero.
+ *
+ * `reasoningTokens` is a **part of** `outputTokens` rather than a bucket
+ * beside it — that is the wire convention this mirrors
+ * (`completion_tokens_details.reasoning_tokens` is inside `completion_tokens`)
+ * — so it is kept smaller than the output it belongs to. A fake carrying more
+ * reasoning than output would look fine and would teach a reader that the two
+ * add up.
+ */
+const UNCACHED: TurnUsage = {
+  inputTokens: 1_904,
+  outputTokens: 480,
+  cacheReadTokens: 0,
+  reasoningTokens: 311,
+  totalTokens: 2_384,
+}
+
+/**
+ * An endpoint that reports usage and says nothing about caching.
+ *
+ * The commonest OpenAI-compatible shape, and the one that makes the
+ * absent-versus-zero rule matter: with no `cacheReadTokens`, there is no hit
+ * rate to show for this generation, and folding it in as `0` would drag down a
+ * conversation-wide rate with a provider that never claimed to have a cache.
+ * It carries no `totalTokens` either, which is what makes this seed the case
+ * for the ruling that a **conversation** reports no total at all: summed under
+ * the optional-bucket rule, this chat's aggregate total would be 5712 while its
+ * own buckets add to 6064 + 826 — a smaller number, wearing the name of the
+ * larger one. See `ChatView.usage` and `conversationUsage`.
+ */
+const SILENT_CACHE: TurnUsage = {
+  inputTokens: 1_050,
+  outputTokens: 128,
+}
 
 /** Sampling the fake reports until something writes over it. */
 export const DEFAULT_SETTINGS: GenerationSettings = {
@@ -91,14 +154,30 @@ export function seedCharacters(): CharacterSummary[] {
   ]
 }
 
-/** One exchange, both halves sharing a turn. */
-function exchange(turn: number, name: string, ask: string, replies: readonly string[]): FakeMessage[] {
+/**
+ * One exchange, both halves sharing a turn.
+ *
+ * `usage` is positional over `replies`, so a turn with two readings can have
+ * one that reported a cost and one that did not — which is what a real turn
+ * looks like after a provider switch, and what the conversation total has to
+ * add up correctly over.
+ */
+function exchange(
+  turn: number,
+  name: string,
+  ask: string,
+  replies: readonly string[],
+  usage: readonly (TurnUsage | undefined)[] = [],
+): FakeMessage[] {
   return [
     { role: 'user', name: 'You', candidates: [{ text: ask }], index: 0, turn },
     {
       role: 'assistant',
       name,
-      candidates: replies.map(text => ({ text })),
+      candidates: replies.map((text, at) => {
+        const cost = usage[at]
+        return { text, ...cost === undefined ? {} : { usage: cost } }
+      }),
       index: 0,
       turn,
     },
@@ -118,18 +197,37 @@ export function seedChats(): FakeChat[] {
       ],
       index: 0,
       // Turn 0 is the greeting: it has no user half, which is exactly the
-      // asymmetry a chat UI has to survive at the top of the log.
+      // asymmetry a chat UI has to survive at the top of the log. It also
+      // carries no `usage`, because a greeting is copied from the card rather
+      // than generated — nobody was ever billed for it, and no amount of
+      // arithmetic can produce a figure for it later.
       turn: 0,
     },
+    // Turn 1 has two readings, and the one the reader is **not** looking at
+    // cost money too: swipe 0 is showing, swipe 1 was generated earlier
+    // through a different endpoint. So this conversation's total is strictly
+    // larger than what its visible rows add up to — which is the property a
+    // surface summing the rows instead of the candidates would get wrong, and
+    // would get wrong by an amount that looks like a rounding difference.
     ...exchange(1, '络络', '我走的是水渠那条路。桥上有人。', [
       `钳子合上，发出一声很轻的金属响。\n\n"桥上永远有人。"她终于抬头，"你是说有人在等你，还是有人在数人？"`,
       `"水渠。"她重复了一遍这两个字，像在称它的重量。\n\n"那你现在鞋里有半个城的水。坐下，别站在我灯下滴。"`,
-    ]),
+    ], [UNCACHED, SILENT_CACHE]),
     ...exchange(2, '络络', '在数人。第三次了。', [
       `她把钳子插回围裙的皮套，动作比刚才慢了半拍——这是她唯一泄露出来的东西。\n\n"第三次。"她说，"那就不是巡检了。巡检只数一次，数完就填表。数三次的人是在等一个对不上的数。"`,
-    ]),
+    ], [CACHED]),
   ]
 
+  /**
+   * The second conversation carries **no costs anywhere**, deliberately.
+   *
+   * This is what a chat imported from SillyTavern looks like, and what every
+   * chat played before the host recorded usage looks like: the requests were
+   * made and answered, and nothing wrote down what they cost. So `ChatView`
+   * here has no `usage` at all, and a surface that renders a total must drop
+   * the whole line rather than show zeros — an empty state that only exists if
+   * something in the fake actually takes it.
+   */
   const survey: FakeMessage[] = [
     {
       role: 'assistant',
