@@ -91,7 +91,7 @@ test('the row renders the split at the one seam everything already reads', () =>
    * untagged card renders byte-for-byte what it rendered before this existed.
    */
   const row = readFileSync(fileURLToPath(new URL('../src/app/MessageInterfaces.tsx', import.meta.url)), 'utf8')
-  assert.match(row, /const bodyTag = useSyncExternalStore\(subscribeBodyTag, getBodyTag\)/, 'the tag name is a live preference, not a constant frozen at boot')
+  assert.match(row, /const bodyTag = useSyncExternalStore\(subscribeBodyTag, getBodyTag, getBodyTag\)/, 'the tag name is a live preference, not a constant frozen at boot — and the render check renders in an environment React treats as a server, where the getter must be passed explicitly')
   assert.match(row, /const leak = splitBodyTag\(display, bodyTag\)/, 'the split reads the repaired text, after the fence ruling')
   assert.match(row, /const bodyText = leak\.body \?\? display/, 'an untagged message is the identity — the compatibility zero')
   assert.match(row, /leak\.tagged && leak\.head\.trim\(\) !== '' && <BodyLeak text=\{leak\.head\}/, 'the head scaffolding renders folded, and only when there is any')
