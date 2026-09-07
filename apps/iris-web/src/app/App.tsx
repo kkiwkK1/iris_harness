@@ -183,7 +183,24 @@ export function App(): ReactElement {
             The library tab shows a character's page in the reading area's own
             track, so the two are siblings rather than one nested in the other.
           */}
-          {tab === 'characters' ? <CharacterPage characterId={face} /> : null}
+          {tab === 'characters'
+            ? (
+              <CharacterPage
+                characterId={face}
+                /*
+                  The page can open a conversation now — one row per chat under
+                  its 对话 column — and opening one has to bring the reading
+                  surface with it. Which surface is showing is this component's
+                  own state (`tab`), unreachable from the page, so the page is
+                  handed the one line it needs. 「开始新对话」 calls the same
+                  thing: before this it created a chat and left the reader on the
+                  card page, with the new conversation behind a tab they had to
+                  find on their own.
+                */
+                onEnterReading={() => setTab('chats')}
+              />
+            )
+            : null}
           {/*
             **Hidden, never unmounted.** `CardScriptFrames` lives inside this
             subtree, and unmounting it would tear down every running card script

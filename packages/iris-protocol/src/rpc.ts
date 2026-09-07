@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { BackupPreview, BackupSummary, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScriptContext, ScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -1289,6 +1289,29 @@ export const requestSchemas = {
     withCard: z.boolean().optional(),
   }),
   /**
+   * Every world book one card involves, listed entry by entry, without content.
+   *
+   * **The reading half of the family.** `worldbook.charNames` answers a card
+   * script's question — which names is this character bound to — and
+   * `worldbook.get` answers a card's or an editor's: give me one book in full,
+   * content and all. Neither answers the question a *character page* asks, which
+   * is "what world info does this card carry", over as many books as the card
+   * involves and with no text: the embedded book (140 entries on one local card)
+   * plus every host-stored extra binding, each entry named, keyed, placed and
+   * flagged. Composing it from the two existing methods costs one call per book
+   * and downloads every entry's `content` to throw it away.
+   *
+   * **One call per page open, and it must stay that way.** A page that asked
+   * per frame is what put 322 KB × 60 on the host's queue on the
+   * `script.context` path. There is no `characterId`-less form and no list form:
+   * this is a card's page asking about the card in front of the reader.
+   *
+   * Refused, never answered empty, on a host with no book store: an empty list
+   * would read as "this card carries no world info", which is a claim about the
+   * card rather than an admission that there is no store to look in.
+   */
+  'worldbook.charDigest': z.object({ characterId: z.string().min(1) }),
+  /**
    * Replace a named world book's entire contents.
    *
    * **Whole-book replacement, which is upstream's semantics.** An entry not in
@@ -1565,6 +1588,16 @@ export interface RpcResponseMap {
     additional: string[]
     card?: CardWorldbookView
   }
+  /**
+   * The card's books, in reading order: its own first, then the extra bindings
+   * in the order the user made them.
+   *
+   * A card with no world info at all answers `{books: []}` — that is a fact
+   * about the card, and the host was able to look. A host with no book store
+   * refuses instead (see the request), so the empty list never has to carry
+   * both meanings.
+   */
+  'worldbook.charDigest': { books: CardBookDigest[] }
   /** The book as stored, read back — so a writer sees what its partial produced. */
   'worldbook.replace': { entries: WorldbookEntry[] }
   'worldbook.globalSelect': { names: string[] }

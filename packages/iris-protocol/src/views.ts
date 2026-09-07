@@ -1342,6 +1342,143 @@ export interface CardWorldbookView {
 }
 
 /**
+ * One world book entry with its content left behind.
+ *
+ * **The whole point is what is absent.** {@link WorldbookEntry} is the shape a
+ * card script reads and it carries `content` — the injected text, which is the
+ * bulk of a book: the local corpus's 18 named books hold 1478 entries between
+ * them, and one card (`爱衣`) embeds 140. A page listing entries so a reader can
+ * see what a card carries needs none of that text, and sending it would put
+ * hundreds of kilobytes on the wire every time a character page opened. So this
+ * is the *listing* shape: what an entry is called, whether it fires, what fires
+ * it, and where it lands.
+ *
+ * Field meanings are {@link WorldbookEntry}'s, not the file's — `name` is the
+ * file's `comment`, `enabled` is the negation of its `disable` — because both
+ * shapes are produced by one mapper (`toEntryDigest`) and a second vocabulary
+ * here would be a second thing to get inverted.
+ */
+export interface WorldbookEntryDigest {
+  uid: number
+  /** The file's `comment`. Empty for an entry whose author titled nothing. */
+  name: string
+  enabled: boolean
+  /**
+   * Whether the entry fires on every scan without matching anything.
+   *
+   * `strategy.type === 'constant'`, flattened to the one bit a listing shows. A
+   * `vectorized` entry reads as `false` here, which is right for the question
+   * this answers — it does not fire unconditionally — and the strategy's third
+   * state is not carried: it is not a fact a reader of a card's contents acts
+   * on, and this shape exists to be small.
+   */
+  constant: boolean
+  /**
+   * Primary keys, as written — regex-shaped strings included.
+   *
+   * Verbatim, exactly as `WorldbookEntry.strategy.keys` carries them: upstream
+   * revives `/foo/i` into a live `RegExp` before a card sees it, and a listing
+   * showing the revived object would show `{}`. A reader is shown what the
+   * author typed.
+   */
+  keys: string[]
+  /**
+   * Secondary keys, when the entry has any.
+   *
+   * **Omitted rather than empty**, because empty is the common case and the
+   * cost is paid once per entry per page: on a 140-entry book the omission is
+   * the difference between 140 `"keysSecondary":[]` and nothing. The logic
+   * combining them is not carried — a listing says *that* an entry has
+   * secondary conditions; the entry editor says how they combine.
+   */
+  keysSecondary?: string[]
+  /** Where the entry is inserted, by TavernHelper's name for it. */
+  position: WorldbookPosition
+  /**
+   * How many messages up from the end, for an `at_depth` entry.
+   *
+   * **Omitted for every other position**, where the stored number is carried on
+   * disk but means nothing: a `before_character_definition` entry has a `depth`
+   * of 4 simply because 4 is the field's default, and printing "depth 4" beside
+   * it would invent a fact about an entry whose position does not use one.
+   */
+  depth?: number
+}
+
+/**
+ * Why one book is on a card's list.
+ *
+ * - `card` — the book the card's own world info comes from, as
+ *   {@link CardWorldbookView} resolves it. Exactly one book can be this, and it
+ *   is the embedded/named *choice*, never both (see `@iris/app-service`'s
+ *   `resolveCardWorldbook`: assembling both sources produced 2246 entries of
+ *   which 1122 were duplicates).
+ * - `additional` — a book the user bound to this character **through the host**
+ *   (upstream's `world_info.charLore[…].extraBooks`), on top of the card's own
+ *   binding. The user's act, not the card's.
+ *
+ * Globally selected books are deliberately not a value here: they apply to
+ * every character, so listing them under one card would report an
+ * installation-wide setting as a property of that card.
+ */
+export type CardBookRole = 'card' | 'additional'
+
+/**
+ * One of a card's world books, listed for a reader rather than for a scan.
+ *
+ * The figures a page shows over it — how many entries, how many enabled, how
+ * many constant — are **not** here: each is derivable from {@link entries} by
+ * counting, and a host-computed copy beside the rows it summarises is a second
+ * derivation that can disagree with the first. The client counts what it was
+ * sent.
+ */
+export interface CardBookDigest {
+  /**
+   * The book's name.
+   *
+   * Never null: a book with no name is not one a reader can be shown, and a
+   * card with no book contributes no digest at all. The card's *embedded* book
+   * keeps the name its binding asks for even when no file carries it yet —
+   * "bound to X, and X is not on disk" is the state, and blanking it would hide
+   * the half a reader needs to go looking.
+   */
+  name: string
+  /**
+   * Where {@link entries} came from.
+   *
+   * - `named` — a book file on the host.
+   * - `embedded` — the card's own `character_book`, not yet materialised into a
+   *   file. A real and transient state: materialisation runs on the import and
+   *   open paths, so a card nobody has opened on this host sits here.
+   * - `missing` — a binding with **no readable book behind it**. 2 of the
+   *   corpus's 18 bindings are in this state, and it is why such a book is
+   *   listed rather than dropped: a bound name that activates nothing looks
+   *   exactly like a book with no entries, and only one of those is broken.
+   */
+  source: 'named' | 'embedded' | 'missing'
+  /** Why this book is on the card's list. */
+  role: CardBookRole
+  /**
+   * Whether {@link name} is a name this host minted rather than the card's own.
+   *
+   * {@link CardWorldbookView.materialised}, carried for the `card` role only
+   * and omitted when false — it is the reason a reader sees a book name that is
+   * not the one written on their card, and false is the ordinary case.
+   */
+  materialised?: boolean
+  /**
+   * The book's entries, in the order the book presents them — `displayIndex`
+   * for a file, stored order for an embedded book.
+   *
+   * Empty for a `missing` book, where the emptiness is a fact about the disk
+   * rather than about the book. Otherwise every entry the book holds, enabled
+   * or not: what the card *contains* is the question a card page answers, and
+   * which of them a scan would admit depends on the chat.
+   */
+  entries: WorldbookEntryDigest[]
+}
+
+/**
  * Why a snapshot of a conversation exists.
  *
  * The host records the reason **in the snapshot's file name**, so a folder

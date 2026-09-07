@@ -35,7 +35,15 @@ import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 
 import { fromCharacterBook, parseLorebook, type Lorebook, type LorebookEntry } from '@iris/lorebook'
 import type { CharacterCard } from '@iris/character'
-import type { CardWorldbookView, SecondaryLogic, WorldbookEntry, WorldbookPosition } from '@iris/protocol'
+import { toEntryDigest } from '@iris/protocol'
+import type {
+  CardBookDigest,
+  CardWorldbookView,
+  SecondaryLogic,
+  WorldbookEntry,
+  WorldbookEntryDigest,
+  WorldbookPosition,
+} from '@iris/protocol'
 
 import { invalid, notFound } from './errors.ts'
 import { fileFor } from './paths.ts'
@@ -793,6 +801,140 @@ export async function cardWorldbookView(
   }
 
   return { name: null, source: 'none', entryCount: 0, materialised: false }
+}
+
+/** Sentinel for "the book could not be read", kept apart from "it is empty". */
+const MISSING: WorldbookEntryDigest[] = []
+
+/**
+ * One book's entries, digested, or {@link MISSING} when it cannot be read.
+ *
+ * The sentinel is compared by identity, so an empty book and an unreadable one
+ * are two answers rather than one — which is the whole distinction the
+ * `missing` source exists to carry.
+ * @param store - the named books, when the host has them.
+ * @param name - the book's name, verbatim.
+ * @returns the digests, or the sentinel.
+ */
+async function digestOf(
+  store: WorldbookStore | undefined,
+  name: string,
+): Promise<WorldbookEntryDigest[]> {
+  if (store === undefined) return MISSING
+  try {
+    return (await store.get(name)).map(toEntryDigest)
+  } catch {
+    return MISSING
+  }
+}
+
+/**
+ * Every book one card involves, entry by entry, with the content left behind.
+ *
+ * **A second reading of {@link cardWorldbookView}, not a second resolution.**
+ * Which book is the card's own is decided by that function and by nothing here,
+ * so the character page and the world book panel cannot name different books
+ * for one card. What this adds is the entries — and only the part of an entry a
+ * listing shows (`toEntryDigest`). Measured over the operator's own profile,
+ * whose 11 book-carrying cards come to **841 entries**: the largest card's book
+ * (140 entries) is 23 KB through this shape and 341 KB through `worldbook.get`,
+ * and the biggest of them (153 entries) is 20 KB against 1.13 MB. Sending
+ * `content` would put that on the wire for text a listing never shows.
+ *
+ * **Three shapes a book can be in, and all three are listed.** A file it read;
+ * the card's embedded `character_book`, which is where a card nobody has opened
+ * on this host still sits; and a *bound name with nothing behind it* — 2 of the
+ * corpus's 18 bindings — which is listed as `missing` rather than dropped,
+ * because a binding that activates nothing is otherwise indistinguishable from
+ * a book with no entries and only one of those is broken.
+ *
+ * The extra bindings follow the card's own book in stored order, which is the
+ * order the user made them, and a name that is already the card's own book is
+ * not listed twice — the same first-occurrence rule
+ * {@link resolveCardWorldbook} applies when it builds one search set.
+ * `globalSelect` is deliberately not read: a globally selected book applies to
+ * every character, and listing it under one card would report an
+ * installation-wide setting as a property of that card.
+ * @param card - the character whose page is open.
+ * @param store - the named books, when the host has them.
+ * @param materialised - the name this host materialised for the card, if any.
+ * @param extraBooks - the character's additional bindings, in stored order.
+ * @returns the card's books, its own first.
+ */
+export async function cardWorldbookDigest(
+  card: CharacterCard | undefined,
+  store: WorldbookStore | undefined,
+  materialised?: string,
+  extraBooks: readonly string[] = [],
+): Promise<CardBookDigest[]> {
+  const view = await cardWorldbookView(card, store, materialised)
+  const books: CardBookDigest[] = []
+
+  if (view.source === 'named' && view.name !== null) {
+    // Read again rather than counted from the view: the view carries a count,
+    // and a listing needs the rows. The file was readable a moment ago, so the
+    // sentinel here is the race — deleted between the two reads — and it is
+    // reported as the broken binding it has just become.
+    const entries = await digestOf(store, view.name)
+    books.push({
+      name: view.name,
+      source: entries === MISSING ? 'missing' : 'named',
+      role: 'card',
+      // Omitted rather than false: it is the reason a reader sees a name that is
+      // not the one on their card, and false is the ordinary case.
+      ...view.materialised ? { materialised: true } : {},
+      entries: entries === MISSING ? [] : entries,
+    })
+  } else if (view.source === 'embedded' && view.name !== null) {
+    /*
+     * The card's own book, converted the way materialisation converts it —
+     * `fromCharacterBook` then `toWorldbookEntry`, the same two calls in the
+     * same order (`materialise.ts`). A card book is the V2 spec's shape, not a
+     * SillyTavern book file's, and reading it as though it were the latter
+     * gives every entry a default position and no keys.
+     */
+    const embedded = card?.data.character_book
+    books.push({
+      name: view.name,
+      source: 'embedded',
+      role: 'card',
+      ...view.materialised ? { materialised: true } : {},
+      entries: embedded === undefined
+        ? []
+        : Object.values(fromCharacterBook(embedded).entries).map(toWorldbookEntry).map(toEntryDigest),
+    })
+  } else {
+    /*
+     * `source: 'none'` covers two states this page has to keep apart: a card
+     * that binds nothing and embeds nothing — no book, no row — and a card whose
+     * binding names a book that is not there, which `cardWorldbookView` reports
+     * as `none` with the name dropped. The binding is still a fact about the
+     * card, so it is read again here and listed as missing.
+     */
+    const own = materialised ?? charWorldbookNames(card).primary
+    if (own !== null) {
+      books.push({ name: own, source: 'missing', role: 'card', entries: [] })
+    }
+  }
+
+  const listed = new Set(books.map(book => book.name))
+  for (const name of extraBooks) {
+    if (listed.has(name)) continue
+    listed.add(name)
+    const entries = await digestOf(store, name)
+    // A dangling extra — bound, then the file deleted or renamed, or bound on a
+    // host that keeps no books at all. Reported as the broken binding it is;
+    // upstream's scan simply `continue`s past it.
+    const missing = entries === MISSING
+    books.push({
+      name,
+      source: missing ? 'missing' : 'named',
+      role: 'additional',
+      entries: missing ? [] : entries,
+    })
+  }
+
+  return books
 }
 
 /**

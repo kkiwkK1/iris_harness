@@ -221,6 +221,7 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   { method: 'worldbook.names', params: () => ({}) },
   { method: 'worldbook.get', params: () => ({ name: 'Eldoria' }) },
   { method: 'worldbook.charNames', params: () => ({ characterId: 'aria' }) },
+  { method: 'worldbook.charDigest', params: () => ({ characterId: 'aria' }) },
   { method: 'preset.list', params: () => ({}) },
   { method: 'preset.view', params: () => ({}) },
   { method: 'preset.read', params: () => ({ name: 'Sample' }) },

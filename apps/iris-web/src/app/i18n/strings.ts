@@ -98,6 +98,56 @@ export const en = {
   faceScriptsDeclined: 'You declined these',
   faceCreator: 'By {creator}',
   facePickHint: 'Pick a character on the left to see its card.',
+
+  /* The character page's three lists, fetched per page open rather than carried
+     by the library (`loadCharacterDetail`). Each list sits under the count its
+     column already showed, so a host that refuses a half leaves the page
+     exactly as it was rather than empty. */
+  /** One conversation row's own action, named so a screen reader hears which. */
+  faceOpenConversation: 'Open “{title}”',
+  /** The row under a book's name: the three figures that describe it. */
+  faceBookFigures: '{n} entries · {enabled} on · {constant} always on',
+  /** A book with no entries at all — the file exists and is empty. */
+  faceBookNoEntries: 'No entries',
+  /** The card carries the book itself; this host has not written it to a file. */
+  faceBookEmbedded: 'in the card, not yet a file',
+  /** This host minted the name because the one the card asked for collided. */
+  faceBookMinted: 'renamed by this host',
+  /** Bound by name, with no readable book behind it. 2 of 18 local bindings. */
+  faceBookMissing: 'bound, but no such book here',
+  /** A book the reader bound to this character themselves, beside the card's. */
+  faceBookExtra: 'you bound this one',
+  /** An entry that fires on every scan without matching anything. */
+  faceEntryConstant: 'always on',
+  /** What fires an entry, keys joined by the list separator. */
+  faceEntryKeys: 'Keys: {keys}',
+  /** A selective entry with no keys: it can never fire, and nothing else says so. */
+  faceEntryNoKeys: 'no keys — never fires',
+  /** Secondary conditions exist; how they combine is the entry editor's business. */
+  faceEntrySecondary: '+{n} secondary',
+  /** An entry its author, or the reader, switched off. */
+  faceEntryOff: 'off',
+  /* The eight world-info positions, in ST's own terms. Five of them do not occur
+     in the local corpus and are carried for correctness. */
+  facePlaceBeforeChar: 'before the character definition',
+  facePlaceAfterChar: 'after the character definition',
+  facePlaceBeforeExamples: 'before the example messages',
+  facePlaceAfterExamples: 'after the example messages',
+  facePlaceBeforeNote: 'before the author’s note',
+  facePlaceAfterNote: 'after the author’s note',
+  facePlaceAtDepth: 'at depth {depth}',
+  facePlaceOutlet: 'in an outlet',
+  /** Every row this list can show came out of the card; `script.list` reports no other tier. */
+  faceScriptInCard: 'in the card',
+  faceScriptOn: 'enabled',
+  /** The two switches, said as the reason rather than as the result. */
+  faceScriptOffByCard: 'the author shipped it off',
+  faceScriptOffByYou: 'you switched it off',
+  faceScriptOnByYou: 'you switched it on',
+  /** Both numbers, always: 58 of the corpus's 89 buttons are hidden by their author. */
+  faceScriptButtons: '{n} buttons, {visible} shown',
+  /** The switch lives beside the conversation, not here — this page only reports. */
+  faceScriptSwitchNote: 'Switch a script off in the card panel, beside the conversation it runs in.',
   favorite: 'Add to favorites',
   unfavorite: 'Remove from favorites',
   duplicateCharacter: 'Duplicate',
@@ -1000,6 +1050,35 @@ export const zh: Record<StringKey, string> = {
   faceScriptsDeclined: '你已拒绝运行',
   faceCreator: '作者 {creator}',
   facePickHint: '在左边选一个角色，看它的卡片。',
+
+  /* 角色页的三份列表：进角色页时按需拉取，不随角色库下发。 */
+  faceOpenConversation: '打开「{title}」',
+  faceBookFigures: '{n} 条 · {enabled} 启用 · {constant} 常驻',
+  faceBookNoEntries: '这本书是空的',
+  faceBookEmbedded: '在卡里，还没落成文件',
+  faceBookMinted: '本机改过名',
+  faceBookMissing: '已绑定，但本机没有这本书',
+  faceBookExtra: '你自己绑上的',
+  faceEntryConstant: '常驻',
+  faceEntryKeys: '触发键：{keys}',
+  faceEntryNoKeys: '没有触发键——永远不会触发',
+  faceEntrySecondary: '另有 {n} 个副键',
+  faceEntryOff: '已停用',
+  facePlaceBeforeChar: '角色定义前',
+  facePlaceAfterChar: '角色定义后',
+  facePlaceBeforeExamples: '示例对话前',
+  facePlaceAfterExamples: '示例对话后',
+  facePlaceBeforeNote: '作者注前',
+  facePlaceAfterNote: '作者注后',
+  facePlaceAtDepth: '深度 {depth}',
+  facePlaceOutlet: '插槽注入',
+  faceScriptInCard: '卡内嵌',
+  faceScriptOn: '启用',
+  faceScriptOffByCard: '作者出厂就关着',
+  faceScriptOffByYou: '你关掉了',
+  faceScriptOnByYou: '你打开了',
+  faceScriptButtons: '{n} 个按钮，{visible} 个可见',
+  faceScriptSwitchNote: '开关在对话旁的卡片脚本面板里，这一页只报告。',
   favorite: '收藏',
   unfavorite: '取消收藏',
   duplicateCharacter: '复制角色',

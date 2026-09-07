@@ -33,6 +33,14 @@ export {
   type IrisEventType,
 } from './events.ts'
 
+/*
+ * The entry-listing mapper, in the contract for the reason the specifier walker
+ * above is: the host derives digests from real books and the fake client from
+ * its own seeded ones, and a page reading both must not be able to tell them
+ * apart by which fields arrived.
+ */
+export { toEntryDigest } from './digests.ts'
+
 export {
   parseRequest,
   requestSchemas,
@@ -51,6 +59,9 @@ export type {
   BackupPreviewFloor,
   BackupReason,
   BackupSummary,
+  CardBookDigest,
+  CardBookRole,
+  WorldbookEntryDigest,
   ChatSearchHit,
   ChatSearchMatch,
   ChatSummary,

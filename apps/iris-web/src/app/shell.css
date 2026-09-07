@@ -718,3 +718,126 @@
   color: var(--iris-ink-secondary);
   text-wrap: pretty;
 }
+
+/*
+ * What each fact column now says under its count: a list.
+ *
+ * One rhythm for all three lists — a name on one line, a mono meta line under
+ * it — because a conversation, a world book entry and a script are the same
+ * *kind* of thing to a reader scanning a column, and three row shapes in three
+ * columns 22px apart would read as three unrelated panels. It is the chat
+ * list's own rhythm (`.iris-row__title` over `.iris-row__meta`), at the fact
+ * columns' scale.
+ *
+ * No background, no card, no border: the columns are already divided by
+ * hairlines, and boxing rows inside a hairline-divided grid is the fencing the
+ * facts row was drawn to avoid.
+ */
+.iris-fact__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+/*
+ * A row that does something — a conversation to open, a book to unfold. Shares
+ * everything but its cursor with `.iris-fact__entry`, which is inert.
+ *
+ * `summary` needs `display: flex` explicitly: the default `list-item` keeps the
+ * disclosure triangle in the flow and the marker is suppressed below, so
+ * without this the two lines sit on one line.
+ */
+.iris-fact__row,
+.iris-fact__entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--iris-radius);
+  padding: 3px 6px;
+  margin-left: -6px;
+  font: inherit;
+  color: var(--iris-ink-secondary);
+}
+
+/* The two things a row can be — a button, or a `summary` — both act on click.
+   `list-style: none` is what stops the native disclosure triangle appearing
+   beside the chevron below; Safari needs the pseudo-element as well. */
+.iris-fact__row {
+  cursor: pointer;
+  list-style: none;
+}
+
+.iris-fact__row:hover {
+  background: var(--iris-bg-sunken);
+}
+
+.iris-fact__row::-webkit-details-marker {
+  display: none;
+}
+
+.iris-fact__name {
+  font-size: var(--iris-size-row);
+  line-height: 1.35;
+  color: var(--iris-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The meta line, and it is allowed two lines rather than one.
+ *
+ * A world book entry's keys are the reason: measured over the local corpus, an
+ * entry carries up to a dozen of them, and clipping the line to one would hide
+ * the very fact the row exists to report. Two lines and then a clip is the
+ * compromise — long enough for the keys that matter, bounded enough that one
+ * entry cannot own the column.
+ */
+.iris-fact__meta {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* A book, folded. The chevron turns with it, as the drawer's cards' does. */
+.iris-fact__book > .iris-fact__row .iris-fact__name::before {
+  content: '▸ ';
+  color: var(--iris-ink-faint);
+}
+
+.iris-fact__book[open] > .iris-fact__row .iris-fact__name::before {
+  content: '▾ ';
+}
+
+/*
+ * A book's entries, unfolded — and bounded.
+ *
+ * The largest local book is 153 entries and one card embeds 140. Laid out in
+ * full, opening a book would push everything beside it off the screen, which is
+ * why the list scrolls inside its own column rather than lengthening the page.
+ * The indent and the left rule are what say these belong to the book above
+ * them, in a column with no boxes to nest.
+ */
+.iris-fact__entries {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 2px;
+  padding: 0 0 0 10px;
+  max-height: 320px;
+  overflow-y: auto;
+  border-left: var(--iris-hairline) solid var(--iris-rule-faint);
+}

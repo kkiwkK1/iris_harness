@@ -141,3 +141,39 @@ test('switching books replaces the held draft with the new book\u2019s entries',
   assert.equal(editor.book, 'Other')
   assert.equal(editor.drafts[0]?.name, 'nine')
 })
+
+test('saving a book drops the character page’s cached listing of it', async () => {
+  /*
+   * The character page holds `worldbook.charDigest`'s answer per card and
+   * re-fetches for no other reason — that cache is what keeps the page to one
+   * call per card. A book rewritten here is the case where "no other reason" is
+   * wrong: the figures the page shows (entries / enabled / constant) and the
+   * entry rows under them were counted from the answer taken *before* this
+   * write, so a reader going back to the card would be shown their own edit's
+   * before-state with nothing on screen to say so.
+   *
+   * Cleared rather than patched: which card a book belongs to is the host's
+   * answer, not something to infer from a name, and the next page open asks
+   * again for the price of one call.
+   */
+  const { client } = wiClient([wiEntry(1)], [wiEntry(1)])
+  const { store } = createIrisStore(client, { transport: 'rpc', origin: 'test' })
+
+  await store.getState().openWiEditor('Book')
+  store.setState({
+    characterDetail: {
+      characterId: 'luoluo',
+      loading: false,
+      books: [{ name: 'Book', source: 'named', role: 'card', entries: [] }],
+      scripts: [],
+    },
+  })
+
+  await store.getState().saveWiEditor()
+
+  assert.equal(
+    store.getState().characterDetail,
+    undefined,
+    'the card page would keep showing the figures counted before this save',
+  )
+})

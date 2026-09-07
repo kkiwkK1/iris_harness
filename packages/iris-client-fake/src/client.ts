@@ -13,6 +13,7 @@
 
 import {
   parseRequest,
+  toEntryDigest,
   type CharacterSummary,
   type ChatSearchHit,
   type ChatSearchMatch,
@@ -840,6 +841,65 @@ class InMemoryClient implements FakeClient {
           primary,
           additional: [],
           card: fakeCardWorldbook(characterId, character.bookEntryCount),
+        }
+      }
+
+      /*
+       * The character page's listing, answered for the shapes this client
+       * actually models and refused for the one it does not.
+       *
+       * **Which book is the card's own is `fakeCardWorldbook`'s answer**, not a
+       * second resolution — the same transcription of the host's rule that
+       * `worldbook.charNames` above hands back, so a page cannot be shown one
+       * book here and another there. The entries are `fakeBookEntries`', mapped
+       * through the contract's own `toEntryDigest`: the host maps real books
+       * with that function, so a page reading this cannot tell the two apart by
+       * which fields arrived, which is the drift a hand-copied mapper here would
+       * have introduced.
+       *
+       * `additional` is empty, because `worldbook.setCharBooks` is refused and
+       * `charNames` answers `additional: []` unconditionally — an extra book
+       * here would be one no write could have produced.
+       */
+      case 'worldbook.charDigest': {
+        const { characterId } = params as RpcRequest<'worldbook.charDigest'>
+        const character = this.#characters.find(row => row.characterId === characterId)
+        if (character === undefined) {
+          throw new FakeRpcError('not-found', `no character "${characterId}"`)
+        }
+        // The store-less host's refusal, reproduced: `createFakeClient({empty:
+        // true})` seeds no books, and an empty list there would say "this card
+        // carries no world info" about a card nothing looked at.
+        if (this.#worldbooks.length === 0) {
+          throw new FakeRpcError('not-found', `world books for "${characterId}"`)
+        }
+        const view = fakeCardWorldbook(characterId, character.bookEntryCount)
+        const seeded = view.name === null
+          ? undefined
+          : FAKE_WORLDBOOKS.find(book => book.name === view.name)
+        if (view.name === null) return { books: [] }
+        if (seeded === undefined) {
+          /*
+           * The card carries a book this client holds no entries for — an
+           * *imported* card, whose `character_book` this package deliberately
+           * does not decode (`card.ts` reads its length and nothing else).
+           * Refused rather than answered `entries: []`, which the page would
+           * count and render as 「0 条」 — a book reported empty when what is
+           * empty is this client's knowledge of it.
+           */
+          throw new FakeRpcError(
+            'unsupported',
+            `the fake client holds no entries for "${view.name}", only the count`,
+          )
+        }
+        return {
+          books: [{
+            name: seeded.name,
+            source: 'named',
+            role: 'card',
+            ...view.materialised ? { materialised: true } : {},
+            entries: fakeBookEntries(seeded).map(toEntryDigest),
+          }],
         }
       }
 
