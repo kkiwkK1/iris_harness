@@ -144,6 +144,19 @@
 | --- | --- | --- |
 | `StatePanel.tsx` 让位注记 | 抽屉占轨且窗口付不起「侧栏＋变量栏＋抽屉＋可读正文」时，变量栏临时收成 36px 窄条；这一句是那时收起键的 title。措辞是承诺而不是报错：读者自己的选择没有被改写，关掉抽屉就回来（`state-panel.ts` 的 `asideShowing`） | `stateYielded` |
 
+任务（提供方回报的 token 用量，`dev/plum-theme`）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `token-format.ts` 数字格式 | 三个**不含中文**的格式行：紧凑档的 K / M 后缀、千分位分隔符。两栏今天都是 `,`：`i18n.test.ts` 的 `neutral` 名单按键放行「zh 必须有中文」那条，`token-format.test.ts` 再把两栏各钉一次，改哪一栏都会红（不是要求两栏必须不同） | `tokensThousand tokensMillion thousandsSeparator` |
+| `Composer.tsx` 输入框下的用量行 | 会话累计（`ChatView.usage`）：`缓存命中 N%` 与 `输入 X tok · 输出 Y tok` 两组，组间 `\|`、组内 `·`。整组没数据就整组消失，两个数都是 0 或宿主没报就整行不渲染 | `usageCacheHit usageTokens` |
+| `Message.tsx` 每轮用量 | 助手消息动作行末尾的安静读数，与其他 `iris-act` 同字号；悬停 `title` 是明细表的纯文本版（`usageDetailText`），行序照 harness 那张对话框，将来做成弹层时文案原样搬过去 | `usageTurn usageTurnTitle usageDetailCacheHit usageDetailInput usageDetailCacheRead usageDetailCacheWrite usageDetailOutput usageDetailReasoning usageCount` |
+
+措辞两条约定，别混称：**「用量」只指提供方回报的实际计费**，`PromptPanel` 那套「估算 /
+provider counted」是另一件事（上游 ST 每条消息显示的 `token_count` 属于前者的估算口径，见
+`notes/apps/iris-web/DEVIATIONS.md` 47）；**「未缓存输入」不是「输入」**——三个 prompt 侧
+桶是互斥的，`inputTokens` 不含缓存服务掉的部分，用量行上的「输入」是三桶之和。
+
 ## 四、持久化决策（同 `language.ts` 文档）
 
 `localStorage` 键 `iris.language`，与 `iris.theme` / `iris.reading` 同一处、同一套

@@ -11,12 +11,33 @@ import { CallId, EMPTY_RESPONSE_CODE, LlmError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, FinishReason, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import { DONE } from './sse.ts'
 
-/** Usage as OpenAI-compatible endpoints report it. */
+/**
+ * Usage as OpenAI-compatible endpoints report it.
+ *
+ * `prompt_tokens` INCLUDES whatever the cache served, and the cache hit is
+ * spelled two ways by the endpoints this adapter actually meets:
+ * `prompt_tokens_details.cached_tokens` is the OpenAI-compatible spelling, and
+ * `prompt_cache_hit_tokens` is DeepSeek's own — its documentation states
+ * `prompt_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens`. Both
+ * are optional because most endpoints report neither, and {@link mapUsage} must
+ * be able to say "this provider does not report cache" rather than "0 hits".
+ */
 export interface WireUsage {
   prompt_tokens: number
   completion_tokens: number
   total_tokens?: number
   prompt_tokens_details?: { cached_tokens?: number }
+  /**
+   * DeepSeek's native hit count, read only when the compat spelling is absent.
+   *
+   * A DeepSeek response carries both, and they agree; reading this one first
+   * would still be wrong for the endpoints that carry only `cached_tokens`,
+   * so the order is the harness's own (`@deepseek-ai/dsh-llm-deepseek`'s
+   * `mapUsage`): compat first, native as the fallback.
+   */
+  prompt_cache_hit_tokens?: number
+  /** The complement DeepSeek reports beside the hit; carried for completeness, never read — `inputTokens` is derived by subtraction so one arithmetic rule covers both spellings. */
+  prompt_cache_miss_tokens?: number
   completion_tokens_details?: { reasoning_tokens?: number }
 }
 
@@ -67,11 +88,20 @@ export function mapFinishReason(reason: string): FinishReason {
  *
  * OpenAI-compatible `prompt_tokens` INCLUDES cached tokens, while the harness
  * `TokenUsage` counts are disjoint — so cache reads are subtracted out.
+ *
+ * The hit count is read from the compat field first and DeepSeek's own
+ * `prompt_cache_hit_tokens` second, because this one adapter serves both: the
+ * user's configured route is a `baseURL`, and DeepSeek is the endpoint behind
+ * it often enough that reading only the compat spelling reported **no cache at
+ * all** for the provider whose cache the feature exists to show. Absent in both
+ * spellings stays absent — never `0`, because a hit rate computed from a
+ * zero-filled bucket says "the cache never helped" about a provider that never
+ * spoke about caching.
  * @param usage - wire usage from either the finish chunk or a trailing usage-only chunk.
  * @returns disjoint harness counts.
  */
 export function mapUsage(usage: WireUsage): TokenUsage {
-  const cacheRead = usage.prompt_tokens_details?.cached_tokens
+  const cacheRead = usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens
   const reasoning = usage.completion_tokens_details?.reasoning_tokens
   const combined = usage.prompt_tokens + usage.completion_tokens
   const hasExactTotal = Number.isSafeInteger(combined)

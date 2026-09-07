@@ -2460,6 +2460,18 @@ export class IrisAppService {
           })
         })
       }
+      // Before `#storeRewritten`, which may rebuild the log: `rebuild` carries
+      // per-candidate records across by position, so a record that exists
+      // survives it — while a record appended afterwards would be attached to
+      // the pre-rebuild candidate seqs and lost. The same ordering
+      // `recordVariables` above depends on.
+      //
+      // Unconditional, `recordVariables`' own gate included: an impersonation
+      // records no variables because a user line has no variable consequences,
+      // but it does cost tokens. It has no candidate to hang them on either
+      // (see `recordUsage`), so nothing is written — but the reason is the
+      // shape of the log, not this switch.
+      entry.recordUsage(turn)
       this.#storeRewritten(entry, entry.scripts, generated, settledText)
       entry.touch()
       entry.finish()
@@ -3090,6 +3102,13 @@ export class IrisAppService {
         const turn = entry?.pending?.turn
         const recorded = turn === undefined ? undefined : entry?.itemizations.get(turn)
         if (recorded !== undefined) recorded.actualTokens = chunk.usage.inputTokens
+        // **The whole report, kept.** The estimator above takes one number out
+        // of it and throws the rest away, which is what this code did in full
+        // until now: `cacheReadTokens` — the figure that decides what a long
+        // chat costs — was arriving on every DeepSeek reply and being dropped.
+        // Held on `pending` and attached to the candidate when the turn settles,
+        // because the candidate does not exist yet.
+        if (turn !== undefined) entry?.noteUsage(turn, chunk.usage)
       }
       yield chunk
     }

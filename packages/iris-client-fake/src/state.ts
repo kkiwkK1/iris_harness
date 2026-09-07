@@ -14,6 +14,7 @@ import type {
   ChatView,
   GenerationSettings,
   MessageView,
+  TurnUsage,
   ViewRole,
 } from '@iris/protocol'
 
@@ -21,6 +22,16 @@ import type {
 export interface Candidate {
   text: string
   reasoning?: string
+  /**
+   * What generating this reading cost, when there was a provider to say.
+   *
+   * Per candidate rather than per message, because that is where the host
+   * keeps it: a turn's swipes are separate generations that were each paid
+   * for. Absent on a reading that came from an import, or from an endpoint
+   * that reports no usage — which is most of them, so the interface must
+   * render that absence as *nothing* rather than as zeros.
+   */
+  usage?: TurnUsage
 }
 
 /** A message in the fake log, with every candidate it ever produced. */
@@ -99,8 +110,78 @@ export function toMessageView(message: FakeMessage, id: number, streaming: boole
     ...(message.role === 'assistant'
       ? { swipes: { count: message.candidates.length, index: message.index } }
       : {}),
+    // The selected reading's own bill, and never while it is streaming: the
+    // host does not project a cost onto a row whose reply has not settled, so
+    // a fake that did would teach the interface to render a state that cannot
+    // occur against the real thing.
+    ...(candidate.usage === undefined || streaming ? {} : { usage: candidate.usage }),
     ...(streaming ? { streaming: true } : {}),
   }
+}
+
+/** The optional buckets, in the order the protocol type lists them. */
+const OPTIONAL_BUCKETS = ['totalTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
+
+/**
+ * Add up what several generations cost, by the protocol's rule.
+ *
+ * A second implementation of `@iris/app-service`'s `sumUsage`, and deliberately
+ * so: this package's only dependency is `@iris/protocol` — that is what lets
+ * the interface be built and tested with no host at all — so the alternative
+ * is not sharing the function, it is the fake depending on the host. What keeps
+ * the two from drifting is that the rule is written down where both can read
+ * it (`ChatView.usage`) and asserted on the same numbers in both halves' tests.
+ *
+ * The rule: the two required buckets sum plainly, an optional bucket is summed
+ * only over the generations that reported it, and a bucket nobody reported
+ * stays absent — because `0` cache reads and "this provider does not speak
+ * about caching" are different facts and only one of them may feed a hit rate.
+ *
+ * This is the arithmetic only. What a **conversation** may show is
+ * {@link conversationUsage}, which drops `totalTokens`.
+ * @param usages - one entry per generation.
+ * @returns the sum, or `undefined` when there was nothing to add.
+ */
+export function sumUsage(usages: Iterable<TurnUsage>): TurnUsage | undefined {
+  let seen = false
+  const total: TurnUsage = { inputTokens: 0, outputTokens: 0 }
+  const optional = new Map<typeof OPTIONAL_BUCKETS[number], number>()
+
+  for (const usage of usages) {
+    seen = true
+    total.inputTokens += usage.inputTokens
+    total.outputTokens += usage.outputTokens
+    for (const bucket of OPTIONAL_BUCKETS) {
+      const value = usage[bucket]
+      if (value === undefined) continue
+      optional.set(bucket, (optional.get(bucket) ?? 0) + value)
+    }
+  }
+
+  if (!seen) return undefined
+  for (const [bucket, value] of optional) total[bucket] = value
+  return total
+}
+
+/**
+ * What a whole conversation cost, in the four buckets it may show.
+ *
+ * {@link sumUsage} with **`totalTokens` dropped, always.** An aggregate total
+ * is summed only over the generations that reported one, so on a conversation
+ * that mixed providers it comes out smaller than the buckets beside it — on
+ * this fake's own seed, 5712 against 6064 + 826 — while still reading as "the
+ * total" to whoever renders it. A conversation therefore reports no total, and
+ * a surface that wants one adds the buckets it is showing. One generation keeps
+ * its own, where the provider's aggregate means what it says.
+ * @param usages - one entry per generation the conversation paid for.
+ * @returns the sum without `totalTokens`, or `undefined` when there was nothing
+ *   to add.
+ */
+export function conversationUsage(usages: Iterable<TurnUsage>): TurnUsage | undefined {
+  const total = sumUsage(usages)
+  if (total === undefined) return undefined
+  const { totalTokens: _neverAggregated, ...buckets } = total
+  return buckets
 }
 
 /**
@@ -110,6 +191,16 @@ export function toMessageView(message: FakeMessage, id: number, streaming: boole
  * @returns the view the client resolves and events carry.
  */
 export function toChatView(chat: FakeChat, streamingTurn?: number): ChatView {
+  // Every candidate of every message, not the selected ones: a reading the
+  // reader swiped away from was generated and charged. Streaming candidates
+  // have no usage yet, so nothing has to be excluded here.
+  const usage = conversationUsage(
+    chat.messages.flatMap(message =>
+      message.candidates.map(candidate => candidate.usage).filter(
+        (one): one is TurnUsage => one !== undefined,
+      ),
+    ),
+  )
   return {
     chatId: chat.chatId,
     title: chat.title,
@@ -118,6 +209,7 @@ export function toChatView(chat: FakeChat, streamingTurn?: number): ChatView {
       toMessageView(message, id, message.role === 'assistant' && message.turn === streamingTurn),
     ),
     variables: chat.variables,
+    ...(usage === undefined ? {} : { usage }),
   }
 }
 

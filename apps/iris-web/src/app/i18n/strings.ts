@@ -807,6 +807,41 @@ export const en = {
   reportsUnreadable: 'could not read the host’s reports: {detail}',
   pageAccessGranted: 'Page access granted. It takes effect the next time the card runs.',
   pageAccessRevoked: 'Page access revoked. It stops at the next run.',
+
+  /**
+   * Token usage — the composer's session line and each reply's own reading.
+   *
+   * The units are the provider's, not an estimate: these numbers exist because
+   * a generation was billed, which is why the words are 「用量」 and never
+   * 「token 数」 (that name is taken, by the prompt panel's estimate).
+   *
+   * The three no-word rows below are the number formats themselves, and they
+   * carry no Chinese on purpose — a grouped integer reads `12,345` in both
+   * languages and a compact one `12.2K`. They are in the dictionary anyway
+   * rather than hardcoded, because the separator is the first thing a third
+   * language changes, and `tests/i18n.test.ts` allowlists them by key.
+   */
+  tokensThousand: '{value}K',
+  tokensMillion: '{value}M',
+  thousandsSeparator: ',',
+  /** `{count}` arrives already grouped or already compacted. */
+  usageCount: '{count} tok',
+  /** The composer line's two groups; a group with no data drops out whole. */
+  usageCacheHit: 'Cache hit {percent}%',
+  usageTokens: 'Input {input} tok · Output {output} tok',
+  /** The reading in a reply's action row, and the heading of its hover table. */
+  usageTurn: 'Usage {total}',
+  usageTurnTitle: 'Turn usage',
+  /* The hover table's rows. "Uncached input" says what it says because the
+     three prompt-side buckets are disjoint: what the cache served is not in
+     it, and adding the two is how a reader gets the billed input. */
+  usageDetailCacheHit: 'Cache hit',
+  usageDetailInput: 'Uncached input',
+  usageDetailCacheRead: 'Cached input',
+  usageDetailCacheWrite: 'Cache write',
+  usageDetailOutput: 'Output',
+  /** Reasoning is part of the output it follows, not a fourth bucket beside it. */
+  usageDetailReasoning: ' ({tokens} reasoning)',
 } as const
 
 /** The key union: every translation has to cover exactly these. */
@@ -1565,6 +1600,22 @@ export const zh: Record<StringKey, string> = {
   reportsUnreadable: '无法读取宿主报告：{detail}',
   pageAccessGranted: '页面访问权已授予。将在卡片下次运行时生效。',
   pageAccessRevoked: '页面访问权已撤销。将在下次运行时停止。',
+
+  /** 用量。数字格式三行不含中文，见 en 一侧的说明。 */
+  tokensThousand: '{value}K',
+  tokensMillion: '{value}M',
+  thousandsSeparator: ',',
+  usageCount: '{count} tok',
+  usageCacheHit: '缓存命中 {percent}%',
+  usageTokens: '输入 {input} tok · 输出 {output} tok',
+  usageTurn: '用量 {total}',
+  usageTurnTitle: '本轮用量',
+  usageDetailCacheHit: '缓存命中',
+  usageDetailInput: '未缓存输入',
+  usageDetailCacheRead: '缓存读取',
+  usageDetailCacheWrite: '缓存写入',
+  usageDetailOutput: '输出',
+  usageDetailReasoning: '（其中推理 {tokens}）',
 }
 
 /** Both dictionaries, keyed by language. */

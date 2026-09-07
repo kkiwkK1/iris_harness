@@ -1307,6 +1307,11 @@ class InMemoryClient implements FakeClient {
       this.#streams.delete(chatId)
       chat.updatedAt = Date.now()
       this.#bumpVariables(chat)
+      // Before the view is built, because `stream.end` carries the settled view
+      // and the cost is part of what settled — the host attaches it on the same
+      // boundary and sends no separate event, so a fake that emitted one would
+      // let the interface be built against a frame that does not exist.
+      this.#recordUsage(chat, messageIndex, role)
       this.#emit({ type: 'stream.end', chatId, turn, view: toChatView(chat), reason: 'completed' })
       this.#emit({ type: 'chats.updated', chats: this.#summaries() })
     })
@@ -1328,6 +1333,51 @@ class InMemoryClient implements FakeClient {
     if (candidate === undefined) return
     if (delta.text !== undefined) candidate.text += delta.text
     if (delta.reasoning !== undefined) candidate.reasoning = (candidate.reasoning ?? '') + delta.reasoning
+  }
+
+  /**
+   * Invent a plausible cost for a settled generation.
+   *
+   * Arithmetically self-consistent rather than random: the prompt grows with
+   * the conversation, the cache serves more of it the longer the chat gets (a
+   * cold first turn, then hits), and `totalTokens` is the sum of the disjoint
+   * buckets — so a surface computing a hit rate from these gets a number that
+   * moves the way a real one does instead of one that jitters. Every reply the
+   * fake generates reports usage, which the real thing does not: the fake's
+   * job here is to make the figures *change* while the interface is being
+   * built, and the "reports nothing" case is covered by the seeded history,
+   * which no generation overwrites.
+   *
+   * An **impersonation** records nothing: its text is the user's own line, and
+   * the host has no candidate to attach a cost to there either.
+   */
+  #recordUsage(chat: FakeChat, messageIndex: number, role?: 'user'): void {
+    if (role === 'user') return
+    const message = chat.messages[messageIndex]
+    if (message === undefined || message.role !== 'assistant') return
+    const candidate = message.candidates[message.index]
+    if (candidate === undefined) return
+
+    // The whole conversation so far, at a rough 4 characters per token, plus a
+    // fixed allowance for the card and the preset — which is what makes the
+    // prompt side grow as the log does.
+    const prompt = 1_200 + Math.round(
+      chat.messages.reduce((sum, one) => sum + (one.candidates[one.index]?.text.length ?? 0), 0) / 4,
+    )
+    // Nothing is cached on the first exchange; after that the shared prefix is
+    // most of the prompt. Rounded to the 64-token blocks providers report in.
+    const cacheRead = message.turn === 0 ? 0 : Math.floor(prompt * 0.75 / 64) * 64
+    const output = Math.max(1, Math.round(candidate.text.length / 4))
+    const reasoning = candidate.reasoning === undefined
+      ? undefined
+      : Math.max(1, Math.round(candidate.reasoning.length / 4))
+    candidate.usage = {
+      inputTokens: prompt - cacheRead,
+      outputTokens: output + (reasoning ?? 0),
+      cacheReadTokens: cacheRead,
+      ...reasoning === undefined ? {} : { reasoningTokens: reasoning },
+      totalTokens: prompt + output + (reasoning ?? 0),
+    }
   }
 
   /**
