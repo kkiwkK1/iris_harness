@@ -194,18 +194,22 @@ export function Composer({
           ) : (
             /*
              * The stamp. Still the primitives' `Button` under the paint, and
-             * still quiet-then-saturated: a permanently-disabled primary button
-             * was once the first thing on the page and read as broken, so the
-             * one saturated element in the interface appears exactly when it has
-             * a job. The artboards draw it saturated beside an empty field;
-             * `panels.css` records that divergence and why the older rule wins.
+             * saturated in both states, as the artboards draw it (user ruling,
+             * 2026-09-07, overturning the older "quiet until there is something
+             * to send" rule). What the older rule guarded against - a
+             * permanently-disabled primary button reading as broken - is met
+             * differently now: the seal is `disabled` only while the field is
+             * empty and inks up on the first keystroke, and `panels.css` gives
+             * the idle state no cast shadow, so it sits *in* the page rather
+             * than standing off it. `tools/render-check.tsx` pins the disabled
+             * half.
              *
              * `icon` puts the arrow above the word, because the button is a flex
              * *column* here — the component's own `.icon` span is the slot, so
              * the geometry comes from CSS and no markup is duplicated.
              */
             <Button
-              variant={empty ? 'outline' : 'primary'}
+              variant="primary"
               size="sm"
               className={`iris-composer__send iris-composer__send--${empty ? 'idle' : 'ready'}`}
               icon={<SendArrow />}

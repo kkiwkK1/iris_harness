@@ -232,17 +232,18 @@
  * It is the primitives' `Button` under the paint, with a two-class selector so
  * these declarations outrank the component's own single-class module rules
  * whichever order the bundler injects them in. Keeping the component matters:
- * `tools/render-check.tsx` asserts Send is the quiet variant and `disabled`
- * while the composer is empty, and a hand-rolled element would have silently
- * dropped both that behaviour and its check.
+ * `tools/render-check.tsx` asserts Send is `disabled` while the composer is
+ * empty, and a hand-rolled element would have silently dropped both that
+ * behaviour and its check.
  *
- * **Where this diverges from the artboards, on purpose.** They draw the seal
- * saturated beside an empty field. Iris's rule is older and stands: the one
- * saturated element on the page appears exactly when it has a job, because a
- * permanently-disabled primary button was the first thing on the page and read
- * as broken. So the geometry is identical in both states and only the fill
- * changes — plum on plum-wash while there is nothing to send, solid plum once
- * there is.
+ * **Saturated in both states, as the artboards draw it.** The earlier rule -
+ * quiet until there is something to send, because a permanently-disabled
+ * primary button once read as broken - was overturned by the user on
+ * 2026-09-07 in favour of the design. The concern it answered is answered
+ * another way: the seal is disabled only while the field is empty and inks up
+ * on the first keystroke, and the idle state casts no shadow, so a control that
+ * cannot be pressed does not stand off the page. Geometry and fill are the
+ * same in both states; the shadow and the cursor are what change.
  */
 .iris-composer .iris-composer__send {
   flex: none;
@@ -267,12 +268,15 @@
   background: var(--iris-accent-strong);
 }
 
-/* Quiet: the same seal, uninked. No cast shadow — a control that cannot be
-   pressed must not appear to stand off the page. */
+/* Idle: the same seal, same ink, resting in the page. No cast shadow and a
+   plain cursor — a control that cannot be pressed must not appear to stand off
+   the page, and this is the whole of what distinguishes it from ready. */
 .iris-composer .iris-composer__send--idle {
-  background: var(--iris-accent-wash);
-  border: var(--iris-hairline) solid var(--iris-accent);
-  color: var(--iris-accent);
+  background: var(--iris-accent);
+  color: var(--iris-ink-inverted);
+  box-shadow: none;
+  cursor: default;
+  opacity: 1;
 }
 
 .iris-composer__row {

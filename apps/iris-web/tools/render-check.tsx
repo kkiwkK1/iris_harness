@@ -156,9 +156,11 @@ async function main(): Promise<void> {
   // carries and nothing else in the interface was using.
   assert.match(settled, /好感度/, 'the state margin does not show the chat variables')
 
-  // Quiet until there is something to send. A permanently disabled primary
-  // button was the first thing on the page and read as broken.
-  assert.match(settled, /Button_outline[^"]*"[^>]*disabled/, 'Send is not quiet while the composer is empty')
+  // Disabled until there is something to send. The seal is drawn saturated in
+  // both states (the design's call, 2026-09-07); what stays pinned is that it
+  // cannot fire on an empty field - the idle class and the disabled attribute
+  // travel together.
+  assert.match(settled, /iris-composer__send--idle[^"]*"[^>]*disabled/, 'Send is not disabled while the composer is empty')
 
   // -------------------------------------------------------------- streaming
   await wired.store.getState().send('那你说，我该怎么办。')
