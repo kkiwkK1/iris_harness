@@ -252,7 +252,7 @@ export function MessageInterfaces({
    * and the fallback read, and the scaffolding folds into the expandable
    * regions the return renders at the edges.
    */
-  const bodyTag = useSyncExternalStore(subscribeBodyTag, getBodyTag)
+  const bodyTag = useSyncExternalStore(subscribeBodyTag, getBodyTag, getBodyTag)
   const leak = splitBodyTag(display, bodyTag)
   const bodyText = leak.body ?? display
 
