@@ -31,9 +31,18 @@ import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
  * Render the conversation pane.
+ * @param props.onOpenSettings - open the settings drawer.
+ *
+ * Threaded through rather than read from anywhere, and the reason is the same
+ * one `StatePanel`'s `drawerOpen` prop gives: **the shell holds the drawer's
+ * state**, because above 1200px the drawer is a grid track and only the shell
+ * can decide a track. The composer's `/config` command needs to open it, and
+ * one prop through this pane is the whole cost — the alternative was a second
+ * module-scope bus beside `composer-bus.ts` for a single boolean the shell
+ * already owns.
  * @returns the pane, or the empty surface when no chat is open.
  */
-export function ChatPane(): ReactElement {
+export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): ReactElement {
   const view = useIris(state => state.view)
   const stream = useIris(state => state.stream)
   const chatId = useIris(state => state.chatId)
@@ -337,6 +346,7 @@ export function ChatPane(): ReactElement {
         onSend={text => void actions.send(text)}
         onStop={() => void actions.abort()}
         onPreviewPrompt={() => setExplaining({ turn: undefined })}
+        onOpenSettings={onOpenSettings}
         onPressButton={button => {
           /*
            * The button id **is** the event name, computed here and computed

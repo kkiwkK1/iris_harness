@@ -2626,7 +2626,7 @@ dash axis.
 **Iris, now.** The composer resolves a typed line into one of three things, in `app/commands.ts`:
 
 1. **Not a command** — no leading `/` — is a message, unchanged.
-2. **A name Iris owns** runs a client-side descriptor. Two of them: `/compact` (`notes/packages/iris-app-service/DEVIATIONS.md` §29) and `/help`.
+2. **A name Iris owns** runs a client-side descriptor. Two of them when this section was written — `/compact` (`notes/packages/iris-app-service/DEVIATIONS.md` §29) and `/help`; eight since §61a, which lists the rest.
 3. **Anything else** goes to the host **verbatim**, through the same `script.slash` a card's call goes through.
 
 Typing `/` opens a completion menu (the `Menu` primitive, portaled and anchored to the field's own rect); Tab completes an unambiguous candidate; Escape dismisses the menu without dismissing the line. The IME guard that was already on the Enter handler now guards Escape and Tab as well — a Chinese reader presses both to commit and cancel a *composition*, and neither press is for this component.
@@ -2639,12 +2639,76 @@ Typing `/` opens a completion menu (the `Menu` primitive, portaled and anchored 
 
 - **A `/`-prefixed line can no longer be sent as prose.** A reader who wanted to say `/shrug` to the character now gets a refusal naming the command instead of a message. That is what upstream does too, and it has upstream's escape hatch neither more nor less: none in the composer.
 - **The host's refusal is what a reader sees for a name nobody owns**, and it is the host's own words. `script.slash` accepts exactly `/trigger` and `/send <text>|/trigger` today (`notes/apps/iris-web/UPSTREAM-SLASH.md` — the three commands the corpus actually calls) and refuses everything else **by name**. So a reader typing `/setvar x 1` — a real upstream command — is told that Iris has not implemented it, which is true and is the honest answer; a sentence written in the browser could not know which of the two layers declined.
-- **The two-command surface is now user-visible**, where before it was only card-visible. That makes the gap between 289 and 3 something a reader meets rather than something only a card author meets. `/help`'s closing line exists for this: without it, a reader shown a two-item list concludes that `/trigger` does not work here, and it does.
+- **Iris's command surface is now user-visible**, where before it was only card-visible. That makes the gap between 289 and 3 something a reader meets rather than something only a card author meets. `/help`'s closing line exists for this: without it, a reader shown a short list concludes that `/trigger` does not work here, and it does. (Two commands then, eight after §61a — the closing line matters *more* at eight, not less, because a longer list reads more like a complete one.)
 - **The completion menu is a display and a click target, not a keyboard surface.** Focus stays in the field so the reader keeps typing, which is why Tab completes rather than the arrow keys, and why the menu is mounted only while open.
 - **The card bus goes through the same resolution.** A card that writes into the field and clicks send gets the command, because that is what SillyTavern's composer does with a card's write. Gating commands to the keyboard would make the same text mean two different things depending on who typed it — but it does mean a card that wrote a `/`-prefixed line intending prose has changed behaviour. Nothing in the corpus does that (all four measured `triggerSlash` sites call the RPC directly).
 - **`/compact` is refused while a reply is arriving**, with a named sentence rather than silence: it rewrites what the next request assembles from, so running it under a request in flight would change the conversation beneath it. `/help` is not gated, because asking what the commands are costs nothing.
 
 **What would overturn it.** A host method that enumerates what `script.slash` accepts, which would let the completion menu offer upstream's names beside Iris's instead of leaving them undiscoverable. Or widening `script.slash` past the three commands — every name it gains is a name this table must not have, and the disjointness test is where that collision would surface.
+
+### 61a. The second batch, read off the harness's own command list
+
+**Kind:** deliberate improvement, on the rule §61 established.
+
+**What the harness actually registers.** The brief for this task named `help`, `model`, `new`, `export`, `config`, `tokens` and `review` as the harness's commands. **Measured, that list is wrong in both directions.** `dsh` has two command registries and seven commands between them:
+
+| dsh command | usage | description (verbatim) | where |
+| --- | --- | --- | --- |
+| `/compact` | — | *Compact older conversation history* | `packages/compaction/command-compact` (host, `ctx.commands.register`) |
+| `/export` | — | *Download this Session log as a ZIP archive* | `packages/session-query/session-log-export` (host) |
+| `/feedback` | `<text>` | *record feedback about this session* | `packages/feedback/command-feedback` (host) |
+| `/goal` | `[<objective>\|clear\|edit <objective>\|pause\|resume]` | *set or view the goal for a long-running task* | `packages/goal/command-goal` (host) |
+| `/plan` | `[off\|message]` | *Enter or leave plan mode* | `packages/plan/plan-mode` (host) |
+| `/permission` | `<preset>` | *Switch the permission preset (sandbox mode + approval policy)* | `packages/interaction/permission-presets` (host) |
+| `/model` | — (a `popupSelect`) | *Select the model for this conversation* | `packages/client/ui-model-selection` (client, `ctx.commandUi.register`) |
+
+`/permission` is also **decorated** client-side by `packages/client/ui-permission-presets` — a `popupSelect` UI hung on the host command's name, not an eighth command. There is no `/help` (the `/` popup *is* the discovery surface, so a help command would list what the menu already shows), no `/new`, no `/config`, no `/tokens`, no `/clear` and no `/review` — the `review` the brief saw is a *skill* name in a test fixture, and `tokens` is a parameter name in an API catalogue. The seven above are the whole list; `grep -rn "commands.register(\|command.register("` over `packages` and `apps` is the census.
+
+**What each one means here.**
+
+| dsh | verdict | Iris |
+| --- | --- | --- |
+| `/compact` | **照搬** | `/compact`, shipped in §61. |
+| `/export` | **照搬** | `/export` → `actions.exportChat(chatId)` over the existing `chat.export`. A conversation, not a session log. |
+| `/model` | **改造 + 改名** | `/chat-model [<name>\|default]` → `actions.setChatModel`. Same semantics as dsh's — *this conversation only* — but `model` is one of upstream's 289, so the name yields. |
+| `/feedback` | **不做** | The object does not exist. Nothing in Iris records a judgement about a session, and inventing one would be a new RPC plus a new store — not a keyboard entry to something that already works. |
+| `/goal` | **不做** | A coding agent's long-running objective. A roleplay conversation's "objective" is the scene, which is the author's note and the prompt — surfaces that already exist and are not commands. |
+| `/plan` | **不做** | Plan mode is a tool-execution policy: the model proposes and a human approves before anything is written. Iris's model writes prose into a conversation; there is nothing to approve. |
+| `/permission` | **不做** | Tempting, because Iris *does* have a permission of this shape — whether a card's scripts may run, and whether they get document access. But it is a **consent decision**, asked through `ConsentAsk` with the script count and byte size in front of the reader (`answerScriptsAllowed`, `setDocumentGrant`). A command that flipped it would be a way to grant a permission without being shown what is being granted, which is the one thing that flow exists to prevent. |
+
+**Four more that are not dsh's, and are marked as such.** `/new`, `/rename`, `/config` and `/capacity` came from the brief rather than from the harness. They were built anyway because each is a keyboard entry to a control the mouse already has — the sidebar's new-conversation, the chat list's rename, the masthead's gear, the composer's capacity capsule — which is the same thing dsh's `/model` is for its capsule. Nothing new reaches the wire: every one of the eight commands calls a store action that already existed.
+
+**The names the rule cost, recorded because a rename is a divergence.**
+
+| wanted | upstream has it | Iris ships | why this name |
+| --- | --- | --- | --- |
+| `model` | yes | `chat-model` | Upstream: *"Sets the model for the current API. Gets the current model name if no argument is provided."* (`slash-commands.js:3005`) — **global**. The prefix names the scope, which is the real divergence: Iris's override is per conversation. |
+| `tokens` | yes | `capacity` | Upstream: *"Counts the number of tokens in the provided text."* (`:2983`). Nothing to do with how full the window is. |
+| `context` | yes | `capacity` | Upstream's `/context` selects a **context template preset** (`selectContextPreset`, `:609-630`). Same word, unrelated object — the worst kind of collision to allow. |
+| `regenerate` | yes | **nothing** | The action stays on the newest reply's own button row (`Message.tsx`), where it already was. |
+| `continue` | yes | **nothing** | Same row. |
+| `impersonate` | yes | **nothing** | Same row. |
+
+**Reserved is not the same as working, and this is the half most likely to be misread.** `script.slash` accepts three commands (`UPSTREAM-SLASH.md`), so typing `/continue` today reaches the host and is **refused by name** — the same honest answer §61 already records for `/setvar` and every other real upstream command. Yielding does not make the three work; it makes them upstream's the day the host implements them, with nothing here to undo.
+
+`new`, `rename`, `export`, `capacity`, `config`, `compact` and `help` are all free of the 289; `tests/commands.test.ts` asserts the disjointness over the whole table with a size floor under it, and asserts the six yielded names in **both** directions — upstream has them, and Iris does not — because either half alone is satisfiable by accident.
+
+**The three decisions inside the batch that are not obvious.**
+
+- **`/chat-model` is *not* gated on idleness, and `/export` is.** The gate answers one question: would running this under a request in flight change or truncate what that request is about to produce? An override applies from the *next* request, and the capsule's menu is already open and selectable during a generation — gating the keyboard entry to a control the mouse can still reach would give one action two answers. `chat.export`, by contrast, serves what the host has **stored**, and a reply still streaming is not stored yet: an ungated `/export` hands back a file silently missing its last floor. `/new` is gated because it navigates off a conversation a reply is still arriving into. The test asserts the gating as a **partition**, both sides, so a ninth command that never asked the question goes red on whichever side it landed on.
+- **An unlisted model name is refused only when the endpoint has answered.** `ModelMenu.models` always carries the model in force, so a connection nobody has probed still yields a one-row list — refusing against *that* would reject every valid id on a connection whose capsule the reader has not opened. The fact that separates them is `menu.empty === undefined`, which is what `ModelChoices.listed` carries. The array's length cannot answer it, and the refusal names the list it refused against.
+- **`default` is a keyword, so a model literally named `default` cannot be set from this command.** The capsule's menu solves the same problem with a sentinel id that begins with a space, which nobody can type on a command line. The capsule can still select such a model; this is the cost, recorded rather than papered over.
+
+**What it costs.**
+
+- **`/config` needed a prop through `ChatPane`.** The drawer's open state is the shell's, because above 1200px the drawer is a grid *track* and only the shell can decide a track (§ the `StatePanel` `drawerOpen` prop, for the same reason). So `App` → `ChatPane` → `Composer` carries an opener. The alternative was a second module-scope bus beside `composer-bus.ts` for one boolean the shell already owns.
+- **`/c` no longer completes on Tab.** Four commands start with it (`chat-model`, `capacity`, `compact`, `config`), and Tab only fires on an unambiguous candidate. The menu still lists all four.
+- **The argument menu is one command's, and only `/chat-model` has one.** `/rename` takes free text a menu cannot predict, so typing `/rename ` closes the menu rather than offering something. The two kinds of row are computed by separate functions because picking one means a different thing: a name row replaces the line with `/name `, a value row completes the line already being written.
+- **Eight rows needed headings.** One column answering three different questions read as one answer. An empty group prints no heading, so the shape follows the table.
+
+**What would overturn it.** A host RPC that reports what the endpoint offers without a connection test would let `/chat-model` refuse honestly on a cold connection instead of accepting anything. A consent surface that is a *statement* rather than a question — if the script permission ever became a plain setting with the figures visible beside it — would make `/permission`'s analogue buildable. And if `script.slash` ever grows `/regenerate`, `/continue` or `/impersonate` host-side, those three names start working from the composer with no change here, which is what yielding was for.
+
+**A note on the brief.** Five of the seven candidate commands the brief named do not exist in the harness, and one of the two that do (`/model`) is a client contribution rather than a host command. The census above is the correction; it was taken before any code was written, because the whole task was defined as "follow dsh's list" and the list was the premise.
 
 ## 62. A rule editor with no test panel, that says beforehand what a rule would fail to do
 
