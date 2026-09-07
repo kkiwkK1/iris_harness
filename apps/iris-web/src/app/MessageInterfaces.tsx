@@ -14,7 +14,7 @@
  *
  * @module iris-web/app/MessageInterfaces
  */
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from 'react'
 
 import type { MessageView, ScriptContext } from '@iris/protocol'
 
@@ -45,6 +45,7 @@ import { runCard } from '../sandbox/runner.ts'
 import { broadcastWindowEvent } from './window-events.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
 import { repairStrayFences } from './stray-fences.ts'
+import { getBodyTag, splitBodyTag, subscribeBodyTag } from './body-tag.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { getLanguage } from './i18n/language.ts'
 
@@ -230,14 +231,34 @@ export function MessageInterfaces({
    * flight and code-to-end-of-stream is its honest render.
    *
    * Everything below — the controller's claim, the row's splice and the
-   * fallback — reads this one string, so no two of them derive surfaces from
-   * different texts.
+   * fallback — reads the one string this derives (the body when a body tag is
+   * present, `display` itself when not), so no two of them derive surfaces
+   * from different texts.
    */
   const display = streaming ? text : repairStrayFences(text)
 
+  /*
+   * The body tag: a preset may teach the model to wrap its prose in a wrapper
+   * (`<content>` and siblings — see `notes/apps/iris-web/BODY-TAG.md`), and
+   * everything the model writes outside it is scaffolding, not prose.
+   *
+   * The split runs here, on `display`, one seam later than the repair: the
+   * scaffolding can carry an unclosed fence of its own, and repairing before
+   * splitting keeps the fence ruling inside the text the fence is in. When the
+   * wrapper is absent the split is the identity — `bodyText` is `display`,
+   * every downstream read is unchanged, and a card that never heard of the
+   * convention renders byte-for-byte as it always has. When it is present,
+   * `bodyText` becomes the one string the claim, the controller, the splice
+   * and the fallback read, and the scaffolding folds into the expandable
+   * regions the return renders at the edges.
+   */
+  const bodyTag = useSyncExternalStore(subscribeBodyTag, getBodyTag)
+  const leak = splitBodyTag(display, bodyTag)
+  const bodyText = leak.body ?? display
+
   const { states, swapping } = useMessageInterfaces({
     floor,
-    text: display,
+    text: bodyText,
     refusedInstances,
     gate,
     allowed: ready !== undefined && chatId !== undefined,
@@ -456,7 +477,7 @@ export function MessageInterfaces({
    */
   const { blocks, refused, styles } = streaming
     ? { blocks: [], refused: [] as readonly string[], styles: [] as readonly MessageStyle[] }
-    : claimMessageSurfaces(display)
+    : claimMessageSurfaces(bodyText)
 
   /*
    * An unclosed region is reported, not swallowed.
@@ -513,7 +534,7 @@ export function MessageInterfaces({
    * simply be printed instead of escaped.
    */
   if (blocks.length === 0 && styles.length === 0) {
-    return markdownProse ? <MarkdownText text={unwrapUnknownTagsOutsideCode(display)} streaming={streaming} /> : <>{text}</>
+    return markdownProse ? <MarkdownText text={unwrapUnknownTagsOutsideCode(bodyText)} streaming={streaming} /> : <>{bodyText}</>
   }
 
   /*
@@ -530,12 +551,13 @@ export function MessageInterfaces({
    * claim, in `useMessageInterfaces`), and the characters themselves have no
    * reader left.
    *
-   * The split reads `display`, the one string the claim and the controller
+   * The split reads `bodyText`, the one string the claim and the controller
    * already agreed on — a style span's offsets come from a claim over the
-   * repaired text, so splicing them out of the unrepaired text would cut at
-   * the wrong characters on any message whose fence was repaired.
+   * repaired, body-tag-split text, so splicing them out of anything else
+   * would cut at the wrong characters on any message whose fence was repaired
+   * or whose scaffolding was folded.
    */
-  const segments = splitAroundInterfaces(display, blocks, styles)
+  const segments = splitAroundInterfaces(bodyText, blocks, styles)
     .map(segment =>
       segment.kind === 'text'
         ? { ...segment, text: unwrapUnknownTagsOutsideCode(segment.text) }
@@ -551,8 +573,14 @@ export function MessageInterfaces({
      * between the prose and the interface that replaced part of it — plus a
      * class name with no rule behind it, which `interface-styles.test.ts` now
      * refuses on the grounds that a selector matching nothing is silent.
+     *
+     * The folded scaffolding sits at the fragment's edges, outside the prose:
+     * it was written before and after the body, so it renders before and after
+     * the body, folded. An empty region is not rendered — a whitespace-only
+     * head or tail is layout noise, not scaffolding a reader could learn from.
      */
     <>
+      {leak.tagged && leak.head.trim() !== '' && <BodyLeak text={leak.head} edge="head" />}
       {segments.map(segment =>
         segment.kind === 'text' ? (
           markdownProse ? (
@@ -575,6 +603,7 @@ export function MessageInterfaces({
           />
         ),
       )}
+      {leak.tagged && leak.tail.trim() !== '' && <BodyLeak text={leak.tail} edge="tail" />}
     </>
   )
 }
@@ -634,5 +663,29 @@ function InterfaceSlot({
         <p className="iris-interfaces__state">{describeInterface(state, getLanguage())}</p>
       )}
     </div>
+  )
+}
+
+/**
+ * One folded region of body-tag scaffolding.
+ *
+ * The model's director notes and planning are not prose, but they are also not
+ * garbage — a reader debugging a scene, or a card author tuning a preset, may
+ * want exactly these words. So they render **folded**: a `details` element the
+ * reader expands on purpose, with the text verbatim — raw, not markdown,
+ * because scaffolding is markup-adjacent and the honest rendering of markup is
+ * its characters. The stored message is untouched either way; this is the
+ * display layer deciding what a reading surface puts between the reader and
+ * the story (see `notes/apps/iris-web/BODY-TAG.md`).
+ * @param props - the scaffolding text, and which side of the body it came from.
+ * @returns the folded region.
+ */
+function BodyLeak({ text, edge }: { text: string, edge: 'head' | 'tail' }): ReactElement {
+  useLanguage()
+  return (
+    <details className={`iris-bodyleak iris-bodyleak--${edge}`}>
+      <summary className="iris-bodyleak__summary">{t('bodyLeakSummary')}</summary>
+      <div className="iris-bodyleak__text">{text}</div>
+    </details>
   )
 }

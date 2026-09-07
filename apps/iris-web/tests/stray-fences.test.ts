@@ -206,22 +206,21 @@ test('the streaming gate holds where the text enters, and every consumer repairs
    */
   const row = readFileSync(fileURLToPath(new URL('../src/app/MessageInterfaces.tsx', import.meta.url)), 'utf8')
   assert.match(row, /const display = streaming \? text : repairStrayFences\(text\)/, 'the row repairs only settled text')
-  assert.match(row, /claimMessageSurfaces\(display\)/, 'the row claims over the repaired text')
-  assert.match(row, /text: display/, 'the controller claims the same string the row splices')
+  assert.match(row, /claimMessageSurfaces\(bodyText\)/, 'the row claims over the string it splices — the body when a body tag split it, the repaired text when not')
+  assert.match(row, /text: bodyText/, 'the controller claims the same string the row splices')
   /*
-   * The fallback splits by role: an assistant row reads the repaired text as
-   * markdown, every other row keeps the raw text it has always shown. Assert
+   * The fallback splits by role: an assistant row reads the repaired body as
+   * markdown, every other row keeps the raw body it has always shown. Assert
    * the branch rather than one arm of it — an earlier version of this line
    * pinned the markdown arm as `text={text}`, which stopped describing the
    * code the moment the unknown-markup rule joined it and would have gone red
-   * on a correct change. The markdown arm now carries that rule and reads
-   * `display`, the one string the claim and the controller already agreed on;
-   * the raw arm reads `text`, because a row that never rendered markdown has
-   * no fence to repair.
+   * on a correct change. Both arms now read `bodyText` — the split's
+   * `body ?? display` — because a body tag changes what "the raw text" means
+   * for every role: the scaffolding outside the tag belongs to no reader.
    */
   assert.ok(
     row.includes(
-      'markdownProse ? <MarkdownText text={unwrapUnknownTagsOutsideCode(display)} streaming={streaming} /> : <>{text}</>',
+      'markdownProse ? <MarkdownText text={unwrapUnknownTagsOutsideCode(bodyText)} streaming={streaming} /> : <>{bodyText}</>',
     ),
     'the fallback splits the repaired-vs-raw rendering by role',
   )

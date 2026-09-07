@@ -211,6 +211,9 @@ export const en = {
   /** Message interface slots. */
   renderThisOne: 'Render this one',
 
+  /** Body-tag scaffolding, folded away from the prose. */
+  bodyLeakSummary: 'Model scaffolding outside the body tag',
+
   /** Script buttons bar. */
   cardButtonsAria: 'Card script buttons',
   cardActionsToggle: 'Card actions ({n})',
@@ -1092,6 +1095,9 @@ export const zh: Record<StringKey, string> = {
 
   /** 消息界面槽位。 */
   renderThisOne: '渲染这一个',
+
+  /** Body-tag scaffolding, folded away from the prose. */
+  bodyLeakSummary: '正文标签外的模型脚手架',
 
   /** 卡片按钮栏。 */
   cardButtonsAria: '卡片脚本按钮',
