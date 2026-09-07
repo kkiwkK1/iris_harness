@@ -362,6 +362,12 @@ const PROBES: Record<string, unknown> = {
   'storage.set': { characterId: 'no-such-character', key: 'k', value: 'v' },
   'storage.remove': { characterId: 'no-such-character', key: 'k' },
   'storage.clear': { characterId: 'no-such-character' },
+  // The same scan `chat.search` probes: the profile chat directory the probe
+  // host created is empty, so the honest answer is a summary of nothing — and
+  // an empty summary is a successful call, which is what proves registration.
+  // Empty params on purpose: all three are optional, and "every record there
+  // is, cut by day" is the page first call.
+  'usage.summary': {},
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {

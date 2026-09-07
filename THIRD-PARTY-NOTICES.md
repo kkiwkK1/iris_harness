@@ -228,6 +228,19 @@ modelled on — and out of which one file was transcribed.
     re-keyed into Iris's dictionary. Iris renders both with its own markup and
     its own tokens, and uses a native `title` where the harness uses its
     `Tooltip` primitive and an anchored dialog.
+
+    The same vocabulary is reused, deliberately, by Iris's profile-wide **usage
+    page** (`apps/iris-web/src/app/UsagePanel.tsx`), so a reader who has met the
+    per-turn dialog reads the same words at the larger scale: the disjoint
+    prompt-side split (uncached input / cache hit / cache write), output with
+    reasoning named as a share of it rather than a bucket beside it, and a
+    cache-hit share that is absent rather than zero where no provider reported
+    one. The harness has **no usage chart and no cross-conversation summary** —
+    its figures are per session, off a live projection — so the page itself, its
+    `usage.summary` host aggregation, and the SVG line chart with its
+    token-based series palette and geometry
+    (`apps/iris-web/src/app/usage-stats.ts`) are Iris's own, with nothing
+    transcribed.
   - **Elsewhere in Iris:** the application framework and host harness as
     **published packages** — see npm dependencies below, same copyright line.
 - **Version read** — **0.1.3-alpha.1**, commit `d347e70`. That is the working

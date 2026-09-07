@@ -20,6 +20,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 
+import { SERIES_TOKENS } from '../src/app/usage-stats.ts'
+
 const TOKENS = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'theme', 'tokens.css'),
   'utf8',
@@ -112,5 +114,58 @@ for (const theme of ['light', 'dark', 'parchment'] as const) {
     const ratio = contrast(token('iris-ink-secondary', theme), token('iris-bg-page', theme))
 
     assert.ok(ratio >= 4.5, `--iris-ink-secondary is ${ratio.toFixed(2)}:1 in ${theme}`)
+  })
+}
+
+/**
+ * The usage chart's series palette, computed against the card it is drawn on.
+ *
+ * The chart's lines are the reason this block exists rather than a comment: a
+ * series a reader cannot see is a model whose cost is invisible, which is the
+ * exact opposite of that page's purpose, and the palette was chosen by reading
+ * hex values out of `tokens.css` — the judgment this file's header records
+ * failing twice.
+ *
+ * **3:1, against `--iris-bg-raised`.** WCAG 1.4.11: a line on a chart carries
+ * meaning rather than decorating, and `--iris-bg-raised` is what
+ * `.iris-usage__plot` paints behind it. Two candidates were rejected on this
+ * measurement — `--iris-accent-quiet` (2.93:1 in dark) and `--iris-tick`
+ * (2.79:1 in dark, where its own floor is against `--iris-bg-page`) — so the
+ * check has already changed the palette once and is not decoration.
+ *
+ * The token list is imported rather than copied, so a seventh colour added to
+ * the chart is measured here without anyone remembering to add it.
+ */
+for (const theme of ['light', 'dark', 'parchment'] as const) {
+  test(`every usage-chart series colour clears the non-text floor in ${theme}`, () => {
+    const names = SERIES_TOKENS.map(reference => {
+      const found = /^var\(--([a-z-]+)\)$/u.exec(reference)?.[1]
+      assert.ok(found !== undefined, `${reference} is not a plain token reference`)
+      return found
+    })
+    // A floor on the sample: an empty palette would pass this loop in silence.
+    assert.ok(names.length >= 4, `only ${String(names.length)} series colours were checked`)
+
+    for (const name of names) {
+      const ratio = contrast(token(name, theme), token('iris-bg-raised', theme))
+      assert.ok(
+        ratio >= 3,
+        `--${name} is ${ratio.toFixed(2)}:1 on the chart card in ${theme}, below the 3:1 floor`,
+      )
+    }
+  })
+
+  test(`the usage chart's gridlines stay quieter than its lines in ${theme}`, () => {
+    // The gridlines are scaffolding and the series are the data. If a rule were
+    // as loud as a line, the chart would read as more series than it has.
+    const rule = contrast(token('iris-rule-faint', theme), token('iris-bg-raised', theme))
+    const quietest = Math.min(...SERIES_TOKENS.map(reference => {
+      const name = /^var\(--([a-z-]+)\)$/u.exec(reference)?.[1] ?? ''
+      return contrast(token(name, theme), token('iris-bg-raised', theme))
+    }))
+    assert.ok(
+      quietest > rule,
+      `the faintest series (${quietest.toFixed(2)}:1) is no louder than a gridline (${rule.toFixed(2)}:1)`,
+    )
   })
 }

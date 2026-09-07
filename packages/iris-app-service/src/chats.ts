@@ -25,7 +25,7 @@ import {
   type SillyTavernChatHeader,
   type SillyTavernMessage,
 } from '@iris/persistence'
-import type { ChatSearchHit, ChatSearchMatch, ChatSummary } from '@iris/protocol'
+import type { ChatSearchHit, ChatSearchMatch, ChatSummary, UsageSummary } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
 import type { ScopeBackend, Variables } from '@iris/variables'
 
@@ -34,6 +34,9 @@ import { ChatEntry, createSession, readMeta } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
 import { fileFor, isSafeId, toId, uniqueId } from './paths.ts'
+import {
+  readChatUsage, summariseUsage, type ChatUsage, type UsageSummaryOptions,
+} from './usage-summary.ts'
 import { resolveCardWorldbook, WorldbookStore } from './worldbooks.ts'
 import type { ScriptVariableStore } from './script-variables.ts'
 
@@ -287,6 +290,53 @@ export class ChatStore {
     }
     // The sidebar list's order, so a search reads as the list, filtered.
     return hits.sort((left, right) => right.updatedAt - left.updatedAt)
+  }
+
+  /**
+   * What every conversation in the profile has cost, cut by time and by model.
+   *
+   * {@link search}'s scan, with {@link search}'s reasoning: the files are the
+   * truth, one linear pass answers directly what an index would need
+   * invalidation on every write to maintain, and each line is substring-checked
+   * before it is parsed so a 19 MiB conversation with a handful of billed
+   * floors pays for a handful of `JSON.parse` calls. Read from disk rather than
+   * from the live entries for the same reason too — the committed conversation
+   * is the honest answer, and a card's uncommitted replay batch is not a bill.
+   *
+   * **The one place it differs from `search`: an unreadable file is counted.**
+   * `list` and `search` skip a corrupt chat silently, which is right for them —
+   * one broken file must not make every other conversation unreachable, and a
+   * search that misses it is missing one result. A *summary* is a claim about a
+   * total, so a total computed over an unknown fraction of the corpus is not
+   * one; the count of skipped files rides in the reply and the interface says so.
+   * @param options - range and granularity.
+   * @returns the aggregate, and nothing else.
+   */
+  async usageSummary(options: UsageSummaryOptions = {}): Promise<UsageSummary> {
+    const chats: ChatUsage[] = []
+    let scanned = 0
+    let skipped = 0
+    for (const chatId of await this.ids()) {
+      let text: string
+      try {
+        text = await readFile(fileFor(this.#dir, chatId, '.jsonl'), 'utf8')
+      } catch {
+        skipped += 1
+        continue
+      }
+      const usage = readChatUsage(chatId, text)
+      if (usage === undefined) {
+        skipped += 1
+        continue
+      }
+      scanned += 1
+      // A conversation that never reported a cost is scanned and then dropped:
+      // it is a real part of the denominator `scannedChats` reports, and a row
+      // of zeros on the subtotal list beside it would read as "this chat cost
+      // nothing" rather than "nothing was ever recorded for this chat".
+      if (usage.records.length > 0) chats.push(usage)
+    }
+    return summariseUsage(chats, options, scanned, skipped)
   }
 
   /**

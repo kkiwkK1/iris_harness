@@ -188,6 +188,24 @@ provider counted」是另一件事（上游 ST 每条消息显示的 `token_coun
 | `CharacterPage.tsx` 脚本行 | 一行名字＋一行 meta：来源（`script.list` 只答卡内嵌，本机 42 个脚本的 `type` 全是 ST 的 `'script'`，没有第二档）/ 两个开关分开成句 / 体积 / 按钮数与其中可见数（89 个按钮里 58 个作者设为不可见）。末尾一句说开关在哪——这一页只报告，`script.setEnabled` 的作用域是**正在对话的那张卡** | `faceScriptInCard faceScriptOn faceScriptOffByCard faceScriptOffByYou faceScriptOnByYou faceScriptButtons faceScriptSwitchNote` |
 | `CharacterPage.tsx` 在读一句 | 两份清单按需拉取（`worldbook.charDigest` ＋ `script.list`），在途时栏里说「正在读取卡片…」；落地后仍然缺就什么都不说——宿主不存世界书是处境，空清单会被读成「这张卡没有书」。这一键与 `ScriptPanel.tsx` 共用 | （`readingCard` 复用） |
 
+任务（用量统计页，`dev/usage-stats`）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `UsageSection.tsx` 抽屉入口卡 | 折叠卡的标题、折起时那句摘要、以及打开页的按钮。卡而不是页本身：抽屉宽 392px，而图表每个时间桶保留一列可读宽度，30 天要约 1.7 个抽屉宽才不用横滚——所以页是对话框 | `usageEntry usageEntrySummary usageOpen` |
+| `UsagePanel.tsx` 页标题与两种非结果 | 标题、正在合计、以及「这段时间没有计费」。空态第二句报出扫了多少个对话：不报的话，「没有」读起来像没去看，而不是看过了 | `usagePageTitle usageCounting usageEmpty usageScanned` |
+| `UsagePanel.tsx` 时间范围切换 | 今天 / 7 天 / 30 天 / 全部。「今天」是读者自己的午夜起算而不是滚动 24 小时（桶按本地边界切，滚动窗口画在日历桶里会把昨天的一部分算进昨天那一列却把整张读数叫「今天」）；粒度不是独立控件，由范围推出来 | `usageRangeAria usageRangeToday usageRangeWeek usageRangeMonth usageRangeAll` |
+| `UsagePanel.tsx` 指标切换 | 折线画哪个数：总量 / 缓存命中 / 未缓存 / 输出。四个都是同一批桶的不同读法，切换不重新取数 | `usageMetricAria usageMetricTotal usageMetricCacheRead usageMetricCacheMiss usageMetricOutput` |
+| `UsagePanel.tsx` 顶部合计卡 | 七张卡。**「计费输入」与「未缓存输入」是两件事**：前者是三个 prompt 侧桶之和，后者只是 `inputTokens`（DeepSeek 路由上就是 `prompt_cache_miss_tokens`）。命中率没有可报的口径时印破折号，不印 `0%` | `usageCardTotal usageCardPrompt usageCardCacheRead usageCardCacheMiss usageCardOutput usageCardHitRate usageCardTurns` |
+| `UsagePanel.tsx` 图表与图例 | 图的 `aria-label`（画的哪个指标、几条线），以及不具名记录那条线的名字。「未知模型」指**没记下模型名**，不是某个叫 unknown 的模型——真实语料里 12 条记录全是这一种 | `usageChartAria usageUnknownModel` |
+| `UsagePanel.tsx` 每对话小计 | 小节标题与每行的生成次数。行可点，进那个对话（同时关掉抽屉） | `usageByChat usageTurnCount` |
+| `UsagePanel.tsx` 两句告白 | 不是标签，是对数据本身的说明：有多少次生成的时间是从对话头部重建的（没有 `at` 的记录全落在该对话最后活动那一个桶里，老对话因此读成一根尖峰而不是它真正的那些次会话），以及有多少个对话文件读不出来所以没计入。用 `--iris-warn` 而不是 `--iris-danger`：没有东西坏了，只是上面那些数字没有看起来那么完整 | `usageUndated usageSkipped` |
+
+口径沿用上面「提供方回报的 token 用量」那条的两句约定，不重说；这一页只多一条：**命中率的分母是
+`cachePrompt` 而不是「计费输入」那张卡**——它只覆盖回报过缓存桶的那些次生成，所以一台混用
+路由的档上两个分母差得很远（两次生成的样例里 75% 对 19%）。不这样分，一条从不提缓存的路由就会
+把一条真的有缓存的路由稀释掉，而稀释出来的百分比看上去完全正常。
+
 ## 四、持久化决策（同 `language.ts` 文档）
 
 `localStorage` 键 `iris.language`，与 `iris.theme` / `iris.reading` 同一处、同一套

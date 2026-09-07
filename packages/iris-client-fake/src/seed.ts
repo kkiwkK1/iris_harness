@@ -76,6 +76,42 @@ const SILENT_CACHE: TurnUsage = {
   outputTokens: 128,
 }
 
+/** One day, for placing the seeded costs on a chart that has more than one column. */
+const DAY_MS = 24 * 60 * 60 * 1_000
+
+/**
+ * Give one of the cost shapes above a route and a moment.
+ *
+ * **The usage page needs a fifth and sixth shape that the three above cannot
+ * express**, because it groups by model and cuts by time and those are exactly
+ * the two fields a cost record did not carry until now. So the shapes stay as
+ * they are — they encode the bucket combinations, which is a separate axis —
+ * and this attaches an identity to a copy of one.
+ *
+ * The seed deliberately produces:
+ *
+ * - **two named models on two different providers**, so the chart has more than
+ *   one line and the legend has something to hide;
+ * - **one record with no model at all**, which is what every cost written before
+ *   `TurnUsage.model` existed looks like — all 12 records in the real corpus, in
+ *   fact — and which the page must draw as its own "unknown" line rather than
+ *   folding into a neighbour or dropping;
+ * - **more than one day**, so a chart with a single column cannot pass for a
+ *   working time axis.
+ * @param usage - one of the bucket shapes above.
+ * @param route - the model and provider, or `undefined` for the unattributed case.
+ * @param at - when the request went out, or `undefined` for a record written
+ *   before the field existed.
+ * @returns a copy carrying whatever identity it was given.
+ */
+function routed(
+  usage: TurnUsage,
+  route: { model: string, provider: string } | undefined,
+  at: number | undefined,
+): TurnUsage {
+  return { ...usage, ...route ?? {}, ...at === undefined ? {} : { at } }
+}
+
 /** Sampling the fake reports until something writes over it. */
 export const DEFAULT_SETTINGS: GenerationSettings = {
   provider: 'openai-compat',
@@ -186,6 +222,12 @@ function exchange(
 
 /** The seeded conversations. */
 export function seedChats(): FakeChat[] {
+  // The seeded costs are placed relative to the moment the fake booted, so a
+  // "last 7 days" range always contains them. Anchored once rather than per
+  // record: two `Date.now()` calls a millisecond apart would put two records in
+  // different hour buckets on a granularity switch, and a chart that changes
+  // when nothing changed is a chart nobody can debug.
+  const booted = Date.now()
   const lamplighter: FakeMessage[] = [
     {
       role: 'assistant',
@@ -212,10 +254,17 @@ export function seedChats(): FakeChat[] {
     ...exchange(1, '络络', '我走的是水渠那条路。桥上有人。', [
       `钳子合上，发出一声很轻的金属响。\n\n"桥上永远有人。"她终于抬头，"你是说有人在等你，还是有人在数人？"`,
       `"水渠。"她重复了一遍这两个字，像在称它的重量。\n\n"那你现在鞋里有半个城的水。坐下，别站在我灯下滴。"`,
-    ], [UNCACHED, SILENT_CACHE]),
+    ], [
+      // Swipe 1 is the older reading and went out on the *other* provider, two
+      // days back: the swipe a reader is not looking at is a different model on
+      // a different day, so the usage page's grouping cannot pass by treating a
+      // conversation as one route.
+      routed(UNCACHED, { model: 'deepseek-reasoner', provider: 'deepseek' }, booted - 2 * DAY_MS),
+      routed(SILENT_CACHE, { model: 'local/qwen3-8b', provider: 'openai-compat' }, booted - 2 * DAY_MS),
+    ]),
     ...exchange(2, '络络', '在数人。第三次了。', [
       `她把钳子插回围裙的皮套，动作比刚才慢了半拍——这是她唯一泄露出来的东西。\n\n"第三次。"她说，"那就不是巡检了。巡检只数一次，数完就填表。数三次的人是在等一个对不上的数。"`,
-    ], [CACHED]),
+    ], [routed(CACHED, { model: 'deepseek-reasoner', provider: 'deepseek' }, booted - 5 * 60 * 1_000)]),
   ]
 
   /**
@@ -245,6 +294,27 @@ export function seedChats(): FakeChat[] {
     ]),
   ]
 
+  /**
+   * A conversation whose one cost names **no model**.
+   *
+   * Its own conversation rather than a swipe added to one of the two above, and
+   * the reason is arithmetic: the numbers in `SILENT_CACHE`'s note and in
+   * `sumUsage`'s (5712 against 6064 + 826) are measurements of the lamplighter
+   * seed, and a fourth record there would make three comments false while every
+   * test stayed green.
+   *
+   * What it is for: every usage record written before `TurnUsage.model` existed
+   * looks like this — all 12 records in the 16 real conversations on this
+   * machine — so the usage page's "unknown model" line is not an edge case, it
+   * is the whole of anyone's history up to today. A fake with no such record
+   * would leave that line unrendered, which is the half a reviewer never sees.
+   */
+  const ledger: FakeMessage[] = [
+    ...exchange(0, 'The Archivist', 'What did the last cataloguer leave unfinished?', [
+      `He does not answer at once. He turns a card over, reads the back of it, and puts it in a different drawer than the one it came from.\n\n"Everything," he says. "That is what a catalogue is."`,
+    ], [routed(CACHED, undefined, undefined)]),
+  ]
+
   const now = Date.now()
   return [
     {
@@ -270,6 +340,18 @@ export function seedChats(): FakeChat[] {
       settings: { ...DEFAULT_SETTINGS, temperature: 0.7 },
       settingsOverride: { temperature: 0.7 },
       variables: { trust: 11, location: 'chart room' },
+    },
+    {
+      chatId: 'chat-ledger',
+      title: 'The unfinished catalogue',
+      characterId: 'the-archivist',
+      messages: ledger,
+      // Nine days back, so it is inside "30 days" and outside "7 days" — which
+      // is what makes the range switch observably do something rather than
+      // redraw the same chart three times.
+      updatedAt: now - 9 * DAY_MS,
+      settings: { ...DEFAULT_SETTINGS },
+      variables: { catalogued: 4 },
     },
   ]
 }

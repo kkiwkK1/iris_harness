@@ -2012,3 +2012,137 @@ line every read in this family draws.
 ceiling — the shape would grow a `limit`/`cursor`, not a per-book call. Or
 upstream growing a listing member of its own, at which point this should be
 renamed to match it.
+
+## 28. A usage record now says which model spent it and when, and one RPC adds them up across the profile
+
+**Kind: deliberate improvement, with a named reconstruction for everything
+already stored.** §22 recorded what the provider charged, per generation, where
+upstream records only its own estimate of the reply. This is the half that makes
+those numbers *answerable*: a cost that names neither a model nor a moment can
+be added up and nothing more.
+
+**Measured first.** Over the 16 real conversations on this machine
+(`apps/iris/data/default-user/chats`, 2026-09-08, 566,905 bytes, 64 lines):
+**12 usage records, none of which carries a model, a provider or a timestamp** —
+seven hold the five token buckets alone, five hold a `promptHash`/`prefixHash`
+pair as well. Nor is there any per-message date to fall back on: Iris's export
+writes no `send_date`, so an assistant line's keys are
+`iris_usage, is_user, mes, name, swipe_id, swipes` and nothing else. "Which
+model is costing me this" was not a question the corpus could answer.
+
+**(a) Three fields on the record, in the object the buckets already ride in.**
+
+`TurnUsage` gains optional `model`, `provider` and `at`. They are on that type
+and merged onto that object rather than parked in a sibling array for the reason
+`USAGE_FIELD` gives at length: SillyTavern's swipe machinery swaps `extra`
+wholesale and its swipe *deletion* splices `swipes` and `swipe_info` while
+knowing nothing about parallel arrays. One object per swipe is the shape that
+survives, and it is the shape `PromptFingerprint`'s hashes already ride in. It
+also means the fields reach `MessageView.usage` for free and survive the log
+rebuild without a line of new code, because the rebuild carries the usage object
+across by position.
+
+- Stamped **once**, at the site that already computes the request fingerprint
+  (`service.ts`, beside `notePromptFingerprint`) — the one place the composed
+  request is in hand, so the model, the provider and the moment are one reading
+  of one request rather than three guesses taken at three times. Parked on
+  `pending.route` under the same guard as `usage` and `fingerprint`, because the
+  candidate does not exist until the turn settles.
+- `at` is when the **request** went out, not when the reply settled. One site
+  rather than two, and for a figure bucketed by hour or day the difference is not
+  observable — while a second `Date.now()` at settle time would let a turn that
+  streamed across midnight land in a different bucket from the fingerprint
+  recorded beside it.
+- A **blank** model is dropped rather than stored. A host started with nothing
+  configured composes `model: ''`, and a blank string would draw a chart series
+  with no label: the unknown case wearing a known case's clothes. Dropped, it
+  reads as unknown, which it is.
+- `sumUsage` is unchanged and **does not carry them**: it builds its total from a
+  fresh object over the four optional buckets, so every aggregate has all three
+  absent. That is the honest reading for a conversation that ran on several
+  models across several days, and it is stated on the type — a consumer that
+  finds `model` on an aggregate has found a bug, not a route.
+
+**(b) `usage.summary`: one scan, rows only.**
+
+`ChatStore.usageSummary` (`src/usage-summary.ts` for the reading and the
+arithmetic, both pure) answers with `(bucket, model)` cells, per-conversation
+subtotals, the range totals, and the model names — never a floor.
+
+The shape a browser reaches for is `chat.list` and then a `chat.open` per
+conversation, and that is wrong twice over: it ships every floor of every
+conversation across the wire to compute a dozen sums, and **`chat.open` is a
+stateful call on this host** — it loads the entry, composes the card's scripts
+and can raise the legacy-cleanup offer. Reading a statistic must not have side
+effects. So this is `ChatStore.search`'s scan with `ChatStore.search`'s
+reasoning: the files are the truth because every write goes through `save`, one
+substring check per line, and `JSON.parse` only on the lines that carry
+`iris_usage`.
+
+| what | where |
+| --- | --- |
+| Wire method and its refusals | `packages/iris-protocol/src/rpc.ts`, `'usage.summary'` |
+| Row shapes and every rule they carry | `packages/iris-protocol/src/views.ts`, `UsageTotals` / `UsageBucket` / `UsageChat` / `UsageSummary` |
+| The scan | `src/chats.ts`, `ChatStore.usageSummary` |
+| The reading and the fold, pure | `src/usage-summary.ts` |
+
+Three rulings inside the row shape, each of which a plainer design gets wrong
+silently:
+
+- **No `input` and no `total` field.** Billed prompt is `cacheMiss + cacheRead +
+  cacheWrite` and the total is that plus `output`. Both are one addition a
+  reader can defend; a stored field duplicating a stored field is a number that
+  can disagree with itself. (`cacheMiss` is `inputTokens` summed, and on a
+  DeepSeek route it *is* `prompt_cache_miss_tokens` — the adapter derives it as
+  `prompt_tokens - cached_tokens` and DeepSeek documents `prompt_tokens =
+  prompt_cache_hit_tokens + prompt_cache_miss_tokens`.)
+- **`cacheTurns` and `cachePrompt` carry the hit rate's population.** The share
+  is `cacheRead / cachePrompt`, both restricted to the generations that reported
+  a cache bucket, so a route that says nothing about caching cannot dilute one
+  that does. Dividing by every prompt token in range is the nearest wrong
+  implementation and it produces a plausible smaller percentage: on a
+  two-generation fixture, 19% where the fact is 75%.
+- **`undatedTurns` is a count, not a flag.** Counts compose under aggregation
+  and flags do not, and this is the one number that says how much of a
+  time-sliced reading is a reconstruction.
+
+The scan differs from `list` and `search` in exactly one way: **an unreadable
+file is counted, not swallowed.** Skipping silently is right for those — one
+corrupt chat must not make every other conversation unreachable — but a summary
+is a claim about a total, and a total over an unknown fraction of the corpus is
+not one. `scannedChats` and `skippedChats` ride in the reply.
+
+**What it costs.** The undated fallback, and it is a reconstruction rather than a
+reading: a record with no `at` is placed at its conversation's `updatedAt` (or
+its `create_date` where the header carries no Iris block, or the epoch where
+neither is readable), so **every undated record in a chat lands in one bucket**.
+An old conversation therefore reads as a single spike at its last activity. That
+is reported as `undatedTurns` rather than smoothed, because smoothing would
+invent a distribution the files do not contain — currently 12 of 12 on the real
+corpus.
+
+And the scan is linear in the profile's bytes, once per request, with no index
+and no cap. Measured through this reader against a read-only copy of the profile,
+2026-09-08: the reply is **1,300 bytes** at day granularity and **1,446** at
+hour, over 16 conversations and 566,905 bytes of files; 爱衣 alone is **629
+bytes** for 9 records. The reply's size is set by (buckets × models) and by the
+number of conversations, never by their length.
+
+**Found and not changed, because it is another feature's decision.**
+`chats.ts`'s `parseCreateDate` cannot read the headers this host writes. Its
+regex requires a trailing `ms` (`(\d{3})?ms`) while `formatCreateDate` in the
+same file ends at the seconds — `2026-08-31 @21h04m17s`, that function's own
+documented example. So it answers `undefined` for **16 of 16** real headers here,
+and its test (`chat-transfer.test.ts`) only ever tried the SillyTavern spelling
+`…21s771ms`, which is why nothing said so. Its one caller is the import path,
+where an unparseable date falls back to the arrival time, so fixing it moves how
+imported conversations sort. `usage-summary.ts`'s own reader therefore accepts
+both spellings and says why, and the divergence is recorded here rather than left
+to be found as "two readers of one field disagree".
+
+**What would overturn it.** Recording a per-message timestamp in the chat file
+would retire the undated fallback and its count. A profile large enough for the
+scan to be felt would make the uncapped reply the wrong shape — and the answer
+then is a host-side index invalidated on write, not a cap. A provider reporting
+a route per *block* rather than per request would make one `model` per record
+the wrong unit, the way the harness's `routes` array already anticipates.

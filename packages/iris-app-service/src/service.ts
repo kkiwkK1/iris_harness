@@ -976,6 +976,19 @@ export class IrisAppService {
         }),
       }),
 
+      // Beside `chat.search` because it is the same scan, and the reason it is
+      // not a `chat.` method at all is that it is not about a chat: it answers
+      // across every conversation in the profile, and naming it `chat.usage`
+      // would invite a `chatId` parameter that would make it a fourth way to
+      // read one conversation's total.
+      'usage.summary': async ({ since, until, granularity }) => ({
+        summary: await chats.usageSummary({
+          ...since === undefined ? {} : { since },
+          ...until === undefined ? {} : { until },
+          ...granularity === undefined ? {} : { granularity },
+        }),
+      }),
+
       'chat.send': async ({ chatId, kind, text }) => {
         // The wire schema has already enforced which kind carries text; this
         // branch is where the request becomes the one start call it means.
@@ -3455,6 +3468,25 @@ export class IrisAppService {
     const pendingTurn = entry?.pending?.turn
     if (entry !== undefined && pendingTurn !== undefined) {
       entry.notePromptFingerprint(pendingTurn, fingerprint)
+      // **The route and the moment, from the same request the fingerprint was
+      // taken from.** A stored cost that names no model can be added up and
+      // nothing more — which is the state every record written before this line
+      // is in — so "which model is this costing me" is not a question the
+      // corpus could answer. Taken from `request` rather than from `options`
+      // for the reason the fingerprint gives above: this is the body the
+      // provider actually sees, so it is the route it is actually billed on.
+      // `at` is the request's moment, not the reply's; `UsageRoute` says why.
+      //
+      // Both fields are required on `GenerateOptions` and are still checked for
+      // emptiness: a host started with no model configured composes a request
+      // with `model: ''`, and a blank string reaching the summary would draw a
+      // chart series with no label — the unknown case wearing a known case's
+      // clothes. Blank is dropped, so it reads as unknown, which it is.
+      entry.noteRoute(pendingTurn, {
+        ...request.model === '' ? {} : { model: request.model },
+        ...request.provider === '' ? {} : { provider: request.provider },
+        at: Date.now(),
+      })
     }
     let cacheReadTokens: number | undefined
     try {

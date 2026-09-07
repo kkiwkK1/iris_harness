@@ -27,6 +27,7 @@ export type CardId =
   | 'reading'
   | 'worldbooks'
   | 'scripts'
+  | 'usage'
   | 'about'
 
 /**
@@ -73,10 +74,37 @@ export function isOpen(state: Readonly<Partial<Record<CardId, boolean>>>, id: Ca
   return state[id] ?? DEFAULT_OPEN_CARDS.includes(id)
 }
 
-/** Every card id — the set of keys a stored record is filtered to. */
-const ALL_CARDS: readonly CardId[] = [
-  'connection', 'presets', 'regex', 'route', 'sampling', 'replies', 'appearance', 'reading', 'worldbooks', 'scripts', 'about',
-]
+/**
+ * Every card id — the set of keys a stored record is filtered to.
+ *
+ * **`backups` was missing from this list and is not any more**, which is the
+ * kind of defect that leaves no trace: `loadCardState` filters the stored
+ * record against these names, so the backups card's remembered open state was
+ * read out of `localStorage` and then dropped on every load. The card worked,
+ * the store held the right value, and the preference silently did nothing.
+ *
+ * The type below is what stops it happening again, `usage` included: a member
+ * of {@link CardId} that is absent here makes `tsc` fail and *name the missing
+ * id*, because a list that has to be kept in step with a union by hand is a
+ * list that will not be. A comment asking for it would not have gone red.
+ */
+const ALL_CARDS = [
+  'connection', 'presets', 'backups', 'regex', 'route', 'sampling', 'replies',
+  'appearance', 'reading', 'worldbooks', 'scripts', 'usage', 'about',
+] as const satisfies readonly CardId[]
+
+/**
+ * Compile-time proof that {@link ALL_CARDS} covers {@link CardId}.
+ *
+ * `Exclude` is the set of ids the list forgot. Empty, it is `never` and this
+ * alias resolves; non-empty, the constraint fails and the error quotes the
+ * missing member — which is the whole value of doing it in the type system
+ * rather than in a test that would have to enumerate the union again to check
+ * it.
+ */
+type EveryCardListed<Missing extends never> = Missing
+export type CardsAreExhaustive =
+  EveryCardListed<Exclude<CardId, typeof ALL_CARDS[number]>>
 
 /**
  * Read a key, treating an unavailable store as an absent value.
