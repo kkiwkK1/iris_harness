@@ -138,6 +138,12 @@
 | `CharacterPage.tsx` 脚本栏 | 卡内可运行脚本单元数（`extractScripts` 口径，含作者关掉的）＋授权注记。授权只在 `scriptsFor` 正是这张卡、且答案是 allowed/declined 时才写——「还没问」不是一种状态 | `faceScripts faceScriptCount faceScriptsAllowed faceScriptsDeclined` |
 | `CharacterPage.tsx` | **删除**六键：`faceTags` `faceNoTags` `faceTagCount` `faceCardFile` `faceUpdated` `faceUpdatedUnknown`。标签与卡片文件时间是协议还没有三栏事实时的顶替；标签本来就在名字下面以胶囊呈现，重复一遍没有信息。对话栏留着——它是唯一对任何卡都答得出的一栏，纯 V1 卡（无简介/无书/无脚本）靠它才不至于渲染出一排空事实 | （无新增） |
 
+任务（窄窗口让位，`dev/plum-theme`）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `StatePanel.tsx` 让位注记 | 抽屉占轨且窗口付不起「侧栏＋变量栏＋抽屉＋可读正文」时，变量栏临时收成 36px 窄条；这一句是那时收起键的 title。措辞是承诺而不是报错：读者自己的选择没有被改写，关掉抽屉就回来（`state-panel.ts` 的 `asideShowing`） | `stateYielded` |
+
 ## 四、持久化决策（同 `language.ts` 文档）
 
 `localStorage` 键 `iris.language`，与 `iris.theme` / `iris.reading` 同一处、同一套

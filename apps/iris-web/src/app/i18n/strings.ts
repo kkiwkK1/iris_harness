@@ -220,6 +220,10 @@ export const en = {
      what pressing it does rather than where it is. */
   stateCollapse: 'Fold the variables away',
   stateExpand: 'Show the variables',
+  /* Shown on the same control while the margin is yielding its column to the
+     settings drawer: the reader's choice is intact and comes back on its own,
+     so the sentence promises that rather than reporting a fault. */
+  stateYielded: 'The settings panel is using this column — it comes back when you close the panel',
   stateEmpty: 'Nothing tracked yet. When a card keeps variables (MVU stat_data), they appear here as the scene moves.',
   booleanYes: 'yes',
   booleanNo: 'no',
@@ -984,6 +988,7 @@ export const zh: Record<StringKey, string> = {
   stateHead: '变量',
   stateCollapse: '收起变量栏',
   stateExpand: '展开变量栏',
+  stateYielded: '设置面板暂时占用了这一栏——关掉它就回来',
   stateEmpty: '还没有跟踪任何内容。卡片写入变量（MVU 的 stat_data）后，会随剧情推进显示在这里。',
   booleanYes: '是',
   booleanNo: '否',

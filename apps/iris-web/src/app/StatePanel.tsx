@@ -62,6 +62,8 @@ import { useIris } from '../client/provider.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { translate, type Language } from './i18n/strings.ts'
 import {
+  ASIDE_YIELD_QUERY,
+  asideShowing,
   branchPaths,
   changeSentence,
   changedPaths,
@@ -359,10 +361,47 @@ function StateRows({
 }
 
 /**
+ * Whether the window is in the range where an open drawer costs this margin.
+ *
+ * A media query rather than a resize listener, so the browser decides when the
+ * answer changed and this panel re-renders once per crossing instead of once
+ * per frame of a drag. The initial value is read synchronously, because a first
+ * paint at 236px followed by a jump to the strip is exactly the flicker the
+ * stored preference is initialised eagerly to avoid.
+ * @returns whether the window is tight, `false` where there is no `matchMedia`.
+ */
+function useTightWindow(): boolean {
+  const [tight, setTight] = useState(() => probeTight())
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const query = window.matchMedia(ASIDE_YIELD_QUERY)
+    const onChange = (): void => { setTight(query.matches) }
+    // Read once on mount as well: a server render and the first client render
+    // may disagree, and the effect is the first moment a real window is certain.
+    onChange()
+    query.addEventListener('change', onChange)
+    return () => { query.removeEventListener('change', onChange) }
+  }, [])
+  return tight
+}
+
+/**
+ * Ask the window whether it is tight, where there is a window to ask.
+ * @returns the media query's answer, or `false` under `node --test`.
+ */
+function probeTight(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia(ASIDE_YIELD_QUERY).matches
+}
+
+/**
  * Render the state margin.
+ * @param props.drawerOpen - whether the settings drawer is showing. The margin
+ *   yields its column to the drawer on a window that cannot pay for both
+ *   (`state-panel.ts`, 让位) — which is a derivation, never a stored choice.
  * @returns the aside; hidden below the width where it has room.
  */
-export function StatePanel(): ReactElement | null {
+export function StatePanel({ drawerOpen }: { drawerOpen: boolean }): ReactElement | null {
   const variables = useIris(state => state.view?.variables)
   const chatId = useIris(state => state.chatId)
   const open = useIris(state => state.chatId !== undefined)
@@ -382,12 +421,26 @@ export function StatePanel(): ReactElement | null {
   const [query, setQuery] = useState('')
   const [onlyChanges, setOnlyChanges] = useState(false)
   /*
-   * Whether the margin is showing at all — a 236px column or the 36px 「变量」
-   * strip (canvas.json: 固定 236px、可收起). Per device rather than per chat,
+   * The reader's **own** choice: a 236px column or the 36px 「变量」 strip
+   * (canvas.json: 固定 236px、可收起). Per device rather than per chat,
    * initialised from storage rather than in an effect, so a reader who folded
    * it away does not watch it open and shut on every load.
+   *
+   * What is on screen is `showing` below, which is this choice minus the yield.
+   * Only the click writes here, and that is the whole discipline: the window is
+   * allowed to override the choice, never to edit it.
    */
   const [asideOpen, setAsideOpen] = useState(loadAsideOpen)
+  /*
+   * 让位: an open drawer takes a whole column, and on a window that cannot pay
+   * for sidebar + margin + drawer + a readable measure, this margin is the one
+   * that stands down. Derived, never stored — `asideShowing` says why, and the
+   * reader's stored choice comes back the moment the drawer closes.
+   */
+  const tight = useTightWindow()
+  const showing = asideShowing(asideOpen, drawerOpen, tight)
+  /** The reader asked for the column and the window took it: say so on hover. */
+  const yielding = asideOpen && !showing
 
   const diff = useVariableDiff(chatId, variables)
   const searching = query !== ''
@@ -447,7 +500,7 @@ export function StatePanel(): ReactElement | null {
      */
     <aside
       className="iris-aside"
-      data-iris-aside={asideOpen ? 'open' : 'shut'}
+      data-iris-aside={showing ? 'open' : 'shut'}
       aria-label={t('stateAria')}
     >
       {/*
@@ -459,8 +512,15 @@ export function StatePanel(): ReactElement | null {
       <button
         type="button"
         className="iris-aside__bar"
-        aria-expanded={asideOpen}
-        title={t(asideOpen ? 'stateCollapse' : 'stateExpand')}
+        aria-expanded={showing}
+        /*
+         * While yielding, the hover says why the column is not there — and the
+         * control stays live rather than disabled: the click writes the same
+         * per-device preference it always wrote, and it takes effect the moment
+         * the drawer closes. A disabled toggle would have to explain itself
+         * through a tooltip browsers do not reliably show on disabled elements.
+         */
+        title={yielding ? t('stateYielded') : t(asideOpen ? 'stateCollapse' : 'stateExpand')}
         onClick={() => {
           const next = !asideOpen
           setAsideOpen(next)
@@ -489,8 +549,12 @@ export function StatePanel(): ReactElement | null {
         is the expensive part of this panel — a real MVU card's `政局` branch
         alone is 34 rows — and a reader who folded the margin away should not go
         on paying to build it on every host event.
+
+        `showing`, not the stored choice: while the margin is yielding to the
+        drawer the strip is all there is room for, and 236px of tree inside a
+        36px track is the sideways scroll this panel's own rules forbid.
       */}
-      {!asideOpen ? null : (
+      {!showing ? null : (
       <div className="iris-aside__inner">
         {hasVariables && (
           <div className="iris-var__tools">

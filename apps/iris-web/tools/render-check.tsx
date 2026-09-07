@@ -15,10 +15,12 @@
  */
 
 import assert from 'node:assert/strict'
+import type { ReactElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { createFakeClient } from '@iris/client-fake'
 
 import { App } from '../src/app/App.tsx'
+import { CharacterPage } from '../src/app/CharacterPage.tsx'
 import { StoreProvider } from '../src/client/provider.tsx'
 import { createIrisStore, type IrisStore } from '../src/client/store.ts'
 import { SlotProvider } from '../src/slots/Slot.tsx'
@@ -36,17 +38,33 @@ import type { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
  * zustand's server snapshot is the store's INITIAL state, so without the
  * override below a server render would only ever show the pre-boot empty shell.
  * That is a harness concession — nothing in the app depends on it.
+ *
+ * `tree` exists because **which sidebar tab is open is not store state**. It is
+ * `useState` in `App` (`tab`, `face`), and deliberately so — the tab governs the
+ * main area, and nothing outside the shell needs to know about it — which means
+ * a server render, which cannot click, has no way to reach the library tab
+ * through the store at all. There is no action to call: `store.ts` carries
+ * `createChat`, `deleteCharacter`, `favoriteCharacter` and the rest, and nothing
+ * that selects a face. So the character page is mounted directly, in the same
+ * providers, and the concession is named rather than worked around by inventing
+ * a store action for a test's benefit.
+ *
+ * What that costs: the page is rendered outside `iris-stage`, so this proves
+ * what the page puts on screen for a given card, not that the tab switch
+ * reaches it. `App.tsx`'s `tab === 'characters' ? <CharacterPage …/> : null` is
+ * the one line neither this nor `character-page.test.ts` covers.
  * @param store - the booted store.
  * @param core - the slot registry.
+ * @param tree - what to mount; the whole shell unless a caller says otherwise.
  * @returns the rendered markup.
  */
-function render(store: IrisStore, core: SlotCore): string {
+function render(store: IrisStore, core: SlotCore, tree: ReactElement = <App />): string {
   const api = store as unknown as { getInitialState: () => unknown }
   api.getInitialState = () => store.getState()
   return renderToString(
     <SlotProvider core={core}>
       <StoreProvider store={store}>
-        <App />
+        {tree}
       </StoreProvider>
     </SlotProvider>,
   )
@@ -161,6 +179,63 @@ async function main(): Promise<void> {
   // cannot fire on an empty field - the idle class and the disabled attribute
   // travel together.
   assert.match(settled, /iris-composer__send--idle[^"]*"[^>]*disabled/, 'Send is not disabled while the composer is empty')
+
+  // --------------------------------------------------------- character page
+  /*
+   * Both ends of the facts row, on the two fixtures that were seeded to be the
+   * two ends of it.
+   *
+   * The page drops a column when the fact behind it is absent (`没有的数据不编`),
+   * and absence is the *common* case in the corpus: of the 19 local cards 15
+   * carry no description, 2 embed no world book and 5 carry no scripts. So the
+   * interesting render is the sparse one, and a check that only looked at 络络 —
+   * the card the dev server opens on — would never see it.
+   *
+   * `character-page.test.ts` pins that each column's guard is still in the
+   * source; this is the other half, and the only place the guards are actually
+   * executed.
+   */
+  const library = wired.store.getState().characters
+  const dense = library.find(row => row.characterId === 'luoluo')
+  const plain = library.find(row => row.characterId === 'the-archivist')
+  assert.ok(dense !== undefined && plain !== undefined, 'the fake no longer seeds the two fixture cards')
+  // The fixture's premise, asserted rather than assumed: if the seed ever gives
+  // the plain card a description or a count, every `doesNotMatch` below would
+  // start passing for the wrong reason — the column would be *correctly* drawn
+  // and the check would be reporting it as correctly absent.
+  assert.ok(
+    dense.description !== undefined && dense.bookEntryCount !== undefined && dense.scriptCount !== undefined,
+    'the dense fixture lost one of its three facts, so the full row is no longer rendered here',
+  )
+  assert.ok(
+    plain.description === undefined && plain.bookEntryCount === undefined && plain.scriptCount === undefined,
+    'the plain fixture gained a fact, so the absent branches below are no longer being taken',
+  )
+
+  const densePage = render(wired.store, slots.core, <CharacterPage characterId={dense.characterId} />)
+  assert.ok(densePage.includes(dense.name), 'the dense card page does not name its character')
+  // The 简介 band. Its own modifier class, because the heading word is shared
+  // with nothing but the band is: a bare paragraph would sit outside the grid.
+  assert.ok(densePage.includes('iris-fact--prose'), 'the description band is missing on a card that has one')
+  assert.ok(densePage.includes(dense.description), 'the description band is drawn but empty')
+  // The script count as the page words it (`{n} in this card`), read off the
+  // summary rather than hardcoded: the fake takes the count from its own script
+  // list, so a fourth fixture script must not fail this.
+  assert.ok(
+    densePage.includes(`${String(dense.scriptCount)} in this card`),
+    'the script column does not report the count the summary carries',
+  )
+  assert.ok(densePage.includes('>World book<'), 'the world book column is missing on a card that embeds one')
+  assert.ok(densePage.includes('>Conversations<'), 'the always-knowable column is missing')
+
+  const plainPage = render(wired.store, slots.core, <CharacterPage characterId={plain.characterId} />)
+  assert.ok(plainPage.includes(plain.name), 'the plain card page does not name its character')
+  assert.equal(plainPage.includes('iris-fact--prose'), false, 'a card with no description drew the 简介 band')
+  assert.equal(plainPage.includes('>World book<'), false, 'a card embedding no book drew the world book column')
+  assert.equal(plainPage.includes('>Scripts<'), false, 'a card with no scripts drew the script column')
+  // …and the one column that is always answerable stays, or the row would be
+  // empty for a plain V1 card, which is a real shape and not a broken one.
+  assert.ok(plainPage.includes('>Conversations<'), 'the plain card lost the column that is always knowable')
 
   // -------------------------------------------------------------- streaming
   await wired.store.getState().send('那你说，我该怎么办。')
