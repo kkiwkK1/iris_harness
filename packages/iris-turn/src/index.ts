@@ -12,4 +12,8 @@ export {
   type TurnDriverOptions,
 } from './driver.ts'
 
-export { historyFromSession } from './history.ts'
+export {
+  historyFromSession,
+  type HistoryOptions,
+  type HistoryProjection,
+} from './history.ts'

@@ -101,6 +101,14 @@ export {
   type ReportKind,
   type ReportPage,
 } from './diagnostics.ts'
+export {
+  fingerprintLine,
+  fingerprintRequest,
+  parseFingerprint,
+  serialiseRequest,
+  PREFIX_BYTES,
+  type PromptFingerprint,
+} from './fingerprint.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
 export {
   DEFAULT_PERSONA_DEPTH,

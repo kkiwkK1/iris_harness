@@ -113,11 +113,15 @@ test('a real fold failure is retained, attributed, and readable', async (t) => {
   // The precondition: if the fixture stopped producing reports, everything
   // below would compare empties and pass while testing nothing.
   assert.ok(page.reports.length > 0, 'the fixture produced no report to retain')
-  const report = page.reports[0]
-  assert.equal(report?.kind, 'mvu')
-  assert.equal(report?.chatId, fixed.chatId, 'the report is not attributed to its conversation')
-  assert.equal(report?.characterId, 'aria')
-  assert.match(report?.message ?? '', /nowhere\.at\.all/u)
+  // Found by kind, not by position. One generation records more than one note
+  // — the request fingerprint, for one — so reading `reports[0]` asserts the
+  // *order* reports were written in, which is not what this test is about and
+  // goes red when an unrelated site starts reporting.
+  const report = page.reports.find(entry => entry.kind === 'mvu')
+  assert.ok(report !== undefined, `no mvu report among ${page.reports.map(entry => entry.kind).join(', ')}`)
+  assert.equal(report.chatId, fixed.chatId, 'the report is not attributed to its conversation')
+  assert.equal(report.characterId, 'aria')
+  assert.match(report.message, /nowhere\.at\.all/u)
 })
 
 test('a report the host wrote itself carries no stack', async (t) => {

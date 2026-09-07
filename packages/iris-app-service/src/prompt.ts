@@ -32,7 +32,17 @@ import type { ActivePersona } from './persona.ts'
 import { DEFAULT_WORLDBOOK_SETTINGS } from './worldbook-settings.ts'
 import { createMacroContext, expandMacros, type MacroMessage } from '@iris/macro'
 import type { Contribution, HistoryEntry, Role, TokenCounter } from '@iris/pipeline'
-import { resolvePreset, type ChatCompletionPreset, type MarkerSources, type PromptItem } from '@iris/preset'
+import {
+  HISTORY_IDENTIFIER,
+  normalizeGenerationType,
+  resolveOrder,
+  resolvePreset,
+  shouldTrigger,
+  type ChatCompletionPreset,
+  type MarkerSources,
+  type PromptItem,
+  type ResolveOptions,
+} from '@iris/preset'
 
 /**
  * One chat-bound book's entries, tagged with its name.
@@ -423,6 +433,77 @@ export function applyCardOverrides(
 }
 
 /**
+ * The marker slots this generation had and could not fill, as zero-token rows.
+ *
+ * `itemize` promises this and cannot deliver it alone: "counted from the
+ * contributions rather than from the rendered request, so a part that
+ * contributed nothing still appears with a zero — a user looking for why a
+ * section is missing is better served by a zero than by an absence"
+ * (`@iris/pipeline`'s `assemble.ts`). But `resolvePreset` drops an item whose
+ * text is empty before a contribution exists (`chat-completion.ts:247`,
+ * `if (text.trim().length === 0) continue`), so the row it would have zeroed is
+ * never offered. The panel then shows no `worldInfoBefore` line at all on a
+ * turn where no world info fired — which is the exact question the panel is
+ * opened to answer, and the absence reads as "Iris does not implement that
+ * slot".
+ *
+ * **Markers only.** A marker is a slot the *host* fills — world info, the
+ * character's description, the persona — so its emptiness is a fact about this
+ * turn and worth a row. A preset item with empty `content` is a prompt its
+ * author left blank; a row per blank would add dozens of them to a real preset
+ * and say nothing about the turn.
+ *
+ * The natural home for this is `resolvePreset` itself, which is the function
+ * that decides to drop them; it lives here because this round's write scope is
+ * the app service. The consequence of the split is that the rows are appended
+ * after the preset's own contributions rather than interleaved into it, so the
+ * itemization lists them together after the sections that produced text —
+ * `itemize` maps contributions in array order.
+ * @param preset - the preset, card overrides already applied.
+ * @param options - the same resolve options the contributions were built with.
+ * @param resolved - what the preset actually contributed.
+ * @returns one zero row per empty marker slot, in the preset's own order.
+ */
+function emptyMarkerRows(
+  preset: ChatCompletionPreset,
+  options: ResolveOptions,
+  resolved: readonly Contribution[],
+): Contribution[] {
+  const contributed = new Set(resolved.map(item => item.id))
+  const byIdentifier = new Map(preset.prompts.map(item => [item.identifier, item]))
+  const generationType = normalizeGenerationType(options.generationType)
+  const rows: Contribution[] = []
+  let afterHistory = false
+
+  for (const identifier of resolveOrder(preset, options)) {
+    // The conversation's own row is `itemize`'s aggregate, not a marker slot.
+    if (identifier === HISTORY_IDENTIFIER) {
+      afterHistory = true
+      continue
+    }
+    if (contributed.has(identifier)) continue
+    const item = byIdentifier.get(identifier)
+    if (item?.marker !== true) continue
+    // The two reasons a slot can be absent that are NOT "it was empty": this
+    // generation type drops the whole post-history section (a continue), or the
+    // item's own `injection_trigger` excludes it. Zeroing those would claim the
+    // slot was offered and came out empty, when it was never offered.
+    if (afterHistory && generationType === 'continue') continue
+    if (!shouldTrigger(item, generationType)) continue
+    rows.push({
+      id: identifier,
+      ...item.name === undefined ? {} : { label: item.name },
+      // `order` is unobservable for a row with no text — `renderSystem` drops
+      // empty text before it sorts, and the itemization renders array order —
+      // so this is a placement the type demands rather than a decision.
+      placement: { kind: 'system', order: 0 },
+      text: '',
+    })
+  }
+  return rows
+}
+
+/**
  * Build one generation's contributions.
  * @param input - character, preset, conversation and budget.
  * @returns the contributions, the timed-effect state to carry forward, and what fired.
@@ -538,11 +619,21 @@ export function buildPrompt(input: PromptInput): PromptResult {
   // prompt text uses `{{char}}` as freely as a card's description does, so
   // expanding only the marker sources would leave the instruction that actually
   // shapes the reply talking about a character named "{{char}}".
-  const contributions = resolvePreset(applyCardOverrides(input.preset, input.card), {
+  //
+  // The preset and the options are named rather than inlined because the zero
+  // rows below walk the same order with the same options: two calls that
+  // resolved a *different* order would put a row on a slot this generation
+  // never had.
+  const preset = applyCardOverrides(input.preset, input.card)
+  const resolveOptions: ResolveOptions = {
     markers,
     ...input.generationType === undefined ? {} : { generationType: input.generationType },
-  })
+  }
+  const contributions = resolvePreset(preset, resolveOptions)
     .map(contribution => ({ ...contribution, text: expand(contribution.text) }))
+
+  // The slots that were there and had nothing to put in them, as zeroes.
+  contributions.push(...emptyMarkerRows(preset, resolveOptions, contributions))
 
   // The author's-note buckets have no note of their own to sit around yet, so
   // they land as system sections after everything the preset ordered. Their
