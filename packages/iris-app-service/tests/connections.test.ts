@@ -13,6 +13,7 @@ import { ConnectionStore, routeOf } from '../src/connections.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type ConnectionEndpoint, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { listenOnFetchablePort } from './support/fetchable-port.ts'
 
 /**
  * Saved connections.
@@ -219,10 +220,12 @@ class ModelsEndpoint {
   }
 
   async start(): Promise<void> {
-    await new Promise<void>(resolve => this.#server.listen(0, '127.0.0.1', resolve))
-    const address = this.#server.address()
-    if (address === null || typeof address === 'string') throw new Error('no bound port')
-    this.#port = address.port
+    // Through the shared guard rather than `listen(0)` directly: an ephemeral
+    // draw can land on a port WHATWG Fetch refuses outright, and the probe
+    // would then report the *endpoint* as unreachable — a false negative in
+    // exactly the assertion this class exists to support. See
+    // `support/fetchable-port.ts`.
+    this.#port = await listenOnFetchablePort(this.#server)
   }
 
   get baseURL(): string {

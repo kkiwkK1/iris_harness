@@ -30,6 +30,7 @@
  */
 
 import { splitHtmlRegions } from '../app/html-regions.ts'
+import { unwrapUnknownTags } from '../app/inline-html.ts'
 
 /** What upstream looks for, verbatim (`src/util/is_frontend.ts:1-3`). */
 const MARKERS: readonly string[] = ['html>', '<head>', '<body']
@@ -212,6 +213,45 @@ export function claimFrontendBlocks(source: string): FrontendBlock[] {
       ...(block.info === undefined ? {} : { info: block.info }),
       matched: block.matched ?? '',
     }))
+}
+
+/**
+ * Strip unrecognised markup from a message's prose, leaving its code alone.
+ *
+ * The policy is `app/inline-html.ts`'s ({@link unwrapUnknownTags}); what this
+ * adds is *where it may run*, and that is why it lives here rather than there:
+ * this module already owns the one line-walk that knows where a message's code
+ * blocks are ({@link scanCodeBlocks}), and a second walk that disagreed with it
+ * about where a fence begins is exactly the drift the walk was kept whole to
+ * avoid.
+ *
+ * Code is skipped whatever it is — claimed or not, fenced or indented. A card
+ * that documents its own markup in a fence wrote those characters on purpose,
+ * and upstream keeps them too: showdown turns a fence into `<pre><code>` with
+ * its body escaped (`showdown.js:2504`, before any raw-HTML handling), so the
+ * tags inside reach DOMPurify as text and survive.
+ *
+ * Applied to the **prose handed to the renderer**, not to the text the claim
+ * pipeline reads: claims are offsets into the message as stored, and rewriting
+ * underneath them would move every boundary they name.
+ *
+ * @param source - a run of message text, prose and code together.
+ * @returns the same text with unrecognised markup removed outside code.
+ */
+export function unwrapUnknownTagsOutsideCode(source: string): string {
+  let out = ''
+  let at = 0
+  for (const block of scanCodeBlocks(source)) {
+    // `scanCodeBlocks` reports blocks in source order and never overlapping,
+    // but the clamp is cheap and keeps a future scanner change from producing
+    // duplicated text rather than a caught mistake.
+    const from = Math.max(at, block.start)
+    const to = Math.max(at, block.end)
+    if (from > at) out += unwrapUnknownTags(source.slice(at, from))
+    out += source.slice(from, to)
+    at = to
+  }
+  return out + unwrapUnknownTags(source.slice(at))
 }
 
 /** What claiming found in one message: every frameable surface, and the notes. */

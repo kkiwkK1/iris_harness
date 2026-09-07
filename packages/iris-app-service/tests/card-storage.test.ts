@@ -47,7 +47,12 @@ interface Fixture {
 
 async function fixture(t: TestContext, withStore = true): Promise<Fixture> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-store-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  // `maxRetries`, for the same Windows window 2b43efc documented on the
+  // transport test: a handle inside the fixture can outlive the last write by a
+  // moment, and a bare `rm` then fails the whole file with ENOTEMPTY. Seen here
+  // on a full-suite run with a second suite running beside it — the tests
+  // themselves are unaffected, only the tidy-up waits.
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 

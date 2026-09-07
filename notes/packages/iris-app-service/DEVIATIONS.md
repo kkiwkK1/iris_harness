@@ -486,13 +486,21 @@ implemented, fully tested and never called is visible to nobody — every test
 passes, because tests construct the service directly and pass the option the
 plugin never passed.
 
-### The default is on, and the cost of that is not symmetric with upstream
+### The default was on until 2026-09-06; it is opt-in now, and the asymmetry below is why
 
-> **Overturned 2026-09-06. The periodic sweep defaults OFF.** The paragraphs
-> below are kept because their *measurements* stand and the asymmetry they
-> describe is exactly what decided it — but their conclusion is reversed. The
-> ruling is at the end of this subsection; read it before acting on anything
-> here.
+> **Overturned 2026-09-06. The periodic sweep defaults OFF** — `pruneVariables`
+> is `false` on the plugin schema (b8bd8cd, 3b241f5) and pinned by
+> `tests/config-wiring.test.ts` — *the defaults that a reader would guess
+> wrong*. b8bd8cd moved the schema default; 3b241f5 stopped `cordis.yml`
+> overriding it back to `true`, so the composed app row is `false` too. This
+> heading still read "The default is on" until 2026-09-07 — sitting directly
+> above the ruling that reversed it. Only the wording is fixed here; no
+> reasoning below was removed.
+>
+> The paragraphs below are kept because their *measurements* stand and the
+> asymmetry they describe is exactly what decided it — but their conclusion is
+> reversed. The ruling is at the end of this subsection; read it before acting
+> on anything here.
 
 ~~It defaults **on**, matching upstream, whose `启用: true` reaches every install
 through a `.prefault({})`.~~ That is not only a reading of a schema: on the corpus,
@@ -870,6 +878,12 @@ never write to your install" stops being true. The install may be running, so a
 file that will not parse is reported as *unreadable this time* rather than
 absent — telling a user a book is missing when they have it sends them looking
 for the wrong thing.
+
+That `settings.json` has a **second reader** since 2026-09-07: §21, the one-time
+seed of a new profile's world-info scan knobs. Same file, same read-only
+promise, different question — and the reason it is a separate entry is that
+fetching a book a card already names is compatibility, while adopting the
+user's knobs is a migration convenience.
 
 **Their filename rule, not ours.** SillyTavern writes
 ``sanitize(`${name}.json`)`` through `sanitize-filename`; this host mirrors that
@@ -1274,6 +1288,126 @@ endpoint is how we learn whether 120 s is right.
 healthy long thinks — the reports would name it, and the fix is per-connection
 budgets (a `connection.save` field), which is deliberately not built until
 something asks for it.
+
+---
+
+## 21. A profile being created takes its world-info scan knobs from the user's install, once
+
+**Kind: deliberate improvement** (ROADMAP's second ledger), so this entry owes
+three things — what is better, what it costs, and why upstream does not do it.
+The last one is the easy one: **upstream cannot have this feature, because
+upstream is the installation.** `settings.json` is SillyTavern's own state, and
+there is nothing for it to import from.
+
+**Upstream, read rather than assumed.** `script.js:7954` calls
+`setWorldInfoSettings(settings.world_info_settings ?? settings, data)`, and
+that function (`world-info.js:917-943`) assigns each key into a module
+variable through `Number()` or `Boolean()`. The `??` is the shape fact worth
+copying: a current install nests the family under `world_info_settings`, an
+older one keeps it at the top level, and a reader that knows only the nested
+shape imports nothing from a pre-migration file while reporting a clean
+"nothing to take". The shipped defaults are `world-info.js:69-82` and the
+strategy enum — `{evenly: 0, character_first: 1, global_first: 2}` — is
+`world-info.js:27-31`.
+
+**Iris.** When a profile's `settings.json` is **created** — not on any later
+boot — and the composition has a `sillyTavernDir`, the install's
+`world_info_*` family is read and the knobs this host models are stored as that
+profile's starting values (`src/st-install.ts` `worldInfoSettings`,
+`src/worldbook-settings.ts` `importWorldbookSettings`, `src/settings.ts`
+`seedWorldbookSettings`, wired at `src/index.ts` right after `settings.load()`).
+
+**What is modelled, and what is therefore imported.** All twelve fields of
+`WorldbookSettings` have an ST key, and `IMPORTED_WORLDBOOK_KEYS` is asserted
+against `DEFAULT_WORLDBOOK_SETTINGS` so a knob added to the model without a key
+cannot pass silently:
+
+| ST key | this host's field | note |
+| --- | --- | --- |
+| `world_info_depth` | `scanDepth` | |
+| `world_info_budget` | `budgetPercent` | |
+| `world_info_budget_cap` | `budgetCap` | |
+| `world_info_min_activations` | `minActivations` | |
+| `world_info_min_activations_depth_max` | `minActivationsDepthMax` | |
+| `world_info_max_recursion_steps` | `maxRecursionSteps` | |
+| `world_info_recursive` | `recursive` | |
+| `world_info_case_sensitive` | `caseSensitive` | |
+| `world_info_match_whole_words` | `matchWholeWords` | |
+| `world_info_use_group_scoring` | `useGroupScoring` | |
+| `world_info_include_names` | `includeNames` | ST default `true`; the reference install runs `false` |
+| `world_info_character_strategy` | `insertionStrategy` | **`0 \| 1 \| 2` upstream, a word here** — the one key that is translated, not copied |
+
+Not imported, and each for its own reason:
+
+- **`world_info_overflow_alert`** — not modelled. There is no field to put it
+  in (§ the module docstring: a UI notice this host has no surface for), and
+  inventing storage for a setting nothing reads would make the import look more
+  complete than the host is. It keeps riding the card-facing
+  `LorebookSettings` table with ST's default, as before.
+- **`world_info.globalSelect`** — modelled, and still not imported. It is a
+  *selection*, not a knob: adopting it would make this host's prompts depend on
+  what the other application happens to have selected right now.
+  `SettingsStore.setGlobalSelect`'s docstring is the standing decision and this
+  did not reverse it.
+
+**What it buys, measured on the reference install.** Fourteen keys sit under
+`world_info_settings` there, and **three of the twelve importable ones disagree
+with this host's defaults**: `world_info_budget` is `100` against a default of
+`25`, `world_info_include_names` is `false` against `true`, and
+`world_info_recursive` is `true` against `false`. So the seed is not cosmetic on
+a real machine — without it, a book tuned in SillyTavern under a 100 %
+budget with recursion on would under-fire here on its first day, which is
+exactly the class of surprise `worldbook-settings.ts` was written to end. The
+other nine agree, which is worth saying plainly: the feature's value on this
+one install is three knobs, not twelve.
+
+**A seed, never a sync, and the property is structural.** `seedWorldbookSettings`
+takes a *callback*, and an existing profile never calls it — the install's
+`settings.json` is not even opened. Passing an already-read import would have
+made "we do not re-read another application's settings" depend on the caller
+checking first, which is the kind of ordering that survives review and dies in
+a refactor. The same tri-state (`#found` is `undefined` until `load` has run)
+makes a seed attempted before `load` a no-op rather than a write over settings
+this store has not read.
+
+**Stricter than upstream on values, deliberately.** `Number('deep')` is `NaN`
+and `Boolean('false')` is `true`; upstream survives that because its result is a
+module variable the next settings write replaces. Here the value is *stored into
+a profile*, so a `NaN` scan depth would outlive the mistake and every later read
+would inherit it. A key whose shape is wrong falls back to that key's own
+default and produces a sentence on the host log; the other keys still import.
+Whole-file failures (no `settings.json`, unparsable, not an object) report one
+line and leave the whole table at ST's defaults — "could not read it" and "the
+user runs the defaults" produce identical knobs and are different facts.
+
+**What it costs.**
+
+1. **A silent success.** Only failures reach the log, so a user whose profile
+   was seeded has no line saying so — the knobs simply are what their install
+   said. That is the same shape as the pre-profile-layout warning being the only
+   thing that speaks, and it is a real gap: the fix is a settings panel that
+   shows provenance, not a boot line nobody reads.
+2. **Day-two drift with no notice.** After the first boot the two applications
+   are independent. A user who then retunes SillyTavern and expects Iris to
+   follow will not be told otherwise.
+3. **An oddly configured install becomes an oddly configured profile.** The
+   seed copies the user's own choices, including ones they had forgotten making.
+
+**What would overturn it.** A user who wants the two kept in step — i.e. asks
+for the sync this deliberately is not. The answer then is an explicit
+"re-import from SillyTavern" action, not a per-boot read: a host that silently
+re-adopted another application's settings would undo the user's own edits here,
+which is the one outcome this shape exists to prevent.
+
+**Pinned by** `tests/st-settings-import.test.ts` (15 tests): the twelve-key
+import including the numeric strategy translation, the per-key fallback with its
+three report lines, the unmodelled key appearing in neither the file nor the
+reports, the second start neither re-reading nor overwriting, the seed-before-load
+no-op, the three whole-file failures each with their own sentence, the flat
+pre-migration layout, that nothing writes to the install, and — structurally,
+in the manner of `config-wiring.test.ts` — that the composition calls the seed
+**after** `load`, since getting that order wrong disables the migration without
+a red test or a log line.
 
 ---
 

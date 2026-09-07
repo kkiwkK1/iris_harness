@@ -7,6 +7,8 @@
 
 import { createServer, type Server } from 'node:http'
 
+import { listenOnFetchablePort } from '../../../packages/iris-app-service/tests/support/fetchable-port.ts'
+
 /** What the mock captured from the last request it served. */
 export interface MockCapture {
   body?: Record<string, unknown>
@@ -69,12 +71,14 @@ export async function startMockProvider(): Promise<MockProvider> {
     })
   })
 
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
-  const address = server.address()
-  if (address === null || typeof address === 'string') throw new Error('mock provider: no bound port')
+  // Through the shared guard rather than `listen(0)` directly: an ephemeral
+  // draw can land on a port WHATWG Fetch refuses outright, and the adapter's
+  // `bad port` would then read as the streaming path being broken. See
+  // `packages/iris-app-service/tests/support/fetchable-port.ts`.
+  const port = await listenOnFetchablePort(server)
 
   return {
-    baseURL: `http://127.0.0.1:${address.port}`,
+    baseURL: `http://127.0.0.1:${String(port)}`,
     capture,
     close: () => new Promise<void>((resolve, reject) => {
       server.close(error => (error ? reject(error) : resolve()))

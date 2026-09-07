@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
-import type { AddressInfo, Socket } from 'node:net'
+import type { Socket } from 'node:net'
 import { after, test } from 'node:test'
 
 import { DEFAULT_TIMEOUTS, OpenAiCompatAdapter } from '../src/index.ts'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+
+import { listenOnFetchablePort } from '../../iris-app-service/tests/support/fetchable-port.ts'
 
 /**
  * The three budgets, against a real endpoint that really stalls.
@@ -89,8 +91,13 @@ async function stallingEndpoint(phase: 'headers' | 'body' | 'mid' | 'none'): Pro
     sockets.add(socket)
     socket.on('close', () => sockets.delete(socket))
   })
-  await new Promise<void>(resolve => { server.listen(0, '127.0.0.1', resolve) })
-  const { port } = server.address() as AddressInfo
+  // Not `listen(0)` directly: an ephemeral draw can land on a port WHATWG
+  // Fetch refuses outright, and the `bad port` that comes back looks like this
+  // adapter failing rather than like `fetch` declining to dial. This file has
+  // gone red on it — drawing 1723 — in both a paired and a serial full-suite
+  // run, on code that had not changed. See
+  // `iris-app-service/tests/support/fetchable-port.ts`.
+  const port = await listenOnFetchablePort(server)
   return { baseURL: `http://127.0.0.1:${port}/v1`, server }
 }
 

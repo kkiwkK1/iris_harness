@@ -4,6 +4,8 @@ import { test } from 'node:test'
 
 import { credentialOf, OpenAiCompatAdapter, type Config } from '../src/index.ts'
 
+import { listenOnFetchablePort } from '../../iris-app-service/tests/support/fetchable-port.ts'
+
 /**
  * The credential a request carries.
  *
@@ -65,15 +67,15 @@ async function withCapture(t: test.TestContext, run: (baseURL: string, headers: 
     response.write('data: [DONE]\n\n')
     response.end()
   })
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
-  const address = server.address()
-  if (address === null || typeof address === 'string') {
-    await new Promise<void>(resolve => server.close(() => resolve()))
-    throw new Error('no bound port')
-  }
+  // Through the shared guard, not `listen(0)` directly: an ephemeral draw can
+  // land on a port WHATWG Fetch refuses, and the `bad port` that comes back
+  // reads as this adapter failing to authenticate rather than as `fetch`
+  // declining to dial. See
+  // `iris-app-service/tests/support/fetchable-port.ts`.
+  const port = await listenOnFetchablePort(server)
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())))
 
-  await run(`http://127.0.0.1:${String(address.port)}/v1`, headers)
+  await run(`http://127.0.0.1:${String(port)}/v1`, headers)
 }
 
 function adapterOf(config: Omit<Config, 'provider' | 'baseURL'> & { baseURL?: string }): OpenAiCompatAdapter {

@@ -34,6 +34,7 @@ import { Portrait } from './Portrait.tsx'
 import { PlumBlossom } from './marks.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { since, toBase64 } from './format.ts'
+import { matchesLibraryQuery } from './library-search.ts'
 import { CARD_FILE_ACCEPT } from './card-files.ts'
 import type { Language } from './i18n/strings.ts'
 import type { ChatSearchHit } from '@iris/protocol'
@@ -133,16 +134,14 @@ export function Sidebar({
     row.parentChatId === undefined || !chats.some(other => other.chatId === row.parentChatId))
 
   /*
-   * One box over names and tags, which is what the artboards' 「搜索角色或标签」
-   * promises and what replaced the tag `<select>`. Case-folded on both sides,
-   * and a substring rather than a prefix: a corpus card is called
-   * `不要被神隐挑战 V1.5.4 测试版`, and a reader looking for it types 神隐.
+   * One box over names, tags and the description's opening, which is what the
+   * artboards' 「搜索角色或标签」 promises and what replaced the tag `<select>`.
+   * The rule itself lives in `library-search.ts` — behaviour a `node --test`
+   * file can import and check, which a filter inlined in this `.tsx` could only
+   * ever have had pinned against its own source text.
    */
-  const needle = libraryQuery.trim().toLowerCase()
   const visibleCharacters = characters
-    .filter(character => needle === ''
-      || character.name.toLowerCase().includes(needle)
-      || character.tags.some(tag => tag.toLowerCase().includes(needle)))
+    .filter(character => matchesLibraryQuery(character, libraryQuery))
     .sort((left, right) => {
       if (sortBy === 'updated') {
         return (right.updatedAt ?? 0) - (left.updatedAt ?? 0)

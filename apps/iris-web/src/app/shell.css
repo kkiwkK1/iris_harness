@@ -476,6 +476,17 @@
 .iris-scrim {
   position: fixed;
   inset: 0;
+  /*
+   * Off by default, and shown only in the narrow interval that has a sliding
+   * sidebar (`panels.css`, the 880px block).
+   *
+   * The shell renders this from `navOpen` alone, and `navOpen` survives a window
+   * that got wider — a rotated tablet, a phone layout maximised. Above 880px the
+   * sidebar is a grid column overlaying nothing, so what was left was a
+   * full-viewport click-catcher with no background of its own: invisible, and
+   * the reader's next click anywhere on the page was spent dismissing it.
+   */
+  display: none;
   /* One step under the sidebar it dismisses; the ladder is in `theme/tokens.css`.
      The settings drawer no longer has one of these — it is a column now, and a
      column does not need dismissing by tapping past it. */

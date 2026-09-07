@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { cacheKey, nodeFetch, ScriptCache, type FetchLike } from '../src/script-cache.ts'
+import { listenOnFetchablePort } from './support/fetchable-port.ts'
 
 /**
  * The host-side half of the remote-bundle proxy.
@@ -212,9 +213,12 @@ test('the default upstream adapter behaves the way the cache assumes', async (t)
     res.writeHead(404)
     res.end()
   })
-  await new Promise<void>(resolve => { server.listen(0, '127.0.0.1', resolve) })
+  // Through the shared guard rather than `listen(0)` directly: an ephemeral
+  // draw can land on a port WHATWG Fetch refuses outright, and `nodeFetch`
+  // would then reject for a reason that has nothing to do with the redirect
+  // behaviour under test. See `support/fetchable-port.ts`.
+  const port = await listenOnFetchablePort(server)
   t.after(() => { server.close() })
-  const port = (server.address() as { port: number }).port
   const base = `http://127.0.0.1:${String(port)}`
 
   const redirected = await nodeFetch(`${base}/redir`, { redirect: 'manual', headers: { accept: '*/*' } })

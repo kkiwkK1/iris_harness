@@ -230,7 +230,15 @@ export function App(): ReactElement {
             while the library is showing — a column of one chat's variables
             beside another character's card page is two subjects in one window.
           */}
-          {tab === 'characters' ? null : <StatePanel />}
+          {/*
+            `drawerOpen` is passed rather than read from anywhere: above 1200px
+            the drawer is a grid track, and on a window that cannot pay for
+            sidebar + margin + drawer + a readable measure the margin yields its
+            column (`state-panel.ts`, 让位). The shell holds the drawer's state,
+            so the shell is the only thing that can say so — and saying it as a
+            prop keeps the margin's own stored preference untouched.
+          */}
+          {tab === 'characters' ? null : <StatePanel drawerOpen={settingsOpen} />}
           {/*
             The settings drawer is the stage's third track now, not an overlay on
             the page: opening it narrows the reading area and the prose re-wraps

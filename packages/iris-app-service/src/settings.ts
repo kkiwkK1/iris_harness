@@ -16,7 +16,10 @@ import type { ChatCompletionPreset } from '@iris/preset'
 import type { ContinuePostfix, GenerationSettings, ReasoningEffort } from '@iris/protocol'
 
 import { invalid } from './errors.ts'
-import { resolveWorldbookSettings, sanitizeWorldbookSettings, type WorldbookSettings } from './worldbook-settings.ts'
+import {
+  resolveWorldbookSettings, sanitizeWorldbookSettings,
+  type WorldbookImport, type WorldbookSettings,
+} from './worldbook-settings.ts'
 
 /** Numeric sampling fields, with the range each is accepted in. */
 const NUMERIC_FIELDS = {
@@ -133,6 +136,16 @@ export class SettingsStore {
   /** The configured route, kept so a cleared global field has something to fall back to. */
   readonly #defaults: GenerationSettings
   #file: SettingsFile
+  /**
+   * Whether `load` found a file: `undefined` until it has run at all.
+   *
+   * Three states rather than two, because {@link seedWorldbookSettings} keys a
+   * one-time migration off "this profile is brand new" and the difference
+   * between *no file* and *not looked yet* is the whole safety of that. A
+   * caller that seeds before loading gets no import — a missed convenience —
+   * rather than a seed written over settings that were already on disk.
+   */
+  #found: boolean | undefined
 
   /**
    * @param path - the JSON file backing the store.
@@ -155,7 +168,9 @@ export class SettingsStore {
     let text: string
     try {
       text = await readFile(this.#path, 'utf8')
+      this.#found = true
     } catch {
+      this.#found = false
       return
     }
     try {
@@ -259,11 +274,15 @@ export class SettingsStore {
   /**
    * Choose the books injected into every chat.
    *
-   * Deliberately not migrated from a SillyTavern installation: importing
-   * settings is its own unstarted piece of work, and silently adopting another
-   * application's live selection would make this host's prompts depend on that
-   * application's current state. A user moving across re-selects their global
-   * books once.
+   * Deliberately not migrated from a SillyTavern installation, and **the
+   * reason narrowed on 2026-09-07 rather than going away**: importing settings
+   * used to be an unstarted piece of work outright, and now
+   * {@link seedWorldbookSettings} does import the scan knobs from the same
+   * `world_info_settings` section this selection lives in. This one still does
+   * not travel, because it is not a knob — silently adopting another
+   * application's live *selection* would make this host's prompts depend on
+   * that application's current state. A user moving across re-selects their
+   * global books once.
    * @param names - book names, verbatim.
    */
   async setGlobalSelect(names: readonly string[]): Promise<void> {
@@ -369,6 +388,43 @@ export class SettingsStore {
     }
     await this.save()
     return this.worldbookSettings()
+  }
+
+  /**
+   * Seed the scan knobs from a SillyTavern installation, once per profile.
+   *
+   * Runs only when `load` found **no file** — a profile being created right
+   * now. An existing profile is never touched, whatever the installation says:
+   * the user's knobs here are their own decisions, and a host that re-read
+   * another application's settings on every boot would quietly undo them. That
+   * is why this is a seed and not a sync (`DEVIATIONS.md` §21).
+   *
+   * **The read is a callback, not a value.** An existing profile must not even
+   * open the installation's `settings.json`, and passing an already-read import
+   * would make that property depend on the caller checking first — the kind of
+   * ordering that survives review and then dies in a refactor. Here the
+   * installation is untouched unless this store asks.
+   * @param read - fetches the installation's knobs; called at most once, ever.
+   * @returns the report lines to hand the host's log, empty when there are none.
+   */
+  async seedWorldbookSettings(read: () => Promise<WorldbookImport>): Promise<string[]> {
+    if (this.#found !== false) return []
+    // Marked before the read, not after it: "at most once, ever" is the whole
+    // contract, and a second call — from a retry, or from a composition that
+    // grew a second boot path — must not reopen the install even when the first
+    // one found nothing to take.
+    this.#found = true
+    const { settings: imported, reports } = await read()
+    if (Object.keys(imported).length > 0) {
+      const section = this.#file.worldbooks ?? { globalSelect: [] }
+      // Imported values go *under* anything already in the section, not over
+      // it. On a first run there is nothing there, so the order is invisible —
+      // it is here so that the day something else writes the section before the
+      // seed runs, the seed loses rather than silently wins.
+      this.#file.worldbooks = { ...section, settings: { ...imported, ...section.settings } }
+      await this.save()
+    }
+    return reports
   }
 
   /**

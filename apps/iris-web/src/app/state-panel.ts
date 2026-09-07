@@ -431,6 +431,102 @@ export function saveAsideOpen(open: boolean, storage: StorageLike | undefined = 
   }
 }
 
+/*
+ * ---------------------------------------------------------------- 让位
+ *
+ * The three tracks that share a window with the reading column, and the width
+ * below which they cannot all be paid for.
+ *
+ * Measured in the browser at 1440×DPR 1 with the drawer open as a column and
+ * the margin expanded: 1440 − 272 − 236 − 393 ≈ 539px of reading area. Prose
+ * and every card frame in it were squeezed into a ribbon and the frames grew
+ * horizontal scrollbars — the one thing `StatePanel`'s own rules forbid of
+ * itself.
+ *
+ * These four numbers are **copies of CSS declarations**, which is a drift risk
+ * and is why `state-panel.test.ts` reads each one back out of the stylesheet
+ * that owns it. Nothing here changes a layout; the arithmetic only decides when
+ * the margin stands down.
+ */
+
+/** The sidebar's grid track above 880px (`shell.css`, `.iris-shell`). */
+export const SIDEBAR_TRACK = 272
+
+/** The margin's own open width (`tokens.css`, `--iris-aside`). */
+export const ASIDE_TRACK = 236
+
+/** The drawer's column width (`tokens.css`, `--iris-drawer-w`). */
+export const DRAWER_TRACK = 392
+
+/** The width from which the margin shows at all (`panels.css`, `.iris-aside`). */
+export const ASIDE_FROM = 1360
+
+/**
+ * The narrowest reading column this layout will produce on purpose.
+ *
+ * A judgement, not a measurement, and stated as one: `--iris-measure` is 68ch,
+ * which at the 17px prose size is around 578px, and the reading column carries
+ * two 46px gutters around it — so a comfortable line of prose wants something
+ * between 578 and 670px of track. 640 sits inside that band and is the figure
+ * the browser review named. It is a floor for *when to yield*, not a min-width
+ * anything is laid out against, so its precision is not load-bearing.
+ */
+export const READING_FLOOR = 640
+
+/**
+ * The window width from which the settings drawer takes a grid track instead
+ * of sliding over the page (`panels.css`, `.iris-drawer`).
+ *
+ * The same arithmetic as {@link ASIDE_YIELD_BELOW}, one flank fewer: sidebar
+ * plus drawer plus the reading floor. The first version used 1200, which
+ * leaves the reading column 536px wide - below the floor the margin yields
+ * for - so the drawer was allowed to do at 1200 what the margin was forbidden
+ * to do at 1539. One floor, both flanks (coordinator ruling, 2026-09-07).
+ */
+export const DRAWER_TRACK_FROM = SIDEBAR_TRACK + DRAWER_TRACK + READING_FLOOR
+
+/**
+ * The window width at which the margin no longer has to yield to the drawer.
+ *
+ * At exactly this width the reading column is `READING_FLOOR` wide with all
+ * three flanks present, so the yield applies strictly below it.
+ */
+export const ASIDE_YIELD_BELOW = SIDEBAR_TRACK + ASIDE_TRACK + DRAWER_TRACK + READING_FLOOR
+
+/**
+ * The window range in which an open drawer costs the margin its column.
+ *
+ * Below {@link ASIDE_FROM} the margin is `display: none` anyway, so yielding
+ * there would be a decision about nothing; from {@link ASIDE_YIELD_BELOW} up
+ * both fit. Built from the constants rather than written out, so the query and
+ * the arithmetic above cannot disagree.
+ */
+export const ASIDE_YIELD_QUERY =
+  `(min-width: ${String(ASIDE_FROM)}px) and (max-width: ${String(ASIDE_YIELD_BELOW - 1)}px)`
+
+/**
+ * Whether the variable margin shows its full column right now.
+ *
+ * The yield is deliberately **not** a stored state and not a write: it is
+ * derived on every render from the drawer and the window, so closing the drawer
+ * restores whatever the reader had chosen without anything having to remember
+ * what that was. A version that "collapsed the margin for you" by calling
+ * {@link saveAsideOpen} would overwrite a per-device preference with a
+ * consequence of a window size — recoverable only by the reader noticing and
+ * clicking twice.
+ *
+ * The reader's control keeps working while yielded: the click writes the
+ * preference as it always did, and it takes effect the moment there is room.
+ *
+ * @param stored - the reader's own choice, from {@link loadAsideOpen}.
+ * @param drawerOpen - whether the settings drawer is showing.
+ * @param tight - whether the window is inside {@link ASIDE_YIELD_QUERY}.
+ * @returns whether to draw the 236px column; `false` means the 36px strip.
+ */
+export function asideShowing(stored: boolean, drawerOpen: boolean, tight: boolean): boolean {
+  return stored && !(drawerOpen && tight)
+}
+
 /** Where the last-seen variable tree lives, so "this round" survives a reload. */
 const LAST_TREE_PREFIX = 'iris.state.lastTree.'
 

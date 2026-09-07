@@ -38,6 +38,10 @@
  * Still not stored here: `overflow_alert`, a UI notice this host has no
  * surface for yet. It keeps riding the card-facing {@link LorebookSettings}
  * table so a card reading it gets the number upstream would have handed it.
+ * It is therefore also the one key of the family that
+ * {@link importWorldbookSettings} does not take from an installation — there is
+ * no field to put it in, and inventing storage for a setting nothing reads
+ * would make the import look more complete than the host is.
  *
  * @module @iris/app-service/worldbook-settings
  */
@@ -172,6 +176,143 @@ export function sanitizeWorldbookSettings(patch: Record<string, unknown>): Parti
  */
 export function resolveWorldbookSettings(stored?: Partial<WorldbookSettings>): WorldbookSettings {
   return { ...DEFAULT_WORLDBOOK_SETTINGS, ...stored }
+}
+
+/**
+ * ST's key for each numeric knob, for the first-run import.
+ *
+ * Every value is a key of {@link NUMERIC_RANGES}, so the range a user's own
+ * patch is checked against is the range an imported value is checked against —
+ * one table, not a second one that can drift.
+ */
+const IMPORTED_NUMBERS = {
+  world_info_depth: 'scanDepth',
+  world_info_budget: 'budgetPercent',
+  world_info_budget_cap: 'budgetCap',
+  world_info_min_activations: 'minActivations',
+  world_info_min_activations_depth_max: 'minActivationsDepthMax',
+  world_info_max_recursion_steps: 'maxRecursionSteps',
+} as const satisfies Record<string, keyof typeof NUMERIC_RANGES>
+
+/** ST's key for each boolean knob. Every value is in {@link BOOLEAN_FIELDS}. */
+const IMPORTED_BOOLEANS = {
+  world_info_recursive: 'recursive',
+  world_info_case_sensitive: 'caseSensitive',
+  world_info_match_whole_words: 'matchWholeWords',
+  world_info_use_group_scoring: 'useGroupScoring',
+  world_info_include_names: 'includeNames',
+} as const satisfies Record<string, keyof WorldbookSettings>
+
+/**
+ * `world_info_insertion_strategy` (`world-info.js:27-31`), indexed by its value.
+ *
+ * The one knob whose stored shape is not this host's: upstream persists
+ * `world_info_character_strategy` as **`0 | 1 | 2`** and Iris stores the word,
+ * so the import is a translation rather than a copy. The reference install
+ * carries `1`, which is `character_first` — the same value Iris defaults to, so
+ * this mapping is the part of the import that no real installation here can
+ * disprove by agreeing with it.
+ */
+const STRATEGY_BY_NUMBER: readonly InsertionStrategy[] = ['evenly', 'character_first', 'global_first']
+
+/**
+ * The scan knobs this host models, with every ST key it reads them from.
+ *
+ * Exported for the test that pins the invariant: **every field of
+ * {@link WorldbookSettings} has an ST key here.** A knob added to the model
+ * without a key would import as its default and read as "the user's install
+ * says so", which is the failure mode this list exists to make impossible.
+ */
+export const IMPORTED_WORLDBOOK_KEYS: Readonly<Record<keyof WorldbookSettings, string>> = {
+  ...Object.fromEntries(Object.entries(IMPORTED_NUMBERS).map(([st, field]) => [field, st])),
+  ...Object.fromEntries(Object.entries(IMPORTED_BOOLEANS).map(([st, field]) => [field, st])),
+  insertionStrategy: 'world_info_character_strategy',
+} as Record<keyof WorldbookSettings, string>
+
+/** What a first-run import of an installation's scan knobs produced. */
+export interface WorldbookImport {
+  /** The knobs adopted, ready to store; absent fields keep their default. */
+  settings: Partial<WorldbookSettings>
+  /** One sentence per key that could not be adopted. Empty on a clean import. */
+  reports: string[]
+}
+
+/**
+ * Read ST's world-info scan knobs out of an installation's `settings.json`.
+ *
+ * **A migration convenience, not upstream behaviour**, and it runs once — on
+ * the very first creation of a profile's settings file. See `DEVIATIONS.md`
+ * §21 for why it is a deviation at all and why it is not a sync.
+ *
+ * Two shapes are accepted, because upstream accepts two:
+ * `script.js:7954` calls `setWorldInfoSettings(settings.world_info_settings ??
+ * settings, data)`, so the family lives under `world_info_settings` in a
+ * current file and at the top level in an older one. Reading only the nested
+ * shape would import nothing from a pre-migration install and report a clean
+ * "nothing to take", which is a missing key wearing the face of a default.
+ *
+ * **Stricter than upstream on values, deliberately.** `setWorldInfoSettings`
+ * coerces — `Number('deep')` is `NaN` and `Boolean('false')` is `true` — and
+ * gets away with it because its result lives in a module variable that the next
+ * settings write replaces. Here the value is *stored* into a profile, so a
+ * `NaN` scan depth would persist and every later read would inherit it. A value
+ * whose shape is wrong falls back to that one knob's default and says so; the
+ * other knobs still import.
+ * @param file - the parsed `settings.json`, whatever it turned out to be.
+ * @returns the knobs to store and a line per key that fell back.
+ */
+export function importWorldbookSettings(file: unknown): WorldbookImport {
+  const settings: Partial<WorldbookSettings> = {}
+  const reports: string[] = []
+
+  if (typeof file !== 'object' || file === null) {
+    return {
+      settings,
+      reports: ['the installation\'s settings.json is not a JSON object;'
+        + ' every scan knob starts at ST\'s own default'],
+    }
+  }
+
+  const nested = (file as { world_info_settings?: unknown }).world_info_settings
+  const source = (typeof nested === 'object' && nested !== null ? nested : file) as Record<string, unknown>
+
+  for (const [key, field] of Object.entries(IMPORTED_NUMBERS)) {
+    if (!Object.hasOwn(source, key)) continue
+    const value = source[key]
+    const [min, max] = NUMERIC_RANGES[field]
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+      reports.push(`${key} is ${JSON.stringify(value) ?? 'undefined'}, not an integer between`
+        + ` ${String(min)} and ${String(max)}; ${field} keeps its default`
+        + ` ${String(DEFAULT_WORLDBOOK_SETTINGS[field])}`)
+      continue
+    }
+    Object.assign(settings, { [field]: value })
+  }
+
+  for (const [key, field] of Object.entries(IMPORTED_BOOLEANS)) {
+    if (!Object.hasOwn(source, key)) continue
+    const value = source[key]
+    if (typeof value !== 'boolean') {
+      reports.push(`${key} is ${JSON.stringify(value) ?? 'undefined'}, not a boolean;`
+        + ` ${field} keeps its default ${String(DEFAULT_WORLDBOOK_SETTINGS[field])}`)
+      continue
+    }
+    Object.assign(settings, { [field]: value })
+  }
+
+  if (Object.hasOwn(source, 'world_info_character_strategy')) {
+    const value = source['world_info_character_strategy']
+    const strategy = typeof value === 'number' ? STRATEGY_BY_NUMBER[value] : undefined
+    if (strategy === undefined) {
+      reports.push(`world_info_character_strategy is ${JSON.stringify(value) ?? 'undefined'}, not one of`
+        + ` ${STRATEGY_BY_NUMBER.map((name, index) => `${String(index)} (${name})`).join(', ')};`
+        + ` insertionStrategy keeps its default ${DEFAULT_WORLDBOOK_SETTINGS.insertionStrategy}`)
+    } else {
+      settings.insertionStrategy = strategy
+    }
+  }
+
+  return { settings, reports }
 }
 
 /**

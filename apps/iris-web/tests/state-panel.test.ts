@@ -12,24 +12,41 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import {
+  ASIDE_FROM,
+  ASIDE_TRACK,
+  ASIDE_YIELD_BELOW,
+  ASIDE_YIELD_QUERY,
+  asideShowing,
   branchPaths,
   changeSentence,
   changedAt,
   changedPaths,
   diffStats,
+  DRAWER_TRACK,
+  DRAWER_TRACK_FROM,
   EMPTY_DIFF,
   filterByName,
   keepChanged,
+  loadAsideOpen,
   loadFoldMemory,
   loadLastTree,
   previewValue,
   RANGED_RIGHT_LIMIT,
+  READING_FLOOR,
   ROUND_QUIET_MS,
   sameValue,
+  saveAsideOpen,
   saveFoldMemory,
   saveLastTree,
+  SIDEBAR_TRACK,
 } from '../src/app/state-panel.ts'
+
+const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 
 test('diffStats marks a new leaf, a changed leaf with both readings, and a removed leaf', () => {
   const before = {
@@ -315,4 +332,139 @@ test('changeSentence renders the old-to-new reading a changed row hovers', () =>
 
 test('the ranged-right limit still separates tallies from notes', () => {
   assert.equal(RANGED_RIGHT_LIMIT, 22)
+})
+
+/* ------------------------------------------------------ the margin's own state */
+
+test('the reader’s collapse survives a remount, because it is read from storage', () => {
+  /*
+   * The remount half of "per device, not per session". `StatePanel` initialises
+   * its state *from* `loadAsideOpen` (pinned below), so a round trip through the
+   * store is exactly what a fresh mount does — a reload, a theme switch that
+   * remounts the tree, tomorrow morning.
+   */
+  const cell = new Map<string, string>()
+  const like = {
+    getItem: (key: string) => cell.get(key) ?? null,
+    setItem: (key: string, value: string) => void cell.set(key, value),
+    removeItem: (key: string) => void cell.delete(key),
+  }
+
+  // Never touched: open, because the margin is the reason a wide window is not
+  // empty. Absence of a record is not a collapsed margin.
+  assert.equal(loadAsideOpen(like), true)
+
+  saveAsideOpen(false, like)
+  assert.equal(loadAsideOpen(like), false, 'a collapsed margin did not survive the remount')
+  // The key is in the `iris.` family, beside `iris.theme` and `iris.reading`,
+  // and in localStorage rather than sessionStorage — a browser review looked for
+  // it by prefix and reported it missing.
+  assert.deepEqual([...cell.keys()], ['iris.state.open'])
+  assert.equal(cell.get('iris.state.open'), 'shut')
+
+  saveAsideOpen(true, like)
+  assert.equal(loadAsideOpen(like), true)
+
+  // A refused store is a default, not a crash: a reader with site data blocked
+  // still gets a working margin.
+  const refusing = {
+    getItem: () => { throw new Error('blocked') },
+    setItem: () => { throw new Error('blocked') },
+    removeItem: () => {},
+  }
+  assert.doesNotThrow(() => saveAsideOpen(false, refusing))
+  assert.equal(loadAsideOpen(refusing), true)
+})
+
+test('the margin yields to the drawer only where the window cannot pay for both', () => {
+  // All four combinations, because the rule is a conjunction and three of them
+  // must leave the reader's choice showing.
+  assert.equal(asideShowing(true, false, false), true)
+  assert.equal(asideShowing(true, true, false), true, 'a wide window pays for both')
+  assert.equal(asideShowing(true, false, true), true, 'a closed drawer costs nothing')
+  assert.equal(asideShowing(true, true, true), false, 'the margin should have yielded')
+  // A reader who folded it away stays folded in every one of them.
+  for (const drawer of [false, true]) {
+    for (const tight of [false, true]) {
+      assert.equal(asideShowing(false, drawer, tight), false)
+    }
+  }
+})
+
+test('yielding cannot write the reader’s choice: nothing on that path can reach storage', () => {
+  /*
+   * The invariant the browser review asked for, in both halves it can fail in.
+   *
+   * `asideShowing` takes no storage and returns a boolean — it *cannot* persist
+   * — but that is only half the guarantee: a component that recomputed the yield
+   * and then "helpfully" remembered it would put the window's decision into a
+   * per-device preference, and the reader would find their margin folded
+   * tomorrow with no idea what folded it. So the second half is pinned on the
+   * component: exactly one call to `saveAsideOpen`, and it is the click.
+   */
+  const panel = readFileSync(join(SRC, 'app', 'StatePanel.tsx'), 'utf8')
+  const writes = [...panel.matchAll(/saveAsideOpen\(/g)]
+  assert.equal(
+    writes.length,
+    1,
+    `${String(writes.length)} calls to saveAsideOpen in StatePanel.tsx; the yield must not be one of them`,
+  )
+  // …and that one call is the toggle's own handler, reading the click's value.
+  assert.match(
+    panel,
+    /const next = !asideOpen\s*\n\s*setAsideOpen\(next\)\s*\n\s*saveAsideOpen\(next\)/,
+    'the one write is no longer the collapse click',
+  )
+  // The stored choice is what a fresh mount starts from, which is what makes the
+  // remount test above a statement about this component.
+  assert.match(panel, /useState\(loadAsideOpen\)/, 'the margin no longer initialises from storage')
+  // And what is on screen is the derived value, not the stored one.
+  assert.match(panel, /asideShowing\(asideOpen, drawerOpen, tight\)/, 'the yield is no longer derived')
+  assert.match(panel, /data-iris-aside=\{showing \? 'open' : 'shut'\}/, 'the attribute is not the derived value')
+})
+
+test('the yield range is derived from the tracks the stylesheets actually declare', () => {
+  /*
+   * Four of these numbers are copies of CSS declarations, and a copy of a
+   * measurement drifts silently — the arithmetic would go on producing a
+   * plausible breakpoint for a layout that had moved. So each one is read back
+   * out of the file that owns it.
+   */
+  const tokens = readFileSync(join(SRC, 'theme', 'tokens.css'), 'utf8')
+  const shell = readFileSync(join(SRC, 'app', 'shell.css'), 'utf8')
+  const panels = readFileSync(join(SRC, 'app', 'panels.css'), 'utf8')
+
+  assert.ok(
+    tokens.includes(`--iris-aside: ${String(ASIDE_TRACK)}px`),
+    `--iris-aside is no longer ${String(ASIDE_TRACK)}px`,
+  )
+  assert.ok(
+    tokens.includes(`--iris-drawer-w: min(${String(DRAWER_TRACK)}px`),
+    `--iris-drawer-w is no longer ${String(DRAWER_TRACK)}px`,
+  )
+  assert.ok(
+    shell.includes(`grid-template-columns: ${String(SIDEBAR_TRACK)}px minmax(0, 1fr)`),
+    `the sidebar track is no longer ${String(SIDEBAR_TRACK)}px`,
+  )
+  assert.ok(
+    panels.includes(`@media (min-width: ${String(ASIDE_FROM)}px)`),
+    `the margin no longer appears at ${String(ASIDE_FROM)}px`,
+  )
+
+  // The arithmetic itself: at the boundary the reading column is exactly the
+  // floor, so the yield applies strictly below it.
+  assert.equal(ASIDE_YIELD_BELOW, SIDEBAR_TRACK + ASIDE_TRACK + DRAWER_TRACK + READING_FLOOR)
+  assert.equal(DRAWER_TRACK_FROM, SIDEBAR_TRACK + DRAWER_TRACK + READING_FLOOR)
+  assert.ok(
+    panels.includes(`@media (min-width: ${String(DRAWER_TRACK_FROM)}px)`),
+    `the drawer no longer becomes a track at ${String(DRAWER_TRACK_FROM)}px - one reading floor for both flanks`,
+  )
+  assert.equal(ASIDE_YIELD_BELOW - SIDEBAR_TRACK - ASIDE_TRACK - DRAWER_TRACK, READING_FLOOR)
+  // The measured case that started this: 1440 with all three flanks up.
+  assert.ok(1440 < ASIDE_YIELD_BELOW, '1440px must be inside the yield range, it was measured at 539px of prose')
+  assert.equal(
+    ASIDE_YIELD_QUERY,
+    `(min-width: ${String(ASIDE_FROM)}px) and (max-width: ${String(ASIDE_YIELD_BELOW - 1)}px)`,
+    'the media query and the arithmetic have come apart',
+  )
 })

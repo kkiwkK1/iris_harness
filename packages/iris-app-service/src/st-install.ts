@@ -16,6 +16,8 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 
+import { importWorldbookSettings, type WorldbookImport } from './worldbook-settings.ts'
+
 /**
  * SillyTavern's own filename rule, mirrored.
  *
@@ -173,6 +175,54 @@ export class StInstall {
     } catch {
       return undefined
     }
+  }
+
+  /**
+   * The world-info scan knobs the installation is configured with.
+   *
+   * Read once, when a profile's settings file is first created, so that a user
+   * who tuned `world_info_depth` in SillyTavern does not have to tune it again
+   * here before their books fire the way they are used to. Never a sync: see
+   * `DEVIATIONS.md` §21.
+   *
+   * **Every kind of nothing reports a sentence rather than an empty answer.**
+   * No install configured is the exception — nothing was looked for, so there
+   * is nothing to say. But an install that is there and whose `settings.json`
+   * cannot be read or parsed produces a knob table identical to "the user runs
+   * ST's defaults", and those are different facts: one of them means the
+   * migration silently did not happen.
+   * @returns the knobs to seed with, and a line per key that could not be taken.
+   */
+  async worldInfoSettings(): Promise<WorldbookImport> {
+    if (this.#dir === undefined) return { settings: {}, reports: [] }
+
+    const path = join(this.#dir, 'settings.json')
+    let text: string
+    try {
+      text = await readFile(path, 'utf8')
+    } catch {
+      return {
+        settings: {},
+        reports: [`${path} could not be read, so the world-info scan settings were not imported`
+          + " from it; this profile starts on ST's own defaults"],
+      }
+    }
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text) as unknown
+    } catch {
+      // Distinct from unreadable on purpose, and the reason is the same one
+      // `book` gives: SillyTavern may be mid-write, in which case half a file
+      // parses as nothing and the user's settings are perfectly fine.
+      return {
+        settings: {},
+        reports: [`${path} is not valid JSON — SillyTavern may have been writing it — so the`
+          + " world-info scan settings were not imported; this profile starts on ST's own defaults"],
+      }
+    }
+
+    return importWorldbookSettings(parsed)
   }
 }
 

@@ -87,7 +87,7 @@
    eight blossoms without the accent appearing eight times. */
 .iris-branch__flower--open {
   background: var(--iris-blush);
-  border: 1px solid var(--iris-rule);
+  border: var(--iris-hairline) solid var(--iris-rule);
   box-sizing: border-box;
 }
 
@@ -353,10 +353,11 @@
  * media query that has to *rescue* the layout is one that fails at every width
  * the author did not think to test.
  *
- * 1200px is the floor, and it is arithmetic rather than a round number:
- * 272 sidebar + 392 drawer leaves 536px of reading area, which is about 520 of
- * text once the two 46px flanks come off — a book measure, and the narrowest
- * this column has ever been asked to hold prose at.
+ * 1304px is the floor, and it is arithmetic rather than a round number:
+ * 272 sidebar + 392 drawer + the 640px reading floor the variable margin also
+ * yields for (`state-panel.ts`, `DRAWER_TRACK_FROM`). The first version said
+ * 1200 and left 536px — the drawer was allowed to squeeze the column below the
+ * width the margin was forbidden to, so the two flanks now share one number.
  *
  * The z rung is unchanged either way (`theme/tokens.css`). It still matters in
  * the column form, where nothing overlaps: the cast shadow has to fall **on**
@@ -390,7 +391,7 @@
   visibility: visible;
 }
 
-@media (min-width: 1200px) {
+@media (min-width: 1304px) {
   /*
    * The column form. Everything the overlay form set has to be unset, which is
    * the cost of choosing the safe base rule — and it is the right cost: the
@@ -590,7 +591,12 @@
 .iris-appearance__sheet {
   display: block;
   height: 22px;
-  border: 1px solid;
+  /* No colour in the shorthand on purpose: `AppearanceCard.tsx` sets this
+     preview's `borderColor` inline from the preset's own `--iris-rule`, so each
+     of the three cells shows the rule colour of the theme it offers rather than
+     of the one in force. Only the width belongs to the shell, and it is the
+     same hairline every other panel edge is drawn with. */
+  border: var(--iris-hairline) solid;
   border-radius: 6px;
 }
 
@@ -815,8 +821,19 @@
   }
 
   /*
+   * The dismiss scrim belongs to the sliding sidebar, so it lives exactly where
+   * the sidebar slides — `shell.css` keeps it off everywhere else and says what
+   * a scrim at a width with no overlay costs. This is also the only interval
+   * where the toggle above exists, so it is the only one where a reader can put
+   * the sidebar into the state the scrim answers for.
+   */
+  .iris-scrim {
+    display: block;
+  }
+
+  /*
    * Nothing about the drawer here. It is a sliding overlay by default and only
-   * becomes a column above 1200px, so a phone already gets the right form —
+   * becomes a column above 1304px, so a phone already gets the right form —
    * this block used to have to put it back, which is the inverted shape the
    * drawer's own comment argues against.
    */
@@ -999,6 +1016,16 @@
  * Hidden below 1360px, unchanged: a 120px column of key/value pairs would be
  * worse than the emptiness it replaced, and the collapse rail is a reader's
  * choice rather than a fallback for a window with no room.
+ *
+ * **The 让位 rule is not here, and could not be.** Between 1360px and 1540px an
+ * open drawer leaves the reading column under 640px (measured: 539px at 1440),
+ * so the margin stands down to its rail — but collapsed, this panel does not
+ * render its tree *at all* (`StatePanel.tsx`: the 34-row branch is the expensive
+ * part), so a CSS rule that only narrowed the track would squeeze a 236px tree
+ * into 36px and produce the sideways scroll this margin forbids of itself. The
+ * decision therefore lives in `state-panel.ts` (`asideShowing`,
+ * `ASIDE_YIELD_QUERY`) and reaches this stylesheet as the same
+ * `data-iris-aside='shut'` a reader's own click writes.
  */
 .iris-aside {
   display: none;
@@ -1538,7 +1565,7 @@
 .iris-prompt__slice {
   /* A part is never allowed to round to nothing: it exists, so it is drawn. */
   min-width: 1px;
-  border-right: 1px solid var(--iris-bg-page);
+  border-right: var(--iris-hairline) solid var(--iris-bg-page);
 }
 
 .iris-prompt__slice--system {

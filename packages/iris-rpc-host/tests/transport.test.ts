@@ -8,6 +8,7 @@ import type { IrisEvent, RpcResponseFrame } from '@iris/protocol'
 import { WebSocket } from 'ws'
 
 import IrisRpcHost, { type Config } from '../src/index.ts'
+import { onFetchablePort } from '../../iris-app-service/tests/support/fetchable-port.ts'
 
 /**
  * The transport, exercised over a real socket.
@@ -17,6 +18,28 @@ import IrisRpcHost, { type Config } from '../src/index.ts'
  * content-type gate, the fact that a malformed frame answers instead of
  * disconnecting, and that disposing the plugin releases both routes.
  */
+
+/**
+ * Boot the carrier on a port `fetch` will actually talk to.
+ *
+ * `port: 0` can hand out one of the ports WHATWG Fetch refuses outright, and
+ * the resulting `bad port` reads as a host bug rather than as the client
+ * declining to dial — it failed this file once in six paired full-suite runs.
+ * The table and the retry live in
+ * `iris-app-service/tests/support/fetchable-port.ts`, shared with
+ * every other test that binds an ephemeral port and then fetches itself; the
+ * retry is a re-bind rather than a search for a free port, because looking one
+ * up and then claiming it leaves a window in which somebody else claims it.
+ * @param ctx - the context to plug the carrier into.
+ * @returns the port it settled on.
+ */
+async function startCarrier(ctx: Context): Promise<number> {
+  const { port } = await onFetchablePort(async () => {
+    const fiber = await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    return { value: fiber, port: ctx.webServer.port, release: () => fiber.dispose() }
+  })
+  return port
+}
 
 /** A booted host and the facts a test needs to talk to it. */
 interface Host {
@@ -29,12 +52,12 @@ interface Host {
 /** Boot a Context with the carrier and the transport, disposed when the test ends. */
 async function startHost(t: TestContext, config: Partial<Config> = {}): Promise<Host> {
   const ctx = new Context()
-  await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+  const port = await startCarrier(ctx)
   await ctx.plugin(IrisRpcHost, { heartbeatMs: 0, ...config })
   t.after(async () => { await ctx.fiber.dispose() })
 
-  const origin = `http://127.0.0.1:${String(ctx.webServer.port)}`
-  return { ctx, rpc: ctx.irisRpc, origin, wsUrl: `ws://127.0.0.1:${String(ctx.webServer.port)}${ctx.irisRpc.eventsPath}` }
+  const origin = `http://127.0.0.1:${String(port)}`
+  return { ctx, rpc: ctx.irisRpc, origin, wsUrl: `ws://127.0.0.1:${String(port)}${ctx.irisRpc.eventsPath}` }
 }
 
 /** POST one raw body, so a test can send frames the client library would refuse to build. */
@@ -255,11 +278,13 @@ test('an upgrade from an explicitly allowed origin is accepted', async (t) => {
 
 test('disposing the plugin releases both routes and detaches every page', async (t) => {
   const ctx = new Context()
-  await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+  // Its own boot rather than `startHost`, because this test disposes the
+  // transport's fiber while leaving the carrier up — but through the same
+  // blocked-port guard, since the assertion below is a `fetch`.
+  const port = await startCarrier(ctx)
   const fiber = await ctx.plugin(IrisRpcHost, { heartbeatMs: 0 })
   t.after(async () => { await ctx.fiber.dispose() })
 
-  const port = ctx.webServer.port
   const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/iris/events`)
   await once(socket, 'open')
 
@@ -277,22 +302,67 @@ test('disposing the plugin releases both routes and detaches every page', async 
   await response.arrayBuffer()
 })
 
+/** Ticks a live page must survive for this test to have seen the loop repeat. */
+const HEARTBEAT_TICKS = 3
+
+/**
+ * How long a run may take before the *heartbeat itself* is declared missing.
+ *
+ * A smoke bound, in 21eb3cc's sense: it is 250× the 20 ms period, so it says
+ * nothing about the machine's speed and everything about whether the timer
+ * exists. Its only job is to fail a dead heartbeat instead of hanging the file
+ * for ever — `node --test` puts no deadline on a test that simply never
+ * resolves, and "the suite hung" is the least diagnosable red there is.
+ */
+const HEARTBEAT_SMOKE_MS = 5000
+
 test('the heartbeat probes a live page without dropping it', async (t) => {
-  // Worth a real timer: a heartbeat that mistakes a healthy socket for a dead
-  // one would terminate every connected page on a fixed interval, and the
-  // symptom — a UI that reconnects every thirty seconds — looks like a network
-  // problem rather than a bug here.
+  // A heartbeat that mistakes a healthy socket for a dead one would terminate
+  // every connected page on a fixed interval, and the symptom — a UI that
+  // reconnects every thirty seconds — looks like a network problem rather than a
+  // bug here. So the invariant is *survives repeated probing*, and the way to
+  // ask that is to count probes, not to sleep.
+  //
+  // **This used to sleep 80 ms after the first ping and then assert OPEN**, and
+  // that made the pass conditional on the machine: 80 ms of wall clock is four
+  // ticks on an idle box and an unknown number under a parallel suite, so the
+  // test's own premise moved with the load. Waiting for `HEARTBEAT_TICKS` pings
+  // asks the same question in the mechanism's unit — a broken `#probe`
+  // terminates the socket on its second tick, so the third ping never arrives
+  // — and a slow machine only makes this test slower, never redder.
   const host = await startHost(t, { heartbeatMs: 20 })
   const socket = await connect(host)
   t.after(() => { socket.close() })
 
-  const pings = once(socket, 'ping')
-  await pings
+  let pings = 0
+  const probed = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(
+      () => { reject(new Error(`only ${String(pings)} pings in ${String(HEARTBEAT_SMOKE_MS)}ms: no heartbeat`)) },
+      HEARTBEAT_SMOKE_MS,
+    )
+    const done = (error?: Error): void => {
+      clearTimeout(timer)
+      socket.off('ping', onPing)
+      socket.off('close', onClose)
+      if (error === undefined) resolve()
+      else reject(error)
+    }
+    const onPing = (): void => {
+      pings += 1
+      if (pings >= HEARTBEAT_TICKS) done()
+    }
+    // The failing case, named rather than left to time out: the hub terminated a
+    // socket that had answered every ping.
+    const onClose = (): void => { done(new Error(`the heartbeat dropped a live page after ${String(pings)} pings`)) }
+    socket.on('ping', onPing)
+    socket.on('close', onClose)
+  })
+  await probed
 
-  await new Promise(resolve => setTimeout(resolve, 80))
   assert.equal(socket.readyState, socket.OPEN, 'a page that answers its pings stays attached')
   assert.equal(host.rpc.connections, 1)
 
+  // And it is still a working stream, not merely an undropped handle.
   const arrival = nextEvent(socket)
   host.rpc.broadcast({ type: 'chats.updated', chats: [] })
   assert.deepEqual(await arrival, { type: 'chats.updated', chats: [] })

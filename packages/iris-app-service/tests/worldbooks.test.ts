@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { isSafeId, toId } from '../src/paths.ts'
 import { charWorldbookNames, toWorldbookEntry, WorldbookStore } from '../src/worldbooks.ts'
@@ -45,8 +45,34 @@ function storedEntry(overrides: Record<string, unknown> = {}): Record<string, un
   }
 }
 
-async function fixture(books: Record<string, Record<string, unknown>>): Promise<WorldbookStore> {
+/**
+ * Every fixture directory this file has created, in order.
+ *
+ * Recorded so the last test can ask whether *this run's* fixtures were cleaned
+ * up. It used to sweep `tmpdir()` for the `iris-worlds-` prefix instead, and
+ * that is a different question with the same answer most of the time: the
+ * prefix belongs to every process running this file, so two suites in parallel
+ * deleted each other's live fixtures. Measured: five rounds of two concurrent
+ * runs of this file, five rounds in which one of the two failed —
+ * `EPERM: operation not permitted, rmdir 'C:\…\iris-worlds-lOfOAY\worlds'`,
+ * a Windows refusal to remove a directory another process still has open.
+ */
+const created: string[] = []
+
+/**
+ * A world-book store over a temporary directory that removes itself.
+ * @param t - the test that owns the fixture; its `after` deletes the directory,
+ *   so ownership is per test rather than per prefix.
+ * @param books - book name to its entries, as a real file stores them.
+ * @returns a store rooted at the fixture's `worlds` directory.
+ */
+async function fixture(
+  t: TestContext,
+  books: Record<string, Record<string, unknown>>,
+): Promise<WorldbookStore> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-worlds-'))
+  created.push(dir)
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
   await mkdir(join(dir, 'worlds'), { recursive: true })
   for (const [name, entries] of Object.entries(books)) {
     await writeFile(join(dir, 'worlds', `${name}.json`), JSON.stringify({ entries }), 'utf8')
@@ -56,8 +82,8 @@ async function fixture(books: Record<string, Record<string, unknown>>): Promise<
 
 // ------------------------------------------------------------ shape invariants
 
-test('an entry is translated into the shape a card reads, not the shape on disk', async () => {
-  const store = await fixture({ book: { 1: storedEntry() } })
+test('an entry is translated into the shape a card reads, not the shape on disk', async (t) => {
+  const store = await fixture(t, { book: { 1: storedEntry() } })
   const [entry] = await store.get('book')
   assert.ok(entry)
 
@@ -71,11 +97,11 @@ test('an entry is translated into the shape a card reads, not the shape on disk'
   assert.equal(entry.position.role, 'system')
 })
 
-test('three independent booleans collapse into one strategy, in upstream’s order', async () => {
+test('three independent booleans collapse into one strategy, in upstream’s order', async (t) => {
   // `constant` wins over `vectorized` upstream, and an entry can carry both.
   // Testing them one at a time would pass against an implementation that got the
   // precedence backwards.
-  const store = await fixture({
+  const store = await fixture(t, {
     book: {
       1: storedEntry({ uid: 1, constant: true, vectorized: true }),
       2: storedEntry({ uid: 2, constant: false, vectorized: true, displayIndex: 1 }),
@@ -86,8 +112,8 @@ test('three independent booleans collapse into one strategy, in upstream’s ord
   assert.deepEqual(types, ['constant', 'vectorized', 'selective'])
 })
 
-test('zero and “off” are one state on disk and two in the shape a card reads', async () => {
-  const store = await fixture({
+test('zero and “off” are one state on disk and two in the shape a card reads', async (t) => {
+  const store = await fixture(t, {
     book: {
       1: storedEntry({ sticky: 0, cooldown: 3, delay: 0, delayUntilRecursion: false }),
     },
@@ -101,8 +127,8 @@ test('zero and “off” are one state on disk and two in the shape a card reads
   assert.equal(entry.recursion.delay_until, null)
 })
 
-test('probability is resolved rather than passed through with its flag', async () => {
-  const store = await fixture({
+test('probability is resolved rather than passed through with its flag', async (t) => {
+  const store = await fixture(t, {
     book: {
       1: storedEntry({ uid: 1, useProbability: false, probability: 25 }),
       2: storedEntry({ uid: 2, useProbability: true, probability: 25, displayIndex: 1 }),
@@ -115,8 +141,8 @@ test('probability is resolved rather than passed through with its flag', async (
   assert.equal(on?.probability, 25)
 })
 
-test('entries come back in display order, which is not uid order', async () => {
-  const store = await fixture({
+test('entries come back in display order, which is not uid order', async (t) => {
+  const store = await fixture(t, {
     book: {
       7: storedEntry({ uid: 7, comment: 'first', displayIndex: 0 }),
       2: storedEntry({ uid: 2, comment: 'second', displayIndex: 1 }),
@@ -128,8 +154,8 @@ test('entries come back in display order, which is not uid order', async () => {
   assert.deepEqual((await store.get('book')).map(entry => entry.name), ['first', 'second'])
 })
 
-test('a missing book is not-found, and a missing directory is an empty list', async () => {
-  const store = await fixture({})
+test('a missing book is not-found, and a missing directory is an empty list', async (t) => {
+  const store = await fixture(t, {})
   // An installation with no books is a normal state; a named book that is not
   // there is a caller mistake. Reporting the second as an empty book would let a
   // card conclude the user deleted their world info.
@@ -140,8 +166,8 @@ test('a missing book is not-found, and a missing directory is an empty list', as
   assert.deepEqual(await absent.names(), [])
 })
 
-test('a name may not escape the worlds directory', async () => {
-  const store = await fixture({ book: { 1: storedEntry() } })
+test('a name may not escape the worlds directory', async (t) => {
+  const store = await fixture(t, { book: { 1: storedEntry() } })
   // Refused by the id guard rather than by the read failing, so a traversal
   // attempt is rejected as one instead of surfacing as a missing file.
   await assert.rejects(() => store.get('../settings'), /not a valid identifier/u)
@@ -229,15 +255,30 @@ test('cards bind books by a name the store can resolve', { skip: NO_CORPUS }, as
   if (bound > 0) assert.ok(resolved <= bound)
 })
 
-test('the temporary fixtures are cleaned up', async () => {
-  // The fixtures above deliberately outlive their tests — `mkdtemp` without a
-  // registered cleanup — so this sweeps the prefix rather than leaving the
-  // developer's temp directory to grow one directory per run.
-  const base = tmpdir()
-  for (const name of await readdir(base)) {
-    if (name.startsWith('iris-worlds-')) {
-      await rm(join(base, name), { recursive: true, force: true })
-    }
-  }
-  assert.ok(true)
+test('this file leaves none of its own fixtures behind', async () => {
+  /*
+   * Runs last, and asks only about the directories `fixture` created in *this*
+   * process. Each one is removed by the `t.after` of the test that made it, and
+   * node's runner finishes a file's top-level tests in order, so by the time
+   * this one runs every earlier fixture's cleanup has already happened.
+   *
+   * **What this used to do was sweep `tmpdir()` for the `iris-worlds-` prefix
+   * and delete everything it found.** As a cleanup that worked; as a *test* it
+   * asserted `true`. And the prefix is shared by every process running this
+   * file, so two suites at once deleted each other's live fixtures: five rounds
+   * of two concurrent runs, five rounds with one of the two red on
+   * `EPERM … rmdir 'iris-worlds-lOfOAY\worlds'`. A test that deletes another
+   * process's data is not a test with a race in it; it is a race with an
+   * assertion attached.
+   */
+  const survivors = created.filter(dir => existsSync(dir))
+  assert.deepEqual(
+    survivors,
+    [],
+    'these fixture directories outlived the test that created them; something skipped its `t.after`',
+  )
+  // The caliper: an empty `created` would satisfy the assertion above for the
+  // wrong reason — no fixture was ever registered, so nothing could survive.
+  // Six of the tests here build one, and only the corpus tests do not.
+  assert.ok(created.length >= 6, `only ${String(created.length)} fixtures were registered; the sweep saw almost nothing`)
 })
