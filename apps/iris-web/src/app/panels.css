@@ -762,9 +762,28 @@
   border-left: var(--iris-hairline) solid var(--iris-rule);
 }
 
-.iris-choice__option[aria-pressed='true'] {
+/* An unselected option answers to the hand before it is chosen. The **raised**
+   ground rather than the sunken one, because these strips sit on two different
+   grounds: the drawer's page and the usage dialog's card, which *is*
+   `--iris-bg-sunken` — a sunken hover is invisible on half its call sites. */
+.iris-choice__option:hover {
+  color: var(--iris-ink-secondary);
+  background: var(--iris-bg-raised);
+}
+
+/*
+ * The selection is the accent, not the ink.
+ *
+ * It used to be the wash with `--iris-ink` on it, which is the *body* colour —
+ * so the chosen option differed from its neighbours by a tint alone, and on 墨
+ * (where the wash is 12% of a light plum on a near-black ground) that tint is
+ * almost nothing. Plum text on the plum wash is the same one-accent rule the
+ * rest of 「梅花」 follows, and it reads at 5.2:1–5.4:1 in all three themes.
+ */
+.iris-choice__option[aria-pressed='true'],
+.iris-choice__option[aria-pressed='true']:hover {
   background: var(--iris-accent-wash);
-  color: var(--iris-ink);
+  color: var(--iris-accent);
 }
 
 /* ------------------------------------------------------------------ notice */
@@ -2931,6 +2950,13 @@
 /* ------------------------------------------------------------------ usage
    The usage page: profile-wide spend, one line per model.
 
+   Three sheets of paper on the dialog's ground — the figures, the chart with
+   its key, and the conversations — separated by nothing but their own edges.
+   The dialog card itself is `--dsw-alias-bg-layer-2`, which the bridge maps to
+   `--iris-bg-sunken`, so a `--iris-bg-raised` card on it reads as a sheet laid
+   on a desk in all three themes; that is why every box below carries the same
+   ground and the same hairline rather than a shadow or a fill.
+
    Wider than the prompt breakdown's 640px because the chart keeps a legible
    column per time bucket; below that a 30-day range spends its whole measure
    inside a scroller. `min()` so the card still fits a phone, where the
@@ -2945,23 +2971,158 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+  /*
+   * The report scrolls here, and it has to scroll somewhere: the primitive's
+   * dialog card is `overflow: hidden`, so with the `max-height` above it a
+   * report taller than the window was **clipped** — the tail of a long list of
+   * conversations was unreachable rather than reachable by scrolling. 168px is
+   * the dialog's own chrome around this box (header, the body's top margin, the
+   * card's bottom padding) plus a margin, so the scroller ends inside the card
+   * rather than under its edge.
+   */
+  max-height: calc(100vh - 168px);
+  overflow-y: auto;
+  /*
+   * **A container query, and deliberately not a media query.** The three width
+   * breakpoints in these stylesheets are the *shell's* — sidebar, variable
+   * margin, settings drawer — and `tests/breakpoints.test.ts` pins that set,
+   * because a fourth viewport interval is an interval nobody checked those
+   * three flanks in. This page's reflow is not about the window: it is about
+   * how wide this dialog's body turned out to be, which is
+   * `min(880px, 100vw - 48px) - 50px`. So the query below measures the box the
+   * cards actually live in, and adds no interval to that table.
+   */
+  container-type: inline-size;
 }
 
-/* The headline figures. `flex-wrap` and no media query: the row has seven
-   cards and reflows on its own, and a width breakpoint here would be a fourth
-   interval in a shell that documents exactly three (`tests/breakpoints.test.ts`). */
+/* Loading, and the error a failed read reports. Centred and quiet: it is a
+   state, not a reading. */
+.iris-usage__status {
+  margin: 0;
+  padding: 32px 4px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--iris-ink-tertiary);
+}
+
+/* The empty reading is a page of its own, and `.iris-empty`'s 14vh top margin
+   is measured against a window rather than a dialog — inside this card it
+   pushed the sentence off the bottom edge. */
+.iris-usage .iris-empty {
+  margin: 28px auto 12px;
+}
+
+/* --------------------------------------------------------- usage: controls */
+
+/*
+ * One row, two segmented controls: *when* on the left, *what* on the right.
+ * They answer different questions about the same picture, and a column of two
+ * identical strips reads as one control with eight options.
+ *
+ * `space-between` with `flex-wrap`, so a narrow container puts them on two
+ * lines rather than squeezing eight labels into one.
+ */
+.iris-usage__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+}
+
+/* Each strip takes its natural width and **never shrinks**, and its options
+   never break a label over two lines.
+
+   Both halves are measured, not defensive. With the default `flex-shrink: 1`,
+   `space-between` squeezed the strips; with that fixed, `7 days` and `Cache
+   hit` still wrapped, because `.iris-choice__option` is `flex: 1` — every
+   option is one quarter of the strip, and a quarter of the strip's own
+   intrinsic width is narrower than its widest label. `nowrap` is scoped here
+   rather than put on the shared option, because the drawer's other segmented
+   controls sit in a 392px column where wrapping is the lesser failure: their
+   strip is `overflow: hidden` and would clip the label instead. */
+.iris-usage__toolbar > .iris-choice {
+  flex: 0 0 auto;
+}
+
+.iris-usage__toolbar .iris-choice__option {
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ usage: cards */
+
+/*
+ * The headline figures: one sheet for the total, a grid of six beside it.
+ *
+ * Seven equal cards were seven unranked facts. `flex-wrap` and no width query
+ * here either — the hero takes what it needs and the grid takes the rest until
+ * there is less than 320px of rest, at which point it drops below.
+ */
 .iris-usage__cards {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 20px;
+  gap: 10px;
+}
+
+.iris-usage__hero {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-width: 176px;
+  padding: 14px 18px;
+  background: var(--iris-bg-raised);
+  border: var(--iris-hairline) solid var(--iris-rule-faint);
+  border-radius: var(--iris-radius-lg);
+}
+
+/*
+ * The one number this page exists to answer, at 30px.
+ *
+ * Not a weight: this face has exactly two (`tokens.css` — synthetic bold is a
+ * cliff, 600 and 700 render the same bitmap), so every hierarchy on this page
+ * is size, colour and case. `-0.01em` because mono digits at 30px sit slightly
+ * loose against the label under them.
+ */
+.iris-usage__total {
+  font-family: var(--iris-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 30px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  color: var(--iris-ink);
+}
+
+/*
+ * `auto-fit` rather than a column count: the capsules reflow on their own, and
+ * only the last step — one column — needs the query at the foot of this
+ * section.
+ *
+ * **160px, and the number is the difference between a block and a hole.** At
+ * 104px the grid fitted five columns in the dialog's 646px of remainder, which
+ * put five capsules on one row and the sixth alone on a second — a ragged edge
+ * beside a hero card stretched to two rows of empty paper. 160px fits three, so
+ * six capsules are a filled 3 × 2 block at the dialog's own width and a 2 × 3
+ * one when it narrows. Measured in the preview, not reasoned about.
+ */
+.iris-usage__grid {
+  flex: 1 1 320px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
 }
 
 .iris-usage__card {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-width: 88px;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--iris-bg-raised);
+  border: var(--iris-hairline) solid var(--iris-rule-faint);
+  border-radius: var(--iris-radius);
 }
 
 /* Tabular figures, like every other number in this interface: seven cards
@@ -2970,26 +3131,68 @@
   font-family: var(--iris-font-mono);
   font-variant-numeric: tabular-nums;
   font-size: 15px;
+  line-height: 1.2;
   color: var(--iris-ink);
 }
 
-.iris-usage__controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
+/* A label is allowed to take two lines rather than lose its second word: at
+   104px, `UNCACHED INPUT` does not fit one, and an ellipsis on a label removes
+   the only thing that says what the figure is. */
+.iris-usage__card .iris-label,
+.iris-usage__hero .iris-label {
+  line-height: 1.35;
+}
+
+/*
+ * A share as a hairline bar: plum on a plum wash, the page's one accent spent
+ * on the one figure that is a proportion.
+ *
+ * `overflow: hidden` on the track, so the fill's own corners are the track's —
+ * a 3px bar with its own radius reads as a pill floating in a groove.
+ */
+.iris-usage__bar {
+  display: block;
+  height: 3px;
+  margin: 3px 0 1px;
+  border-radius: var(--iris-radius-pill);
+  background: var(--iris-accent-wash);
+  overflow: hidden;
+}
+
+.iris-usage__bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--iris-accent);
+}
+
+/* ------------------------------------------------------------ usage: chart */
+
+/*
+ * The chart and its key are one figure on one sheet: the plot, a hairline, and
+ * the legend under it. The legend is not a paragraph about the chart — it is
+ * its key and its only control — and a floating row of swatches under a bordered
+ * box reads as a second, unrelated thing.
+ *
+ * Positioned, because the hovered column's reading is pinned to **this** box.
+ * It used to be pinned inside the scroller, which put it at the far left of the
+ * content on a 30-day range scrolled right: off screen exactly when the chart
+ * is wide enough to need it.
+ */
+.iris-usage__chart {
+  position: relative;
+  background: var(--iris-bg-raised);
+  border: var(--iris-hairline) solid var(--iris-rule-faint);
+  border-radius: var(--iris-radius-lg);
+  overflow: hidden;
 }
 
 /* **The one layout rule the chart has to honour.** The SVG keeps a real column
    per bucket, so on a narrow window it is wider than the dialog — and it
    scrolls *inside here* rather than making the page scroll sideways. */
 .iris-usage__plot {
-  position: relative;
   overflow-x: auto;
   overflow-y: hidden;
-  background: var(--iris-bg-raised);
-  border: var(--iris-hairline) solid var(--iris-rule-faint);
-  border-radius: var(--iris-radius);
 }
 
 .iris-usage__svg {
@@ -2998,14 +3201,14 @@
 
 /* The axis numerals. 10px is below the body's floor on purpose: these are not
    read, they are referred to — the figures a reader actually reads are the
-   cards above and the tooltip. */
+   cards above and the hovered column's reading. */
 .iris-usage__axis {
   font-family: var(--iris-font-mono);
   font-variant-numeric: tabular-nums;
   font-size: 10px;
 }
 
-/* Pinned to the plot's top-right, out of the way of the lines, which rise to
+/* Pinned to the card's top-right, out of the way of the lines, which rise to
    the left far more often than they end high. */
 .iris-usage__tip {
   position: absolute;
@@ -3040,13 +3243,24 @@
   overflow-wrap: anywhere;
 }
 
+/* A metric that was never billed says so in words, in the space the chart
+   would have taken. */
+.iris-usage__quiet {
+  margin: 0;
+  padding: 36px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--iris-ink-tertiary);
+}
+
 .iris-usage__legend {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 7px 8px;
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 14px;
+  gap: 2px 4px;
 }
 
 .iris-usage__legend-item {
@@ -3055,11 +3269,18 @@
   gap: 6px;
   background: none;
   border: 0;
-  padding: 2px 0;
+  border-radius: var(--iris-radius-pill);
+  padding: 3px 8px;
   cursor: pointer;
   font: inherit;
   font-size: 12px;
   color: var(--iris-ink-secondary);
+}
+
+/* The whole capsule lights, not the text: it is a switch, and the wash is the
+   same one the segmented controls and the conversation rows use. */
+.iris-usage__legend-item:hover {
+  background: var(--iris-accent-wash);
 }
 
 /* A hidden series stays legible rather than fading to nothing: it is still the
@@ -3075,11 +3296,13 @@
 
 .iris-usage__legend-item:focus-visible {
   outline: none;
+  background: var(--iris-accent-wash);
   text-decoration: underline;
 }
 
-/* 10px, so a dashed swatch has room for two dashes — the dash is what tells a
-   seventh model from the first, and one dash is a solid square. */
+/* 14px, so a dashed swatch has room for two dashes — the dash is what tells a
+   seventh model from the first, and the unattributed line from every named one,
+   and one dash is a solid square. */
 .iris-usage__swatch {
   width: 14px;
   height: 3px;
@@ -3091,34 +3314,82 @@
   overflow-wrap: anywhere;
 }
 
-/* The caveats: how much of the reading is a reconstruction, and how much of
-   the corpus was unreadable. `--iris-warn` rather than `--iris-danger`:
-   nothing is broken, the figures above are simply less complete than they look. */
+/* ------------------------------------------------------------ usage: notes */
+
+/*
+ * The caveats, as one line of small type with the sentences on hover.
+ *
+ * No longer `--iris-warn`, and the demotion is the point: two paragraphs of
+ * warm-coloured prose between the chart and the conversations read as an error
+ * message about something that is not an error. What is kept is each caveat's
+ * **count**, at reading contrast — the reconstruction is a fact about the
+ * figures above, and 12 of 12 is a different page from 1 of 400.
+ */
 .iris-usage__note {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--iris-warn);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  font-size: var(--iris-meta-size);
+  line-height: 1.5;
+  color: var(--iris-ink-tertiary);
 }
 
+/* The hint's handle. `cursor: help` because there is nothing to click: the
+   whole sentence is on this element's `title` and on the line's. */
+.iris-usage__why {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: var(--iris-radius-pill);
+  background: var(--iris-accent-wash);
+  color: var(--iris-accent);
+  font-size: 10px;
+  cursor: help;
+}
+
+/* ------------------------------------------------------------ usage: chats */
+
+/* An `h3` with a label's treatment; its own margin, because the label sits
+   between two sheets rather than at the top of a drawer section. */
+.iris-usage__head {
+  margin: 4px 0 0;
+}
+
+/*
+ * The per-conversation subtotals: one sheet, hairline-separated rows.
+ *
+ * Four named areas rather than four bare columns, so the narrow arrangement at
+ * the foot of this section is a re-order of the same cells and not a second
+ * markup.
+ */
 .iris-usage__chats {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
+  background: var(--iris-bg-raised);
+  border: var(--iris-hairline) solid var(--iris-rule-faint);
+  border-radius: var(--iris-radius-lg);
+  overflow: hidden;
+}
+
+.iris-usage__chats li + li {
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
 }
 
 .iris-usage__chat {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-  align-items: baseline;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(56px, 92px) auto;
+  grid-template-areas: 'title count hit total';
+  align-items: center;
+  gap: 4px 12px;
   width: 100%;
   background: none;
   border: 0;
-  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
-  padding: 6px 2px;
+  padding: 9px 12px;
   cursor: pointer;
   font: inherit;
   font-size: 13px;
@@ -3126,22 +3397,76 @@
   text-align: left;
 }
 
-.iris-usage__chat:hover {
-  background: var(--iris-bg-sunken);
-}
-
+.iris-usage__chat:hover,
 .iris-usage__chat:focus-visible {
   outline: none;
-  background: var(--iris-bg-sunken);
+  background: var(--iris-accent-wash);
 }
 
 .iris-usage__chat-title {
+  grid-area: title;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.iris-usage__chat-count {
+  grid-area: count;
+}
+
+/* The bar takes the column and the percentage keeps its own width, so the
+   percentages line up down the list however long the bars are. */
+.iris-usage__chat-hit {
+  grid-area: hit;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.iris-usage__chat-hit .iris-usage__bar {
+  flex: 1 1 auto;
+  min-width: 20px;
+  margin: 0;
+}
+
 .iris-usage__chat-total {
+  grid-area: total;
   font-family: var(--iris-font-mono);
   font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* --------------------------------------------------------- usage: narrow */
+
+/*
+ * The one width rule on this page, and it is measured against the **dialog
+ * body** rather than the window (see `.iris-usage` for why it has to be).
+ *
+ * 560px of container is a window of about 656px: the body is the dialog's
+ * `min(880px, 100vw - 48px)` less its own 48px of side padding and 2px of
+ * border. Below it there is no arrangement in which six capsules and a
+ * four-column row are still readable, so the capsules become a column and each
+ * conversation takes two lines.
+ */
+@container (max-width: 560px) {
+  .iris-usage__hero {
+    flex: 1 1 100%;
+  }
+
+  .iris-usage__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Each strip takes the width; its options already share it. */
+  .iris-usage__toolbar > .iris-choice {
+    flex: 1 1 100%;
+  }
+
+  .iris-usage__chat {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'title total'
+      'count hit';
+  }
 }

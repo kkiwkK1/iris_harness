@@ -1053,6 +1053,24 @@ export const en = {
   usageTurnCount: '{n} generations',
   usageUndated: '{n} of {turns} generations carried no timestamp and are placed at their conversation’s last activity.',
   usageSkipped: '{n} conversation files could not be read and are not counted.',
+  /*
+   * The caveat line and its hint. The **short** forms are what the page shows —
+   * one line of small text under the chart — and the long forms above are what
+   * the hint carries, unchanged. The count stays in the short form on purpose:
+   * "some of this is reconstructed" is not a reading, and the whole reason
+   * these two lines exist is that a reader can tell 12 of 12 from 1 of 400.
+   */
+  usageUndatedShort: '{n}/{turns} undated',
+  usageSkippedShort: '{n} unreadable',
+  usageBasisAria: 'What these figures cover',
+  /*
+   * The hit-rate card's hint, on the one number here whose denominator is not
+   * the card beside it — `notes/apps/iris-web/DEVIATIONS.md` 60 records the
+   * confusion this sentence exists to prevent.
+   */
+  usageHitRateBasis: 'The share of prompt tokens the cache served, over the generations whose provider reported a cache bucket. Routes silent about caching are not in the denominator, so this is not the cache hit over the billed input beside it.',
+  /** Nothing to draw, because this figure was never billed — not a chart of zeros. */
+  usageChartEmpty: 'Nothing was billed to this figure in this range.',
 } as const
 
 /** The key union: every translation has to cover exactly these. */
@@ -1974,6 +1992,11 @@ export const zh: Record<StringKey, string> = {
   usageTurnCount: '{n} 次生成',
   usageUndated: '{turns} 次生成中有 {n} 次没有时间戳，被记在其对话最后活动的时间上。',
   usageSkipped: '有 {n} 个对话文件读不出来，未计入。',
+  usageUndatedShort: '{n}/{turns} 次无时间戳',
+  usageSkippedShort: '{n} 个文件未读',
+  usageBasisAria: '这些数字的口径',
+  usageHitRateBasis: '缓存替你省下的提示 token 占比，只在「提供方报告了缓存桶」的那些生成上计算。对缓存沉默的线路不进分母，所以这不是旁边那张「计费输入」的命中比例。',
+  usageChartEmpty: '这段时间这个指标没有产生计费。',
 }
 
 /** Both dictionaries, keyed by language. */

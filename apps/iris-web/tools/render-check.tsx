@@ -1033,10 +1033,46 @@ async function main(): Promise<void> {
     `the seeded cache share is ${usageShare}%, which no longer exercises the computation`,
   )
 
+  /*
+   * `range` and `onRange` are the report's now, and that is why they are handed
+   * over here: the page's control row carries the range switch and the metric
+   * switch side by side, so the row lives in the half that draws — which also
+   * means this check reaches the range control for the first time. It used to
+   * sit in `UsagePanel`, inside the portal `react-dom/server` refuses, so
+   * nothing rendered it anywhere.
+   */
   const usagePage = render(
     wired.store,
     slots.core,
-    <UsageReport summary={usage} onOpenChat={() => { /* not clicked here */ }} />,
+    <UsageReport
+      summary={usage}
+      range="all"
+      onRange={() => { /* not clicked here */ }}
+      onOpenChat={() => { /* not clicked here */ }}
+    />,
+  )
+
+  /*
+   * The control row: both switches, and the one option each that is pressed.
+   * `aria-pressed` is the whole state of a segmented control here — there is no
+   * selected *class* to look for — so a row that rendered every option unpressed
+   * would look identical in a screenshot and be a control with no reading.
+   */
+  assert.match(usagePage, /class="iris-usage__toolbar"/, 'the control row did not render')
+  const switches = usagePage.match(/class="iris-choice"/g)?.length ?? 0
+  assert.equal(switches, 2, `the row holds ${String(switches)} segmented controls, not the range and the metric`)
+  // Read as "this button is pressed", not as a count of pressed buttons: the
+  // legend's entries are `aria-pressed` too, so a total would be pinned to how
+  // many models the seed happens to carry.
+  assert.match(
+    usagePage,
+    /<button[^>]*aria-pressed="true"[^>]*>All<\/button>/,
+    'the range switch does not show the range it was handed as the one in force',
+  )
+  assert.match(
+    usagePage,
+    /<button[^>]*aria-pressed="true"[^>]*>Total<\/button>/,
+    'the metric switch does not show its own default as the one in force',
   )
 
   // The chart itself. A `<path>` per showing line, and the axis it is scaled
@@ -1115,10 +1151,31 @@ async function main(): Promise<void> {
   const quietPage = render(
     wired.store,
     slots.core,
-    <UsageReport summary={quiet.summary} onOpenChat={() => { /* not clicked here */ }} />,
+    <UsageReport
+      summary={quiet.summary}
+      range="today"
+      onRange={() => { /* not clicked here */ }}
+      onOpenChat={() => { /* not clicked here */ }}
+    />,
   )
   assert.doesNotMatch(quietPage, /class="iris-usage__svg"/, 'an empty range still drew a chart')
   assert.ok(quietPage.includes('Nothing has been billed'), 'the empty range does not say so')
+  /*
+   * The way out is still on the page. An empty reading is the one state where
+   * the range switch is the only control that can do anything, and it used to be
+   * the panel's — outside this render — so nothing established that a reader
+   * looking at "nothing has been billed" is not looking at a dead end.
+   */
+  assert.match(quietPage, /class="iris-usage__toolbar"/, 'the empty reading has no range switch to leave by')
+  assert.match(
+    quietPage,
+    /<button[^>]*aria-pressed="true"[^>]*>Today<\/button>/,
+    'the empty reading does not say which range it is empty for',
+  )
+  // And nothing else: a metric switch over a chart that was not drawn is a
+  // control with nothing to control.
+  const quietSwitches = quietPage.match(/class="iris-choice"/g)?.length ?? 0
+  assert.equal(quietSwitches, 1, 'the empty reading offers a switch for a chart it did not draw')
   // The denominator is still reported: "nothing" has to read as a reading of
   // the corpus rather than as a failure to look at it.
   assert.ok(
