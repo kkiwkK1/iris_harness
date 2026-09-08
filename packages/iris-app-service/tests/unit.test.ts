@@ -8,6 +8,7 @@ import type { CharacterCard } from '@iris/character'
 
 import { applyCardOverrides, buildPrompt, DEFAULT_PRESET, scanEntriesOf } from '../src/prompt.ts'
 import { fileFor, isSafeId, toId, uniqueId } from '../src/paths.ts'
+import { presetScalarPatch } from '../src/service.ts'
 import { sanitize } from '../src/settings.ts'
 
 /**
@@ -311,4 +312,70 @@ test('every real SillyTavern filename is a usable id', {
 
   assert.ok(seen > 20, `read ${String(seen)} filenames from the library`)
   assert.deepEqual(rejected, [], `ids Iris would refuse to open: ${rejected.slice(0, 5).join(', ')}`)
+})
+
+test('a card’s {{original}} keeps the preset’s prompt instead of erasing it', () => {
+  const preset = {
+    prompts: [
+      { identifier: 'main', role: 'system' as const, content: 'PRESET RULES.' },
+      { identifier: 'jailbreak', role: 'system' as const, content: 'PRESET WRAP-UP.' },
+    ],
+  }
+  const overridden = applyCardOverrides(preset, card({
+    system_prompt: '{{original}}\n\nAnd Aria never breaks character.',
+    post_history_instructions: 'Before finishing: {{original}}',
+  }))
+
+  // Upstream supplies the replaced text to the substitution as `original`
+  // (`openai.js:1491-1492` reaching `PromptManager.js:1281-1284`), so a card
+  // that writes the macro EXTENDS the preset rather than replacing it. Without
+  // it the preset's main prompt vanishes silently and completely, which is the
+  // failure this pins.
+  assert.equal(
+    overridden.prompts.find(item => item.identifier === 'main')?.content,
+    'PRESET RULES.\n\nAnd Aria never breaks character.',
+  )
+  assert.equal(
+    overridden.prompts.find(item => item.identifier === 'jailbreak')?.content,
+    'Before finishing: PRESET WRAP-UP.',
+  )
+})
+
+test('{{original}} yields once, and a card without it still replaces outright', () => {
+  const preset = { prompts: [{ identifier: 'main', role: 'system' as const, content: 'ORIGINAL' }] }
+
+  // One shot, as upstream's registry gives it: the second read falls through to
+  // `@iris/macro`'s builtin, which yields '' — so the text is left for the
+  // macro pass rather than filled a second time here.
+  const twice = applyCardOverrides(preset, card({ system_prompt: 'A {{original}} B {{original}} C' }))
+  assert.equal(twice.prompts[0]?.content, 'A ORIGINAL B {{original}} C')
+
+  // And the ordinary case is untouched: no macro means a plain replacement,
+  // which is what every card in the local corpus actually does.
+  const plain = applyCardOverrides(preset, card({ system_prompt: 'The card wins.' }))
+  assert.equal(plain.prompts[0]?.content, 'The card wins.')
+})
+
+test('presetScalarPatch carries squash_system_messages, which is a boolean', () => {
+  // A checkbox in upstream's `settingsToUpdate` (`openai.js:380`). The numeric
+  // loop's `typeof value === 'number'` guard dropped it silently, so switching
+  // presets left the previous preset's squash running over the new prompt list.
+  assert.equal(
+    presetScalarPatch({ prompts: [], squash_system_messages: true })['squashSystemMessages'],
+    true,
+  )
+  // `false` is a value, not an absence — the operator's own preset ships it.
+  assert.equal(
+    presetScalarPatch({ prompts: [], squash_system_messages: false })['squashSystemMessages'],
+    false,
+  )
+  // Garbage is skipped rather than refused, like every other field here.
+  assert.equal(
+    Object.hasOwn(presetScalarPatch({ prompts: [], squash_system_messages: 'yes' }), 'squashSystemMessages'),
+    false,
+  )
+  assert.equal(
+    Object.hasOwn(presetScalarPatch({ prompts: [] }), 'squashSystemMessages'),
+    false,
+  )
 })

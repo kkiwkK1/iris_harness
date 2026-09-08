@@ -403,7 +403,12 @@ export class TurnDriver {
         ? seedText
         : seedText + postfix,
       ...postfix === undefined || postfix.length === 0 ? {} : { postfix },
-      ...nudge === undefined ? {} : { tail: { role: 'user' as const, text: nudge } },
+      // System, as upstream builds it: the `continueNudge` promptObject
+      // declares `role: 'system'` and `system_prompt: true`
+      // (`openai.js:899-903`). It rode as `user` here, cited to those same
+      // lines — see {@link toTailMessage} for why the role is the instruction's
+      // authority rather than a formatting choice.
+      ...nudge === undefined ? {} : { tail: { role: 'system' as const, text: nudge } },
     })
   }
 
@@ -547,9 +552,11 @@ function toMessage(message: PipelineMessage) {
  * Turn the tail message into the harness message type, its role intact.
  *
  * The tail is a utility prompt that closes the request — a continue's nudge
- * (user, upstream's `continueNudge`, `openai.js:899-904`) or an impersonation's
- * instruction (system, upstream's `impersonate` control prompt, `openai.js:1373`
- * built role system and `:1213-1216` appended after the whole chat history).
+ * (system, upstream's `continueNudge` promptObject at `openai.js:899-903`,
+ * which declares `role: 'system'` and `system_prompt: true`) or an
+ * impersonation's instruction (system, upstream's `impersonate` control prompt,
+ * `openai.js:1373` built role system and `:1213-1216` appended after the whole
+ * chat history).
  * The role IS the instruction's authority: upstream delivers the impersonation
  * prompt as a system message, and flattening it to the user's voice makes it
  * one more user turn the model talks past — for a strong preset that reads as

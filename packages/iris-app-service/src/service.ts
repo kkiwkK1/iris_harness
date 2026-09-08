@@ -96,16 +96,49 @@ const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
  * SillyTavern's own words (`openai.js:104-110`, the shipped defaults of
  * `impersonation_prompt` / `continue_nudge_prompt`).
  *
- * Upstream keeps both in `oai_settings` where they are user-editable text; this
- * host has no settings surface for them yet, so the defaults stand in until one
- * exists. `{{lastChatMessage}}` in the nudge is upstream's own substitution
- * slot (`openai.js:902`), filled with the trimmed text being continued.
+ * These are the **defaults**, not the values. Both fields ride in the preset
+ * file (`settingsToUpdate`, `openai.js:357` and `:362`), and a real preset
+ * tunes them: measured on the two presets in the local profile, one carries a
+ * 457-character impersonation prompt and a 456-character continue nudge, the
+ * other a 210-character impersonation prompt. {@link utilityPromptOf} reads
+ * them off the active preset and falls back here.
+ *
+ * `{{lastChatMessage}}` in the nudge is upstream's own substitution slot
+ * (`openai.js:902`), filled with the trimmed text being continued.
  */
 const IMPERSONATION_PROMPT =
   '[Write your next reply from the point of view of {{user}}, using the chat history so far as a'
   + ' guideline for the writing style of {{user}}. Don\'t write as {{char}} or system. Don\'t'
   + ' describe actions of {{char}}.]'
 const CONTINUE_NUDGE_PROMPT = '[Continue your last message without repeating its original content.]'
+
+/**
+ * One utility prompt, as the active preset spells it.
+ *
+ * Upstream's own read is `oai_settings.<field>`, and a preset switch overwrites
+ * that field from the file — so the preset's text *is* the value, and the
+ * shipped constant is only what an untouched install happens to hold.
+ *
+ * **An empty string is a value, not an absence.** Upstream guards
+ * `impersonation_prompt` explicitly (`openai.js:1362`,
+ * `oai_settings.impersonation_prompt ? substituteParams(...) : ''`) — a preset
+ * that blanks the field sends no instruction, and falling back to the default
+ * there would put words in the request the user deleted on purpose. Both
+ * presets in the local profile set `new_chat_prompt` to exactly that, so the
+ * distinction is real rather than theoretical.
+ * @param preset - the active preset.
+ * @param field - the preset field to read.
+ * @param fallback - the shipped default, for a preset that omits the key.
+ * @returns the prompt text; `''` when the preset deliberately blanks it.
+ */
+function utilityPromptOf(
+  preset: ChatCompletionPreset,
+  field: 'impersonation_prompt' | 'continue_nudge_prompt',
+  fallback: string,
+): string {
+  const value = preset[field]
+  return typeof value === 'string' ? value : fallback
+}
 
 /**
  * The Iris generation kinds in upstream's vocabulary — the words the preset's
@@ -3042,16 +3075,30 @@ export class IrisAppService {
     }
 
     // The two utility prompts that close a continue / impersonation request,
-    // expanded against this chat before the driver is asked for anything. The
-    // macro pass runs first, then the explicit slots, so text inserted into
-    // `{{lastChatMessage}}` is never re-scanned for braces.
-    const nudge = request.kind === 'continue'
-      ? entry.substitute(CONTINUE_NUDGE_PROMPT)
-        .replace('{{lastChatMessage}}', seedTextOf(seed).trim())
-      : undefined
-    const instruction = request.kind === 'impersonate'
-      ? entry.substitute(IMPERSONATION_PROMPT)
-      : undefined
+    // read off the active preset and expanded against this chat before the
+    // driver is asked for anything. The macro pass runs first, then the
+    // explicit slots, so text inserted into `{{lastChatMessage}}` is never
+    // re-scanned for braces.
+    //
+    // **`continue_prefill` suppresses the nudge entirely.** Upstream's guard is
+    // `if (type === 'continue' && cyclePrompt && !oai_settings.continue_prefill)`
+    // (`openai.js:898`): with prefill on, the reply being continued is displaced
+    // to the end of the request and handed back to the model as its own opening
+    // words, and no instruction is added — the position *is* the instruction.
+    // Sending a nudge as well is not a smaller divergence than sending the wrong
+    // nudge: it puts a system line into a request upstream leaves clean, and it
+    // is the default on the one real preset here that sets the field
+    // (`continue_prefill: true`).
+    const nudgeText = request.kind === 'continue' && this.#activePreset['continue_prefill'] !== true
+      ? utilityPromptOf(this.#activePreset, 'continue_nudge_prompt', CONTINUE_NUDGE_PROMPT)
+      : ''
+    const nudge = nudgeText === ''
+      ? undefined
+      : entry.substitute(nudgeText).replace('{{lastChatMessage}}', seedTextOf(seed).trim())
+    const instructionText = request.kind === 'impersonate'
+      ? utilityPromptOf(this.#activePreset, 'impersonation_prompt', IMPERSONATION_PROMPT)
+      : ''
+    const instruction = instructionText === '' ? undefined : entry.substitute(instructionText)
 
     const running: Promise<Candidate | string> = request.kind === 'send'
       // The storage direction runs on what the user typed, before it enters the
@@ -4823,7 +4870,7 @@ function toggleAllowed(item: PromptItem): boolean {
  * @param preset - the preset being switched to.
  * @returns a patch for `SettingsStore.set`, possibly empty.
  */
-export function presetScalarPatch(preset: ChatCompletionPreset): Record<string, number | string> {
+export function presetScalarPatch(preset: ChatCompletionPreset): Record<string, number | string | boolean> {
   const numbers: [string, keyof GenerationSettings][] = [
     ['temperature', 'temperature'],
     ['openai_max_tokens', 'maxTokens'],
@@ -4836,11 +4883,21 @@ export function presetScalarPatch(preset: ChatCompletionPreset): Record<string, 
     ['presence_penalty', 'presencePenalty'],
     ['seed', 'seed'],
   ]
-  const patch: Record<string, number | string> = {}
+  const patch: Record<string, number | string | boolean> = {}
   for (const [key, field] of numbers) {
     const value = preset[key]
     if (typeof value === 'number' && Number.isFinite(value)) patch[field] = value
   }
+  // `squash_system_messages` is a checkbox in `settingsToUpdate`
+  // (`openai.js:380`) and a preset carries it like any other field — the two
+  // presets in the local profile disagree about it, one shipping `false`
+  // explicitly. It reached `GenerationSettings.squashSystemMessages` only if a
+  // user set it by hand, so switching presets left the previous preset's squash
+  // running over the new preset's prompt list. Booleans are read separately
+  // because the numeric loop's `typeof value === 'number'` guard silently drops
+  // them.
+  const squash = preset['squash_system_messages']
+  if (typeof squash === 'boolean') patch['squashSystemMessages'] = squash
   const effort = preset['reasoning_effort']
   if (typeof effort === 'string' && REASONING_EFFORT_VALUES.has(effort)) {
     patch['reasoningEffort'] = effort

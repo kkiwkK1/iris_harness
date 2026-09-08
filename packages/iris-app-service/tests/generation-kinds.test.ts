@@ -466,3 +466,141 @@ test('the next send after a reroll carries the whole conversation again', async 
   assert.equal(whole(next).includes('SECOND-READING.'), true, 'the reroll’s own reply went missing')
   assert.equal(whole(next).includes('FIRST-READING.'), false, 'the swiped-away reading came back')
 })
+
+/**
+ * A preset carrying its own utility prompts, the way a real one does.
+ *
+ * Both of the operator's presets tune these — a 456-character continue nudge
+ * and a 457-character impersonation prompt in one of them — so the values here
+ * stand in for real overrides rather than for a hypothetical.
+ * @param fields - the utility fields this preset carries.
+ * @returns the preset.
+ */
+function utilityPreset(fields: Record<string, unknown>): ChatCompletionPreset {
+  return {
+    ...fields,
+    prompts: [
+      { identifier: 'main', role: 'system', content: 'Main.' },
+      { identifier: 'chatHistory', marker: true },
+      { identifier: 'jailbreak', role: 'system', content: '' },
+    ],
+    prompt_order: [{
+      character_id: GLOBAL_ORDER_ID,
+      order: [
+        { identifier: 'main', enabled: true },
+        { identifier: 'chatHistory', enabled: true },
+        { identifier: 'jailbreak', enabled: true },
+      ],
+    }],
+  }
+}
+
+test('the continue nudge is the preset’s own text, not the shipped default', async (t) => {
+  const fix = await fixture(t, {
+    replies: ['A reply.', ' And more.'],
+    preset: utilityPreset({ continue_nudge_prompt: '[CONTINUE MODE — PURE EXTENSION for {{char}}.]' }),
+  })
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await fix.handlers['chat.send']({ chatId, text: 'Go on.' })
+  await fix.settled()
+  await fix.handlers['chat.send']({ chatId, kind: 'continue' })
+  await fix.settled()
+
+  const texts = textsOf(fix.seen[1])
+  // The preset's words, with the turn's macros expanded — upstream runs the
+  // nudge through `substituteParamsExtended` (`openai.js:902`).
+  assert.equal(texts.at(-1), '[CONTINUE MODE — PURE EXTENSION for Aria.]')
+  assert.equal(
+    whole(fix.seen[1]).includes('without repeating its original content'),
+    false,
+    'the shipped default reached the request even though the preset overrode it',
+  )
+})
+
+test('continue_prefill cancels the nudge entirely, as upstream’s guard does', async (t) => {
+  const fix = await fixture(t, {
+    replies: ['A reply.', ' And more.'],
+    // The same preset text as above, so the only variable is the flag — a
+    // control that fails if the nudge went missing for any other reason.
+    preset: utilityPreset({
+      continue_nudge_prompt: '[CONTINUE MODE — PURE EXTENSION for {{char}}.]',
+      continue_prefill: true,
+    }),
+  })
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await fix.handlers['chat.send']({ chatId, text: 'Go on.' })
+  await fix.settled()
+  const sentCount = fix.seen[0]?.messages.length ?? 0
+  await fix.handlers['chat.send']({ chatId, kind: 'continue' })
+  await fix.settled()
+
+  // No nudge at all: upstream's guard is
+  // `type === 'continue' && cyclePrompt && !oai_settings.continue_prefill`
+  // (`openai.js:898`). The request still happened, and still ends on the
+  // conversation — the reply being continued.
+  assert.equal(whole(fix.seen[1]).includes('CONTINUE MODE'), false, 'the nudge survived continue_prefill')
+  assert.equal(fix.seen.length, 2, 'the continue never reached the provider')
+  assert.equal(textsOf(fix.seen[1]).at(-1)?.startsWith('A reply.'), true)
+  // And it is shorter than the send by exactly the message the nudge would have
+  // been, which is what makes the absence a measurement rather than a guess.
+  assert.equal(fix.seen[1]?.messages.length, sentCount)
+})
+
+test('a blank continue_nudge_prompt sends nothing, and an absent one sends the default', async (t) => {
+  const blank = await fixture(t, {
+    replies: ['A reply.', ' And more.'],
+    preset: utilityPreset({ continue_nudge_prompt: '' }),
+  })
+  const chatId = (await blank.handlers['chat.create']({ characterId: 'aria' })).view.chatId
+  await blank.handlers['chat.send']({ chatId, text: 'Go on.' })
+  await blank.settled()
+  await blank.handlers['chat.send']({ chatId, kind: 'continue' })
+  await blank.settled()
+  // Upstream treats an emptied field as a deleted instruction, not as a request
+  // for the default (`openai.js:1362` guards the impersonation prompt the same
+  // way). Falling back here would put back words the user removed.
+  assert.equal(whole(blank.seen[1]).includes('[Continue'), false, 'a blanked nudge fell back to the default')
+
+  const absent = await fixture(t, {
+    replies: ['A reply.', ' And more.'],
+    preset: utilityPreset({}),
+  })
+  const other = (await absent.handlers['chat.create']({ characterId: 'aria' })).view.chatId
+  await absent.handlers['chat.send']({ chatId: other, text: 'Go on.' })
+  await absent.settled()
+  await absent.handlers['chat.send']({ chatId: other, kind: 'continue' })
+  await absent.settled()
+  assert.equal(
+    textsOf(absent.seen[1]).at(-1),
+    '[Continue your last message without repeating its original content.]',
+    'an absent key must still get upstream’s shipped default',
+  )
+})
+
+test('the impersonation prompt is the preset’s own text', async (t) => {
+  const fix = await fixture(t, {
+    replies: ['A reply.', 'I look around.'],
+    preset: utilityPreset({ impersonation_prompt: '[IMPERSONATION MODE for {{user}} — ABSOLUTE OVERRIDE]' }),
+  })
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  await fix.handlers['chat.send']({ chatId, text: 'Go on.' })
+  await fix.settled()
+  await fix.handlers['chat.send']({ chatId, kind: 'impersonate' })
+  await fix.settled()
+
+  assert.equal(textsOf(fix.seen[1]).at(-1), '[IMPERSONATION MODE for Traveller — ABSOLUTE OVERRIDE]')
+  assert.equal(
+    whole(fix.seen[1]).includes('using the chat history so far as a guideline'),
+    false,
+    'the shipped default reached the request even though the preset overrode it',
+  )
+  // Still a system message: the role is the instruction's authority
+  // (`openai.js:1373` builds it role system).
+  assert.equal(fix.seen[1]?.messages.at(-1)?.role, 'system')
+})
