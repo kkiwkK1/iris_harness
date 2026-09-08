@@ -75,6 +75,18 @@ export type ItemizationResult =
   | { ok: false, error: import('@iris/protocol').RpcError }
 
 /**
+ * Where this request stopped matching the last one, or why there is no answer.
+ *
+ * `ok` with `divergence: undefined` is a third outcome and the common one: the
+ * host answered, and the conversation has fewer than two recorded requests. That
+ * is not a failure and must not arrive as one — a first turn would otherwise
+ * show an error about a comparison nobody asked for.
+ */
+export type DivergenceResult =
+  | { ok: true, divergence: import('@iris/protocol').PromptDivergence | undefined }
+  | { ok: false, error: import('@iris/protocol').RpcError }
+
+/**
  * What one compaction did, or why it did nothing.
  *
  * Three outcomes, not two, and the middle one is why this is not a `void`
@@ -1019,6 +1031,17 @@ export interface IrisActions {
    * would mean holding a stale answer that looks current.
    */
   itemize(turn?: number): Promise<ItemizationResult>
+  /**
+   * Where the newest request stopped matching the one before it.
+   *
+   * Returned rather than stored, for `itemize`'s reason, and asked for the same
+   * way — but keyed differently, and the difference matters to a caller: an
+   * itemization is addressed by **turn** because it is an account of one
+   * assembly, while this is addressed by the trace's own **sequence number**
+   * because a turn can send several requests (every swipe is one) and each has
+   * its own prefix. Absent `seq` means the newest recorded request.
+   */
+  divergence(seq?: number): Promise<DivergenceResult>
   /**
    * What the whole profile has cost, cut by time and by model.
    *
@@ -3080,6 +3103,25 @@ export function createIrisStore(
             ...(turn === undefined ? {} : { turn }),
           })
           return { ok: true, itemization }
+        } catch (error: unknown) {
+          return { ok: false, error: asRpcError(error) }
+        }
+      },
+
+      async divergence(seq?: number): Promise<DivergenceResult> {
+        const chatId = get().chatId
+        if (chatId === undefined) {
+          return { ok: false, error: { code: 'not-found', message: 'no chat is open' } }
+        }
+        try {
+          const { divergence } = await client.call('prompt.divergence', {
+            chatId,
+            ...(seq === undefined ? {} : { seq }),
+          })
+          // The host's `undefined` is passed straight through rather than turned
+          // into a refusal: it means "fewer than two recorded requests", which
+          // every conversation is true of once.
+          return { ok: true, divergence }
         } catch (error: unknown) {
           return { ok: false, error: asRpcError(error) }
         }

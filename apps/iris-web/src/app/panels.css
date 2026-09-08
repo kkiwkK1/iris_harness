@@ -2028,6 +2028,94 @@
   font-style: italic;
 }
 
+/* -------------------------------------------- against the previous request */
+
+/* Set apart by a rule rather than by a heading weight: the block above it is
+   this assembly's estimated tokens and this one is two requests' actual bytes,
+   and a reader who crosses that seam without noticing it will add the two kinds
+   of number together. */
+.iris-prompt__diverged {
+  margin: 4px 0 14px;
+  padding-top: 12px;
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+/* Neither warn nor danger: nothing here is wrong, it is a measurement. The
+   `__notice` class carries the warning colour, so this block turns it back into
+   prose for its own summary line. */
+.iris-prompt__diverged .iris-prompt__notice {
+  margin-bottom: 6px;
+  color: var(--iris-ink-secondary);
+}
+
+/* The unattributed warning keeps its own colour: it is the one line in the block
+   that says the instrument is uncertain, and that is worth being loud about. */
+.iris-prompt__diverged .iris-prompt__notice--wrong {
+  color: var(--iris-danger);
+}
+
+.iris-prompt__unserved {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+
+.iris-prompt__unserved li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+/* The mark beside a part's name. Beside the label rather than in a column of its
+   own, because it qualifies the name — not the token count, which is a different
+   measurement in a different unit. */
+.iris-prompt__diverge {
+  margin-left: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-prompt__diverge--changed,
+.iris-prompt__diverge--added {
+  color: var(--iris-warn);
+}
+
+/* Unchanged and re-sent in full. Coloured like a fault although nothing failed,
+   because it is the one row here that is recoverable: the bytes were identical
+   and were paid for anyway, which is a placement problem and has a fix.
+   `same` on its own is the opposite — cached, free, and quiet. */
+.iris-prompt__diverge--stranded {
+  color: var(--iris-danger);
+}
+
+.iris-prompt__diverge--gone {
+  color: var(--iris-ink-faint);
+  font-style: italic;
+}
+
+/* The divergence line on the capacity card is a button because it goes
+   somewhere; it must not look like one. */
+.iris-context-card__diverge {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.iris-context-card__diverge:hover {
+  color: var(--iris-ink-secondary);
+}
+
 /* ------------------------------------------------------------- connections */
 
 .iris-conn {

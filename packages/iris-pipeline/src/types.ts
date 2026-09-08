@@ -28,6 +28,22 @@ export interface PipelineMessage {
    * reordering exists to prevent.
    */
   volatile?: boolean
+  /**
+   * Which part produced this message — a contribution's `id`, or a floor's.
+   *
+   * **Provenance, never content.** Every path out of here reads `role` and
+   * `text` and builds the provider's own message type from those two, so an id
+   * set here cannot reach a model and cannot change a byte of the request. It
+   * exists because attributing a cache miss needs "which item is the byte at
+   * offset N?" answered *by construction*: {@link injectAtDepth} knows, and
+   * nothing downstream can work it out again without searching the assembled
+   * text for a substring — a guess dressed as an answer whenever two
+   * contributions share a line.
+   *
+   * Absent on a message the assembler did not place (a caller's own tail), so a
+   * reader treats absence as "unattributed" rather than as an error.
+   */
+  id?: string
 }
 
 /** One turn of existing conversation, oldest first. */
@@ -243,10 +259,36 @@ export interface AssembledItem {
   promoted?: boolean
 }
 
+/**
+ * One run of text inside the rendered system prompt, and what put it there.
+ *
+ * The system prompt is a single string by the time a provider sees it, so a
+ * divergence landing anywhere in it can only be reported as "the system prompt"
+ * unless the seams are recorded while they still exist. `text` is the segment
+ * *as rendered* — trimmed, empty ones already dropped — so a reader can lay the
+ * segments end to end, separated by the blank line {@link renderSystem} joins
+ * them with, and get the string back.
+ */
+export interface SystemSegment {
+  /** The contributing part's `id`. */
+  id: string
+  /** Its display name, when it has one that differs from the id. */
+  label?: string
+  /** The rendered text of this segment: trimmed, never empty. */
+  text: string
+}
+
 /** The assembled request. */
 export interface AssembleResult {
   system: string
   messages: PipelineMessage[]
+  /**
+   * The system prompt's seams, in rendered order.
+   *
+   * `segments.map(s => s.text).join('\n\n') === system` by construction — the
+   * renderer produces both from one pass, so the two cannot drift.
+   */
+  systemSegments: SystemSegment[]
   /** Tokens the assembled request is estimated to occupy. */
   tokens: number
   /**

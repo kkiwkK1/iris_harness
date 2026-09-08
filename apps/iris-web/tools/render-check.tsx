@@ -34,6 +34,7 @@ import { modelMenu } from '../src/app/model-menu.ts'
 import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView } from '@iris/protocol'
 import { contributing, discrepancy, rowsFor } from '../src/app/itemization.ts'
+import { cacheCeiling, providerExcuse, providerFellShort } from '../src/app/divergence.ts'
 import {
   billedInputTokens, cacheHitPercent, formatExactTokens, formatTokens, totalTokens, usageDetailText,
 } from '../src/app/token-format.ts'
@@ -1345,6 +1346,46 @@ async function main(): Promise<void> {
   // Before any compaction there is no marker at all — the control for the
   // assertion below, which would otherwise pass for a marker that is always on.
   assert.doesNotMatch(metered, /data-control="compaction-note"/)
+
+  /*
+   * The divergence line the card's bottom row prints.
+   *
+   * Asserted on the store's answer rather than on the rendered card, for the
+   * reason the section header gives: the card exists only once the capsule is
+   * pressed, and a server render cannot press it. What is pinned here is that
+   * the fetch is wired, that the fixture carries the shape the line is designed
+   * for, and that the two figures the line puts side by side actually disagree —
+   * a fixture where the ceiling and the provider's share happened to match would
+   * render the same words for the opposite finding.
+   */
+  const diverged = await wired.store.getState().divergence()
+  assert.ok(diverged.ok, 'the fake should model a comparison, not refuse one')
+  const comparison = diverged.divergence
+  assert.ok(comparison !== undefined, 'the seeded conversation has two replies, so there is a pair')
+  assert.equal(
+    comparison.addedBytes + comparison.changedBytes + comparison.repeatedBytes + comparison.structureBytes,
+    comparison.uncacheableBytes,
+    'the four terms must add up, or the panel prints an account that does not',
+  )
+  const ceiling = cacheCeiling(comparison)
+  assert.ok(ceiling > 0.5 && ceiling < 1, `the fixture's ceiling should be high and not perfect (${String(ceiling)})`)
+  assert.equal(
+    providerFellShort(comparison),
+    true,
+    'the fixture must keep the measured shape: a high ceiling and a provider that served far less',
+  )
+  assert.equal(providerExcuse(comparison), null, 'and no ordinary reason for it, or the finding is suppressed')
+  // The part that did not change and was re-sent in full: the largest single
+  // recoverable cost in the real corpus, and the row the panel is designed
+  // around. A fixture without one leaves that design untested.
+  assert.ok(
+    comparison.items.some(item => item.state === 'same' && item.uncachedBytes === item.bytes && item.bytes > 0),
+    'the fixture should carry an unchanged part that is re-billed in full',
+  )
+  assert.ok(
+    comparison.items.some(item => item.state === 'gone'),
+    'and one that fell out of the request, since that is what a budget change looks like',
+  )
 
   const compacted = await wired.store.getState().compactChat()
   assert.ok(compacted.ok, 'the fake refused to compact')

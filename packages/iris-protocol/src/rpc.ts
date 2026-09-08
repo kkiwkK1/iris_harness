@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, PersonaView, PresetManagerView, PresetSummary, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -508,6 +508,20 @@ export const requestSchemas = {
   'prompt.itemize': z.object({
     chatId: z.string().min(1),
     turn: z.number().int().min(0).optional(),
+  }),
+
+  /**
+   * Compare one recorded request against the one before it.
+   *
+   * `seq` addresses the **newer** of the pair and defaults to the newest
+   * recorded; the older is whichever trace sits immediately before it. Optional
+   * rather than required because "why did the turn I just sent miss" is the
+   * question this answers most of the time, and making a caller find a sequence
+   * number first would make the common case the awkward one.
+   */
+  'prompt.divergence': z.object({
+    chatId: z.string().min(1),
+    seq: z.number().int().min(0).optional(),
   }),
 
   'chat.branch': z.object({
@@ -1770,6 +1784,15 @@ export interface RpcResponseMap {
    */
   'chat.export': { filename: string, content: string }
   'prompt.itemize': { itemization: PromptItemization }
+  /**
+   * The comparison, or `undefined` when this conversation has fewer than two
+   * recorded requests.
+   *
+   * `undefined` rather than a refusal: a chat whose first turn has just gone out
+   * has nothing to compare and that is a normal state, not an error. A caller
+   * shows nothing; a caller told `not-found` would show a failure.
+   */
+  'prompt.divergence': { divergence?: PromptDivergence }
 
   /** The stored table, so a card sees what its write actually produced. */
   'script.getVariables': { variables: Record<string, unknown> }

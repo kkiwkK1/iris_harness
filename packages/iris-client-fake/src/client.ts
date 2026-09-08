@@ -35,7 +35,7 @@ import {
 
 import { chunk, replyFor, reasoningFor } from './corpus.ts'
 import { cardFileExtension, readCard } from './card.ts'
-import { fakeItemization } from './prompt.ts'
+import { fakeDivergence, fakeItemization } from './prompt.ts'
 import {
   activateConnection,
   deleteConnection,
@@ -676,6 +676,18 @@ class InMemoryClient implements FakeClient {
         const newest = chat.messages.reduce((highest, message) => Math.max(highest, message.turn), 0)
         const isRecord = turn !== undefined && turn === newest
         return { itemization: fakeItemization(turn ?? newest + 1, !isRecord) }
+      }
+
+      case 'prompt.divergence': {
+        const { chatId } = params as RpcRequest<'prompt.divergence'>
+        const chat = this.#require(chatId)
+        // Two recorded requests are needed for there to be a comparison at all.
+        // The absence is modelled as carefully as the answer, because a UI that
+        // only ever meets the answer draws the empty state wrong — and the empty
+        // state is what the first turn of every conversation shows.
+        const generations = chat.messages.filter(message => message.role === 'assistant').length
+        if (generations < 2) return {}
+        return { divergence: fakeDivergence(chatId) }
       }
 
       case 'character.list':

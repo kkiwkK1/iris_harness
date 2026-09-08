@@ -29,7 +29,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import type { ReactElement } from 'react'
 import { Button, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PromptItemization } from '@iris/protocol'
+import type { PromptDivergence, PromptItemization } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import type { ResolvedButton } from './script-buttons.ts'
@@ -206,6 +206,16 @@ export function Composer({
   const [reading, setReading] = useState<{
     key: string
     itemization?: PromptItemization
+    /**
+     * Where the last request diverged from the one before it.
+     *
+     * On the same reading and keyed the same way, because the same three things
+     * invalidate it: a new turn writes a new trace, so a comparison held across
+     * one would describe a request that is no longer the newest. Absent is a
+     * first-class answer — fewer than two recorded requests, or the record
+     * switched off — and is not the reading having failed.
+     */
+    divergence?: PromptDivergence
     state: 'loading' | 'ready' | { error: string }
   } | undefined>(undefined)
   const meterAnchor = useRef<HTMLButtonElement | null>(null)
@@ -267,14 +277,24 @@ export function Composer({
     if (!meterOpen || fetching.current === readingKey) return
     fetching.current = readingKey
     setReading({ key: readingKey, state: 'loading' })
-    void actions.itemize().then((result) => {
+    // Both readings in one round trip's worth of waiting, because both are
+    // invalidated by the same key and the card shows them together. The
+    // divergence is **not** allowed to decide the card's state: it is two file
+    // reads and the itemization is the card, so a store that is switched off or
+    // a comparison that refuses must leave the breakdown standing.
+    void Promise.all([actions.itemize(), actions.divergence()]).then(([itemized, diverged]) => {
       // The conversation may have moved while this was in flight, in which case
       // the answer describes an assembly that is no longer the next one.
       if (fetching.current !== readingKey) return
-      if (!result.ok) fetching.current = undefined
-      setReading(result.ok
-        ? { key: readingKey, itemization: result.itemization, state: 'ready' }
-        : { key: readingKey, state: { error: `${result.error.code}: ${result.error.message}` } })
+      if (!itemized.ok) fetching.current = undefined
+      setReading(itemized.ok
+        ? {
+            key: readingKey,
+            itemization: itemized.itemization,
+            ...diverged.ok && diverged.divergence !== undefined ? { divergence: diverged.divergence } : {},
+            state: 'ready',
+          }
+        : { key: readingKey, state: { error: `${itemized.error.code}: ${itemized.error.message}` } })
     })
   }, [actions, meterOpen, readingKey])
 
@@ -658,6 +678,15 @@ export function Composer({
           itemization={shownReading?.itemization}
           state={shownReading?.state ?? 'loading'}
           usage={usage}
+          divergence={shownReading?.divergence}
+          // The card closes on the way through, because the panel it opens is a
+          // modal: leaving the card standing behind it would put two dismissal
+          // surfaces on screen, and the outside-pointerdown listener the card
+          // installs would close it on the first press inside the modal.
+          onOpenPanel={() => {
+            setMeterOpen(false)
+            onPreviewPrompt()
+          }}
           anchor={meterAnchor}
           onClose={() => setMeterOpen(false)}
         />

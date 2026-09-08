@@ -25,9 +25,19 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, listCandidates, selectCandidate, selectedCandidate, type Candidate } from '@iris/chat'
-import { assemble, type Budget, type Contribution, type HistoryEntry, type PipelineMessage } from '@iris/pipeline'
+import {
+  assemble,
+  type Budget,
+  type Contribution,
+  type HistoryEntry,
+  type PipelineMessage,
+  type SystemSegment,
+} from '@iris/pipeline'
 
 import type { HistoryProjection } from './history.ts'
+// This module also augments `GenerateOptions` with `layout`; the field set
+// below does not exist without it in the program.
+import type { LayoutPart, LayoutSlot, PromptLayout } from './layout.ts'
 
 /** Streams one model call. Normally `ctx.llm.stream` bound to the registry. */
 export type StreamFn = (options: GenerateOptions) => AsyncIterable<StreamChunk>
@@ -205,7 +215,8 @@ export class TurnDriver {
     // tail is exempt: it is pinned as the request's LAST message, and a nudge
     // merged into a neighbouring system message would no longer be the thing
     // the model reads before it writes.
-    const base = options.squashSystemMessages === true ? squashSystemRuns(request.messages) : request.messages
+    const assembled = slotsOf(request.messages)
+    const base = options.squashSystemMessages === true ? squashSystemRuns(assembled) : assembled
     // The continue's separator rides on the request too, not only on the
     // recorded composite, because the model needs the same boundary it is
     // expected to write from. Same guard as upstream: text already ending in a
@@ -228,15 +239,25 @@ export class TurnDriver {
     // either way.
     if (postfix !== undefined && postfix.length > 0) {
       for (let index = base.length - 1; index >= 0; index -= 1) {
-        const message = base[index] as PipelineMessage
-        if (message.role !== 'assistant') continue
-        if (!message.text.endsWith(' ')) message.text += postfix
+        const slot = base[index] as AssembledSlot
+        if (slot.message.role !== 'assistant') continue
+        if (!slot.message.text.endsWith(' ')) {
+          slot.message.text += postfix
+          // The part's recorded text moves with the message's, so the layout
+          // still describes the bytes that go out. A separator appended after
+          // the provenance was taken is the exact shape that makes a trace's
+          // parts stop laying back down onto their slot — harmless here, since
+          // the slot has one part, and not harmless in the one-part system slot
+          // the trace checks strictly.
+          const only = slot.parts[0]
+          if (only !== undefined && slot.parts.length === 1) only.text = slot.message.text
+        }
         break
       }
     }
     const messages = tail === undefined
-      ? base.map(toMessage)
-      : [...base.map(toMessage), toTailMessage(tail)]
+      ? base.map(slot => toMessage(slot.message))
+      : [...base.map(slot => toMessage(slot.message)), toTailMessage(tail)]
 
     const assembler = new BlockAssembler()
     for await (const chunk of options.stream({
@@ -244,6 +265,13 @@ export class TurnDriver {
       model: options.model,
       system: request.system,
       messages,
+      // Which item produced each slot, for cache attribution. Built **here**,
+      // after the squash, the postfix and the tail, because those three are the
+      // difference between what `assemble` returned and what the provider is
+      // about to be sent — a map taken before them would name the wrong slot
+      // for every message after the first merged run. `PromptLayout` says why
+      // this cannot reach a provider.
+      layout: layoutOf(request.systemSegments, base, tail),
       ...options.temperature === undefined ? {} : { temperature: options.temperature },
       ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
       ...options.stop === undefined ? {} : { stop: options.stop },
@@ -549,6 +577,41 @@ function toTailMessage(tail: PipelineMessage) {
 }
 
 /**
+ * One outgoing message and the assembly parts inside it.
+ *
+ * A slot holds more than one part only after a squash. Carrying the pair
+ * together is what keeps the merge and its record from drifting: the one loop
+ * that joins two texts is the one loop that joins their provenance.
+ *
+ * Exported for the one caller that assembles a request without this driver —
+ * the host's `TavernHelper.generate` — so that path squashes by the same rule
+ * and records the same provenance instead of keeping a second copy of both.
+ */
+export interface AssembledSlot {
+  message: PipelineMessage
+  parts: LayoutPart[]
+}
+
+/**
+ * Open each assembled message into a slot of its own.
+ *
+ * The message is copied, because the postfix pass writes into it and
+ * `assemble`'s array is the caller's.
+ * @param messages - the assembled conversation, oldest first.
+ * @returns one single-part slot per message.
+ */
+export function slotsOf(messages: readonly PipelineMessage[]): AssembledSlot[] {
+  return messages.map(message => ({
+    message: { ...message },
+    // Absent only for a message the assembler did not place, which within this
+    // function is nothing — `injectAtDepth` stamps every one. Written as a
+    // conditional anyway so a caller assembling its own messages produces an
+    // unattributed slot rather than a slot claiming to be `undefined`.
+    parts: message.id === undefined ? [] : [{ id: message.id, text: message.text }],
+  }))
+}
+
+/**
  * Merge consecutive system-role messages of the assembled conversation.
  *
  * Upstream's `squash_system_messages`, transcribed: only adjacent system
@@ -562,7 +625,11 @@ function toTailMessage(tail: PipelineMessage) {
  * `lastMessage.content += '\n' + message.content`). It was a blank line here
  * until this was read against the source: two adjacent injections then reached
  * the model spaced differently than the same two reach SillyTavern's, which is
- * a difference in the prompt and not only in the whitespace.
+ * a difference in the prompt and not only in the whitespace. It is written out
+ * rather than taken from `SYSTEM_JOIN`, and the two now differ: this separator
+ * and the system prompt's are decided by two independent upstream lines, so one
+ * constant standing for both would let a change to either silently change the
+ * other.
  *
  * Three of upstream's guards have no object here, so they are absent rather
  * than dropped: it skips empty system messages (`:3836`, and `injectAtDepth`
@@ -580,21 +647,57 @@ function toTailMessage(tail: PipelineMessage) {
  * a formatting pass one layer down. Volatile messages still merge with each
  * other, and stable ones with each other, so the squash still does its job
  * wherever doing it is free.
- * @param messages - the assembled conversation, oldest first.
- * @returns the conversation with adjacent system runs collapsed.
+ * @param slots - the assembled conversation as slots, oldest first.
+ * @returns the conversation with adjacent system runs collapsed, provenance
+ *   merged with the text.
  */
-export function squashSystemRuns(messages: readonly PipelineMessage[]): PipelineMessage[] {
-  const squashed: PipelineMessage[] = []
-  for (const message of messages) {
+export function squashSystemRuns(slots: readonly AssembledSlot[]): AssembledSlot[] {
+  const squashed: AssembledSlot[] = []
+  for (const slot of slots) {
     const previous = squashed.at(-1)
-    const sameSide = (previous?.volatile === true) === (message.volatile === true)
-    if (message.role === 'system' && previous?.role === 'system' && sameSide) {
-      previous.text = `${previous.text}\n${message.text}`
+    const sameSide = (previous?.message.volatile === true) === (slot.message.volatile === true)
+    if (slot.message.role === 'system' && previous?.message.role === 'system' && sameSide) {
+      previous.message.text = `${previous.message.text}\n${slot.message.text}`
+      // The parts follow the text into the surviving slot, in the order they
+      // were joined: the one loop that merges two texts is the one loop that
+      // merges their provenance, so a merged run can still name each injection
+      // inside it.
+      previous.parts.push(...slot.parts)
       continue
     }
-    squashed.push({ ...message })
+    squashed.push({ message: { ...slot.message }, parts: [...slot.parts] })
   }
   return squashed
+}
+
+/**
+ * Record which item produced each text slot of the request being sent.
+ *
+ * Positional and exhaustive by construction: one entry per outgoing message, in
+ * the same order, with the tail appended last so `layout.messages.length` equals
+ * `GenerateOptions.messages.length`. A reader that finds those two disagreeing
+ * must refuse the offsets rather than shift them by one — a cache report that
+ * names the neighbouring item is worse than one that names none.
+ * @param segments - the system prompt's seams, as rendered.
+ * @param slots - the conversation slots, after the squash and the postfix.
+ * @param tail - the message pinned after the conversation, when one rides.
+ * @returns the layout to hand along with the request.
+ */
+function layoutOf(
+  segments: readonly SystemSegment[],
+  slots: readonly AssembledSlot[],
+  tail: PipelineMessage | undefined,
+): PromptLayout {
+  const messages: LayoutSlot[] = slots.map(slot => ({
+    parts: slot.parts.map(part => ({ ...part })),
+    role: slot.message.role,
+  }))
+  // The tail is a slot with no parts: it is this driver's own text, not a
+  // contribution, so there is no assembly item to attribute it to. `tail`
+  // labels it, which is what lets a trace say "the divergence is in the
+  // continue nudge" instead of "in an unattributed slot".
+  if (tail !== undefined) messages.push({ parts: [], role: tail.role, tail: true })
+  return { system: segments.map(segment => ({ ...segment })), messages }
 }
 
 /**

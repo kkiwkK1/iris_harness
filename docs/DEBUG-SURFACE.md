@@ -30,6 +30,7 @@ That is a line on the server's stdout and then it is gone.
 | **诊断报告流**(13 处 `#report`):MVU 拒绝的命令、`<JSONPatch>` 空操作、模板失败、模板写回被拒、残留宏、无存储的变量作用域、`script.context` 增长告警、prune 决定 | `onError` → `ctx.logger.warn` | 读服务器日志的人 | **不留存**,一行,然后没了 |
 | `entry.unsupportedScopes` | `ChatEntry` 上的 Set | 每次装配时被**排空**成一条报告后 `clear()` | 到下一次装配 |
 | `entry.itemizations` | `ChatEntry` 上的 Map | `prompt.itemize` RPC | entry 在缓存里多久 |
+| **请求留痕**:每次真实生成的 canonical body、逐条目的字节偏移区间、提供方回报的 `cacheReadTokens` | `<profile>/cache-trace/<chatId>/<seq>.json` | `prompt.divergence` RPC、容量卡底部那一行、提示词面板、`scripts/cache-divergence-report.mjs` | **每对话最近 8 份**(`IRIS_CACHE_TRACE_KEEP` 改数量,`IRIS_CACHE_TRACE=0` 关闭) |
 | `iris/variables-pruned` 事件 | 会话事件日志 | **只有测试在读** | 永久(append-only,随聊天文件走) |
 | 具名拒绝(`AppError` 的 code + message) | RPC 边界抛出 | **只有那次调用的调用方** | 一次调用 |
 | 插件启动警告(pre-profile 布局等) | `ctx.logger.warn` | 服务器日志 | 不留存 |

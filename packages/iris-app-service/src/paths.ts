@@ -224,6 +224,18 @@ export interface ProfilePaths {
   personas: string
   /** Which characters this profile has starred, by character id. */
   favorites: string
+  /**
+   * The bodies of the most recent requests, one subdirectory per conversation.
+   *
+   * A diagnostic record, and the only store here that holds whole prompts
+   * rather than the pieces they are assembled from — which is the point: a
+   * provider's prefix cache is decided over the bytes that went out, and
+   * `cache-trace.ts` explains why those bytes cannot be reconstructed
+   * afterwards. Bounded per conversation and switchable off; inside the profile
+   * for the reason `scriptBundles` is, so deleting a profile takes its whole
+   * footprint with it and leaves nothing the user cannot find.
+   */
+  cacheTrace: string
 }
 
 /**
@@ -264,5 +276,6 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     presets: join(root, 'presets'),
     personas: join(root, 'personas.json'),
     favorites: join(root, 'favorites.json'),
+    cacheTrace: join(root, 'cache-trace'),
   }
 }

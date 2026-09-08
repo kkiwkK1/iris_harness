@@ -282,3 +282,26 @@ safeRead/safeWrite 容错。理由：`notes/SETTINGS-IA.md` 把「屏幕上有�
 | `SettingsDrawer.tsx` 回复卡 | 「缓存友好装配」开关与注。**这是这张卡上唯一默认开的开关**，所以注里把两件事都写出来：搬的是「每回都变的部分」（而不是随便重排），以及关掉之后逐字节回到 SillyTavern 的顺序。摘要那一行只在**关掉时**才出现，和另外两个开关正好相反——默认开的控件，值得在卡头上说的状态是「被关掉了」 | `cacheFriendly cacheFriendlyNote repliesCacheOff` |
 | `PromptPanel.tsx` 被搬动的行 | 徽标 + 原位置两句必须同时出现。只给徽标等于告诉读者「你的提示词被搬走了」却不告诉他去哪里改；原位置报的是宿主那张表里的序号（第 N / M 条），因为标识是 UUID、`order` 是内部数字，「五条里的第三条」是读者唯一能照着动手的说法。**前移与后移必须是两个徽标**：两者含义相反（发在对话之前 / 之后），一句「已移动」恰好把读者唯一需要知道的那件事省掉了 | `promptDeferred promptPromoted promptDeferredWhere promptDeferredAria promptPromotedAria` |
 | `ContextMeter.tsx` 稳定前缀 | 单独一行，紧贴 `usageCacheHit` 但**不能合成一句**：那一行是提供方回报的实测计费，这一行是宿主对「这份装配留下多少可复用」的估算。措辞照 §三 的约定走「估算」那一套（「约 X%」），两种数并列的地方只有这张卡 | `contextStablePrefix` |
+
+任务（前缀缓存分叉仪器，`dev/cache-diff-instrument`）追加：
+
+**这一族的单位是「字节」，既不是「估算」也不是「用量」。** `STRINGS.md` §三 定的那条
+「用量只指提供方回报的实际计费、`PromptPanel` 那套是估算」在这里出现了第三种数：
+**两条请求之间逐字节的比较**。提供方的前缀缓存是按字节判命中的（DeepSeek 64 token
+一块，前缀里改一个字节其后全 miss），而字节也是两条请求唯一能精确比较的单位——
+token 都是估算或提供方的口径。所以这一族的词里**不出现「token」**，容量卡上它单独
+一行、排在缓存命中那一行下面：上面那句是全会话计费 token 的比例，这句是单条请求
+字节的比例，两句是同一件失望的两种量法，读者必须能看出它们不是一个数。容量卡上
+三种数的顺序因此是：缓存命中（用量）→ 稳定前缀（估算，任务 C）→ 分叉（字节）。
+稳定前缀那一行讲的是「这一条请求本身留下多少可复用」，分叉这一行讲的是「这一条和
+上一条实际在哪里分开」——一个是这次装配的形状，一个是两次装配的差，所以估算那一行
+在上、字节这一行在下。
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `ContextMeter.tsx` 容量卡底部新增一行 | 「与上一条请求在 X% 处分叉 · 落在〈条目〉」。它是个按钮（点开进提示词面板看逐条目的标记），但**不做成按钮的样子**——一句点线下划线的话。逐字节相同时换一句说清楚（这在实测里罕见，但重生成本该是这个结果，说出来才看得出它没发生）。没有可比的上一条请求时**整行不出现**：第一轮、以及留痕关掉时都是这个状态，写一句「无可比对象」是在讲仪器，而读者在看的是自己的提示词 | `divergenceLine divergenceIdentical divergenceNone divergenceOpen` |
+| `PromptPanel.tsx` 分叉块 | 与上一条请求相比：上界（这些字节里有多少本可以由缓存供出）与提供方实际给了多少，**并排一行**。两者都在同一句里，因为它们的差额才是判据——「我们抖了」和「提供方没给」是相反的两种毛病，单看任一个数都分不出来。这一句用中性色而不是警告色：这里没有出错，这是一次测量 | `divergenceHeading divergenceCeiling divergenceServed divergenceUnreported divergenceShortfall` |
+| `PromptPanel.tsx` 三条「不算毛病」的免责 | DeepSeek 的三个文档事实各自都足以解释一次未命中：前缀要被看到两次才落盘（所以本会话前两条请求必然不中）、条目寿命几小时到几天、缓存只属于一个模型。把它们**先说出来**，否则报告开头就是三条假警报，读者的注意力在真正那一条之前就用完了 | `divergenceColdStart divergenceStale divergenceRoute` |
+| `PromptPanel.tsx` 四项拆分 | 「N 字节命不中：新增 / 改写 / 逐字未变却落在前缀之后 / 框架」。四项**加起来正好等于总数**——`CACHE-PREFIX.md` §1.2 当初只拆两项，余下几百字节没有交代，读者会以为那是四舍五入，而这里没有四舍五入 | `divergenceSplit` |
+| `PromptPanel.tsx` 逐条目标记 | 未变 / 改写 / 新增 / 消失，贴在条目名字旁边（不是新开一列：它修饰的是名字，而不是那一列估算 token）。「逐字未变，仍整段重发」是**另一种标记**，虽然状态同为「未变」——实测这一种占爱衣九对相邻轮里五对损失的 51%–76%，是全产品最大的一笔可挽回开销，而只问「什么变了」的账把这一段判成无辜 | `divergenceStateSame divergenceStateChanged divergenceStateAdded divergenceStateGone divergenceStranded divergenceBytes divergenceFloor` |
+| `PromptPanel.tsx` 归因不确定 | 偏移是准的、落在哪一段不准。卡的 EJS 模板在装配记下段落之后改写了系统段，边界就真的不知道了——这时候说出来，是「只怀疑这一行」和「怀疑整台仪器」的区别 | `divergenceUnattributed` |

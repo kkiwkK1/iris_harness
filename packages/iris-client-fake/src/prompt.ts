@@ -27,7 +27,7 @@
  * @module @iris/client-fake/prompt
  */
 
-import type { PromptItemEntry, PromptItemization } from '@iris/protocol'
+import type { PromptDivergence, PromptDivergenceItem, PromptItemEntry, PromptItemization } from '@iris/protocol'
 
 /**
  * The budget the seeded conversation assembles under.
@@ -86,5 +86,120 @@ export function fakeItemization(turn: number, preview: boolean): PromptItemizati
     droppedHistory: preview ? 0 : 3,
     overBudget: false,
     preview,
+  }
+}
+
+/**
+ * The two adjacent requests, compared.
+ *
+ * Transcribed from the first row of `CACHE-PREFIX.md` §1.2 — the user's own
+ * `爱衣`, messages 6 → 8 — so the numbers a designer sees are the numbers the
+ * product will show. Four measured properties, and each is here because a
+ * plausible invention would have got it wrong:
+ *
+ * 1. **The ceiling is high and the provider served nothing.** 81.6% of these
+ *    bytes were byte-identical to the previous request and
+ *    `cacheReadTokens` is `0`. That is not a made-up worst case: the pair
+ *    `OVERLORD-沙盒` line 3 → line 5 in the corpus has an identical 4 KB prefix
+ *    and reports zero, measured 2026-09-08. A panel that renders one number for
+ *    "cache" cannot show this, and showing it is the whole point.
+ * 2. **The largest single loss is text that did not change.** The depth-0
+ *    world-info block is byte-identical and entirely unservable, because it sits
+ *    after the newest floor — `state: 'same'` with `uncachedBytes === bytes`.
+ *    Measured at 51%–76% of the loss across five of nine adjacent pairs.
+ * 3. **New floors are the smaller half.** Two added history entries account for
+ *    1 350 of 6 354 unservable bytes. A design that assumed "the conversation
+ *    grew" was the answer would present the wrong item first.
+ * 4. **The terms add up exactly.** `added + changed + repeated + structure`
+ *    equals `uncacheableBytes`; §1.2's own two-term split left a few hundred
+ *    bytes unexplained and this fixture must not teach that as normal.
+ *
+ * The ids are the ones {@link fakeItemization} uses, so the two panels line up
+ * for a reader who opens both.
+ * @param chatId - the conversation being compared.
+ * @returns the comparison.
+ */
+export function fakeDivergence(chatId: string): PromptDivergence {
+  const divergedAt = 28_209
+  const bytes = 34_563
+  const items: PromptDivergenceItem[] = [
+    { id: 'main', label: 'Main Prompt', kind: 'system', state: 'same', bytes: 592, previousBytes: 592, uncachedBytes: 0 },
+    {
+      id: 'charDescription',
+      label: 'Char Description',
+      kind: 'system',
+      state: 'same',
+      bytes: 25_408,
+      previousBytes: 25_408,
+      uncachedBytes: 0,
+    },
+    // Where the divergence lands: the world-info block re-scanned this turn.
+    {
+      id: 'worldInfoAfter',
+      label: 'World Info (after)',
+      kind: 'system',
+      state: 'changed',
+      bytes: 5_366,
+      previousBytes: 5_120,
+      uncachedBytes: 3_157,
+    },
+    // Unchanged to the byte, and re-billed in full every single turn.
+    {
+      id: 'd5b8c3a1-2f47-4e69-9a05-8b6d1c4f7e23',
+      label: '状态栏格式',
+      kind: 'depth',
+      role: 'system',
+      state: 'same',
+      bytes: 1_647,
+      previousBytes: 1_647,
+      uncachedBytes: 1_647,
+    },
+    { id: 'history.6', label: 'history.6', kind: 'history', role: 'user', state: 'added', bytes: 800, previousBytes: 0, uncachedBytes: 800 },
+    {
+      id: 'history.7',
+      label: 'history.7',
+      kind: 'history',
+      role: 'assistant',
+      state: 'added',
+      bytes: 550,
+      previousBytes: 0,
+      uncachedBytes: 550,
+    },
+    // Fell out of the world-info budget this turn. It costs nothing now, and it
+    // is usually the reason a neighbouring section moved.
+    { id: 'worldInfoBefore', label: 'World Info (before)', kind: 'system', state: 'gone', bytes: 0, previousBytes: 900, uncachedBytes: 0 },
+  ]
+
+  return {
+    chatId,
+    seq: 7,
+    previousSeq: 6,
+    at: Date.UTC(2026, 8, 7, 4, 12, 30),
+    previousAt: Date.UTC(2026, 8, 7, 4, 9, 12),
+    kind: 'send',
+    previousKind: 'send',
+    // The same route on both sides, so the fixture exercises the branch where a
+    // shortfall is *not* explained away: a model switch is a complete reason for
+    // a miss, and a fixture that quietly carried one would hide the finding this
+    // panel exists to show. `seq: 7` keeps it out of the cold-start window too.
+    model: 'deepseek-reasoner',
+    previousModel: 'deepseek-reasoner',
+    provider: 'deepseek',
+    previousProvider: 'deepseek',
+    bytes,
+    previousBytes: 33_905,
+    divergedAt,
+    divergedIn: { id: 'worldInfoAfter', label: 'World Info (after)', kind: 'system' },
+    uncacheableBytes: bytes - divergedAt,
+    addedBytes: 1_350,
+    changedBytes: 3_157,
+    repeatedBytes: 1_647,
+    // The remainder, so the four terms sum to `uncacheableBytes`: JSON framing
+    // and role names, which belong to no part.
+    structureBytes: bytes - divergedAt - 1_350 - 3_157 - 1_647,
+    items,
+    cacheReadTokens: 0,
+    inputTokens: 8_612,
+    attributed: true,
   }
 }
