@@ -628,6 +628,72 @@
   color: var(--iris-ink-faint);
 }
 
+/*
+ * The usage hover card (`UsagePopover.tsx`): the breakdown a reply's usage
+ * chip and the composer's usage strip open in place of the native `title`
+ * they used to carry (DEVIATIONS.md 47).
+ *
+ * Fixed, not absolute: the card is portaled to the body because both of its
+ * triggers live in scroll containers that would clip it, and
+ * `useAnchoredPosition` hands it viewport coordinates. The surface is the
+ * context card's — hairline, raised ground, the one shadow — because it is
+ * the same kind of sentence: a small reading the reader asked to see, held
+ * over the page at the dropdown layer.
+ */
+.iris-usage-card {
+  position: fixed;
+  z-index: var(--iris-drop-z);
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  background: var(--iris-bg-raised);
+  box-shadow: var(--iris-shadow);
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-secondary);
+  cursor: default;
+}
+
+/* Two columns: the term takes the room it needs, the figure sits against it
+   in tabular numerals, one tier brighter than the term — the number is the
+   answer and the label is only its name. */
+.iris-usage-card__rows {
+  margin: 6px 0 0;
+}
+
+.iris-usage-card__row {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 2px 0;
+}
+
+.iris-usage-card__row dt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-usage-card__row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--iris-ink);
+  white-space: nowrap;
+}
+
+/* The caption under a card's rows — the composer card's share sentence. One
+   tier quieter than the rows it sits beneath, like the usage panel's own
+   share note, so the numbers stay the loudest thing on the card. */
+.iris-usage-card__note {
+  margin: 8px 0 0;
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-tertiary);
+}
+
 /* Nothing here takes pointer events away from the menu list above it. */
 .iris-composer__command-anchor {
   display: none;

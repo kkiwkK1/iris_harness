@@ -246,16 +246,136 @@ export function cacheHitPercent(usage: TurnUsage): string | null {
 }
 
 /**
- * The composer line's groups: `Cache hit N%` and `Input X tok · Output Y tok`.
+ * One label/value row of a usage reading.
  *
- * Returned as a list rather than a string so the row can draw its own
- * separators, and empty rather than `['']` when there is nothing to say — the
- * caller renders no row at all in that case, which is what keeps the composer
- * from reserving a line of empty height before the first reply.
+ * The usage hover cards render these as a two-column `<dl>`; the composer's
+ * one-line strip renders the same rows flattened into text. One construction,
+ * so a wording change cannot move one surface and leave the other behind —
+ * the drift a plain-text copy beside a card once invited.
+ */
+export interface UsageDetailRow {
+  label: string
+  value: string
+}
+
+/**
+ * The per-turn breakdown rows, in the anchored dialog's order.
+ *
+ * The order is the harness's (`packages/client/ui-chat`'s usage dialog, which
+ * shows the same reading for the same kind of turn): cache share first, then
+ * the prompt side in billing order, then output — with the reasoning note
+ * riding the output row, because reasoning is part of the output it is
+ * reported inside, not a fourth bucket beside it. An absent bucket has no row
+ * — the same rule as the hit rate, one layer out.
+ *
+ * Exact digits, not the compact ones the chip prints: the chip is a glance and
+ * the card is the bill, and a reader who stopped to hover is being charged.
+ * @param usage - one generation's usage.
+ * @param lang - the language the rows are read in.
+ * @returns the rows, in reading order; the card's heading is the caller's.
+ */
+function turnDetailRows(usage: TurnUsage, lang: Language): UsageDetailRow[] {
+  const count = (value: number): string =>
+    translate(lang, 'usageCount', { count: formatExactTokens(value, lang) })
+  const rows: UsageDetailRow[] = []
+  const hit = cacheHitPercent(usage)
+  if (hit !== null) rows.push({ label: translate(lang, 'usageDetailCacheHit'), value: `${hit}%` })
+  rows.push({ label: translate(lang, 'usageDetailInput'), value: count(usage.inputTokens) })
+  if (usage.cacheReadTokens !== undefined) {
+    rows.push({ label: translate(lang, 'usageDetailCacheRead'), value: count(usage.cacheReadTokens) })
+  }
+  if (usage.cacheWriteTokens !== undefined) {
+    rows.push({ label: translate(lang, 'usageDetailCacheWrite'), value: count(usage.cacheWriteTokens) })
+  }
+  const reasoning = usage.reasoningTokens === undefined
+    ? ''
+    : translate(lang, 'usageDetailReasoning', { tokens: count(usage.reasoningTokens) })
+  rows.push({
+    label: translate(lang, 'usageDetailOutput'),
+    value: `${count(usage.outputTokens)}${reasoning}`,
+  })
+  return rows
+}
+
+/**
+ * The per-turn breakdown as rows, for the hover card on a reply's usage chip.
+ *
+ * This is the only shape the breakdown takes: the plain-text assembly is gone,
+ * because the card that replaces the native `title` reads these rows directly
+ * (`UsagePopover`, `DEVIATIONS.md` 47), and there is no second rendering left
+ * to keep in step.
+ * @param usage - one generation's usage.
+ * @param lang - the language the rows are read in.
+ * @returns the rows, in reading order.
+ */
+export function usageDetailRows(usage: TurnUsage, lang: Language = 'en'): readonly UsageDetailRow[] {
+  return turnDetailRows(usage, lang)
+}
+
+/**
+ * The conversation's total, as rows before they are shaped for a surface.
+ *
+ * The same figures the composer's strip prints — cache share, then the two
+ * sides of the bill — built once here so the strip and the strip's hover card
+ * cannot disagree about either number or word. The prompt side is
+ * `billedInputTokens`, the three disjoint buckets added, and never
+ * `totalTokens`: the protocol's summed total covers only the generations that
+ * reported one, which on a mixed-provider conversation is smaller than the
+ * buckets beside it.
  *
  * Gated on real token activity, like the harness's line: a conversation whose
  * every request failed has a `usage` of zeros, and `Input 0 tok · Output 0 tok`
  * is noise dressed as information.
+ * @param usage - the conversation's summed usage, absent until one generation
+ * reported any.
+ * @param lang - the language the rows are read in.
+ * @returns the three rows, the cache one omitted when the provider is silent;
+ * `undefined` when there is nothing to say at all.
+ */
+function conversationRows(
+  usage: TurnUsage | undefined,
+  lang: Language,
+): { hit: UsageDetailRow | undefined, input: UsageDetailRow, output: UsageDetailRow } | undefined {
+  if (usage === undefined) return undefined
+  const input = billedInputTokens(usage)
+  const output = countable(usage.outputTokens)
+  if (input === 0 && output === 0) return undefined
+  const compact = (value: number): string =>
+    translate(lang, 'usageCount', { count: formatTokens(value, lang) })
+  const hit = cacheHitPercent(usage)
+  return {
+    hit: hit === null
+      ? undefined
+      : { label: translate(lang, 'usageDetailCacheHit'), value: `${hit}%` },
+    input: { label: translate(lang, 'usageSummaryInput'), value: compact(input) },
+    output: { label: translate(lang, 'usageDetailOutput'), value: compact(output) },
+  }
+}
+
+/**
+ * The conversation's total as rows, for the hover card on the composer's strip.
+ * @param usage - the conversation's summed usage, absent until one generation
+ * reported any.
+ * @param lang - the language the rows are read in.
+ * @returns the rows, in reading order.
+ */
+export function usageSummaryRows(
+  usage: TurnUsage | undefined,
+  lang: Language = 'en',
+): readonly UsageDetailRow[] {
+  const rows = conversationRows(usage, lang)
+  if (rows === undefined) return []
+  return [...(rows.hit === undefined ? [] : [rows.hit]), rows.input, rows.output]
+}
+
+/**
+ * The composer line's groups: `Cache hit N%` and `Input X tok · Output Y tok`.
+ *
+ * The flattened shape of {@link usageSummaryRows} — the same rows, joined for
+ * a line that must not wrap — and empty rather than `['']` when there is
+ * nothing to say. The caller renders no row at all in that case, which is what
+ * keeps the composer from reserving a line of empty height before the first
+ * reply.
  * @param usage - the conversation's summed usage, absent until one generation
  * reported any.
  * @param lang - the language the groups are read in.
@@ -265,80 +385,33 @@ export function usageLineGroups(
   usage: TurnUsage | undefined,
   lang: Language = 'en',
 ): readonly string[] {
-  if (usage === undefined) return []
-  const input = billedInputTokens(usage)
-  const output = countable(usage.outputTokens)
-  if (input === 0 && output === 0) return []
+  const rows = conversationRows(usage, lang)
+  if (rows === undefined) return []
   const groups: string[] = []
-  const hit = cacheHitPercent(usage)
-  if (hit !== null) groups.push(translate(lang, 'usageCacheHit', { percent: hit }))
-  groups.push(translate(lang, 'usageTokens', {
-    input: formatTokens(input, lang),
-    output: formatTokens(output, lang),
-  }))
+  if (rows.hit !== undefined) groups.push(`${rows.hit.label} ${rows.hit.value}`)
+  groups.push(`${rows.input.label} ${rows.input.value} · ${rows.output.label} ${rows.output.value}`)
   return groups
 }
 
 /**
- * The composer row's hover text: the visible line, plus the card share.
+ * The summary card's note: one sentence accounting for the card's own share.
  *
- * The row's `title` used to be the visible line repeated, which costs a reader
- * nothing and tells them nothing either. It is now the one place the split by
- * source is stated, and the reason it is *only* here is the row's shape: it is
- * a single ellipsised line whose groups are already up to three, and a fourth
- * is the one that gets cut on a narrow composer.
- *
- * **The visible groups already include the card's requests** — they are summed
- * into `ChatView.usage` because they were billed to this conversation — so this
- * is a breakdown of the line above it and never an addition to it. A reader who
- * added the two would double-count, which is what the 「其中」 wording is for.
- * @param groups - the visible line's groups, from {@link usageLineGroups}.
+ * The composer's visible line already counts a card's requests — they are
+ * summed into `ChatView.usage` because they were billed to this conversation —
+ * so the note under the card's rows is a breakdown of the figures above it,
+ * never an addition to them. Absent a share there is nothing to break down,
+ * and the caller draws no note at all.
  * @param script - the card share the host reported, absent when there is none.
- * @param lang - the language the text is read in.
- * @returns the hover text, or the empty string when the row is not drawn.
+ * @param lang - the language the sentence is read in.
+ * @returns the share sentence, or the empty string when there is none.
  */
-export function usageLineTitle(
-  groups: readonly string[],
+export function usageScriptShareSentence(
   script: { turns: number, usage: TurnUsage } | undefined,
   lang: Language = 'en',
 ): string {
-  if (groups.length === 0) return ''
-  const line = groups.join(' | ')
-  if (script === undefined) return line
-  return `${line}\n${translate(lang, 'usageScriptShare', {
+  if (script === undefined) return ''
+  return translate(lang, 'usageScriptShare', {
     n: script.turns,
     tokens: formatExactTokens(totalTokens(script.usage), lang),
-  })}`
-}
-
-/**
- * The per-turn breakdown as plain text, one row per line.
- *
- * Plain text because this is a `title`: the harness shows the same rows in an
- * anchored dialog, and Iris does not have that dialog yet (`DEVIATIONS.md` 47).
- * The rows are the dialog's, in the dialog's order, so the day it arrives the
- * copy moves and nothing is rewritten. An absent bucket has no row — the same
- * rule as the hit rate, one layer out.
- * @param usage - one generation's usage.
- * @param lang - the language the rows are read in.
- * @returns the breakdown, newline-separated, heading first.
- */
-export function usageDetailText(usage: TurnUsage, lang: Language = 'en'): string {
-  const count = (value: number): string =>
-    translate(lang, 'usageCount', { count: formatExactTokens(value, lang) })
-  const rows: string[] = [translate(lang, 'usageTurnTitle')]
-  const hit = cacheHitPercent(usage)
-  if (hit !== null) rows.push(`${translate(lang, 'usageDetailCacheHit')} ${hit}%`)
-  rows.push(`${translate(lang, 'usageDetailInput')} ${count(usage.inputTokens)}`)
-  if (usage.cacheReadTokens !== undefined) {
-    rows.push(`${translate(lang, 'usageDetailCacheRead')} ${count(usage.cacheReadTokens)}`)
-  }
-  if (usage.cacheWriteTokens !== undefined) {
-    rows.push(`${translate(lang, 'usageDetailCacheWrite')} ${count(usage.cacheWriteTokens)}`)
-  }
-  const reasoning = usage.reasoningTokens === undefined
-    ? ''
-    : translate(lang, 'usageDetailReasoning', { tokens: count(usage.reasoningTokens) })
-  rows.push(`${translate(lang, 'usageDetailOutput')} ${count(usage.outputTokens)}${reasoning}`)
-  return rows.join('\n')
+  })
 }

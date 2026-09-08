@@ -1777,7 +1777,7 @@ That is inference from the runner's own comment plus those timings, **not** a di
 
 What upstream *does* show per message is `extra.token_count`: **its own tokenizer's count of the reply text**, written after a generation settles (`public/script.js:3638`, `:5830`, `:6629` and five more sites, all `getTokenCountAsync(reasoning + mes, 0)`) and rendered as inline text `{n}t` in the message block (`:2605`, `:10243`, into `.tokenCounterDisplay`, `public/index.html:7386`). It is gated on `power_user.message_token_count_enabled`, which defaults to `false` (`power-user.js:199`) and is `true` in the measured profile — the same shape as `mesIDDisplay_enabled`, the floor-number setting `app/Message.tsx` records at its own render site. Hovering a message shows the generation timer's title, which carries a **rate** derived from that same estimate (`Token rate: {n} t/s`, `:2697`), not a usage breakdown.
 
-**Iris** shows the reported values, in two places: the conversation's total under the composer (`Cache hit 56% | Input 21.6K tok · Output 3.4K tok`, from `ChatView.usage`), and each reply's own total in its actions row (`Usage 7.2K`), whose `title` carries the breakdown — cache hit, uncached input, cached input, cache write, output and the reasoning inside it. Formatting is `app/token-format.ts`; the copy is the `usage*` keys of `i18n/strings.ts`.
+**Iris** shows the reported values, in two places: the conversation's total under the composer (`Cache hit 56% | Input 21.6K tok · Output 3.4K tok`, from `ChatView.usage`), and each reply's own total in its actions row (`Usage 7.2K`), whose hover card carries the breakdown — cache hit, uncached input, cached input, cache write, output and the reasoning inside it (the landing is the bullet below). Formatting is `app/token-format.ts`; the copy is the `usage*` keys of `i18n/strings.ts`.
 
 **Why.** The three prompt-side buckets are what a request is actually billed on, and the cache-hit share is the one number that tells a reader whether a long-running scene is costing them a full prompt per turn or a tenth of one. It is knowable — every provider Iris speaks to reports it — and upstream simply does not carry it far enough forward to be shown.
 
@@ -1786,7 +1786,7 @@ What upstream *does* show per message is `extra.token_count`: **its own tokenize
 - **It depends on the provider reporting.** No report, no row: `MessageView.usage` and `ChatView.usage` are optional, an absent bucket is never zero-filled, and a provider silent about caching gets **no** cache-hit line rather than `0%` — the two are different facts and `token-format.ts` keeps them apart (`cacheHitPercent` returns `null`, not `'0'`).
 - **Every floor imported from a SillyTavern chat file has none**, and always will: what upstream stored is its own estimate under a different name, and back-filling `usage` from it would be manufacturing a bill. So a migrated conversation shows readings only from the turns generated in Iris, and its composer total counts only those.
 - **The two numbers must not be called the same thing**, and this is the live conflation risk: upstream's `{n}t` is an *estimate*, of the *reply text only*, by *Iris's own tokenizer* if we ever computed it; Iris's `用量 7.2K` is the *provider's* count of the *whole turn*, prompt side included. They differ by the entire prompt and can differ on the reply too. The interface therefore words them apart — 「用量」 only ever means reported billing, and the prompt panel's estimate keeps 「估算」 (`STRINGS.md` §三 records the convention) — and neither surface prints the other's number.
-- The per-turn breakdown is a native `title`, so it is unreachable by touch and unreadable by a screen reader as a table. The harness shows the same rows in an anchored dialog; the rows are assembled in that dialog's order (`usageDetailText`) so the copy moves over unchanged when the dialog is built.
+- **The breakdown was a native `title`; it is now a styled hover card, and this bullet is the record of that landing.** Both readings that carried one — the per-turn chip in a reply's actions row and the composer's session strip — open the same card (`app/UsagePopover.tsx`): anchored below the trigger by `useAnchoredPosition` from `@deepseek-ai/dsh-client-ui-primitives` (the model menu's own package; the strip lives at the viewport's bottom edge and the reading pane scrolls, so the card is portaled rather than CSS-positioned like the context card), clamped inside the viewport, drawn only in `--iris-*` tokens at the dropdown layer. It opens on hover (after a dwell) and on keyboard focus at once, closes on Escape, pointer-out (with the menus' 200ms grace, so the trip onto the portaled card does not close it) and an outside press, and its rows are a two-column `<dl>` a screen reader reads as pairs. The touch semantics are the honest trade: touch has no hover, so a tap **toggles** the card and an outside tap closes it — a press-and-hold or a second tap on the trigger is how a touch reader dismisses it, which is less discoverable than a hover-out but reachable, which the `title` was not. The plain-text assembly (`usageDetailText`) is deleted rather than kept beside the card: the rows are built once (`usageDetailRows` for the turn, `usageSummaryRows` for the session, the strip's own line being `usageSummaryRows` flattened by `usageLineGroups`), so the copy cannot drift between the line, the card, and the two languages. On the composer card those rows are joined by the card-script share as a `note` under them — the split the strip's `title` used to own, riding the card rather than a fourth group in the line (the composer's card-share divergence, §70).
 
 **What would overturn it.** A ruling that Iris should also carry upstream's estimate — which is a *different* entry, not this one: it would mean computing a count for imported floors so that a migrated conversation is not blank, and it would need its own word in the interface. Or a provider population where the reported figures are unreliable enough that showing them is worse than showing nothing; nothing measured so far suggests that.
 ## 48. The world book panel groups books by whose card they are; upstream lays every book out flat
@@ -3293,22 +3293,27 @@ in silently. Three surfaces, three amounts of room, three answers:
   and not a second number inside the total's cell, because two figures in one
   cell read as a subtraction whose direction the reader has to guess.
 
-**The composer's line keeps dsh's reading and moves the split to the hover.**
+**The composer's line keeps dsh's reading and moves the split to the card's note.**
 That row is 「本对话累计计费」 — what this conversation has cost — and a card's
 request is part of that, so the visible figure counts it. What the row cannot do
 is carry a fourth group: it is one ellipsised line, and a fourth group is the
-one that gets cut on a narrow composer. So the `title`, which previously
-repeated the visible line and therefore told a reader nothing, now carries the
-line plus 「其中卡脚本请求 N 次 · X tok」. The wording is 「其中」 in both dictionaries
-precisely because a reader who added the two figures would double-count.
+one that gets cut on a narrow composer. The `title` that used to state the split
+separately is gone with DEVIATION 47's landing — the strip opens the same hover
+card the per-turn chip does — and the share rides as a **note under that card's
+rows** (the card's `note`, `usageScriptShareSentence`): 「其中卡脚本请求
+N 次 · X tok」. The wording is 「其中」 in both dictionaries precisely because a
+reader who added the two figures would double-count.
 
 **The wrong implementation this is defended against**, in the render check and
 in `token-format.test.ts`: a line that *subtracted* the card's share to keep
 "what I generated" clean. It renders a smaller number, looks entirely
 reasonable, and disagrees with the bill — so the checks assert that the visible
-line carries the whole figure and the hover the smaller one, on a fixture where
-the two are different numbers. The fake seeds the card share on **one** of its
-three conversations for the same kind of reason: a fixture where every row had a
+line carries the whole figure and the card's note the smaller one, on a fixture
+where the two are different numbers. The note is closed inside the portaled
+card on a server render, so `render-check` proves it reaches markup by
+rendering the card itself, and pins that the share sentence appears nowhere on
+the static page. The fake seeds the card share on **one** of its three
+conversations for the same kind of reason: a fixture where every row had a
 figure would leave the blank column unrendered, which is the half a reviewer
 never sees.
 

@@ -37,9 +37,10 @@ import { Slot } from '../slots/Slot.tsx'
 import { PlumBlossom, PlumBranch } from './marks.tsx'
 import { ScriptButtons } from './ScriptButtons.tsx'
 import { registerComposer } from './composer-bus.ts'
-import { usageLineGroups, usageLineTitle } from './token-format.ts'
+import { usageLineGroups, usageScriptShareSentence, usageSummaryRows } from './token-format.ts'
 import { modelMenu } from './model-menu.ts'
 import { ContextCard, ContextPill } from './ContextMeter.tsx'
+import { UsagePopover } from './UsagePopover.tsx'
 import {
   commandArgumentCompletions,
   commandCompletions,
@@ -994,21 +995,26 @@ export function Composer({
           * lets a provider that reports no caching simply not have a cache
           * group, instead of having one that says nothing.
           *
-          * A native `title` carrying the line plus what the visible groups
-          * cannot fit: how much of the figure a card's own script asked for
-          * (`usageLineTitle`). The `title` is here in the first place because
-          * the row is one ellipsised line and measuring whether it actually
-          * overflowed would mean a `ResizeObserver` per composer; that it now
-          * also carries the split by source is why it is worth reading even
-          * when the line is fully visible.
+          * The line carries the same rows as a hover card (`UsagePopover`),
+          * built from the very rows the line flattens (`usageSummaryRows`), so
+          * a reader on touch or a keyboard — or one whose line just elided —
+          * gets the whole reading as a table, which is what the old native
+          * `title` repeated itself for and could not deliver to anyone.
           *
-          * **The visible line counts the card's requests.** They were billed
-          * to this conversation on this conversation's route, and this row is
-          * 「本对话累计计费」 — so leaving them out would put a number here that
-          * disagrees with the bill. The hover is where the two are separated.
+          * The card's note is where the split the old `title` used to carry
+          * lives now: how much of the bill above the card a card's own script
+          * asked for (`usageScriptShareSentence`). The visible groups already
+          * count those requests — they were billed to this conversation — so
+          * the note is a breakdown of the figures above it, never an addition
+          * to them.
           */}
         {stats.length === 0 ? null : (
-          <div className="iris-composer__stats" title={usageLineTitle(stats, scriptUsage, lang)}>
+          <UsagePopover
+            className="iris-composer__stats"
+            heading={t('usageSummaryTitle')}
+            rows={usageSummaryRows(usage, lang)}
+            note={usageScriptShareSentence(scriptUsage, lang)}
+          >
             {stats.map((group, at) => (
               <Fragment key={group}>
                 {at === 0 ? null : (
@@ -1017,7 +1023,7 @@ export function Composer({
                 <span>{group}</span>
               </Fragment>
             ))}
-          </div>
+          </UsagePopover>
         )}
       </div>
     </div>
