@@ -328,7 +328,23 @@ export class OpenAiCompatAdapter extends LlmAdapter {
       try {
         yield* translate(timed())
       } catch (cause: unknown) {
-        throw expired ?? cause
+        // `expired` is the one abort this adapter owns, and it already names the
+        // phase and the wait. `translate`'s own `LlmError`s name their failure
+        // (a stream that ended without [DONE] is `STREAM_CLOSED`), and an
+        // `AbortError` is the caller's own stop, which the host settles as an
+        // abort. But a peer that closes the socket mid-reply reaches this catch
+        // as undici's bare `TypeError: terminated` — one word that says nothing
+        // about what broke or what was lost. The reply never completed, so the
+        // usage chunk that rides the end of an OpenAI-compatible stream never
+        // arrived; say both, so the report reads as a diagnosis instead of a
+        // word a reader pastes into a search box.
+        throw expired ?? (cause instanceof LlmError ? cause
+          : cause instanceof Error && cause.name === 'AbortError' ? cause
+          : new LlmError(
+            `connection to ${url} was closed by the peer while the reply was streaming; no usage was reported for this turn`,
+            'TRANSPORT',
+            { cause },
+          ))
       }
     } finally {
       disarm()

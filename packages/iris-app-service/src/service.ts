@@ -4452,6 +4452,14 @@ export class IrisAppService {
     }
     let cacheReadTokens: number | undefined
     let inputTokens: number | undefined
+    // What surfaced in the report panel, when the reply did not complete. The
+    // trace below records it so a reader comparing two adjacent turns can tell
+    // an interrupted one from a free one — and knows *why* the figures are
+    // missing. Set only for a genuine failure to finish: a user pressing stop
+    // surfaces as an `AbortError`, which is the caller's own decision and is a
+    // note, not a fault (the adapter rethrows it untouched, and `#fail` settles
+    // the partial the user kept), so it is never recorded as an error.
+    let streamFailure: string | undefined
     // The request's moment, taken once. The trace, the report line below and a
     // side generation's own record all describe this request, and three
     // `Date.now()` calls around a stream that ran for a minute would describe
@@ -4498,6 +4506,18 @@ export class IrisAppService {
         }
         yield chunk
       }
+    } catch (error: unknown) {
+      // The reply never completed: hold onto what the report panel will say so
+      // the trace written below can name the failure. The adapter has already
+      // turned undici's bare `terminated` into a sentence naming the peer close
+      // and the missing usage; whatever arrives here is what `#fail` broadcasts
+      // verbatim as `stream.error`, so recording it makes the trace and the
+      // report agree. Rethrown untouched — `#fail` still owns how the turn
+      // settles.
+      if (!(error instanceof Error && error.name === 'AbortError')) {
+        streamFailure = error instanceof Error ? error.message : String(error)
+      }
+      throw error
     } finally {
       // **A card's generation, billed to its conversation.** First in the
       // `finally`, and in the `finally` rather than in the loop, because that
@@ -4579,6 +4599,7 @@ export class IrisAppService {
           sentAt,
           { ...inputTokens === undefined ? {} : { inputTokens },
             ...cacheReadTokens === undefined ? {} : { cacheReadTokens } },
+          streamFailure,
         ))
       }
     }

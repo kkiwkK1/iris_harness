@@ -4147,3 +4147,57 @@ save path rewrites unknown top-level header keys. `formatChatFile` writes the
 header verbatim and `parseChatFile` reads it verbatim, and `header.iris` has
 lived there since the beginning on the same assumption, so the two would fail
 together.
+
+## 52. A reply the provider cuts short is a fault with a name and a record, not a free turn
+
+**Kind: fix to how a closed-mid-stream reply is reported and recorded.**
+
+Measured on 爱衣, 2026-09-09: after a profile was saved for the route `deepseek`
+(`baseURL https://api.deepseek.com`, **no** `/v1`), cache traces `1..5.json` all
+recorded `provider: 'deepseek'` with `inputTokens` and `cacheReadTokens` **missing**
+while the report panel showed the single word `terminated`; trace `0.json`, sent
+through the default route (`https://api.deepseek.com/v1`), carried usage. Five
+adjacent traces read like five free turns, and the sixth (the default-route one)
+was the only one that looked billed — a reader could not tell "the provider never
+answered" from "the provider served it for nothing".
+
+Two findings, kept apart because only one was a defect.
+
+**Route parity is not the cause.** Both the host-default route and the saved
+profile route reach the same `OpenAiCompatAdapter` class; there is no route-specific
+URL, usage, or error-handling path to unify. And the `/v1` difference between the two
+routes is a real configuration difference, not an assembly bug: OpenAI documents
+`https://api.openai.com/v1` as its base, OpenRouter documents
+`https://openrouter.ai/api/v1`, and DeepSeek documents `https://api.deepseek.com`
+as its base_url while noting the appended `/v1` is unrelated to model version and is
+also accepted. DeepSeek answers both spellings, so the two are **preserved**, not
+collapsed: the join strips trailing slashes only
+(`packages/iris-llm-openai-compat/src/index.ts`), so `/v1`, `/v1/` and `/v1///` all
+reach the same `POST …/v1/chat/completions` and no `/v1` is ever invented for a base
+that already sits at the right root. A spelling that reached a different path than the
+user typed is pinned by `baseurl-parity.test.ts`.
+
+**The defect is the unreadable transport error.** A provider that closes the
+connection mid-reply surfaces in undici as the bare `TypeError: terminated`, which
+escaped the adapter unwrapped and was broadcast verbatim. Because the usage chunk in
+an OpenAI-compatible stream rides the **end** of the stream (after `[DONE]`), a peer
+close means usage never arrived — so the absent figures on those traces were the
+honest record, and zero-filling them would have read as free turns. The fix says both
+things where a reader looks:
+
+- the adapter turns the bare word into a sentence naming the failure and its cost
+  (`connection to … was closed by the peer while the reply was streaming; no usage
+  was reported for this turn`, code `TRANSPORT`);
+- the service records that sentence as an `error` field on the trace of the turn it
+  happened to, in the same `finally` that writes every other trace line, so the report
+  and the record describe the same failure. A caller stop (`AbortError`) is excluded:
+  a stop settles the partial reply as a note, not a fault, and records no `error`;
+- `prompt.divergence` carries the interrupted turn's `error` to the comparison, and the
+  excuse list names it `interrupted`, checked **before** cold-start/route/stale so a
+  shortfall caused by a cut-short reply is never reported as the operator's defect.
+
+`cache-trace.ts` stores the `error` only when the reply failed to complete; usage
+fields stay absent rather than zero on such a trace. What would overturn it: a trace
+whose `error` disagrees with the `stream.error` the panel showed for the same turn,
+or an interrupted turn whose divergence is reported under any excuse but
+`interrupted`.

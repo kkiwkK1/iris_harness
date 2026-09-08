@@ -124,6 +124,14 @@ export interface CacheTraceFile {
   inputTokens?: number
   /** What it served from cache, once it said. */
   cacheReadTokens?: number
+  /**
+   * Present when the reply did not complete: what surfaced in the report panel,
+   * verbatim. A trace that ends this way has no usage fields — not zero, just
+   * absent — because the provider never reported usage for a reply it never
+   * finished; zero would be a measurement of nothing, and a reader comparing
+   * turns could mistake an interrupted turn for a free one.
+   */
+  error?: string
   /** Every attributed range, in body order. */
   spans: TraceSpan[]
   /** Sum of the spans' lengths, so a reader can see how much was attributed. */
@@ -351,6 +359,7 @@ export function traceOf(
   target: TraceTarget,
   at: number,
   usage?: { inputTokens?: number, cacheReadTokens?: number },
+  error?: string,
 ): Omit<CacheTraceFile, 'seq'> {
   const canonical = canonicalBody(options)
   const fingerprint = fingerprintBody(canonical.body)
@@ -369,6 +378,7 @@ export function traceOf(
     bytes: canonical.bytes,
     ...usage?.inputTokens === undefined ? {} : { inputTokens: usage.inputTokens },
     ...usage?.cacheReadTokens === undefined ? {} : { cacheReadTokens: usage.cacheReadTokens },
+    ...error === undefined ? {} : { error },
     spans: attribution.spans,
     coveredBytes: attribution.spans.reduce((total, span) => total + (span.end - span.start), 0),
     attributed: attribution.attributed,
@@ -495,6 +505,7 @@ export function divergenceOf(previous: CacheTraceFile, current: CacheTraceFile):
     items,
     ...current.inputTokens === undefined ? {} : { inputTokens: current.inputTokens },
     ...current.cacheReadTokens === undefined ? {} : { cacheReadTokens: current.cacheReadTokens },
+    ...current.error === undefined ? {} : { error: current.error },
     // Either side being uncertain makes the comparison uncertain: the items are
     // aligned by id across both.
     attributed: previous.attributed && current.attributed,

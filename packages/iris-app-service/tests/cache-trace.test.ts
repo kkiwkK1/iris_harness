@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
-import { createAssistantMessage, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import type { IrisEvent } from '@iris/protocol'
+import { LlmError, createAssistantMessage, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { providerExcuse, type IrisEvent } from '@iris/protocol'
 import { slotsOf, squashSystemRuns, type AssembledSlot, type PromptLayout, type StreamFn } from '@iris/turn'
 
 import {
@@ -531,6 +531,64 @@ test('two byte-identical requests diverge at the end, not at the beginning', () 
   assert.ok(row.items.every(item => item.state === 'same'))
 })
 
+test('an interrupted trace records no usage and no zeroes, and the comparison carries the error', () => {
+  /*
+   * The 2026-09-09 shape, from the report side in. A reply the provider cut
+   * short reports no usage — the usage chunk rides the end of the stream and
+   * never arrived — and a trace must record that as an *absence*, not as zero,
+   * or a reader comparing two adjacent turns would mistake an interrupted turn
+   * for a free one. The error field is what says the absence is real.
+   */
+  const options = request('你是爱衣。', '第一轮提问', '第一轮回复')
+  const layout: PromptLayout = {
+    system: [{ id: 'main', text: '你是爱衣。' }],
+    messages: [
+      { parts: [{ id: 'history.0', text: '第一轮提问' }], role: 'user' },
+      { parts: [{ id: 'history.1', text: '第一轮回复' }], role: 'assistant' },
+    ],
+  }
+  const before = { ...traceOf({ ...options, layout }, { chatId: 'c', kind: 'send', turn: 0 }, 1000, {
+    inputTokens: 100,
+    cacheReadTokens: 50,
+  }), seq: 0 }
+  const interrupted = {
+    ...traceOf(
+      { ...options, layout },
+      { chatId: 'c', kind: 'send', turn: 1 },
+      2000,
+      // No usage object at all — the turn never reached the end of the stream.
+      undefined,
+      'connection to http://127.0.0.1:1/v1/chat/completions was closed by the peer while the reply was streaming; no usage was reported for this turn',
+    ),
+    seq: 1,
+  }
+  const next = { ...traceOf({ ...options, layout }, { chatId: 'c', kind: 'send', turn: 2 }, 3000, {
+    inputTokens: 120,
+    cacheReadTokens: 60,
+  }), seq: 2 }
+  assert.equal('error' in interrupted, true, 'the trace file carries the failure verbatim')
+  assert.match(interrupted.error as string, /closed by the peer|no usage was reported/iu)
+
+  // The comparison copies the newer request's error the same way it copies its
+  // usage figures — a reader of this pair sees that the turn it is looking at
+  // never finished, so its absent numbers are the absence of a bill, not a zero.
+  const row = divergenceOf(before, interrupted)
+  assert.equal(row.error, interrupted.error)
+  assert.equal(row.inputTokens, undefined)
+  assert.equal(row.cacheReadTokens, undefined)
+  // And the excuse answers "why nothing was served" without sending a reader
+  // hunting for a prompt defect in a request that was never answered.
+  assert.equal(providerExcuse(row), 'interrupted')
+
+  // A healthy turn that follows the interrupted one is an ordinary pair again:
+  // the interruption is the interrupted turn's own fact, not a property the
+  // conversation carries.
+  const after = divergenceOf(interrupted, next)
+  assert.equal(after.error, undefined)
+  assert.equal(after.inputTokens, 120)
+  assert.equal(after.cacheReadTokens, 60)
+})
+
 test('the store keeps the newest N and deletes only its own files', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-trace-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
@@ -915,4 +973,99 @@ test('a host with no trace store answers with no comparison rather than failing'
   // And nothing was written where a store would have written: a host without one
   // must not create the directory as a side effect of being asked.
   await assert.rejects(readFile(join(dir, 'cache-trace', created.view.chatId, '0.json'), 'utf8'))
+})
+
+// ------------------------------------------------- an interrupted turn, in full
+
+/**
+ * A stream that writes a reply and then fails the way the adapter reports a
+ * peer closing the connection mid-stream.
+ *
+ * What reaches the host is the adapter's `TRANSPORT` `LlmError` — shaped after
+ * the sentence the fix in `packages/iris-llm-openai-compat/src/index.ts` writes
+ * in place of undici's bare `TypeError: terminated`. Some text has already been
+ * written, and no usage chunk has: the usage rides the end of the stream, which
+ * the peer never reached. This is the whole interrupted-turn shape in one
+ * injected stream, asserted end to end.
+ */
+function interruptingStream(): StreamFn {
+  return async function* (_options: GenerateOptions): AsyncIterable<StreamChunk> {
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: '*The map rustles, and then' }
+    throw new LlmError(
+      'connection to http://endpoint/v1/chat/completions was closed by the peer while the reply was streaming; '
+      + 'no usage was reported for this turn',
+      'TRANSPORT',
+    )
+  }
+}
+
+test('an interrupted turn records the failure on the trace, and never a zero for the usage it was not given', async (t) => {
+  /*
+   * The whole path the 2026-09-09 report was missing, in one turn. Measured on
+   * the user's own host, a saved profile whose replies were all cut short left
+   * five traces with `provider: 'deepseek'` and **no** `inputTokens` /
+   * `cacheReadTokens`, while the report panel showed the bare word `terminated`
+   * and the trace said nothing about the turn having failed. A reader comparing
+   * adjacent sequence numbers would have read an interrupted turn as a free one.
+   *
+   * This pins the record side: the error the report shows is the error the trace
+   * keeps, and the absent usage stays absent — zero would be a measurement of a
+   * bill that never arrived.
+   */
+  const dir = await mkdtemp(join(tmpdir(), 'iris-trace-interrupted-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await mkdir(join(dir, 'worlds'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+  await writeFile(join(dir, 'worlds', 'atlas.json'), JSON.stringify(BOOK), 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const worldbooks = new WorldbookStore(join(dir, 'worlds'))
+  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
+  await settings.load()
+  const chats = new ChatStore(
+    join(dir, 'chats'), library, undefined, undefined, worldbooks, () => settings.globalSelect())
+  const traces = new CacheTraceStore(join(dir, 'cache-trace'), { keep: 8 })
+  const errors: IrisEvent[] = []
+  const handlers = new IrisAppService({
+    stream: interruptingStream(),
+    library,
+    chats,
+    settings,
+    worldbooks,
+    cacheTrace: traces,
+    broadcast: (event: IrisEvent) => { if (event.type === 'stream.error') errors.push(event) },
+    userName: 'Traveller',
+  }).handlers()
+  await handlers['worldbook.setGlobalSelect']({ names: ['atlas'] })
+
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+  await handlers['chat.send']({ chatId, text: '早上好' })
+
+  // The report panel gets the readable sentence — the fix in the adapter — and
+  // never the bare word it used to broadcast verbatim.
+  let failure: Extract<IrisEvent, { type: 'stream.error' }> | undefined
+  for (let waited = 0; waited < 200 && failure === undefined; waited += 1) {
+    failure = errors[0] as Extract<IrisEvent, { type: 'stream.error' }> | undefined
+    if (failure === undefined) await new Promise(resolve => setTimeout(resolve, 1))
+  }
+  assert.ok(failure !== undefined, 'no stream.error was broadcast')
+  assert.equal(failure.code, 'provider-error', 'a mid-stream peer close is a provider error, not a timeout and not an abort')
+  assert.notEqual(failure.message, 'terminated')
+  assert.match(failure.message, /closed by the peer|no usage was reported/iu)
+
+  // The trace that turn left carries the same sentence, and no zero-fill.
+  const seqs = await traces.list(chatId)
+  assert.deepEqual(seqs, [0], `expected one trace, got ${seqs.join(', ')}`)
+  const trace = await traces.read(chatId, 0)
+  assert.ok(trace !== undefined)
+  assert.equal(trace.error, failure.message, 'the report and the record describe the same failure')
+  assert.equal(trace.inputTokens, undefined, 'no input figure was invented')
+  assert.equal(trace.cacheReadTokens, undefined, 'no cache figure was invented')
+  assert.equal(trace.kind, 'send')
+  assert.ok(trace.spans.length > 0, 'the assembled parts are still named')
+  assert.ok(trace.body.length > 0, 'the body that was sent is still kept')
+  assert.equal(chats.cached(chatId)?.generating, false, 'a failed turn releases the chat')
 })
