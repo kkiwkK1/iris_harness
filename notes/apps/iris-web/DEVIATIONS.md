@@ -3311,3 +3311,58 @@ the two are different numbers. The fake seeds the card share on **one** of its
 three conversations for the same kind of reason: a fixture where every row had a
 figure would leave the blank column unrendered, which is the half a reviewer
 never sees.
+
+## 71. The `z` global keeps answering after a card overwrites it with a one-spelled copy
+
+**Kind:** deliberate improvement.
+
+**Upstream.** A card script may assign anything to `globalThis.z`, and whatever
+it assigns is thereafter what every bare `z` read answers — in upstream's frames
+exactly as here. MagVarUpdate's helper `mvu_zod.js` is written against the
+**namespace** spelling (`const r = z; … r.z.ZodObject …`), and the host page's
+`z` upstream happens to be a namespace-shaped object, so the helper works against
+whatever namespace it finds.
+
+**The measured break.** 人贩子物语's Zod Schema script imports zod itself
+through the bundle proxy —
+`({ z: zodZ } = await import('https://cdn.jsdelivr.net/npm/zod/v4/+esm'))` — and
+hangs the **named export** on `globalThis.z` before importing `mvu_zod.js`.
+Measured on both the jsDelivr rollup build and the npm package it is
+`Object.freeze({__proto__:null, …})` with `ZodObject`, `looseObject`, `object`,
+`prettifyError` on it and **no `.z`** — the self-reference is a named export of
+the namespace, not a member of the export. So the helper's first dereference
+read `.z` of a copy that does not have it, and the card reported
+`Cannot read properties of undefined (reading 'ZodObject')` at
+`mvu_zod.js:1:647` before its variable schema registered. The overwrite is the
+card's own doing and fails the same way in an upstream frame; upstream never
+meets it because no upstream card has shipped this wiring yet.
+
+**The fix.** `preset-entry.ts` publishes `z` through `zod-global.ts` as an
+**accessor**: the setter stores whatever a card assigns, and the getter answers
+it as stored — except when the stored value is zod-shaped and missing `.z`, in
+which case reads answer through a prototype-layered view owning exactly one
+member, `z`. That view *is* the namespace shape the seed was chosen for,
+reconstructed over the card's own copy, so `instanceof r.z.ZodObject` sees the
+very class the card's schemas were built from and the prefault-compat question
+never arises across copies.
+
+**The cost.** One accessor where a data property was; every bare `z` read in the
+realm passes a two-member shape test. The shape test is deliberately narrow — a
+full namespace, a future zod whose export self-references, and every non-zod
+value read back identically — so the defense cannot silently rewrite a value it
+does not recognise. **What would overturn it:** a zod that puts `.z` on the
+named export makes the view dead code; the premise is pinned by
+`zod-global.test.ts`'s first assertion, which fails — and retires the layer —
+the day upstream's shape changes.
+
+**The same round closed the document stand-in's event half** (`virtual-document.ts`),
+recorded here because it is the mirror image: not a divergence but a
+**compatibility gap closed**. 人贩子物语's 黑市手机 walks `window.parent`
+outwards until a document reads and holds it as `hostDocument`; here that walk
+lands on the virtual document, which answered `addEventListener` with
+`undefined` — `hostDocument.addEventListener is not a function`, one line into
+its startup. The stand-in now carries `addEventListener`/`removeEventListener`/
+`dispatchEvent`, delegating to the **frame's own document** — the only page a
+card's capture-phase delegation can observe, and the only bus that produces real
+DOM events with a `target` to walk. Upstream's `hostDocument` is the page's real
+document; this is the same semantics over the page a card actually has.

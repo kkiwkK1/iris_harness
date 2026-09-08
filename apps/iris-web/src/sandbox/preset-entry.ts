@@ -49,6 +49,7 @@ import * as YAML from 'yaml'
 import * as z from 'zod'
 
 import { installPrefaultCompat } from './zod-compat.ts'
+import { publishZodGlobal } from './zod-global.ts'
 
 const host = window as unknown as Record<string, unknown>
 
@@ -105,7 +106,20 @@ host['_'] = lodash
  * measured break and the semantics the forwarding preserves.
  */
 installPrefaultCompat(z)
-host['z'] = z
+/*
+ * The **accessor**, not the bare assignment — because the seed's shape decision
+ * has to survive the card that undoes it.
+ *
+ * The namespace answers both observed spellings, and 人贩子物语's Zod Schema
+ * script then overwrites it: `({ z: zodZ } = await import('…/zod/v4/+esm'))`
+ * destructures the **named export** (measured: `ZodObject` on it, no `.z`) and
+ * hangs it on `globalThis.z` before importing `mvu_zod.js`, whose helper
+ * dereferences `z` → `.z` → `.ZodObject`. A plain data property would answer
+ * the overwrite with the copy as-is and die one read later; the accessor stores
+ * what the card brought and answers it under the shape contract the seed was
+ * chosen for. See `zod-global.ts` for the measured break.
+ */
+publishZodGlobal(host, z)
 host['YAML'] = YAML
 
 /*
