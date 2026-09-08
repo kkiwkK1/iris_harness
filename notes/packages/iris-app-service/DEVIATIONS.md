@@ -3196,3 +3196,314 @@ here.
 prints the first differing character with 60 characters of context on each side,
 so the next reading names the floor and the script that touched it rather than a
 byte offset.
+
+## 45. The continue nudge and the impersonation prompt come from the preset, not from a constant — and `continue_prefill` cancels the nudge entirely
+
+**Kind: compatibility fix, plus a remaining gap.** Found by a field-level audit
+of the Chat Completion preset against `openai.js`'s `settingsToUpdate`
+(`openai.js:298-403`, 102 keys), prompted by the operator's report that "a
+preset seems less effective here than in ST".
+
+**Upstream.** Both prompts ride in the preset file like any other field —
+`impersonation_prompt` at `openai.js:357`, `continue_nudge_prompt` at `:362` —
+and a preset switch overwrites `oai_settings` from them. So the preset's text
+*is* the value; the shipped constants (`openai.js:104`, `:110`) are only what an
+untouched install happens to hold.
+
+Three details are load-bearing:
+
+1. **The nudge is suppressed by `continue_prefill`.** The guard is
+   `if (type === 'continue' && cyclePrompt && !oai_settings.continue_prefill)`
+   (`openai.js:898`). With prefill on, upstream displaces the reply being
+   continued to the end of the request and hands it back as the model's own
+   opening words (`openai.js:1311-1318`); no instruction is added, because the
+   position *is* the instruction.
+2. **The nudge is a system message.** The `continueNudge` promptObject declares
+   `role: 'system'` and `system_prompt: true` (`openai.js:899-903`).
+3. **An empty string is a value, not an absence.** Upstream guards
+   `impersonation_prompt` explicitly (`openai.js:1362`) — a preset that blanks
+   the field sends no instruction.
+
+**Iris, before.** `CONTINUE_NUDGE_PROMPT` and `IMPERSONATION_PROMPT` were
+constants, with a docblock saying "this host has no settings surface for them
+yet, so the defaults stand in until one exists". The premise had stopped being
+true: `SettingsStore.presetBody()` holds the whole preset, so the values were in
+memory the whole time. The nudge also rode as `role: 'user'`, cited in
+`driver.ts` to `openai.js:899-904` — the very lines that say `role: 'system'`.
+
+**Iris, now.** `utilityPromptOf` reads the field off the active preset and falls
+back to the shipped default only when the key is **absent**; `''` sends nothing.
+The nudge is suppressed when `continue_prefill` is `true`, and rides as
+`system`.
+
+**Measured, on the two presets in the operator's profile:**
+
+| field | `[主预设] V19.5 狐神抚 · 毓忻` | `咩咩预设 ver 5.8.1` |
+| --- | --- | --- |
+| `continue_nudge_prompt` | 456 chars, custom (`[CONTINUE MODE — PURE EXTENSION]…`) | 68 chars — byte-identical to upstream's default |
+| `continue_prefill` | `true` | absent |
+| `impersonation_prompt` | 457 chars, custom (`[IMPERSONATION MODE — ABSOLUTE OVERRIDE]…`) | 210 chars, custom |
+
+So for the preset the operator actually runs, every **continue** used to carry a
+generic one-line nudge as a user message where upstream carries **no nudge at
+all**, and every **impersonate** carried upstream's stock paragraph instead of
+the preset's 457-character override. Both are now the preset's own words.
+
+### The part that is still a deviation
+
+Five more utility prompts ride in a preset and are still unread:
+`send_if_empty` (`openai.js:356`), `new_chat_prompt` (`:358`),
+`new_group_chat_prompt` (`:359`), `new_example_chat_prompt` (`:360`),
+`group_nudge_prompt` (`:365`). **Measured impact on the operator's presets:
+zero** — `send_if_empty`, `new_chat_prompt`, `new_group_chat_prompt` and
+`new_example_chat_prompt` are all `""` or absent in both files, and
+`group_nudge_prompt` is upstream's default and applies only to group chats,
+which this host does not have. They are listed because "reads none of them" and
+"reads none of them and it happens not to matter for these two files" are
+different claims, and only the second is true.
+
+### `{{original}}` in a card's prompt override
+
+Carried in the same change. Upstream lets a card **extend** the preset's main
+prompt rather than replace it: the replaced text is supplied to the substitution
+as `original` (`openai.js:1491-1492` reaching
+`PromptManager.js:1281-1284`), so a card writing `{{original}}` followed by its
+own rules keeps the preset's prompt and appends to it. `applyCardOverrides`
+replaced the content and never supplied `original`, so `@iris/macro`'s
+`original` builtin yielded `''` and the preset's whole main prompt vanished —
+silently and totally.
+
+**Measured: 0 of 33 cards** across the two local profiles use `{{original}}`,
+and only 1 of 33 carries a non-empty `system_prompt` at all. This is therefore a
+correctness fix with **no measured effect on the present corpus**, kept because
+the failure mode is silent and total rather than because anything here exercises
+it. The fix resolves the macro at the substitution site — which is where
+upstream resolves it — rather than by widening the turn's macro context, because
+`original` is the only macro whose value differs per prompt item while the
+context that expands the preset is built once per turn.
+
+Not gated on `prefer_character_prompt` / `prefer_character_jailbreak`
+(`power-user.js:203-204`): both ship `true`, neither rides in a preset file, and
+this host has no settings surface for them, so applying the override
+unconditionally is upstream's default behaviour.
+
+## 46. The request body carries eleven of the preset's fields; upstream's carries twenty-one
+
+**Kind: measured gap, deliberate for now.**
+
+Upstream's `generate_data` (`openai.js:2742-2767`) is a request to **its own
+backend**, which then builds the provider call. Some of its keys therefore never
+reach a provider at all and are not gaps: `type`, `chat_completion_source`,
+`user_name`, `char_name`, `group_names`, `reverse_proxy`, `proxy_password`,
+`custom_prompt_post_processing`. `@iris/preset`'s `parity.ts` carries that
+allow-list so a parity report does not open with a dozen false findings.
+
+What is left, against `serialize.ts`:
+
+| upstream body field | preset key | Iris | value in the operator's fox preset |
+| --- | --- | --- | --- |
+| `temperature` | `temperature` | sent | 1 |
+| `max_tokens` | `openai_max_tokens` | sent | 65535 — **and it does reach the wire**, so short replies are not this |
+| `top_p` | `top_p` | sent | 0.88 |
+| `frequency_penalty` | `frequency_penalty` | sent | 0 |
+| `presence_penalty` | `presence_penalty` | sent | 0 |
+| `top_k` | `top_k` | sent | 40 |
+| `min_p` | `min_p` | sent | 0 |
+| `repetition_penalty` | `repetition_penalty` | sent | 1 |
+| `seed` | `seed` | sent when non-negative | −1, upstream's "random"; dropped, see `serialize.ts` |
+| `reasoning_effort` | `reasoning_effort` | sent | `"low"` |
+| `stream` | `stream_openai` | always `true` | `true` |
+| `logit_bias` | `bias_preset_selected` + `bias_presets` | **not sent** | `"Default (none)"`, and `bias_presets` is absent — the selected preset is the empty one, so upstream's field would be `undefined` too |
+| `n` | `n` | **not sent** | 1 — upstream also omits it unless multi-swipe is on |
+| `include_reasoning` | `show_thoughts` | **not sent** | `true` |
+| `enable_web_search` | `enable_web_search` | **not sent** | `false` |
+| `verbosity` | `verbosity` | **not sent** | `"auto"` |
+| tool definitions | `function_calling` | **not sent** | `true` |
+| — | `top_a` | **not read** | 0 |
+| — | `max_context_unlocked` | **not read** | `true`; this host's window is a setting, not a checkbox |
+| — | `names_behavior` | **not implemented** | `0` = DEFAULT |
+
+**`names_behavior` is the one that reads worse than it is.** The enum is
+`{ NONE: -1, DEFAULT: 0, COMPLETION: 1, CONTENT: 2 }` (`openai.js:204-209`).
+`CONTENT` prefixes the speaker's name onto every non-narrator message's content
+(`openai.js:594-598`) and `COMPLETION` sets the wire `name` field
+(`openai.js:948-951`); this host does neither. But `DEFAULT` — the shipped
+value, the value in **both** of the operator's presets, and the value in the
+local ST install's own `oai_settings` — adds a prefix only for a group chat or a
+message carrying `force_avatar` (`openai.js:589-593`). For a one-to-one chat,
+`DEFAULT` and "no prefix at all" are the same request. So the gap is real for a
+preset that sets 1 or 2, and **exactly zero** for every preset measured here.
+
+The rest are omissions of fields whose measured values are either the provider's
+own default (`n: 1`, `enable_web_search: false`, `verbosity: "auto"`) or without
+an addressee on this host (`function_calling`, `logit_bias` with no bias
+preset). `show_thoughts: true` is the one with a visible consequence — upstream
+asks its backend to pass reasoning through — but this host reads reasoning off
+the stream directly, so there is nothing to ask.
+
+`top_a` is skipped in `presetScalarPatch` because `GenerationSettings` has no
+field for it. Value `0` in the one preset that carries it, which is off.
+
+### Carried in this change
+
+`presetScalarPatch` also reads **`squash_system_messages`** now. It is a
+checkbox in `settingsToUpdate` (`openai.js:380`) and a preset carries it like
+any other field; the numeric loop's `typeof value === 'number'` guard silently
+dropped it, so switching presets left the previous preset's squash running over
+the new preset's prompt list. The operator's fox preset ships `false`
+explicitly, 咩咩 omits it.
+
+## 47. A preset's own regex scripts are not run — three tiers exist upstream, two here
+
+**Kind: unimplemented feature, with a measured surface and an upstream gate that
+changes the recommendation.**
+
+**Upstream.** `getRegexScripts` walks three tiers —
+`SCRIPT_TYPES = { GLOBAL: 0, PRESET: 2, SCOPED: 1 }`, iterated by key insertion
+order so the run order is global, preset, character
+(`extensions/regex/engine.js:11-16`, consumed at `:99`; §35 is the correction
+that got that order right here). The preset tier reads
+`presetManager.readPresetExtensionField({ path: 'regex_scripts' })`
+(`engine.js:126`) — the active preset file's own `extensions.regex_scripts`.
+
+**Iris.** `scriptsOf` (`regex.ts:100`) builds the global and character tiers.
+Its docblock said the preset tier "stays reserved — upstream reads it from the
+active preset file's own `regex_scripts` field, which this host's read-only
+preset library does not carry". **That premise is false**: the switched-in preset
+body is stored whole, `extensions` included, and the operator's live
+`settings.json` holds 40 scripts under
+`preset.body.extensions.regex_scripts` right now.
+
+### Measured surface, `[主预设] V19.5 狐神抚 · 毓忻`
+
+40 scripts, 18 not disabled. Split by the stage each acts on
+(`markdownOnly` = display only, `promptOnly` = the request only):
+
+| | count | what they do |
+| --- | --- | --- |
+| enabled, `promptOnly` | 6 | strip `<think_fox>`, `<draft>`, `<fox_front>`, `<fox_selc>`, `<fox>` and `<fox_input>` blocks out of the text **sent to the model** |
+| enabled, `markdownOnly` | 12 | the thinking-chain and action-option prettifiers — replaceStrings of 25 299, 41 831 and 21 412 chars |
+| disabled | 22 | alternate skins, and the "kill LLM tics" family |
+
+The six `promptOnly` ones are the fidelity-relevant half: without them every
+turn feeds the model's own scaffolding, drafts and option blocks back into the
+history it reads. The twelve `markdownOnly` ones are the *visible* half — a user
+running this preset in ST sees a rendered thinking panel and sees raw tags here
+— and they change no byte of any request.
+
+Two of the 40 are UI separators with an **empty** `findRegex` and
+`disabled: false`, which any implementation has to survive.
+
+The preset stores the same 40 scripts twice more: in
+`extensions.SPreset.RegexBinding.regexes` (a third-party extension's own copy)
+and inside a 204 091-char `SPresetSettings` pseudo-prompt smuggled into
+`prompts[]`. Only `extensions.regex_scripts` is upstream's field.
+
+### The gate that changes the recommendation
+
+`getScriptsByType` refuses the preset tier unless the preset is allow-listed:
+`extension_settings.preset_allowed_regex[getCurrentPresetAPI()]` must contain
+the preset's name, and `getRegexedString` is the caller that passes
+`allowedOnly: true` (`engine.js:126-128`, `:346`). In the local ST install that
+list holds four preset names — `Antennae_v16_α (1) (1)`, `Kemini 5.17 (1)`,
+`Antennae_v18 (1)`, `Kemini 5.17 (5)` — and **neither of the operator's two
+presets is on it**.
+
+So on the evidence in this install, ST would not run those 40 scripts either,
+and "ST is more effective because it runs the preset's regex" is **not
+established**. What is established: the capability is missing, and the surface it
+would cover is large. Those are two different claims and only the first is a
+fact about Iris.
+
+Wiring it therefore needs a policy decision rather than a parameter: the tier
+must arrive **off** by default with a per-preset allow-list of its own,
+mirroring `ScopedRegexPolicy`, or a user importing a preset silently gains 18
+rewrite rules over their transcript. That is why this is listed rather than
+fixed here.
+
+`咩咩预设 ver 5.8.1` carries no `regex_scripts` at all, so this entry is one
+preset's exposure and not a corpus statistic.
+
+## 48. Every system-placed contribution is one system message; upstream sends one message per prompt
+
+**Kind: framing deviation, effect unmeasured, recorded because every parity
+report will show it.**
+
+Upstream's Chat Completion path builds a flat `messages[]` in which each enabled
+prompt becomes its own message carrying its own role (`Message.fromPromptAsync`,
+collected by `ChatCompletion`), and merges adjacent system ones only when
+`squash_system_messages` is on. `assemble.ts:165` joins this host's
+system-placed contributions with a blank line and `serialize.ts:64-67` emits the
+result as a single `{ role: 'system' }` message.
+
+**Measured on the operator's presets**, enabled prompts in the chat-completion
+order group, split by position and role:
+
+| | fox V19.5 | 咩咩 5.8.1 |
+| --- | --- | --- |
+| pre-history, system, non-empty | 20 | 55 |
+| pre-history, markers | 6 | 7 |
+| pre-history, non-system, non-empty | **0** | **0** |
+| post-history, system, non-empty | 8 | 9 |
+| post-history, non-system, non-empty | 1 (assistant, 49 chars) | 0 |
+
+So a request upstream frames as roughly 26 or 64 messages this host frames as
+one system message plus the conversation. The **text** is the same and in the
+same order; what differs is where the provider sees the boundaries, and
+providers disagree about how they join multiple system messages.
+
+A second, narrower gap sits in the same place: `resolvePreset` keeps `item.role`
+for a post-history contribution and **drops it** for a pre-history one
+(`chat-completion.ts`, the `placement: afterHistory ? … : { kind: 'system' }`
+branch), so an enabled pre-history prompt authored as `user` or `assistant`
+would be folded into the system block under the system role. Measured above:
+**zero** enabled prompts in either preset sit in that position, and the one
+non-system enabled prompt that exists is post-history, where the role is
+honoured. Named because the code cannot express the case, not because anything
+here hits it.
+
+Both are left alone in this round. Changing the framing changes every recorded
+prefix hash and every cache figure in §38 and `CACHE-TARGET.md`, and the
+experiment that would justify it is provider-side — does DeepSeek treat one
+40 KB system message differently from twenty-six smaller ones? — which nothing
+here has run.
+
+## 49. What the parity instruments are, and what they cannot answer
+
+**Kind: instrument note.**
+
+`scripts/capture-endpoint.mjs` is a loopback-only OpenAI-compatible endpoint that
+writes every request body it receives to disk verbatim and answers a fixed
+empty stream. Pointed at from SillyTavern's Custom source, it yields **ST's own
+request** for whatever card, preset and conversation is open — the only artefact
+that can settle a parity argument, because the request is the product of ~100
+settings fields, two macro passes, a world-info scan, a token budget and three
+regex tiers, and only the final body knows which of them diverged.
+
+`@iris/preset`'s `parity.ts` compares two such bodies in four layers — body
+fields, message framing, system blocks aligned by content, first byte of
+divergence — and `scripts/preset-parity.mjs` is the shell that reads files,
+optionally stands a headless host up for the Iris side, and prints.
+`notes/packages/iris-preset/PARITY-HOWTO.md` is the operator's walk-through.
+
+Three limits, stated because a report that looks complete is the dangerous kind:
+
+1. **A report describes one assembly, not a standing fact.** World-info
+   activation, `{{random}}`, MVU variables and depth placement all move with the
+   conversation's state. A claim that a difference is *stable* needs two
+   captures at different turns agreeing.
+2. **Cache-friendly assembly must be off** (`IRIS_CACHE_FRIENDLY=0`) or its
+   deliberate reordering (§38) buries every other finding under "moved". The
+   script sets it when it assembles the Iris side itself and says so in the
+   header; when both sides are captured, the operator has to.
+3. **The block alignment is finer than a prompt boundary.** Blocks are cut on
+   the blank line, so a prompt whose own text contains one splits into two —
+   equally on both sides, which costs a reader nothing and never moves a byte
+   across a boundary, but means "matched 26" is a count of blocks and not of
+   preset prompts.
+
+The "moved" column is the minimum set of blocks whose relocation explains the
+order — the complement of a longest increasing subsequence — not "every block
+that now sits after a block with a smaller index". The naive reading names the
+wrong elements: for `a,b,c` against `c,a,b` it reports *a* and *b* as moved when
+**c** is what moved. That is asserted by test rather than argued.

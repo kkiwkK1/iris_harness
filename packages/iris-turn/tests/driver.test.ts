@@ -170,13 +170,15 @@ test('continueTurn rejoins the continued reading and keeps its siblings', async 
   assert.equal(session.events.some(event => event.type === 'turn/start' && event.data.turn === 1), false)
 
   // The nudge is the request's LAST message — after the depth-0 injection,
-  // which is where depth 0 lands by convention — and its role is untouched by
-  // the impersonation fix: the continue's own path, unchanged.
+  // which is where depth 0 lands by convention — and it carries the **system**
+  // role, as upstream's `continueNudge` promptObject declares
+  // (`openai.js:899-903`: `role: 'system'`, `system_prompt: true`). It rode as
+  // `user` here, cited to those same lines; DEVIATIONS.md §45.
   const texts = seen[1]?.messages.map(message =>
     message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
   const continueTail = seen[1]?.messages.at(-1)
   assert.equal(texts.at(-1), 'carry the scene on')
-  assert.equal(continueTail?.role, 'user', 'the continue nudge changed role')
+  assert.equal(continueTail?.role, 'system', 'the continue nudge changed role')
 })
 
 test('continueTurn without a nudge still closes on the conversation', async () => {

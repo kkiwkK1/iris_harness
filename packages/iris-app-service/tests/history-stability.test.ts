@@ -329,7 +329,9 @@ test('a continue keeps the floors it is continuing byte-identical and only exten
   // past the conversation — behind the newest floor, where a prefix cache has
   // already stopped matching either way.
   assert.deepEqual(rows(continued).slice(3, 5), TAIL.slice(0, 2))
-  assert.equal(rows(continued).at(-1)?.startsWith('user [Continue'), true)
+  // `system`, not `user`: upstream's `continueNudge` promptObject declares
+  // `role: 'system'` (`openai.js:899-903`) — DEVIATIONS.md §45.
+  assert.equal(rows(continued).at(-1)?.startsWith('system [Continue'), true)
   assert.equal(continued.messages.length, 6)
 })
 

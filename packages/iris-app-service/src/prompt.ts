@@ -429,12 +429,53 @@ function outletPromptsOf(buckets: PositionBuckets['outlets']): Record<string, st
 }
 
 /**
+ * Resolve `{{original}}` in an override against the text it replaced.
+ *
+ * The macro's whole job is *additive* overriding: a card writes
+ * `{{original}}\n\n<its own rules>` to keep the preset's main prompt and append
+ * to it. Upstream supplies the replaced text as the substitution's `original`
+ * key — `preparePrompt(systemPrompt, mainOriginalContent)` at
+ * `openai.js:1491-1492`, reaching `substituteParams(prompt.content, { original })`
+ * at `PromptManager.js:1281-1284`.
+ *
+ * Resolved **here**, on the override itself, rather than by widening the macro
+ * context: `original` is the only macro whose value differs per prompt item, and
+ * the context that expands the preset is built once for the whole turn. Doing it
+ * at the substitution site is also where upstream does it.
+ *
+ * One shot, as upstream's registry gives it: the first occurrence takes the
+ * text, and any later one falls through to `@iris/macro`'s `original` builtin,
+ * which yields `''` on a second read (`registry.ts:332`, `builtins.ts:140`).
+ * @param override - the card's replacement text.
+ * @param original - the preset item's own content, which it replaces.
+ * @returns the override with its first `{{original}}` filled in.
+ */
+function substituteOriginal(override: string, original: string): string {
+  const at = override.indexOf('{{original}}')
+  if (at < 0) return override
+  return override.slice(0, at) + original + override.slice(at + '{{original}}'.length)
+}
+
+/**
  * Apply a card's overrides to the preset it will be rendered with.
  *
  * SillyTavern lets a card replace the preset's main prompt and its post-history
  * instructions, unless the preset item forbids it. Cards rely on this heavily —
  * a card's whole voice is often in `system_prompt` — so a preset that silently
  * won a card's override would make most of the library play wrong.
+ *
+ * A replacement is not necessarily a deletion: see {@link substituteOriginal}
+ * for `{{original}}`, which is how a card *extends* the preset's prompt instead
+ * of discarding it. Measured over the 33 cards in the two local profiles, none
+ * uses it and only one carries a non-empty `system_prompt` at all — so this is
+ * a correctness fix with no measured effect on the present corpus, kept because
+ * the failure mode is silent and total (the preset's main prompt vanishes).
+ *
+ * Not gated on upstream's `prefer_character_prompt` / `prefer_character_jailbreak`
+ * (`power-user.js:203-204`), which decide whether the override is offered at
+ * all; both ship `true` and neither rides in a preset file, so applying the
+ * override unconditionally is upstream's default behaviour and the gate is a
+ * settings surface this host does not have.
  * @param preset - the configured preset.
  * @param card - the character, or absent.
  * @returns a preset with the overrides applied; the input is not mutated.
@@ -455,7 +496,7 @@ export function applyCardOverrides(
     if (text.trim().length === 0) continue
     prompts = prompts.map(item =>
       item.identifier === identifier && item.forbid_overrides !== true
-        ? { ...item, content: text, marker: false }
+        ? { ...item, content: substituteOriginal(text, item.content ?? ''), marker: false }
         : item)
   }
   return { ...preset, prompts }

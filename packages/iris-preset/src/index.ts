@@ -20,3 +20,22 @@ export {
   type PromptOrder,
   type ResolveOptions,
 } from './chat-completion.ts'
+
+export {
+  alignBlocks,
+  blocksOf,
+  compareBodies,
+  compareFields,
+  firstDivergence,
+  mergeSystemRuns,
+  messagesOf,
+  renderReport,
+  type BlockAlignment,
+  type Divergence,
+  type FieldRow,
+  type Framing,
+  type ParityMessage,
+  type ParityOptions,
+  type ParityReport,
+  type RequestBody,
+} from './parity.ts'
