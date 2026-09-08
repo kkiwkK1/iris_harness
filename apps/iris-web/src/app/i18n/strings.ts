@@ -847,6 +847,8 @@ export const en = {
   /** Reasoning and context window (sampling section, behind “more parameters”). */
   contextWindow: 'Context window',
   contextWindowNote: 'Tokens of conversation one request may carry. Switching a preset sets it.',
+  contextUnlocked: 'Unlock the window',
+  contextUnlockedNote: 'Off, the window above is capped at what the model is known to accept. On, the number stands as written — SillyTavern’s “unlocked context size”.',
   reasoningEffort: 'Reasoning effort',
   reasoningEffortNote: 'How hard a reasoning model thinks. “auto” lets the provider decide.',
 
@@ -1192,7 +1194,7 @@ export const en = {
    * kinds of number sit together.
    */
   contextPill: 'Context {used}/{total} · {percent}%',
-  /** Before the card has been opened for this conversation: the capacity alone. */
+  /** When nothing has ever measured this conversation: the capacity alone. */
   contextPillCapacity: 'Context {total}',
   contextPillTitle: 'What is filling the context window',
   contextCardTitle: 'Context capacity',
@@ -1216,6 +1218,18 @@ export const en = {
   /** Which of the two answers this is: a record of a sent request, or a preview. */
   contextFromRecord: 'Measured on turn {turn}',
   contextFromPreview: 'A preview of the next request',
+  /*
+   * Where the window in force came from — the line the reported case needed.
+   *
+   * Four, because they are four different next steps: change model or unlock,
+   * change the number, reconsider a decision already made, or set one at all.
+   * Each names the figure, so the sentence is readable on its own in a hover
+   * where nothing else is on screen.
+   */
+  contextWindowFromModel: 'Window {tokens}, the limit of {model}',
+  contextWindowFromSettings: 'Window {tokens}, from the settings or a preset',
+  contextWindowUnlocked: 'Window {tokens}, unclamped — {model} is known to take {modelTokens}',
+  contextWindowFromHost: 'Window {tokens}, the host default',
 
   /*
    * Where this request stopped matching the last one (`divergence.ts`).
@@ -2077,6 +2091,8 @@ export const zh: Record<StringKey, string> = {
   /** 推理与上下文窗口（采样区，收在“更多参数”里）。 */
   contextWindow: '上下文窗口',
   contextWindowNote: '单个请求可携带的对话 token 数。切换预设时会随之设置。',
+  contextUnlocked: '解锁窗口上限',
+  contextUnlockedNote: '关闭时，上面的窗口会被夹到「模型已知能接受的长度」。打开后按写的数值用 —— 对应 SillyTavern 的「解锁上下文长度」。',
   reasoningEffort: '推理力度',
   reasoningEffortNote: '推理模型回答前的思考投入。“auto”由提供方自行决定。',
 
@@ -2370,6 +2386,10 @@ export const zh: Record<StringKey, string> = {
   contextStablePrefix: '稳定前缀 约 {percent}%（{tokens}）',
   contextFromRecord: '第 {turn} 回实测',
   contextFromPreview: '下一条请求的预览',
+  contextWindowFromModel: '窗口 {tokens}，按模型 {model} 的上限',
+  contextWindowFromSettings: '窗口 {tokens}，来自设置或预设',
+  contextWindowUnlocked: '窗口 {tokens}，未夹 —— {model} 已知只到 {modelTokens}',
+  contextWindowFromHost: '窗口 {tokens}，宿主默认',
 
   divergenceLine: '与上一条请求在 {percent} 处分叉 · 落在〈{item}〉',
   divergenceIdentical: '与上一条请求逐字节相同',

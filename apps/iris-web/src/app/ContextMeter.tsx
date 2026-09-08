@@ -28,10 +28,16 @@
  * **The reading is fetched, not derived.** An itemization is a full world-info
  * scan and a macro pass, so it is asked for **when the card opens** and kept
  * until the conversation changes underneath it — never on a render, and never
- * on a keystroke. Which is also why the capsule states the capacity alone
- * until it has been pressed once: that is a fact the view already carries, and
- * a capsule that showed nothing until a round trip completed would be a control
- * that looks broken.
+ * on a keystroke.
+ *
+ * That rule used to mean the capsule showed its capacity and nothing else until
+ * pressed. It no longer has to: the host records an itemization for every turn
+ * it assembles anyway, and now projects the newest one (`ChatView.measured`),
+ * so the capsule draws a *measured* occupancy off a fact the view already
+ * carries. Nothing is assembled to draw the bar; a conversation with no record
+ * — nothing generated yet, or a host that has just restarted — still states its
+ * capacity alone, because a capsule that showed nothing until a round trip
+ * completed would be a control that looks broken.
  *
  * @module iris-web/app/ContextMeter
  */
@@ -39,13 +45,15 @@
 import { useEffect, useRef } from 'react'
 import type { MutableRefObject, ReactElement } from 'react'
 
-import type { PromptDivergence, PromptItemization, TurnUsage } from '@iris/protocol'
+import type { ChatBudget, PromptDivergence, PromptItemization, TurnUsage } from '@iris/protocol'
 
 import {
   averageCacheHit,
+  capsuleReading,
   contextOccupancy,
   meterSegments,
   stablePrefix,
+  windowSourceKey,
   type ContextCategory,
   type ContextOccupancy,
 } from './context-occupancy.ts'
@@ -86,11 +94,38 @@ function percent(share: number): string {
   return value === 0 ? '0%' : '<1%'
 }
 
+/**
+ * Where the window in force came from, in one phrase.
+ *
+ * The question the whole feature exists to answer. The reported case: a
+ * conversation on `deepseek-v4-flash` — a model documented at 1M — assembling
+ * against 2 000 000 tokens, because a preset switched earlier had left that
+ * number on the global settings layer and nothing on any surface said so. The
+ * window was on the card the whole time; *who chose it* was not.
+ * @param budget - the resolved budget, provenance included.
+ * @returns the phrase, ready to print.
+ */
+function windowSourceText(budget: ChatBudget): string {
+  // Every slot for every case: `interpolate` leaves an unused one alone, and
+  // one call site is what keeps the four sentences from drifting into four
+  // different vocabularies for the same three numbers.
+  return t(windowSourceKey(budget.source), {
+    tokens: formatTokens(budget.context),
+    model: budget.model ?? '',
+    // Only the `unlocked` sentence prints this, and that case is reachable only
+    // with a known model window — so the fallback stands in for nothing rather
+    // than quietly answering for a missing figure.
+    modelTokens: formatTokens(budget.modelContext ?? budget.context),
+  })
+}
+
 /** What the capsule needs. */
 export interface ContextPillProps {
-  budget: { context: number, reserve: number }
+  budget: ChatBudget
   /** The reading, once the card has been opened for this conversation. */
   itemization: PromptItemization | undefined
+  /** What the host recorded for the newest real turn, when it has one. */
+  measured: { turn: number, tokens: number } | undefined
   open: boolean
   onToggle: () => void
   anchor: MutableRefObject<HTMLButtonElement | null>
@@ -103,12 +138,21 @@ export interface ContextPillProps {
  * is absent when whoever projected the view had no settings to resolve, and a
  * capsule reading 「上下文 0」 would be a confident statement about a window
  * nobody measured.
- * @param props - the budget, the reading if there is one, and the open state.
+ *
+ * **The bar is drawn from a reading that already exists.** The module doc above
+ * says an itemization is never paid for on a render, and that still holds: what
+ * changed is that the host now projects the measurement it *already recorded*
+ * for the newest real turn (`ChatView.measured`), so there is a number to draw
+ * without asking for one. A conversation nobody has generated in yet — and
+ * every conversation right after a restart, since those records live in memory
+ * — has no bar, and states its capacity as it always did.
+ * @param props - the budget, whichever readings exist, and the open state.
  * @returns the capsule, or null when there is no capacity to report.
  */
 export function ContextPill({
   budget,
   itemization,
+  measured,
   open,
   onToggle,
   anchor,
@@ -116,34 +160,79 @@ export function ContextPill({
   useLanguage()
   const available = Math.max(0, budget.context - budget.reserve)
   if (available === 0) return null
-  const occupancy = contextOccupancy(itemization)
-  const label = occupancy === null
+  const reading = capsuleReading(budget, itemization, measured)
+  const label = reading === null
     ? t('contextPillCapacity', { total: formatTokens(available) })
     : t('contextPill', {
-      used: formatTokens(occupancy.usedTokens),
+      used: formatTokens(reading.usedTokens),
       total: formatTokens(available),
-      percent: String(occupancy.percent),
+      percent: String(reading.percent),
     })
+  /*
+   * The hover carries what the capsule has no room for: the exact figures, the
+   * window's provenance, and which request the reading is about. Not a
+   * duplicate of the label — the label rounds (「30.1K」) and this does not, and
+   * a reader checking a figure against a receipt needs the unrounded one.
+   */
+  const title = reading === null
+    ? `${t('contextPillTitle')} · ${windowSourceText(budget)}`
+    : [
+        t('contextCardFigures', {
+          used: formatExactTokens(reading.usedTokens),
+          total: formatExactTokens(reading.available),
+          percent: String(reading.percent),
+        }),
+        windowSourceText(budget),
+        reading.basis === 'record'
+          ? t('contextFromRecord', { turn: String(reading.turn ?? 0) })
+          : t('contextFromPreview'),
+      ].join(' · ')
   return (
     <button
       ref={anchor}
       type="button"
       className={`iris-composer__pill iris-composer__pill--action${
-        occupancy?.over === true ? ' iris-composer__pill--over' : ''}`}
+        reading?.over === true ? ' iris-composer__pill--over' : ''}`}
       aria-haspopup="dialog"
       aria-expanded={open}
-      title={t('contextPillTitle')}
+      title={title}
       data-control="context-meter"
       onClick={onToggle}
     >
       {label}
+      {/*
+        The gauge along the capsule's own bottom edge, inside its `overflow:
+        hidden` so the fill is clipped to the capsule's curve.
+
+        `aria-hidden`, deliberately: it draws the percentage already printed in
+        the label beside it, so a screen reader announcing it would read one
+        fact twice — and the label is the reading that carries units. A
+        zero-width fill is not drawn at all, the rule `meterSegments` follows on
+        the card: nothing in the window is a real state, and a hairline of plum
+        is not how to say it.
+      */}
+      {reading === null
+        ? null
+        : (
+            <span className="iris-composer__pill-gauge" aria-hidden="true">
+              {reading.percent === 0
+                ? null
+                : (
+                    <span
+                      className={`iris-composer__pill-fill iris-composer__pill-fill--${reading.level}`}
+                      style={{ width: `${String(reading.percent)}%` }}
+                      data-control="context-gauge"
+                    />
+                  )}
+            </span>
+          )}
     </button>
   )
 }
 
 /** What the card needs. */
 export interface ContextCardProps {
-  budget: { context: number, reserve: number }
+  budget: ChatBudget
   itemization: PromptItemization | undefined
   /** Why there is no reading yet, or why the last attempt failed. */
   state: 'loading' | 'ready' | { error: string }
@@ -234,7 +323,7 @@ export function ContextCard({
               occupancy={occupancy}
               itemization={itemization}
               usage={usage}
-              reserve={budget.reserve}
+              budget={budget}
               divergence={divergence}
               onOpenPanel={onOpenPanel}
             />
@@ -256,17 +345,20 @@ function ContextBody({
   occupancy,
   itemization,
   usage,
-  reserve,
+  budget,
   divergence,
   onOpenPanel,
 }: {
   occupancy: ContextOccupancy
   itemization: PromptItemization | undefined
   usage: TurnUsage | undefined
-  reserve: number
+  /* The whole budget, not just its reserve: the card prints the reserve *and*
+     names where the window came from, and those are two reads of one object. */
+  budget: ChatBudget
   divergence: PromptDivergence | undefined
   onOpenPanel: () => void
 }): ReactElement {
+  const reserve = budget.reserve
   const segments = meterSegments(occupancy)
   const cacheHit = averageCacheHit(usage)
   const prefix = stablePrefix(itemization)
@@ -394,6 +486,22 @@ function ContextBody({
               </button>
             </p>
           )}
+      {/*
+        Where the denominator came from — last of the four, and that ordering is
+        the point rather than an accident. The three above are all *about this
+        request*: what the provider cached, what the assembly left reusable,
+        where this request stopped matching the last one. This one is about the
+        **conversation**, and so is the reserve line further up: it does not
+        change when the reader sends another turn.
+
+        This is the line the reported case needed: a 2 000 000-token window
+        under a 1M model was printed on this card with nothing saying who had
+        asked for it. The record-or-preview line stays below it, because that is
+        a fact about the *reading* rather than about either.
+      */}
+      <p className="iris-context-card__note iris-context-card__note--window" data-control="context-window-source">
+        {windowSourceText(budget)}
+      </p>
       <p className="iris-context-card__note iris-context-card__note--source">
         {itemization?.preview === false
           ? t('contextFromRecord', { turn: String(itemization.turn) })

@@ -305,3 +305,19 @@ token 都是估算或提供方的口径。所以这一族的词里**不出现「
 | `PromptPanel.tsx` 四项拆分 | 「N 字节命不中：新增 / 改写 / 逐字未变却落在前缀之后 / 框架」。四项**加起来正好等于总数**——`CACHE-PREFIX.md` §1.2 当初只拆两项，余下几百字节没有交代，读者会以为那是四舍五入，而这里没有四舍五入 | `divergenceSplit` |
 | `PromptPanel.tsx` 逐条目标记 | 未变 / 改写 / 新增 / 消失，贴在条目名字旁边（不是新开一列：它修饰的是名字，而不是那一列估算 token）。「逐字未变，仍整段重发」是**另一种标记**，虽然状态同为「未变」——实测这一种占爱衣九对相邻轮里五对损失的 51%–76%，是全产品最大的一笔可挽回开销，而只问「什么变了」的账把这一段判成无辜 | `divergenceStateSame divergenceStateChanged divergenceStateAdded divergenceStateGone divergenceStranded divergenceBytes divergenceFloor` |
 | `PromptPanel.tsx` 归因不确定 | 偏移是准的、落在哪一段不准。卡的 EJS 模板在装配记下段落之后改写了系统段，边界就真的不知道了——这时候说出来，是「只怀疑这一行」和「怀疑整台仪器」的区别 | `divergenceUnattributed` |
+
+任务（胶囊进度条 + 窗口来源，`dev/context-pill-bar`）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `ContextMeter.tsx` 窗口来源四句 | 这一任务的全部要点。实测本机：`settings.json` 的 `/global/contextWindow` 是 2 000 000，而 `/global/model` 是 `deepseek-v4-flash`——DeepSeek 官方文档写它 1M。窗口一直印在容量卡上，**是谁定的** 从来没有印过。四句而不是一句，因为对读者来说是四个不同的下一步：换模型或解锁（按模型夹住）、改数字（来自设置或预设）、重新考虑一个已经做过的决定（未夹）、根本没人设过（宿主默认）。每句都把数字带上，所以在 hover 里单独出现也读得通 | `contextWindowFromModel contextWindowFromSettings contextWindowUnlocked contextWindowFromHost` |
+| `SettingsDrawer.tsx` 解锁开关 | ST 的 `max_context_unlocked`（`openai.js:308`）。放在窗口滑杆**旁边**而不是别处，因为它是同一个决定的另一半：不开时上面那个数字会被夹到「模型已知能接受的长度」。注里点名 ST 的那句原话（「解锁上下文长度」），因为用这个功能的人是从 ST 过来的，认那个词 | `contextUnlocked contextUnlockedNote` |
+
+复用而没有新增：胶囊的 hover 把两条已有的键（`contextCardFigures`，加 `contextFromRecord`/`contextFromPreview` 之一）与本任务新增的窗口来源句接起来，各用 ` · ` 分隔。**没有** 为 hover 造一条模板键——那会是同一批数字的第二套排版，而排版差异正是两个面互相对不上的来由。`contextPillTitle`（「看上下文窗口被什么占满了」）现在只在「一次都没测过」时出现，那时它是唯一还成立的说法。
+
+**容量卡上的行序补一句（接上面「分叉仪器」那一节定的三种数）：** 窗口来源这一行排在
+**分叉之后**，是四行里的最后一行。上面三行讲的都是「这一条请求」——提供方缓存给了多少
+（用量）、这份装配留下多少可复用（估算）、这一条和上一条在哪里分开（字节）；窗口来源
+讲的是**这个会话**，读者再发一轮它也不会变，所以它和「为回复留出」同属一类，排在会随
+每轮变动的三行之下。「第 N 回实测 / 下一条请求的预览」仍在最末，因为那句讲的是**这份
+读数**本身，既不属于请求也不属于会话。

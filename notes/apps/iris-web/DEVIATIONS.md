@@ -2595,7 +2595,7 @@ dash axis.
 
 **Upstream.** SillyTavern has the figures and never puts them together. Its prompt manager computes a per-item token count and a total, and shows them in the *prompt manager* — a panel two clicks away inside the AI-response-configuration drawer, listing the preset's own rows with a token column (`public/scripts/PromptManager.js:1761`, into the `#completion_prompt_manager_list` header template). Nothing on the composer says how much of the window is spoken for: the send form's own bar carries the extension buttons and the stop/continue affordances, and the only always-visible token figure anywhere in the interface is the per-message `{n}t` estimate — of the reply text only — which is off by default (`power-user.js:199`). So the question "am I about to overflow" is answered in SillyTavern by opening a drawer, and the question "what is filling it" by reading a list of preset rows that does not include the conversation, the world books, or a card script's injections as such.
 
-**Iris** puts one capsule in the composer's row beside the prompt and model capsules, and it opens a card. Before it has been pressed for this conversation it states the capacity alone (`Context 7.2K`); pressed once, it states the reading (`Context 2.1K/7.2K · 29%`) and keeps it until the conversation changes. The card carries the headline reading, one proportion bar, six category rows with a colour and a token count each, what is left, what is held back for the reply, the conversation's average cache-hit share, and which of the two answers this is — a record of a sent turn or a preview of the next request. `app/context-occupancy.ts`, `app/ContextMeter.tsx`, the `context*` keys of `i18n/strings.ts`, `tests/context-meter.test.ts`.
+**Iris** puts one capsule in the composer's row beside the prompt and model capsules, and it opens a card. Before it has been pressed for this conversation it states the capacity alone (`Context 7.2K`); pressed once, it states the reading (`Context 2.1K/7.2K · 29%`) and keeps it until the conversation changes. *(§68 narrowed that first clause: the capsule now states a **measured** reading, and draws it, as soon as the conversation has generated once — the capacity-alone state is what a conversation nobody has generated in shows.)* The card carries the headline reading, one proportion bar, six category rows with a colour and a token count each, what is left, what is held back for the reply, the conversation's average cache-hit share, and which of the two answers this is — a record of a sent turn or a preview of the next request. `app/context-occupancy.ts`, `app/ContextMeter.tsx`, the `context*` keys of `i18n/strings.ts`, `tests/context-meter.test.ts`.
 
 **Transcribed from deepseek-harness** (MIT, `THIRD-PARTY-NOTICES.md`): the panel's shape and dismissal, and the rule that makes the picture honest — the bar's overall length is the **exact** occupancy and the breakdown only proportions its coloured parts, so the bar can never disagree with the percentage printed above it; a zero-width part is dropped rather than drawn at the minimum width that protects genuinely small ones.
 
@@ -2611,7 +2611,7 @@ dash axis.
 - **A legend swatch is not held to the 3:1 contrast floor**, and that is a decision rather than an oversight: WCAG 1.4.11 covers a graphic required to understand the content, and each row states its own name and token count in text beside the dot. Two of the four borrowed palette tokens would fail that floor. What *is* held, by a test that reads both stylesheets, is the property that actually breaks the legend — **no two categories may draw the same colour in any of the three themes**.
 - **Two new palette tokens.** Six categories needed six distinguishable marks; four came out of the existing family (plum, its lighter derivative, gold, the faintest ink) and two hues were missing, so `--iris-meter-celadon` and `--iris-meter-slate` were added to all three themes, to `THEME_TOKENS` and to the three preset tables. Not `--iris-danger`, which means "this deletes something" everywhere else in the shell — a category wearing it would read as a warning about itself.
 - **The card is CSS-positioned, not portaled**, which means it is anchored to the composer's left gutter rather than to the capsule. `.iris-composer__inner` is the scroll container that reserves the scrollbar lane and would clip an absolutely-positioned child, so the card is a sibling of the plum branch at `.iris-composer` level — the box that exists to paint and position and has no `overflow` for exactly this reason. The cost is that a very narrow window gets a card wider than the capsule it belongs to.
-- **A server render cannot open it**, so `tools/render-check.tsx` pins only the wiring on either side — the capsule is on the page, it is a button that announces a dialog, and it states the capacity computed from the fake's own budget. The card's contents are pinned in `tests/context-meter.test.ts`, the same division the model menu already uses.
+- **A server render cannot open it**, so `tools/render-check.tsx` pins only the wiring on either side — the capsule is on the page, it is a button that announces a dialog, and it states the reading computed from the fake's own budget. The card's contents are pinned in `tests/context-meter.test.ts`, the same division the model menu already uses. *(§68 added to both ends: the render check also pins the gauge, its band and its width, and renders `ContextCard` directly for the one line that had fallen between the two suites.)*
 
 **What would overturn it.** A cheap reading. If the host ever carried the last request's category totals on the open chat, the capsule could state a percentage without being pressed and the fetch-on-open machinery would go — that is a protocol change with a real cost (the host would have to classify, which is a view concern) and it is why it was not done now. Or a ruling that the prompt panel is the only place a breakdown belongs, in which case this becomes a capsule that opens that panel and the card goes.
 
@@ -3021,6 +3021,191 @@ host reorders anyway. The card's one-line summary names it only when it is
 **off** (「缓存顺序已关」), the mirror of how the other two switches are named
 only when on: for a default-on control, the state worth surfacing without
 opening the card is having been switched off.
+
+## 68. The capacity capsule draws a gauge, and says which window it is dividing by
+
+**Kind:** deliberate improvement, and the correction of a §59 cost.
+
+*(§67 is the fake-client round in flight elsewhere.)*
+
+**What §59 said it would take to do this.** Its own closing paragraph:
+
+> **What would overturn it.** A cheap reading. If the host ever carried the last
+> request's category totals on the open chat, the capsule could state a
+> percentage without being pressed and the fetch-on-open machinery would go.
+
+Half of that turned out to be already paid for and half is still true, and the
+difference is the shape of this entry. The host records a full itemization for
+**every turn it assembles** (`entry.itemizations`, and `#autoCompact` was
+already reading one of them back by `lastTurn` — `service.ts` calls that reading
+*free*, "no second assembly") and simply never projected it. So the *total* was
+available for nothing; the *category totals* still are not, because classifying
+is a view concern and putting six buckets on the wire would move it host-side.
+
+So `ChatView` grew `measured?: { turn, tokens }` — one number and the turn it
+was taken on — and nothing else changed about the fetch-on-open machinery. The
+card still fetches, because the card answers a different question (what the
+*next* request would contain, itemized).
+
+### The gauge
+
+A 2px fill along the capsule's own bottom edge, inside the capsule's existing
+`overflow: hidden` so it is clipped to the capsule's curve and needs no radius
+of its own — which is what keeps a fill at 4% from drawing a square corner
+outside a rounded box.
+
+**Three colour bands, not a ramp** (`pressureLevel`): under 60% the faintest
+ink, from 60% the accent, past 85% the warning hue. At 2px a continuous hue ramp
+is a colour nobody can name; three bands are a fact a reader can carry away
+("it has gone plum"). The bands are stated once — `quiet` below 60, `near` from
+60 through 85, `full` above 85 — so the capsule, the class names and the test
+read the same rule, and the test pins them **as boundaries** (59/60, 85/86),
+because a test at 30/70/95 passes for a rule shifted five points either way,
+which is the only way this can be wrong.
+
+**No track.** The capsule's border already draws the full length; a track would
+be a second hairline 1px inside the first, and at this size the pair reads as a
+rendering fault rather than as a scale.
+
+**`aria-hidden`.** The gauge draws the percentage already printed in the label
+beside it, and the label is the one that carries units. A zero-width fill is not
+drawn at all — the rule `meterSegments` already follows on the card: nothing in
+the window is a real state, and a hairline of plum is not how to say it. (The
+`min-width: 2px` that keeps a genuinely small reading visible is exactly why the
+zero case has to be dropped in the component rather than left to the width.)
+
+**Which reading it draws, and a correction to the obvious ordering.** The task
+brief said to prefer the host's recorded measurement. Implemented as: the
+**fetched itemization wins when there is one**, the record otherwise. The reason
+is agreement. A record is the cheaper fact and is why there is a bar at all
+before anything is pressed — but the moment the card is open the card is showing
+the *preview*, and a capsule printing a different number one line below the card
+that explains it is two surfaces under one composer disagreeing about one
+conversation, which is the exact failure §59's denominator paragraph exists to
+prevent. `CapsuleReading.basis` carries which of the two is on screen, and the
+hover names it.
+
+**What a reader loses.** A conversation nobody has generated in yet has no
+gauge, and so does every conversation immediately after the host restarts —
+those records live in memory. The capsule then states its capacity alone, as it
+did before this existed. Absent is reported as absent (`capsuleReading` returns
+`null`), never as 0%: a confident empty bar under a full window is worse than no
+bar.
+
+### The window's provenance
+
+The other half, and the one the user actually asked about — the capacity card
+was printing 1 998 976 as the window for a `deepseek-v4-flash` conversation, and
+nothing anywhere said who had chosen 2 000 000. (Where that number came from:
+`notes/packages/iris-app-service/DEVIATIONS.md` §44.)
+
+The host now resolves a window *with* its provenance (`ChatBudget.source`), and
+two surfaces print it: a line on the card above the record-or-preview line, and
+the capsule's hover. Four sentences, because they are four different next steps
+for the reader — change model or unlock, change the number, reconsider a
+decision already made, or set one at all:
+
+| source | the line |
+| --- | --- |
+| `model` | 窗口 1M，按模型 deepseek-v4-flash 的上限 |
+| `settings` | 窗口 65.5K，来自设置或预设 |
+| `unlocked` | 窗口 2M，未夹 —— deepseek-v4-flash 已知只到 1M |
+| `host` | 窗口 32.8K，宿主默认 |
+
+**`source` is required on the wire, not optional.** The other two fields of
+`ChatBudget` are absent when there is nothing to say; this one always has an
+answer, because the host cannot resolve a window without taking one of the four
+paths. Optional would let a projection that forgot it read as "no opinion", and
+a capacity readout that cannot name its own denominator is precisely the state
+this entry is fixing.
+
+**The branch is a function, not a `switch` in JSX.** `windowSourceKey` lives in
+`context-occupancy.ts` so a node test can call it: the four cases are the whole
+visible half of this feature, and the case that was missing entirely — the
+clamp — is the one nobody could have noticed the absence of. `windowSourceText`
+then passes every slot for every case, one call site, which is what keeps four
+sentences about the same three numbers from drifting into four vocabularies. The
+test asserts the other direction too: the two sentences that do **not** name a
+model must not carry a `{model}` slot, or the host-default line would print a
+model it was never judged against.
+
+**The settings drawer gets the unlock toggle** beside the window slider and not
+elsewhere, because it is the other half of one decision — upstream keeps it
+beside the same slider for the same reason.
+
+### Costs
+
+- **The gauge shares the capsules' positioning context.** `position: relative`
+  went on the shared `.iris-composer__pill` rule rather than the capacity
+  capsule's own, because the `overflow: hidden` that clips the fill is declared
+  on that box and the two have to be on the same element. Harmless for the
+  prompt and model capsules, and it is a coupling worth knowing about.
+- **The three bands are held to the property the six category tints are held
+  to** — no two may draw the same value in any of the three themes — by a test
+  that reads `panels.css` and `tokens.css` off disk. Not to a contrast floor,
+  for §59's reason: the percentage is printed in text beside the bar.
+- **`prefers-reduced-motion` drops the width transition.** The growth is
+  decoration; the width it lands on is the information.
+- **`contextPillTitle`** (「看上下文窗口被什么占满了」) now appears only when
+  nothing has ever been measured, which is the only state it is still true of —
+  and so does `contextPillCapacity`'s comment one key above it, which said
+  "before the card has been opened". The hover otherwise composes two existing
+  keys (`contextCardFigures`, and one of the record/preview pair) with the
+  window sentence added by this task, joined with ` · ` rather than given a
+  template of its own — a second layout of the same figures is how two surfaces
+  come to disagree.
+- **The card's own 「第 N 回实测」 line is still unreachable, and that is
+  unchanged rather than fixed.** `Composer` calls `actions.itemize()` with no
+  turn, and the host answers with a record only when a turn is passed
+  (`service.ts`'s `prompt.itemize`), so the card always renders
+  `contextFromPreview`. Reachable copy would mean deciding the card is about the
+  last request rather than the next one, which is a product decision and not
+  this task's. The **capsule** does render 「第 N 回实测」 now, off
+  `ChatView.measured`, which is where that wording earns its keep.
+- **The render check can see both halves**, because both are wiring a server
+  render reaches: the gauge needs `measured` to have survived the store and the
+  provenance needs `budget.source` to have. It pins the fill's presence, its
+  band, its width and the hover's window line — every one computed from the
+  fake's own seed rather than spelled out. The fake declares
+  `source: 'settings'` with a model the built-in table has never heard of
+  (`local/qwen3-8b`), which is the one of the four wordings that fixture can be
+  *true* of; declaring `'model'` to light up the clamped wording would have
+  meant a fixture whose three numbers cannot all hold at once, and a fixture
+  that cannot be true silences whatever asserts on it. The other three wordings
+  are pinned in `tests/context-meter.test.ts` — all four in fact, and against
+  `windowSourceKey` directly rather than by building a budget, because the
+  branch is the thing that can be wrong.
+
+  The fake also had to *earn* `'settings'`. It means "the stored value stands",
+  and the fake's `DEFAULT_SETTINGS` carried no `contextWindow` at all — the real
+  resolver would have said `'host'`. Visible on the seeded page: the drawer
+  rendered its 32 768 fallback while the hover claimed the settings. Fixed by
+  storing 8192 in the seed, not by relabelling the budget, so
+  `FAKE_BUDGET`'s number is the one in both places.
+
+**What would overturn it.** Per-category totals on the open chat, which would
+let the *card* render without a fetch too and would retire the fetch-on-open
+machinery §59 describes — still a host-side classification, so still not now.
+Or a reading that the gauge and the over-budget border say the same thing twice:
+the border already turns `--iris-danger` past 100%, and if that reads as
+sufficient the third band could go.
+
+**Where this sits among §59, §67 and the divergence line.** The card now closes
+with four lines, and the order is an argument rather than an accretion: cache
+hit (what the provider gave — 用量), stable prefix (§67: what this assembly left
+reusable — 估算), divergence (bytes: where this request stopped matching the
+last), then the window source. The first three are all *about this request* and
+move every turn; the window source is about the **conversation** and does not,
+which is why it is last of the four and why it sits beside the reserve line in
+kind rather than beside the cache figures. 「第 N 回实测 / 下一条请求的预览」
+stays below all of them: that sentence is about the *reading*, not about either
+the request or the conversation. `STRINGS.md`'s divergence section states the
+same ordering from the copy side.
+
+One shared prop came out of the merge: `ContextBody` now takes the whole
+`ChatBudget` rather than a bare `reserve`, because the card reads two things off
+it — what is held back for the reply, and where the window came from — and
+passing one number plus a second object would have been two reads of one fact.
 
 ## 69. A world-info row that was split shows which of its entries moved, because no badge on the row itself would be true
 

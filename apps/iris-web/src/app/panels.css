@@ -295,6 +295,11 @@
  * conversation.
  */
 .iris-composer__pill {
+  /* The positioning context the capacity capsule's gauge is laid against. On
+     the shared rule rather than the capacity capsule's own, because `overflow:
+     hidden` below is what clips the gauge to the capsule's curve and the two
+     have to be declared on the same box. */
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -395,6 +400,63 @@
 .iris-composer__pill--over {
   border-color: var(--iris-danger);
   color: var(--iris-danger);
+}
+
+/*
+ * The gauge along the capacity capsule's bottom edge.
+ *
+ * 2px, inside the capsule's own `overflow: hidden`, so the fill is clipped to
+ * the capsule's curve and needs no radius of its own — which is what keeps a
+ * fill at 4% from drawing a square corner outside a rounded box.
+ *
+ * `bottom: 0` rather than under the text, and that is a reading of the capsule
+ * rather than a preference: the capsule ellipsises a label that can be
+ * 「上下文 1.4M/2M · 71%」, and a rule under the text would be a second thing
+ * competing for the same horizontal space. On the edge it is a gauge; between
+ * the text and the border it would be an underline.
+ *
+ * No track. The capsule's border already draws the full length, so a track
+ * would be a second hairline 1px inside the first, and at this size the pair
+ * reads as a rendering fault rather than as a scale.
+ */
+.iris-composer__pill-gauge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  pointer-events: none;
+}
+
+/*
+ * The filled part. Three bands, `context-occupancy.ts`'s `pressureLevel`:
+ * under 60% the faintest ink, from 60% the accent, past 85% the warning hue.
+ *
+ * Each is a token the page already spends, and each is redefined by all three
+ * themes — which the test in `tests/context-meter.test.ts` checks by reading
+ * this file, because a band drawing the same value as its neighbour in one
+ * theme is a gauge with two levels in that theme and three everywhere else.
+ */
+.iris-composer__pill-fill {
+  display: block;
+  height: 100%;
+  /* A width computed from a percentage is set inline; this is the floor that
+     keeps a real-but-tiny occupancy visible. `ContextPill` drops a 0% fill
+     entirely, so this minimum can never paint an empty window. */
+  min-width: 2px;
+  background: var(--iris-gauge-tint, var(--iris-ink-faint));
+  transition: width var(--iris-slip) var(--iris-ease);
+}
+
+.iris-composer__pill-fill--quiet { --iris-gauge-tint: var(--iris-ink-faint); }
+.iris-composer__pill-fill--near { --iris-gauge-tint: var(--iris-accent); }
+.iris-composer__pill-fill--full { --iris-gauge-tint: var(--iris-warn); }
+
+/* The gauge's growth is decoration; the width it lands on is the information. */
+@media (prefers-reduced-motion: reduce) {
+  .iris-composer__pill-fill {
+    transition: none;
+  }
 }
 
 /*
@@ -549,6 +611,18 @@
 }
 
 /* Where the reading came from, one tier quieter than the readings themselves. */
+/*
+ * The two closing lines: which window this reading divides by and who chose it,
+ * then whether the reading is a record or a preview. Both the faintest tier —
+ * they are provenance, not the reading — and the window line keeps the ink one
+ * step stronger, because it is the answer to a question ("why 2M?") rather than
+ * a caption on the figures above.
+ */
+.iris-context-card__note--window {
+  margin-top: 8px;
+  color: var(--iris-ink-tertiary);
+}
+
 .iris-context-card__note--source {
   margin-top: 4px;
   color: var(--iris-ink-faint);

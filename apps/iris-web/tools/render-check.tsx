@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict'
 import type { ReactElement } from 'react'
 import { renderToString } from 'react-dom/server'
-import { createFakeClient } from '@iris/client-fake'
+import { createFakeClient, fakeItemization } from '@iris/client-fake'
 
 import { App } from '../src/app/App.tsx'
 import { CharacterPage } from '../src/app/CharacterPage.tsx'
@@ -34,6 +34,8 @@ import { modelMenu } from '../src/app/model-menu.ts'
 import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView } from '@iris/protocol'
 import { contributing, discrepancy, rowsFor } from '../src/app/itemization.ts'
+import { pressureLevel } from '../src/app/context-occupancy.ts'
+import { ContextCard } from '../src/app/ContextMeter.tsx'
 import { cacheCeiling, providerExcuse, providerFellShort } from '../src/app/divergence.ts'
 import {
   billedInputTokens, cacheHitPercent, formatExactTokens, formatTokens, totalTokens, usageDetailText,
@@ -1339,9 +1341,79 @@ async function main(): Promise<void> {
   )
   // Computed from the seeded budget, not spelled out, so a change to the fake
   // moves the expectation instead of turning this into a wrong-answer check.
+  /*
+   * The capsule states the reading, and draws it.
+   *
+   * It used to state the capacity alone until pressed, because the only account
+   * of the prompt cost a round trip. The host now projects the itemization it
+   * already recorded for the newest real turn, so an unpressed capsule has a
+   * measured occupancy — which is what the gauge is drawn from.
+   *
+   * Both halves of this task are pinned here rather than only in the unit
+   * suite, because both depend on wiring a server render can see: the gauge
+   * needs `ChatView.measured` to have survived the store, and the provenance
+   * needs `ChatView.budget.source` to have.
+   */
+  const measured = capacity.measured
+  assert.ok(measured !== undefined, 'the fake no longer reports a measured turn on the open chat')
   assert.ok(
-    metered.includes(`Context ${formatTokens(available)}`),
-    `the capsule does not state the capacity (${formatTokens(available)})`,
+    metered.includes(`Context ${formatTokens(measured.tokens)}/${formatTokens(available)}`),
+    `the capsule does not state the measured reading (${formatTokens(measured.tokens)}/${formatTokens(available)})`,
+  )
+  assert.match(metered, /data-control="context-gauge"/, 'the capsule draws no gauge')
+  // Computed from the fake rather than spelled out, the same rule the figures
+  // above follow — a change to the seed moves the expectation instead of
+  // turning this into a wrong-answer check.
+  const gaugePercent = Math.min(100, Math.round(measured.tokens / available * 100))
+  assert.ok(
+    gaugePercent > 0 && gaugePercent < 100,
+    `the seeded reading is ${String(gaugePercent)}%, which draws no distinguishable bar`,
+  )
+  assert.match(
+    metered,
+    new RegExp(`iris-composer__pill-fill--${pressureLevel(gaugePercent)}`),
+    `the gauge is not in the ${pressureLevel(gaugePercent)} band at ${String(gaugePercent)}%`,
+  )
+  assert.match(
+    metered,
+    new RegExp(`width:${String(gaugePercent)}%`),
+    `the gauge is not drawn at ${String(gaugePercent)}%`,
+  )
+  // And the hover says which window it divides by, and who chose it. The fake's
+  // route is a model nothing knows a window for, so the settings' own value is
+  // what is in force — the one of the four wordings this fixture can be true of.
+  assert.ok(
+    metered.includes(`Window ${formatTokens(capacity.budget.context)}, from the settings or a preset`),
+    'the capsule hover does not name the window it divides by',
+  )
+  /*
+   * The card's own copy of that line, rendered directly.
+   *
+   * A server render cannot press the capsule, which is why the card's contents
+   * are otherwise pinned in `tests/context-meter.test.ts` — but that suite has
+   * no renderer, so between the two of them the window line on the *card* was
+   * covered by nothing. Rendered here the way `UsageReport` above is: one
+   * component, real props, off the fake's own budget.
+   */
+  const opened = renderToString(
+    <ContextCard
+      budget={capacity.budget}
+      itemization={fakeItemization(measured.turn, false)}
+      state="ready"
+      usage={capacity.usage}
+      // No comparison and nowhere to go: this render is about the window line,
+      // and the divergence line is pinned on its own further down. Passing a
+      // fixture here would put a second thing in the assertion's way.
+      divergence={undefined}
+      onOpenPanel={() => {}}
+      anchor={{ current: null }}
+      onClose={() => {}}
+    />,
+  )
+  assert.match(opened, /data-control="context-window-source"/, 'the card does not say where its window came from')
+  assert.ok(
+    opened.includes(`Window ${formatTokens(capacity.budget.context)}, from the settings or a preset`),
+    'the card names no window source',
   )
   // Before any compaction there is no marker at all — the control for the
   // assertion below, which would otherwise pass for a marker that is always on.

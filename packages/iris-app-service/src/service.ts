@@ -23,8 +23,9 @@ import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribu
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView } from '@iris/protocol'
-import { providerPreset } from '@iris/protocol'
+import type { BackupSummary, ChatBudget, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView } from '@iris/protocol'
+import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
+import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
 import { checkScriptFetch, extractScripts } from '@iris/script'
@@ -244,31 +245,74 @@ export const DEFAULT_PROBE_TIMEOUT_MS = 10_000
 type ProbeVerdict = Omit<RpcResponse<'connection.test'>, 'keySource'>
 
 /**
- * Read the model ids out of a `/models` response body.
+ * Read the model list out of a `/models` response body.
  *
  * The OpenAI-compatible shape is `{ data: [{ id }] }`; Ollama's native list is
  * `{ models: [{ name }] }` and costs nothing to also accept. An empty list is
  * still an answer — an endpoint that served 200 with nothing advertised has
  * said something, and the form should show it.
+ *
+ * **Each row is now read twice: for its id, and for a context length.** It used
+ * to be reduced to a bare string here, which threw away the one thing several
+ * real serves put in the row and nothing else in this host can ever learn —
+ * vLLM's `max_model_len`, OpenRouter's `context_length`. See
+ * `model-context.ts`'s `CONTEXT_LENGTH_FIELDS` for what is read and where each
+ * spelling is documented. A row carrying no such field contributes no entry;
+ * the ids are unaffected either way.
  * @param body - the parsed JSON body.
- * @returns the ids, or undefined when the body carries no list at all.
+ * @returns the ids and whatever windows the rows carried, or undefined when the body carries no list at all.
  */
-function modelIdsOf(body: unknown): string[] | undefined {
+function modelListOf(body: unknown): {
+  ids: string[]
+  contexts: Record<string, ModelContextLength>
+} | undefined {
   if (typeof body !== 'object' || body === null) return undefined
   const record = body as Record<string, unknown>
   for (const [key, field] of [['data', 'id'], ['models', 'name']] as const) {
     const rows = record[key]
     if (!Array.isArray(rows)) continue
-    const ids = rows
-      .map(row => {
-        if (typeof row !== 'object' || row === null) return undefined
-        const value = (row as Record<string, unknown>)[field]
-        return typeof value === 'string' && value.length > 0 ? value : undefined
-      })
-      .filter((id): id is string => id !== undefined)
-    return ids
+    const ids: string[] = []
+    const contexts: Record<string, ModelContextLength> = {}
+    for (const row of rows) {
+      if (typeof row !== 'object' || row === null) continue
+      const value = (row as Record<string, unknown>)[field]
+      if (typeof value !== 'string' || value.length === 0) continue
+      ids.push(value)
+      const tokens = modelContextFromRow(row)
+      // Bounded by the same ceiling the settings store allows a window to be
+      // set to, so a serve reporting a wild number cannot put one on the wire
+      // that `settings.set` would refuse a user for typing.
+      if (tokens !== undefined && tokens <= MAX_CONTEXT_WINDOW) {
+        contexts[value] = { tokens, source: 'provider' }
+      }
+    }
+    return { ids, contexts }
   }
   return undefined
+}
+
+/**
+ * Fill in, from the built-in table, the ids the endpoint said nothing about.
+ *
+ * The endpoint's own answer always wins: it is current, and it describes the
+ * serve rather than the model. The table only reaches the ids the endpoint left
+ * unannotated — which for DeepSeek is every one of them, since its documented
+ * `/models` row carries `id`, `object` and `owned_by` and nothing else.
+ * @param ids - the ids the probe reported.
+ * @param reported - what the rows themselves carried.
+ * @returns one record covering every id anything knows a window for.
+ */
+function withTableContexts(
+  ids: readonly string[],
+  reported: Record<string, ModelContextLength>,
+): Record<string, ModelContextLength> {
+  const merged: Record<string, ModelContextLength> = { ...reported }
+  for (const id of ids) {
+    if (merged[id] !== undefined) continue
+    const found = modelContextFromTable(id)
+    if (found !== undefined) merged[id] = { tokens: found.tokens, source: 'table' }
+  }
+  return merged
 }
 
 /** What the service needs that it does not own. */
@@ -581,6 +625,19 @@ export class IrisAppService {
   #hostProbe: HostProbeRecord | undefined
 
   /**
+   * Context windows endpoints reported to this process's own probes, by model id.
+   *
+   * Not persisted, and that is the same ruling {@link #hostProbe} above
+   * carries for the same reason: it is an observation rather than a decision.
+   * The scope is narrower than a profile's stored `modelContexts`, which is
+   * filed as a record of one endpoint's answer; this map is read by the window
+   * resolver, which has only a model name to go on, so a persisted entry could
+   * outlive the endpoint that justified it and clamp a chat against a serve it
+   * never talks to.
+   */
+  readonly #probedContexts = new Map<string, ModelContextLength>()
+
+  /**
    * @param options - domain stores, the model stream, and the event sink.
    */
   constructor(options: AppServiceOptions) {
@@ -755,11 +812,21 @@ export class IrisAppService {
    * describe something else.
    * @param baseURL - where the probe actually went.
    * @param models - what it reported.
+   * @param modelContexts - what is known about those models' windows, when anything is.
    */
-  #recordHostModels(baseURL: string, models: readonly string[]): void {
+  #recordHostModels(
+    baseURL: string,
+    models: readonly string[],
+    modelContexts?: Record<string, ModelContextLength>,
+  ): void {
     const host = this.#hostConnection()
     if (!sameEndpointOrigin(host.baseURL, baseURL)) return
-    this.#hostProbe = { origin: baseURL, models: [...models], probedAt: Date.now() }
+    this.#hostProbe = {
+      origin: baseURL,
+      models: [...models],
+      probedAt: Date.now(),
+      ...modelContexts === undefined ? {} : { modelContexts: { ...modelContexts } },
+    }
   }
 
   /**
@@ -917,15 +984,24 @@ export class IrisAppService {
         error: { code: 'bad-response', message: `${url} answered 200, but the body is not JSON` },
       }
     }
-    const models = modelIdsOf(body)
-    if (models === undefined) {
+    const listed = modelListOf(body)
+    if (listed === undefined) {
       return {
         ok: false,
         latencyMs,
         error: { code: 'bad-response', message: `${url} answered 200, but the body carries no model list` },
       }
     }
-    return { ok: true, latencyMs, models }
+    const modelContexts = withTableContexts(listed.ids, listed.contexts)
+    return {
+      ok: true,
+      latencyMs,
+      models: listed.ids,
+      // Omitted rather than sent empty, so "nothing knows any of these
+      // windows" and "this build predates the field" stay distinguishable on
+      // the wire.
+      ...Object.keys(modelContexts).length === 0 ? {} : { modelContexts },
+    }
   }
 
   /**
@@ -1657,6 +1733,7 @@ export class IrisAppService {
             ? adopted === undefined || host.apiKeyHeader === undefined ? {} : { apiKeyHeader: host.apiKeyHeader }
             : { apiKeyHeader: input.apiKeyHeader },
           ...input.models === undefined ? {} : { models: input.models },
+          ...input.modelContexts === undefined ? {} : { modelContexts: input.modelContexts },
         })
         return { ...saved, host: hostDefaultView(host, this.#hostProbe) }
       },
@@ -1771,14 +1848,32 @@ export class IrisAppService {
         // on success and only with a profile named: recording an empty list
         // after a 401 would say "this endpoint offers nothing".
         if (verdict.ok && verdict.models !== undefined && input.profileId !== undefined) {
-          await this.#connections().recordModels(input.profileId, verdict.models)
+          await this.#connections().recordModels(input.profileId, verdict.models, verdict.modelContexts)
+        }
+        // What the endpoint said about its models' windows is also remembered
+        // for the life of this process, keyed by model id, because that is what
+        // the *window resolver* reads and it has no profile in hand — a chat
+        // carries a model name, not the connection it came from. Only the
+        // endpoint's own numbers: a `'table'` entry would be this host telling
+        // itself something it can look up again for free, and caching a lookup
+        // is how a stale copy of a constant gets born.
+        if (verdict.ok && verdict.modelContexts !== undefined) {
+          for (const [model, known] of Object.entries(verdict.modelContexts)) {
+            // Keyed folded, because the *table* lookup folds and these two are
+            // read one after the other by `#modelContext`. An endpoint that
+            // lists `DeepSeek-V4-Flash` against settings that say
+            // `deepseek-v4-flash` would otherwise miss the probe and fall
+            // through to the table, inverting "the endpoint's own answer wins"
+            // on nothing but a capital letter.
+            if (known.source === 'provider') this.#probedContexts.set(model.trim().toLowerCase(), known)
+          }
         }
         // And a successful probe of the host's **own** endpoint is filed in
         // memory, which is the one connection with no file to file it on. The
         // two are not exclusive: a profile pointed at the host's endpoint
         // records on both, because both rows describe that server.
         if (verdict.ok && verdict.models !== undefined) {
-          this.#recordHostModels(baseURL, verdict.models)
+          this.#recordHostModels(baseURL, verdict.models, verdict.modelContexts)
         }
         return { ...verdict, keySource: resolved.keySource }
       },
@@ -2933,20 +3028,65 @@ export class IrisAppService {
   /**
    * What one conversation's next request may spend.
    *
-   * The same resolution the assembler runs — the preset's own window when it
-   * has one, the composition's otherwise (`windowOf`) — and the host's reply
-   * reserve. Resolved per call rather than stored on the entry, so a preset
-   * switch or a per-chat override is in force on the next view without anyone
-   * having to remember to refresh a copy.
+   * The same resolution the assembler runs — {@link resolveWindow}: the
+   * preset's own window when it has one, clamped to the model's known window
+   * unless `contextUnlocked`, the composition's value otherwise — and the
+   * host's reply reserve. Resolved per call rather than stored on the entry, so
+   * a preset switch, a per-chat override, or a probe that has just learned this
+   * model's window is in force on the next view without anyone having to
+   * remember to refresh a copy.
    * @param chatId - the conversation.
-   * @returns the two figures the capacity meter divides by.
+   * @returns the figures the capacity meter divides by, and where the window came from.
    */
-  #chatBudget(chatId: string): { context: number, reserve: number } {
+  #chatBudget(chatId: string): ChatBudget {
     const settings: GenerationSettings = this.#options.settings.get(chatId)
+    const resolved = this.#resolveWindow(settings)
     return {
-      context: windowOf(settings, this.#options.contextWindow),
+      context: resolved.context,
       reserve: this.#options.reserveTokens,
+      source: resolved.source,
+      ...resolved.model === undefined ? {} : { model: resolved.model },
+      ...resolved.modelContext === undefined ? {} : { modelContext: resolved.modelContext },
     }
+  }
+
+  /**
+   * What is known about one model's context window.
+   *
+   * Two sources, in this order: what an endpoint reported to a probe **in this
+   * process**, then the built-in table. The probe half is deliberately not
+   * persisted and deliberately not read back off the saved profiles — a chat's
+   * settings name a model, never the connection the model came from, so
+   * "profile X said this id is 128k" cannot be attributed to a chat that may be
+   * generating through a different endpoint entirely. The process-local map is
+   * the honest scope for that: it holds what *this* run observed.
+   *
+   * A fresh start therefore answers from the table until something probes,
+   * which is the right way round — the table is a constant and cannot be stale
+   * about a model it names, while a persisted observation can be stale about an
+   * endpoint that has since been reconfigured.
+   * @param model - the model id from the chat's settings.
+   * @returns the window and who said so, or undefined when nothing knows.
+   */
+  #modelContext(model: string): ModelContextLength | undefined {
+    const probed = this.#probedContexts.get(model.trim().toLowerCase())
+    if (probed !== undefined) return probed
+    const found = modelContextFromTable(model)
+    return found === undefined ? undefined : { tokens: found.tokens, source: 'table' }
+  }
+
+  /**
+   * The window for one settings object, with its provenance.
+   *
+   * The single place the clamp is applied, so the capacity readout and the
+   * assembly cannot come to divide by different numbers — which is the whole
+   * failure this replaces, one layer up: the meter and the trimmer agreeing
+   * perfectly on a window neither of them had any business using.
+   * @param settings - the chat's merged settings.
+   * @returns the window, its source, and the model it was judged against.
+   */
+  #resolveWindow(settings: GenerationSettings): ResolvedWindow {
+    return resolveWindow(settings, this.#options.contextWindow, this.#modelContext(settings.model))
   }
 
   /**
@@ -3371,8 +3511,9 @@ export class IrisAppService {
       contributions: session => this.#contributions(entry, session, count, true, generationType),
       history: (session, projection) => this.#history(entry, session, projection),
       // The same builder every other assembly in this host uses, so the trim
-      // block cannot be in force on one path and absent on another.
-      budget: this.#budget(count, windowOf(settings, this.#options.contextWindow)),
+      // block cannot be in force on one path and absent on another — fed the
+      // window `resolveWindow` decided, which is the one place that decides it.
+      budget: this.#budget(count, this.#resolveWindow(settings).context),
       ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...settings.stop === undefined ? {} : { stop: settings.stop },
@@ -3404,7 +3545,7 @@ export class IrisAppService {
   ): Promise<Contribution[]> {
     const names = entry.names
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
-    const window = windowOf(settings, this.#options.contextWindow)
+    const window = this.#resolveWindow(settings).context
     // A reroll's world-info scan and its itemization must read the same
     // conversation the request carries — the driver drops the reply being
     // replaced, and a scan that still saw it could fire an entry on a keyword
@@ -3534,8 +3675,16 @@ export class IrisAppService {
       // assembled against a 2 000 000 override — the preview path
       // (`#previewItemization`) passed the window and the record did not, so the
       // panel's capacity line changed meaning depending on which of the two
-      // answered. Found by the census pass, not by this file's own tests: every
-      // fixture here runs on the default window, where the two agree.
+      // answered.
+      //
+      // **Found twice, independently: once by the cache census pass and once by
+      // the window-provenance pass**, which is worth recording because neither
+      // of this file's own suites could have found it — every fixture here runs
+      // on the default window, where the two numbers agree. It is now pinned
+      // from the clamp side too (`tests/model-context.test.ts`: a real turn is
+      // generated and `prompt.itemize` is asked *with* its turn, which is the
+      // only way to get a record back rather than a fresh preview).
+
       entry.itemizations.set(turn, this.#itemizationOf(assembled, turn, false, window))
     }
 
@@ -3595,8 +3744,22 @@ export class IrisAppService {
     }
   }
 
-  /** Project an assembly onto the wire shape. */
-  #itemizationOf(result: AssembleResult, turn: number, preview: boolean, window?: number): PromptItemization {
+  /**
+   * Project an assembly onto the wire shape.
+   *
+   * `window` is **required**, and that is the fix for the bug two separate
+   * passes found here: it used to default to the composition's value, so the
+   * one caller that forgot it filed a record claiming 32 768 for an assembly
+   * that had run against something else. A defaulted window is a wrong answer
+   * that renders perfectly, so the parameter no longer has a default to fall
+   * into — a third caller cannot repeat it without the compiler saying so.
+   * @param result - what the assembler produced.
+   * @param turn - the turn this describes.
+   * @param preview - whether this is the next request rather than a record.
+   * @param window - the window that assembly actually ran against.
+   * @returns the itemization.
+   */
+  #itemizationOf(result: AssembleResult, turn: number, preview: boolean, window: number): PromptItemization {
     return {
       turn,
       entries: result.items.map(item => ({
@@ -3628,7 +3791,7 @@ export class IrisAppService {
       tokens: result.tokens,
       stablePrefixTokens: result.stablePrefixTokens,
       budget: {
-        context: window ?? this.#options.contextWindow,
+        context: window,
         reserve: this.#options.reserveTokens,
       },
       droppedHistory: result.overflow.droppedHistory,
@@ -3650,7 +3813,7 @@ export class IrisAppService {
     const count = (text: string): number => this.#counter.count(text)
     const names = entry.names
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
-    const window = windowOf(settings, this.#options.contextWindow)
+    const window = this.#resolveWindow(settings).context
     const worldbookSettings = this.#options.settings.worldbookSettings()
     const persona = await this.#activePersona()
     const built = buildPrompt({
@@ -3792,7 +3955,13 @@ export class IrisAppService {
       // prefix of the conversation it belongs to. Upstream has no separate
       // budget for `TavernHelper.generate` at all — it goes through the same
       // `Generate`, so it gets the same `openai_max_context`.
-      budget: this.#budget(count, windowOf(settings, this.#options.contextWindow)),
+      //
+      // Through `#resolveWindow`, so the model clamp reaches this path too. Same
+      // argument one step further: a side generation assembled against 2M while
+      // the real turn ran at the model's 1M would trim at a different floor for
+      // the same reason, and it would do it on every chat rather than only on
+      // ones carrying an override.
+      budget: this.#budget(count, this.#resolveWindow(settings).context),
     })
 
     const assembler = new BlockAssembler()
@@ -4786,21 +4955,6 @@ export function samplingOf(settings: GenerationSettings): GenerateOptions['sampl
   }
 }
 
-/**
- * The context window one chat assembles under.
- *
- * Preset-scoped: the active preset's `openai_max_context` wins when it carries
- * one (they always do in practice — measured on real presets: 4095 to
- * 2 000 000), and the composition's value stands otherwise. A preset tuned for
- * one window assembled against another does not fail loudly; it trims a
- * different part of the conversation, which is the quiet kind of wrong.
- * @param settings - the chat's merged settings.
- * @param fallback - the composition's window.
- * @returns the window in tokens.
- */
-function windowOf(settings: GenerationSettings, fallback: number): number {
-  return settings.contextWindow ?? fallback
-}
 
 /**
  * The host-wide off switch for the cache-friendly reorder.
@@ -4913,6 +5067,24 @@ export function presetScalarPatch(preset: ChatCompletionPreset): Record<string, 
   // them.
   const squash = preset['squash_system_messages']
   if (typeof squash === 'boolean') patch['squashSystemMessages'] = squash
+  /*
+   * `max_context_unlocked`, which travels with `openai_max_context` and never
+   * apart from it.
+   *
+   * The two are one decision upstream: the unlock is what makes the window
+   * *reachable*, because upstream's slider bound is the model's maximum until it
+   * is ticked (`openai.js:4967`). Reading the number and dropping the flag is
+   * how a preset's 2 000 000 came to be in force here under a 1M model —
+   * measured on the reported install: `[主预设] V19.5 狐神抚 · 毓忻.json`
+   * carries `openai_max_context: 2000000` *and* `max_context_unlocked: true`,
+   * and only the first half was ever applied.
+   *
+   * `false` is applied as deliberately as `true`. A preset that says "clamp me"
+   * has said something, and leaving a previous preset's unlock standing would
+   * make the window depend on the order presets were switched in.
+   */
+  const unlocked = preset['max_context_unlocked']
+  if (typeof unlocked === 'boolean') patch['contextUnlocked'] = unlocked
   const effort = preset['reasoning_effort']
   if (typeof effort === 'string' && REASONING_EFFORT_VALUES.has(effort)) {
     patch['reasoningEffort'] = effort

@@ -208,6 +208,15 @@ class ModelsEndpoint {
   lastHadHeaders = false
   /** When set, the endpoint stalls this long before answering. */
   delayMs = 0
+  /**
+   * The rows the list answers with.
+   *
+   * Bare ids by default, which is what DeepSeek's own documented `/models` row
+   * is — `id`, `object`, `owned_by` and nothing else. A test about reading a
+   * context length off the row replaces them, rather than every other test in
+   * this file getting a fixture that quietly claims DeepSeek reports one.
+   */
+  rows: unknown[] = [{ id: 'deepseek-v4-flash' }, { id: 'deepseek-v4-chat' }, { id: 'deepseek-reasoner' }]
 
   constructor() {
     this.#server = createServer((request, response) => {
@@ -225,9 +234,7 @@ class ModelsEndpoint {
           return
         }
         response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({
-          data: [{ id: 'deepseek-v4-flash' }, { id: 'deepseek-v4-chat' }, { id: 'deepseek-reasoner' }],
-        }))
+        response.end(JSON.stringify({ data: this.rows }))
       }, this.delayMs)
     })
   }
@@ -1038,4 +1045,158 @@ test('the host row’s list is never written to the connections file', async (t)
     false,
     'the in-memory host list reached the user’s connections file',
   )
+})
+
+test('a probe reads the context length the endpoint put on the row', async (t) => {
+  const { handlers, endpoint } = await keyedFixture(t)
+  // Three real spellings in one list, and one row with none — which is the
+  // shape a mixed serve actually produces (vLLM leaves `max_model_len` null on
+  // its LoRA adapters, OpenRouter documents both its fields as nullable).
+  endpoint.rows = [
+    { id: 'served-by-vllm', max_model_len: 131_072 },
+    { id: 'listed-by-openrouter', context_length: 163_840 },
+    { id: 'loaded-in-lm-studio', max_context_length: 32_768 },
+    { id: 'says-nothing' },
+  ]
+  const verdict = await handlers['connection.test']({
+    baseURL: `${endpoint.baseURL}/v1`,
+    apiKey: 'sk-real-key',
+  })
+  assert.equal(verdict.ok, true, verdict.error?.message)
+  assert.deepEqual(verdict.modelContexts?.['served-by-vllm'], { tokens: 131_072, source: 'provider' })
+  assert.deepEqual(verdict.modelContexts?.['listed-by-openrouter'], { tokens: 163_840, source: 'provider' })
+  assert.deepEqual(verdict.modelContexts?.['loaded-in-lm-studio'], { tokens: 32_768, source: 'provider' })
+  // Absent, not zero. Nothing knows this one's window, and a record saying
+  // "zero" would make every consumer that divides by it report the
+  // conversation as infinitely full.
+  assert.equal(verdict.modelContexts?.['says-nothing'], undefined)
+  // The ids are unaffected by any of this — the control for the reading above,
+  // which would otherwise pass for a probe that had stopped listing models.
+  assert.deepEqual(verdict.models, [
+    'served-by-vllm',
+    'listed-by-openrouter',
+    'loaded-in-lm-studio',
+    'says-nothing',
+  ])
+})
+
+test('the table answers for the rows the endpoint said nothing about', async (t) => {
+  const { handlers, endpoint } = await keyedFixture(t)
+  // The default rows: bare ids, as DeepSeek's documented `/models` row is. A
+  // probe of that endpoint can learn nothing, so the built-in table is the only
+  // thing that will ever answer — and it says so in the source field.
+  const verdict = await handlers['connection.test']({
+    baseURL: `${endpoint.baseURL}/v1`,
+    apiKey: 'sk-real-key',
+  })
+  assert.deepEqual(verdict.modelContexts?.['deepseek-v4-flash'], { tokens: 1_000_000, source: 'table' })
+  assert.deepEqual(verdict.modelContexts?.['deepseek-reasoner'], { tokens: 1_000_000, source: 'table' })
+})
+
+test('the endpoint’s own answer wins over the table', async (t) => {
+  const { handlers, endpoint } = await keyedFixture(t)
+  // A serve that runs `deepseek-v4-flash` with a shorter window than DeepSeek's
+  // own — a proxy, a quantised local copy — is telling the truth about itself,
+  // and a constant compiled into this host months ago is not in a position to
+  // overrule it.
+  endpoint.rows = [{ id: 'deepseek-v4-flash', max_model_len: 65_536 }]
+  const verdict = await handlers['connection.test']({
+    baseURL: `${endpoint.baseURL}/v1`,
+    apiKey: 'sk-real-key',
+  })
+  assert.deepEqual(verdict.modelContexts?.['deepseek-v4-flash'], { tokens: 65_536, source: 'provider' })
+})
+
+test('a nonsense window is refused rather than put on the wire', async (t) => {
+  const { handlers, endpoint } = await keyedFixture(t)
+  // Bounded by the same 4 000 000 the settings store allows a user to type
+  // (`MAX_CONTEXT_WINDOW`), so an endpoint cannot hand this host a window it
+  // would refuse a person for asking about.
+  endpoint.rows = [{ id: 'wild', max_model_len: 40_000_000 }, { id: 'sane', max_model_len: 4_000_000 }]
+  const verdict = await handlers['connection.test']({
+    baseURL: `${endpoint.baseURL}/v1`,
+    apiKey: 'sk-real-key',
+  })
+  assert.equal(verdict.modelContexts?.['wild'], undefined, 'a 40M window reached the wire')
+  assert.deepEqual(verdict.modelContexts?.['sane'], { tokens: 4_000_000, source: 'provider' })
+})
+
+test('what a probe learned is filed on the profile beside its list', async (t) => {
+  const { handlers, endpoint } = await keyedFixture(t)
+  endpoint.rows = [{ id: 'served-by-vllm', max_model_len: 131_072 }]
+  const { profiles } = await handlers['connection.save']({
+    provider: 'default',
+    model: 'served-by-vllm',
+    baseURL: `${endpoint.baseURL}/v1`,
+    apiKey: 'sk-real-key',
+  })
+  const id = profiles[0]?.id
+  assert.ok(id !== undefined)
+  await handlers['connection.test']({ profileId: id, baseURL: `${endpoint.baseURL}/v1` })
+  const listed = (await handlers['connection.list']({})).profiles.find(one => one.id === id)
+  assert.deepEqual(listed?.modelContexts?.['served-by-vllm'], { tokens: 131_072, source: 'provider' })
+})
+
+test('a probe’s reading clamps the chat’s window without anything being saved', async (t) => {
+  const { handlers, endpoint } = await keyedFixture(t)
+  // The half of feature A the table cannot do: a serve nobody has a table row
+  // for, whose own answer becomes the clamp for a conversation running on it.
+  endpoint.rows = [{ id: 'local/qwen3-8b', max_model_len: 40_960 }]
+  await handlers['settings.set']({ settings: { model: 'local/qwen3-8b', contextWindow: 2_000_000 } })
+  const before = await handlers['chat.create']({ characterId: 'aria' })
+  assert.equal(before.view.budget?.context, 2_000_000, 'a window was clamped before anything knew the model')
+  assert.equal(before.view.budget?.source, 'settings')
+
+  await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1`, apiKey: 'sk-real-key' })
+
+  const after = await handlers['chat.open']({ chatId: before.view.chatId })
+  assert.equal(after.view.budget?.context, 40_960, 'the probe’s reading did not reach the budget')
+  assert.equal(after.view.budget?.source, 'model')
+  assert.equal(after.view.budget?.modelContext, 40_960)
+})
+
+test('a capital letter does not hand the table an answer the endpoint already gave', async (t) => {
+  /*
+   * The two lookups the resolver runs back to back have to fold alike. The
+   * table folds (its docblock argues why at length); the probe map did not, so
+   * an endpoint that lists `DeepSeek-V4-Flash` against settings that say
+   * `deepseek-v4-flash` missed the probe and fell through to the table —
+   * silently inverting "the endpoint's own answer wins over the table" on
+   * nothing but capitalisation.
+   *
+   * The fixture discriminates: the table's answer for this id is 1 000 000 and
+   * the endpoint's is 65 536, so a miss is visible as the wrong number rather
+   * than as a missing one.
+   */
+  const { handlers, endpoint } = await keyedFixture(t)
+  endpoint.rows = [{ id: 'DeepSeek-V4-Flash', max_model_len: 65_536 }]
+  await handlers['settings.set']({ settings: { model: 'deepseek-v4-flash', contextWindow: 2_000_000 } })
+  await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1`, apiKey: 'sk-real-key' })
+
+  const { view } = await handlers['chat.create']({ characterId: 'aria' })
+  assert.equal(view.budget?.modelContext, 65_536, 'the differently-cased probe reading was not found')
+  assert.equal(view.budget?.context, 65_536)
+  assert.equal(view.budget?.source, 'model')
+})
+
+test('and it folds the other way too: odd casing in the settings still finds the probe', async (t) => {
+  /*
+   * The mirror of the case above, and it is a separate assertion because it
+   * fails on a *different* line. Folding only where the probe is written keeps
+   * the previous test green — the settings model was already lowercase, so the
+   * lookup hit the folded key by luck. This one puts the odd casing in the
+   * settings instead, which is the half that needs the read to fold.
+   *
+   * Not hypothetical: `settings.model` is a free-text field on the connection
+   * form whenever the endpoint advertises no list, and vendor documentation
+   * writes these ids both ways.
+   */
+  const { handlers, endpoint } = await keyedFixture(t)
+  endpoint.rows = [{ id: 'deepseek-v4-flash', max_model_len: 65_536 }]
+  await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1`, apiKey: 'sk-real-key' })
+  await handlers['settings.set']({ settings: { model: 'DeepSeek-V4-Flash', contextWindow: 2_000_000 } })
+
+  const { view } = await handlers['chat.create']({ characterId: 'aria' })
+  assert.equal(view.budget?.modelContext, 65_536, 'the probe reading was missed for a differently-cased setting')
+  assert.equal(view.budget?.context, 65_536)
 })

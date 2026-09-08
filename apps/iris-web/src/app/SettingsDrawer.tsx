@@ -18,6 +18,7 @@ import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import type { ContinuePostfix, GenerationSettings } from '@iris/protocol'
+import { MAX_CONTEXT_WINDOW } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
@@ -284,11 +285,34 @@ export function SettingsDrawer({
                   <NumberField
                     label={t('contextWindow')}
                     value={settings.contextWindow}
-                    bounds={{ min: 512, max: 2_000_000, step: 512 }}
+                    /*
+                      4 000 000, which is `MAX_CONTEXT_WINDOW` — the ceiling the
+                      settings store, the probe and the wire schema all check.
+                      It was 2 000 000, which is upstream's `unlocked_max`
+                      verbatim, and that made the unlock switch below argue
+                      against a bound this control was still imposing: the
+                      reason not to borrow upstream's 2M is that it would cap a
+                      future 4M model at a 2026 constant, and the slider was
+                      capping it anyway.
+                    */
+                    bounds={{ min: 512, max: MAX_CONTEXT_WINDOW, step: 512 }}
                     fallback={32_768}
                     decimals={0}
                     note={t('contextWindowNote')}
                     onCommit={value => patch('contextWindow', value)}
+                  />
+                  {/*
+                    Beside the window and not elsewhere, because it is the other
+                    half of one decision: the number above is capped at what the
+                    model is known to accept until this is on. Upstream's
+                    `max_context_unlocked` — where it lives beside the same
+                    slider, for the same reason.
+                  */}
+                  <ToggleField
+                    label={t('contextUnlocked')}
+                    note={t('contextUnlockedNote')}
+                    value={settings.contextUnlocked === true}
+                    onToggle={next => patch('contextUnlocked', next)}
                   />
                   <ChoiceField
                     label={t('reasoningEffort')}

@@ -14,6 +14,7 @@ import { dirname } from 'node:path'
 
 import type { ChatCompletionPreset } from '@iris/preset'
 import type { ContinuePostfix, GenerationSettings, ReasoningEffort } from '@iris/protocol'
+import { MAX_CONTEXT_WINDOW } from '@iris/protocol'
 
 import { invalid } from './errors.ts'
 import {
@@ -21,11 +22,19 @@ import {
   type WorldbookImport, type WorldbookSettings,
 } from './worldbook-settings.ts'
 
-/** Numeric sampling fields, with the range each is accepted in. */
+/**
+ * Numeric sampling fields, with the range each is accepted in.
+ *
+ * `contextWindow`'s ceiling is {@link MAX_CONTEXT_WINDOW}, read from the
+ * protocol rather than written here: the probe that bounds what an endpoint
+ * may report and the schema that bounds what crosses the wire check the same
+ * number, and three restatements of one ceiling is three chances for a
+ * validator to refuse what this store would have accepted.
+ */
 const NUMERIC_FIELDS = {
   temperature: [0, 5],
   maxTokens: [1, 1_000_000],
-  contextWindow: [1, 4_000_000],
+  contextWindow: [1, MAX_CONTEXT_WINDOW],
   topP: [0, 1],
   topK: [0, 10_000],
   minP: [0, 1],
@@ -34,6 +43,7 @@ const NUMERIC_FIELDS = {
   presencePenalty: [-2, 2],
   seed: [Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
 } as const satisfies Partial<Record<keyof GenerationSettings, readonly [number, number]>>
+
 
 /**
  * The reasoning-effort values upstream accepts, verbatim.
@@ -65,12 +75,28 @@ const CONTINUE_POSTFIXES = Object.keys(CONTINUE_POSTFIX_SEPARATORS) as readonly 
  * leaves it alone, `null` clears the override, and a non-boolean value is
  * refused — a `"true"` string would read as on forever and never say why.
  *
- * `cacheFriendly` is the one with no upstream key, and the one whose **absence
- * means on** — clearing it therefore restores the reorder rather than switching
- * it off. That asymmetry lives in the reader (`cacheFriendlyOf`, service.ts),
- * not here: this table only decides what a patch may say.
+ * Four, and they are not all the same kind of switch:
+ *
+ * - `trimSentences` / `squashSystemMessages` shape the **reply**
+ *   (`trim_sentences`, `squash_system_messages`).
+ * - `contextUnlocked` (upstream's `max_context_unlocked`) shapes the
+ *   **budget** — it decides whether {@link NUMERIC_FIELDS}' `contextWindow` is
+ *   clamped to the model's own window.
+ * - `cacheFriendly` shapes the **assembly order**, is the one with no upstream
+ *   key at all, and is the one whose **absence means on** — clearing it
+ *   restores the reorder rather than switching it off. That asymmetry lives in
+ *   the reader (`cacheFriendlyOf`, service.ts), not here: this table only
+ *   decides what a patch may say.
+ *
+ * All four take the same three cases, so they share one table rather than
+ * getting one each.
  */
-const BOOLEAN_FIELDS = ['trimSentences', 'squashSystemMessages', 'cacheFriendly'] as const satisfies
+const BOOLEAN_FIELDS = [
+  'trimSentences',
+  'squashSystemMessages',
+  'contextUnlocked',
+  'cacheFriendly',
+] as const satisfies
   readonly (keyof GenerationSettings)[]
 
 /**

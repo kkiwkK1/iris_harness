@@ -158,6 +158,99 @@ export interface ChatCompaction {
   model: string
 }
 
+/**
+ * The largest context window this host will accept from anyone.
+ *
+ * **In the protocol, because three layers check it and only one of them could
+ * have owned it.** The settings store bounds what a person may type
+ * (`@iris/app-service`'s `NUMERIC_FIELDS.contextWindow`), the probe bounds what
+ * an endpoint may report about a model, and `connection.save`'s schema bounds
+ * what may cross the wire. The first two are host-side and the third is not, so
+ * a constant living in the host could only be *restated* on the wire — and a
+ * wire validator restating a bound is how a schema comes to reject what the
+ * store would have accepted.
+ *
+ * A bound on *credulity*, not a capability claim: nothing here says a 4M window
+ * works anywhere, only that a larger number is likelier to be a unit error than
+ * a model.
+ */
+export const MAX_CONTEXT_WINDOW = 4_000_000
+
+/**
+ * How long a model's context is, and who said so.
+ *
+ * The `source` is not decoration. A number the endpoint itself reported and a
+ * number this host looked up in a table baked in at build time are two
+ * different kinds of fact — the first is current, the second is as old as the
+ * release — and a surface that shows a window without saying which one it is
+ * leaves the user unable to tell "my provider says 1M" from "we guessed".
+ */
+export interface ModelContextLength {
+  /** Tokens. */
+  tokens: number
+  /**
+   * `'provider'`: the endpoint's own `/models` row carried it.
+   * `'table'`: read out of this host's built-in model table.
+   */
+  source: 'provider' | 'table'
+}
+
+/**
+ * Why the context window is the number it is.
+ *
+ * Four answers, because they are four different next steps for the reader: a
+ * clamped window changes by changing model or unlocking, a window in force from
+ * the settings changes in the settings, an unlocked one is a decision they have
+ * already made, and the host default means nothing has ever set one.
+ */
+export type ContextWindowSource
+  /** Clamped down to the model's own known window. */
+  = 'model'
+  /** The stored value — the user's, or their preset's — stands. */
+  | 'settings'
+  /**
+   * The stored value stands *above* the model's known window, because
+   * {@link GenerationSettings.contextUnlocked} is on.
+   */
+  | 'unlocked'
+  /** Nothing has set one; the host composition's value is in force. */
+  | 'host'
+
+/**
+ * What one conversation's next request may spend, and who decided the window.
+ *
+ * Named rather than inline because three layers hand it to each other — the
+ * service resolves it, the entry projects it, the composer divides by it — and
+ * an inline shape restated at each boundary is the seam a field goes missing
+ * across.
+ */
+export interface ChatBudget {
+  context: number
+  reserve: number
+  /**
+   * Why {@link context} is that number.
+   *
+   * **Required, not optional.** The two fields below are absent when there is
+   * nothing to say; this one always has an answer, because the host cannot
+   * resolve a window without taking one of the four paths. Making it optional
+   * would let a projection that forgot it read as "no opinion", and a capacity
+   * readout that cannot name its own denominator is exactly the state that made
+   * a 2 000 000-token window sit unexplained under a 1M model.
+   */
+  source: ContextWindowSource
+  /** The model the window was judged against, when the settings named one. */
+  model?: string
+  /**
+   * That model's own known window, when anything knew one.
+   *
+   * Carried even when it did **not** win — with `source: 'unlocked'` this is
+   * the number the user chose to exceed, and a surface that wants to say so
+   * needs it. Absent means nothing knows this model's window, which is why
+   * nothing was clamped.
+   */
+  modelContext?: number
+}
+
 /** One open conversation. */
 export interface ChatView {
   chatId: string
@@ -167,23 +260,49 @@ export interface ChatView {
   /**
    * What this conversation's next request is allowed to spend.
    *
-   * The same two numbers {@link PromptItemization.budget} carries, resolved the
-   * same way — the preset's own `openai_max_context` when it has one, the host
-   * composition's value otherwise — carried on the open chat so a surface can
-   * say how full the window is **without** asking for an itemization.
-   * Assembling one is not free (a full world-info scan and a macro pass), and a
-   * capacity readout that paid that on every keystroke is a readout nobody
-   * could afford to show.
+   * The two numbers {@link PromptItemization.budget} carries, resolved the same
+   * way — the preset's own `openai_max_context` when it has one, clamped to the
+   * model's known window, the host composition's value otherwise — carried on
+   * the open chat so a surface can say how full the window is **without**
+   * asking for an itemization. Assembling one is not free (a full world-info
+   * scan and a macro pass), and a capacity readout that paid that on every
+   * keystroke is a readout nobody could afford to show.
+   *
+   * Plus the provenance the two numbers alone could not carry: an itemization's
+   * budget is an account of one assembly, while this is a standing answer to
+   * "what is the window, and who decided" — see {@link ContextWindowSource}.
    *
    * **Optional, and absent is a real state rather than a gap to fill in.** The
-   * projection is handed these two numbers by whoever resolves the settings;
+   * projection is handed these numbers by whoever resolves the settings;
    * something that projects a conversation without them — a fixture, a
    * transport test — gets a view that says nothing about capacity, and a
    * surface reading it shows no meter. Zero-filling instead would put a `0`
    * window on the wire, and every consumer that divides by it would report a
    * conversation as infinitely full.
    */
-  budget?: { context: number, reserve: number }
+  budget?: ChatBudget
+  /**
+   * What the newest real turn's prompt actually measured.
+   *
+   * The one free reading of "how full is it" this host has. Every real
+   * generation records its own itemization (`@iris/app-service`'s
+   * `entry.itemizations`), and the host was already reading the newest one back
+   * for auto-compaction without projecting it — so a capacity surface can draw
+   * a measured occupancy with no `prompt.itemize` round trip and no second
+   * assembly, which is what {@link budget} alone could never give it.
+   *
+   * **A measurement, so it is dated by turn rather than presented as current.**
+   * `turn` is the turn it was taken on; the newest floor may be later than that
+   * (a swipe, an imported chat, a floor added by a script), and a reader that
+   * wants to know whether the reading still describes the next request compares
+   * it against the conversation's own length.
+   *
+   * **Absent is the normal state after a restart.** The records live in memory
+   * for as long as the host holds the chat open, so a freshly opened profile
+   * has none until it generates once. Absent means "nothing has been measured
+   * in this process", never "nothing is in the window".
+   */
+  measured?: { turn: number, tokens: number }
   /** Present only when an early span of this conversation has been compacted. */
   compaction?: ChatCompaction
   /** Variables of the newest turn, for a status-bar surface. */
@@ -1163,6 +1282,24 @@ export interface ConnectionProfile {
   models?: string[]
   /** Unix epoch milliseconds of the probe {@link models} came from. */
   modelsProbedAt?: number
+  /**
+   * What is known about the context window of the ids in {@link models}, keyed
+   * by id.
+   *
+   * **Sparse on purpose.** Most endpoints annotate some rows and not others —
+   * vLLM leaves `max_model_len` null on its LoRA adapters, OpenRouter documents
+   * both its context fields as nullable — and the built-in table answers for
+   * some ids and not others. A missing key means "nothing knows this one",
+   * which is a different fact from a window of zero and is why this is a record
+   * rather than an array parallel to {@link models}.
+   *
+   * Each entry says whether the endpoint reported it or the host's table did
+   * ({@link ModelContextLength}). A `'table'` entry is not an observation of
+   * this endpoint at all, which is why it does not travel under
+   * {@link modelsProbedAt}'s timestamp in the reader's mind — the source field
+   * is what keeps the two kinds apart.
+   */
+  modelContexts?: Record<string, ModelContextLength>
 }
 
 /**
@@ -1242,6 +1379,12 @@ export interface HostDefaultConnection {
    * shape that turns an observation into a claim about the present.
    */
   modelsProbedAt?: number
+  /**
+   * What is known about those ids' context windows — the same field a saved
+   * profile carries ({@link ConnectionProfile.modelContexts}), in memory only
+   * for the life of the process, like {@link models} beside it.
+   */
+  modelContexts?: Record<string, ModelContextLength>
 }
 
 /**
@@ -1333,6 +1476,27 @@ export interface GenerationSettings {
    * the conversation. Absent falls back to the host composition's value.
    */
   contextWindow?: number
+  /**
+   * Let {@link contextWindow} stand above the model's known window — upstream's
+   * `max_context_unlocked` (openai.js:308).
+   *
+   * Without it, a stored window larger than what the model is known to accept
+   * is clamped down to the model's — the mechanism upstream applies once per
+   * *named* source branch of `onModelChange`
+   * (`oai_settings.openai_max_context = Math.min(<the model's max>, …)`). With
+   * it, the stored number is used as written, which is what upstream does for
+   * its **CUSTOM** source — a base URL plus a model name, structurally the only
+   * route this host has (`openai.js:5704-5710` sets the bound to `unlocked_max`
+   * and consults no model table). So here the clamp is a deliberate improvement
+   * and this switch hands upstream's own answer for this route back; see
+   * `notes/packages/iris-app-service/DEVIATIONS.md` §44.
+   *
+   * Absent means off, which is upstream's default (openai.js:479). Note that
+   * upstream's unlock *raises* its bound to 2 000 000 rather than removing it;
+   * this one removes it, because this host has no 2 000 000 of its own and
+   * borrowing upstream's would cap a future 4M model at a 2026 constant.
+   */
+  contextUnlocked?: boolean
   /** How hard a reasoning model thinks, upstream's `reasoning_effort`. */
   reasoningEffort?: ReasoningEffort
   topP?: number

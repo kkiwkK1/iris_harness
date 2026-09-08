@@ -169,6 +169,13 @@ export function Composer({
    */
   const budget = useIris(state => state.view?.budget)
   /*
+   * What the host recorded for the newest real turn, so the capsule's gauge has
+   * a measured number without a round trip (`ChatView.measured` says why it can
+   * be read for free). A narrow selector for the same reason as every other one
+   * here — this component re-renders on every keystroke.
+   */
+  const measured = useIris(state => state.view?.measured)
+  /*
    * Which card this conversation belongs to — read for `/new`, which starts
    * another conversation with the same character. The field rather than the
    * view, for the reason every other selector here is narrow: this component
@@ -949,6 +956,7 @@ export function Composer({
             <ContextPill
               budget={budget}
               itemization={shownReading?.itemization}
+              measured={measured}
               open={meterOpen}
               anchor={meterAnchor}
               onToggle={() => setMeterOpen(!meterOpen)}
