@@ -1097,9 +1097,8 @@ export const en = {
   thousandsSeparator: ',',
   /** `{count}` arrives already grouped or already compacted. */
   usageCount: '{count} tok',
-  /** The composer line's two groups; a group with no data drops out whole. */
+  /** The context card's cache-hit line. */
   usageCacheHit: 'Cache hit {percent}%',
-  usageTokens: 'Input {input} tok · Output {output} tok',
   /** The reading in a reply's action row, and the heading of its hover table. */
   usageTurn: 'Usage {total}',
   usageTurnTitle: 'Turn usage',
@@ -1113,6 +1112,12 @@ export const en = {
   usageDetailOutput: 'Output',
   /** Reasoning is part of the output it follows, not a fourth bucket beside it. */
   usageDetailReasoning: ' ({tokens} reasoning)',
+  /** The composer strip's hover table: its heading, and the row label for the
+      three prompt buckets added. The table and the strip's own line are the
+      same rows (`usageSummaryRows`), so this is the line's own word `Input`
+      given a key of its own — not a second word for the billed sum. */
+  usageSummaryTitle: 'Session usage',
+  usageSummaryInput: 'Input',
 
   /*
    * The usage page: the whole profile's cost, cut by time and by model.
@@ -2348,7 +2353,6 @@ export const zh: Record<StringKey, string> = {
   thousandsSeparator: ',',
   usageCount: '{count} tok',
   usageCacheHit: '缓存命中 {percent}%',
-  usageTokens: '输入 {input} tok · 输出 {output} tok',
   usageTurn: '用量 {total}',
   usageTurnTitle: '本轮用量',
   usageDetailCacheHit: '缓存命中',
@@ -2357,6 +2361,11 @@ export const zh: Record<StringKey, string> = {
   usageDetailCacheWrite: '缓存写入',
   usageDetailOutput: '输出',
   usageDetailReasoning: '（其中推理 {tokens}）',
+  /** 输入框下用量行的悬浮卡：标题，与「输入」一栏的行标签。卡和行本是同一组行
+      （`usageSummaryRows`），这里就是行上那个「输入」拿到了自己的键，不是给计费
+      之和另起一个词。 */
+  usageSummaryTitle: '会话用量',
+  usageSummaryInput: '输入',
 
   /** 用量页。口径见 en 一侧：「用量」只指提供方计费，「未缓存输入」不是「计费输入」。 */
   usageEntry: '用量',

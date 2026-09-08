@@ -20,8 +20,9 @@ import type { MessageView } from '@iris/protocol'
 
 import { Slot } from '../slots/Slot.tsx'
 import { Reasoning } from './Reasoning.tsx'
+import { UsagePopover } from './UsagePopover.tsx'
 import { VariantRail } from './VariantRail.tsx'
-import { formatTokens, totalTokens, usageDetailText } from './token-format.ts'
+import { formatTokens, totalTokens, usageDetailRows } from './token-format.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /** What a message row can do, supplied by the pane that owns the chat. */
@@ -223,10 +224,10 @@ export function Message({
               <MessageActions message={message} streaming={streaming} notify={handlers.onNotify} />
               {/*
                 What this reply cost, at the end of the row — a reading, not a
-                control, which is why it is a `span` with `default` cursor
-                among the buttons. It carries the row's own type size and its
-                hover reveal, which is the intended loudness: the number is
-                worth having and worth nobody looking at it.
+                control, which is why it keeps `default` cursor among the
+                buttons. It carries the row's own type size and its hover
+                reveal, which is the intended loudness: the number is worth
+                having and worth nobody looking at it.
 
                 Gated on the fact being present rather than on the role. The
                 protocol puts `usage` on an assistant message's selected
@@ -241,19 +242,21 @@ export function Message({
                 for somewhere else and Iris has no figure to show. See
                 `notes/apps/iris-web/DEVIATIONS.md` 47.
 
-                The breakdown is a `title`, i.e. plain text, and the harness
-                shows the same rows in an anchored dialog. That dialog is not
-                built yet; what is kept is the *rows* — `usageDetailText`
-                assembles them in the dialog's order, so the day it arrives it
-                takes the copy over and nothing here is re-derived.
+                The breakdown is the hover card (`UsagePopover`), which is the
+                anchored dialog this row once promised in a `title`: hover and
+                keyboard focus open it, Escape and pointer-out close it, a
+                touch tap toggles it, and its rows are `usageDetailRows` — the
+                harness dialog's rows, in the harness dialog's order, now read
+                by a screen reader as a table instead of one run-on line.
               */}
               {message.usage === undefined ? null : (
-                <span
+                <UsagePopover
                   className="iris-act iris-act--reading"
-                  title={usageDetailText(message.usage, lang)}
+                  heading={t('usageTurnTitle')}
+                  rows={usageDetailRows(message.usage, lang)}
                 >
                   {t('usageTurn', { total: formatTokens(totalTokens(message.usage), lang) })}
-                </span>
+                </UsagePopover>
               )}
             </div>
           </>

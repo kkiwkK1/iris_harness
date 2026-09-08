@@ -19,9 +19,10 @@ import {
   formatExactTokens,
   formatTokens,
   totalTokens,
-  usageDetailText,
+  usageDetailRows,
   usageLineGroups,
-  usageLineTitle,
+  usageScriptShareSentence,
+  usageSummaryRows,
 } from '../src/app/token-format.ts'
 import { DICTIONARIES } from '../src/app/i18n/strings.ts'
 
@@ -188,36 +189,6 @@ test('the composer line drops a group with no data, and the row with no activity
   )
 })
 
-test('the composer row’s hover separates the card’s share, and only there', () => {
-  /*
-   * Two claims, and the second is the one worth pinning. The *visible* groups
-   * already count a card's requests — they are summed into `ChatView.usage`
-   * because they were billed to this conversation, which is what makes the row
-   * agree with the bill — so the hover is a breakdown of the line above it and
-   * never an addition to it. A reader adding the two would double-count, which
-   * is what the 「其中」 / "of which" wording is for.
-   */
-  const groups = usageLineGroups(usage({ cacheReadTokens: 1_200 }))
-  const share = { turns: 2, usage: { inputTokens: 400, outputTokens: 60 } }
-
-  // With no card share, the hover is the line and nothing else — the state
-  // every conversation whose cards never generated is in.
-  assert.equal(usageLineTitle(groups, undefined), 'Cache hit 60% | Input 2K tok · Output 300 tok')
-  // With one, a second line carrying the count and the tokens. 460 and not
-  // 2,300: the share's own buckets, not the row's.
-  assert.equal(
-    usageLineTitle(groups, share),
-    'Cache hit 60% | Input 2K tok · Output 300 tok\nof which 2 card-script requests · 460 tok',
-  )
-  assert.equal(
-    usageLineTitle(usageLineGroups(usage({ cacheReadTokens: 1_200 }), 'zh'), share, 'zh'),
-    '缓存命中 60% | 输入 2K tok · 输出 300 tok\n其中卡脚本请求 2 次 · 460 tok',
-  )
-  // No row means no hover: the composer draws nothing there, so a `title` would
-  // be attached to an element that does not exist.
-  assert.equal(usageLineTitle([], share), '')
-})
-
 test('the composer line adds the buckets and never reads a summed total', () => {
   /*
    * `ChatView.usage.totalTokens` is a sum over only the generations that
@@ -239,31 +210,107 @@ test('the composer line adds the buckets and never reads a summed total', () => 
 })
 
 test('the per-turn breakdown has a row only for a bucket the provider reported', () => {
-  const bare = usageDetailText(usage())
-  assert.equal(bare.split('\n')[0], 'Turn usage')
-  assert.match(bare, /Uncached input 800 tok/)
-  assert.match(bare, /Output 300 tok/)
-  assert.doesNotMatch(bare, /Cache/, 'a provider silent about caching got cache rows anyway')
-  assert.doesNotMatch(bare, /reasoning/, 'a turn with no reasoning got a reasoning note')
+  const bare = usageDetailRows(usage())
+  assert.deepEqual(bare, [
+    { label: 'Uncached input', value: '800 tok' },
+    { label: 'Output', value: '300 tok' },
+  ])
+  assert.doesNotMatch(
+    JSON.stringify(bare),
+    /Cache/,
+    'a provider silent about caching got cache rows anyway',
+  )
+  assert.doesNotMatch(
+    JSON.stringify(bare),
+    /reasoning/,
+    'a turn with no reasoning got a reasoning note',
+  )
 
-  const full = usageDetailText(usage({
+  assert.deepEqual(usageDetailRows(usage({
     cacheReadTokens: 1_200,
     cacheWriteTokens: 4_000,
     reasoningTokens: 250,
-  }))
-  assert.deepEqual(full.split('\n'), [
-    'Turn usage',
-    'Cache hit 20%',
-    'Uncached input 800 tok',
-    'Cached input 1,200 tok',
-    'Cache write 4,000 tok',
+  })), [
+    { label: 'Cache hit', value: '20%' },
+    { label: 'Uncached input', value: '800 tok' },
+    { label: 'Cached input', value: '1,200 tok' },
+    { label: 'Cache write', value: '4,000 tok' },
     // Reasoning rides the output row, because that is where it lives.
-    'Output 300 tok (250 tok reasoning)',
+    { label: 'Output', value: '300 tok (250 tok reasoning)' },
   ])
 
-  assert.deepEqual(usageDetailText(usage({ reasoningTokens: 250 }), 'zh').split('\n'), [
-    '本轮用量',
-    '未缓存输入 800 tok',
-    '输出 300 tok（其中推理 250 tok）',
+  assert.deepEqual(usageDetailRows(usage({ reasoningTokens: 250 }), 'zh'), [
+    { label: '未缓存输入', value: '800 tok' },
+    { label: '输出', value: '300 tok（其中推理 250 tok）' },
   ])
+})
+
+test('the session rows name the sides of the bill, cache share first when there is one', () => {
+  assert.deepEqual(usageSummaryRows(undefined), [])
+  // A conversation whose every request failed: zeros are not a reading.
+  assert.deepEqual(usageSummaryRows({ inputTokens: 0, outputTokens: 0 }), [])
+  assert.deepEqual(usageSummaryRows(usage()), [
+    { label: 'Input', value: '800 tok' },
+    { label: 'Output', value: '300 tok' },
+  ])
+  assert.deepEqual(usageSummaryRows(usage({ cacheReadTokens: 1_200 })), [
+    { label: 'Cache hit', value: '60%' },
+    { label: 'Input', value: '2K tok' },
+    { label: 'Output', value: '300 tok' },
+  ])
+  assert.deepEqual(usageSummaryRows(usage({ cacheReadTokens: 1_200 }), 'zh'), [
+    { label: '缓存命中', value: '60%' },
+    { label: '输入', value: '2K tok' },
+    { label: '输出', value: '300 tok' },
+  ])
+})
+
+test('the composer line is the session rows, flattened', () => {
+  /*
+   * The line and its hover card are one construction (`conversationRows`), so
+   * they cannot disagree — and this is the property that makes it so, checked
+   * over every shape the data takes rather than one fixture: absent, all-zero,
+   * no cache bucket, and the mixed-provider trap below.
+   */
+  const fixtures: (TurnUsage | undefined)[] = [
+    undefined,
+    usage(),
+    usage({ inputTokens: 0, outputTokens: 0 }),
+    usage({ cacheReadTokens: 1_200 }),
+    usage({ inputTokens: 800, outputTokens: 300, cacheReadTokens: 1_200, totalTokens: 5 }),
+  ]
+  for (const fixture of fixtures) {
+    const rows = [...usageSummaryRows(fixture)]
+    const line = usageLineGroups(fixture)
+    if (rows.length === 0) {
+      assert.deepEqual(line, [], 'a reading with no rows still produced a line')
+      continue
+    }
+    const [hit, input, output] = rows.length === 3 ? rows : [undefined, rows[0]!, rows[1]!]
+    const expected = [
+      ...(hit === undefined ? [] : [`${hit.label} ${hit.value}`]),
+      `${input.label} ${input.value} · ${output.label} ${output.value}`,
+    ]
+    assert.deepEqual(line, expected)
+  }
+})
+
+test('the summary card’s share note reads as a breakdown, only when there is one', () => {
+  /*
+   * The composer's visible groups already count a card's requests — they are
+   * summed into `ChatView.usage` because they were billed to this conversation,
+   * which is what makes the note agree with the bill — so the sentence under
+   * the card's rows is a breakdown of the figures above it and never an
+   * addition to them. A reader adding the two would double-count, which is what
+   * the 「其中」 / "of which" wording is for.
+   */
+  const share = { turns: 2, usage: { inputTokens: 400, outputTokens: 60 } }
+
+  // No card share means no note: the state every conversation whose cards
+  // never generated is in.
+  assert.equal(usageScriptShareSentence(undefined), '')
+  // With one, the count and the tokens of the share's own buckets, never the
+  // whole row's. 460 and not 2,300.
+  assert.equal(usageScriptShareSentence(share), 'of which 2 card-script requests · 460 tok')
+  assert.equal(usageScriptShareSentence(share, 'zh'), '其中卡脚本请求 2 次 · 460 tok')
 })
