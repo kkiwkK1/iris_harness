@@ -1150,6 +1150,14 @@ export const en = {
   usageMetricCacheRead: 'Cache hit',
   usageMetricCacheMiss: 'Uncached',
   usageMetricOutput: 'Output',
+  /**
+   * The fifth line the chart can draw: what card scripts asked for.
+   *
+   * A **subset** of `usageMetricTotal` rather than another cut of it — the four
+   * before it partition the spend, this one says how much of the same spend was
+   * a card's doing.
+   */
+  usageMetricScript: 'Card scripts',
   /** The headline cards. `usageCardPrompt` is the three prompt buckets added; `usageCardCacheMiss` is the uncached one alone. */
   usageCardTotal: 'Total tokens',
   usageCardPrompt: 'Billed input',
@@ -1182,6 +1190,23 @@ export const en = {
    * confusion this sentence exists to prevent.
    */
   usageHitRateBasis: 'The share of prompt tokens the cache served, over the generations whose provider reported a cache bucket. Routes silent about caching are not in the denominator, so this is not the cache hit over the billed input beside it.',
+  /*
+   * The card-script share: the line under the total, its hint, and the
+   * per-conversation column.
+   *
+   * **「其中」 / "of which" carries the whole meaning.** These generations are
+   * *inside* the figure above them, not beside it — they were billed on the
+   * same route to the same account — and a phrasing that read as an addition
+   * would make every total on the page look understated by its own footnote.
+   */
+  usageScriptShare: 'of which {n} card-script requests · {tokens} tok',
+  usageScriptBasis: 'Requests a card’s own script made (TavernHelper.generate / generateRaw). They are billed like a turn, produce no reply, and are counted inside every figure on this page.',
+  /**
+   * The subtotal list's card column. Blank, never `0`, on a conversation with
+   * none. `tok` carries the unit for the same reason the line above does: a
+   * bare number after a count of requests reads as a second count.
+   */
+  usageScriptCell: '{n} card · {tokens} tok',
   /** Nothing to draw, because this figure was never billed — not a chart of zeros. */
   usageChartEmpty: 'Nothing was billed to this figure in this range.',
   /**
@@ -1267,14 +1292,15 @@ export const en = {
    */
   divergenceShortfall: 'far below what the bytes allowed',
   /**
-   * The three conditions under which serving nothing is expected, so a reader is
-   * not sent hunting for a prompt defect that is not there. DeepSeek stores a
-   * prefix only after seeing it twice, entries live hours to days, and a cache
-   * belongs to one model.
+   * The conditions under which serving nothing is expected, so a reader is not
+   * sent hunting for a prompt defect that is not there. DeepSeek stores a prefix
+   * only after seeing it twice, entries live hours to days, a cache belongs to
+   * one model, and a reply that never completed was never billed.
    */
   divergenceColdStart: 'one of this conversation’s first two requests — a prefix has to be seen twice before it is stored',
   divergenceStale: 'more than half an hour since the previous request, so the cached prefix may have expired',
   divergenceRoute: 'a different model from the previous request ({from} → {to}), and a cache belongs to one model',
+  divergenceInterrupted: 'the reply never completed (the provider closed it or never answered), so no usage was reported',
   /** The four terms of the loss, which add up exactly. */
   divergenceSplit: '{total} B unservable: {added} new, {changed} rewritten, {repeated} unchanged but out of reach, {structure} framing',
   divergenceStateSame: 'unchanged',
@@ -2350,6 +2376,7 @@ export const zh: Record<StringKey, string> = {
   usageMetricCacheRead: '缓存命中',
   usageMetricCacheMiss: '未缓存',
   usageMetricOutput: '输出',
+  usageMetricScript: '卡脚本',
   usageCardTotal: '总 token',
   usageCardPrompt: '计费输入',
   usageCardCacheRead: '缓存命中',
@@ -2367,6 +2394,9 @@ export const zh: Record<StringKey, string> = {
   usageSkippedShort: '{n} 个文件未读',
   usageBasisAria: '这些数字的口径',
   usageHitRateBasis: '缓存替你省下的提示 token 占比，只在「提供方报告了缓存桶」的那些生成上计算。对缓存沉默的线路不进分母，所以这不是旁边那张「计费输入」的命中比例。',
+  usageScriptShare: '其中卡脚本请求 {n} 次 · {tokens} tok',
+  usageScriptBasis: '卡自己的脚本发起的请求（TavernHelper.generate / generateRaw）。它们和一次回合一样计费，但不产生任何回复，本页每个数字都已把它们算在内。',
+  usageScriptCell: '卡脚本 {n} 次 · {tokens} tok',
   usageChartEmpty: '这段时间这个指标没有产生计费。',
   contextPill: '上下文 {used}/{total} · {percent}%',
   contextPillCapacity: '上下文 {total}',
@@ -2404,6 +2434,7 @@ export const zh: Record<StringKey, string> = {
   divergenceColdStart: '这是本对话最前两条请求之一 —— 前缀要被看到两次才会存下来',
   divergenceStale: '距上一条请求超过半小时，缓存的前缀可能已经过期',
   divergenceRoute: '与上一条请求不是同一个模型（{from} → {to}），而缓存只属于一个模型',
+  divergenceInterrupted: '这条回复没有走完（提供方中途断开，或一直没有应答），所以没有上报用量',
   divergenceSplit: '{total} 字节命不中：新增 {added}、改写 {changed}、逐字未变却落在前缀之后 {repeated}、框架 {structure}',
   divergenceStateSame: '未变',
   divergenceStateChanged: '改写',

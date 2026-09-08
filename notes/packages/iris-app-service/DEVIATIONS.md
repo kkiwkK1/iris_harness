@@ -4002,3 +4002,202 @@ join is not — the mirror of this corpus — where splitting adds message
 boundaries and buys nothing. The probe's three columns are the instrument: the
 "on, bucket-level" column is reproducible at any time by suppressing the member
 list, which is one branch in `splitOf`.
+
+## 51. A card's own generation is billed, so it is now recorded — on the conversation's header, and inside every figure
+
+Upstream records **nothing** about what a generation cost, for any generation:
+`extra.token_count` is SillyTavern's own *estimate of the reply text*
+(`getTokenCountAsync`), and nothing anywhere stores what the provider said it
+charged. So this whole area is Iris's — §28 is the turn side. This entry is
+about the population that was still missing from it.
+
+**The defect.** `TavernHelper.generate` and `generateRaw` — `#sideGenerate` and
+`#generateRaw` — call `#stream` with **no `entry`**, and `noteUsage`,
+`notePromptFingerprint` and `noteRoute` all hang off `entry.pending.turn`. A
+card's request was therefore billed by the provider and recorded nowhere: no
+`iris_usage` entry, no fingerprint, no route, nothing on the usage page, and
+nothing in the conversation's own running total.
+
+**Why it is not a corner.** MVU fires one of these per turn for its variable
+update (`MagVarUpdate`'s `invoke_extra_model.ts:511`). On a conversation running
+that card the unrecorded population is the same size as the recorded one, so
+every figure Iris printed about cost was roughly half the bill — and the half it
+omitted was the half the user did not ask for and could not see.
+`CACHE-TARGET.md` §4.5 was written around this gap and required every PR to
+state that its numbers excluded it.
+
+**Where the record goes: a top-level `iris_side_usage` array on the chat
+header.** Not on a message, and the reason is positional rather than
+philosophical. `iris_usage` is an array *parallel to `swipes`* (§28,
+`USAGE_FIELD`), so an extra entry with no swipe behind it shifts every real
+record after it — the residual that module already names as its worst case,
+reached deliberately. And a card's generation has no floor to pick: it is a
+request the conversation made between two turns, not a candidate for either. The
+other three homes lose the record silently and are enumerated at
+`SIDE_USAGE_FIELD` — a message's `extra` is replaced wholesale on every
+SillyTavern swipe; `chat_metadata` is replaced wholesale by `commitChatMetadata`
+and is reachable from a card as `script.saveMetadata`, so the cards being
+measured are exactly the code that would delete the measurements; `header.iris`
+is re-minted by `importFile`. Same location and same argument as §28's
+compaction record, which is the precedent.
+
+Each entry carries the buckets, the route (`model`, `provider`), the request's
+moment, `source: 'script'`, the request fingerprint, and a `caller`.
+
+**`caller` is the RPC method name, and there is no script id to be had.**
+Checked against the contract rather than assumed: `script.generate` carries
+`chatId`, `userInput`, `systemPrompt` and `maxHistory`; `script.generateRaw`
+carries `chatId`, `prompt` and `systemPrompt`. Neither carries a script id or a
+run id, and neither does upstream's `TavernHelper.generate` — so a card could
+not send one if it wanted to. `script.setExtensionPrompt` *does* carry a
+`runId`, which is the shape a future attribution would take; adding it here
+means widening two request schemas and changing what a card must send, which is
+a contract change rather than a bookkeeping one. The method name is worth
+storing on its own regardless: it separates an assembled generation
+(`script.generate`, which re-sends this conversation's whole prefix) from a bare
+one (`script.generateRaw`, which sends only what the card handed it), and that
+is the distinction a reader asking "why is this card expensive" is after.
+
+**The array is append-only and unbounded**, unlike `cache-trace.ts`'s eight
+rotating traces — a trace is evidence and this is a sum, and a total that drops
+its oldest entries understates a bill, which is the failure this entry exists to
+remove. Measured 2026-09-09: one record serialises to 151 bytes at its smallest,
+252 for the shape a DeepSeek route writes, 332 at its largest. So on the largest
+real conversation on this machine — 爱衣, 51 lines, 34 recorded generations,
+header line 3 387 bytes — a card firing one per turn would take that header line
+to about 12 KB, and a thousand turns would take it to ~250 KB. One file in the
+same corpus already carries a *single message line* of 237 KB.
+`tests/side-usage.test.ts` pins the upper per-record figure, because these
+numbers are the argument and an argument resting on a number nothing checks
+drifts.
+
+**Counted inside every figure, and named.** `ChatView.usage` now covers both
+populations — a card's request was billed to this conversation on this
+conversation's route, so a total that excluded it would be a total of something
+other than the bill — and `ChatView.scriptUsage` reports the share. Likewise
+`usage.summary`: `UsageTotals.script` is the same buckets over the
+script-sourced records, present on the whole range, on each (time, model) cell,
+and on each conversation subtotal. It is **absent**, never zero-filled, when no
+card generation was counted — the optional-bucket rule one level out, and what
+keeps 「其中卡脚本 0 次」 off every profile that runs none. There is deliberately
+no matching `turn` share: the turn figure is the enclosing one minus this, which
+is a subtraction a reader can defend, where a stored pair that must sum to the
+whole is two numbers that can disagree with it.
+
+**`usage.summary`'s reply, measured** on the operator's own profile, 2026-09-09
+(17 chat files, 4 of them carrying any usage record, 37 recorded generations):
+
+| reading | turns | script share | reply bytes |
+| --- | --- | --- | --- |
+| whole profile, as on disk | 37 | absent | **1 915** |
+| 爱衣 alone (51 lines, 300 KB) | 34 | absent | **1 252** |
+| whole profile, one card generation per recorded turn | 74 | 37 | **2 734** (+819) |
+| 爱衣, same injection | 68 | 34 | **1 863** (+611) |
+
+The first two are the honest zero: no file on this machine carries the key yet,
+so the reply is byte-identical to what it was before this change — the `script`
+field is absent, not zero-filled, exactly as the absence rule requires.
+
+The last two are the bound, and the growth in them is **not** the field: the
+injected records are dated today while the real ones are undated, so most of
+those 819 bytes are new (bucket, model) cells. Isolated by re-serialising the
+same summary with `script` stripped: the field costs **626 bytes over the 6
+places that carry a share — 104 bytes each** (the range's totals, each cell, and
+each conversation row). 104 and not the ~22 a nested-buckets guess predicts,
+because every optional bucket the share reports is a key of its own; the guess
+was wrong by more than 4×, which is why this is measured rather than reasoned.
+Either way it is a nested object per place and not a doubled cell count, so the
+reply stays a page of rows.
+
+**The source comes from the record's location, not from the stored field.** A
+per-message array is by construction a candidate's and the header array is by
+construction a card's, so `readChatUsage` stamps each population rather than
+trusting `source` — a file arriving from elsewhere cannot move a card's spend
+into the turn column or the reverse. The field is still *written*, so the file
+says what it holds to a reader that is not this code. Records written before the
+field existed carry no `source` and read as turns, which is what they are.
+
+**What is still not recorded, stated because the fix is small and the number is
+not zero.** The compaction summarizer (`#summarize`) is also a generation the
+provider bills that produces no candidate, and it passes neither an `entry` nor
+a trace — so it is invisible on exactly the terms this entry just fixed for
+cards. It is outside this round's scope and would fit the same array under a
+`host.compaction` caller. Until then, a profile that has compacted is a profile
+whose usage page is short by one summary per compaction.
+
+**Not fixed, and not ours: the random uuid header on MVU's extra-model
+request.** The census reported it as a gemini-path defect; it is card code.
+`MagVarUpdate`'s `invoke_extra_model.ts:44` builds a 35-character random block
+(`_.times(4, () => uuidv4().slice(0, 8)).join('\n')`) and `:570` prepends it as
+a `role: 'system'` prompt — gated on the card's own 随机头部 setting **and** on
+the model name containing `gemini`. It arrives here as the card's `prompt`, so
+Iris has nothing to delete: there is no gemini path in this repo and no
+`randomUUID` anywhere in request composition. Upstream SillyTavern does add a
+uuid, and it is a different mechanism that does not sit in the cached prefix —
+`bodyParams['user'] = uuidv4()`
+(`src/endpoints/backends/chat-completions.js:2212`), a body parameter on the
+OpenAI source only, gated on the `openai.randomizeUserId` config, default false.
+What Iris can now do about the card's block is *report* it, which is the
+recording above: the request is stored with its `prefixHash`, so a card whose
+own header defeats its own cache shows up as a `script.generate` record whose
+prefix hash changes every time while the conversation's does not.
+
+**What would overturn the storage choice.** A SillyTavern release whose swipe or
+save path rewrites unknown top-level header keys. `formatChatFile` writes the
+header verbatim and `parseChatFile` reads it verbatim, and `header.iris` has
+lived there since the beginning on the same assumption, so the two would fail
+together.
+
+## 52. A reply the provider cuts short is a fault with a name and a record, not a free turn
+
+**Kind: fix to how a closed-mid-stream reply is reported and recorded.**
+
+Measured on 爱衣, 2026-09-09: after a profile was saved for the route `deepseek`
+(`baseURL https://api.deepseek.com`, **no** `/v1`), cache traces `1..5.json` all
+recorded `provider: 'deepseek'` with `inputTokens` and `cacheReadTokens` **missing**
+while the report panel showed the single word `terminated`; trace `0.json`, sent
+through the default route (`https://api.deepseek.com/v1`), carried usage. Five
+adjacent traces read like five free turns, and the sixth (the default-route one)
+was the only one that looked billed — a reader could not tell "the provider never
+answered" from "the provider served it for nothing".
+
+Two findings, kept apart because only one was a defect.
+
+**Route parity is not the cause.** Both the host-default route and the saved
+profile route reach the same `OpenAiCompatAdapter` class; there is no route-specific
+URL, usage, or error-handling path to unify. And the `/v1` difference between the two
+routes is a real configuration difference, not an assembly bug: OpenAI documents
+`https://api.openai.com/v1` as its base, OpenRouter documents
+`https://openrouter.ai/api/v1`, and DeepSeek documents `https://api.deepseek.com`
+as its base_url while noting the appended `/v1` is unrelated to model version and is
+also accepted. DeepSeek answers both spellings, so the two are **preserved**, not
+collapsed: the join strips trailing slashes only
+(`packages/iris-llm-openai-compat/src/index.ts`), so `/v1`, `/v1/` and `/v1///` all
+reach the same `POST …/v1/chat/completions` and no `/v1` is ever invented for a base
+that already sits at the right root. A spelling that reached a different path than the
+user typed is pinned by `baseurl-parity.test.ts`.
+
+**The defect is the unreadable transport error.** A provider that closes the
+connection mid-reply surfaces in undici as the bare `TypeError: terminated`, which
+escaped the adapter unwrapped and was broadcast verbatim. Because the usage chunk in
+an OpenAI-compatible stream rides the **end** of the stream (after `[DONE]`), a peer
+close means usage never arrived — so the absent figures on those traces were the
+honest record, and zero-filling them would have read as free turns. The fix says both
+things where a reader looks:
+
+- the adapter turns the bare word into a sentence naming the failure and its cost
+  (`connection to … was closed by the peer while the reply was streaming; no usage
+  was reported for this turn`, code `TRANSPORT`);
+- the service records that sentence as an `error` field on the trace of the turn it
+  happened to, in the same `finally` that writes every other trace line, so the report
+  and the record describe the same failure. A caller stop (`AbortError`) is excluded:
+  a stop settles the partial reply as a note, not a fault, and records no `error`;
+- `prompt.divergence` carries the interrupted turn's `error` to the comparison, and the
+  excuse list names it `interrupted`, checked **before** cold-start/route/stale so a
+  shortfall caused by a cut-short reply is never reported as the operator's defect.
+
+`cache-trace.ts` stores the `error` only when the reply failed to complete; usage
+fields stay absent rather than zero on such a trace. What would overturn it: a trace
+whose `error` disagrees with the `stream.error` the panel showed for the same turn,
+or an interrupted turn whose divergence is reported under any excuse but
+`interrupted`.

@@ -1794,6 +1794,28 @@ try {
   // this card's own document, and `parent.document.head` is where a script
   // that finished mounting injects its stylesheet.
   ...(document.head === null ? {} : { head: document.head }),
+  // The same document as an event target: a script that walks `window.parent`
+  // outwards lands its `hostDocument` here and delegates page-level `click` and
+  // `change` through it. The frame's document is the only page those events
+  // happen in, so it is the only honest bus for them.
+  eventTarget: document,
+  // The frame's own timers, bound to this window: a card that walked outwards
+  // holds the virtual parent as `hostWindow` and arms its delays and animation
+  // frames through it. There is one realm here, so the scheduler the parent
+  // answers and the scheduler the card reaches bare are the same functions and
+  // the handles they hand back cancel each other's timers.
+  schedulers: {
+    setTimeout: window.setTimeout.bind(window),
+    // The cancels are wrapped rather than bound: this realm's handles are
+    // numbers, but the interface a test implements may hand any handle back,
+    // and the adapter — not a cast on the member table — is where that
+    // difference lives.
+    clearTimeout: handle => window.clearTimeout(handle as number),
+    setInterval: window.setInterval.bind(window),
+    clearInterval: handle => window.clearInterval(handle as number),
+    requestAnimationFrame: window.requestAnimationFrame.bind(window),
+    cancelAnimationFrame: handle => window.cancelAnimationFrame(handle as number),
+  },
   // What relative fetches resolve against. For a srcdoc frame `baseURI` is the
   // shell page's URL, so the bridge resolves a card's `fetch('/x')` the same
   // way the browser would have.

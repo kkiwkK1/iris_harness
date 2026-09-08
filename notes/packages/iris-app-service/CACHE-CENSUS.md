@@ -447,6 +447,16 @@ marker 有内容。**"零行"是一个关于一张卡的事实，不是关于装
    **那条按构造就会打掉自己的前缀缓存**。这些请求被 DeepSeek 计费，
    用量页上一条都看不到。→ "全 profile 95%" 这句话如果不加限定，
    说的是一个比用户账单窄的总体。
+
+   > **2026-09-09 已改**（`DEVIATIONS.md` §51、`CACHE-TARGET.md` §4.5）：
+   > 这些请求现在各写一条只追加的记录到对话头的 `iris_side_usage`，
+   > 带桶、路由、时刻、fingerprint 与 `caller`，并算进
+   > `ChatView.usage` 与 `usage.summary` 的每个数字，同时单独报出这一份。
+   > 同时纠正本条的一处归因：那个随机 uuid 头是**卡自己的代码**
+   > （`invoke_extra_model.ts:44` 造块、`:570` 拼在最前，条件是卡的
+   > `随机头部` 设置且模型名含 `gemini`），不是 Iris 的 gemini 路径——
+   > 本仓请求装配路径里没有 `randomUUID`。上游 ST 的 uuid 是另一个机制、
+   > 不在被缓存的前缀里（`bodyParams['user']`，`openai.randomizeUserId`，默认关）。
 2. **`prefixHash` 的窗口里含路由。** `serialiseRequest`（`fingerprint.ts:167-176`）
    把 `provider`/`model` 放在被哈希字符串的开头，所以换模型让 `prefixHash` 变化
    而提示词没动——正好破坏该模块文档里写的判据（"两轮 `prefixHash` 相同而

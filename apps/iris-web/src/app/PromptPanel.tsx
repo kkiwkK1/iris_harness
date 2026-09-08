@@ -445,10 +445,10 @@ function Divergence({ divergence }: { divergence: PromptDivergence }): ReactElem
       </p>
       {/*
         Why a shortfall may be nobody's defect, said **before** a reader starts
-        looking for one. A cold start, an expired entry and a model switch each
-        produce a miss on an identical prompt, and all three are ordinary; a
-        panel that reported only the gap would spend the reader's attention on
-        three false alarms before the real one.
+        looking for one. A cold start, an expired entry, a model switch and an
+        interrupted reply each produce a miss on an identical prompt, and all
+        four are ordinary; a panel that reported only the gap would spend the
+        reader's attention on false alarms before the real one.
       */}
       {excuse === null ? null : (
         <p className="iris-meta">
@@ -457,6 +457,7 @@ function Divergence({ divergence }: { divergence: PromptDivergence }): ReactElem
           {excuse === 'route'
             ? t('divergenceRoute', { from: divergence.previousModel, to: divergence.model })
             : null}
+          {excuse === 'interrupted' ? t('divergenceInterrupted') : null}
         </p>
       )}
       {/*

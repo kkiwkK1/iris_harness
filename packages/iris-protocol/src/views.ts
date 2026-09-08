@@ -122,6 +122,31 @@ export interface TurnUsage {
    * chat's own header and say that it did.
    */
   at?: number
+  /**
+   * Who asked for this generation: the user's own turn, or a card's script.
+   *
+   * **Absent reads as `'turn'`**, which is what every record written before
+   * this field existed is — and the reason it is optional rather than required
+   * with a default. A reader that treated absence as unknown would put the
+   * whole existing corpus in a third category that has no meaning: before card
+   * generations were recorded at all, every stored record was a turn by
+   * construction.
+   *
+   * A `'script'` record is a request `TavernHelper.generate` /
+   * `generateRaw` made from inside a card (`@iris/app-service`'s
+   * `#sideGenerate` / `#generateRaw`). It was billed exactly like a turn and
+   * it is **not** a turn: it produced no candidate, so it hangs off the
+   * conversation rather than off any message — see `SIDE_USAGE_FIELD`. MVU
+   * fires one of these per turn for its variable update, so on that card the
+   * two populations are the same size and a total that counted only one of
+   * them was about half the bill.
+   *
+   * Not a grouping key on the wire's own summary cells: those are cut by
+   * (time, model). The split by source is carried instead as
+   * {@link UsageTotals.script}, so a surface can show a share without the
+   * cell count doubling.
+   */
+  source?: 'turn' | 'script'
 }
 
 /**
@@ -328,8 +353,30 @@ export interface ChatView {
    * impersonation writes a *user* line, so it has no candidate to carry a cost
    * and its tokens are absent from this sum. The host records why (see
    * `@iris/app-service`'s `recordUsage`).
+   *
+   * **A card's own generations are in here.** `TavernHelper.generate` /
+   * `generateRaw` are billed to this conversation on this conversation's route,
+   * so they belong in "what this conversation has cost" — which is the reading
+   * the composer's line is asked for. They have no candidate to hang off, so
+   * they are stored on the header instead of on a message
+   * (`@iris/app-service`'s `SIDE_USAGE_FIELD`), and {@link scriptUsage} is how
+   * a surface says how much of this figure they are.
    */
   usage?: TurnUsage
+  /**
+   * The part of {@link usage} that a card's own script asked for, and how many
+   * generations that was.
+   *
+   * Inside `usage`, never beside it — see the paragraph there. Reported
+   * separately because the two are answers to different questions: `usage` is
+   * "what has this conversation cost", which is what a running total means, and
+   * this is "how much of that was not me", which is what a reader asks when the
+   * total is larger than the replies they can see. On MVU it is roughly half.
+   *
+   * Absent when no card generation has been recorded for this conversation —
+   * including every conversation whose file predates the record.
+   */
+  scriptUsage?: { turns: number, usage: TurnUsage }
 }
 
 /** A conversation in the sidebar list. */
@@ -1156,6 +1203,18 @@ export interface PromptDivergence {
   /** Prompt tokens the provider charged in full, when it reported them. */
   inputTokens?: number
   /**
+   * What surfaced in the report panel when the newer request's reply did not
+   * complete, verbatim.
+   *
+   * Present together with absent usage fields — never zero, just absent — because
+   * a reply that never finished was never billed, and zero would read as a free
+   * turn to a reader comparing adjacent sequence numbers. It is the one fact that
+   * distinguishes "the provider served nothing and I do not know why" from "the
+   * provider never got to say", which is the same line the {@link providerExcuse}
+   * `interrupted` answer draws.
+   */
+  error?: string
+  /**
    * False when the byte offsets could not be attributed to parts with
    * certainty, and why.
    *
@@ -1198,14 +1257,23 @@ export const CACHE_STALE_MS = 30 * 60 * 1000
  *   model, so this is sufficient on its own — and it is the reason the route was
  *   moved out of the prompt hash, because a switch used to read as the prompt's
  *   head changing.
+ * - `interrupted`: the newer request's reply never completed — the provider
+ *   closed the connection mid-stream, or never answered within budget. There is
+ *   no shortfall to explain: usage was never reported because the request was
+ *   never served, and a reader hunting a prompt defect would be hunting the one
+ *   thing that did not happen.
  *
- * Checked before any shortfall is reported, and the ordering is the point: three
+ * Checked before any shortfall is reported, and the ordering is the point: four
  * ordinary conditions each produce a miss on an identical prompt, and reporting
  * those as findings spends a reader's attention on false alarms.
  * @param divergence - the comparison.
  * @returns the condition, or null when none applies.
  */
-export function providerExcuse(divergence: PromptDivergence): 'cold-start' | 'stale' | 'route' | null {
+export function providerExcuse(divergence: PromptDivergence): 'cold-start' | 'stale' | 'route' | 'interrupted' | null {
+  // Checked first: an interrupted reply is not a miss to explain, it is a
+  // request that never got an answer — and every other check below reads fields
+  // that were never reported for it.
+  if (divergence.error !== undefined) return 'interrupted'
   if (divergence.model !== divergence.previousModel || divergence.provider !== divergence.previousProvider) {
     return 'route'
   }
@@ -2306,7 +2374,7 @@ export type UsageGranularity = 'day' | 'hour'
  * both are one addition a reader can defend, and a stored field that duplicates
  * a stored field is a number that can disagree with itself.
  */
-export interface UsageTotals {
+export interface UsageBuckets {
   /** Prompt tokens the cache did not serve. Always present: it is a required bucket. */
   cacheMiss: number
   /** Output tokens, reasoning included — reasoning is part of the output it is reported inside. Always present. */
@@ -2331,9 +2399,21 @@ export interface UsageTotals {
   cacheTurns: number
   /** Billed prompt tokens over the {@link cacheTurns} generations only: the hit rate's denominator. */
   cachePrompt: number
+}
+
+/**
+ * {@link UsageBuckets} plus the two facts that are about the *reading* rather
+ * than about the spend: how much of the time axis was reconstructed, and how
+ * much of the spend was a card's own doing.
+ *
+ * Split from {@link UsageBuckets} so the nested {@link script} share cannot
+ * carry a second copy of either. A share of a share is not a thing this page
+ * can show, and `undatedTurns` inside `script` would be a count of a count.
+ */
+export interface UsageTotals extends UsageBuckets {
   /**
-   * Of {@link turns}, how many carried no `TurnUsage.at` and were placed in
-   * time by their conversation's own header instead.
+   * Of {@link UsageBuckets.turns}, how many carried no `TurnUsage.at` and were
+   * placed in time by their conversation's own header instead.
    *
    * Surfaced rather than hidden because it is the one number that says how much
    * of a time-sliced reading is a reconstruction. Every record written before
@@ -2343,6 +2423,28 @@ export interface UsageTotals {
    * sessions.
    */
   undatedTurns: number
+  /**
+   * The share of everything above that a **card's own script** asked for, over
+   * the same population — `TurnUsage.source` of `'script'`.
+   *
+   * Included in the enclosing figures, not beside them: a card's generation is
+   * billed to the same account on the same route, so a total that excluded it
+   * would be a total of something other than the bill. This field is what lets
+   * a surface say *how much of it* was the card, which is a question a user
+   * asks the moment the number is bigger than they expected — MVU fires one
+   * side generation per turn, so on that card this is roughly half of
+   * everything.
+   *
+   * **Absent means no script generation was counted in this range**, not that
+   * they cost nothing: the same rule the optional buckets follow, and the same
+   * rule `summariseUsage` follows when it refuses to emit a conversation row of
+   * zeros. `script.turns` is the count — the "how many" a header card prints.
+   *
+   * There is no matching `turn` field. The turn share is the enclosing figure
+   * minus this one, which is one subtraction a reader can defend, and a stored
+   * pair that must sum to the whole is two numbers that can disagree with it.
+   */
+  script?: UsageBuckets
 }
 
 /**

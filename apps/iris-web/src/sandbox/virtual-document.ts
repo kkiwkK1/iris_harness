@@ -110,6 +110,25 @@ export interface VirtualDocumentSource {
    * to the value that is true of a frame nobody has told anything about.
    */
   state?: DocumentState
+  /**
+   * The event target behind `addEventListener`/`removeEventListener`/
+   * `dispatchEvent`: **the frame's own document**, handed over by the realm.
+   *
+   * Upstream's `parent.document` is the SillyTavern page's document, and a
+   * script that walks `window.parent` outwards until the document reads lands
+   * there — then delegates page-level DOM events through it in capture phase
+   * (人贩子物语's 黑市手机 registers `click`/`change` delegation the moment it
+   * resolves that document). Here the walk lands on this stand-in, and the only
+   * page a card has is its own frame — which is also where every element this
+   * document answers for (`body`, the lookups, the factories) actually lives.
+   * A real target rather than the parent proxy's message bus, because what
+   * these listeners receive must be the **DOM event** with its `target` and
+   * attributes, not a `{type, detail}` shaped like one.
+   *
+   * Optional so a test can build a document without a realm; absent, the three
+   * names follow the unprovided-name policy like `head` does.
+   */
+  eventTarget?: EventTarget
 }
 
 
@@ -167,6 +186,12 @@ function documentElement(viewport: () => { width: number, height: number }): obj
  */
 export function createVirtualDocument(source: VirtualDocumentSource): object {
   const element = documentElement(source.viewport)
+  /*
+   * Captured once, so the three delegating members below cannot observe a
+   * later mutation of the source bag — the same one-read discipline the other
+   * members get by closing over their values directly.
+   */
+  const events = source.eventTarget
 
 
   /*
@@ -259,6 +284,31 @@ export function createVirtualDocument(source: VirtualDocumentSource): object {
     createElement: (tagName: string): unknown => source.factory.createElement(tagName),
     createTextNode: (data: string): unknown => source.factory.createTextNode(data),
     createDocumentFragment: (): unknown => source.factory.createDocumentFragment(),
+
+    /*
+     * The event-target surface, delegated to the frame's own document.
+     *
+     * Present alongside `body` only when the realm handed one over, like `head`:
+     * absent, the names follow the unprovided-name policy instead of half-working.
+     * Delegation rather than the parent proxy's bus (`addEventListener` there
+     * routes onto the message bus) is the semantic point — a card listening here
+     * is waiting for **DOM events** (`click`, `change`) whose handler reads
+     * `event.target` and walks the node it points at, and only the frame's real
+     * document produces those. This is the read-only half: registering listeners
+     * never writes to the document, so unlike `body` these members are the
+     * card's to use, not the shell's to keep.
+     */
+    ...(events === undefined
+      ? {}
+      : {
+          addEventListener: (...args: Parameters<EventTarget['addEventListener']>): void => {
+            events.addEventListener(...args)
+          },
+          removeEventListener: (...args: Parameters<EventTarget['removeEventListener']>): void => {
+            events.removeEventListener(...args)
+          },
+          dispatchEvent: (event: Event): boolean => events.dispatchEvent(event),
+        }),
 
     /*
      * **Read-only state, answered rather than refused, and a real card paid for
@@ -444,4 +494,7 @@ export const VIRTUAL_DOCUMENT_MEMBERS = [
   'createElement',
   'createTextNode',
   'createDocumentFragment',
+  'addEventListener',
+  'removeEventListener',
+  'dispatchEvent',
 ] as const

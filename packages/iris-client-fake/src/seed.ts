@@ -76,6 +76,44 @@ const SILENT_CACHE: TurnUsage = {
   outputTokens: 128,
 }
 
+/**
+ * A card's own generation, on a cache-reporting route.
+ *
+ * `source: 'script'` is the whole point: this is a request a card's script made
+ * (`TavernHelper.generate`), which the provider billed and which produced no
+ * reply — so it belongs to no message and to no swipe of one, and the host keeps
+ * it on the chat header instead (`@iris/app-service`'s `SIDE_USAGE_FIELD`).
+ * MVU fires one of these per turn for its variable update, which is why the
+ * split is worth a figure on the page rather than a footnote.
+ *
+ * **On the same model as one of the turn records above.** Deliberately, and it
+ * is what gives the split teeth: an implementation that tried to recover the
+ * source from the route, or that split the chart by model and called it a split
+ * by source, would agree with the correct one on every other seed and disagree
+ * here.
+ */
+const SCRIPT_CACHED: TurnUsage = {
+  inputTokens: 612,
+  outputTokens: 96,
+  cacheReadTokens: 1_180,
+  source: 'script',
+}
+
+/**
+ * A second card generation, this one on a route that says nothing about caching.
+ *
+ * So the nested `script` share has its own two populations — two generations,
+ * one of them reporting a cache bucket — and the optional-bucket rule has to
+ * hold *inside* the share rather than only over the whole. A share that
+ * zero-filled here would report a card's cache hit rate over a generation
+ * nobody measured.
+ */
+const SCRIPT_SILENT: TurnUsage = {
+  inputTokens: 430,
+  outputTokens: 64,
+  source: 'script',
+}
+
 /** One day, for placing the seeded costs on a chart that has more than one column. */
 const DAY_MS = 24 * 60 * 60 * 1_000
 
@@ -501,6 +539,29 @@ export function seedChats(): FakeChat[] {
     ], [routed(CACHED, undefined, undefined)]),
   ]
 
+  /**
+   * The card's own generations, on the conversation above.
+   *
+   * **This conversation and not the other two, for two reasons.** The
+   * lamplighter's totals are quoted as measurements in three comments
+   * (`SILENT_CACHE`, `sumUsage`, and the note above), and the survey is the one
+   * seeded conversation that must carry no cost anywhere — it is what an
+   * imported chat looks like and the only thing that renders the "no usage
+   * line at all" state. So the card share lands here, which also leaves two of
+   * the three conversations with a **blank** card column: the subtotal list's
+   * empty cell is a branch of its own, and a fixture where every row had a
+   * figure would leave it unrendered.
+   *
+   * Two records rather than one, dated where the turn record above is not, and
+   * `2` where that turn count is `1`: every figure the split produces is a
+   * different number from every figure beside it, so a check that read the
+   * wrong one cannot accidentally agree.
+   */
+  const ledgerScripts: TurnUsage[] = [
+    routed(SCRIPT_CACHED, { model: 'deepseek-reasoner', provider: 'deepseek' }, booted - 9 * DAY_MS),
+    routed(SCRIPT_SILENT, { model: 'deepseek-reasoner', provider: 'deepseek' }, booted - 9 * DAY_MS),
+  ]
+
   const now = Date.now()
   return [
     {
@@ -538,6 +599,7 @@ export function seedChats(): FakeChat[] {
       updatedAt: now - 9 * DAY_MS,
       settings: { ...DEFAULT_SETTINGS },
       variables: { catalogued: 4 },
+      sideUsage: ledgerScripts,
     },
   ]
 }

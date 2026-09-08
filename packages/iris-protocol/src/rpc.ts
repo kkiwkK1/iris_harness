@@ -1411,8 +1411,13 @@ export const requestSchemas = {
    * no conversation — **and it succeeds**, which is why they are separate
    * methods rather than a flag.
    *
-   * Nothing is recorded: not the log, and not the two pieces of chat state a
-   * real assembly advances (world-info timed effects, the turn's itemization).
+   * Nothing that changes the conversation is recorded: not the log, and not the
+   * two pieces of chat state a real assembly advances (world-info timed
+   * effects, the turn's itemization). What **is** recorded is the bill — one
+   * append-only entry on the chat header, reported back as
+   * `ChatView.scriptUsage` and counted by `usage.summary`. The provider charged
+   * for it either way, and recording nothing is what made a card's spend
+   * invisible on every surface that reports cost.
    *
    * `injects`, `overrides`, `tools`, `tool_choice` and `json_schema` are in
    * upstream's config and deliberately absent here: no card in the corpus passes

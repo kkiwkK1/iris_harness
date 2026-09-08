@@ -37,7 +37,7 @@ import { Slot } from '../slots/Slot.tsx'
 import { PlumBlossom, PlumBranch } from './marks.tsx'
 import { ScriptButtons } from './ScriptButtons.tsx'
 import { registerComposer } from './composer-bus.ts'
-import { usageLineGroups } from './token-format.ts'
+import { usageLineGroups, usageLineTitle } from './token-format.ts'
 import { modelMenu } from './model-menu.ts'
 import { ContextCard, ContextPill } from './ContextMeter.tsx'
 import {
@@ -155,6 +155,18 @@ export function Composer({
    * streaming message does not re-render the composer through this line.
    */
   const usage = useIris(state => state.view?.usage)
+  /*
+   * How much of that figure a card's own script asked for.
+   *
+   * **Inside `usage`, and stated separately only on hover.** The visible line
+   * is 「本对话累计计费」 and a card's request is billed to this conversation, so
+   * excluding it would make the line disagree with the bill — that is the dsh
+   * reading of this row and the reason the split is not a second visible
+   * figure. What a reader does need, when the total is larger than the replies
+   * they can count, is *why*, and the hover is where that belongs: the row is
+   * one ellipsised line, and a fourth group in it is the group that gets cut.
+   */
+  const scriptUsage = useIris(state => state.view?.scriptUsage)
   /*
    * What the capacity capsule divides by, and the two facts that make its
    * reading stale.
@@ -982,14 +994,21 @@ export function Composer({
           * lets a provider that reports no caching simply not have a cache
           * group, instead of having one that says nothing.
           *
-          * A native `title` carrying the same line, because the row is one
-          * ellipsised line: measuring whether it actually overflowed would
-          * mean a `ResizeObserver` per composer to decide whether to attach a
-          * tooltip, and a `title` that repeats a fully-visible line costs the
-          * reader nothing.
+          * A native `title` carrying the line plus what the visible groups
+          * cannot fit: how much of the figure a card's own script asked for
+          * (`usageLineTitle`). The `title` is here in the first place because
+          * the row is one ellipsised line and measuring whether it actually
+          * overflowed would mean a `ResizeObserver` per composer; that it now
+          * also carries the split by source is why it is worth reading even
+          * when the line is fully visible.
+          *
+          * **The visible line counts the card's requests.** They were billed
+          * to this conversation on this conversation's route, and this row is
+          * 「本对话累计计费」 — so leaving them out would put a number here that
+          * disagrees with the bill. The hover is where the two are separated.
           */}
         {stats.length === 0 ? null : (
-          <div className="iris-composer__stats" title={stats.join(' | ')}>
+          <div className="iris-composer__stats" title={usageLineTitle(stats, scriptUsage, lang)}>
             {stats.map((group, at) => (
               <Fragment key={group}>
                 {at === 0 ? null : (

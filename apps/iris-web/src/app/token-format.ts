@@ -280,6 +280,38 @@ export function usageLineGroups(
 }
 
 /**
+ * The composer row's hover text: the visible line, plus the card share.
+ *
+ * The row's `title` used to be the visible line repeated, which costs a reader
+ * nothing and tells them nothing either. It is now the one place the split by
+ * source is stated, and the reason it is *only* here is the row's shape: it is
+ * a single ellipsised line whose groups are already up to three, and a fourth
+ * is the one that gets cut on a narrow composer.
+ *
+ * **The visible groups already include the card's requests** — they are summed
+ * into `ChatView.usage` because they were billed to this conversation — so this
+ * is a breakdown of the line above it and never an addition to it. A reader who
+ * added the two would double-count, which is what the 「其中」 wording is for.
+ * @param groups - the visible line's groups, from {@link usageLineGroups}.
+ * @param script - the card share the host reported, absent when there is none.
+ * @param lang - the language the text is read in.
+ * @returns the hover text, or the empty string when the row is not drawn.
+ */
+export function usageLineTitle(
+  groups: readonly string[],
+  script: { turns: number, usage: TurnUsage } | undefined,
+  lang: Language = 'en',
+): string {
+  if (groups.length === 0) return ''
+  const line = groups.join(' | ')
+  if (script === undefined) return line
+  return `${line}\n${translate(lang, 'usageScriptShare', {
+    n: script.turns,
+    tokens: formatExactTokens(totalTokens(script.usage), lang),
+  })}`
+}
+
+/**
  * The per-turn breakdown as plain text, one row per line.
  *
  * Plain text because this is a `title`: the harness shows the same rows in an

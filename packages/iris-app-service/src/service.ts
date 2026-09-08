@@ -23,7 +23,7 @@ import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribu
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, ChatBudget, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView } from '@iris/protocol'
+import type { BackupSummary, ChatBudget, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TurnUsage } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -3863,8 +3863,16 @@ export class IrisAppService {
    * Run one completion that never touches the log.
    *
    * A card asks for this to compute something on the side — a summary, a
-   * classification — so it is not a turn: nothing is appended, nothing streams,
-   * and no candidate is produced.
+   * classification — so it is not a turn: nothing is appended to the log,
+   * nothing streams, and no candidate is produced.
+   *
+   * **One thing is written: what it cost.** The record goes on the
+   * conversation's header (`./side-usage.ts`), not into the log, and it is a
+   * *cost* rather than conversation state — it changes nothing about what the
+   * conversation does next, which is the property the paragraph above is
+   * really about. Before it existed these requests were billed by the provider
+   * and recorded nowhere, so a conversation's running total and the whole usage
+   * page were about a population narrower than the user's bill.
    * @param entry - the conversation whose model route to use.
    * @param prompt - what to ask.
    * @param systemPrompt - an optional system slot.
@@ -3892,7 +3900,13 @@ export class IrisAppService {
       // and the gap in sequence numbers unexplained. It carries no layout —
       // nothing here was assembled — so its spans are unattributed, and the
       // trace says so rather than guessing.
-    }, undefined, { chatId: entry.chatId, kind: 'side', caller: 'script.generateRaw', turn: -1 })) {
+    },
+    undefined,
+    { chatId: entry.chatId, kind: 'side', caller: 'script.generateRaw', turn: -1 },
+    // Billed to this conversation all the same — see `./side-usage.ts`. The
+    // caller is the RPC method name because that is the finest attribution
+    // the contract carries: `script.generateRaw` sends no script id.
+    { entry, caller: 'script.generateRaw' })) {
       assembler.push(chunk)
     }
 
@@ -3914,12 +3928,17 @@ export class IrisAppService {
    * and it reports as success, which is why the two must not share an
    * implementation.
    *
-   * **Nothing is written.** Not the log, and not the two pieces of chat state a
-   * real assembly advances: the world-info timed effects and the turn's
-   * itemization. A side generation that stored either would change what the
-   * conversation does next — a sticky entry aged out by a script, or the account
-   * of the user's own turn overwritten — from a call that never appears in the
-   * chat.
+   * **Nothing that changes the conversation is written.** Not the log, and not
+   * the two pieces of chat state a real assembly advances: the world-info timed
+   * effects and the turn's itemization. A side generation that stored either
+   * would change what the conversation does next — a sticky entry aged out by a
+   * script, or the account of the user's own turn overwritten — from a call
+   * that never appears in the chat.
+   *
+   * What *is* written is the bill: one append-only record on the header
+   * (`./side-usage.ts`). It changes nothing the conversation does; leaving it
+   * out was what made a card's spend invisible on every surface that reports
+   * cost.
    * @param entry - the conversation to assemble from.
    * @param userInput - the card's prompt, placed as the final user message.
    * @param systemPrompt - replaces the assembled system slot when given.
@@ -4013,7 +4032,13 @@ export class IrisAppService {
           role: slot.message.role,
         })),
       },
-    }, undefined, { chatId: entry.chatId, kind: 'side', caller: 'script.generate', turn: -1 })) {
+    },
+    undefined,
+    { chatId: entry.chatId, kind: 'side', caller: 'script.generate', turn: -1 },
+    // The bill, on the conversation this was assembled from. This is the path
+    // that re-sends the whole prefix, so it is also the expensive one of the
+    // two — which is what makes separating the callers worth storing.
+    { entry, caller: 'script.generate' })) {
       assembler.push(chunk)
     }
 
@@ -4319,11 +4344,20 @@ export class IrisAppService {
    *   Separate from `entry` on purpose: the host's *own* utility generations —
    *   the compaction summarizer — belong to a chat and are not requests a user
    *   is comparing, so they pass an entry and no trace target.
+   * @param side - the conversation to **bill** a generation that is not a turn.
+   *   A third parameter and not `entry`, because passing `entry` would turn on
+   *   four other things a card's generation must not do: evaluate the card's
+   *   own templates over a prompt the card wrote, move the turn's recorded
+   *   `actualTokens`, file a fingerprint against whatever turn is pending, and
+   *   emit a per-turn report line. The bill is the one thing that *is* shared,
+   *   and it lands on the header rather than on any turn
+   *   (`./side-usage.ts`).
    */
   async *#stream(
     options: GenerateOptions,
     entry?: ChatEntry,
     trace?: { chatId: string, kind: string, caller?: string, turn?: number },
+    side?: { entry: ChatEntry, caller: string },
   ): AsyncIterable<StreamChunk> {
     // The templates run here because here is the only place that has both the
     // assembled prompt and the chat it belongs to. `#generateRaw` reaches this
@@ -4389,13 +4423,9 @@ export class IrisAppService {
     // the macro pass above have already run, so this is the body the provider
     // sees. A side generation (`#generateRaw`, `#sideGenerate`) arrives here
     // with no entry and has no candidate to file this record against, so it
-    // records nothing *here*.
-    //
-    // **It is not thereby invisible.** The `finally` below writes it a cache
-    // trace, labelled `kind: 'side'`, because it is billed like any other
-    // request and sits between two turns' traces — and because the usage page
-    // cannot see it either (`DEVIATIONS.md` §36 records that gap and why fixing
-    // it is not this round's).
+    // records nothing *here* — it takes the `side` route below instead, which
+    // files the same fingerprint on the conversation's header once the
+    // provider has said what it charged (`DEVIATIONS.md` §47).
     const fingerprint = fingerprintRequest(request)
     const pendingTurn = entry?.pending?.turn
     if (entry !== undefined && pendingTurn !== undefined) {
@@ -4422,10 +4452,24 @@ export class IrisAppService {
     }
     let cacheReadTokens: number | undefined
     let inputTokens: number | undefined
-    // The request's moment, taken once. The trace and the report line below
-    // both describe this request, and two `Date.now()` calls around a stream
-    // that ran for a minute would describe two.
+    // What surfaced in the report panel, when the reply did not complete. The
+    // trace below records it so a reader comparing two adjacent turns can tell
+    // an interrupted one from a free one — and knows *why* the figures are
+    // missing. Set only for a genuine failure to finish: a user pressing stop
+    // surfaces as an `AbortError`, which is the caller's own decision and is a
+    // note, not a fault (the adapter rethrows it untouched, and `#fail` settles
+    // the partial the user kept), so it is never recorded as an error.
+    let streamFailure: string | undefined
+    // The request's moment, taken once. The trace, the report line below and a
+    // side generation's own record all describe this request, and three
+    // `Date.now()` calls around a stream that ran for a minute would describe
+    // three.
     const sentAt = Date.now()
+    // What a card's generation cost, held until the `finally` can store it.
+    // Held rather than written on the spot for one reason: a record has to
+    // reach disk, and `chats.save` is a file write that must not run inside
+    // the loop yielding chunks to whoever is consuming this stream.
+    let sideUsage: TurnUsage | undefined
     try {
       for await (const chunk of this.#options.stream(request)) {
         if (chunk.type === 'usage') {
@@ -4443,10 +4487,70 @@ export class IrisAppService {
           // Held on `pending` and attached to the candidate when the turn settles,
           // because the candidate does not exist yet.
           if (turn !== undefined) entry?.noteUsage(turn, chunk.usage)
+          // **The same report, for a generation that will never have a
+          // candidate.** The route and the moment are merged on here rather
+          // than parked on `pending` and merged at settle time, because there
+          // is no settle: this record is complete now. Taken from `request`,
+          // like the turn's, so it names the route the provider actually
+          // billed; blank is dropped so it reads as unknown rather than as a
+          // chart series with no label.
+          if (side !== undefined) {
+            sideUsage = {
+              ...chunk.usage,
+              ...request.model === '' ? {} : { model: request.model },
+              ...request.provider === '' ? {} : { provider: request.provider },
+              at: sentAt,
+              source: 'script',
+            }
+          }
         }
         yield chunk
       }
+    } catch (error: unknown) {
+      // The reply never completed: hold onto what the report panel will say so
+      // the trace written below can name the failure. The adapter has already
+      // turned undici's bare `terminated` into a sentence naming the peer close
+      // and the missing usage; whatever arrives here is what `#fail` broadcasts
+      // verbatim as `stream.error`, so recording it makes the trace and the
+      // report agree. Rethrown untouched — `#fail` still owns how the turn
+      // settles.
+      if (!(error instanceof Error && error.name === 'AbortError')) {
+        streamFailure = error instanceof Error ? error.message : String(error)
+      }
+      throw error
     } finally {
+      // **A card's generation, billed to its conversation.** First in the
+      // `finally`, and in the `finally` rather than in the loop, because that
+      // is what covers the abort and the provider error: a request that
+      // reported its usage and then failed was still charged, and dropping it
+      // would leave a gap exactly where a reader is comparing what they paid
+      // against what they can see.
+      //
+      // Guarded on `sideUsage` and not on `side`: a provider that reported
+      // nothing leaves no record at all, rather than a zero-filled one — the
+      // rule `recordUsage` states for the turn side, for the same reason (an
+      // invented `0` is a claim about a generation nobody measured).
+      //
+      // The fingerprint rides along, so "did this card's request read the
+      // cache, and was it sending the same prefix as last time" is answerable
+      // from the stored record instead of only from a trace that rotates
+      // after eight.
+      if (side !== undefined && sideUsage !== undefined) {
+        side.entry.noteSideUsage({
+          usage: sideUsage,
+          caller: side.caller,
+          fingerprint,
+        })
+        try {
+          await this.#options.chats.save(side.entry)
+        } catch {
+          // A bookkeeping write must not replace the generation's own outcome,
+          // and must not turn a successful card call into a failure. The
+          // record is already on the in-memory header, so a later save — the
+          // next turn's — picks it up; what is lost is only durability across
+          // a crash in between.
+        }
+      }
       // In a `finally`, so **every** generation leaves exactly one line — an
       // aborted one and a refused one included. Those are the turns whose cache
       // figure is missing, and a report that skipped them would leave a gap
@@ -4495,6 +4599,7 @@ export class IrisAppService {
           sentAt,
           { ...inputTokens === undefined ? {} : { inputTokens },
             ...cacheReadTokens === undefined ? {} : { cacheReadTokens } },
+          streamFailure,
         ))
       }
     }
