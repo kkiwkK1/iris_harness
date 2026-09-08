@@ -82,6 +82,20 @@
     model: !!js process.env.IRIS_MODEL ?? 'local-model'
     userName: !!js process.env.IRIS_USER_NAME ?? 'User'
     contextWindow: !!js Number(process.env.IRIS_CONTEXT_WINDOW ?? 32768)
+    # When a conversation overflows its budget, give up its oldest floors in
+    # multiples of this many. A trim that drops exactly what does not fit has to
+    # trim again on the next turn, so the oldest floor the model is shown moves
+    # every turn and a provider that caches on the request prefix re-pays for the
+    # whole conversation every turn; rounding the count up holds that floor still
+    # for about half a block's worth of turns. Unset on purpose — `undefined`
+    # reaches the plugin as absent and `@iris/pipeline`'s
+    # `DEFAULT_TRIM_BLOCK_FLOORS` is the decision, so this row cannot make the
+    # schema default dead code the way the old `pruneVariables` row did.
+    # `IRIS_TRIM_BLOCK=0` restores SillyTavern's per-floor trim.
+    # Quoted, because an unquoted plain scalar cannot carry a colon followed by
+    # a space: YAML reads the ternary's `: ` as a nested mapping and the row
+    # arrives as an object instead of an expression.
+    trimBlockFloors: !!js "process.env.IRIS_TRIM_BLOCK === undefined ? undefined : Number(process.env.IRIS_TRIM_BLOCK)"
     presetPath: !!js process.env.IRIS_PRESET
     # The SillyTavern **profile** directory (`…/data/<user>`, never the install
     # root) that preset import reads from and book materialisation consults.

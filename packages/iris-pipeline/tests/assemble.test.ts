@@ -51,11 +51,16 @@ test('an author note at depth survives history trimming, still anchored to the e
   const contributions: Contribution[] = [
     { id: 'note', placement: { kind: 'depth', depth: 1, role: 'system' }, text: 'NOTE' },
   ]
-  // Room for the note plus three of the six turns.
+  // Room for the note plus three of the six turns. `trimBlockFloors: 0` on
+  // purpose: this test is about **where the note lands** relative to whatever
+  // history survives, so it asks for the exact-fit trim — upstream's rule — and
+  // leaves the quantised default to `trim-block.test.ts`. Without that, a
+  // six-floor fixture and an eight-floor block would collapse the conversation
+  // to one floor and the anchoring would be asserted against nothing.
   const result = assemble({
     contributions,
     history: conversation(6),
-    budget: { context: 4, reserve: 0, count: countWords },
+    budget: { context: 4, reserve: 0, count: countWords, trimBlockFloors: 0 },
   })
 
   assert.equal(result.overflow.droppedHistory, 3)
@@ -122,8 +127,13 @@ test('an over-budget request is still returned, flagged', () => {
 })
 
 test('the reserve is withheld from the history budget', () => {
-  const spacious = assemble({ contributions: [], history: conversation(4), budget: { context: 4, reserve: 0, count: countWords } })
-  const reserved = assemble({ contributions: [], history: conversation(4), budget: { context: 4, reserve: 2, count: countWords } })
+  // `trimBlockFloors: 0` for the same reason as the note test above: the claim
+  // here is that a reserve shrinks the history budget, which is a statement
+  // about the exact-fit arithmetic. Quantising the drop would round both
+  // numbers to the same block and the comparison would stop discriminating.
+  const budget = { context: 4, count: countWords, trimBlockFloors: 0 }
+  const spacious = assemble({ contributions: [], history: conversation(4), budget: { ...budget, reserve: 0 } })
+  const reserved = assemble({ contributions: [], history: conversation(4), budget: { ...budget, reserve: 2 } })
 
   assert.equal(spacious.overflow.droppedHistory, 0)
   assert.equal(reserved.overflow.droppedHistory, 2)
