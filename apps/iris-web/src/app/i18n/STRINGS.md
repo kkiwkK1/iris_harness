@@ -150,8 +150,8 @@
 | 来源 | 内容 | 键 |
 | --- | --- | --- |
 | `token-format.ts` 数字格式 | 三个**不含中文**的格式行：紧凑档的 K / M 后缀、千分位分隔符。两栏今天都是 `,`：`i18n.test.ts` 的 `neutral` 名单按键放行「zh 必须有中文」那条，`token-format.test.ts` 再把两栏各钉一次，改哪一栏都会红（不是要求两栏必须不同） | `tokensThousand tokensMillion thousandsSeparator` |
-| `Composer.tsx` 输入框下的用量行 | 会话累计（`ChatView.usage`）：`缓存命中 N%` 与 `输入 X tok · 输出 Y tok` 两组，组间 `\|`、组内 `·`。整组没数据就整组消失，两个数都是 0 或宿主没报就整行不渲染 | `usageCacheHit usageTokens` |
-| `Message.tsx` 每轮用量 | 助手消息动作行末尾的安静读数，与其他 `iris-act` 同字号；悬停 `title` 是明细表的纯文本版（`usageDetailText`），行序照 harness 那张对话框，将来做成弹层时文案原样搬过去 | `usageTurn usageTurnTitle usageDetailCacheHit usageDetailInput usageDetailCacheRead usageDetailCacheWrite usageDetailOutput usageDetailReasoning usageCount` |
+| `Composer.tsx` 输入框下的用量行 | 会话累计（`ChatView.usage`）：`缓存命中 N%` 与 `输入 X tok · 输出 Y tok` 两组，组间 `\|`、组内 `·`。整组没数据就整组消失，两个数都是 0 或宿主没报就整行不渲染。行和它悬浮卡里的行是同一组构造（`usageSummaryRows`），行上的「输入」因此拿到了自己的键 `usageSummaryInput`——不是给三桶之和另起一个词；卡标题 `usageSummaryTitle` 与每轮的「本轮用量」相对。原 `usageTokens`（整句两组的键）随纯文本装配一并删除 | `usageCacheHit usageSummaryTitle usageSummaryInput` |
+| `Message.tsx` 每轮用量 | 助手消息动作行末尾的安静读数，与其他 `iris-act` 同字号；悬停与键盘聚焦展开明细悬浮卡（`UsagePopover`，触屏轻点切换、Esc 或移出关闭），行序照 harness 那张对话框——原 `title` 纯文本版（`usageDetailText`）已随弹层落地删除 | `usageTurn usageTurnTitle usageDetailCacheHit usageDetailInput usageDetailCacheRead usageDetailCacheWrite usageDetailOutput usageDetailReasoning usageCount` |
 
 措辞两条约定，别混称：**「用量」只指提供方回报的实际计费**，`PromptPanel` 那套「估算 /
 provider counted」是另一件事（上游 ST 每条消息显示的 `token_count` 属于前者的估算口径，见
@@ -335,4 +335,4 @@ token 都是估算或提供方的口径。所以这一族的词里**不出现「
 | `UsagePanel.tsx` 指标切换新增第五项 | 「卡脚本」。不是把每条折线按来源拆成两条：那样每个模型会画出两条线，而以模型名为键的图例分不开它们，配色还要多一根轴，只想看总量的读者要在两倍的线里找。作为一个指标它复用整套机械（同一批桶、同一批系列、同一个图例），切换本身就说明了屏幕上是哪个读数。排在**最后**，因为它是「总量」的子集，不是第五种切法 | `usageMetricScript` |
 | `UsagePanel.tsx` 合计卡下的一行 | 「其中卡脚本请求 N 次 · X token」。一行而不是第八张胶囊：它不是把总量再分一次，而是关于紧贴在它上面那个数字的一句话。悬停那句解释这些请求是什么、以及本页每个数字都已把它们算在内。宿主没报这一份时**整行不出现**——在不跑卡脚本的 profile 上写「其中卡脚本 0 次」，是一行读者学会跳过的字 | `usageScriptShare usageScriptBasis` |
 | `UsagePanel.tsx` 每对话小计新增一列 | 「卡脚本 N 次 · X tok」。`tok` 这个单位不能省，和上一行同一个理由：一个跟在「次数」后面的裸数字会被读成第二个次数。没有卡脚本生成的对话这一格**留空，不写 0**：一列里的一个空格说「不是这条」，一整列 0 说这个功能没加载出来。自己一列而不是塞进总量那一格，因为一格里两个数会被读成一次减法，而方向要读者猜 | `usageScriptCell` |
-| `Composer.tsx` 用量行的悬停 | 可见那一行仍是**本对话累计计费**、把卡脚本请求算在内（不算就和账单不符），拆分只出现在 `title` 里：那一行是单行截断的，第四组正是会被截掉的那一组。`title` 原来只是把可见那行重复一遍，现在多一行「其中卡脚本请求 N 次 · X tok」 | （`usageScriptShare` 复用） |
+| `Composer.tsx` 用量行的悬浮卡 | 可见那一行仍是**本对话累计计费**、把卡脚本请求算在内（不算就和账单不符）；拆分不写进 `title`——`title` 已随悬浮卡落地删除（`UsagePopover`）——而是作为那张卡行下的一句**注脚**：那一行是单行截断的，第四组正是会被截掉的一组，注脚因此不是第四组。宿主没报这一份时注脚整句不渲染 | （`usageScriptShare` 复用） |

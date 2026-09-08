@@ -38,8 +38,10 @@ import { pressureLevel } from '../src/app/context-occupancy.ts'
 import { ContextCard } from '../src/app/ContextMeter.tsx'
 import { cacheCeiling, providerExcuse, providerFellShort } from '../src/app/divergence.ts'
 import {
-  billedInputTokens, cacheHitPercent, formatExactTokens, formatTokens, totalTokens, usageDetailText,
+  billedInputTokens, cacheHitPercent, formatExactTokens, formatTokens, totalTokens, usageDetailRows,
+  usageScriptShareSentence, usageSummaryRows,
 } from '../src/app/token-format.ts'
+import { UsageDetailCard } from '../src/app/UsagePopover.tsx'
 import { UsageReport } from '../src/app/UsagePanel.tsx'
 // Aliased: `totalTokens` above is the one-generation reader, and this is the
 // aggregate one. Two functions of the same name over different types is exactly
@@ -1034,14 +1036,27 @@ async function main(): Promise<void> {
       `floor ${String(floor.id)} does not carry its own usage reading`,
     )
   }
-  // The hover table reaches the page as the `title`, rows and all — this is the
-  // only place the plain-text assembly is actually rendered into the DOM. Read
-  // off the reply that reported reasoning, because the reasoning note is a row
-  // inside another row rather than one of its own.
+  // The breakdown is a hover card now (`UsagePopover`), and a server render
+  // cannot hover: closed, so the rows appear in the page only through the
+  // card, which is asserted by rendering the card itself — the same component
+  // the popover portals — for the reply that reported reasoning, because the
+  // reasoning note is a row inside another row rather than one of its own.
+  // That the triggers carry no native `title` any more is pinned against the
+  // sources in `tests/usage-popover.test.ts`; here the rendered page is held
+  // to the old title's first words going away.
   const reasoned = pricedFloors.find(row => row.usage.reasoningTokens !== undefined)
   assert.ok(reasoned !== undefined, 'the seed should price one reply with reasoning')
-  for (const row of usageDetailText(reasoned.usage).split('\n')) {
-    assert.ok(priced.includes(row), `the breakdown row "${row}" did not reach the page`)
+  assert.ok(
+    !priced.includes('Turn usage'),
+    'the per-turn breakdown reached the page outside the hover card',
+  )
+  const turnBreakdown = renderToString(
+    <UsageDetailCard heading="Turn usage" rows={usageDetailRows(reasoned.usage)} />,
+  )
+  assert.match(turnBreakdown, /<dl/, 'the breakdown did not render as a definition list')
+  for (const row of usageDetailRows(reasoned.usage)) {
+    assert.ok(turnBreakdown.includes(row.label), `the breakdown row "${row.label}" did not reach the card`)
+    assert.ok(turnBreakdown.includes(row.value), `the breakdown figure "${row.value}" did not reach the card`)
   }
 
   /*
@@ -1077,13 +1092,14 @@ async function main(): Promise<void> {
   /*
    * The composer line on a conversation whose card scripts have generated.
    *
-   * **The visible line counts them and the hover separates them**, which is the
-   * dsh reading of this row: it is 「本对话累计计费」, and a card's request was
-   * billed to this conversation, so a line that excluded it would disagree with
-   * the bill. What that costs a reader is the ability to explain a total larger
-   * than the replies they can count, and the `title` is where that is paid
-   * back — the row is one ellipsised line and a fourth visible group is the
-   * group that gets cut.
+   * **The visible line counts them and the strip's hover card separates
+   * them**, which is the dsh reading of this row: it is 「本对话累计计费」, and a
+   * card's request was billed to this conversation, so a line that excluded it
+   * would disagree with the bill. What that costs a reader is the ability to
+   * explain a total larger than the replies they can count, and the card pays
+   * it back — the share is a note under the card's rows rather than a fourth
+   * group in the strip, which is the group that would get cut on a narrow
+   * composer.
    *
    * The premise is asserted first: without a seeded card share this block would
    * be checking that a conversation with no card generations does not mention
@@ -1101,12 +1117,40 @@ async function main(): Promise<void> {
   const scriptedTotal = totalTokens(scriptedView.scriptUsage.usage)
   const scriptedPage = render(wired.store, slots.core)
   assert.match(scriptedPage, /class="iris-composer__stats"/, 'the usage line is missing on the card-share chat')
-  assert.ok(
-    scriptedPage.includes(
-      `of which ${String(scriptedView.scriptUsage.turns)} card-script requests · ${formatExactTokens(scriptedTotal)} tok`,
-    ),
-    'the composer row’s hover does not separate the card-script share',
+  // The card is portaled and closed unless a reader has opened it, so the
+  // server render must not leak the note anywhere — the native `title` that
+  // used to carry this text is gone (pinned against the sources in
+  // `tests/usage-popover.test.ts`), and the strip's own content is only the
+  // visible groups.
+  const expectedShare = usageScriptShareSentence(scriptedView.scriptUsage)
+  assert.equal(
+    expectedShare,
+    `of which ${String(scriptedView.scriptUsage.turns)} card-script requests · ${formatExactTokens(scriptedTotal)} tok`,
+    'the card-share sentence is not the rendered share strings',
   )
+  assert.ok(
+    !scriptedPage.includes('of which'),
+    'the card-script share reached the page outside the closed hover card',
+  )
+  // What *does* reach markup is proven the same way the per-turn card is, by
+  // rendering the card itself — the component the popover portals — with the
+  // rows and note the composer builds from the very reading on screen.
+  const summaryCard = renderToString(
+    <UsageDetailCard
+      heading="Session usage"
+      rows={usageSummaryRows(scriptedView.usage)}
+      note={expectedShare}
+    />,
+  )
+  assert.match(summaryCard, /iris-usage-card__note/, 'the share note did not render under the card rows')
+  assert.ok(
+    summaryCard.includes(expectedShare),
+    'the composer card’s note does not separate the card-script share',
+  )
+  for (const row of usageSummaryRows(scriptedView.usage)) {
+    assert.ok(summaryCard.includes(row.label), `the summary row "${row.label}" did not reach the card`)
+    assert.ok(summaryCard.includes(row.value), `the summary figure "${row.value}" did not reach the card`)
+  }
 
   /*
    * And the visible line reports the **whole** figure, card requests included.

@@ -475,7 +475,8 @@
  * It borrows `.iris-act` for the type size and the row's hover reveal — the
  * point is that it is exactly as loud as the words beside it — and takes back
  * the two things that would make it look pressable. `pointer-events` stays on,
- * because the whole reading is the trigger for its `title`.
+ * because the whole reading is the trigger for its breakdown card
+ * (`UsagePopover`: hover and focus open it, a touch tap toggles it).
  */
 .iris-act--reading {
   cursor: default;
