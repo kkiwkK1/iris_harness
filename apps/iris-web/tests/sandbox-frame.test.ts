@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import { UnsupportedApiError } from '../src/sandbox/errors.ts'
 import { CARD_METHODS, isCardMethod, isOnSillyTavernSurface } from '../src/sandbox/card-api.ts'
-import { installSandbox, type FrameEnv } from '../src/sandbox/frame.ts'
+import { installSandbox, VIRTUAL_PARENT_SCHEDULER_MEMBERS, type FrameEnv, type FrameSchedulers } from '../src/sandbox/frame.ts'
 import { MEMBERS } from './members-table.ts'
 import { UPSTREAM_MEMBERS } from '../src/sandbox/upstream-surface.ts'
 import { SCRIPT_REGISTRY } from '../src/sandbox/preamble.ts'
@@ -20,7 +20,12 @@ import type { ScriptContext } from '@iris/protocol'
  *   `seeded` hands the frame the inlined-snapshot seed a srcdoc would carry —
  *   the document-order guarantee that lets a parse-time call answer truth.
  */
-function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext, eventTarget?: EventTarget }): {
+function realm(options?: {
+  interfaceFrame?: boolean
+  seeded?: ScriptContext
+  eventTarget?: EventTarget
+  schedulers?: FrameSchedulers
+}): {
   posted: FromFrame[]
   send: (message: ToFrame) => void
   /** The globals the last evaluation was handed, by name. */
@@ -110,6 +115,7 @@ function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext, eve
     container,
     ...(options?.interfaceFrame === true ? { interfaceFrame: true } : {}),
     ...(options?.eventTarget === undefined ? {} : { eventTarget: options.eventTarget }),
+    ...(options?.schedulers === undefined ? {} : { schedulers: options.schedulers }),
     // The seed a srcdoc would have inlined ahead of this bootstrap. The real
     // reader (frame-entry) consumes and deletes the global; here the snapshot
     // itself is the fixture, and "was it read before the body ran" is what the
@@ -469,6 +475,106 @@ test('parent.document delegates its event surface to the frame document', () => 
   const event = new Event('click')
   target.dispatchEvent(event)
   assert.equal(registered, event, 'the listener ran against something other than the frame document')
+})
+
+test('parent answers the scheduler set with the frame realm\'s own timers', () => {
+  /*
+   * 人贩子物语's 黑市手机 arms its delays and animation frames through the
+   * window its outward walk produced — `hostWindow.setTimeout is not a
+   * function`, one measured line after the document it walks to. Upstream's
+   * `hostWindow` is a real same-origin window whose scheduler **is** the
+   * scheduler; here the walk stops at this proxy, and the honest delegation is
+   * to the one realm a timer can fire in — the frame's own, the same functions
+   * a bare `window.setTimeout` reaches, so handles armed either way cancel each
+   * other's timers.
+   *
+   * The calls are recorded, not replayed: the assertion is that the **injected**
+   * scheduler ran with the arguments the card passed, and that the handle it
+   * returned is what reaches the cancel — the property a recording stub that
+   * only counted calls would not have checked.
+   */
+  const calls: { name: string, args: unknown[] }[] = []
+  const handle = { timer: 'one' }
+  const frameHandle = { frame: 'raf' }
+  const schedulers: FrameSchedulers = {
+    setTimeout: (...args: unknown[]) => {
+      calls.push({ name: 'setTimeout', args })
+      return handle
+    },
+    clearTimeout: (...args: unknown[]) => { calls.push({ name: 'clearTimeout', args }) },
+    setInterval: (...args: unknown[]) => {
+      calls.push({ name: 'setInterval', args })
+      return 'interval'
+    },
+    clearInterval: (...args: unknown[]) => { calls.push({ name: 'clearInterval', args }) },
+    requestAnimationFrame: () => {
+      calls.push({ name: 'requestAnimationFrame', args: [] })
+      return frameHandle
+    },
+    cancelAnimationFrame: (...args: unknown[]) => { calls.push({ name: 'cancelAnimationFrame', args }) },
+  }
+  const scope = realm({ schedulers })
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    for (const name of VIRTUAL_PARENT_SCHEDULER_MEMBERS) {
+      assert.equal(typeof parent[name], 'function', `parent.${name} was not answered`)
+    }
+
+    const armed = (parent['setTimeout'] as (...args: unknown[]) => unknown)(
+      () => undefined, 5,
+    )
+    assert.equal(armed, handle, 'the handle did not come from the frame realm')
+    ;(parent['clearTimeout'] as (h: unknown) => void)(armed)
+    ;(parent['requestAnimationFrame'] as (cb: (time: number) => void) => unknown)(() => undefined)
+    ;(parent['cancelAnimationFrame'] as (h: unknown) => void)(frameHandle)
+  })
+
+  // asserted piecewise: a callback function compares by reference, so a whole-
+  // record deepEqual would be comparing arrow identities, not behaviour.
+  assert.deepEqual(calls.map(call => call.name), [
+    'setTimeout',
+    'clearTimeout',
+    'requestAnimationFrame',
+    'cancelAnimationFrame',
+  ])
+  assert.equal(calls[0]?.args[1], 5, 'the delay did not reach the frame realm')
+  assert.equal(calls[1]?.args[0], handle, 'the armed handle did not reach the cancel')
+  assert.equal(calls[3]?.args[0], frameHandle, 'the animation handle did not reach its cancel')
+})
+
+test('a parent without schedulers refuses them by name', () => {
+  // The unpublished-name policy, the same one a misspelled slot gets: the read
+  // yields `undefined` and says so once, rather than answering with something
+  // that fails three lines later with nothing pointing here.
+  const scope = realm()
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    for (const name of VIRTUAL_PARENT_SCHEDULER_MEMBERS) {
+      assert.equal(parent[name], undefined, `parent.${name} was answered without a realm`)
+    }
+  })
+
+  const note = scope.posted.find(
+    message => (message as { type?: string }).type === 'note'
+      && String((message as { message?: string }).message).includes('parent.setTimeout'),
+  )
+  assert.notEqual(note, undefined, 'the absent scheduler read was silent')
+})
+
+test('the parent scheduler list is exactly the standard set', () => {
+  /*
+   * The list is the dispatch: a name added to it becomes a member a card can
+   * call, so the list itself is pinned by name. Anything beyond the six the
+   * platform defines has to say why it belongs beside them.
+   */
+  assert.deepEqual([...VIRTUAL_PARENT_SCHEDULER_MEMBERS], [
+    'setTimeout',
+    'clearTimeout',
+    'setInterval',
+    'clearInterval',
+    'requestAnimationFrame',
+    'cancelAnimationFrame',
+  ])
 })
 
 test('the viewport a card reads is the one the shell reported', () => {

@@ -3366,3 +3366,14 @@ its startup. The stand-in now carries `addEventListener`/`removeEventListener`/
 card's capture-phase delegation can observe, and the only bus that produces real
 DOM events with a `target` to walk. Upstream's `hostDocument` is the page's real
 document; this is the same semantics over the page a card actually has.
+
+**The walk's window half followed** (`frame.ts`): the same card holds the proxy
+as `hostWindow` and its next measured failure was `hostWindow.setTimeout is not
+a function`. Upstream's `hostWindow` is a real same-origin window whose
+scheduler is the scheduler; the proxy now answers the standard set —
+`setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`,
+`requestAnimationFrame`, `cancelAnimationFrame` — delegating to the **frame's
+own realm**, because that is the only realm a timer here can fire in, which
+makes a scheduler read through the parent and one read bare the same functions
+with mutually cancellable handles. Injected through `FrameEnv` like the event
+target; absent, the six names follow the unpublished-name policy.
