@@ -230,3 +230,30 @@ export function averageCacheHit(usage: TurnUsage | undefined): string | null {
   if (usage === undefined || usage.cacheReadTokens === undefined) return null
   return formatCacheHitPercent(usage.cacheReadTokens, billedInputTokens(usage))
 }
+
+/**
+ * The share of this request a prefix cache could serve on the next turn.
+ *
+ * `PromptItemization.stablePrefixTokens` over the request's own total: the
+ * *ceiling* this assembly leaves available. A different kind of number from
+ * {@link averageCacheHit}, which is the provider's accounting of what actually
+ * happened — the card shows both, they answer different questions ("is my
+ * prompt shaped for the cache" against "did the cache serve me"), and neither
+ * may be dressed as the other.
+ *
+ * `null` when the host sent no reading, which is **not** zero: "no reading" and
+ * "nothing reusable" are different facts, and a `?? 0` here would print the
+ * second whenever the first was true.
+ * @param itemization - the host's answer, or absent.
+ * @returns the tokens and the rounded share, or null.
+ */
+export function stablePrefix(
+  itemization: PromptItemization | undefined,
+): { tokens: number, percent: number } | null {
+  if (itemization?.stablePrefixTokens === undefined) return null
+  if (itemization.tokens <= 0) return null
+  return {
+    tokens: itemization.stablePrefixTokens,
+    percent: Math.round(itemization.stablePrefixTokens / itemization.tokens * 100),
+  }
+}

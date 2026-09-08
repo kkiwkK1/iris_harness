@@ -37,6 +37,18 @@ import { WorldbookStore } from '../src/worldbooks.ts'
  * `serializeRequest`, which is what the adapter `JSON.stringify`s onto the
  * wire. Comparing the assembled objects instead would pass on a difference the
  * serializer would have shown, and vice versa.
+ *
+ * **The comparison starts after a warm-up, and that is a real qualification.**
+ * The cache-friendly order (DEVIATIONS §38, on by default) classifies each
+ * contribution by watching it, so a part that has held still long enough to be
+ * worth pulling into the prefix changes place **once**, on the assembly where
+ * it settles. That is a deliberate one-off cost — every layout change is one
+ * miss, and the alternative was never moving anything — but it means this
+ * control is a claim about the *steady state*: after the classifier has seen
+ * each part twice, the same state assembles to the same bytes forever. The
+ * warm-up is two assemblies, and the test asserts the layout really did settle
+ * inside it rather than assuming so, or three pre-settle assemblies would agree
+ * with each other and prove nothing about the state the product runs in.
  */
 
 const CARD = JSON.stringify({
@@ -177,6 +189,16 @@ async function fixture(t: TestContext): Promise<Fixture> {
 
 test('the same chat state assembles to the same request bytes', async (t) => {
   const fix = await fixture(t)
+
+  // The warm-up, and the check that it was enough: with the cache-friendly
+  // order on, the depth-anchored parts move into the prefix on the assembly
+  // where they settle, so the comparison below has to start after that.
+  await fix.assemble()
+  await fix.assemble()
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId: fix.chatId })
+  assert.ok(itemization.entries.some(entry => entry.promoted === true),
+    'the warm-up did not reach the steady state, so the comparison below would '
+    + 'be between three assemblies that have not settled yet')
 
   const first = await fix.assemble()
   const second = await fix.assemble()

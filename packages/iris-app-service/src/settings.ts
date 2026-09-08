@@ -59,13 +59,18 @@ export const CONTINUE_POSTFIX_SEPARATORS: Record<ContinuePostfix, string> = {
 const CONTINUE_POSTFIXES = Object.keys(CONTINUE_POSTFIX_SEPARATORS) as readonly ContinuePostfix[]
 
 /**
- * Boolean reply-shaping fields, each named after the upstream key it maps.
+ * Boolean fields, each named after the upstream key it maps where there is one.
  *
  * A boolean gets the same three-case treatment as every other field: omitted
  * leaves it alone, `null` clears the override, and a non-boolean value is
  * refused — a `"true"` string would read as on forever and never say why.
+ *
+ * `cacheFriendly` is the one with no upstream key, and the one whose **absence
+ * means on** — clearing it therefore restores the reorder rather than switching
+ * it off. That asymmetry lives in the reader (`cacheFriendlyOf`, service.ts),
+ * not here: this table only decides what a patch may say.
  */
-const BOOLEAN_FIELDS = ['trimSentences', 'squashSystemMessages'] as const satisfies
+const BOOLEAN_FIELDS = ['trimSentences', 'squashSystemMessages', 'cacheFriendly'] as const satisfies
   readonly (keyof GenerationSettings)[]
 
 /**

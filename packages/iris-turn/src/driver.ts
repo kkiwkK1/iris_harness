@@ -77,6 +77,17 @@ export interface TurnDriverOptions {
    * it was assembled.
    */
   squashSystemMessages?: boolean
+  /**
+   * Maximise the stable prefix — `AssembleInput.cacheFriendly`, passed straight
+   * through.
+   *
+   * The driver has no opinion about which contributions are volatile (the
+   * caller marks them) nor about where they go (`assemble` decides). What it
+   * does own is the squash, which is the one pass here that could undo the
+   * reorder by merging a moved message into a message in front of it — see
+   * {@link squashSystemRuns}.
+   */
+  cacheFriendly?: boolean
 }
 
 /** Progress reported while a candidate is being generated. */
@@ -184,6 +195,7 @@ export class TurnDriver {
       contributions: await options.contributions(session),
       history: projectedHistory(session, options.history, projection),
       budget: options.budget,
+      ...options.cacheFriendly === undefined ? {} : { cacheFriendly: options.cacheFriendly },
     })
     // The tail rides outside `assemble` because it has to be the request's LAST
     // message whatever depth injections the contributions carry — depth 0 lands
@@ -559,6 +571,15 @@ function toTailMessage(tail: PipelineMessage) {
  * has one — `name` reaches only history entries, which are user or assistant),
  * and it exempts three identifiers (`newMainChat`/`newChat`/`groupNudge`,
  * `:3828`) that Iris does not mint.
+ *
+ * **A volatile message never merges with a stable one, in either direction.**
+ * That is the one addition, and it is not a preference. A merge rewrites the
+ * message that absorbs the other; if a moved (volatile) message merged into the
+ * stable message in front of it, the stable one would change text every turn —
+ * which is exactly the miss the reorder was performed to avoid, reintroduced by
+ * a formatting pass one layer down. Volatile messages still merge with each
+ * other, and stable ones with each other, so the squash still does its job
+ * wherever doing it is free.
  * @param messages - the assembled conversation, oldest first.
  * @returns the conversation with adjacent system runs collapsed.
  */
@@ -566,7 +587,8 @@ export function squashSystemRuns(messages: readonly PipelineMessage[]): Pipeline
   const squashed: PipelineMessage[] = []
   for (const message of messages) {
     const previous = squashed.at(-1)
-    if (message.role === 'system' && previous?.role === 'system') {
+    const sameSide = (previous?.volatile === true) === (message.volatile === true)
+    if (message.role === 'system' && previous?.role === 'system' && sameSide) {
       previous.text = `${previous.text}\n${message.text}`
       continue
     }

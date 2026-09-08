@@ -58,8 +58,9 @@ import {
   writeCompaction,
 } from './compaction.ts'
 import { COMPACTION_INSTRUCTION } from './compaction-prompt.ts'
+import { classifyVolatility, emptyVolatility, markCachePhase } from './cache-friendly.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
-import { writeTimedEffects } from './entry.ts'
+import { writeTimedEffects, writeVolatility } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
 import { FavoriteStore } from './favorites.ts'
 import type { WorldbookBindingStore } from './materialise.ts'
@@ -3287,6 +3288,11 @@ export class IrisAppService {
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...settings.stop === undefined ? {} : { stop: settings.stop },
       ...settings.squashSystemMessages === undefined ? {} : { squashSystemMessages: settings.squashSystemMessages },
+      // Resolved here, once, rather than inside the assembly: the driver's
+      // `assemble` and the itemization recorded beside it have to agree, and
+      // two reads of an environment variable and a settings file are two
+      // chances to disagree.
+      cacheFriendly: cacheFriendlyOf(settings),
       sampling: samplingOf(settings),
     })
   }
@@ -3386,7 +3392,25 @@ export class IrisAppService {
       writeTimedEffects(entry.header.chat_metadata, built.timedEffects)
     }
 
-    const contributions = [...built.contributions, ...injectedContributions(entry, built.contributions)]
+    const resolved = [...built.contributions, ...injectedContributions(entry, built.contributions)]
+
+    // Which parts change between turns, and therefore which ones the reorder
+    // moves out of the stable prefix. Two phases on purpose: the **verdict** is
+    // read on every path, so a preview shows the layout the next real turn will
+    // have, while the **record** advances only for a real turn. A preview that
+    // advanced the generation counter would age every mark out of hysteresis by
+    // opening the prompt panel.
+    const verdict = classifyVolatility(
+      entry.volatility ?? emptyVolatility(),
+      resolved,
+      { entropic: new Set(built.entropic), runtime: runtimeIds(entry) },
+    )
+    if (record) {
+      entry.volatility = verdict.next
+      writeVolatility(entry.header.chat_metadata, verdict.next)
+    }
+    const contributions = markCachePhase(resolved, verdict)
+    const cacheFriendly = cacheFriendlyOf(settings)
 
     // Recorded here because this is the only moment the parts and the history
     // agree with what is about to be sent: by the time the turn settles, the
@@ -3400,6 +3424,7 @@ export class IrisAppService {
         contributions,
         history: this.#history(entry, session, projection),
         budget: this.#budget(count, window),
+        cacheFriendly,
       })
       // The first floor the budget kept is the one the dropped count names —
       // history entries map one-to-one onto chat-file lines. This is
@@ -3415,7 +3440,14 @@ export class IrisAppService {
       // shift rather than a special case.
       entry.firstIncludedMessageId
         = (readCompaction(entry.header)?.count ?? 0) + assembled.overflow.droppedHistory
-      entry.itemizations.set(turn, this.#itemizationOf(assembled, turn, false))
+      // `window`, not the composition default. Without it the recorded
+      // itemization reported `budget.context: 32768` for a chat that had just
+      // assembled against a 2 000 000 override — the preview path
+      // (`#previewItemization`) passed the window and the record did not, so the
+      // panel's capacity line changed meaning depending on which of the two
+      // answered. Found by the census pass, not by this file's own tests: every
+      // fixture here runs on the default window, where the two agree.
+      entry.itemizations.set(turn, this.#itemizationOf(assembled, turn, false, window))
     }
 
     return contributions
@@ -3486,8 +3518,11 @@ export class IrisAppService {
         tokens: item.tokens,
         ...item.depth === undefined ? {} : { depth: item.depth },
         ...item.role === undefined || item.role === 'system' ? {} : { role: item.role },
+        ...item.deferred === true ? { deferred: true } : {},
+        ...item.promoted === true ? { promoted: true } : {},
       })),
       tokens: result.tokens,
+      stablePrefixTokens: result.stablePrefixTokens,
       budget: {
         context: window ?? this.#options.contextWindow,
         reserve: this.#options.reserveTokens,
@@ -3539,11 +3574,20 @@ export class IrisAppService {
       // actually be sent, and that includes the persona's slot.
       ...persona === undefined ? {} : { persona },
     })
-    const contributions = [...built.contributions, ...injectedContributions(entry, built.contributions)]
+    const resolved = [...built.contributions, ...injectedContributions(entry, built.contributions)]
+    // The verdict, not the record: a preview must show the layout the next real
+    // turn will send, and must not advance the classifier's generation counter
+    // — `prompt.itemize` is a read.
+    const verdict = classifyVolatility(
+      entry.volatility ?? emptyVolatility(),
+      resolved,
+      { entropic: new Set(built.entropic), runtime: runtimeIds(entry) },
+    )
     const result = assemble({
-      contributions,
+      contributions: markCachePhase(resolved, verdict),
       history: this.#history(entry, entry.session),
       budget: this.#budget(count, window),
+      cacheFriendly: cacheFriendlyOf(settings),
     })
     return this.#itemizationOf(result, entry.lastTurn + 1, true, window)
   }
@@ -4359,6 +4403,34 @@ function placementFor(
  *   `after` can find main. Absent falls back to the ends of the system block.
  * @returns one contribution per live injection.
  */
+/**
+ * Contributions whose **source** makes them volatile, not their text: every
+ * live card-script injection.
+ *
+ * A `setExtensionPrompt` value is computed by a script while the turn is being
+ * prepared; that is what the API is for. So two turns producing the same string
+ * is not evidence the third will, and this set is re-asserted on every
+ * classification rather than being a first-sight guess — the classifier's rule
+ * 2 rather than its rule 3.
+ *
+ * The asymmetry is worth the cost here in a way it is not for a macro: since
+ * #17 a `'before'` injection lands at `main.order - 1`, ahead of the entire
+ * preset, and `CACHE-PREFIX.md` §2.1 puts a per-turn value there at a ceiling
+ * near 0.2%. Nothing else in the request can do that much damage from one
+ * contribution.
+ *
+ * A `position: 'none'` injection contributes no text, so no contribution
+ * carries its id; naming it here is harmless and cheaper than filtering, since
+ * the classifier only consults ids it actually sees.
+ * @param entry - the conversation, for its live injections.
+ * @returns the injection contribution ids.
+ */
+function runtimeIds(entry: ChatEntry): Set<string> {
+  const ids = new Set<string>()
+  for (const key of entry.extensionPrompts.keys()) ids.add(`script.${key}`)
+  return ids
+}
+
 export function injectedContributions(entry: ChatEntry, preset: readonly Contribution[] = []): Contribution[] {
   const main = mainPlacement(preset)
   const contributions: Contribution[] = []
@@ -4538,6 +4610,40 @@ export function samplingOf(settings: GenerationSettings): GenerateOptions['sampl
  */
 function windowOf(settings: GenerationSettings, fallback: number): number {
   return settings.contextWindow ?? fallback
+}
+
+/**
+ * The host-wide off switch for the cache-friendly reorder.
+ *
+ * `IRIS_CACHE_FRIENDLY=0` (or `false`) disables it for every chat whatever the
+ * per-chat setting says — one line in the environment restores byte-for-byte
+ * SillyTavern order across a whole installation, which is what an operator
+ * needs when the question is "is the reorder causing this?". Anything else, the
+ * variable being unset included, leaves the decision to the setting.
+ *
+ * Read per assembly rather than captured at construction, so an operator does
+ * not have to reason about when the host last started.
+ * @returns false when the environment forbids the reorder.
+ */
+function cacheFriendlyAllowed(): boolean {
+  const flag = process.env['IRIS_CACHE_FRIENDLY']
+  return !(flag === '0' || flag?.toLowerCase() === 'false')
+}
+
+/**
+ * Whether this chat assembles cache-friendly.
+ *
+ * **Default on**, and that is the one place this feature is not conservative:
+ * the measured ceiling *without* it is 21.9% for a card that puts a `{{roll}}`
+ * near the front of its world info (`CACHE-PREFIX.md` §1.3), and a default that
+ * has to be found in a drawer is a default nobody gets. `cacheFriendly: false`
+ * on the chat — or on the global layer under it — turns it off; the environment
+ * can veto both.
+ * @param settings - the chat's merged settings.
+ * @returns whether to reorder.
+ */
+function cacheFriendlyOf(settings: GenerationSettings): boolean {
+  return cacheFriendlyAllowed() && settings.cacheFriendly !== false
 }
 
 /**

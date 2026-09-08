@@ -2732,3 +2732,301 @@ here.
 prints the first differing character with 60 characters of context on each side,
 so the next reading names the floor and the script that touched it rather than a
 byte offset.
+
+## 38. The request's parts are sorted by whether they change between turns, so a prefix cache can serve the part that does not
+
+**Kind: deliberate divergence, on by default, with an off switch and a
+measurement. The model reads the moved instructions somewhere other than where
+their author placed them; that is the cost, and it is real.**
+
+**Upstream.** SillyTavern assembles in one order and has no notion of a request
+prefix. `ChatCompletion` places every prompt by its `order` / `injection_depth`
+and sends it (`openai.js`); a world-info entry at `position: 1` lands in the
+system block wherever its `insertion_order` puts it, whether its text is a
+constant or a fresh `{{roll::1d20}}`. There is no setting to change that,
+because upstream has nothing that would read one.
+
+**Iris.** `ChatSettings.cacheFriendly` (**absent means on** — the only field in
+that type that defaults to on) sorts the request's parts by whether they change
+between turns, in **both** directions:
+
+- a part classified **volatile** leaves the request's leading bytes for a
+  segment placed after the whole conversation, immediately before the depth-0
+  injections;
+- a depth-anchored part **observed unchanged** goes the other way, into a
+  segment between the system prompt and the first floor.
+
+Order inside each moved group is preserved. Nothing is added, removed or
+rewritten — only relocated. The second direction is the larger lever of the
+two, and it is not about volatility at all.
+
+`IRIS_CACHE_FRIENDLY=0` on the host turns it off for every conversation at once,
+whatever each chat's setting says. With it off the assembly is **byte-identical**
+to what it was before this feature existed (`cache-friendly.test.ts`, and
+`assembly-determinism.test.ts` still holds).
+
+### Why, and which of the two directions matters more
+
+DeepSeek serves a cached prompt up to the **first changed byte** of the request
+prefix, in 64-token blocks. Two separate losses follow from that, and they are
+easy to conflate:
+
+1. **Volatility.** One `{{roll}}` near the front of a world book does not cost
+   its own size — it costs everything behind it. Three OVERLORD conversations
+   in this profile cannot repeat their own request past **9.5%** of its bytes,
+   and the first difference is a die-roll world-info entry in the system block.
+2. **Rent.** Depth-anchored content is anchored to the *end* of the
+   conversation, so its absolute position slides forward one exchange every
+   turn. Two turns diverge at the newest floor, and every byte of depth content
+   behind that point is re-sent in full and charged at miss price **even though
+   it never changed**. `CACHE-CENSUS.md` §2.2 measures this: **100% of the rent
+   in 11 real adjacent pairs is depth-anchored**, a mean of 6 381 tokens a turn
+   over those pairs (two conversations), and 7 140 tokens a turn — 23% of the
+   request — on 爱衣's own six stable pairs. Across 27 pairs, **60.8% of all
+   unhittable bytes are byte-identical content**.
+
+The second is the bigger number and it is invisible to any rule that only looks
+for content that *changes*. It also has the opposite failure mode: promoting
+content that turns out to move is worse than doing nothing — the four corpus
+conversations whose depth bucket changes every turn go from 7.6%–55.2% down to
+**0.0%–19.5%** if promoted. That asymmetry is why the mechanism promotes only on
+*observed* stability, never on appearance, and it is `CACHE-CENSUS.md`'s explicit
+constraint on this work ("搬位置之前必须先判定稳定性").
+
+### Which parts move, and which do not
+
+| placement | volatile | settled |
+| --- | --- | --- |
+| system section | **moved back** — it sits ahead of the whole conversation, so a volatile one costs the entire request | no move; it is already in the prefix |
+| depth ≥ 1 injection | **moved back** — it sits *inside* the run two turns would otherwise agree on | **moved forward** |
+| depth 0 injection | **stays** — it is already the last thing before the reply, so there is nowhere later to put it | **moved forward** |
+| chat history | not a contribution — see "what this does not fix" | — |
+
+Two departures from the brief, both because the geometry says so:
+
+- **`CACHE-PREFIX.md` §3 提案 A's "never relocate depth content"** rests on
+  「它们已经在新历史之后了」, which is true of depth 0 and false of depth 1 and
+  deeper. So volatile depth ≥ 1 injections do move back.
+- **Depth 0 is the one placement that moves in only one direction**: nowhere
+  later to defer it to, but forward is the whole point.
+
+**The loudest single cost is `post_history_instructions`.** A card's
+post-history instruction and a preset's post-history section are placed as
+depth-0 contributions, so a constant one is promoted like any other settled
+depth content — and it is *named* for sitting after the conversation. That is
+what `CACHE-CENSUS.md`'s counterfactual measured (it moved every depth-anchored
+segment, n=9 on 爱衣, for 98.0%), so the mechanism matches the measurement
+rather than carving out an exception the numbers never had. Pinned by name in
+`cache-friendly-assembly.test.ts` so that if this is later ruled wrong, the test
+says where the exception goes.
+
+### How the classification is decided — a mechanism, not a list of entries
+
+Four rules, in `packages/iris-app-service/src/cache-friendly.ts`, each weighted
+by the evidence behind it. The first three decide *volatile*; the fourth decides
+*settled*, and no id can be both — volatility is always the newer evidence.
+
+1. **Measured.** The host keeps a content hash per contribution id for the
+   previous assembly (in memory, and persisted in `chat_metadata` under
+   `iris_cache_volatility`, an Iris-owned key — upstream has no equivalent).
+   A different hash under the same id means that text changed. The mark then
+   holds for 20 further generations, because *returning* to the prefix costs a
+   full miss too and is not worth paying on a hunch.
+2. **Runtime source.** Every live card-script `setExtensionPrompt` injection,
+   re-asserted every generation so it never lapses. Not a reading of text: such
+   a value is computed while the turn is prepared, so two turns agreeing is not
+   evidence the third will — and since #17 a `'before'` injection lands at
+   `main.order - 1`, ahead of the entire preset, where one change costs
+   everything.
+3. **Predicted**, on a contribution's *first* sighting only: its
+   **pre-expansion** text carries a macro whose value provably moves
+   (`{{random}}`, `{{roll}}`, the clock family, the floor-addressing family,
+   `{{format_*_variable}}`) or an EJS template. The list lives in one place,
+   `ENTROPIC_MACROS`, with its source named per line.
+4. **Settled** — the id's *current* content has been observed at
+   {@link DEFAULT_SETTLE_AFTER} = 2 consecutive assemblies and it carries no
+   volatile mark. Two is small because the hold above already dominates:
+   anything that ever changed is suppressed for 20 further generations, so this
+   counter governs one case only — content that has *never* been seen to change.
+   There the cost of waiting is a turn of rent and the cost of acting is one
+   miss, and DeepSeek does not serve a prefix until it has seen it twice anyway
+   (`CACHE-TARGET.md` §1.2: 「前两次请求不会命中缓存」), so the first two turns
+   of a conversation were never going to hit.
+
+The `since` clock that rule 4 reads restarts on every observed change, and — the
+case worth naming — starts *now* rather than "forever ago" for a record written
+by a build that had no such field. An id whose clock is simply missing has not
+been observed holding still; it has not been observed at all.
+
+The prediction needs text that no longer exists by assembly time, so
+`buildPrompt` collects it while it still does (`PromptResult.entropic`), and
+`@iris/lorebook` now keeps `PreparedEntry.source` — the entry's content before
+the scan overwrites it with this turn's expansions. `source` is added *outside*
+the object `PreparedEntry.hash` is taken over, deliberately: that hash keys the
+persisted sticky and cooldown windows, and stirring a field into it would have
+silently reset every timed window in every chat file on disk.
+
+### Two rules that were wrong first, and what each cost
+
+Both were found by measurement, not by review, and both are pinned by tests:
+
+- **A broad prediction list.** `{{getvar}}` / `{{setvar}}` / `{{addvar}}` were on
+  it. On the operator's own preset they fire on **136 of its 246 prompts**
+  (`setvar` 70, `addvar` 56, `getvar` 15) — a preset uses them for its own
+  internal switches, which answer the same string every turn. 37 of those
+  rendered non-empty for a real generation and were moved, `main` among them,
+  and 爱衣's measured ceiling went **from 72.2% down to 66.7%**. Moving stable
+  text out of the prefix costs the prefix. After the narrowing the same preset
+  predicts **1 of 246**.
+- **A prediction worth one generation.** The idea was that a guess should not
+  earn a measurement's hysteresis. What it produced was a *flapping layout*:
+  assembly 1 moved a section, assembly 2 (now holding a hash) put it back, and
+  two assemblies of one unchanged conversation agreed on **0.3%** of their bytes
+  where the control had been 100%. A layout that changes is worse than either
+  layout, so a prediction now holds exactly as long as a measurement.
+
+### Interaction with the rest of the assembly
+
+- **`squashSystemMessages`.** Upstream's squash merges adjacent system messages.
+  A volatile message now never merges with a stable one **in either direction**
+  (`driver.ts`'s `squashSystemRuns`). Merging rewrites the message that absorbs
+  the other, so a moved segment merging into the message in front of it would
+  reintroduce, one layer down, exactly the miss the reorder was performed to
+  avoid. Volatile messages still merge with each other, and stable ones with
+  each other.
+- **The budget and history trimming are untouched.** The moved sections leave
+  the system string, so `assemble` charges them as their own term. The total
+  charge is deliberately the same either way — the reorder changes where text
+  sits, never how much of it there is — so `trimHistory` drops the same floors,
+  `firstIncludedMessageId` names the same floor, and #28's `iris_compaction`
+  summary (which rides as pinned history) is unaffected. Pinned by a test that
+  asserts equal `droppedHistory` and equal `tokens` with the flag on and off, on
+  a fixture that really does trim.
+- **`#summarize` and the card-facing side completion assemble with the reorder
+  off.** The first extracts the system slot alone against an empty
+  conversation — with the reorder on it would lose the moved sections
+  entirely — and the second is a one-off with no prefix to preserve.
+- **A preview never advances the classifier.** `classifyVolatility` returns the
+  verdict and the next record separately; `prompt.itemize` takes the verdict
+  only. Opening the prompt panel twenty times must not age every mark out of its
+  hold and reshuffle the next real request.
+
+### What it was measured to buy
+
+`scripts/cache-friendly-probe.mjs`, 2026-09-08, on a read-only copy of the
+operator's profile, comparing wire bodies through `serializeRequest`. No request
+leaves the process. Three passes per conversation: off, on with an empty
+classifier, and on seeded with **the record the cold pass itself learned**, its
+clock rewound so nothing has lapsed — that third pass is the steady state, and
+its seed is the product's own record written through the product's own writer.
+
+**These are ceilings, not acceptance.** `CACHE-TARGET.md` §2 rules that
+acceptance is the provider's own `prompt_cache_hit_tokens / prompt_tokens` over
+ten consecutive included turns, per turn *and* in aggregate, excluding each
+session's first two generations — and a gate that read ceilings alone would pass
+while the hit rate never moved. A ceiling has exactly two sanctioned uses:
+below 95% means the target is unreachable without sending anything, and a report
+far below its own ceiling sends you to `CACHE-TARGET.md` §4.3 rather than back to
+the assembler. Nothing here is a claim of 达标.
+
+**Not comparable with `CACHE-PREFIX.md`'s 2026-09-07 table.** The corpus is live:
+爱衣 has roughly doubled since (body 54 855 → 111 549 B, and its depth-0 block
+5 367 → 16 498 B). Each table belongs to its own day.
+
+爱衣, eight adjacent pairs (11→13 … 25→27):
+
+| | off | on (steady state) |
+| --- | --- | --- |
+| mean ceiling | 72.2% | **88.9%** |
+| range | 67.5% – 74.2% | **85.7% – 90.5%** |
+| bytes re-sent verbatim behind the prefix, per turn | 24 981 | **8 223** |
+
+Two conversations that could not repeat their own request, measured as
+"same state assembled twice":
+
+| conversation | off | on, defer only | on (steady state) | first difference remaining |
+| --- | --- | --- | --- | --- |
+| OVERLORD ×3 | **9.5%** | 41.1% | **65.1%** | `msg[8]`, a `{{roll}}` world-info entry |
+| Sgw 又看一集 | 83.1% | 83.1% | **99.1%** | `msg[12]`, a `{{random}}` avatar table |
+
+And the case the *defer* direction exists for — a card script injecting a value
+that differs every turn at `position: 'before'`, which since #17 lands at
+`main.order - 1`, ahead of the whole preset (`IRIS_PROBE_MVU=1`; four pairs,
+19→21 … 25→27):
+
+| 爱衣 | off | on (steady state) |
+| --- | --- | --- |
+| no injection | 73.9% | **89.9%** |
+| with the per-turn injection | **0.4%** | **89.9%** |
+| same state twice, with the injection | 0.3% | 92.2% |
+
+The two numbers in the last column being equal is the result: the reorder makes
+that injection **free**, which is `CACHE-CENSUS.md` §4.4's finding reached
+independently (it measured the same move as 0.4% → 74.7% against a 74.9%
+baseline).
+
+The host's own reading agrees with the byte measurement without sharing any code
+with it: `PromptItemization.stablePrefixTokens` reports 91.9% of 爱衣's newest
+request as reusable where the byte-level pair ceiling is 88.6% – 90.5%. The gap
+is history growth, which a single-request reading cannot see.
+
+### What it does not fix, measured
+
+**≥95% is not reached on 爱衣, and the shortfall is one identified block.**
+
+1. **爱衣 stops at 88.9%, and 7.4 points of the remaining 11 are a single
+   8 223-byte depth block** — the MVU status table, `{{format_message_variable::
+   stat_data}}`. It is classified volatile, so it is not promoted, and that is
+   the right call rather than a gap: `CACHE-CENSUS.md` §4.5 measures 爱衣's depth
+   content as changing on **4 of 10** real transitions (world-info activation
+   varies with the scan window at short history), and promoting it on a changing
+   turn takes the ceiling to **5.2% – 6.2%**. Arithmetic on the newest pair: with
+   that block promoted too the ceiling is **96.5%**, matching
+   `CACHE-CENSUS.md`'s 98.0% synthetic figure; the difference between 88.6% and
+   96.5% is exactly this one block. The rest — 1 282 to 13 397 B a turn — is
+   genuinely new conversation and cannot be recovered by anyone.
+2. **The next step is granularity, not policy.** That block is *one*
+   contribution because `buildPrompt` joins a whole depth bucket into one, while
+   the individual world-info entries inside it are byte-stable —
+   `CACHE-CENSUS.md` §4.5 verified three of them (8 223 + 4 020 + 7 114 =
+   19 357 B) byte-identical on the newest pair, and the bucket changes because
+   entries *join and leave* it. Classifying per entry would let the stable ones
+   promote and leave only the moving one behind. Not done here: it means one
+   contribution per activated entry rather than one per bucket, which changes
+   the `cacheFriendly: false` assembly too (N separate messages where there was
+   one joined block), and that path must stay byte-identical. The same outcome
+   is available to the user today with no code change — `CACHE-PREFIX.md` §3
+   提案 C's `position` knob on the individual entries.
+3. **OVERLORD's and Sgw's residual is a `{{roll}}` / `{{random}}` the card
+   author wrote**, in a world-info entry. OVERLORD's is at `worldInfoBefore`
+   (`CACHE-CENSUS.md` §5.1: 6 + 6 d20 re-rolled on every assembly, ~4 527
+   tokens), so its ceiling is capped **regardless of history length** and the
+   fix is the card's — moving the dice entry to depth 0, which is where a roll
+   belongs anyway. Iris can only report it.
+4. **A volatile depth ≥ 1 injection's lift is still unmeasured in isolation.**
+   It fires, but in every corpus conversation a larger loss sits in front of it,
+   so its own contribution to these numbers is 0. Kept on the geometric argument
+   alone; named here as the part of this entry a reviewer may reasonably cut.
+5. **Nothing here covers card-script-initiated generations.** They are not
+   recorded in `iris_usage` (`CACHE-TARGET.md` §4.5), so every figure above and
+   every figure in the acceptance run describes the user-visible turns only — a
+   narrower population than the bill.
+
+### One unrelated fix carried in this change
+
+`#itemizationOf` was called without `window` when recording a real turn's
+itemization (`service.ts`), so the stored record reported
+`budget.context: 32768` for a chat that had just assembled against a 2 000 000
+override, while the *preview* path passed the window and reported it correctly.
+The panel's capacity line therefore changed meaning depending on which of the
+two answered. Found by the census pass rather than by this package's tests:
+every fixture here runs on the default window, where the two agree.
+
+### Where a user sees it
+
+The prompt panel's assembly-order view groups rows into the three phases the
+request actually carries — promoted, in place, deferred — and marks each moved
+row 「已前移（缓存友好）」 or 「已后移（缓存友好）」 with the position it came
+from. The context card prints 「稳定前缀 约 X%」 beside the provider's own
+cache-hit line, worded as an estimate because it is one.
+`notes/apps/iris-web/DEVIATIONS.md` §67.

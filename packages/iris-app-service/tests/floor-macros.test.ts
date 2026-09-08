@@ -103,9 +103,27 @@ async function fixture(t: TestContext): Promise<Fixture> {
   }
 }
 
-/** The system prompt of one seen request. */
-function systemOf(options: GenerateOptions | undefined): string {
-  return options?.system ?? ''
+/**
+ * The whole text of one seen request — the system prompt, then every message.
+ *
+ * **The request, not the system slot.** That is this file's stated subject
+ * ("the B4 macros reach the request") and it is now the only reading that can
+ * be right: every macro in `SYSTEM_PROMPT` is on `cache-friendly.ts`'s
+ * entropic list, so the cache-friendly order — on by default — carries that
+ * section after the conversation instead of at the top. The macros still reach
+ * the model, expanded; they arrive later in the request. *Where* they arrive is
+ * `cache-friendly.test.ts`'s subject, and pinning it here as well would make
+ * one change go red in two files for two different reasons.
+ * @param options - the captured request.
+ * @returns the system prompt and every message's text, concatenated.
+ */
+function requestText(options: GenerateOptions | undefined): string {
+  if (options === undefined) return ''
+  const messages = options.messages.map(message => message.content
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join(''))
+  return [options.system ?? '', ...messages].join('\n')
 }
 
 test('the B4 macros reach the request with live floors, outlets and budget', async (t) => {
@@ -116,7 +134,7 @@ test('the B4 macros reach the request with live floors, outlets and budget', asy
   await handlers['chat.send']({ chatId, text: 'What has she earned?' })
   await settled()
 
-  const first = systemOf(seen[0])
+  const first = requestText(seen[0])
   // The outlet bucket the scan parked under the name, joined onto the prompt.
   assert.match(first, /Outlet\[She has three achievements.\]/u, `outlet missing from: ${first}`)
   // The floor view: the newest floor is the user's message.
@@ -131,7 +149,7 @@ test('the B4 macros reach the request with live floors, outlets and budget', asy
   await handlers['chat.send']({ chatId, text: 'And now?' })
   await settled()
 
-  const second = systemOf(seen[1])
+  const second = requestText(seen[1])
   assert.match(second, /Last\[And now\?\]/u)
   // The previous turn's assembly kept every floor, so the boundary is floor 0 —
   // one generation stale by design, exactly as upstream's metadata is.
