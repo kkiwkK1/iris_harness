@@ -45,6 +45,7 @@ import {
   averageCacheHit,
   contextOccupancy,
   meterSegments,
+  stablePrefix,
   type ContextCategory,
   type ContextOccupancy,
 } from './context-occupancy.ts'
@@ -240,6 +241,7 @@ function ContextBody({
 }): ReactElement {
   const segments = meterSegments(occupancy)
   const cacheHit = averageCacheHit(usage)
+  const prefix = stablePrefix(itemization)
   const remaining = Math.max(0, occupancy.available - occupancy.usedTokens)
   const byCategory = new Map(occupancy.categories.map(row => [row.category, row]))
   return (
@@ -307,6 +309,25 @@ function ContextBody({
         : (
             <p className="iris-context-card__note">
               {t('usageCacheHit', { percent: cacheHit })}
+            </p>
+          )}
+      {/*
+        The estimate that sits beside it, and its own line for the same reason:
+        this one is 「估算」 — how much of the request the *assembly* leaves
+        reusable — while the line above is the provider's accounting of what
+        happened. Same subject, different kind of number, so they never share a
+        sentence. It appears even when the provider says nothing about caching,
+        because a prompt shaped badly for the cache is worth seeing before the
+        first bill.
+      */}
+      {prefix === null
+        ? null
+        : (
+            <p className="iris-context-card__note" data-control="stable-prefix">
+              {t('contextStablePrefix', {
+                percent: String(prefix.percent),
+                tokens: formatTokens(prefix.tokens),
+              })}
             </p>
           )}
       <p className="iris-context-card__note iris-context-card__note--source">

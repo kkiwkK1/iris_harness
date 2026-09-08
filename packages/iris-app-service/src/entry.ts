@@ -39,6 +39,7 @@ import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore
 
 import { scriptIdOf } from './script-variables.ts'
 
+import type { VolatilityRecord } from './cache-friendly.ts'
 import { readCompaction } from './compaction.ts'
 import { busy } from './errors.ts'
 import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
@@ -215,6 +216,64 @@ export function writeTimedEffects(metadata: Record<string, unknown>, state: Time
 }
 
 /**
+ * The metadata key the cache classifier's per-chat memory lives under.
+ *
+ * **Iris's own, not upstream's**, and named so a reader of a chat file can tell
+ * at a glance: SillyTavern has no equivalent feature, so there is no key to
+ * agree with. Recorded in `notes/packages/iris-app-service/DEVIATIONS.md` §38.
+ */
+export const VOLATILITY_KEY = 'iris_cache_volatility'
+
+/**
+ * Read the cache classifier's memory out of a chat header.
+ *
+ * Persisted for one reason: the classification is *earned* — each id's verdict
+ * costs one turn's full cache miss to discover. A host restart that threw the
+ * table away would pay for the same discoveries again, and the user would see
+ * the hit rate collapse on the first turn after every restart.
+ *
+ * Shape-checked field by field rather than trusted, like
+ * {@link readTimedEffects}: a `generation: "3"` would poison the comparison
+ * that decides whether a mark has lapsed, and the failure would look like
+ * random reordering.
+ * @param metadata - the chat header's metadata block.
+ * @returns the record, or undefined when none is stored or it is unusable.
+ */
+export function readVolatility(metadata: Record<string, unknown>): VolatilityRecord | undefined {
+  const stored = metadata[VOLATILITY_KEY]
+  if (typeof stored !== 'object' || stored === null) return undefined
+  const raw = stored as Record<string, unknown>
+  const generation = raw['generation']
+  if (typeof generation !== 'number' || !Number.isFinite(generation)) return undefined
+
+  const table = <T>(key: string, ok: (value: unknown) => value is T): Record<string, T> => {
+    const out: Record<string, T> = {}
+    const source = raw[key]
+    if (typeof source !== 'object' || source === null) return out
+    for (const [id, value] of Object.entries(source as Record<string, unknown>)) {
+      if (ok(value)) out[id] = value
+    }
+    return out
+  }
+
+  return {
+    generation,
+    seen: table<string>('seen', (value): value is string => typeof value === 'string'),
+    until: table<number>('until', (value): value is number =>
+      typeof value === 'number' && Number.isFinite(value)),
+  }
+}
+
+/**
+ * Write the cache classifier's memory into a chat header's metadata.
+ * @param metadata - the chat header's metadata block, mutated in place.
+ * @param record - the record the classifier returned.
+ */
+export function writeVolatility(metadata: Record<string, unknown>, record: VolatilityRecord): void {
+  metadata[VOLATILITY_KEY] = structuredClone(record)
+}
+
+/**
  * Chat-scope variables, stored where SillyTavern keeps them.
  *
  * `chat_metadata.variables` is the upstream location, and the header is written
@@ -324,6 +383,14 @@ export class ChatEntry {
   worldbook: ResolvedWorldbook | undefined
   /** Sticky and cooldown windows, carried between turns. */
   timedEffects: TimedEffectState | undefined
+  /**
+   * What the cache classifier has learned about this chat's contributions.
+   *
+   * Carried between turns for the same reason the timed windows are: the
+   * knowledge is the product of turns that already happened, and re-deriving it
+   * costs a cache miss per contribution. Absent until the first assembly.
+   */
+  volatility: VolatilityRecord | undefined
   /** The turn currently streaming, if any. */
   pending: PendingTurn | undefined
   /**
@@ -496,6 +563,10 @@ export class ChatEntry {
     // host restarted would otherwise let a sticky entry lapse (or a cooled entry
     // fire) silently.
     this.timedEffects = readTimedEffects(input.header.chat_metadata)
+    // Same reasoning one line up, for the same reason: restored on every
+    // construction path (open, branch, import) so a restart does not re-pay for
+    // classifications this conversation already earned.
+    this.volatility = readVolatility(input.header.chat_metadata)
     // Assigned before the first `#makeStore`, and held, because `rebuild` makes
     // a new store: a backend created inside `#makeStore` would drop every script
     // table the moment a message was edited.

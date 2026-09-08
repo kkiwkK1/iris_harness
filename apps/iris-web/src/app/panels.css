@@ -1970,6 +1970,37 @@
   overflow-wrap: anywhere;
 }
 
+/* A part the cache-friendly order sends after the conversation rather than from
+   where it sits. The row is not dimmed — the section is still in the request,
+   in full — so the mark is a badge on its own line under the label, and the
+   only change to the row is a marker in the gutter. */
+.iris-prompt__row--deferred {
+  border-left: 2px solid var(--iris-warn);
+  padding-left: 6px;
+  margin-left: -8px;
+}
+
+/* The other direction: a depth part that held still and was pulled into the
+   prefix. Marked in the accent rather than the warning colour, because it is
+   the cheaper of the two moves — the part is unchanged, and what moved is only
+   how early the model reads it. */
+.iris-prompt__row--promoted {
+  border-left: 2px solid var(--iris-accent);
+  padding-left: 6px;
+  margin-left: -8px;
+}
+
+.iris-prompt__deferred {
+  display: block;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--iris-warn);
+}
+
+.iris-prompt__deferred--promoted {
+  color: var(--iris-accent);
+}
+
 .iris-prompt__share {
   text-align: right;
 }

@@ -25,6 +25,32 @@ export interface ItemRow {
   entry: PromptItemEntry
   /** Fraction of the total, 0–1. */
   share: number
+  /**
+   * One-based position in the host's own list, and its length.
+   *
+   * The host sends entries in **contribution** order — the order the preset and
+   * the card asked for. Both display orders reshuffle that, so a row moved by
+   * the cache-friendly reorder has to be able to say where it came from, and
+   * "row 8 of 41" is the only form of that a reader can use: the ids are UUIDs
+   * and the orders are internal numbers.
+   */
+  origin: { at: number, total: number }
+}
+
+/**
+ * Where in the request a row is actually sent, as a sort rank.
+ *
+ * Coarse on purpose — three phases, not a message index. The host's breakdown
+ * has one aggregate row for the whole conversation, so there is no finer
+ * position to be had, and a rank that pretended otherwise would be a number the
+ * contract cannot support.
+ * @param entry - the row.
+ * @returns 0 for promoted, 1 for in place, 2 for deferred.
+ */
+function phaseOf(entry: PromptItemEntry): number {
+  if (entry.promoted === true) return 0
+  if (entry.deferred === true) return 2
+  return 1
 }
 
 /**
@@ -36,7 +62,15 @@ export interface ItemRow {
  * assembly order and discarding it would throw away information the host went to
  * the trouble of preserving.
  *
- * Ties keep assembly order, so a re-render cannot reshuffle equal rows.
+ * Ties keep the host's order, so a re-render cannot reshuffle equal rows.
+ *
+ * **`assembly` is no longer the host's order verbatim.** With
+ * `GenerationSettings.cacheFriendly` on, a `deferred` row is sent after the
+ * whole conversation and a `promoted` one before it, neither from where it sits
+ * in the list — so this order groups the rows into those three phases. The
+ * host's list stays contribution order (that is the reading the *other* button
+ * wants, and `origin` preserves it either way); making the assembly view agree
+ * with the request is the whole point of its name.
  * @param entries - the entries as the host sent them.
  * @param order - the chosen order.
  * @param total - the reported total, used for each row's share.
@@ -53,13 +87,20 @@ export function rowsFor(
     // Guarded rather than assumed: a zero total is a real answer for an empty
     // chat, and dividing by it would put NaN into every bar width.
     share: total > 0 ? entry.tokens / total : 0,
+    origin: { at: at + 1, total: entries.length },
   }))
 
   if (order === 'size') {
     rows.sort((left, right) => right.entry.tokens - left.entry.tokens || left.at - right.at)
+  } else {
+    // Three phases, in the order the request carries them: promoted rows first
+    // (they are sent ahead of the conversation), then everything in its own
+    // place, then deferred rows (sent after it). Within a phase the host's
+    // order stands, so a re-render cannot reshuffle anything.
+    rows.sort((left, right) => phaseOf(left.entry) - phaseOf(right.entry) || left.at - right.at)
   }
 
-  return rows.map(({ entry, share }) => ({ entry, share }))
+  return rows.map(({ entry, share, origin }) => ({ entry, share, origin }))
 }
 
 /**

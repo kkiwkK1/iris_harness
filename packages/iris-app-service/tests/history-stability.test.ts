@@ -192,9 +192,16 @@ async function fixture(t: TestContext, options: { squash?: boolean } = {}): Prom
   await handlers['worldbook.setGlobalSelect']({ names: ['atlas'] })
   const created = await handlers['chat.create']({ characterId: 'aria' })
   const chatId = created.view.chatId
-  if (options.squash === true) {
-    await handlers['settings.set']({ chatId, settings: { squashSystemMessages: true } })
-  }
+  // These tests assert upstream's own order — depth injections after the floors
+  // they are anchored to — because the question here is whether the *history*
+  // side holds still between two requests. Cache-friendly assembly (on by
+  // default) deliberately promotes settled depth content in front of the first
+  // floor and would answer a different question inside the same assertions, so
+  // the fixture pins it off; `cache-friendly-assembly.test.ts` owns that order.
+  await handlers['settings.set']({
+    chatId,
+    settings: { cacheFriendly: false, ...options.squash === true ? { squashSystemMessages: true } : {} },
+  })
 
   return {
     handlers,

@@ -219,7 +219,12 @@ function Breakdown({
 
       <ul className="iris-prompt__rows">
         {rows.map(row => (
-          <li className="iris-prompt__row" key={row.entry.id}>
+          <li
+            className={`iris-prompt__row${
+              row.entry.deferred === true ? ' iris-prompt__row--deferred' : ''}${
+              row.entry.promoted === true ? ' iris-prompt__row--promoted' : ''}`}
+            key={row.entry.id}
+          >
             <span className={`iris-prompt__kind iris-prompt__kind--${row.entry.kind}`}>
               {row.entry.kind === 'depth' ? `@${row.entry.depth ?? 0}` : row.entry.kind}
             </span>
@@ -227,6 +232,30 @@ function Breakdown({
             <span className="iris-prompt__label" title={row.entry.id}>
               {row.entry.label}
               {row.entry.role === undefined ? null : <span className="iris-meta"> {row.entry.role}</span>}
+              {/*
+                Both halves, always together. The badge says the row is not
+                being sent from where it sits; the position says where it sits,
+                which is where the reader put it and where they will go to
+                change it. A badge without the position would tell someone their
+                prompt moved and give them nowhere to look.
+              */}
+              {row.entry.deferred !== true && row.entry.promoted !== true
+                ? null
+                : (
+                    <span
+                      className={row.entry.promoted === true
+                        ? 'iris-prompt__deferred iris-prompt__deferred--promoted'
+                        : 'iris-prompt__deferred'}
+                      title={t(row.entry.promoted === true ? 'promptPromotedAria' : 'promptDeferredAria')}
+                      data-control={row.entry.promoted === true ? 'prompt-promoted' : 'prompt-deferred'}
+                    >
+                      {t(row.entry.promoted === true ? 'promptPromoted' : 'promptDeferred')}
+                      <span className="iris-meta">
+                        {' '}
+                        {t('promptDeferredWhere', { n: row.origin.at, total: row.origin.total })}
+                      </span>
+                    </span>
+                  )}
             </span>
             {/*
               A zero-token part reads as "empty", not as "0". They are common — 14

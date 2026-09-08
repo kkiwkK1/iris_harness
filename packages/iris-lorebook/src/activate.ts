@@ -71,6 +71,22 @@ export interface PreparedEntry extends ScanEntry {
   decorators: string[]
   /** Content hash. Identifies the entry to timed-effect state across turns. */
   hash: number
+  /**
+   * `content` as authored, before the scan expands its macros in place.
+   *
+   * The scan overwrites `content` with the expanded text, exactly as upstream
+   * does, so by the time a caller reads an activated entry the `{{roll}}` it
+   * was written with is already a number. A caller that has to know what the
+   * author wrote — a cache classifier asking "will this be the same text next
+   * turn?" — cannot recover it from anywhere else.
+   *
+   * **Not part of {@link PreparedEntry.hash}.** That hash identifies the entry
+   * to persisted sticky and cooldown windows (`chat_metadata.timedWorldInfo`),
+   * and it is taken over `JSON.stringify` of the prepared object — so adding a
+   * field inside that object would have changed every hash and silently reset
+   * every timed window in every chat file on disk.
+   */
+  source: string
 }
 
 /**
@@ -872,7 +888,11 @@ export function activateEntries(options: ActivateOptions): ActivationResult {
   const sortedEntries: PreparedEntry[] = options.entries.map((entry) => {
     const [decorators, content] = parseDecorators(entry.content || '')
     const prepared = { ...entry, decorators, content }
-    return { ...prepared, hash: stringHash(JSON.stringify(prepared)) }
+    // `source` is added *outside* the object the hash is taken over, and it has
+    // to stay that way: the hash keys persisted timed-effect windows, so
+    // stirring a new field into it would reset every sticky and cooldown window
+    // in every chat file. `PreparedEntry.source` says so too.
+    return { ...prepared, source: content, hash: stringHash(JSON.stringify(prepared)) }
   })
 
   const rank = new Map<PreparedEntry, number>()

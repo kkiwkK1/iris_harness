@@ -348,6 +348,8 @@ export const en = {
   samplingSet: '{count} set',
   repliesTrim: 'trim',
   repliesSquash: 'merge',
+  /** Named only when off: this one is on by default (see `cacheFriendly`). */
+  repliesCacheOff: 'cache order off',
   repliesContinue: 'continue: {word}',
   aboutSummary: 'startup · backup · credentials',
 
@@ -604,6 +606,8 @@ export const en = {
   postfixDouble: 'a blank line',
   squashSystemMessages: 'Merge adjacent injections',
   squashSystemMessagesNote: 'Send consecutive system-placed injections as one message instead of several.',
+  cacheFriendly: 'Cache-friendly order',
+  cacheFriendlyNote: 'Send the parts that change every turn after the conversation instead of at the top, so the provider’s prefix cache keeps serving everything in front of them. On by default; turning it off restores SillyTavern’s order exactly.',
   showFloorNumbers: 'Show floor numbers',
   showFloorNumbersNote: 'Number each message in the margin, as the chat search’s floor references do.',
   autoOpenChat: 'Open the most recent conversation on start',
@@ -1018,6 +1022,17 @@ export const en = {
   droppedToFit: '{n} earlier messages dropped to fit',
   overBudget: 'over budget',
   tokenEmpty: 'empty',
+  /**
+   * A row the cache-friendly order moved. `{n}` / `{total}` are the position it
+   * holds in the preset's own order, which is where the reader put it and where
+   * they will look for it.
+   */
+  promptDeferred: 'moved back (cache-friendly)',
+  /** The other direction: a depth injection observed unchanged, pulled into the prefix. */
+  promptPromoted: 'moved forward (cache-friendly)',
+  promptDeferredWhere: 'was #{n} of {total}',
+  promptDeferredAria: 'Moved after the conversation for the prefix cache',
+  promptPromotedAria: 'Moved before the conversation for the prefix cache, because it has not changed',
 
   /** Cleanup dialog. */
   cleanupTitle: '[MVU] Automatic cleanup',
@@ -1192,6 +1207,12 @@ export const en = {
   contextCategoryOther: 'Other',
   contextRemaining: '{tokens} left',
   contextReserve: '{tokens} held back for the reply',
+  /**
+   * The estimated ceiling, beside the provider's own `usageCacheHit` reading.
+   * Worded as an estimate — 「估算」's vocabulary, `STRINGS.md` §三 — because it
+   * is: the two lines sit together and must not read as the same kind of number.
+   */
+  contextStablePrefix: 'Stable prefix ~{percent}% ({tokens})',
   /** Which of the two answers this is: a record of a sent request, or a preview. */
   contextFromRecord: 'Measured on turn {turn}',
   contextFromPreview: 'A preview of the next request',
@@ -1533,6 +1554,7 @@ export const zh: Record<StringKey, string> = {
   samplingSet: '已设 {count} 项',
   repliesTrim: '裁剪',
   repliesSquash: '合并',
+  repliesCacheOff: '缓存顺序已关',
   repliesContinue: '续写：{word}',
   aboutSummary: '启动 · 备份 · 凭据',
 
@@ -1773,6 +1795,8 @@ export const zh: Record<StringKey, string> = {
   postfixDouble: '一个空行',
   squashSystemMessages: '合并相邻注入',
   squashSystemMessagesNote: '把连续多条系统位注入合并成一条消息发给模型。',
+  cacheFriendly: '缓存友好装配',
+  cacheFriendlyNote: '把每回都变的部分从提示词开头挪到对话之后再发，让服务端的前缀缓存能一直命中它前面的全部内容。默认开启；关掉后逐字节回到 SillyTavern 的顺序。',
   showFloorNumbers: '显示楼层号',
   showFloorNumbersNote: '在页边给每条消息编号，与聊天搜索里的楼层引用一致。',
   autoOpenChat: '启动时打开最近的对话',
@@ -2172,6 +2196,11 @@ export const zh: Record<StringKey, string> = {
   droppedToFit: '为装下这些，已丢弃更早的 {n} 条消息',
   overBudget: '超出预算',
   tokenEmpty: '空',
+  promptDeferred: '已后移（缓存友好）',
+  promptPromoted: '已前移（缓存友好）',
+  promptDeferredWhere: '原位置第 {n} / {total} 条',
+  promptDeferredAria: '为前缀缓存移到了对话之后',
+  promptPromotedAria: '这段跨轮逐字未变，为前缀缓存移到了对话之前',
 
   /** 清理对话框。 */
   cleanupTitle: '[MVU] 自动清理',
@@ -2282,6 +2311,7 @@ export const zh: Record<StringKey, string> = {
   contextCategoryOther: '其他',
   contextRemaining: '还剩 {tokens}',
   contextReserve: '为回复留出 {tokens}',
+  contextStablePrefix: '稳定前缀 约 {percent}%（{tokens}）',
   contextFromRecord: '第 {turn} 回实测',
   contextFromPreview: '下一条请求的预览',
 

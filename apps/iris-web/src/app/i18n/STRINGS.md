@@ -274,3 +274,11 @@ safeRead/safeWrite 容错。理由：`notes/SETTINGS-IA.md` 把「屏幕上有�
 | `ScriptEditor.tsx` 按钮表 | 一行一个按钮：名字、是否显示、删除。注里说清隐藏的按钮**仍然会发事件**——脚本常把它们当成自己调用的命令，这是 58/89 那个比例的来由 | `libraryFieldButtons libraryButtonsEnabled libraryButtonName libraryButtonVisible libraryButtonRemove libraryAddButton libraryButtonsNote` |
 | `CharacterPage.tsx` 脚本来源 | **改写**：来源那一格原本是常量 `faceScriptInCard`，旁边还有一条注释说「`script.list` 只答卡内嵌，没有第二档」。那句话写的时候是真的，脚本库一出现就不再是真的，而常量在错误前提下照样渲染得很好——没有任何东西会发现。现在读 `script.source`，多出两句 | `faceScriptGlobal faceScriptCharacter` |
 | `CharacterPage.tsx` 脚本栏新增 | 「其中 N 个是你自己的」只在有非卡内嵌行时出现：上面那个计数是 `character.scriptCount`，一张卡的事实，三个仓合起来之后「3」压在五行上面会被读成数错了。加脚本的按钮在这一页——这一页**拒绝**改卡内嵌脚本的开关（§57），区别在于写到哪个库：`script.setEnabled` 的作用域是正在对话的那张卡，而脚本库的写入自己指名角色 | `faceScriptsOfYours faceAddScript` |
+
+任务 C（缓存友好装配，`dev/cache-aware-assembly`）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `SettingsDrawer.tsx` 回复卡 | 「缓存友好装配」开关与注。**这是这张卡上唯一默认开的开关**，所以注里把两件事都写出来：搬的是「每回都变的部分」（而不是随便重排），以及关掉之后逐字节回到 SillyTavern 的顺序。摘要那一行只在**关掉时**才出现，和另外两个开关正好相反——默认开的控件，值得在卡头上说的状态是「被关掉了」 | `cacheFriendly cacheFriendlyNote repliesCacheOff` |
+| `PromptPanel.tsx` 被搬动的行 | 徽标 + 原位置两句必须同时出现。只给徽标等于告诉读者「你的提示词被搬走了」却不告诉他去哪里改；原位置报的是宿主那张表里的序号（第 N / M 条），因为标识是 UUID、`order` 是内部数字，「五条里的第三条」是读者唯一能照着动手的说法。**前移与后移必须是两个徽标**：两者含义相反（发在对话之前 / 之后），一句「已移动」恰好把读者唯一需要知道的那件事省掉了 | `promptDeferred promptPromoted promptDeferredWhere promptDeferredAria promptPromotedAria` |
+| `ContextMeter.tsx` 稳定前缀 | 单独一行，紧贴 `usageCacheHit` 但**不能合成一句**：那一行是提供方回报的实测计费，这一行是宿主对「这份装配留下多少可复用」的估算。措辞照 §三 的约定走「估算」那一套（「约 X%」），两种数并列的地方只有这张卡 | `contextStablePrefix` |

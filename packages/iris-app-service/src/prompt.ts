@@ -27,6 +27,7 @@ import {
 } from '@iris/lorebook'
 
 import type { InsertionStrategy } from '@iris/protocol'
+import { isEntropic } from './cache-friendly.ts'
 import type { ResolvedWorldbook } from './worldbooks.ts'
 import type { ActivePersona } from './persona.ts'
 import { DEFAULT_WORLDBOOK_SETTINGS } from './worldbook-settings.ts'
@@ -251,6 +252,21 @@ export interface PromptResult {
   timedEffects: TimedEffectState
   /** World-info entries that fired, for diagnostics. */
   activated: PreparedEntry[]
+  /**
+   * Contribution ids whose **pre-expansion** text carries a feature that makes
+   * it render differently next turn — see `cache-friendly.ts`.
+   *
+   * Computed here because this is the last layer that still has the text as its
+   * author wrote it. Everything in {@link PromptResult.contributions} is
+   * already expanded, so a `{{roll}}` has become a number and no downstream
+   * consumer can tell it from a constant.
+   *
+   * A **prediction**, and only used on a contribution's first sighting; from
+   * the second turn the host compares content hashes instead. The set is
+   * reported rather than applied so the two instruments stay separable —
+   * "predicted" and "measured" are different claims about the same id.
+   */
+  entropic: string[]
 }
 
 /** Map a world-info injection role onto the pipeline's vocabulary. */
@@ -382,6 +398,19 @@ export function scanEntriesOf(
 /** Join a bucket's entries into one block of prompt text. */
 function joinEntries(entries: readonly PreparedEntry[]): string {
   return entries.map(entry => entry.content).filter(text => text.trim().length > 0).join('\n')
+}
+
+/**
+ * The same join taken over the entries **as authored**, for the cache classifier.
+ *
+ * {@link joinEntries} reads `content`, which the scan has already rewritten with
+ * this turn's expansions; `source` is what the author wrote. Joined the same way
+ * so a macro cannot fall in a seam between two entries.
+ * @param entries - a position bucket.
+ * @returns the bucket's pre-expansion text.
+ */
+function joinSources(entries: readonly PreparedEntry[]): string {
+  return entries.map(entry => entry.source).filter(text => text.trim().length > 0).join('\n')
 }
 
 /**
@@ -615,6 +644,34 @@ export function buildPrompt(input: PromptInput): PromptResult {
     ].filter(text => text.trim().length > 0).join('\n'),
   }
 
+  // The same table taken over the text **as authored**, for the cache
+  // classifier. A marker's contribution carries the marker's *filled* value, so
+  // by the time `resolvePreset` has run the world info in `worldInfoAfter` is
+  // already expanded and its `{{roll}}` is a number. This is the only place
+  // both halves exist, which is why the parallel table is built rather than
+  // recovered later. Keys must match `markers` exactly: a marker present here
+  // and absent there would be classified against nothing.
+  const markerSources: MarkerSources = {
+    worldInfoBefore: joinSources(scan.buckets.before),
+    worldInfoAfter: joinSources(scan.buckets.after),
+    personaDescription: input.persona?.position === 'inprompt' ? input.persona.description : '',
+    charDescription: data?.description ?? '',
+    // The **unexpanded** formats, unlike `markers`: a `scenario_format` that
+    // reads `{{time}}` makes the section volatile, and the expanded copy has
+    // already lost the evidence.
+    charPersonality: personality === ''
+      ? ''
+      : `${formatOf(input.preset, 'personality_format', DEFAULT_PERSONALITY_FORMAT)}\n${personality}`,
+    scenario: scenario === ''
+      ? ''
+      : `${formatOf(input.preset, 'scenario_format', DEFAULT_SCENARIO_FORMAT)}\n${scenario}`,
+    dialogueExamples: [
+      joinSources(scan.buckets.emTop),
+      data?.mes_example ?? '',
+      joinSources(scan.buckets.emBottom),
+    ].filter(text => text.trim().length > 0).join('\n'),
+  }
+
   // Expanded once, here, over everything the preset produced. A preset's own
   // prompt text uses `{{char}}` as freely as a card's description does, so
   // expanding only the marker sources would leave the instruction that actually
@@ -629,8 +686,24 @@ export function buildPrompt(input: PromptInput): PromptResult {
     markers,
     ...input.generationType === undefined ? {} : { generationType: input.generationType },
   }
+  // Predicted-volatile ids, collected as each contribution is built, because
+  // that is the only moment its authored text is in scope. See
+  // `PromptResult.entropic`.
+  const entropic = new Set<string>()
+  const noteEntropic = (id: string, ...sources: (string | undefined)[]): void => {
+    if (sources.some(text => text !== undefined && isEntropic(text))) entropic.add(id)
+  }
+
   const contributions = resolvePreset(preset, resolveOptions)
-    .map(contribution => ({ ...contribution, text: expand(contribution.text) }))
+    .map((contribution) => {
+      // Two sources per row, and both are needed. A **marker**'s own text is
+      // already the filled value (world info, expanded during the scan), so
+      // `markerSources` is the authored half; a plain prompt's text is the
+      // preset's `content`, still unexpanded at this point. Passing both means
+      // one call covers markers and prompts without asking which this is.
+      noteEntropic(contribution.id, contribution.text, markerSources[contribution.id])
+      return { ...contribution, text: expand(contribution.text) }
+    })
 
   // The slots that were there and had nothing to put in them, as zeroes.
   contributions.push(...emptyMarkerRows(preset, resolveOptions, contributions))
@@ -640,6 +713,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
   // relative order is still honoured, which is what the two positions mean.
   const authorNote = [...scan.buckets.anTop, ...scan.buckets.anBottom]
   if (authorNote.length > 0) {
+    noteEntropic('worldInfo.authorNote', joinSources(authorNote))
     contributions.push({
       id: 'worldInfo.authorNote',
       label: 'World Info (author’s note)',
@@ -654,6 +728,14 @@ export function buildPrompt(input: PromptInput): PromptResult {
   for (const bucket of scan.buckets.atDepth) {
     const text = joinEntries(bucket.entries)
     if (text.trim().length === 0) continue
+    // Noted even though a depth placement is never *moved*: the mark is what
+    // makes `stablePrefixTokens` stop at a volatile injection sitting **inside**
+    // the conversation (depth ≥ 1), which is a loss the reorder cannot repair
+    // and the reading has to be honest about.
+    noteEntropic(
+      `worldInfo.depth.${String(bucket.depth)}.${String(bucket.role)}`,
+      joinSources(bucket.entries),
+    )
     contributions.push({
       id: `worldInfo.depth.${String(bucket.depth)}.${String(bucket.role)}`,
       // Labelled because the itemization view renders labels, and a row reading
@@ -671,6 +753,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
   // (default system). Same shape as the card's note below, which is why it
   // rides the same depth placement.
   if (input.persona?.position === 'atdepth') {
+    noteEntropic('persona.depthPrompt', input.persona.description)
     contributions.push({
       id: 'persona.depthPrompt',
       label: 'Persona Description',
@@ -682,6 +765,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
   // The character's note, ST's per-card depth prompt.
   const depthPrompt = data?.extensions.depth_prompt
   if (depthPrompt !== undefined && depthPrompt.prompt.trim().length > 0) {
+    noteEntropic('card.depthPrompt', depthPrompt.prompt)
     contributions.push({
       id: 'card.depthPrompt',
       label: 'Character’s Note',
@@ -692,7 +776,12 @@ export function buildPrompt(input: PromptInput): PromptResult {
     })
   }
 
-  return { contributions, timedEffects: scan.timedEffects, activated: scan.activated }
+  return {
+    contributions,
+    timedEffects: scan.timedEffects,
+    activated: scan.activated,
+    entropic: [...entropic],
+  }
 }
 
 /**

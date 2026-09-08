@@ -67,6 +67,10 @@ function repliesSummaryOf(settings: GenerationSettings): string {
   const parts: string[] = []
   if (settings.trimSentences === true) parts.push(t('repliesTrim'))
   if (settings.squashSystemMessages === true) parts.push(t('repliesSquash'))
+  // Named only when it is OFF, the mirror of the two above: this one is on by
+  // default, so its interesting state — the one a reader wants the summary to
+  // surface without opening the card — is having been switched off.
+  if (settings.cacheFriendly === false) parts.push(t('repliesCacheOff'))
   parts.push(t('repliesContinue', { word: t(POSTFIX_LABEL[settings.continuePostfix ?? 'space']) }))
   return parts.join(' · ')
 }
@@ -360,6 +364,18 @@ export function SettingsDrawer({
                 note={t('squashSystemMessagesNote')}
                 value={settings.squashSystemMessages === true}
                 onToggle={next => patch('squashSystemMessages', next)}
+              />
+              {/*
+                The one switch on this card whose **absence means on**, so the
+                value reads `!== false` rather than `=== true`. Spelled out here
+                rather than folded into a helper: the asymmetry is the fact a
+                reader of this line needs, and a helper would hide it.
+              */}
+              <ToggleField
+                label={t('cacheFriendly')}
+                note={t('cacheFriendlyNote')}
+                value={settings.cacheFriendly !== false}
+                onToggle={next => patch('cacheFriendly', next)}
               />
             </CollapsibleSection>
           </>

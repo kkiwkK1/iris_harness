@@ -775,6 +775,27 @@ export interface PromptItemEntry {
   /** For a depth injection, how many messages from the end it sits. */
   depth?: number
   role?: ViewRole
+  /**
+   * True when {@link GenerationSettings.cacheFriendly} moved this section out
+   * of the system prompt and into the volatile segment after the conversation.
+   *
+   * The row keeps its place in {@link PromptItemization.entries} — that list is
+   * contribution order, which is the order the preset and the card asked for —
+   * so a surface can say both things at once: where the user put it, and that
+   * it is not being sent from there. A surface showing *assembly* order sorts
+   * the flagged rows to the end itself.
+   */
+  deferred?: boolean
+  /**
+   * True when {@link GenerationSettings.cacheFriendly} moved this depth
+   * injection *forward*, out of the conversation and into the stable prefix.
+   *
+   * The mirror of {@link deferred}, and the direction with the larger effect
+   * and the larger semantic cost: a depth injection is written to sit a fixed
+   * number of floors from the end, and a promoted one arrives before the
+   * transcript instead. The row is the only place a person can see that.
+   */
+  promoted?: boolean
 }
 
 /**
@@ -797,6 +818,22 @@ export interface PromptItemization {
    * reported no usage.
    */
   actualTokens?: number
+  /**
+   * Tokens of the request's leading run that carries no volatile part — the
+   * most a prefix cache could serve on the next turn.
+   *
+   * The reading the cache-friendly reorder exists to move, so it is the reading
+   * that says whether it worked. Against {@link tokens} it is a share: 95% means
+   * a next turn that changes only its newest floors can be served from the
+   * cache down to those floors, and 22% means something near the front of the
+   * request changes every turn (a `{{roll}}` in a world-info entry, measured).
+   *
+   * An estimate of a **ceiling**, on the assumption that existing floors are
+   * not rewritten and the budget does not start trimming from the front —
+   * {@link droppedHistory} beside it is the second of those. Absent when the
+   * host did not compute one; a surface must not read absence as zero.
+   */
+  stablePrefixTokens?: number
   budget: { context: number, reserve: number }
   /** History entries dropped to make the request fit. */
   droppedHistory: number
@@ -1083,6 +1120,24 @@ export interface GenerationSettings {
    * default.
    */
   squashSystemMessages?: boolean
+  /**
+   * Assemble for a prefix cache: move every prompt part that changes from turn
+   * to turn out of the system prompt into one segment after the conversation,
+   * ahead of the depth-0 injections.
+   *
+   * **Absent means ON**, the only field in this type that defaults to on. A
+   * prefix cache serves a request's leading bytes and stops at the first byte
+   * that differs, so a single `{{roll}}` near the front of a world book caps a
+   * whole conversation's hit rate — measured at 21.9% on three real
+   * conversations in this profile (`CACHE-PREFIX.md` §1.3). `false` restores
+   * SillyTavern's order byte for byte; the host's `IRIS_CACHE_FRIENDLY=0`
+   * overrides every chat at once.
+   *
+   * **Not an upstream setting**, and the cost is real: the model reads the
+   * moved instructions later than their author placed them. Recorded in
+   * `notes/packages/iris-app-service/DEVIATIONS.md` §38.
+   */
+  cacheFriendly?: boolean
 }
 
 /**

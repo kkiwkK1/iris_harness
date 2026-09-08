@@ -2953,3 +2953,71 @@ the dense card only, with its second rule `disabled: true`, because 4 of the 19
 real cards carry none and the "this card ships none" branch is the common one;
 and both library scripts switched **off**, which is the state a fresh library is
 in.
+
+## 67. A prompt part the cache-friendly order moved says so, and says where it came from
+
+The host may now send a prompt section somewhere other than where the preset
+put it — `notes/packages/iris-app-service/DEVIATIONS.md` §38 explains the
+mechanism and what it costs. **A reorder the interface does not show is a
+reorder the user cannot debug**, so two surfaces carry it, and each answers a
+different question.
+
+### The prompt panel: "my instruction is not where I put it"
+
+The host sends `PromptItemization.entries` in **contribution order** — the order
+the preset and the card asked for — and marks a moved row `deferred` (sent after
+the conversation) or `promoted` (sent before it). The panel does two things with
+that, and both are needed:
+
+- **「按装配顺序」 groups the rows into the three phases the request carries** —
+  promoted, in place, deferred. A view named "assembly order" that showed a row
+  in a position the request does not use would be describing something that
+  never happened. The grouping is deliberately coarse: the host's breakdown has
+  one aggregate row for the whole conversation, so there is no finer position to
+  be had, and a rank that pretended otherwise would be a number the contract
+  cannot support. 「从大到小」 is untouched: it answers "what is eating my
+  context", and position is no part of that question.
+- **The row itself carries 「已前移（缓存友好）」 or 「已后移（缓存友好）」, plus
+  「原位置第 N / M 条」.** Two badges rather than one, because the two moves have
+  opposite meanings — "sent after the transcript" and "sent before it" — and a
+  single 「已移动」 would leave the reader unable to tell which way, which is the
+  only thing they need. The badge alone would also tell someone their prompt
+  moved and give them nowhere to look; the position is the row's index in the
+  host's own list, which is where they put it and where they will go to change
+  it. The ids are UUIDs (29 of 41 prompts in a real preset) and the `order`
+  numbers are internal, so "third of five" is the only form of that answer a
+  reader can act on.
+
+The row is **not** dimmed and not moved out of the table. The section is still
+in the request, in full — only somewhere else. The visual mark is a rule in the
+gutter plus a small line under the label, drawn in the accent colour for the
+forward move and the warning colour for the backward one: they do not cost the
+same. A promoted part is unchanged and only arrives earlier; a deferred part is
+one the host has decided *does* change.
+
+### The context card: "how much of this request is reusable"
+
+`PromptItemization.stablePrefixTokens` over the request's total, printed as
+「稳定前缀 约 X%（N）」. It sits on its own line beside
+「缓存命中 X%」 and must never share a sentence with it: that line is the
+**provider's own accounting of what happened**, this one is the host's
+**estimate of a ceiling** the assembly leaves available. `STRINGS.md` §三 pins
+that vocabulary split, and this is the one card where the two kinds of number
+sit together.
+
+It shows even when the provider has said nothing about caching, because a prompt
+shaped badly for the cache is worth seeing before the first bill arrives. And
+`stablePrefix()` returns `null` rather than 0 when the field is absent: "the host
+sent no reading" and "nothing in this request is reusable" are different facts,
+and a `?? 0` would print the second whenever the first was true.
+
+### The switch
+
+The replies card gets 「缓存友好装配」, and it is the **only** toggle on that card
+whose absence means **on** — `settings.cacheFriendly !== false`, written out
+rather than folded into a helper, because a copy-paste of its neighbours'
+`=== true` would show every fresh installation a switch that is off while the
+host reorders anyway. The card's one-line summary names it only when it is
+**off** (「缓存顺序已关」), the mirror of how the other two switches are named
+only when on: for a default-on control, the state worth surfacing without
+opening the card is having been switched off.
