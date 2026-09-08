@@ -2517,3 +2517,218 @@ with the preset tier, green.
 The fix is `TIER_ORDER`, a rank kept separate from `SCRIPT_TYPE` precisely
 because the two disagree, and the test now asserts that they still disagree —
 so a future renumbering cannot silently make the case stop discriminating.
+
+## 39. History is trimmed in blocks of floors, not one floor at a time — so the oldest floor the model sees holds still
+
+**Kind: deliberate deviation, for prefix caching. Measured before and after.**
+
+Upstream's budget trim keeps newest-first and stops at the first message that
+does not fit (`openai.js:1061-1065` — `canAfford`, else `break`), rebuilding the
+budget from scratch on every generation (`:1558`, a fresh `ChatCompletion` and
+`setTokenBudget`). It remembers no boundary: the only stored artefact,
+`chat_metadata.lastInContextMessageId`, is written by `setInContextMessages`
+(`script.js:6041`) and read by two macro definitions and nothing else — a grep
+over `public/**/*.js` finds no path back into `populateChatHistory`. So from the
+first overflow to the end of the chat, **the oldest floor the model is shown
+moves on every turn.**
+
+Against a provider that serves a cached prompt only up to the first changed byte
+of the request prefix, that is the worst shape a long conversation can have: the
+conversation now starts one floor later than the cached copy does, so the whole
+thing is re-billed, every turn, for as long as the chat lives. `CACHE-PREFIX.md`
+§3's proposal C already named this the most expensive kind of loss in a long
+chat; this is the measurement and the change.
+
+**What Iris does instead.** `trimHistory` rounds the number of dropped floors
+**up** to a multiple of `Budget.trimBlockFloors`
+(`DEFAULT_TRIM_BLOCK_FLOORS = 8`, four exchanges; `trimBlockFloors` on the
+`@iris/app-service` config row, `IRIS_TRIM_BLOCK` in `apps/iris/cordis.yml`,
+`0` restoring upstream exactly). The count then has to climb a whole block
+before the boundary moves again — about `block / 2` turns, since an exchange is
+two floors — and while it does not move, the entire prefix ahead of the newest
+exchange is byte-identical to the previous turn's. Two guards: a conversation
+that still fits is never cut (the block is the price of a trim, not a standing
+tax), and the drop is clamped so at least one trimmable floor always survives.
+
+**The cost, named.** At the moment of a cut, up to `block - 1` floors the budget
+could still have afforded are given up — the oldest ones, which is also the span
+automatic compaction (§29, threshold 80% of the same budget) is meant to have
+replaced with a summary long before the trimmer ever runs.
+
+**The unit took a measurement to get right, and that is the part worth
+remembering.** The first implementation expressed the block as a *share of the
+token budget* and subtracted it before selecting, on the theory that the
+leftover would be headroom. It is not: the selection adds floors until the next
+one overflows, so whatever the target, the slack left behind is only the size of
+the floor that did not fit — and the boundary advances on the next turn exactly
+as before. Run against six adjacent rounds of the operator's own longest
+conversation, that version was byte-for-byte indistinguishable from upstream.
+The boundary is an **index**, so the quantum has to be an index.
+
+**Measured** (`scripts/cache-history-probe.mjs`, 2026-09-08, 爱衣 at 27 floors,
+`contextWindow` narrowed to 18 000 so the trimmer engages — at the product's
+32 768 no conversation in this corpus is trimmed at all, because the world-info
+budget is a percentage of the window and shrinks with it):
+
+| | oldest sent floor moved | mean conversation ceiling | mean body ceiling |
+|---|---|---|---|
+| `trimBlockFloors: 0` (upstream) | **4 of 6 rounds** | 21.4% | 47.8% |
+| `trimBlockFloors: 8` (default) | **1 of 6 rounds** | 27.8% | 54.7% |
+
+With the block, the boundary held across four consecutive rounds (dropped count
+16, 16, 16, 16) and the conversation's own prefix ceiling climbed turn by turn
+as the held prefix accumulated — 17.6%, 20.6%, 23.5%, 26.2%. Without it, three
+of the four comparable rounds start over from the pinned greeting at 12–13%.
+
+**Threshold ordering, written down because the two mechanisms answer the same
+pressure.** Compaction fires at `0.8 × (context − reserve)` (§29); the trim
+fires when that same figure is reached in full, since `assemble` spends
+`context − reserve − fixed` on history. So compaction always gets there first
+and a block cut is the fallback rather than the plan —
+`history-stability.test.ts`'s last test is where that ordering is asserted
+instead of assumed. One gap is known and deliberately left alone:
+`#autoCompact` reads the **previous** turn's itemization out of
+`ChatEntry.itemizations`, which is in-memory, so the first generation after a
+host restart cannot compact, and a conversation already over the threshold can
+take one block cut before the compaction machinery has a reading to act on.
+
+**What would overturn it.** A conversation where the block's over-trim costs
+context the model visibly needed. The answer then is not a smaller block but an
+earlier compaction, since the block only runs where compaction has already
+failed to.
+
+## 40. `script.generate` assembles under the chat's own window and squash, not the composition's defaults
+
+**Kind: compatibility fix. Both halves were prefix breakers.**
+
+`#sideGenerate` — the assembly behind a card's `TavernHelper.generate` — built
+its budget from the composition's `contextWindow` rather than from the chat's
+(`windowOf`, which prefers the active preset's `openai_max_context` and any
+per-chat override), and never applied the chat's `squashSystemMessages`.
+Upstream has no separate budget and no separate squash for a card's generate at
+all: it goes through the same `Generate` → `prepareOpenAIMessages`, so it gets
+the same `openai_max_context` and the same squash at `openai.js:1599`.
+
+Both differences show up as one defect. A card's side call is meant to be a
+genuine **prefix** of the conversation it belongs to — the same reasoning §29's
+summarizer call is built on — and a call that trimmed at a different floor, or
+that sent the same depth injections in a different shape, stops being one and
+re-pays for the whole history. Pinned by two tests in
+`history-stability.test.ts`. The window one is asserted on the *amount* of
+conversation that comes back rather than on the first row, because the greeting
+is pinned and row 0 survives every trim: the first version of that assertion
+compared row 0 and stayed green with the fix reverted.
+
+## 41. The squash separator was a blank line; upstream's is one newline
+
+**Kind: compatibility fix, found while auditing the squash for cache safety.
+Cache-neutral.**
+
+`squashSystemRuns` joined merged system messages with a blank line. Upstream's
+`ChatCompletion.squashSystemMessages` joins with a single newline
+(`openai.js:3846`, `lastMessage.content += '\n' + message.content`) and keeps
+the first message of the run, mutating it in place. Two adjacent injections were
+therefore reaching the model spaced differently than the same two reach
+SillyTavern's, which is a difference in the prompt and not only in the
+whitespace. Corrected, with the citation; the driver test now spells the
+separator as a literal so a later edit has to come to it and say why.
+
+Three of upstream's other guards have no object here, and are recorded as absent
+rather than dropped: it skips empty system messages (`:3836`, and
+`injectAtDepth` already refuses a blank contribution), it skips messages
+carrying a `name` (`:3841`, and no system-placed message in this pipeline has
+one — `name` reaches only history entries, which are user or assistant), and it
+exempts `newMainChat` / `newChat` / `groupNudge` (`:3828`), identifiers Iris
+does not mint.
+
+**The squash does not endanger the prefix, and that is measured rather than
+argued.** Six adjacent rounds of 爱衣 assembled with the squash off and then on
+gave the same common-prefix byte counts to the byte (73 985 / 75 350 / 77 180 /
+78 334 / 79 695 / 81 610), and the request-size difference between the two was a
+constant 189 B on every round. The reason is structural: every message the
+squash can merge is either the compaction summary at the head or a depth
+injection, and a depth injection sits a fixed distance from the **end** of the
+conversation, so the merge point cannot wander into text a previous request had
+already sent.
+
+## 42. The continue separator rides on the request; upstream's rides only on the recorded reply
+
+**Kind: deviation, pre-existing, now measured and documented rather than
+changed. The code comment claiming it was upstream's behaviour was wrong.**
+
+`TurnDriver` appends `continue_postfix` to the last assistant message of the
+**request**, so the model is asked to continue text whose boundary it can see.
+Upstream does not. It appends the postfix to `cyclePrompt` and to `continue_mag`
+(`script.js:4916-4921`), and both are output-side: `continue_mag` is prepended
+to the reply it records (`:5346`, `:5452`) — which is what Iris's composite
+candidate does too, so the **stored** floor matches upstream — while
+`cyclePrompt` reaches the request only through the continue nudge's
+`{{lastChatMessage}}` macro, where `String(cyclePrompt).trim()` strips the
+separator straight back off (`openai.js:902`). The request's own copy of the
+continued text comes from `coreChat[…].mes` and carries no postfix.
+
+Left as it is, for two reasons. The cache cost is one separator's worth of bytes
+at the newest floor, which is past the prefix either way — and the behaviour is
+arguably better, which is the §"Iris is an upgrade" case rather than a
+compatibility one. But it is a deviation and the driver's comment presented it
+as parity, so both the comment and this entry now say which half of upstream's
+postfix handling Iris matches and which it does not. Pinned in
+`history-stability.test.ts` so the deviation cannot drift silently in either
+direction.
+
+## 43. Measured, not changed: no already-sent floor is ever re-rendered — every mid-conversation divergence is a depth injection moving
+
+**Kind: audit result. The instrument is the finding.**
+
+An adjacent-round ceiling says *where* two requests diverge. It does not say
+whether the divergence is the tail growing (expected, and unavoidable) or an
+older floor being rendered differently on the newer turn — which would be a
+defect, and the one the history side owns. Those two have opposite fixes and the
+byte offset alone cannot tell them apart: on the operator's own longest
+conversation the two adjacent requests stop agreeing about 20 KB into a 46 KB
+conversation, which reads like a floor changing in the middle.
+
+`scripts/cache-history-probe.mjs`'s `floors` section discriminates. It aligns
+the two message lists from the front, then looks for the older request's first
+non-matching message **anywhere** in the newer one, and classifies:
+
+- `grew` — every message of the older request is still there, byte-identical,
+  and the newer one only added to the end;
+- `moved` — the older text is present at a different index (a depth injection
+  sliding as the conversation grows);
+- `rewritten` — the older text appears nowhere; something re-rendered a floor
+  that had already been sent.
+
+**Result on 爱衣, 2026-09-08, four adjacent rounds (19→21, 21→23, 23→25,
+25→27 floors): zero `rewritten` floors.** The shared head covers every
+already-sent floor on every round (18, 20, 22, 24 messages), and the first
+divergence is in all four cases the first **depth injection** — the same
+~4 785-character block, three times `moved` to a later index by exactly the
+number of messages that round added (18→20 head with the text found at 22,
+20→22 at 24, 22→24 at 27), and once with its own content changed by a single
+character between the two rounds (4 784 vs 4 785). Its content moves because the
+block holds a live variable table and, in this book, a `{{lastUserMessage}}`:
+measured over the same profile, 1 of 18 world books uses a per-turn floor macro
+(`[SG]可攻略女主拒绝被攻略` uid 21) and 0 use `{{lastMessage}}`,
+`{{lastCharMessage}}`, `{{lastMessageId}}` or `{{firstIncludedMessageId}}` —
+and that one entry is `position: 4, depth: 0`, so it sits after the newest floor
+where the prefix has already ended and it costs nothing extra.
+
+So the history projection contributes **no** mid-conversation churn: not the
+naming (`serializeMessages` sends no `name` field and `toMessage` coerces every
+mid-conversation role the same way on every path), and not the prompt-direction
+regex depths either — which was the specific hypothesis worth checking, since
+`#rawHistory` recomputes each floor's `depth` from the conversation's length on
+every generation, so a depth-scoped script would re-render an older floor as it
+aged. Measured: none of these floors changes.
+
+The loss the ceiling actually reports is the geometry of depth anchoring
+(`CACHE-PREFIX.md` §3 proposal B): a block anchored a fixed distance from the
+end moves forward every turn, and everything from it onwards is re-sent and
+re-billed verbatim. That is not a history-side defect and is not fixable from
+here.
+
+**What would overturn it.** A `rewritten` row on any conversation. The probe
+prints the first differing character with 60 characters of context on each side,
+so the next reading names the floor and the script that touched it rather than a
+byte offset.

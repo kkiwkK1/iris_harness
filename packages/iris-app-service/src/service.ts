@@ -19,7 +19,7 @@
 import { BlockAssembler, createAssistantMessage, createUserMessage, isHarnessError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, selectCandidate, selectedCandidate, SwipeError, type Candidate } from '@iris/chat'
-import { assemble, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
+import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
@@ -30,7 +30,7 @@ import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper
 import { checkScriptFetch, extractScripts } from '@iris/script'
 import { defaultRegistry } from '@iris/macro'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
-import { historyFromSession, TurnDriver, type GenerateEvents, type HistoryProjection, type StreamFn } from '@iris/turn'
+import { historyFromSession, squashSystemRuns, TurnDriver, type GenerateEvents, type HistoryProjection, type StreamFn } from '@iris/turn'
 import { randomUUID } from 'node:crypto'
 
 import { PresetStore } from './presets.ts'
@@ -388,6 +388,15 @@ export interface AppServiceOptions {
    */
   templateOverhead?: number
   /**
+   * Drop the oldest floors in multiples of this many when the budget overflows
+   * — `@iris/pipeline`'s `Budget.trimBlockFloors`.
+   *
+   * Absent takes the assembler's default. `0` restores upstream's per-floor
+   * trim, which moves the oldest sent floor on every turn once a chat is full
+   * and costs a prefix miss from that floor on every turn from then on.
+   */
+  trimBlockFloors?: number
+  /**
    * Where the `script` scope persists.
    *
    * Optional like the other stores. It is passed here as well as to the
@@ -539,6 +548,7 @@ export class IrisAppService {
       contextWindow: options.contextWindow ?? 32_768,
       reserveTokens: options.reserveTokens ?? 1024,
       templateOverhead: options.templateOverhead ?? 0,
+      trimBlockFloors: options.trimBlockFloors ?? DEFAULT_TRIM_BLOCK_FLOORS,
       onError: options.onError ?? (() => {}),
       fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
       probeTimeoutMs: options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
@@ -3270,11 +3280,9 @@ export class IrisAppService {
       // is the one this turn asked for: triggers and the continue rule read it.
       contributions: session => this.#contributions(entry, session, count, true, generationType),
       history: (session, projection) => this.#history(entry, session, projection),
-      budget: {
-        context: windowOf(settings, this.#options.contextWindow),
-        reserve: this.#options.reserveTokens,
-        count,
-      },
+      // The same builder every other assembly in this host uses, so the trim
+      // block cannot be in force on one path and absent on another.
+      budget: this.#budget(count, windowOf(settings, this.#options.contextWindow)),
       ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...settings.stop === undefined ? {} : { stop: settings.stop },
@@ -3450,8 +3458,20 @@ export class IrisAppService {
   }
 
   /** The budget every assembly for this host runs under. */
-  #budget(count: (text: string) => number, window?: number): { context: number, reserve: number, count: (text: string) => number } {
-    return { context: window ?? this.#options.contextWindow, reserve: this.#options.reserveTokens, count }
+  #budget(
+    count: (text: string) => number,
+    window?: number,
+  ): { context: number, reserve: number, count: (text: string) => number, trimBlockFloors: number } {
+    return {
+      context: window ?? this.#options.contextWindow,
+      reserve: this.#options.reserveTokens,
+      count,
+      // Carried by every budget this host builds, so the real turn, the
+      // preview, a card's own `generate` and the itemization all decide the
+      // same cut. A block that only some paths knew about would make the
+      // preview name floors the request did not send.
+      trimBlockFloors: this.#options.trimBlockFloors,
+    }
   }
 
   /** Project an assembly onto the wire shape. */
@@ -3605,18 +3625,34 @@ export class IrisAppService {
     const result = assemble({
       contributions: await this.#contributions(entry, entry.session, count, false),
       history: [...kept, { role: 'user' as const, text: userInput }],
-      budget: this.#budget(count),
+      // **Against this chat's own window**, not the composition's. A chat with a
+      // per-chat `contextWindow` override used to have its side generations
+      // assembled against the host default, so the trim cut at a different
+      // floor than the real turn does and the card's `generate` stopped being a
+      // prefix of the conversation it belongs to. Upstream has no separate
+      // budget for `TavernHelper.generate` at all — it goes through the same
+      // `Generate`, so it gets the same `openai_max_context`.
+      budget: this.#budget(count, windowOf(settings, this.#options.contextWindow)),
     })
 
     const assembler = new BlockAssembler()
     const sampling = samplingOf(settings)
+    // Same squash as the real turn's. It is a per-chat setting and upstream
+    // applies it at the end of `prepareOpenAIMessages` (`openai.js:1599`),
+    // which every generation type passes through — a side generation that
+    // skipped it would send this conversation's injections in a different
+    // shape than the turn beside it, so the two requests would stop sharing a
+    // prefix at the first injection.
+    const messages = settings.squashSystemMessages === true
+      ? squashSystemRuns(result.messages)
+      : result.messages
     for await (const chunk of this.#stream({
       provider: settings.provider,
       model: settings.model,
       ...systemPrompt === undefined
         ? result.system === '' ? {} : { system: result.system }
         : { system: systemPrompt },
-      messages: result.messages.map(message => (message.role === 'assistant'
+      messages: messages.map(message => (message.role === 'assistant'
         ? createAssistantMessage({
           content: [{ type: 'text', text: message.text }],
           source: { provider: 'iris', model: 'history' },

@@ -195,12 +195,25 @@ export class TurnDriver {
     // the model reads before it writes.
     const base = options.squashSystemMessages === true ? squashSystemRuns(request.messages) : request.messages
     // The continue's separator rides on the request too, not only on the
-    // recorded composite: upstream appends `continue_postfix` to the text being
-    // continued before the prompt is built (`cyclePrompt`, script.js:4917-4921),
-    // because the model needs the same boundary it is expected to write from.
-    // Same guard as upstream: text already ending in a space is left alone, so
+    // recorded composite, because the model needs the same boundary it is
+    // expected to write from. Same guard as upstream: text already ending in a
+    // space is left alone (`script.js:4918`, `!cyclePrompt.endsWith(' ')`), so
     // a space separator cannot stack. The continued floor is the last assistant
     // message — a nudge, when one rides, sits after it and is not touched.
+    //
+    // **This is a deliberate departure, read against the source.** Upstream
+    // appends `continue_postfix` to `cyclePrompt` and to `continue_mag`
+    // (`script.js:4916-4921`), and both of those are output-side: `continue_mag`
+    // is prepended to the reply it records (`:5346`, `:5452`) — which is what
+    // Iris's composite candidate does too — while `cyclePrompt` reaches the
+    // request only through the nudge's `{{lastChatMessage}}` macro, where
+    // `String(cyclePrompt).trim()` strips the separator straight back off
+    // (`openai.js:902`). The request's own copy of the continued text comes from
+    // `coreChat[…].mes` and carries no postfix. So upstream's model is asked to
+    // continue text whose boundary it cannot see, and Iris shows it. Recorded in
+    // `notes/packages/iris-app-service/DEVIATIONS.md` §42; the cache cost is one
+    // separator's worth of bytes at the newest floor, which is past the prefix
+    // either way.
     if (postfix !== undefined && postfix.length > 0) {
       for (let index = base.length - 1; index >= 0; index -= 1) {
         const message = base[index] as PipelineMessage
@@ -527,19 +540,34 @@ function toTailMessage(tail: PipelineMessage) {
  * Merge consecutive system-role messages of the assembled conversation.
  *
  * Upstream's `squash_system_messages`, transcribed: only adjacent system
- * messages merge, their text joining with a blank line, so the conversation's
- * shape otherwise survives. The system *prompt* is already one string here
- * (`assemble` renders it) — this is for the mid-conversation injections the
- * assembly places as their own messages.
+ * messages merge, the first message of the run surviving and the rest folding
+ * into it, so the conversation's shape otherwise survives. The system *prompt*
+ * is already one string here (`assemble` renders it) — this is for the
+ * mid-conversation injections the assembly places as their own messages.
+ *
+ * **The separator is one newline**, which is upstream's
+ * (`ChatCompletion.squashSystemMessages`, `openai.js:3846` —
+ * `lastMessage.content += '\n' + message.content`). It was a blank line here
+ * until this was read against the source: two adjacent injections then reached
+ * the model spaced differently than the same two reach SillyTavern's, which is
+ * a difference in the prompt and not only in the whitespace.
+ *
+ * Three of upstream's guards have no object here, so they are absent rather
+ * than dropped: it skips empty system messages (`:3836`, and `injectAtDepth`
+ * already refuses a contribution whose text is blank), it skips messages
+ * carrying a `name` (`:3841`, and no system-placed message in this pipeline
+ * has one — `name` reaches only history entries, which are user or assistant),
+ * and it exempts three identifiers (`newMainChat`/`newChat`/`groupNudge`,
+ * `:3828`) that Iris does not mint.
  * @param messages - the assembled conversation, oldest first.
  * @returns the conversation with adjacent system runs collapsed.
  */
-function squashSystemRuns(messages: readonly PipelineMessage[]): PipelineMessage[] {
+export function squashSystemRuns(messages: readonly PipelineMessage[]): PipelineMessage[] {
   const squashed: PipelineMessage[] = []
   for (const message of messages) {
     const previous = squashed.at(-1)
     if (message.role === 'system' && previous?.role === 'system') {
-      previous.text = `${previous.text}\n\n${message.text}`
+      previous.text = `${previous.text}\n${message.text}`
       continue
     }
     squashed.push({ ...message })

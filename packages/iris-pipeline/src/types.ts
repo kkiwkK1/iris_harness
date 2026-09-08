@@ -77,6 +77,29 @@ export interface Budget {
   /** Tokens held back for the model's reply. */
   reserve: number
   count: TokenCounter
+  /**
+   * Quantise the trim: drop the oldest floors in multiples of this many.
+   *
+   * A trim that drops exactly what does not fit has to trim again on the very
+   * next turn, because the next turn is longer — so the conversation's oldest
+   * sent floor moves every turn, and a provider that caches on the request
+   * prefix re-pays for the whole conversation on every turn for the rest of the
+   * chat. Rounding the number of dropped floors up to a multiple of this holds
+   * the oldest sent floor still until the *count* has to cross the next
+   * multiple, which takes about half this many turns.
+   *
+   * **In floors, not tokens, and that is the load-bearing part.** A block
+   * expressed as a share of the token budget was written first and measured to
+   * buy nothing: subtracting tokens moves the boundary further back, but the
+   * slack left behind is still only "whatever did not fit" — the selection
+   * keeps adding floors until the next one overflows, whatever the target is —
+   * so the boundary advances on the next turn exactly as before. The boundary
+   * is an index, so the quantum has to be an index too.
+   *
+   * `0` restores upstream's arithmetic exactly — drop only what does not fit.
+   * Absent takes the assembler's default.
+   */
+  trimBlockFloors?: number
 }
 
 /** Everything one assembly needs. */

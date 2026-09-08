@@ -295,13 +295,15 @@ test('squashSystemMessages merges adjacent system messages and leaves the tail a
   assert.equal(baseline.at(-2), 'Injection A.')
   assert.equal(baseline.at(-1), 'Injection B.')
 
-  // On: adjacent system messages merge, joining with a blank line; nothing
-  // else about the conversation's shape changes.
+  // On: adjacent system messages merge, joining with **one** newline —
+  // upstream's separator (`openai.js:3846`, `lastMessage.content += '\n' +
+  // message.content`). Spelled as a literal rather than built from a constant
+  // so a later edit to the join has to come here and say why.
   const on = build(true)
   await on.driver.send(on.session, 'Hello?')
   const texts = on.seen[0]?.messages.map(message =>
     message.content.filter(block => block.type === 'text').map(block => block.text).join('')) ?? []
-  assert.deepEqual(texts, [...baseline.slice(0, -2), 'Injection A.\n\nInjection B.'])
+  assert.deepEqual(texts, [...baseline.slice(0, -2), 'Injection A.\nInjection B.'])
 
   // A continue's nudge is exempt: it stays the request's LAST message, its own
   // message, even when it follows a merged run.

@@ -4,7 +4,14 @@
  * @module @iris/pipeline
  */
 
-export { assemble, injectAtDepth, itemize, renderSystem, trimHistory } from './assemble.ts'
+export {
+  assemble,
+  DEFAULT_TRIM_BLOCK_FLOORS,
+  injectAtDepth,
+  itemize,
+  renderSystem,
+  trimHistory,
+} from './assemble.ts'
 
 export type {
   AssembledItem,

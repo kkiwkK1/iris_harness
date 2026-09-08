@@ -61,17 +61,33 @@ function depthItems(contributions: readonly Contribution[]): DepthItem[] {
 }
 
 /**
- * Choose which history survives the budget.
+ * Default {@link Budget.trimBlockFloors}: floors are dropped in multiples of
+ * this many.
  *
- * Trims from the oldest end, which is what keeps a conversation coherent: the
- * model needs the recent turns and the character definition, and the middle is
- * what it can afford to forget. Pinned entries are exempt wherever they sit.
+ * Eight floors is four exchanges, so the oldest sent floor holds still for
+ * about four turns after a cut and the boundary moves on roughly one turn in
+ * four instead of on every one. The cost is the other half of the same number:
+ * at the moment of a cut, up to seven floors the budget could still have
+ * afforded are given up — the oldest ones, which is also the span automatic
+ * compaction is meant to have replaced with a summary long before the trimmer
+ * ever runs (`@iris/app-service`'s `compaction.ts`, threshold 80% of the same
+ * budget). `0` restores upstream's per-floor arithmetic.
+ */
+export const DEFAULT_TRIM_BLOCK_FLOORS = 8
+
+/**
+ * Keep as many of the newest entries as `available` pays for.
+ *
+ * Upstream's arithmetic, and the inner half of {@link trimHistory}: newest
+ * first, stop at the first entry that does not fit
+ * (`openai.js:1061-1065` — `canAfford` then `break`, never "skip and keep
+ * going"). Pinned entries are exempt wherever they sit.
  * @param history - the full conversation, oldest first.
- * @param available - tokens left after the fixed cost.
+ * @param available - tokens the conversation may spend.
  * @param count - token counter.
  * @returns the surviving entries in chronological order, and how many were dropped.
  */
-export function trimHistory(
+function selectHistory(
   history: readonly HistoryEntry[],
   available: number,
   count: (text: string) => number,
@@ -95,6 +111,103 @@ export function trimHistory(
 
   const kept = history.filter((_entry, index) => keep.has(index))
   return { kept, dropped: history.length - kept.length }
+}
+
+/** How many of these entries are not exempt from trimming. */
+function unpinnedCount(entries: readonly HistoryEntry[]): number {
+  return entries.reduce((total, entry) => total + (entry.pinned === true ? 0 : 1), 0)
+}
+
+/**
+ * Keep every pinned entry, plus every trimmable entry after the first `drop`
+ * of them.
+ *
+ * Counted over trimmable entries rather than over positions, so it agrees with
+ * {@link selectHistory}'s `dropped`: a pinned greeting at index 0 is kept
+ * either way and is not one of the drops.
+ * @param history - the full conversation, oldest first.
+ * @param drop - how many trimmable entries to give up from the oldest end.
+ * @returns the survivors in chronological order, and how many were dropped.
+ */
+function dropOldest(
+  history: readonly HistoryEntry[],
+  drop: number,
+): { kept: HistoryEntry[], dropped: number } {
+  let seen = 0
+  const kept = history.filter(entry => {
+    if (entry.pinned === true) return true
+    seen += 1
+    return seen > drop
+  })
+  return { kept, dropped: history.length - kept.length }
+}
+
+/**
+ * Choose which history survives the budget.
+ *
+ * Trims from the oldest end, which is what keeps a conversation coherent: the
+ * model needs the recent turns and the character definition, and the middle is
+ * what it can afford to forget. Pinned entries are exempt wherever they sit.
+ *
+ * **Where this departs from upstream: the cut is quantised.** Upstream drops
+ * exactly what does not fit, one message at a time, and recomputes from
+ * scratch on every generation (`openai.js:1558` re-sets the budget on a fresh
+ * `ChatCompletion`; the only stored artefact, `lastInContextMessageId`, is read
+ * by two macros and never fed back). So the first turn that overflows drops one
+ * floor, the next turn drops the next one, and the oldest floor the model is
+ * shown moves on *every* turn from then on. Against a provider that caches on
+ * the request prefix (DeepSeek's context cache: 64-token blocks keyed on the
+ * literal prefix) that is the most expensive shape a long chat can have — every
+ * turn re-pays for the entire conversation, because the conversation now starts
+ * one floor later than the cached copy does. Measured on the operator's own
+ * longest chat with the window narrowed until the trimmer engaged: the
+ * conversation's own prefix ceiling fell from ~47% untrimmed to 10–16%, and the
+ * oldest sent floor moved on 6 of 6 adjacent rounds.
+ *
+ * So the number of dropped floors is rounded **up** to a multiple of `block`.
+ * The count then has to climb a whole block before the boundary moves again,
+ * which takes about `block / 2` turns, and while it does not move the whole
+ * prefix up to the newest exchange is byte-identical to the previous turn's.
+ *
+ * **The quantum is a floor count, not a token allowance, and that took a
+ * measurement to establish.** The first version of this subtracted a share of
+ * the token budget before selecting, on the theory that the leftover would be
+ * headroom. It is not: {@link selectHistory} adds floors until the next one
+ * overflows, so whatever the target, the slack left behind is only the size of
+ * the floor that did not fit — and the boundary advances on the next turn
+ * exactly as it did before. Run against the same six rounds, that version was
+ * byte-for-byte indistinguishable from upstream's. The boundary is an index,
+ * so the quantum has to be an index.
+ *
+ * Nothing is remembered between calls. Stability comes from the quantisation,
+ * not from a stored boundary: the same conversation and the same budget always
+ * produce the same cut, which is what keeps a reroll, a preview and the real
+ * turn agreeing about which floors were sent.
+ * @param history - the full conversation, oldest first.
+ * @param available - tokens left after the fixed cost.
+ * @param count - token counter.
+ * @param block - drop floors in multiples of this many; `0` drops exactly what
+ *   does not fit, upstream's rule.
+ * @returns the surviving entries in chronological order, and how many were dropped.
+ */
+export function trimHistory(
+  history: readonly HistoryEntry[],
+  available: number,
+  count: (text: string) => number,
+  block = 0,
+): { kept: HistoryEntry[], dropped: number } {
+  const exact = selectHistory(history, available, count)
+  // Nothing had to go, so nothing is given up: the block is the price of a cut,
+  // and a conversation that still fits is not being cut.
+  if (block <= 1 || exact.dropped === 0) return exact
+
+  const trimmable = unpinnedCount(history)
+  // Never past the last trimmable floor. A conversation the budget cannot fit
+  // at all already keeps nothing but the newest floor upstream would have
+  // kept, and rounding that up would hand the model a conversation with no
+  // present in it.
+  const drop = Math.min(Math.ceil(exact.dropped / block) * block, Math.max(trimmable - 1, exact.dropped))
+  return dropOldest(history, drop)
 }
 
 /**
@@ -163,7 +276,12 @@ export function assemble(input: AssembleInput): AssembleResult {
     + history.reduce((total, entry) => total + (entry.pinned === true ? count(entry.text) : 0), 0)
 
   const available = budget.context - budget.reserve - fixed
-  const { kept, dropped } = trimHistory(history, Math.max(available, 0), count)
+  const { kept, dropped } = trimHistory(
+    history,
+    Math.max(available, 0),
+    count,
+    budget.trimBlockFloors ?? DEFAULT_TRIM_BLOCK_FLOORS,
+  )
   const messages = injectAtDepth(kept, contributions)
 
   const tokens = count(system) + messages.reduce((total, message) => total + count(message.text), 0)

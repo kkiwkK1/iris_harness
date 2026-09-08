@@ -186,6 +186,16 @@ export interface Config {
   reserveTokens?: number
   /** Fixed per-request cost of the provider's chat template, in tokens. @default 0 */
   templateOverhead?: number
+  /**
+   * Drop the oldest floors in multiples of this many when a conversation
+   * overflows its budget, so the oldest sent floor holds still for several
+   * turns and a prefix cache keeps hitting.
+   *
+   * Absent takes `@iris/pipeline`'s `DEFAULT_TRIM_BLOCK_FLOORS` — the default
+   * lives there, beside the trimmer it governs, rather than being restated
+   * here. `0` is upstream's per-floor trim.
+   */
+  trimBlockFloors?: number
   /** A SillyTavern Chat Completion preset to assemble with. Absent uses a thin built-in. */
   presetPath?: string
   /** Pathname prefix the card avatars are served at. @default '/iris/avatar' */
@@ -285,6 +295,14 @@ export const Config: z<Config> = z.object({
   contextWindow: z.natural().default(32_768),
   reserveTokens: z.natural().default(1024),
   templateOverhead: z.natural().default(0),
+  // **No `.default()` on purpose**: the number belongs to the trimmer, and a
+  // default restated here would be a second place to change it (and would go
+  // stale silently, since both spellings would keep parsing). Absent reaches
+  // the service as absent, which is what makes the pipeline's own constant the
+  // one decision. Capped at 64 floors — thirty-two exchanges given up in one
+  // cut is already more conversation than any preset's window holds, and a
+  // bound refused at boot beats a typo that quietly empties the history.
+  trimBlockFloors: z.natural().max(64),
   presetPath: z.string(),
   avatarPath: z.string().default('/iris/avatar'),
   scriptBundlePath: z.string().default('/iris/script-bundle'),
@@ -675,6 +693,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ...config.contextWindow === undefined ? {} : { contextWindow: config.contextWindow },
     ...config.reserveTokens === undefined ? {} : { reserveTokens: config.reserveTokens },
     ...config.templateOverhead === undefined ? {} : { templateOverhead: config.templateOverhead },
+    ...config.trimBlockFloors === undefined ? {} : { trimBlockFloors: config.trimBlockFloors },
     // `templates: false` must produce no key at all: in the service, presence is
     // the switch, and a `{}` here would silently turn the feature on.
     ...config.templates !== true

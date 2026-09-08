@@ -5,6 +5,7 @@
  */
 
 export {
+  squashSystemRuns,
   TurnDriver,
   TurnError,
   type GenerateEvents,
