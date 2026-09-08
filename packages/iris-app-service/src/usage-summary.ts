@@ -26,15 +26,25 @@
  * in `undatedTurns`**, so a reader can see how much of a time-sliced chart is a
  * reconstruction rather than a reading.
  *
+ * **Two populations.** A conversation's cost is not only its turns: a card's
+ * own `TavernHelper.generate` / `generateRaw` is billed on the same route to
+ * the same account and produces no reply, so it is stored on the chat header
+ * (`./side-usage.ts`) rather than on a message. Both are counted here, and the
+ * split is reported as `UsageTotals.script` — because a total that left the
+ * card out was about a population narrower than the user's bill, and one that
+ * folded it in silently would leave a reader unable to explain why the figure
+ * is twice the replies they can see.
+ *
  * @module @iris/app-service/usage-summary
  */
 
 import type { SillyTavernChatHeader, SillyTavernMessage } from '@iris/persistence'
 import type {
-  TurnUsage, UsageBucket, UsageChat, UsageGranularity, UsageSummary, UsageTotals,
+  TurnUsage, UsageBucket, UsageBuckets, UsageChat, UsageGranularity, UsageSummary, UsageTotals,
 } from '@iris/protocol'
 
 import { readMeta } from './entry.ts'
+import { readSideUsage } from './side-usage.ts'
 import { parseUsage, USAGE_FIELD, usageFieldOf } from './usage.ts'
 
 /**
@@ -98,9 +108,23 @@ export function bucketStart(at: number, granularity: UsageGranularity): number {
   return when.getTime()
 }
 
-/** An empty accumulator; the optional buckets stay absent until one is reported. */
+/** An empty bucket set; the optional buckets stay absent until one is reported. */
+function emptyBuckets(): UsageBuckets {
+  return { cacheMiss: 0, output: 0, turns: 0, cacheTurns: 0, cachePrompt: 0 }
+}
+
+/**
+ * An empty accumulator.
+ *
+ * `script` is **absent** here rather than an empty bucket set, and stays absent
+ * unless a script-sourced record is folded in: the protocol reads its absence
+ * as "no card generation was counted in this range", which is a different
+ * statement from a row of zeros — and the same rule `summariseUsage` already
+ * follows when it refuses to emit a conversation subtotal of zeros.
+ * @returns the accumulator.
+ */
 function emptyTotals(): UsageTotals {
-  return { cacheMiss: 0, output: 0, turns: 0, cacheTurns: 0, cachePrompt: 0, undatedTurns: 0 }
+  return { ...emptyBuckets(), undatedTurns: 0 }
 }
 
 /**
@@ -116,13 +140,37 @@ function emptyTotals(): UsageTotals {
  * `reasoning` is added but never added *into* `output`: the provider reports it
  * as the reasoning share of the completion it is already inside, and adding it
  * would bill the same tokens twice.
+ *
+ * **A card's generation is folded in twice: into the whole, and into
+ * `script`.** Into the whole because it was billed to the same account on the
+ * same route, so a total that left it out would be a total of something other
+ * than the bill; into `script` so a surface can say how much of the figure it
+ * is. The two are not parallel populations to be added — `script` is a subset,
+ * and a reader wanting the turn share subtracts.
  * @param into - the accumulator, mutated.
  * @param record - one generation.
  */
 export function addUsage(into: UsageTotals, record: DatedUsage): void {
-  const usage = record.usage
-  into.turns += 1
+  foldBuckets(into, record.usage)
   if (record.undated) into.undatedTurns += 1
+  if (record.usage.source !== 'script') return
+  const script = into.script ?? emptyBuckets()
+  into.script = script
+  foldBuckets(script, record.usage)
+}
+
+/**
+ * Fold one generation's buckets into one bucket set.
+ *
+ * Separate from {@link addUsage} because it runs twice for a script record and
+ * once for a turn's, and the two facts that are about the *reading* rather than
+ * the spend — `undatedTurns`, and the `script` subset itself — must not be
+ * folded twice or nested.
+ * @param into - the bucket set, mutated.
+ * @param usage - one generation's cost.
+ */
+function foldBuckets(into: UsageBuckets, usage: TurnUsage): void {
+  into.turns += 1
   into.cacheMiss += countable(usage.inputTokens)
   into.output += countable(usage.outputTokens)
   if (usage.cacheWriteTokens !== undefined) {
@@ -173,6 +221,15 @@ function countable(value: number): number {
  * last activity rather than as the sessions it really was. It is reported as
  * such (`undatedTurns`) rather than smoothed, because smoothing would invent a
  * distribution the file does not contain.
+ *
+ * **Two populations, two locations.** The turns are on the message lines; a
+ * card's own generations are on the **header**, because they produced no
+ * candidate to hang off (`./side-usage.ts`). Both are read here, and this is
+ * the one place that decides a record's `source` — from where it was found
+ * rather than from what it claims, so a file that arrived from elsewhere cannot
+ * move a card's spend into the turn column or the reverse. Records written
+ * before card generations were recorded at all carry no `source` and are turns,
+ * which is what they are.
  * @param chatId - the file's stem, which is the conversation's id.
  * @param text - the whole file.
  * @returns the conversation's records, or undefined when the file is not a chat.
@@ -198,6 +255,19 @@ export function readChatUsage(chatId: string, text: string): ChatUsage | undefin
     : parseHeaderDate(header) ?? 0
 
   const records: DatedUsage[] = []
+  // The header's own records first, because they are already in hand — the
+  // header was parsed above for the title and the fallback moment, so reading
+  // them costs no second parse. Order inside a conversation is not a reading:
+  // `summariseUsage` places every record by its own moment.
+  for (const side of readSideUsage(header)) {
+    const at = side.usage.at
+    records.push({
+      at: at ?? fallback,
+      undated: at === undefined,
+      ...side.usage.model === undefined ? {} : { model: side.usage.model },
+      usage: side.usage,
+    })
+  }
   for (let index = 1; index < lines.length; index += 1) {
     const line = lines[index] ?? ''
     if (!line.includes(USAGE_FIELD)) continue
@@ -217,6 +287,10 @@ export function readChatUsage(chatId: string, text: string): ChatUsage | undefin
       // reported nothing. Nothing to count and nothing to report.
       if (usage === undefined) continue
       const at = usage.at
+      // No `source`, which reads as `'turn'`. `parseUsage` does not carry the
+      // field at all, so a `source: 'script'` written onto a message line by
+      // something else cannot claim to be a card's spend from a location that
+      // is by construction a candidate's.
       records.push({
         at: at ?? fallback,
         undated: at === undefined,

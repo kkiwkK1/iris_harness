@@ -3771,6 +3771,26 @@
 }
 
 /*
+ * 「其中卡脚本请求 N 次 · X token」, under the total and its label.
+ *
+ * Third in the hero's own hierarchy — 30px figure, then the label, then this —
+ * and it earns the position by being a statement *about* the figure above it
+ * rather than another figure. 11px and `--iris-ink-faint` keep it out of the
+ * reading a reader takes at a glance; the hairline above it rather than more
+ * gap, because a sentence at this weight next to a 30px number needs a
+ * boundary or it reads as a stray caption. Wraps freely: nothing in the hero
+ * ellipsises, and a sentence is the wrong place to start.
+ */
+.iris-usage__hero-note {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--iris-ink-faint);
+}
+
+/*
  * A share as a hairline bar: plum on a plum wash, the page's one accent spent
  * on the one figure that is a proportion.
  *
@@ -3989,7 +4009,7 @@
 /*
  * The per-conversation subtotals: one sheet, hairline-separated rows.
  *
- * Four named areas rather than four bare columns, so the narrow arrangement at
+ * Five named areas rather than five bare columns, so the narrow arrangement at
  * the foot of this section is a re-order of the same cells and not a second
  * markup.
  */
@@ -4009,8 +4029,8 @@
 
 .iris-usage__chat {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(56px, 92px) auto;
-  grid-template-areas: 'title count hit total';
+  grid-template-columns: minmax(0, 1fr) auto minmax(56px, 92px) auto auto;
+  grid-template-areas: 'title count hit script total';
   align-items: center;
   gap: 4px 12px;
   width: 100%;
@@ -4057,6 +4077,20 @@
   margin: 0;
 }
 
+/*
+ * The card-script column.
+ *
+ * Its own column and not a second number in the total's cell: the total
+ * already counts these, and two figures in one cell read as a subtraction
+ * whose direction the reader has to guess. `auto`, so the column collapses to
+ * nothing on a list where no conversation has a card share — a reserved empty
+ * column beside every row would read as a fifth reading that failed to load.
+ */
+.iris-usage__chat-script {
+  grid-area: script;
+  white-space: nowrap;
+}
+
 .iris-usage__chat-total {
   grid-area: total;
   font-family: var(--iris-font-mono);
@@ -4073,8 +4107,8 @@
  * 560px of container is a window of about 656px: the body is the dialog's
  * `min(880px, 100vw - 48px)` less its own 48px of side padding and 2px of
  * border. Below it there is no arrangement in which six capsules and a
- * four-column row are still readable, so the capsules become a column and each
- * conversation takes two lines.
+ * five-column row are still readable, so the capsules become a column and each
+ * conversation takes up to three lines.
  */
 @container (max-width: 560px) {
   .iris-usage__hero {
@@ -4090,10 +4124,14 @@
     flex: 1 1 100%;
   }
 
+  /* Three lines rather than two: the card column is a phrase, not a figure, so
+     it takes the second row's remainder beside the count and the share drops
+     to its own line. */
   .iris-usage__chat {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       'title total'
-      'count hit';
+      'count hit'
+      'script script';
   }
 }

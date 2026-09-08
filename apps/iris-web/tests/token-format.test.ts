@@ -21,6 +21,7 @@ import {
   totalTokens,
   usageDetailText,
   usageLineGroups,
+  usageLineTitle,
 } from '../src/app/token-format.ts'
 import { DICTIONARIES } from '../src/app/i18n/strings.ts'
 
@@ -185,6 +186,36 @@ test('the composer line drops a group with no data, and the row with no activity
     usageLineGroups(usage({ cacheReadTokens: 1_200 }), 'zh'),
     ['缓存命中 60%', '输入 2K tok · 输出 300 tok'],
   )
+})
+
+test('the composer row’s hover separates the card’s share, and only there', () => {
+  /*
+   * Two claims, and the second is the one worth pinning. The *visible* groups
+   * already count a card's requests — they are summed into `ChatView.usage`
+   * because they were billed to this conversation, which is what makes the row
+   * agree with the bill — so the hover is a breakdown of the line above it and
+   * never an addition to it. A reader adding the two would double-count, which
+   * is what the 「其中」 / "of which" wording is for.
+   */
+  const groups = usageLineGroups(usage({ cacheReadTokens: 1_200 }))
+  const share = { turns: 2, usage: { inputTokens: 400, outputTokens: 60 } }
+
+  // With no card share, the hover is the line and nothing else — the state
+  // every conversation whose cards never generated is in.
+  assert.equal(usageLineTitle(groups, undefined), 'Cache hit 60% | Input 2K tok · Output 300 tok')
+  // With one, a second line carrying the count and the tokens. 460 and not
+  // 2,300: the share's own buckets, not the row's.
+  assert.equal(
+    usageLineTitle(groups, share),
+    'Cache hit 60% | Input 2K tok · Output 300 tok\nof which 2 card-script requests · 460 tok',
+  )
+  assert.equal(
+    usageLineTitle(usageLineGroups(usage({ cacheReadTokens: 1_200 }), 'zh'), share, 'zh'),
+    '缓存命中 60% | 输入 2K tok · 输出 300 tok\n其中卡脚本请求 2 次 · 460 tok',
+  )
+  // No row means no hover: the composer draws nothing there, so a `title` would
+  // be attached to an element that does not exist.
+  assert.equal(usageLineTitle([], share), '')
 })
 
 test('the composer line adds the buckets and never reads a summed total', () => {

@@ -50,6 +50,7 @@ import {
   seriesDomKey,
   seriesKey,
   rangeParams,
+  scriptTokens,
   styleFor,
   totalTokens,
   USAGE_METRICS,
@@ -235,6 +236,7 @@ const METRIC_KEYS = {
   cacheRead: 'usageMetricCacheRead',
   cacheMiss: 'usageMetricCacheMiss',
   output: 'usageMetricOutput',
+  script: 'usageMetricScript',
 } as const
 
 /**
@@ -403,6 +405,13 @@ function dashSwatch(color: string): string {
  * that total divides, so the total is a sheet of its own at twice the type size
  * and the rest are a grid of capsules beside it. Nothing was dropped: the same
  * seven figures, ranked.
+ *
+ * The card generations' share is a **line under the total**, not an eighth
+ * capsule, because it is not another way of dividing the total — it is a
+ * statement about the same figure directly above it: how much of that was
+ * something the user did not ask for. It appears only when the host reported
+ * the share; a `0 次 · 0 token` line on every profile that runs no card
+ * scripts is a line a reader learns to skip.
  * @param props.totals - the range's aggregate.
  * @returns the cards.
  */
@@ -414,6 +423,14 @@ function Cards({ totals }: { totals: UsageTotals }): ReactElement {
       <div className="iris-usage__hero">
         <span className="iris-usage__total">{formatExactTokens(totalTokens(totals))}</span>
         <span className="iris-label">{t('usageCardTotal')}</span>
+        {totals.script === undefined ? null : (
+          <span className="iris-usage__hero-note" title={t('usageScriptBasis')}>
+            {t('usageScriptShare', {
+              n: totals.script.turns,
+              tokens: formatExactTokens(scriptTokens(totals)),
+            })}
+          </span>
+        )}
       </div>
       <div className="iris-usage__grid">
         <Card label={t('usageCardPrompt')} value={formatExactTokens(billedPrompt(totals))} />
@@ -811,12 +828,20 @@ function Notes({ summary }: { summary: UsageSummary }): ReactElement | null {
 /**
  * Per-conversation subtotals, as a list of rows on one sheet.
  *
- * Four columns and only one of them flexible, so the numbers line up down the
- * page: the title takes what is left, the count and the share are their own
- * columns, and the total is right-aligned and monospaced — a column of tokens
- * whose digits do not line up is four unrelated readings rather than a ranking.
- * The share carries the same hairline bar as the hit-rate card, over the same
- * population ({@link ShareBar} says why it can be no other).
+ * Five columns and only one of them flexible, so the numbers line up down the
+ * page: the title takes what is left, the count, the share and the card share
+ * are their own columns, and the total is right-aligned and monospaced — a
+ * column of tokens whose digits do not line up is unrelated readings rather
+ * than a ranking. The share carries the same hairline bar as the hit-rate card,
+ * over the same population ({@link ShareBar} says why it can be no other).
+ *
+ * **The card-generation column is a second column and not a second number in
+ * the total's.** The total is what the conversation cost and includes the
+ * card's requests; putting the card's figure inside that cell would read as a
+ * subtraction the reader has to guess the direction of. It is blank — not `0` —
+ * on the conversations the host reported no share for, which is most of them:
+ * one blank cell in a column says "not this one", and a column of zeros says
+ * the feature is broken.
  * @param props.chats - the subtotals, in the host's order.
  * @param props.onOpenChat - open one conversation from its row.
  * @returns the list, or nothing when the range holds no conversation.
@@ -850,6 +875,14 @@ function ChatRows({
                 <span className="iris-usage__chat-hit">
                   <ShareBar share={share} />
                   <span className="iris-meta">{share === null ? '—' : `${share}%`}</span>
+                </span>
+                <span className="iris-usage__chat-script iris-meta">
+                  {chat.script === undefined
+                    ? ''
+                    : t('usageScriptCell', {
+                      n: chat.script.turns,
+                      tokens: formatTokens(scriptTokens(chat)),
+                    })}
                 </span>
                 <span className="iris-usage__chat-total">{formatTokens(totalTokens(chat))}</span>
               </button>

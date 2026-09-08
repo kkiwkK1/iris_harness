@@ -233,7 +233,13 @@ export function projectMessages(
 }
 
 /**
- * Everything this conversation ever paid a provider for, added up.
+ * Everything this conversation's **turns** ever paid a provider for, added up.
+ *
+ * Turns only, because that is all this log holds: a card's own generation
+ * produces no candidate and is stored on the header instead
+ * (`./side-usage.ts`). `toChatView` adds the two together for `ChatView.usage`
+ * — which is the figure a reader is asked to believe is the conversation's
+ * cost, so it has to cover both — and reports the card's share separately.
  *
  * **Every candidate, not every selected candidate.** A regenerated reply was
  * billed; the fact that the user swiped away from it does not refund it, and a
@@ -291,8 +297,33 @@ export function toChatView(input: {
   budget?: ChatBudget | undefined
   measured?: { turn: number, tokens: number } | undefined
   compaction?: ChatCompaction | undefined
+  /**
+   * What this conversation's own card scripts have spent, read from the header
+   * (`./side-usage.ts`). Folded **into** `usage` as well as reported on its
+   * own — the protocol's `ChatView.usage` says why a card's generation belongs
+   * in a conversation's running total.
+   */
+  scriptUsage?: { turns: number, usage: TurnUsage } | undefined
 }): ChatView {
-  const usage = totalUsage(input.session)
+  const turnTotal = totalUsage(input.session)
+  const script = input.scriptUsage
+  /*
+   * The two populations added through `conversationUsage` rather than by hand.
+   * An optional bucket present on one side and absent on the other has to come
+   * out as the side that reported it, and adding two summed objects with `+`
+   * and a `?? 0` is exactly where "no provider mentioned caching on the turns"
+   * would turn into "the cache served nothing" — the one arithmetic this
+   * bucket convention exists to prevent.
+   *
+   * Both sides are already `conversationUsage` outputs, so neither carries a
+   * `totalTokens` the sum could be uneven about.
+   */
+  const usage = turnTotal === undefined && script === undefined
+    ? undefined
+    : conversationUsage([
+      ...turnTotal === undefined ? [] : [turnTotal],
+      ...script === undefined ? [] : [script.usage],
+    ])
   return {
     chatId: input.chatId,
     title: input.title,
@@ -308,5 +339,6 @@ export function toChatView(input: {
     ...input.compaction === undefined ? {} : { compaction: input.compaction },
     ...input.variables === undefined ? {} : { variables: input.variables },
     ...usage === undefined ? {} : { usage },
+    ...script === undefined ? {} : { scriptUsage: script },
   }
 }

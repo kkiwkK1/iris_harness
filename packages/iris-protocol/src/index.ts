@@ -105,6 +105,7 @@ export type {
   ScriptView,
   SecondaryLogic,
   UsageBucket,
+  UsageBuckets,
   UsageChat,
   UsageGranularity,
   UsageSummary,
