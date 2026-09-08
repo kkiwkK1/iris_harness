@@ -64,11 +64,23 @@ test('getChatMessages numbers user and assistant turns alike', () => {
   assert.equal(messages[1]?.name, 'Aria')
 })
 
-test('swipe fields are withheld unless asked for', () => {
+test('the swipe triple rides on every shape, asked or not', () => {
+  /*
+   * This test asserted the opposite — `swipes` withheld unless the flag was
+   * passed — and a real card paid for it: 人贩子物语's embedded phone calls
+   * `getChatMessages('0', { include_swipe: true })`, a misspelling upstream's
+   * own destructuring ignores too, and then reads `msg.swipes[swipeId]` from
+   * the plain shape's `// for compatibility` fields
+   * (`chat_message.ts:139-143`). Stripping the triple turned that read into
+   * "开场白 N 不存在" on a floor that held all four greetings. The flag's real
+   * job upstream is swapping `message`/`data`/`extra` for `swipes_info`, which
+   * this surface has never carried.
+   */
   const { helper: th } = helper()
   const get = th.api.getChatMessages as (range: string | number, options?: object) => ChatMessageSwiped[]
 
-  assert.equal('swipes' in (get(1)[0] ?? {}), false)
+  assert.equal((get(1)[0]?.swipes?.length ?? 0), 2, 'the plain read still carries swipes')
+  assert.equal(get(1)[0]?.swipe_id, 1, 'the showing candidate, not a gate on the fields')
   assert.equal(get(1, { include_swipes: true })[0]?.swipes?.length, 2)
 })
 
