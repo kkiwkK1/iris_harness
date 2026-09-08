@@ -34,6 +34,42 @@ import { EventBus, MVU_EVENTS, TAVERN_EVENTS } from '@iris/compat-tavernhelper-c
 import type { Listener } from '@iris/compat-tavernhelper-core'
 import type { ScriptContext } from '@iris/protocol'
 
+/**
+ * The standard scheduler set, as the virtual parent answers it.
+ *
+ * Every member is delegated to the frame's **own** realm, injected rather than
+ * read off `realWindow` here so this module keeps knowing nothing about the
+ * realm it installs into. Handles are `unknown` rather than `number`: a test's
+ * recording scheduler returns whatever it likes, and the type never lies about
+ * what a handle is used for — only that it goes back to the same family's
+ * cancel.
+ */
+export interface FrameSchedulers {
+  setTimeout: (callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => unknown
+  clearTimeout: (handle: unknown) => void
+  setInterval: (callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => unknown
+  clearInterval: (handle: unknown) => void
+  requestAnimationFrame: (callback: (time: number) => void) => unknown
+  cancelAnimationFrame: (handle: unknown) => void
+}
+
+/**
+ * Every scheduler name the virtual parent answers.
+ *
+ * The dispatch in the parent proxy walks this list rather than a hand-written
+ * row of `if`s, so a name on the list is a name that works and the list is the
+ * surface — the same rule the document stand-in's `VIRTUAL_DOCUMENT_MEMBERS`
+ * follows on its side of the parent.
+ */
+export const VIRTUAL_PARENT_SCHEDULER_MEMBERS = [
+  'setTimeout',
+  'clearTimeout',
+  'setInterval',
+  'clearInterval',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+] as const
+
 /** What the frame-side code needs from its realm. */
 export interface FrameEnv {
   /** The run token every message carries. */
@@ -63,6 +99,26 @@ export interface FrameEnv {
    * member the realm did not hand over.
    */
   eventTarget?: EventTarget
+  /**
+   * The frame's own realm's timers — what `parent.setTimeout` and its five
+   * siblings delegate to.
+   *
+   * **Why the parent answers these at all.** A card that walks `window.parent`
+   * outwards (人贩子物语's 黑市手机 holds the result as `hostWindow` and reads
+   * `hostWindow.setTimeout` on its next line) is, upstream, holding the
+   * same-origin page window — where the scheduler **is** the scheduler, and a
+   * timer it arms fires with the page's own clock. Here the walk stops at this
+   * proxy, and the only realm a timer can fire in is the frame's own: the same
+   * object its bare `window.setTimeout` answers, so a scheduler read through
+   * the parent and one read directly arm timers on the same clock and cancel
+   * each other's handles.
+   *
+   * Handed over rather than read off {@link FrameEnv.realWindow} for the same
+   * reason the event target is a parameter. Optional so a test can install
+   * without a realm; absent, the six names follow the unpublished-name policy
+   * like every other name this proxy does not bridge.
+   */
+  schedulers?: FrameSchedulers
   /** The real window of this frame, proxied through for everything not overridden. */
   realWindow: object
   /** Send a message to the shell. */
@@ -1033,7 +1089,11 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     // unwritable, so the stand-in keeps the same read-only shape.
     property === 'addEventListener' ||
     property === 'removeEventListener' ||
-    property === 'dispatchEvent'
+    property === 'dispatchEvent' ||
+    // The schedulers with them: same native read-only shape upstream, and a
+    // script rearming a sibling's timer through the proxy is the same kind of
+    // accident the read-only rule exists to prevent.
+    (VIRTUAL_PARENT_SCHEDULER_MEMBERS as readonly string[]).includes(property)
 
   const virtualParent = new Proxy(Object.create(null) as object, {
     get(_target, property): unknown {
@@ -1066,6 +1126,20 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (property === 'addEventListener') return parentEventTarget.addEventListener
       if (property === 'removeEventListener') return parentEventTarget.removeEventListener
       if (property === 'dispatchEvent') return parentEventTarget.dispatchEvent
+
+      /*
+       * The scheduler set, answered from the frame's own realm. Dispatch walks
+       * {@link VIRTUAL_PARENT_SCHEDULER_MEMBERS} rather than six hand-written
+       * branches, so the exported list is the surface rather than a comment
+       * about it: a name on the list is a name that works, and the test pins
+       * the two together.
+       */
+      if (
+        env.schedulers !== undefined
+        && (VIRTUAL_PARENT_SCHEDULER_MEMBERS as readonly string[]).includes(property)
+      ) {
+        return env.schedulers[property as keyof FrameSchedulers]
+      }
 
       // Published by one of this card's scripts. Checked after the bridged
       /*
