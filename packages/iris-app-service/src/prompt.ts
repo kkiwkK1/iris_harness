@@ -32,7 +32,13 @@ import type { ResolvedWorldbook } from './worldbooks.ts'
 import type { ActivePersona } from './persona.ts'
 import { DEFAULT_WORLDBOOK_SETTINGS } from './worldbook-settings.ts'
 import { createMacroContext, expandMacros, type MacroMessage } from '@iris/macro'
-import type { Contribution, HistoryEntry, Role, TokenCounter } from '@iris/pipeline'
+import type {
+  Contribution,
+  ContributionMember,
+  HistoryEntry,
+  Role,
+  TokenCounter,
+} from '@iris/pipeline'
 import {
   HISTORY_IDENTIFIER,
   normalizeGenerationType,
@@ -395,9 +401,65 @@ export function scanEntriesOf(
   return [...chatEntries.sort(byOrder), ...ordered]
 }
 
+/**
+ * The entries of a bucket that put text in the prompt.
+ *
+ * The drop-empty rule {@link joinEntries} applies, lifted out so a caller that
+ * needs the entries *and* the joined text works from one list rather than
+ * filtering twice and hoping the two agree by index.
+ * @param entries - a position bucket.
+ * @returns the entries whose rendered content is not blank, in order.
+ */
+function contributingEntries(entries: readonly PreparedEntry[]): PreparedEntry[] {
+  return entries.filter(entry => entry.content.trim().length > 0)
+}
+
 /** Join a bucket's entries into one block of prompt text. */
 function joinEntries(entries: readonly PreparedEntry[]): string {
-  return entries.map(entry => entry.content).filter(text => text.trim().length > 0).join('\n')
+  return contributingEntries(entries).map(entry => entry.content).join('\n')
+}
+
+/**
+ * One member per entry of a depth bucket.
+ *
+ * The join is upstream's and stays exactly as it is — a depth bucket reaches
+ * the model as one newline-separated message whatever this
+ * returns. What the members add is a **name and a hash per entry**, so the
+ * cache classifier can ask "did this entry change" instead of "did this bucket
+ * change", and the assembler can put the stable ones in the prefix. See
+ * `ContributionMember`: on 爱衣 the bucket's three entries are byte-identical
+ * between adjacent turns and the bucket's own hash still moves every turn,
+ * because the *set* of them moves.
+ *
+ * The same filter as the join, in the same order, so
+ * `members.map(m => m.text).join('\n')` is the bucket's text by construction —
+ * which is the invariant the assembler re-checks before it splits anything.
+ * The separator is written out on both sides rather than shared through one
+ * constant, for the reason `SYSTEM_JOIN` and the squash separator are: they are
+ * two independent upstream lines. What keeps them honest is that the assembler
+ * refuses a member list that does not rejoin, and
+ * `depth-bucket-entries.test.ts` fails if the two ever part company — so the
+ * cost of the duplication is a red test, not a silently unsplit bucket.
+ *
+ * **Identity is `world` plus `uid`, prefixed by the bucket's id.** Uids collide
+ * constantly across a global book, a character book and a chat book
+ * (`PreparedEntry`'s own note), and the bucket prefix keeps one entry that sits
+ * in two buckets — different depth, different role — from answering to one
+ * name. The label is the entry's `comment`, which is what SillyTavern's own
+ * editor shows, falling back to the book and uid rather than to nothing: this
+ * is routinely the largest row in the itemization and `#13` alone names nothing.
+ * @param bucketId - the contribution id the members belong to.
+ * @param entries - the bucket's {@link contributingEntries}, in emission order.
+ * @returns one member per entry.
+ */
+function bucketMembers(bucketId: string, entries: readonly PreparedEntry[]): ContributionMember[] {
+  return entries.map(entry => ({
+    id: `${bucketId}#${entry.world}.${String(entry.uid)}`,
+    label: entry.comment.trim().length > 0
+      ? entry.comment
+      : `${entry.world} #${String(entry.uid)}`,
+    text: entry.content,
+  }))
 }
 
 /**
@@ -769,22 +831,37 @@ export function buildPrompt(input: PromptInput): PromptResult {
   for (const bucket of scan.buckets.atDepth) {
     const text = joinEntries(bucket.entries)
     if (text.trim().length === 0) continue
+    const bucketId = `worldInfo.depth.${String(bucket.depth)}.${String(bucket.role)}`
     // Noted even though a depth placement is never *moved*: the mark is what
     // makes `stablePrefixTokens` stop at a volatile injection sitting **inside**
     // the conversation (depth ≥ 1), which is a loss the reorder cannot repair
     // and the reading has to be honest about.
-    noteEntropic(
-      `worldInfo.depth.${String(bucket.depth)}.${String(bucket.role)}`,
-      joinSources(bucket.entries),
-    )
+    noteEntropic(bucketId, joinSources(bucket.entries))
+    const present = contributingEntries(bucket.entries)
+    const members = bucketMembers(bucketId, present)
+    // **Per member, over the member's own pre-expansion text.** The bucket-wide
+    // note above marks the whole bucket the moment *any* entry in it carries a
+    // `{{roll}}`, which is the right answer for the bucket and the wrong one for
+    // its neighbours: predicting them volatile too would hold every entry in
+    // the bucket out of the prefix for the full 20-generation hold on the
+    // strength of a die roll in one of them.
+    present.forEach((entry, index) => {
+      const member = members[index]
+      if (member !== undefined) noteEntropic(member.id, entry.source)
+    })
     contributions.push({
-      id: `worldInfo.depth.${String(bucket.depth)}.${String(bucket.role)}`,
+      id: bucketId,
       // Labelled because the itemization view renders labels, and a row reading
       // `worldInfo.depth.0.0` tells a user nothing about what is in it — this is
       // routinely the largest single part of the prompt.
       label: `World Info (depth ${String(bucket.depth)})`,
       placement: { kind: 'depth', depth: bucket.depth, role: roleOf(bucket.role), order: 0 },
       text,
+      // The entries this text is the join of. The contribution stays one row
+      // and one message; the members are what let the classifier and the
+      // reorder work at the granularity the loss actually has. Nothing reads
+      // them with cache-friendly assembly off.
+      members,
     })
   }
 

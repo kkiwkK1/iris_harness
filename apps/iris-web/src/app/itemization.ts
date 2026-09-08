@@ -15,7 +15,7 @@
  * @module iris-web/app/itemization
  */
 
-import type { PromptItemEntry, PromptItemization } from '@iris/protocol'
+import type { PromptItemEntry, PromptItemization, PromptItemMember } from '@iris/protocol'
 
 /** How the rows are ordered. */
 export type ItemOrder = 'size' | 'assembly'
@@ -101,6 +101,36 @@ export function rowsFor(
   }
 
   return rows.map(({ entry, share, origin }) => ({ entry, share, origin }))
+}
+
+/**
+ * The entries of a split row worth showing under it, or none.
+ *
+ * A world-info depth bucket is **one** row here and several entries in the
+ * request. When the host classified those entries separately and they went
+ * different ways, the row above carries no badge at all — no single mark is
+ * true of it — so the answer has to appear per entry, or the panel goes silent
+ * about the largest row it has.
+ *
+ * **Empty unless at least one entry actually moved**, and that is the decision
+ * this function exists to hold. A bucket that was split and stayed put is the
+ * ordinary case, and five unmarked sub-rows under it would bury the rows that
+ * did move. Once one entry has moved the *whole* list is shown, the unmoved
+ * ones included: "these two went forward and this one stayed" is the reading,
+ * and a list of only the movers cannot express its second half.
+ *
+ * A pure function rather than a condition inside the JSX so that it can be
+ * asserted directly. A source-text check ("the panel mentions `members`")
+ * cannot tell reading the field from naming it — measured: one stayed green
+ * with the whole sub-list disabled.
+ * @param entry - one itemization row.
+ * @returns the entries to render beneath it, in the host's order; empty when
+ *   there is nothing to say.
+ */
+export function splitMembers(entry: PromptItemEntry): PromptItemMember[] {
+  const members = entry.members ?? []
+  const moved = members.some(member => member.deferred === true || member.promoted === true)
+  return moved ? [...members] : []
 }
 
 /**

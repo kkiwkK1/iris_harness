@@ -44,6 +44,26 @@ export interface PipelineMessage {
    * reader treats absence as "unattributed" rather than as an error.
    */
   id?: string
+  /**
+   * The members this message's text is the join of — set only for a depth slot
+   * that {@link Contribution.members} split.
+   *
+   * `parts.map(part => part.text).join(MEMBER_JOIN)` is `text` by construction:
+   * the one place that joins the texts is the one place that records the parts.
+   * The separator is {@link MEMBER_JOIN}, which is also what a squashed system
+   * run joins with, so a reader lays both kinds of subdivided slot down with one
+   * rule.
+   *
+   * **Provenance, exactly like {@link id}**, and needed for the same reason. A
+   * slot holding three world-info entries can otherwise only be reported as
+   * "the depth injection changed" — which names the largest part of the request
+   * and no entry in it — because the join is the last moment anything knows
+   * where one entry ended.
+   *
+   * Absent means "this slot is one part": the reader falls back to {@link id},
+   * which is what every slot carried before this field existed.
+   */
+  parts?: ContributionMember[]
 }
 
 /** One turn of existing conversation, oldest first. */
@@ -78,6 +98,44 @@ export type Placement =
     /** Tie-break among contributions at the same depth; ascending. */
     order?: number
   }
+
+/**
+ * One member of a composite contribution — an entry inside a depth bucket.
+ *
+ * SillyTavern merges every world-info entry sharing a depth and a role into a
+ * **single** injection, newline-joined (`world-info.js`, one
+ * `setExtensionPrompt(CUSTOM_WI_DEPTH_ROLE(depth, role), joined, …)` per
+ * bucket), and Iris reproduces that byte for byte. The merge is also the single
+ * largest cache loss measured on this corpus, and for a reason that has nothing
+ * to do with the text: the entries in one bucket are individually stable while
+ * the *set* of them changes as keywords match, so the bucket's own hash moves
+ * every turn and the whole 19 KB block is judged volatile. Measured on 爱衣,
+ * three entries of 8 223, 4 020 and 7 114 bytes, each byte-identical between
+ * adjacent turns.
+ *
+ * So a contribution may carry its members beside its text. The text stays
+ * authoritative — with {@link AssembleInput.cacheFriendly} off nothing here is
+ * read at all, which is what keeps upstream's bytes exact — and with the reorder
+ * on the members are classified and placed individually.
+ *
+ * **The id has to be stable across turns and unique within an assembly**, or the
+ * classifier would compare two different entries' hashes under one name. World
+ * info's own identity is `world` plus `uid` (`PreparedEntry`'s note says why
+ * `uid` alone is not enough), so the ids the prompt builder mints are the
+ * bucket's id, a `#`, and that pair.
+ */
+export interface ContributionMember {
+  /** Stable identity, unique within one assembly. */
+  id: string
+  /** What to call this when showing it to a person — a world-info entry's `comment`. */
+  label?: string
+  /** The member's text, as rendered. */
+  text: string
+  /** Whether this member's text is expected to differ next turn; see {@link Contribution.volatile}. */
+  volatile?: boolean
+  /** Whether this member has been observed unchanged for long enough to promote; see {@link Contribution.settled}. */
+  settled?: boolean
+}
 
 /** One piece of text contributed to the prompt. */
 export interface Contribution {
@@ -147,6 +205,29 @@ export interface Contribution {
    * claim the caller has to have earned, and this module refuses to guess it.
    */
   settled?: boolean
+  /**
+   * The parts this contribution's text is the join of, when it has several.
+   *
+   * Set by the prompt builder for a world-info **depth bucket**, whose text is
+   * upstream's newline join of the entries that landed on one depth and role.
+   * See {@link ContributionMember} for why the bucket is the wrong unit to
+   * classify and the entry is the right one.
+   *
+   * Two invariants, and the assembler **checks** the second rather than
+   * trusting it:
+   *
+   * 1. The members are in the order upstream emits them, so a split keeps the
+   *    reading sequence the bucket had.
+   * 2. `members.map(m => m.text).join(MEMBER_JOIN) === text`. A caller whose
+   *    members do not rejoin exactly has handed over a description of some
+   *    other text, and the assembler ignores the members entirely — the split
+   *    can only ever be exact, never approximate.
+   *
+   * Ignored outright when {@link AssembleInput.cacheFriendly} is off: the whole
+   * point of the flag is that upstream's bytes come back, and a bucket
+   * upstream sends as one message must stay one message.
+   */
+  members?: readonly ContributionMember[]
 }
 
 /** Counts tokens for a piece of text. Supplied by the caller — no tokenizer is bundled. */
@@ -197,7 +278,13 @@ export interface AssembleInput {
    * - a **volatile depth ≥ 1** injection joins it, because it sat *inside* the
    *   run two turns would otherwise agree on;
    * - a **settled depth** injection goes the other way, into a segment between
-   *   the system prompt and the first floor.
+   *   the system prompt and the first floor;
+   * - and a depth contribution carrying {@link Contribution.members} is taken
+   *   apart: each member goes where its own classification sends it, and the
+   *   ones that stay are re-joined into the slot. This is the case a world-info
+   *   depth bucket has, and the reason it needs one: the bucket's text moves
+   *   whenever its *membership* does, so the bucket cannot be classified even
+   *   when every entry in it is byte-stable.
    *
    * A prefix cache hits on the request's leading bytes and stops at the first
    * byte that differs, so the two rules are one rule: everything that does not
@@ -212,7 +299,8 @@ export interface AssembleInput {
    * arrives before the transcript. Order *within* each moved segment is
    * preserved, so a group keeps its own reading sequence.
    *
-   * Absent or false assembles exactly as it always did, byte for byte.
+   * Absent or false assembles exactly as it always did, byte for byte — member
+   * lists included, which is not read at all on that path.
    */
   cacheFriendly?: boolean
 }
@@ -256,6 +344,33 @@ export interface AssembledItem {
    * the only place a person can see that an instruction written for "two floors
    * from the end" is arriving before the transcript instead.
    */
+  promoted?: boolean
+  /**
+   * One row per {@link Contribution.members} member, when the reorder read them.
+   *
+   * Present only with {@link AssembleInput.cacheFriendly} on and only for a
+   * contribution whose members rejoin exactly — the same condition the placement
+   * uses, so the account and the request cannot disagree about whether a bucket
+   * was split.
+   *
+   * {@link deferred} and {@link promoted} on the row above stay meaningful and
+   * mean **all of them**: a bucket every member of which was promoted is
+   * promoted, and one whose members went different ways carries neither mark,
+   * because the row is no longer one thing that moved. That is what these
+   * sub-rows are for — a 19 KB depth bucket where two entries reached the
+   * prefix and one did not has no honest single-row answer.
+   */
+  members?: AssembledMember[]
+}
+
+/** One member of a split contribution, and what it cost. */
+export interface AssembledMember {
+  id: string
+  label?: string
+  tokens: number
+  /** True when the reorder sent this member after the conversation. */
+  deferred?: boolean
+  /** True when the reorder sent this member ahead of the conversation. */
   promoted?: boolean
 }
 

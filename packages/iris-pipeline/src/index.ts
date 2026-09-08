@@ -9,6 +9,7 @@ export {
   DEFAULT_TRIM_BLOCK_FLOORS,
   injectAtDepth,
   itemize,
+  MEMBER_JOIN,
   renderSystem,
   SYSTEM_JOIN,
   systemSegments,
@@ -17,10 +18,12 @@ export {
 
 export type {
   AssembledItem,
+  AssembledMember,
   AssembleInput,
   AssembleResult,
   Budget,
   Contribution,
+  ContributionMember,
   HistoryEntry,
   Overflow,
   PipelineMessage,

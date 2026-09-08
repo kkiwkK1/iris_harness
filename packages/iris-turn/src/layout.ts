@@ -30,15 +30,26 @@ import type { Role, SystemSegment } from '@iris/pipeline'
 /**
  * One item inside one message slot.
  *
- * Usually a slot holds exactly one — a depth injection is its own message, and
- * a floor is its own message. A slot holds several only when
- * `squash_system_messages` merged a run of adjacent system messages into one,
- * and then the parts are recorded separately because that is the granularity a
- * reader needs: "the merged system run changed" names three injections at once
- * and identifies none of them.
+ * Usually a slot holds exactly one — a floor is its own message, and so is a
+ * promoted world-info entry. Two joins put several in one slot, and both would
+ * otherwise be opaque to a reader:
+ *
+ * - `squash_system_messages` merging a run of adjacent system messages;
+ * - a **world-info depth bucket**, which is upstream's newline join of every
+ *   entry that landed on one depth and role, and which the cache-friendly
+ *   split may leave holding several of them (`Contribution.members`).
+ *
+ * Both join with one newline, so a reader lays either kind of slot back down
+ * with one rule. The parts are recorded separately because that is the
+ * granularity a reader needs: "the merged system run changed" names three
+ * injections at once and identifies none of them, and "the depth injection
+ * changed" names the largest part of the request and no entry in it.
  */
 export interface LayoutPart {
-  /** The contributing part's id: a contribution's, or a floor's `history.N`. */
+  /**
+   * The contributing part's id: a contribution's, a floor's `history.N`, or —
+   * inside a split depth bucket — one member's `<bucket>#<world>.<uid>`.
+   */
   id: string
   /** Its display name, when it has one that differs from the id. */
   label?: string

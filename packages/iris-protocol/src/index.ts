@@ -91,6 +91,7 @@ export type {
   PromptDivergenceItem,
   PromptItemEntry,
   PromptItemization,
+  PromptItemMember,
   ReasoningEffort,
   RegexScriptView,
   ScopedRegexView,

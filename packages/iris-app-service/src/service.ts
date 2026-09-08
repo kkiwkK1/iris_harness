@@ -3609,6 +3609,21 @@ export class IrisAppService {
         ...item.role === undefined || item.role === 'system' ? {} : { role: item.role },
         ...item.deferred === true ? { deferred: true } : {},
         ...item.promoted === true ? { promoted: true } : {},
+        // The entries a split depth bucket is the join of, each with where the
+        // reorder sent it. Present only when the reorder read them, which is
+        // the same condition the placement used — so the panel can never show a
+        // split the request did not make.
+        ...item.members === undefined
+          ? {}
+          : {
+              members: item.members.map(member => ({
+                id: member.id,
+                label: member.label ?? member.id,
+                tokens: member.tokens,
+                ...member.deferred === true ? { deferred: true } : {},
+                ...member.promoted === true ? { promoted: true } : {},
+              })),
+            },
       })),
       tokens: result.tokens,
       stablePrefixTokens: result.stablePrefixTokens,
