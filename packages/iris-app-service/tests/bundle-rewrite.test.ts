@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import { fromProxied } from '@iris/protocol'
 
-import { rewriteNestedSpecifiers } from '../src/bundle-rewrite.ts'
+import { rewriteNestedSpecifiers, rewriteStylesheetUrls } from '../src/bundle-rewrite.ts'
 
 /**
  * A proxied bundle's own imports have to travel with it.
@@ -117,4 +117,78 @@ test('a concatenated specifier is a fragment, and is left whole', () => {
   assert.equal(done.source, source, 'a concatenated fragment was rewritten')
   assert.equal(done.rewritten, 0)
   assert.deepEqual(done.dynamic, ['./locale/'])
+})
+
+/*
+ * ─── Stylesheets ──────────────────────────────────────────────────────────
+ *
+ * The proxied stylesheet's references resolve against the route that served
+ * them, so its faces have to move the way a bundle's imports do. The input
+ * below is shaped like 人贩子物语's Tabler sheet: two `@font-face` blocks
+ * (woff2 first, fallback after), an `@import`, and the decoys a real sheet
+ * carries — a `data:` face, a fragment reference, an icon-position image.
+ */
+
+const SHEET_URL = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css'
+
+const SHEET = [
+  '@font-face{',
+  'font-family:"tabler-icons";',
+  'src:url("fonts/tabler-icons.woff2?v0.0.1") format("woff2"),',
+  'url(fonts/tabler-icons.ttf?v0.0.1) format("truetype");',
+  '}',
+  '@import "helpers/tabler-helpers.css";',
+  '@font-face{',
+  'font-family:"tabler-icons-fallback";',
+  'src:url(data:font/woff2;base64,d09GMg) format("woff2");',
+  '}',
+  '.ti-book::before{content:"\eb15";}',
+  '.sprite{clip-path:url(#icon-sprite);}',
+].join('\n')
+
+test('a proxied stylesheet carries its faces and imports with it', () => {
+  const done = rewriteStylesheetUrls(SHEET, SHEET_URL)
+
+  // Root-relative, like the module rewrites: the cached body must not bake in
+  // the address it was reached at.
+  assert.ok(done.source.includes('url(/iris/script-bundle?url='), 'faces load through the same route')
+  assert.equal(done.rewritten, 3, 'two faces and one import')
+  for (const target of [
+    'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/fonts/tabler-icons.woff2?v0.0.1',
+    'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/fonts/tabler-icons.ttf?v0.0.1',
+    'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/helpers/tabler-helpers.css',
+  ]) {
+    assert.ok(
+      done.source.includes(encodeURIComponent(target)),
+      `the face resolves against the upstream sheet: ${target}`,
+    )
+  }
+})
+
+test('self-contained targets and non-fetch references stay as written', () => {
+  const done = rewriteStylesheetUrls(SHEET, SHEET_URL)
+
+  assert.ok(done.source.includes('url(data:font/woff2;base64,d09GMg)'), 'a data: face needs no route')
+  assert.ok(done.source.includes('url(#icon-sprite)'), 'a fragment reference is not a fetch')
+  assert.ok(done.source.includes('.ti-book::before'), 'the glyph rules themselves are untouched')
+})
+
+test('a stylesheet url outside a font-face is left to name its host honestly', () => {
+  // An image or background is img-src's business. Rewriting it would launder a
+  // fetch through this route and make the eventual refusal name *us*; leaving
+  // it keeps the report pointing at the host the card chose.
+  const source = '.panel{background:url(../img/panel.png) no-repeat;}'
+  const done = rewriteStylesheetUrls(source, SHEET_URL)
+
+  assert.equal(done.source, source)
+  assert.equal(done.rewritten, 0)
+  assert.deepEqual(done.refused, [])
+})
+
+test('a face on a host the allowlist refuses is reported and left as written', () => {
+  const source = '@font-face{font-family:"x";src:url(https://fontsapi.zeoseven.com/292/result.woff2);}'
+  const done = rewriteStylesheetUrls(source, SHEET_URL)
+
+  assert.equal(done.source, source, 'wrapping it would serve a URL the route itself refuses')
+  assert.deepEqual(done.refused, ['https://fontsapi.zeoseven.com/292/result.woff2'])
 })

@@ -9,7 +9,8 @@
  * @module iris-web/sandbox/srcdoc
  */
 
-import { REMOTE_ALLOWLIST } from './policy.ts'
+import { fromProxied, toProxied } from './bundle-proxy.ts'
+import { isAllowedRemote, REMOTE_ALLOWLIST } from './policy.ts'
 
 /**
  * The frame's content security policy.
@@ -89,6 +90,16 @@ export function framePolicy(networkGranted: boolean, selfOrigin: string): string
   // CSS, `fonts.gstatic.com` the faces — both are needed or neither works.
   const fontCss = FONT_CSS_ORIGIN
   const fontFiles = 'https://fonts.gstatic.com'
+  /*
+   * Iris's own origin joins the face list: a proxied stylesheet's faces are
+   * rewritten onto the bundle route (`rewriteStylesheetUrls`), so a sheet the
+   * allowlist already carries loads its glyphs from an origin that is Iris's
+   * end to end — the same standing `script-src` and `style-src` entries rest
+   * on, and strictly less than the remote origins that `script-src` already
+   * admits for *code*. Without this the CSS arrives and every glyph in it is
+   * still missing, with a refusal pointing at our own route.
+   */
+  const faceSources = `data: ${fontFiles} ${selfOrigin}`
 
   /*
    * The three directives a network grant widens, and why they are closed by
@@ -107,6 +118,7 @@ export function framePolicy(networkGranted: boolean, selfOrigin: string): string
    */
   const imgSrc = networkGranted ? 'https: data: blob:' : 'data: blob:'
   const connectSrc = networkGranted ? 'https:' : "'none'"
+
   /*
    * Iris's own origin is admitted for stylesheets, and for one file: the
    * FontAwesome sentinel the head links (`FA_SENTINEL`). Named exactly, the
@@ -153,7 +165,7 @@ export function framePolicy(networkGranted: boolean, selfOrigin: string): string
     `script-src 'unsafe-inline' 'unsafe-eval' blob: ${selfOrigin} ${remotes}`,
     `connect-src ${connectSrc}`,
     `style-src ${styleSrc}`,
-    `font-src data: ${fontFiles}`,
+    `font-src ${faceSources}`,
     `img-src ${imgSrc}`,
     // No nested browsing contexts and no form posts: both would be routes out of
     // a frame whose whole purpose is not having any.
@@ -173,6 +185,100 @@ function attribute(value: string): string {
     .join('&gt;')
     .split('"')
     .join('&quot;')
+}
+
+/**
+ * Whether a `<link>` tag's attributes name a stylesheet the proxy should carry.
+ *
+ * `rel` is read case-insensitively and may be a list; `href` must be an
+ * absolute URL on the remote allowlist — the same list `script-src` names, so
+ * "the frame already trusts this origin with executing code" is the floor a
+ * stylesheet clears. An already-proxied href is left alone: rewriting it again
+ * would nest one route inside another, and the upstream URL would be
+ * recoverable only by unwrapping twice.
+ */
+function isProxiedStylesheetLink(tag: string): boolean {
+  const attributes = linkAttributes(tag)
+  const rel = attributes.get('rel')?.toLowerCase() ?? ''
+  if (!rel.split(/\s+/).includes('stylesheet')) return false
+  const href = attributes.get('href')
+  if (href === undefined) return false
+  return isAllowedRemote(href) && fromProxied(href) === undefined
+}
+
+/**
+ * Point a card's remote stylesheet links at the host's bundle route.
+ *
+ * A card's remote stylesheets are inert — the same reasoning that admits
+ * Google Fonts by default — but the frame's `style-src` is closed by default,
+ * and the measured injector (人贩子物语's status bar) reaches the document the
+ * way scripts do: an HTML string parsed through a `template` and appended,
+ * which no markup-time pass sees. Rewriting the href to
+ * `{origin}/iris/script-bundle?url=…` keeps the load inside what the policy
+ * already admits — Iris's own origin, listed in `style-src` for the sentinel —
+ * and inside the allowlist the host enforces on that route, rather than
+ * widening `style-src` to the remote. What the proxy serves back has its
+ * `@font-face` faces rewritten onto the same route, so `font-src` stays at
+ * Iris's origin too; that widening is recorded at {@link framePolicy}.
+ *
+ * Scoped like its sibling {@link unblockFontStylesheets}: only `<link>` tags,
+ * only `stylesheet` links, only origins the allowlist already trusts. Anything
+ * else passes untouched and is refused by directive, reported by name — which
+ * is the correct answer for a source the user never allowed.
+ * @param html - markup a card authored.
+ * @param origin - the shell origin, which serves the bundle route.
+ * @returns the markup with allowlisted stylesheet links loading through the host.
+ */
+export function rewriteStylesheetLinks(html: string, origin: string): string {
+  return html.replace(/<link\b[^>]*>/gi, tag => {
+    if (!isProxiedStylesheetLink(tag)) return tag
+    const href = linkAttributes(tag).get('href') ?? ''
+    // Attribute-value level, not text level: a blanket replacement across the
+    // tag could rewrite `data-href` or a comment's text. The escaped value goes
+    // back inside double quotes, the one spelling `attribute()` produces.
+    return tag.replace(/(\bhref\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/i,
+      (_match, lead: string) => `${lead}"${attribute(toProxied(href, origin))}"`)
+  })
+}
+
+/**
+ * A `template` whose `innerHTML` passes through the stylesheet rewrite.
+ *
+ * This is the measured injection route for remote stylesheets: 人贩子物语's
+ * status bar parses a whole HUD document out of a JS string —
+ * `hostDocument.createElement('template')`, `template.innerHTML = source`,
+ * `template.content.querySelector(…)` — and appends the result. The `<link>`
+ * inside that string never crosses this frame as *markup*, so the build-time
+ * pass in `buildSrcdoc` cannot see it; the parse is the last moment the choice
+ * of URL is still ours. Rewriting there means the browser's first fetch of the
+ * sheet is the proxied one, instead of fetching into a `style-src` refusal,
+ * reporting it, and only then loading the same sheet from the route it should
+ * have asked for in the first place.
+ *
+ * A **proxy, not a copy**, because a template is a live DOM node: `content`
+ * must be the real fragment the card will query and insert, and every other
+ * member has to keep its native behaviour. Methods are bound to the target —
+ * a DOM method invoked with the proxy as `this` is an Illegal invocation, the
+ * one way this wrapper could break a card that only forwards calls. Only the
+ * `innerHTML` **write** is intercepted; reads and every other property are
+ * forwarded untouched.
+ * @param real - the template the frame's own document built.
+ * @param origin - the shell origin serving the bundle route.
+ * @returns the element to hand a card as `parent.document`'s factory output.
+ */
+export function rewritingTemplate(real: HTMLTemplateElement, origin: string): HTMLTemplateElement {
+  return new Proxy(real, {
+    get(target, property): unknown {
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+    set(target, property, value): boolean {
+      if (property === 'innerHTML' && typeof value === 'string') {
+        value = rewriteStylesheetLinks(value, origin)
+      }
+      return Reflect.set(target, property, value, target)
+    },
+  })
 }
 
 /**
@@ -619,12 +725,17 @@ export function buildSrcdoc(
      * place upstream rewrites what a card means (`vh` units, bundle imports) —
      * so a decorative font can never hold the interface's own scripts, and with
      * them its buttons, hostage to the network. See
-     * `unblockFontStylesheets` for the reasoning and the scope.
+     * `unblockFontStylesheets` for the reasoning and the scope. Before that,
+     * stylesheet links aimed at the remote allowlist are pointed at the host's
+     * bundle route (`rewriteStylesheetLinks`), so a card's remote sheet loads
+     * from an origin the policy already admits instead of being refused by
+     * `style-src`; that pass runs first so its same-origin output is not
+     * mistaken for a font link by the pass below.
      */
     // `message.rest`, not `body`: the message's sheet has moved to the head, and
     // leaving a copy here would apply it twice and put a `<style>` element in
     // the card's own body.
-    body === undefined ? '' : unblockFontStylesheets(message.rest),
+    body === undefined ? '' : unblockFontStylesheets(rewriteStylesheetLinks(message.rest, selfOrigin)),
     '</body></html>',
   ].join('')
 }

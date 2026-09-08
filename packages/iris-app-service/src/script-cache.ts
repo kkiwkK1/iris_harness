@@ -26,7 +26,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { rewriteNestedSpecifiers } from './bundle-rewrite.ts'
+import { rewriteNestedSpecifiers, rewriteStylesheetUrls } from './bundle-rewrite.ts'
 import { checkScriptFetch } from '@iris/script'
 
 /** How a fetch through this route can fail, in the words the browser is given. */
@@ -243,6 +243,43 @@ interface CacheMeta {
   bytes: number
 }
 
+/**
+ * Whether the upstream URL names a stylesheet.
+ *
+ * Decided from the URL, not from upstream's `content-type` — the same rule the
+ * JavaScript branch states for its own type ("the far side's own content-type
+ * is not echoed"), kept as one URL read. The measured stylesheet family —
+ * jsDelivr package paths, the same hosts the script allowlist already admits —
+ * ends in `.css`; a stylesheet served from an extension-less URL would come
+ * back typed as JavaScript and not apply, which is a recorded gap rather than
+ * a guessed content-type.
+ * @param url - the normalized upstream URL.
+ * @returns whether to serve the body as CSS.
+ */
+function isStylesheetUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.toLowerCase().endsWith('.css')
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The stylesheet response's headers.
+ *
+ * Same CORS surface as {@link CORS_HEADER} — a stylesheet fetch from an
+ * opaque-origin frame is cross-origin exactly as a module fetch is, and the
+ * same `no-cache` reasoning holds: a wrong header on a long-TTL response
+ * outlives the deployment that wrote it. The one difference is the type,
+ * `text/css`, which is the whole reason the branch exists: a stylesheet the
+ * browser will not apply is a stylesheet that did not load.
+ */
+const CORS_HEADERS_STYLESHEET = {
+  ...CORS_HEADER,
+  'content-type': 'text/css; charset=utf-8',
+  'cache-control': 'no-cache',
+} as const
+
 /** Fetches remote script bundles once and serves them from disk. */
 export class ScriptCache {
   readonly #dir: string
@@ -288,9 +325,37 @@ export class ScriptCache {
       return
     }
 
+    // The normalized upstream URL, so the stylesheet decision below reads the
+    // same address the load will fetch — not the encoding the caller typed.
+    const verdict = checkScriptFetch(requested)
+    if (!verdict.allowed) {
+      this.#fail(res, { status: 403, reason: verdict.reason })
+      return
+    }
+
     const body = await this.load(requested)
     if (!Buffer.isBuffer(body)) {
       this.#fail(res, body)
+      return
+    }
+
+    // **Stylesheets are the second content this route serves.** The bytes come
+    // from the same cache under the same allowlist; what differs is the type —
+    // a stylesheet the browser will not apply without `text/css` — and the
+    // rewriting, because a stylesheet served from here resolves its own
+    // references against this route, which is a 404 for every face it carries.
+    // See `rewriteStylesheetUrls`.
+    if (isStylesheetUrl(verdict.url)) {
+      const rewrite = rewriteStylesheetUrls(body.toString('utf8'), verdict.url)
+      for (const refused of rewrite.refused) {
+        this.#onReport(
+          `${verdict.url} references ${refused}, which is not on the remote allowlist;`
+          + ' it was left as written, and the frame will refuse that fetch by directive',
+        )
+      }
+      const served = Buffer.from(rewrite.source, 'utf8')
+      res.writeHead(200, { ...CORS_HEADERS_STYLESHEET, 'content-length': served.byteLength })
+      res.end(req.method === 'HEAD' ? undefined : served)
       return
     }
 

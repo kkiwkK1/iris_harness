@@ -306,6 +306,36 @@ CSS's own `@font-face` `src` to proxy URLs so `style-src`/`font-src` stay at
 report (host + directive). Recorded as a deliberate divergence; the mechanism is
 queued in `ROADMAP.md`.)
 
+**Landed (2026-09-08), scoped to the script allowlist.** The measured injector
+is 人贩子物语's status bar: its HUD parses `<link rel="stylesheet"
+href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/…min.css">`
+through a `template` and appends it, and the closed `style-src` refused it as
+`blocked cdn.jsdelivr.net (style-src-elem)`. The ruling's mechanism, as built:
+
+- **The links are rewritten, not the policy widened.** `rewriteStylesheetLinks`
+  (`apps/iris-web/src/sandbox/srcdoc.ts`) points a stylesheet `<link>` at
+  `/iris/script-bundle?url=…` when — and only when — its href is on the same
+  remote allowlist `script-src` names, so the load rides an origin the policy
+  already admits and a route the host enforces. It runs at both crossings where
+  card markup enters the frame as *text*: `buildSrcdoc`'s body pass, and
+  `rewritingTemplate`'s `innerHTML` gate on the virtual document's node factory
+  — the template parse is the measured route, and rewriting there means the
+  browser's first fetch of the sheet is the allowed one, so no refusal is
+  reported for a load that then succeeds.
+- **The proxy serves stylesheets as stylesheets.** A `.css` upstream is
+  answered `text/css` and its `@font-face`/`@import` targets are rewritten onto
+  the same route (`rewriteStylesheetUrls`,
+  `packages/iris-app-service/src/bundle-rewrite.ts`), the stylesheet twin of
+  the nested-import rewrite. A `url()` *outside* a font-face stays as written
+  so `img-src`'s refusal keeps naming the host the card chose.
+- **`font-src` admits the shell origin** (`framePolicy`), because the proxied
+  faces now come from there — the same standing `script-src`/`style-src` entry,
+  strictly less than the remote code origins `script-src` already admits.
+- **Everything else is unchanged.** A stylesheet host outside the allowlist is
+  still refused and still named — `fontsapi.zeoseven.com` remains exactly the
+  refusal the ruling describes, and per-host lists remain the shape this
+  project refuses.
+
 **1. SillyTavern sends no Content-Security-Policy.** It mounts helmet with the
 CSP explicitly switched off:
 

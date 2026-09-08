@@ -112,8 +112,18 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * about 0.8 before this change, so the tightness is not new — and the next
  * thing that grows the bootstrap has the same choice to make: put it in the
  * member table, or move the gate and say so.
+ *
+ * **52 KiB, and the predicted gate move came with it.** The stylesheet-proxy
+ * policy (`srcdoc.ts`'s `rewriteStylesheetLinks` / `rewritingTemplate`, the
+ * 人贩子物语 style-src-elem fix) is bootstrap policy — a template parse is the
+ * last place a card's stylesheet URL choice is still unspent — so it could not
+ * go into the member table without becoming substitutable, the one property the
+ * inline/fetch seam exists to protect. Measured 52448 bytes against 51 KiB,
+ * 224 over; not squeezable to the line without gambling on minifier weather.
+ * So the constant moves as the table below always said it would, and the count
+ * gate moves with it.
  */
-export const FRAME_OVERHEAD_BYTES = 51 * 1024
+export const FRAME_OVERHEAD_BYTES = 52 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -161,6 +171,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * | 48 KiB | 42.7 | 21.3 | 20 | held |
  * | 49 KiB | 41.8 | 20.9 | 20 | held |
  * | 50 KiB | 41.0 | 20.5 | 20 | held, half a frame from the line; 52 KiB would move the gate |
+ * | 52 KiB | 39.4 | 19.7 | 20 | **false** → gate 19, the move 50 said 52 would cost |
  *
  * Both times the reasonable-looking response was to raise the constant above and
  * treat the ratio as incidental; both times the invariant said otherwise, and
@@ -194,8 +205,14 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * **relationship** — that the gate sits well below the degradation point —
  * rather than any of the three numbers. Every figure in this paragraph is stale
  * the moment the bootstrap moves; the guard in `build:sandbox` is what is not.
+ *
+ * **19, at 52 KiB, by the same table.** The stylesheet-proxy bootstrap crossed
+ * the line 50 KiB warned about, and 19 is the largest value the invariant
+ * holds — it holds to about 55 KiB, so the next bootstrap increment that trips
+ * `build:sandbox` has real room to answer with a slimming pass instead of
+ * another frame.
  */
-export const FRAME_COUNT_LIMIT = 20
+export const FRAME_COUNT_LIMIT = 19
 
 /** One interface block that could become a frame. */
 export interface FrameCandidate {

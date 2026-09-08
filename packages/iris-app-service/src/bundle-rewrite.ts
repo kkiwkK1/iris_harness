@@ -165,3 +165,149 @@ export function rewriteNestedSpecifiers(source: string, upstream: string): Neste
 
   return { source: out, rewritten, refused, bare, dynamic }
 }
+
+/** What one stylesheet rewrite pass did, for the report. */
+export interface StylesheetRewrite {
+  /** The source, with every proxied target pointed back at this host. */
+  source: string
+  /** How many targets were rewritten. */
+  rewritten: number
+  /** Targets that resolved somewhere the allowlist does not cover. */
+  refused: string[]
+}
+
+/**
+ * Whether a CSS url target names something this route should leave alone.
+ *
+ * `data:` and `blob:` are already self-contained, and a `#fragment` is a
+ * reference into the document, not a fetch — `url(#icon)` pointing at an inline
+ * SVG sprite is ordinary CSS. Resolving one against the upstream URL would
+ * produce a plausible address for a fetch nobody meant to make.
+ */
+function isSelfContained(target: string): boolean {
+  return target === '' || target.startsWith('#')
+}
+
+/** One `url( … )` token, quoted or bare. Bare cannot carry whitespace or quotes. */
+const URL_TOKEN = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]*))\s*\)/gi
+
+/**
+ * Rewrite one target, quoted as it was written.
+ * @param token - the whole `url( … )` or quoted-string match.
+ * @param target - the text between the quotes or parens.
+ * @returns the replacement text, or undefined when the target is left alone.
+ */
+function rewriteTarget(token: string, target: string, upstream: string, refused: string[]): string | undefined {
+  if (isSelfContained(target.trim())) return undefined
+  let resolved: URL
+  try {
+    resolved = new URL(target.trim(), upstream)
+  } catch {
+    return undefined
+  }
+  // Anything but a remote reference stays as written: the resolved URL's own
+  // scheme decides, and `checkScriptFetch` would refuse `data:` anyway — but
+  // refusing a non-fetch is noise, so it is filtered here rather than reported.
+  if (resolved.protocol !== 'https:' && resolved.protocol !== 'http:') return undefined
+  const verdict = checkScriptFetch(resolved.href)
+  if (!verdict.allowed) {
+    refused.push(resolved.href)
+    return undefined
+  }
+  const first = token.charAt(0)
+  const quote = first === '"' || first === "'" ? first : ''
+  // **Origin-relative, like the module rewrites.** The stylesheet is served from
+  // this host, so a root-relative route resolves against us without the cached
+  // body naming which address it was reached at.
+  return `${quote}${toProxied(verdict.url, '')}${quote}`
+}
+
+/**
+ * Point a proxied stylesheet's own references back at this host's route.
+ *
+ * The stylesheet twin of {@link rewriteNestedSpecifiers}, for the reason that
+ * one records: rewriting moves the text's base URL. A stylesheet served from
+ * `…/script-bundle?url=https://cdn.jsdelivr.net/…/icons.min.css` resolves its
+ * `@font-face` faces — `url("fonts/tabler-icons.woff2")` — against this host's
+ * route path, which is a 404: the CSS arrives and every glyph in it does not.
+ * Measured on 人贩子物语's status bar, whose Tabler sheet carries exactly that
+ * shape.
+ *
+ * Two constructs are rewritten and the rest is deliberately not:
+ *
+ * - **`@font-face` blocks** — the faces are the content that breaks when the
+ *   base moves, and they are inert. A `url()` *outside* a font-face is an
+ *   image or a background; leaving it as written keeps the refusal the frame
+ *   issues (through `img-src`) naming the remote host the card actually chose,
+ *   rather than laundering the fetch through this route and reporting our own
+ *   origin in its place.
+ * - **`@import` targets** — the same base-URL break, and the same route.
+ *
+ * Nothing here decides what may be fetched: the allowlist check is the same
+ * `checkScriptFetch` the route's own load runs, so a target this pass wraps is
+ * a target the route would have served if asked directly, and one it would not
+ * is reported and left as written.
+ * @param source - the stylesheet as upstream sent it.
+ * @param upstream - the URL the stylesheet was fetched from, as the base.
+ * @returns the rewritten source and what happened to each target.
+ */
+export function rewriteStylesheetUrls(source: string, upstream: string): StylesheetRewrite {
+  const refused: string[] = []
+  let rewritten = 0
+  /** Whole-match spans, applied descending so earlier offsets stay valid. */
+  const edits: { start: number, end: number, replacement: string }[] = []
+
+  /*
+   * A `@font-face` block cannot nest braces — its body is descriptors, and the
+   * one function-like construct it carries (`format(...)`, `local(...)`) sits
+   * inside `src:` without braces of its own — so `[^{}]*` is the whole block,
+   * in a minified sheet as much as a formatted one. The `{` is matched
+   * literally: `[^{}]` excludes it, so a pattern that did not name the opener
+   * would end the block before it began.
+   */
+  for (const block of source.matchAll(/@font-face\s*\{[^{}]*\}/gi)) {
+    const at = block.index ?? 0
+    for (const token of block[0].matchAll(URL_TOKEN)) {
+      const target = token[1] ?? token[2] ?? token[3] ?? ''
+      const replacement = rewriteTarget(token[0], target, upstream, refused)
+      if (replacement === undefined) continue
+      rewritten += 1
+      // `rewriteTarget` answers the inner text; here it sits back inside the
+      // `url( … )` construct the edit span covers. The proxied URL is bare-safe
+      // (no whitespace, no quotes, no parens — the encoder did that), so the
+      // original quoting is not preserved.
+      edits.push({
+        start: at + (token.index ?? 0),
+        end: at + (token.index ?? 0) + token[0].length,
+        replacement: `url(${replacement})`,
+      })
+    }
+  }
+
+  // Only the import's own target moves; what follows it on the statement is a
+  // media query, which is not an address. The `exec` here needs a fresh
+  // non-global regex — a `/g` regex carries `lastIndex` between `exec` calls,
+  // and the second statement would be searched from the first one's end. Both
+  // alternatives expose the inner text as groups 1 and 2, the same shape
+  // `URL_TOKEN` uses, so the quoting stays with `rewriteTarget`.
+  for (const statement of source.matchAll(/@import\s+[^;{}]*;/gi)) {
+    const at = statement.index ?? 0
+    const inner = statement[0]
+    const token = /^url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]*))\s*\)/i.exec(inner)
+      ?? /"([^"]*)"|'([^']*)'/.exec(inner)
+    if (token === null || token === undefined) continue
+    // Group 3 exists only for the `url( … )` form's bare spelling; the quoted
+    // fallback stops at group 2, so the chain reads the first group that fired.
+    const target = token[1] ?? token[2] ?? token[3] ?? ''
+    const replacement = rewriteTarget(token[0], target, upstream, refused)
+    if (replacement === undefined) continue
+    rewritten += 1
+    edits.push({ start: at + (token.index ?? 0), end: at + (token.index ?? 0) + token[0].length, replacement })
+  }
+
+  let out = source
+  for (const edit of edits.sort((a, b) => b.start - a.start)) {
+    out = out.slice(0, edit.start) + edit.replacement + out.slice(edit.end)
+  }
+  return { source: out, rewritten, refused }
+}
