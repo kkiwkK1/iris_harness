@@ -7,6 +7,8 @@ import {
   FA_SENTINEL,
   buildSrcdoc,
   framePolicy,
+  rewriteStylesheetLinks,
+  rewritingTemplate,
   unblockFontStylesheets,
   withMessageCss,
 } from '../src/sandbox/srcdoc.ts'
@@ -666,4 +668,98 @@ test('the unblocking is applied where the markup enters the document', () => {
     body: '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">',
   })
   assert.match(doc, /Inter[^>]*media="print"/)
+})
+
+/*
+ * ─── Remote stylesheets ride the bundle route ────────────────────────────
+ *
+ * The measured injector is 人贩子物语's status bar: its HUD source opens with a
+ * Tabler link — the exact tag below, taken from the card's script — parsed
+ * through a `template` and appended, which the closed `style-src` refused as
+ * `blocked cdn.jsdelivr.net (style-src-elem)`. The rewrite passes here point
+ * allowlisted stylesheet links at the host's bundle route instead, the same
+ * allowlist `script-src` already names.
+ */
+
+test('font-src admits the shell origin, where proxied faces now come from', () => {
+  // A proxied stylesheet's `@font-face` targets are rewritten onto the bundle
+  // route (host side, `rewriteStylesheetUrls`), so the faces load from Iris's
+  // origin — the same standing `script-src`/`style-src` entry, strictly less
+  // than the remote code origins already admitted.
+  const escaped = SELF.replace(/[/:]/gu, '\\$&')
+  const policy = framePolicy(false, SELF)
+  assert.match(policy, new RegExp(`font-src[^;]*${escaped}`))
+  const granted = framePolicy(true, SELF)
+  assert.match(granted, new RegExp(`font-src[^;]*${escaped}`))
+})
+
+test('an allowlisted stylesheet link is pointed at the bundle route', () => {
+  // 人贩子物语's HUD source, first line of the HUD div, verbatim.
+  const body = '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">'
+
+  const out = rewriteStylesheetLinks(body, SELF)
+
+  const expected = `${SELF}/iris/script-bundle?url=${encodeURIComponent('https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css')}`
+  assert.equal(out, `<link rel="stylesheet" href="${expected}">`)
+})
+
+test('links the policy already answers, or refuses outright, are left alone', () => {
+  const body = [
+    // The font origin is admitted by default; the non-blocking pass owns it.
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter&display=swap">',
+    // Not on the allowlist: the refusal must keep naming the host the card chose.
+    '<link rel=stylesheet href=https://fontsapi.zeoseven.com/292/result.css>',
+    // Not a stylesheet at all.
+    '<link rel="preload" href="https://cdn.jsdelivr.net/npm/x/y.woff2" as="font" crossorigin>',
+    // Already on the route: rewriting again would nest one proxy inside another.
+    `<link rel="stylesheet" href="${SELF}/iris/script-bundle?url=${encodeURIComponent('https://cdn.jsdelivr.net/npm/a/b.css')}">`,
+  ].join('')
+
+  const out = rewriteStylesheetLinks(body, SELF)
+
+  assert.ok(out.includes('fonts.googleapis.com/css2?family=Inter'), 'the admitted origin is not moved')
+  assert.ok(out.includes('fontsapi.zeoseven.com'), 'a non-allowlisted host stays as written, to be refused by name')
+  assert.ok(out.includes('as="font"'), 'a non-stylesheet link is untouched')
+  assert.equal(out.split('script-bundle?').length - 1, 1, 'an already-proxied href is not wrapped twice')
+})
+
+test('the rewrite is applied where static markup enters the document', () => {
+  // Through `buildSrcdoc`, so the pass cannot drift from the assembly — and it
+  // must run before the font pass, whose output it must not re-edit.
+  const doc = buildSrcdoc('tok', '', {
+    networkGranted: false,
+    libraries: [],
+    selfOrigin: SELF,
+    body: '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css">',
+  })
+
+  assert.ok(doc.includes('/iris/script-bundle?url='), 'the sheet loads through the route the policy admits')
+  assert.ok(!doc.includes('href="https://cdn.jsdelivr.net'), 'no direct remote href is left for style-src to refuse')
+})
+
+test('a template parsed by a card rewrites its stylesheets before the browser sees them', () => {
+  /*
+   * The runtime injection path. `innerHTML` is set on a real template, so the
+   * wrapper must forward everything — `content` most of all, since it is the
+   * fragment the card queries and appends — and intercept only the write.
+   */
+  const queries: string[] = []
+  const real = {
+    innerHTML: '',
+    content: { querySelector: (selector: string) => (queries.push(selector), { found: selector }) },
+    remove() { return this === real },
+  }
+  const wrapped = rewritingTemplate(real as unknown as HTMLTemplateElement, SELF)
+
+  wrapped.innerHTML =
+    '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">'
+
+  assert.ok(
+    (real.innerHTML as string).includes('/iris/script-bundle?url='),
+    'the parse saw the proxied href, so the first fetch is the allowed one',
+  )
+  assert.ok(!(real.innerHTML as string).includes('href="https://cdn.jsdelivr.net'), 'no direct fetch is ever started')
+  assert.deepEqual((wrapped.content as { querySelector: (s: string) => unknown }).querySelector('#kdn-statusbar-root'),
+    { found: '#kdn-statusbar-root' }, 'the fragment is the real one, reachable through the wrapper')
+  assert.equal((wrapped.remove as () => boolean)(), true, 'forwarded methods run against the real element')
 })

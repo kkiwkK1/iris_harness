@@ -17,6 +17,7 @@
 
 import type { ScriptContext } from '@iris/protocol'
 import { installSandbox } from './frame.ts'
+import { rewritingTemplate } from './srcdoc.ts'
 /*
  * **Types only.** The stand-in's code comes off the member table
  * (`members.js`), which is fetched once per frame rather than inlined into
@@ -1820,7 +1821,18 @@ try {
   // way the browser would have.
   baseUrl: document.baseURI,
   factory: {
-    createElement: tagName => document.createElement(tagName),
+    /*
+     * A `template` is the one element wrapped at creation: parsing HTML into a
+     * template is how a card's script injects markup, and the parse is where a
+     * remote stylesheet link inside that markup is still text with the URL
+     * choice unspent. See `rewritingTemplate` in `srcdoc.ts`.
+     */
+    createElement: tagName => {
+      const element = document.createElement(tagName)
+      return tagName.toLowerCase() === 'template'
+        ? rewritingTemplate(element as HTMLTemplateElement, shellOrigin())
+        : element
+    },
     createTextNode: data => document.createTextNode(data),
     createDocumentFragment: () => document.createDocumentFragment(),
   },

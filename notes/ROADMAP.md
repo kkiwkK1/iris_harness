@@ -19,9 +19,11 @@ ST 的功能面规模：14 个内置扩展、43 组 API 端点、约 290 个斜�
 main 相对 dev 独有的只有 overlay 测量仪器 + OVERLAY-CARDS §六之五。dev 的状态账在 IMPLEMENTATION-CHECKLIST.md / ACTION-PLAN.md,
 本文件下述条目凡与之重叠者以那两份为准;`ST-COMPARE.md` 基线是 `3cf858d`,引用须带坐标。合并后待收:ACTION-PLAN §二 五项、
 qa/** 判别力四条(D/A/C/E)、frame-entry 两条 500ms 的源码断言、dev 声称的上游事实正读复核。构建:bootstrap-b46bb40c / members-75a59bef / index-BU8bF8D-。
-**远程样式表/字体族(2026-09-06 裁)**:上游无 CSP、其帧头自装九个远程资源;卡引用远程 CSS 是一族(Lights ON 五条 regex 产出各带一份),
+**远程样式表/字体族(2026-09-06 裁;2026-09-08 白名单族已落地)**:上游无 CSP、其帧头自装九个远程资源;卡引用远程 CSS 是一族(Lights ON 五条 regex 产出各带一份),
 不按 host 加白名单;机制解 = 远程样式表走宿主代理(与 script bundle 同路由,代理重写 `@font-face src`,`style-src`/`font-src` 仍只 self),
-一次盖住 style-src / font-src / script-src(onload) / CORS(不透明源 preload)四道门;落地前具名拒绝并报告。事实见 SANDBOX.md 该节。
+一次盖住 style-src / font-src / script-src(onload) / CORS(不透明源 preload)四道门。**已落地(限 script 白名单族,人贩子物语 tabler 验收)**:
+链接改写走 `rewriteStylesheetLinks`/`rewritingTemplate`(srcdoc.ts,静态与 template.innerHTML 两条入口)、代理服务 `.css` 为 text/css 并重写
+`@font-face`/`@import`(`rewriteStylesheetUrls`,bundle-rewrite.ts)、`font-src` 加 selfOrigin;白名单外(zeoseven)维持具名拒绝。事实见 SANDBOX.md 该节。
 **世界书扫描的说话人前缀(2026-09-06)**:`include_names` 已接成真实旋钮(eb9ee2c),但前缀名按 role 派生;从 ST 导入、行上带自己说话人的聊天,
 上游用的是行上存的 `name`——待改投影让扫描读行上说话人(与 dev 的 MODELLED_KEYS 5→4 同一处)。
 

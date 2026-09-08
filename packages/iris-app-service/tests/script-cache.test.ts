@@ -63,6 +63,9 @@ async function cacheIn(
 
 const BUNDLE = 'https://testingcf.jsdelivr.net/gh/some/repo@1.2.3/dist/bundle.js'
 
+/** The sheet 人贩子物语's status bar asks for, the measured stylesheet case. */
+const TABLER_CSS = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css'
+
 test('a bundle is fetched once and served from disk after that', async (t) => {
   const { cache, asked, dir } = await cacheIn(t, { [BUNDLE]: { status: 200, body: 'export const x = 1' } })
 
@@ -380,4 +383,80 @@ test('a throw from the fetch does not claim to know it was the network', async (
   assert.match(result.reason, /fetch adapter faulted/u, 'the second reading was not named')
   assert.equal(result.reason.includes('could not reach'), false, 'the message still asserts a cause')
   assert.equal(errors.length, 1)
+})
+
+test('a stylesheet is served as CSS with its faces moved onto the route', async (t) => {
+  /*
+   * The second content this route serves. The measured sheet is shaped like
+   * 人贩子物语's Tabler icons: the CSS comes back as JavaScript's content type
+   * and the browser applies none of it, or it comes back as CSS with the faces
+   * resolving against the route path — a 404 per glyph. Both halves are
+   * asserted here, against the tabler URL the card actually requests.
+   */
+  const sheet = [
+    '@font-face{font-family:"tabler-icons";',
+    'src:url("fonts/tabler-icons.woff2?v0.0.1") format("woff2");}',
+    '.ti-book::before{content:"\\eb15";}',
+  ].join('')
+  const { cache, asked } = await cacheIn(t, { [TABLER_CSS]: { status: 200, body: sheet } })
+
+  const captured: { status: number, headers: Record<string, unknown>, body: string }[] = []
+  const res = () => {
+    const entry = { status: 0, headers: {} as Record<string, unknown>, body: '' }
+    captured.push(entry)
+    return {
+      writeHead(status: number, headers: Record<string, unknown>) {
+        entry.status = status
+        entry.headers = headers
+      },
+      end(body?: Buffer) { entry.body = body?.toString('utf8') ?? '' },
+    } as unknown as Parameters<ScriptCache['serve']>[1]
+  }
+  const req = (url: string) => ({ method: 'GET', url }) as Parameters<ScriptCache['serve']>[0]
+
+  await cache.serve(req(`/x?url=${encodeURIComponent(TABLER_CSS)}`), res())
+
+  assert.deepEqual(asked, [TABLER_CSS])
+  assert.equal(captured[0]?.headers['content-type'], 'text/css; charset=utf-8')
+  assert.equal(captured[0]?.headers['access-control-allow-origin'], '*', 'a stylesheet fetch from an opaque frame is CORS too')
+  assert.ok(
+    captured[0]?.body.includes('/iris/script-bundle?url='),
+    'the face resolves against the route, not against it',
+  )
+  assert.ok(
+    captured[0]?.body.includes(encodeURIComponent('https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/fonts/tabler-icons.woff2?v0.0.1')),
+    'the face resolves against the upstream sheet',
+  )
+  assert.ok(captured[0]?.body.includes('content:'), 'the rule text itself is untouched')
+})
+
+test('a stylesheet reference off the allowlist is reported and left as written', async (t) => {
+  const sheet = '@font-face{font-family:"x";src:url(https://fontsapi.zeoseven.com/292/result.woff2);}'
+  const dir = await mkdtemp(join(tmpdir(), 'iris-bundles-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const reports: string[] = []
+  const cache = new ScriptCache({
+    dir,
+    fetchRemote: upstream({ [TABLER_CSS]: { status: 200, body: sheet } }).fetch,
+    onError: () => {},
+    onReport: message => reports.push(message),
+  })
+
+  const captured: { status: number, headers: Record<string, unknown> }[] = []
+  await cache.serve(
+    { method: 'GET', url: `/x?url=${encodeURIComponent(TABLER_CSS)}` } as Parameters<ScriptCache['serve']>[0],
+    (() => {
+      const entry = { status: 0, headers: {} as Record<string, unknown> }
+      captured.push(entry)
+      return {
+        writeHead(status: number, headers: Record<string, unknown>) { entry.status = status; entry.headers = headers },
+        end() {},
+      } as unknown as Parameters<ScriptCache['serve']>[1]
+    })(),
+  )
+
+  assert.equal(captured[0]?.status, 200, 'the sheet itself is served')
+  assert.equal(reports.length, 1)
+  assert.match(reports[0] ?? '', /fontsapi\.zeoseven\.com/)
+  assert.match(reports[0] ?? '', /not on the remote allowlist/)
 })
