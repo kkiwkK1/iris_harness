@@ -449,9 +449,20 @@ export interface CardChatMessage {
    * `data` after asking for swipes finds nothing here too.
    */
   data?: Record<string, unknown>
-  swipe_id?: number
-  swipes?: string[]
-  swipes_data?: Record<string, unknown>[]
+  /**
+   * The swipe triple, on **every** shape.
+   *
+   * Upstream returns these under its `// for compatibility` comment in both
+   * shapes (`chat_message.ts:139-143` plain, `:148` swiped) — the option named
+   * `include_swipes` swaps `message`/`data`/`extra` for `swipes_info`, it does
+   * not gate these. They are required here because a card reads them without
+   * asking: 人贩子物语's embedded phone guards on `msg.swipes[swipeId]` after a
+   * call whose option it misspelled, so "present only when asked" was, for the
+   * one caller that mattered, "present never".
+   */
+  swipe_id: number
+  swipes: string[]
+  swipes_data: Record<string, unknown>[]
 }
 
 /**
@@ -760,7 +771,9 @@ function toCardChatMessage(
   const swipesData = swipeVariables(message, swipes)
   const swipeId = message.swipe_id ?? 0
 
-  const base: CardChatMessage = {
+  // The fields both shapes carry; the caller below adds the triple and the
+  // `data` half of upstream's asymmetry.
+  const base: Omit<CardChatMessage, 'data' | 'swipe_id' | 'swipes' | 'swipes_data'> = {
     message_id: index,
     name: message.name,
     role: narrator
@@ -771,7 +784,28 @@ function toCardChatMessage(
     extra: message.extra ?? {},
   }
 
-  if (!withSwipes) return { ...base, data: swipesData[swipeId] ?? {} }
+  /*
+   * The plain shape carries the swipe triple **too**, not only `data`. Upstream's
+   * plain return has `swipe_id`, `swipes` and `swipes_data` under its own
+   * `// for compatibility` comment (`chat_message.ts:139-143`) — every floor
+   * carries them, asked or not, and `include_swipes` changes only whether
+   * `message`/`data`/`extra` ride along. The plain read used to return `data`
+   * alone, on a reading of the option's name as a gate; what that cost was
+   * measured: 人贩子物语's embedded phone calls
+   * `getChatMessages('0', { include_swipe: true })` — misspelled, which upstream
+   * ignores exactly as this did — and reads `msg.swipes[swipeId]` from the plain
+   * shape's compatibility fields, so every greeting but the first reported
+   * "开场白 N 不存在" on a floor that held all four.
+   */
+  if (!withSwipes) {
+    return {
+      ...base,
+      data: swipesData[swipeId] ?? {},
+      swipe_id: swipeId,
+      swipes: [...swipes],
+      swipes_data: swipesData,
+    }
+  }
 
   // No `data` here, deliberately — see the field's note.
   return { ...base, swipe_id: swipeId, swipes: [...swipes], swipes_data: swipesData }

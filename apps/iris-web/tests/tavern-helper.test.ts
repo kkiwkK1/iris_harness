@@ -324,7 +324,55 @@ test('include_swipes returns one entry carrying every swipe', () => {
   const plain = read(2)
   assert.equal(plain.length, 1)
   assert.equal(plain[0]?.message, 'third', 'the selected swipe’s text, under Tavern Helper’s name')
-  assert.equal(plain[0]?.swipes, undefined, 'without the flag there are no swipes')
+  /*
+   * The triple is upstream's `// for compatibility` fields
+   * (`chat_message.ts:139-143`), on the plain shape as much as the swiped one —
+   * the flag does not gate it. This asserted `undefined` here, and the caller
+   * that paid was 人贩子物语's embedded phone: it asks with a misspelled option
+   * upstream also ignores, then reads `msg.swipes[swipeId]`, so "present only
+   * when asked" meant every greeting but the first reported 开场白 N 不存在.
+   */
+  assert.deepEqual(plain[0]?.swipes, ['third', 'other'], 'the plain read carries swipes too')
+  assert.equal(plain[0]?.swipe_id, 0)
+})
+
+test('人贩子物语’s opener reads its five greetings through this surface', async () => {
+  /*
+   * The real caller, pinned on the real data. The card's opener page — its
+   * `first_mes`, rendered as a message frame — draws four buttons
+   * (`jumpGreeting(1)`…`(4)`) and the handler reads floor 0 with a misspelled
+   * option (`include_swipe`), then guards on `msg.swipes[swipeId]`. With the
+   * triple stripped, every greeting but the first answered 开场白 N 不存在; the
+   * fixture is the card's own `first_mes` + `alternate_greetings`, verbatim.
+   * The snapshot rows are what `exportMessages` produces for the seeded log
+   * (`packages/iris-app-service/tests/greeting-swipe-contract.test.ts` pins
+   * that half), so this holds the frame-facing side of the same contract.
+   */
+  const fixture = JSON.parse(
+    await readFile(
+      new URL('../../../packages/iris-app-service/tests/fixtures/人贩子物语-greetings.json', import.meta.url),
+      'utf8',
+    ),
+  ) as { first_mes: string, alternate_greetings: string[] }
+  const swipes = [fixture.first_mes, ...fixture.alternate_greetings]
+
+  const { api } = surface({
+    context: {
+      ...context(),
+      chat: [{ name: '人贩子物语', is_user: false, mes: swipes[0], swipes, swipe_id: 0 }],
+    } as ScriptContext,
+  })
+  const read = api['getChatMessages'] as (
+    range: string | number,
+    options?: object,
+  ) => { swipes?: string[], swipe_id?: number }[]
+
+  const messages = read('0', { include_swipe: true })
+  assert.equal(messages.length, 1)
+  assert.deepEqual(messages[0]?.swipes, swipes, 'all five, through the misspelled call the card actually makes')
+  for (const at of [1, 2, 3, 4]) {
+    assert.ok(messages[0]?.swipes?.[at], `开场白 ${at} 存在，jumpGreeting(${at}) 能切过去`)
+  }
 })
 
 test('data is present without swipes and absent with them', () => {
@@ -343,7 +391,7 @@ test('data is present without swipes and absent with them', () => {
   const plain = read(2)[0]
   assert.ok(plain !== undefined)
   assert.equal('data' in plain, true, 'the plain read must carry this floor’s variables')
-  assert.equal('swipes_data' in plain, false)
+  assert.equal(Array.isArray(plain.swipes_data), true, 'the plain read carries the compatibility fields too')
 
   const swiped = read(2, { include_swipes: true })[0]
   assert.ok(swiped !== undefined)
@@ -1584,6 +1632,10 @@ test('the renamed fields carry the values upstream says they do', () => {
     message: 'hidden note',
     extra: {},
     data: {},
+    // Upstream's `// for compatibility` triple — on every floor, asked or not.
+    swipe_id: 0,
+    swipes: ['hidden note'],
+    swipes_data: [{}],
   })
 })
 

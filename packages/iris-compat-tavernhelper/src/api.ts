@@ -21,7 +21,6 @@ import type { DeleteResult, VariableOption, Variables, VariableStore } from '@ir
 import {
   chatMessages,
   selectMessages,
-  type ChatMessage,
   type ChatMessageSwiped,
   type GetChatMessagesOptions,
   type SpeakerNames,
@@ -112,7 +111,7 @@ export function createTavernHelper(host: TavernHelperHost): TavernHelperApi {
     getChatMessages: (
       range: string | number,
       options?: GetChatMessagesOptions,
-    ): (ChatMessage | ChatMessageSwiped)[] => selectMessages(allMessages(), range, options),
+    ): ChatMessageSwiped[] => selectMessages(allMessages(), range, options),
     getLastMessageId: (): number => allMessages().length - 1,
 
     // ── swipes ───────────────────────────────────────────────────────────

@@ -26,14 +26,31 @@ export interface ChatMessage {
   /** The message's own variables — where MVU keeps `stat_data`. */
   data: Record<string, unknown>
   extra: Record<string, unknown>
-}
-
-/** One message with every alternate generation exposed. */
-export interface ChatMessageSwiped extends ChatMessage {
+  /**
+   * The swipe triple, on **every** shape.
+   *
+   * Upstream returns these under its `// for compatibility` comment
+   * (`chat_message.ts:139-143`) whether or not `include_swipes` was passed —
+   * the flag swaps `message`/`data`/`extra` for `swipes_info`, it does not gate
+   * these. `selectMessages` used to strip them, and the one measured caller
+   * that reads them guards on `msg.swipes[swipeId]` after a call whose option
+   * it misspells (`include_swipe`), so "present only when asked" was for that
+   * caller "present never".
+   */
   swipe_id: number
   swipes: string[]
   swipes_data: Record<string, unknown>[]
 }
+
+/**
+ * One message with every alternate generation exposed.
+ *
+ * Kept as its own name because callers reach for it when they mean "I am
+ * reading the swipes", but it adds nothing any more: the triple is on
+ * {@link ChatMessage} itself, upstream's compatibility fields on every shape,
+ * and this surface never modelled the `data`-omission half of the flag.
+ */
+export interface ChatMessageSwiped extends ChatMessage {}
 
 /** Filters `getChatMessages` accepts. */
 export interface GetChatMessagesOptions {
@@ -178,13 +195,17 @@ export function resolveRange(range: string | number, length: number): number[] {
  * @param all - the full message list.
  * @param range - which messages.
  * @param options - role, visibility and swipe filters.
- * @returns the selected messages; swipe fields are stripped unless asked for.
+ * @returns the selected messages. The swipe triple stays on every entry — it
+ * is upstream's `// for compatibility` fields, not the flag's cargo — so this
+ * no longer strips anything: `include_swipes` exists upstream to swap
+ * `message`/`data`/`extra` for `swipes_info`, and this surface carries no
+ * `swipes_info` to trade for.
  */
 export function selectMessages(
   all: readonly ChatMessageSwiped[],
   range: string | number,
   options: GetChatMessagesOptions = {},
-): (ChatMessage | ChatMessageSwiped)[] {
+): ChatMessageSwiped[] {
   const role = options.role ?? 'all'
   const hideState = options.hide_state ?? 'all'
 
@@ -194,9 +215,4 @@ export function selectMessages(
     .filter(message => role === 'all' || message.role === role)
     .filter(message => hideState === 'all'
       || (hideState === 'hidden' ? message.is_hidden : !message.is_hidden))
-    .map((message) => {
-      if (options.include_swipes === true) return message
-      const { swipe_id: _id, swipes: _swipes, swipes_data: _data, ...plain } = message
-      return plain
-    })
 }
