@@ -3250,3 +3250,64 @@ this is thinner than §67's row badge. The position a reader would go to in orde
 to change an entry is inside a world book, not at an index in this list, and a
 number pointing into the panel's own ordering would be a place that does not
 exist. The entry's name is the handle instead.
+
+## 70. Every cost figure now counts a card's own requests, and says how many of them there were
+
+**Kind:** deliberate improvement, on a surface upstream does not have. §47 and
+§60 record the per-turn and the profile-wide halves of showing what a provider
+charged; this is the population those two were missing. The host side —
+including the measurement and the storage argument — is
+`notes/packages/iris-app-service/DEVIATIONS.md` §51.
+
+**The fact being surfaced.** A card's script can ask for a generation of its own
+(`TavernHelper.generate` / `generateRaw`). The provider bills it exactly like a
+turn, on the same route, and it produces no reply — so nothing on the page could
+show it, and until now nothing recorded it either. MVU fires one per turn for
+its variable update, so on that card roughly half of what a reader had spent was
+absent from every figure Iris printed.
+
+**The ruling: inside the totals, with the share named.** A card's request is
+spend on this account, so leaving it out would make a total disagree with the
+bill. But a reader whose figure is twice the replies they can count needs to be
+able to explain it, so the share is stated beside the figure rather than folded
+in silently. Three surfaces, three amounts of room, three answers:
+
+- **The usage page's total card** carries a line under the figure and its label:
+  「其中卡脚本请求 N 次 · X token」. A line rather than an eighth capsule, because
+  it is not another way of dividing the total — it is a statement *about* the
+  figure immediately above it. Drawn only when the host reported a share;
+  「其中卡脚本 0 次」 on every profile that runs no card scripts is a line a reader
+  learns to skip, and the host's absent-versus-zero rule is what makes that
+  distinction available here.
+- **The chart** gets a fifth metric, 「卡脚本」, rather than splitting every line
+  in two. That was the smaller change and the better reading: split by source,
+  each model draws two lines a legend keyed on the model name cannot tell apart,
+  the colour assignment grows a second axis, and a reader who wanted the plain
+  total is looking at twice as many lines to find it. As a metric it reuses the
+  whole machine — same axis, same series, same legend — and the switch already
+  says which reading is on screen. It sits **last** in the switch because it is
+  a subset of 「总量」 rather than a fifth way of cutting it.
+- **The per-conversation subtotals** get a fifth column, 「卡脚本 N 次 · X tok」,
+  blank — never `0` — on a conversation with no card generations. One blank cell in a column says "not
+  this one"; a column of zeros says the feature failed to load. Its own column
+  and not a second number inside the total's cell, because two figures in one
+  cell read as a subtraction whose direction the reader has to guess.
+
+**The composer's line keeps dsh's reading and moves the split to the hover.**
+That row is 「本对话累计计费」 — what this conversation has cost — and a card's
+request is part of that, so the visible figure counts it. What the row cannot do
+is carry a fourth group: it is one ellipsised line, and a fourth group is the
+one that gets cut on a narrow composer. So the `title`, which previously
+repeated the visible line and therefore told a reader nothing, now carries the
+line plus 「其中卡脚本请求 N 次 · X tok」. The wording is 「其中」 in both dictionaries
+precisely because a reader who added the two figures would double-count.
+
+**The wrong implementation this is defended against**, in the render check and
+in `token-format.test.ts`: a line that *subtracted* the card's share to keep
+"what I generated" clean. It renders a smaller number, looks entirely
+reasonable, and disagrees with the bill — so the checks assert that the visible
+line carries the whole figure and the hover the smaller one, on a fixture where
+the two are different numbers. The fake seeds the card share on **one** of its
+three conversations for the same kind of reason: a fixture where every row had a
+figure would leave the blank column unrendered, which is the half a reviewer
+never sees.

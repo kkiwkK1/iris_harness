@@ -43,12 +43,14 @@ import {
   metricValue,
   monthLabel,
   rangeParams,
+  scriptTokens,
   seriesKey,
   SERIES_TOKENS,
   styleFor,
   styleForSlot,
   totalTokens,
   UNATTRIBUTED_STYLE,
+  USAGE_METRICS,
   USAGE_RANGES,
   xFor,
   yFor,
@@ -138,6 +140,51 @@ test('each metric reads its own bucket, and an absent cache bucket plots as a fl
   // A point on a line has to be a number; the honest half of the same fact is
   // `hitRate` refusing to state a share, asserted above.
   assert.equal(metricValue(totals({ cacheMiss: 700, output: 1 }), 'cacheRead'), 0)
+})
+
+test('the card-script metric reads the share, not the whole it sits inside', () => {
+  /*
+   * The share is a **subset** of the row it hangs on, so the two are different
+   * numbers over the same set — which is what makes this checkable. The nearest
+   * wrong implementation reads the row itself and returns 1_400: a plausible
+   * figure that would draw the card line exactly on top of the total line and
+   * read as "all of this was a card's".
+   */
+  const row = totals({
+    cacheMiss: 700,
+    cacheRead: 300,
+    output: 400,
+    turns: 3,
+    script: { cacheMiss: 100, cacheRead: 50, output: 40, turns: 1, cacheTurns: 1, cachePrompt: 150 },
+  })
+  assert.equal(metricValue(row, 'total'), 1_400)
+  assert.equal(metricValue(row, 'script'), 190)
+  assert.equal(scriptTokens(row), 190)
+  // The counts differ too, so a reading that took `turns` where it meant
+  // `script.turns` cannot agree by coincidence.
+  assert.notEqual(row.script?.turns, row.turns)
+})
+
+test('a row with no card share plots as a floor, while the page says nothing', () => {
+  /*
+   * The same pairing `cacheRead` has, for the same reason: a point on a line
+   * must be a number, while the *figure* on the page is not drawn at all — the
+   * panel branches on `totals.script === undefined`, which is what keeps
+   * 「其中卡脚本 0 次」 off every profile that runs no card scripts.
+   */
+  const row = totals({ cacheMiss: 700, output: 400, turns: 2 })
+  assert.equal(row.script, undefined)
+  assert.equal(metricValue(row, 'script'), 0)
+  assert.equal(scriptTokens(row), 0)
+})
+
+test('the metric switch offers the card line, or nobody can draw it', () => {
+  // A metric in the type and missing from the control is a line that exists and
+  // cannot be reached. The order carries a reading of its own: `script` is a
+  // subset of `total` rather than a fifth way of cutting it, so it comes last.
+  assert.ok(USAGE_METRICS.includes('script'), 'the card-script metric is not in the switch')
+  assert.equal(USAGE_METRICS.at(-1), 'script')
+  assert.equal(USAGE_METRICS[0], 'total')
 })
 
 /* -------------------------------------------------------------- series */

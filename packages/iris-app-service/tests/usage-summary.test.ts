@@ -36,6 +36,7 @@ import {
   addUsage, bucketStart, readChatUsage, summariseUsage,
   type ChatUsage, type DatedUsage,
 } from '../src/usage-summary.ts'
+import { SIDE_USAGE_FIELD } from '../src/side-usage.ts'
 import { USAGE_FIELD } from '../src/usage.ts'
 
 /** A moment with a known local calendar position, so bucket tests do not depend on the runner's zone. */
@@ -509,4 +510,155 @@ test('a blank model in a file reads as unattributed, not as a model with no labe
   // The moment was still read: dropping a blank name must not drop the rest.
   assert.equal(read.records[0]?.undated, false)
   assert.deepEqual(summariseUsage([read], { granularity: 'day' }).models, [])
+})
+
+/*
+ * ------------------------------------------------------ the second population
+ *
+ * A conversation's cost is not only its turns. A card's own
+ * `TavernHelper.generate` is billed on the same route to the same account and
+ * produces no reply, so it lives on the chat **header** rather than on any
+ * message (`../src/side-usage.ts`). Counting only the turns made every figure
+ * on the usage page a claim about a population narrower than the user's bill;
+ * folding them in without saying so would leave a reader unable to explain a
+ * total twice the size of the replies they can count.
+ */
+
+test('a card generation is counted in the whole and reported as its own share', () => {
+  const summary = summariseUsage([
+    chat('mixed', [
+      record(NOON, 'deepseek-chat', { inputTokens: 100, outputTokens: 10, cacheReadTokens: 900 }),
+      record(NOON, 'deepseek-chat', {
+        inputTokens: 40, outputTokens: 4, cacheReadTokens: 360, source: 'script',
+      }),
+    ]),
+  ], { granularity: 'day' })
+
+  // In the whole. These are the sums of both records, which is what makes the
+  // total a total of the bill.
+  assert.equal(summary.totals.turns, 2)
+  assert.equal(summary.totals.cacheMiss, 140)
+  assert.equal(summary.totals.output, 14)
+  assert.equal(summary.totals.cacheRead, 1_260)
+
+  /*
+   * And on its own. A **subset**, so `script.turns` is 1 of 2 — not a parallel
+   * population to be added to the figures above. This discriminates both
+   * plausible wrong implementations at once: one that left the card out of the
+   * whole reports `cacheMiss` 100, and one that treated the share as a separate
+   * population reports `turns` 3.
+   */
+  assert.equal(summary.totals.script?.turns, 1)
+  assert.equal(summary.totals.script?.cacheMiss, 40)
+  assert.equal(summary.totals.script?.output, 4)
+  assert.equal(summary.totals.script?.cacheRead, 360)
+
+  // The same split on the cell and on the conversation subtotal, because the
+  // three figures on the page have to be one reading of one set.
+  assert.equal(summary.buckets[0]?.script?.turns, 1)
+  assert.equal(summary.chats[0]?.script?.turns, 1)
+})
+
+test('a range with no card generation reports an absent share, not a row of zeros', () => {
+  /*
+   * Absence is the statement "no card generation was counted here", which a
+   * surface renders as no line at all. A zero-filled share would put
+   * 「其中卡脚本 0 次」 on every profile that runs no card scripts — a line a
+   * reader learns to skip — and it is the same distinction the optional buckets
+   * keep, one level out.
+   */
+  const summary = summariseUsage([
+    chat('turns-only', [
+      record(NOON, 'deepseek-chat', { inputTokens: 100, outputTokens: 10 }),
+    ]),
+  ], { granularity: 'day' })
+  assert.equal(summary.totals.script, undefined)
+  assert.equal(summary.buckets[0]?.script, undefined)
+  assert.equal(summary.chats[0]?.script, undefined)
+  // And the turns were still counted: an absent share is not an absent record.
+  assert.equal(summary.totals.turns, 1)
+})
+
+test('the share keeps the optional-bucket rule inside itself', () => {
+  /*
+   * Two card generations, one on a cache-reporting route and one on a route
+   * that says nothing. If the share zero-filled, `script.cacheTurns` would be 2
+   * and the card's own hit rate would be computed over a generation nobody
+   * measured — the exact failure `cacheTurns` exists to prevent, reappearing
+   * one nesting level down where the outer figures still look right.
+   */
+  const summary = summariseUsage([
+    chat('cards', [
+      record(NOON, 'deepseek-chat', {
+        inputTokens: 40, outputTokens: 4, cacheReadTokens: 360, source: 'script',
+      }),
+      record(NOON, 'deepseek-chat', { inputTokens: 60, outputTokens: 6, source: 'script' }),
+    ]),
+  ], { granularity: 'day' })
+
+  assert.equal(summary.totals.script?.turns, 2)
+  assert.equal(summary.totals.script?.cacheTurns, 1)
+  assert.equal(summary.totals.script?.cacheRead, 360)
+  assert.equal(summary.totals.script?.cachePrompt, 400)
+  // No cache-write bucket anywhere, so the share has none either.
+  assert.equal(summary.totals.script?.cacheWrite, undefined)
+})
+
+test('a card generation is read off the header, and an old file has none', () => {
+  /*
+   * The scan, not the arithmetic: these records are on the **header line**,
+   * which is a different location from the per-message arrays every other test
+   * here exercises.
+   *
+   * The two files are the two populations on disk today — one written before
+   * the key existed, one after — and the assertion on the first is the one that
+   * matters for compatibility: a missing key reads as no card spend rather than
+   * as a file that cannot be scanned.
+   */
+  const withCards = chatFile({ chatId: 'cards', title: 'Cards', updatedAt: NOON }, [
+    [{ inputTokens: 100, outputTokens: 10, model: 'deepseek-chat', at: NOON }],
+  ]).replace(
+    '"chat_metadata":{}',
+    `"chat_metadata":{},${JSON.stringify(SIDE_USAGE_FIELD)}:${JSON.stringify([
+      {
+        inputTokens: 40, outputTokens: 4, cacheReadTokens: 360,
+        model: 'deepseek-chat', provider: 'deepseek', at: LATER_SAME_DAY,
+        source: 'script', caller: 'script.generate',
+      },
+    ])}`,
+  )
+  const read = readChatUsage('cards', withCards)
+  assert.ok(read !== undefined)
+  assert.equal(read.records.length, 2, 'the header record was not read, or the message record was lost')
+  const scripted = read.records.filter(one => one.usage.source === 'script')
+  assert.equal(scripted.length, 1)
+  // Its own moment, from its own record — not the conversation's fallback.
+  assert.equal(scripted[0]?.at, LATER_SAME_DAY)
+  assert.equal(scripted[0]?.undated, false)
+
+  const older = readChatUsage('older', chatFile(
+    { chatId: 'older', title: 'Older', updatedAt: NOON },
+    [[{ inputTokens: 100, outputTokens: 10 }]],
+  ))
+  assert.ok(older !== undefined)
+  assert.equal(older.records.length, 1)
+  assert.equal(older.records[0]?.usage.source, undefined, 'a message record must read as a turn')
+  assert.equal(summariseUsage([older]).totals.script, undefined)
+})
+
+test('a source claimed on a message line is not read as a card’s spend', () => {
+  /*
+   * The location decides, both ways. A per-message array is by construction a
+   * candidate's, so a `source: 'script'` written there — by a hand edit, or by
+   * some other tool — must not move a turn's cost into the card column. The
+   * inverse is pinned in `side-usage.test.ts`.
+   */
+  const text = chatFile({ chatId: 'lying', title: 'Lying', updatedAt: NOON }, [
+    [{ inputTokens: 100, outputTokens: 10, at: NOON, source: 'script' }],
+  ])
+  const read = readChatUsage('lying', text)
+  assert.ok(read !== undefined)
+  assert.equal(read.records.length, 1, 'the record was refused rather than read as a turn')
+  assert.equal(read.records[0]?.usage.source, undefined)
+  assert.equal(summariseUsage([read]).totals.script, undefined)
 })

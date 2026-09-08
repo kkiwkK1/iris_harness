@@ -298,23 +298,53 @@ C 的预期是**在卡作者不改条目的前提下上界锁在 9.6%**，任何
 并附 `grep -c iris_compaction` 的输出**：这条排除项如果只写在文档里而没人查，
 它就是一个随时会安静地推翻整段验收的原因。
 
-### 4.5 一个在总体之外的群体：卡脚本自己的请求根本没被记账
+### 4.5 卡脚本自己的请求：曾经在总体之外，现在进了总体
 
-`script.generate` → `#sideGenerate` → `this.#stream({...})` **不传 `entry`**
-（`service.ts:3613`），而 `noteUsage` 与 `notePromptFingerprint` 都挂在
-`entry?.pending?.turn` 上（`service.ts:3997`、`:4035`）。所以**卡脚本发起的
-生成不写 `iris_usage`、不写 fingerprint**。
+**这一节写的是原来的缺陷与它的现状，不是一条待办。**
+原来：`script.generate` → `#sideGenerate` → `this.#stream({...})` **不传
+`entry`**，而 `noteUsage` / `notePromptFingerprint` / `noteRoute` 都挂在
+`entry?.pending?.turn` 上，所以卡脚本发起的生成不写 `iris_usage`、
+不写 fingerprint、不进用量页，也不进对话自己的累计计费。
 
 对 MVU 这类卡这不是边角情况：它每轮都会为"变量更新"再发一次请求
-（`invoke_extra_model.ts:511`，带 `<past_observe>` 注入；gemini 路径还会
-在最前面加一个 35 字符的随机 uuid 头 `invoke_extra_model.ts:44-46`，
-**那条按构造就会打掉自己的前缀缓存**）。这些请求被 DeepSeek 计费，
-在用量页上一条都看不到。
+（`invoke_extra_model.ts:511`，带 `<past_observe>` 注入）。也就是说
+在这类卡上，没被记账的那一群和被记账的那一群**一样大**。
 
-**协议因此要求 PR 写清两个数**：
-(a) `iris_usage` 里那一群（用户可见的轮）的命中率；
-(b) 一句说明"本次验收未覆盖卡脚本自己发起的请求，因为宿主不记录它们"。
-把 (b) 省掉，"全 profile 95%"这句话就是关于一个比用户账单窄的总体说的。
+现在（`DEVIATIONS.md` §51）：这些请求各写一条只追加的记录，
+落在对话头的 `iris_side_usage` 上——它不属于任何一楼的 swipe，
+所以不能进消息的 `iris_usage` 数组（那个数组与 `swipes` 平行）。
+每条带桶、路由、时刻、fingerprint、`source: 'script'` 与 `caller`
+（RPC 方法名；契约里没有脚本 id 可记，`script.generate` 只带
+`chatId`/`userInput`/`systemPrompt`/`maxHistory`）。
+`ChatView.usage` 与 `usage.summary` 的每个数字都已把它们算在内，
+并用 `ChatView.scriptUsage` / `UsageTotals.script` 单独报出这一份。
+
+**协议因此要求 PR 写清三个数**：
+(a) 用户可见回次（消息行上的 `iris_usage`）的命中率；
+(b) 卡脚本请求（对话头上的 `iris_side_usage`）的命中率，**单独一列**；
+(c) 两者合起来的命中率，也就是最接近账单的那个数。
+三条都要，因为 (c) 是用户付的钱，而 (a) 与 (b) 的分母上界不一样：
+`script.generate` 会把整段前缀重发一遍，`script.generateRaw` 只发卡递给它的
+那点东西，混在一个分母里会把两种现象平均掉——和 §4.6 对 swipe 的理由相同。
+
+**仍在总体之外的一项，明写在这里**：compaction 的摘要请求（`#summarize`）
+同样被计费、同样不产生候选、同样既不传 `entry` 也不传 trace，所以它至今不进
+任何数字。本轮范围之外（`DEVIATIONS.md` §51 末尾）。§4.4 已经要求 PR 附
+`grep -c iris_compaction` 的输出；只要那个数是 0，这一项对本次验收无影响，
+而这正是那条排除项要被人真去查的原因。
+
+**一条前提纠正**：普查把 MVU 那个"35 字符随机 uuid 头"记成了 gemini 路径的
+问题（`CACHE-CENSUS.md` §7.1 与本文件旧版本）。它是**卡自己的代码**：
+`invoke_extra_model.ts:44` 造出这个块、`:570` 把它作为 `role: 'system'`
+提示词拼在最前面，条件是卡自己的 `随机头部` 设置**且**模型名含 `gemini`。
+它经 `prompt` 传进来，Iris 侧没有任何东西可删——本仓请求装配路径里没有
+`randomUUID`。上游 SillyTavern 确实也加一个 uuid，但机制不同、不在被缓存的
+前缀里：`bodyParams['user'] = uuidv4()`
+（`src/endpoints/backends/chat-completions.js:2212`），只在 OpenAI 源上，
+受 `openai.randomizeUserId` 配置控制，默认关。
+Iris 现在能做的是**把它报出来**：这条请求连同 `prefixHash` 一起存下来，
+所以"卡自己的头把自己的缓存打掉了"会表现为一条 `script.generate` 记录的
+prefix 哈希每次都变，而同一对话的回次哈希没变。
 
 ### 4.6 swipe 单独报
 

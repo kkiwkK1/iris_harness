@@ -17,6 +17,7 @@ import type {
   MessageView,
   TurnUsage,
   UsageBucket,
+  UsageBuckets,
   UsageChat,
   UsageGranularity,
   UsageSummary,
@@ -92,6 +93,21 @@ export interface FakeChat {
    * yet" surface untested.
    */
   compaction?: ChatCompaction
+  /**
+   * What this conversation's **card scripts** have spent.
+   *
+   * A flat list rather than something hanging off a message, because that is
+   * the shape of the fact and the shape the host stores: a card's
+   * `TavernHelper.generate` produces no reply, so it belongs to no message and
+   * to no swipe of one — the host keeps these on the chat header
+   * (`@iris/app-service`'s `SIDE_USAGE_FIELD`). Every entry carries
+   * `source: 'script'`, which is what a summary splits on.
+   *
+   * Absent on a conversation whose cards have never generated, which is most
+   * of them: the interesting states are both, and a fixture where every chat
+   * had a card share would leave the blank column untested.
+   */
+  sideUsage?: TurnUsage[]
 }
 
 /**
@@ -225,18 +241,26 @@ export function toChatView(chat: FakeChat, streamingTurn?: number): ChatView {
   // Every candidate of every message, not the selected ones: a reading the
   // reader swiped away from was generated and charged. Streaming candidates
   // have no usage yet, so nothing has to be excluded here.
+  const side = chat.sideUsage ?? []
+  // A card's own generations are inside the conversation's total, because they
+  // were billed to it on its own route — the protocol's `ChatView.usage` states
+  // that ruling and the reason the split is reported separately rather than
+  // subtracted from the figure.
+  //
   // The newest turn that has actually been assembled: the highest turn among
   // the messages a model wrote. A user line typed but not yet answered does not
   // count, which is the same rule the host's own projection follows.
   const generated = chat.messages.filter(message => message.role === 'assistant').map(message => message.turn)
   const newestTurn = generated.length === 0 ? undefined : Math.max(...generated)
-  const usage = conversationUsage(
-    chat.messages.flatMap(message =>
+  const usage = conversationUsage([
+    ...chat.messages.flatMap(message =>
       message.candidates.map(candidate => candidate.usage).filter(
         (one): one is TurnUsage => one !== undefined,
       ),
     ),
-  )
+    ...side,
+  ])
+  const scriptTotal = side.length === 0 ? undefined : conversationUsage(side)
   return {
     chatId: chat.chatId,
     title: chat.title,
@@ -259,8 +283,11 @@ export function toChatView(chat: FakeChat, streamingTurn?: number): ChatView {
     ...(chat.compaction === undefined ? {} : { compaction: chat.compaction }),
     variables: chat.variables,
     ...(usage === undefined ? {} : { usage }),
+    ...(scriptTotal === undefined ? {} : { scriptUsage: { turns: side.length, usage: scriptTotal } }),
   }
 }
+
+
 
 /**
  * Project a conversation to its sidebar row.
@@ -308,38 +335,46 @@ export function summariseFakeUsage(
 
   for (const chat of chats) {
     const perChat = blankTotals()
-    for (const message of chat.messages) {
-      // Every candidate, not the visible one: a reading the reader swiped away
-      // from was generated and charged. The same walk `toChatView` takes for
-      // the conversation total, so the page's per-chat subtotal and the
-      // composer's line are readings of one set rather than two.
-      for (const candidate of message.candidates) {
-        const usage = candidate.usage
-        if (usage === undefined) continue
-        // The undated fallback, named where the host names it: a record with no
-        // `at` is placed at its conversation's last activity, which clusters
-        // every old record of a chat into one bucket. Counted as such below.
-        const at = usage.at ?? chat.updatedAt
-        if (options.since !== undefined && at < options.since) continue
-        if (options.until !== undefined && at >= options.until) continue
-        const bucket = bucketOf(at, granularity)
-        // JSON, so no separator or sentinel character is needed: `null` and
-        // `""` are distinct JSON values, which keeps a model named after the
-        // empty string from merging with the records that name none. The host
-        // keys its cells the same way.
-        const key = JSON.stringify([bucket, usage.model ?? null])
-        let cell = cells.get(key)
-        if (cell === undefined) {
-          cell = {
-            bucket,
-            ...usage.model === undefined ? {} : { model: usage.model },
-            ...blankTotals(),
-          }
-          cells.set(key, cell)
+    /*
+     * Both populations, in one walk, because the range filter and the cell
+     * keying are the same for both and a second loop is where the two drift.
+     *
+     * Every candidate, not the visible one: a reading the reader swiped away
+     * from was generated and charged. Then the card's own generations, which
+     * hang off the conversation rather than any message. The same set
+     * `toChatView` sums, so the page's per-chat subtotal and the composer's
+     * line are readings of one population rather than two.
+     */
+    const records = [
+      ...chat.messages.flatMap(message =>
+        message.candidates.flatMap(candidate =>
+          candidate.usage === undefined ? [] : [candidate.usage])),
+      ...chat.sideUsage ?? [],
+    ]
+    for (const usage of records) {
+      // The undated fallback, named where the host names it: a record with no
+      // `at` is placed at its conversation's last activity, which clusters
+      // every old record of a chat into one bucket. Counted as such below.
+      const at = usage.at ?? chat.updatedAt
+      if (options.since !== undefined && at < options.since) continue
+      if (options.until !== undefined && at >= options.until) continue
+      const bucket = bucketOf(at, granularity)
+      // JSON, so no separator or sentinel character is needed: `null` and
+      // `""` are distinct JSON values, which keeps a model named after the
+      // empty string from merging with the records that name none. The host
+      // keys its cells the same way.
+      const key = JSON.stringify([bucket, usage.model ?? null])
+      let cell = cells.get(key)
+      if (cell === undefined) {
+        cell = {
+          bucket,
+          ...usage.model === undefined ? {} : { model: usage.model },
+          ...blankTotals(),
         }
-        if (usage.model !== undefined) models.add(usage.model)
-        for (const into of [cell, perChat, totals]) foldUsage(into, usage, usage.at === undefined)
+        cells.set(key, cell)
       }
+      if (usage.model !== undefined) models.add(usage.model)
+      for (const into of [cell, perChat, totals]) foldUsage(into, usage, usage.at === undefined)
     }
     // A conversation with nothing in range is not a row of zeros: a zero row
     // reads as "this chat cost nothing", which is a different claim from
@@ -399,13 +434,31 @@ function bucketOf(at: number, granularity: UsageGranularity): number {
  * population, so a route that never mentions caching cannot dilute one that
  * does. Reasoning is added but never added *into* `output` — the provider
  * reports it as the reasoning share of the completion it is already inside.
+ *
+ * A `source: 'script'` generation is folded **twice**: into the whole, because
+ * it was billed on the same route to the same account, and into `script`, so a
+ * surface can say how much of the figure a card asked for. `script` stays
+ * absent until one arrives — the same absence rule the optional buckets follow.
  * @param into - the accumulator, mutated.
  * @param usage - one generation.
  * @param undated - whether this generation's moment was reconstructed.
  */
 function foldUsage(into: UsageTotals, usage: TurnUsage, undated: boolean): void {
-  into.turns += 1
+  foldBuckets(into, usage)
   if (undated) into.undatedTurns += 1
+  if (usage.source !== 'script') return
+  const script = into.script ?? { cacheMiss: 0, output: 0, turns: 0, cacheTurns: 0, cachePrompt: 0 }
+  into.script = script
+  foldBuckets(script, usage)
+}
+
+/**
+ * Fold one generation's buckets into one bucket set.
+ * @param into - the bucket set, mutated.
+ * @param usage - one generation.
+ */
+function foldBuckets(into: UsageBuckets, usage: TurnUsage): void {
+  into.turns += 1
   into.cacheMiss += usage.inputTokens
   into.output += usage.outputTokens
   if (usage.cacheWriteTokens !== undefined) {

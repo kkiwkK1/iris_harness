@@ -45,6 +45,7 @@ import { busy } from './errors.ts'
 import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
 import { scriptsOf, type ScopedRegexPolicy } from './regex.ts'
 import { parseFingerprint, type PromptFingerprint } from './fingerprint.ts'
+import { appendSideUsage, readSideUsage, scriptUsage, type SideUsage } from './side-usage.ts'
 import { fingerprintBySeq, parseUsage, usageBySeq, usageFieldOf, USAGE_FIELD } from './usage.ts'
 import { projectMessages, textOf, toChatView, type Names, type PendingTurn, type UsageRoute } from './views.ts'
 
@@ -1143,6 +1144,32 @@ export class ChatEntry {
   }
 
   /**
+   * Record what a **card's own** generation cost, on this conversation.
+   *
+   * The three methods above park a figure on `pending` because a turn's cost
+   * has nowhere to live until its candidate exists. This one has the opposite
+   * problem: there will never be a candidate, so there is nothing to wait for
+   * and nothing to guard against — the record goes straight onto the header
+   * (`./side-usage.ts` says why the header and not a message) and is complete
+   * the moment it is written.
+   *
+   * For the same reason it takes **no turn**. A side generation is not a turn
+   * and folding it onto whichever turn happened to be pending would file a
+   * card's bill against a reply the user is looking at — the mistake
+   * `cache-trace.ts` avoids by writing `turn: -1`.
+   *
+   * Does not stamp `updatedAt`: a card asking a question about the
+   * conversation is not activity *in* it, and moving the chat to the top of the
+   * sidebar because a script ran would reorder the list from a call the user
+   * never made. The record still reaches disk, because every caller of this
+   * saves.
+   * @param record - the cost, the caller, and the request's fingerprint.
+   */
+  noteSideUsage(record: SideUsage): void {
+    appendSideUsage(this.header, record)
+  }
+
+  /**
    * Attach a generation's cost to the candidate it produced.
    *
    * **The newest candidate of the turn, not the selected one.** A generation
@@ -1540,6 +1567,10 @@ export class ChatEntry {
       // compaction lands on the header and the next view has to show it, and a
       // cache here would be a second copy of the one durable fact.
       compaction: readCompaction(this.header),
+      // The same reading, for the same reason: a card's generation lands on the
+      // header mid-conversation and the composer's running total has to include
+      // it on the next projection.
+      scriptUsage: scriptUsage(readSideUsage(this.header)),
     })
   }
 

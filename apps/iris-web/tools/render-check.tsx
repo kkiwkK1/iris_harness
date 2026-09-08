@@ -1075,6 +1075,78 @@ async function main(): Promise<void> {
   )
 
   /*
+   * The composer line on a conversation whose card scripts have generated.
+   *
+   * **The visible line counts them and the hover separates them**, which is the
+   * dsh reading of this row: it is 「本对话累计计费」, and a card's request was
+   * billed to this conversation, so a line that excluded it would disagree with
+   * the bill. What that costs a reader is the ability to explain a total larger
+   * than the replies they can count, and the `title` is where that is paid
+   * back — the row is one ellipsised line and a fourth visible group is the
+   * group that gets cut.
+   *
+   * The premise is asserted first: without a seeded card share this block would
+   * be checking that a conversation with no card generations does not mention
+   * them, which is true of every wrong implementation too.
+   */
+  const scripted = wired.store.getState().chats.find(row => row.chatId === 'chat-ledger')
+  assert.ok(scripted !== undefined, 'the fake no longer seeds the conversation that carries a card share')
+  await wired.store.getState().openChat(scripted.chatId)
+  const scriptedView = wired.store.getState().view
+  assert.ok(
+    scriptedView?.scriptUsage !== undefined,
+    'the seeded card-share conversation reports no scriptUsage, so the hover split is not rendered here',
+  )
+  assert.ok(scriptedView.usage !== undefined, 'a conversation with a card share must still report a total')
+  const scriptedTotal = totalTokens(scriptedView.scriptUsage.usage)
+  const scriptedPage = render(wired.store, slots.core)
+  assert.match(scriptedPage, /class="iris-composer__stats"/, 'the usage line is missing on the card-share chat')
+  assert.ok(
+    scriptedPage.includes(
+      `of which ${String(scriptedView.scriptUsage.turns)} card-script requests · ${formatExactTokens(scriptedTotal)} tok`,
+    ),
+    'the composer row’s hover does not separate the card-script share',
+  )
+
+  /*
+   * And the visible line reports the **whole** figure, card requests included.
+   * This is the assertion that discriminates the plausible wrong implementation:
+   * a total that subtracted the card's share to keep "what I generated" clean
+   * renders a smaller number and looks entirely reasonable.
+   *
+   * **The expectation is built from the other two fields, not from `usage`.**
+   * The first version of this block asserted `page.includes(billedInput(
+   * view.usage))` — which is the page's own number compared against itself, so
+   * it passed unchanged when the fake was made to leave the share out. Teeth
+   * check found that. The independent reading is the per-message figures plus
+   * the reported share, which must add to the conversation's total.
+   */
+  const messageInput = scriptedView.messages.flatMap(row =>
+    row.usage === undefined ? [] : [billedInputTokens(row.usage)])
+  assert.equal(
+    messageInput.length,
+    1,
+    `this conversation carries ${String(messageInput.length)} per-message readings; the sum below is only`
+    + ' the whole conversation when every billed candidate is a selected one, which holds at exactly one',
+  )
+  const expectedInput = (messageInput[0] ?? 0) + billedInputTokens(scriptedView.scriptUsage.usage)
+  assert.ok(expectedInput > (messageInput[0] ?? 0), 'the card share is zero, so the sum proves nothing')
+  assert.equal(
+    billedInputTokens(scriptedView.usage),
+    expectedInput,
+    'the conversation total is not its turns plus its card generations',
+  )
+  assert.ok(
+    scriptedPage.includes(`Input ${formatTokens(expectedInput)} tok`),
+    'the visible usage line does not report the total with the card share inside it',
+  )
+  // Put the store back where the block above left it. Everything downstream
+  // reads "the open conversation", so a check that opens a third one and walks
+  // away moves the subject of every assertion after it — which is how this
+  // block first failed a divergence check twelve sections later.
+  await wired.store.getState().openChat(other.chatId)
+
+  /*
    * A card's popup, drawn by the shell.
    *
    * Server-rendered, so this proves what the tree puts on the page and nothing
@@ -1246,6 +1318,85 @@ async function main(): Promise<void> {
     'the total-tokens card does not carry the total',
   )
   assert.ok(usagePage.includes(`${usageShare}%`), 'the hit-rate card does not carry the share')
+
+  /*
+   * The card-script share, on the total card.
+   *
+   * **The premise is asserted, not used as a guard**, for the reason the
+   * undated note below records: an `if (usage.totals.script !== undefined)`
+   * around this block would go quiet the moment the seed stopped carrying one,
+   * and a check that skips itself is indistinguishable from a check that
+   * passes.
+   *
+   * Three figures are pinned because three separate wrong readings each look
+   * right on a page: the **count** must be the card's generations and not the
+   * range's, the **tokens** must be the card's share and not the whole total,
+   * and the share must come out strictly smaller than the total printed above
+   * it — a page handed `totals` where it meant `totals.script` prints the same
+   * figure twice, which reads as confirmation.
+   */
+  const scriptShare = usage.totals.script
+  assert.ok(
+    scriptShare !== undefined,
+    'the seed no longer carries a card-script generation, so the share line is not rendered here',
+  )
+  assert.ok(
+    scriptShare.turns > 0 && scriptShare.turns < usage.totals.turns,
+    `the seed's card share is ${String(scriptShare.turns)} of ${String(usage.totals.turns)} generations,`
+    + ' which no longer distinguishes the card figure from the whole range',
+  )
+  const scriptSpend = usageTotal(scriptShare)
+  assert.ok(
+    scriptSpend > 0 && scriptSpend < usageTotal(usage.totals),
+    `the card share is ${String(scriptSpend)} of ${String(usageTotal(usage.totals))} tokens,`
+    + ' so a page printing the whole total in its place would pass this check',
+  )
+  assert.match(
+    usagePage,
+    /class="iris-usage__hero-note"/,
+    'the total card does not report the card-script share',
+  )
+  assert.ok(
+    usagePage.includes(
+      `of which ${String(scriptShare.turns)} card-script requests · ${formatExactTokens(scriptSpend)} tok`,
+    ),
+    'the card-script line does not carry both the count and the tokens',
+  )
+  /*
+   * And the chart's fifth metric, which is the same figure over time. Pinned
+   * here rather than only in `tests/usage-stats.test.ts` because the switch is
+   * what makes it reachable: a metric present in the type and missing from the
+   * control is a line nobody can draw.
+   */
+  assert.ok(usagePage.includes('>Card scripts<'), 'the metric switch does not offer the card-script line')
+
+  /*
+   * The per-conversation card column, in **both** of its states.
+   *
+   * One seeded conversation has a card share and the others do not, and the
+   * blank cell is a branch rather than a degenerate case: a column of `0`s
+   * reads as the feature failing to load, so the cell is empty — and the count
+   * below is what stops a well-meaning `?? 0` from turning up there.
+   */
+  const withScript = usage.chats.filter(row => row.script !== undefined)
+  assert.equal(
+    withScript.length,
+    1,
+    `${String(withScript.length)} seeded conversations carry a card share; the check wants exactly one, so`
+    + ' the figure and the blank cell are both on the page',
+  )
+  const scriptRow = withScript[0]?.script
+  assert.ok(scriptRow !== undefined, 'the card-share row lost its share between two reads of one summary')
+  assert.ok(
+    usagePage.includes(`${String(scriptRow.turns)} card · ${formatTokens(usageTotal(scriptRow))} tok`),
+    'the subtotal row does not carry its card-script column',
+  )
+  const blankCells = usagePage.match(/class="iris-usage__chat-script iris-meta"><\/span>/g)?.length ?? 0
+  assert.equal(
+    blankCells,
+    usage.chats.length - 1,
+    'a conversation with no card generations should render an empty card cell rather than a zero',
+  )
 
   /*
    * The caveat. Every usage record in the real corpus is undated, so this note

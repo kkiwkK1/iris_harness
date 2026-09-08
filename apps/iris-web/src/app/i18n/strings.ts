@@ -1150,6 +1150,14 @@ export const en = {
   usageMetricCacheRead: 'Cache hit',
   usageMetricCacheMiss: 'Uncached',
   usageMetricOutput: 'Output',
+  /**
+   * The fifth line the chart can draw: what card scripts asked for.
+   *
+   * A **subset** of `usageMetricTotal` rather than another cut of it — the four
+   * before it partition the spend, this one says how much of the same spend was
+   * a card's doing.
+   */
+  usageMetricScript: 'Card scripts',
   /** The headline cards. `usageCardPrompt` is the three prompt buckets added; `usageCardCacheMiss` is the uncached one alone. */
   usageCardTotal: 'Total tokens',
   usageCardPrompt: 'Billed input',
@@ -1182,6 +1190,23 @@ export const en = {
    * confusion this sentence exists to prevent.
    */
   usageHitRateBasis: 'The share of prompt tokens the cache served, over the generations whose provider reported a cache bucket. Routes silent about caching are not in the denominator, so this is not the cache hit over the billed input beside it.',
+  /*
+   * The card-script share: the line under the total, its hint, and the
+   * per-conversation column.
+   *
+   * **「其中」 / "of which" carries the whole meaning.** These generations are
+   * *inside* the figure above them, not beside it — they were billed on the
+   * same route to the same account — and a phrasing that read as an addition
+   * would make every total on the page look understated by its own footnote.
+   */
+  usageScriptShare: 'of which {n} card-script requests · {tokens} tok',
+  usageScriptBasis: 'Requests a card’s own script made (TavernHelper.generate / generateRaw). They are billed like a turn, produce no reply, and are counted inside every figure on this page.',
+  /**
+   * The subtotal list's card column. Blank, never `0`, on a conversation with
+   * none. `tok` carries the unit for the same reason the line above does: a
+   * bare number after a count of requests reads as a second count.
+   */
+  usageScriptCell: '{n} card · {tokens} tok',
   /** Nothing to draw, because this figure was never billed — not a chart of zeros. */
   usageChartEmpty: 'Nothing was billed to this figure in this range.',
   /**
@@ -2350,6 +2375,7 @@ export const zh: Record<StringKey, string> = {
   usageMetricCacheRead: '缓存命中',
   usageMetricCacheMiss: '未缓存',
   usageMetricOutput: '输出',
+  usageMetricScript: '卡脚本',
   usageCardTotal: '总 token',
   usageCardPrompt: '计费输入',
   usageCardCacheRead: '缓存命中',
@@ -2367,6 +2393,9 @@ export const zh: Record<StringKey, string> = {
   usageSkippedShort: '{n} 个文件未读',
   usageBasisAria: '这些数字的口径',
   usageHitRateBasis: '缓存替你省下的提示 token 占比，只在「提供方报告了缓存桶」的那些生成上计算。对缓存沉默的线路不进分母，所以这不是旁边那张「计费输入」的命中比例。',
+  usageScriptShare: '其中卡脚本请求 {n} 次 · {tokens} tok',
+  usageScriptBasis: '卡自己的脚本发起的请求（TavernHelper.generate / generateRaw）。它们和一次回合一样计费，但不产生任何回复，本页每个数字都已把它们算在内。',
+  usageScriptCell: '卡脚本 {n} 次 · {tokens} tok',
   usageChartEmpty: '这段时间这个指标没有产生计费。',
   contextPill: '上下文 {used}/{total} · {percent}%',
   contextPillCapacity: '上下文 {total}',

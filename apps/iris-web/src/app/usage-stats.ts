@@ -40,15 +40,33 @@
  * @module iris-web/app/usage-stats
  */
 
-import type { UsageBucket, UsageGranularity, UsageTotals } from '@iris/protocol'
+import type { UsageBucket, UsageBuckets, UsageGranularity, UsageTotals } from '@iris/protocol'
 
 import { formatCacheHitPercent } from './token-format.ts'
 
-/** Which figure the chart's lines draw. */
-export type UsageMetric = 'total' | 'cacheRead' | 'cacheMiss' | 'output'
+/**
+ * Which figure the chart's lines draw.
+ *
+ * `script` is the odd one and is a **fifth metric rather than a second set of
+ * lines**, which is the smaller of the two changes that were available. Split
+ * by source, every model would draw two lines that a legend keyed on the model
+ * name cannot tell apart, the colour assignment would have to carry a second
+ * axis, and a reader who wanted the plain total would be looking at twice as
+ * many lines to get it. As a metric it reuses the whole machine: same axis,
+ * same series, same legend, and the switch already says which reading is on
+ * screen.
+ */
+export type UsageMetric = 'total' | 'cacheRead' | 'cacheMiss' | 'output' | 'script'
 
-/** Every metric, in the order the switch offers them. */
-export const USAGE_METRICS: readonly UsageMetric[] = ['total', 'cacheRead', 'cacheMiss', 'output']
+/**
+ * Every metric, in the order the switch offers them.
+ *
+ * `script` last, because it is a *subset* of the first one rather than another
+ * cut of it: the four before it partition what was spent, and this one says how
+ * much of the same spend a card asked for.
+ */
+export const USAGE_METRICS: readonly UsageMetric[] =
+  ['total', 'cacheRead', 'cacheMiss', 'output', 'script']
 
 /**
  * Billed prompt tokens: the three disjoint prompt-side buckets.
@@ -60,7 +78,7 @@ export const USAGE_METRICS: readonly UsageMetric[] = ['total', 'cacheRead', 'cac
  * @param totals - a bucket, a conversation subtotal, or the whole range.
  * @returns the billed prompt tokens.
  */
-export function billedPrompt(totals: UsageTotals): number {
+export function billedPrompt(totals: UsageBuckets): number {
   return totals.cacheMiss + (totals.cacheRead ?? 0) + (totals.cacheWrite ?? 0)
 }
 
@@ -75,8 +93,23 @@ export function billedPrompt(totals: UsageTotals): number {
  * @param totals - a bucket, a conversation subtotal, or the whole range.
  * @returns billed prompt plus output.
  */
-export function totalTokens(totals: UsageTotals): number {
+export function totalTokens(totals: UsageBuckets): number {
   return billedPrompt(totals) + totals.output
+}
+
+/**
+ * What a card's own scripts spent, of the figure beside it.
+ *
+ * `0` where the host reported no `script` share, and that is the display half
+ * of the protocol's absence rule rather than a contradiction of it: a *point on
+ * a line* has to be a number, and the honest half of the same fact is that the
+ * header card and the per-conversation column are not drawn at all when the
+ * share is absent. `metricValue`'s `cacheRead` case is the same pairing.
+ * @param totals - a cell, a conversation subtotal, or the whole range.
+ * @returns the card's share of the total, in tokens.
+ */
+export function scriptTokens(totals: UsageTotals): number {
+  return totals.script === undefined ? 0 : totalTokens(totals.script)
 }
 
 /**
@@ -99,6 +132,7 @@ export function metricValue(totals: UsageTotals, metric: UsageMetric): number {
     case 'cacheRead': return totals.cacheRead ?? 0
     case 'cacheMiss': return totals.cacheMiss
     case 'output': return totals.output
+    case 'script': return scriptTokens(totals)
   }
 }
 
