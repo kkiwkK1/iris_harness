@@ -206,6 +206,10 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   { method: 'chat.list', params: () => ({}) },
   { method: 'chat.open', params: fixed => ({ chatId: fixed.chatId }) },
   { method: 'prompt.itemize', params: fixed => ({ chatId: fixed.chatId }) },
+  // Reads two files and, unlike `prompt.itemize`, does not even open the chat —
+  // so it is the one method here whose only way to write would be a defect
+  // rather than a side effect of assembling a preview.
+  { method: 'prompt.divergence', params: fixed => ({ chatId: fixed.chatId }) },
   { method: 'script.context', params: fixed => ({ chatId: fixed.chatId, characterId: 'aria' }) },
   { method: 'script.context', params: fixed => ({ chatId: fixed.chatId, characterId: 'aria', messageId: 2 }) },
   { method: 'script.list', params: () => ({ characterId: 'aria' }) },

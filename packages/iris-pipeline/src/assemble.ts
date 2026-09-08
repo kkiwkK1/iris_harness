@@ -30,9 +30,20 @@ import type {
   HistoryEntry,
   PipelineMessage,
   Role,
+  SystemSegment,
   TokenCounter,
   Placement,
 } from './types.ts'
+
+/**
+ * What {@link renderSystem} puts between two segments.
+ *
+ * Exported because a reader of {@link AssembleResult.systemSegments} has to lay
+ * the segments back end to end to know where each one starts, and a separator
+ * guessed from the rendered string is a guess: a segment whose own text ends in
+ * a blank line makes `'\n\n'` ambiguous to find and unambiguous to count.
+ */
+export const SYSTEM_JOIN = '\n\n'
 
 /** A depth contribution with its resolved sort key. */
 interface DepthItem {
@@ -151,34 +162,48 @@ function systemOrder(contributions: readonly Contribution[]): Contribution[] {
 }
 
 /**
- * Join the system-placed contributions.
+ * The system-placed contributions that survive rendering, in rendered order.
  *
  * Empty text drops out rather than leaving a blank run: a section that
  * evaluated to nothing this turn should not cost the model a paragraph break
  * that looks like a missing instruction.
+ *
+ * The seams are the product here, not a byproduct. Once the segments are joined
+ * the system prompt is one opaque string, and a request whose cache broke
+ * somewhere inside it can only be reported as "the system prompt changed" — a
+ * sentence that names the largest section of the request and no part of it.
+ * {@link renderSystem} is defined in terms of this, so the two can never
+ * disagree about where a segment begins.
+ * @param contributions - every contribution.
+ * @param cacheFriendly - when true, volatile sections are left out because
+ *   {@link injectAtDepth} places them after the conversation instead; the seams
+ *   then describe the system string as the reorder actually rendered it, which
+ *   is the only string a trace can attribute offsets in.
+ * @returns one segment per surviving system contribution.
+ */
+export function systemSegments(
+  contributions: readonly Contribution[],
+  cacheFriendly = false,
+): SystemSegment[] {
+  return systemOrder(contributions)
+    .filter(item => !moves(item, cacheFriendly))
+    .map(item => ({
+      id: item.id,
+      ...item.label === undefined ? {} : { label: item.label },
+      text: item.text.trim(),
+    }))
+    .filter(segment => segment.text.length > 0)
+}
+
+/**
+ * Join the system-placed contributions.
  * @param contributions - every contribution.
  * @param cacheFriendly - when true, volatile sections are left out of the join
  *   because {@link injectAtDepth} places them after the conversation instead.
  * @returns the system prompt.
  */
 export function renderSystem(contributions: readonly Contribution[], cacheFriendly = false): string {
-  return systemSections(contributions, cacheFriendly).join('\n\n')
-}
-
-/**
- * The non-empty system sections, in render order.
- *
- * The join's own list, before it becomes one string: the stable-prefix walk
- * has to stop *between* two sections, which a joined string cannot express.
- * @param contributions - every contribution.
- * @param cacheFriendly - whether volatile sections are being moved out.
- * @returns the sections that will be joined.
- */
-function systemSections(contributions: readonly Contribution[], cacheFriendly: boolean): string[] {
-  return systemOrder(contributions)
-    .filter(item => !moves(item, cacheFriendly))
-    .map(item => item.text.trim())
-    .filter(text => text.length > 0)
+  return systemSegments(contributions, cacheFriendly).map(segment => segment.text).join(SYSTEM_JOIN)
 }
 
 /**
@@ -433,22 +458,38 @@ export function injectAtDepth(
   // whose depth clamped to the front: those still slide as the conversation
   // grows (`history.length - depth` is negative and clamps), so putting the
   // promoted group behind them would leave it outside the prefix again.
+  // Each promoted injection stays its own message and keeps its own `id`: it
+  // did not fold into the system string, so the seams cannot name it and the
+  // message is the only place its provenance can ride. A trace that could not
+  // attribute these would mark every cache-friendly request unattributed —
+  // the reorder's own messages reading as a defect.
   for (const item of promoted) {
-    messages.push({ role: item.role, text: item.contribution.text })
+    messages.push({ role: item.role, text: item.contribution.text, id: item.contribution.id })
   }
   for (let index = 0; index <= history.length; index += 1) {
     // The moved sections go in ahead of depth 0's own bucket, so a depth-0
     // injection stays the last thing before the reply.
     if (index === history.length) {
       for (const item of moved) {
-        messages.push({ role: item.role, text: item.contribution.text, volatile: true })
+        // Same provenance rule as the promoted group: a deferred section left
+        // the system string, so its id has to travel on the message.
+        messages.push({ role: item.role, text: item.contribution.text, id: item.contribution.id, volatile: true })
       }
     }
     for (const item of slots[index] as DepthItem[]) {
       if (item.contribution.text.trim().length === 0) continue
+      // `id` is provenance, not content — `PipelineMessage.id` says why it
+      // cannot reach a provider. Stamped here because here is the only place
+      // that knows which contribution became which message: after this the
+      // depth ordering has been applied and a downstream reader could only
+      // recover it by matching text, which two contributions sharing a line
+      // make a guess. `volatile` rides beside it and answers a different
+      // question — provenance says which item, volatility says whether the
+      // squash and the prefix walk may cross this message.
       messages.push({
         role: item.placement.role,
         text: item.contribution.text,
+        id: item.contribution.id,
         ...item.contribution.volatile === true ? { volatile: true } : {},
       })
     }
@@ -492,11 +533,11 @@ function stablePrefixTokens(
     if (text.length === 0) continue
     // An empty section is not a boundary: it contributes no bytes, so a
     // volatile one that rendered to nothing cannot break anything.
-    if (item.volatile === true) return count(sections.join('\n\n'))
+    if (item.volatile === true) return count(sections.join(SYSTEM_JOIN))
     sections.push(text)
   }
 
-  let total = count(sections.join('\n\n'))
+  let total = count(sections.join(SYSTEM_JOIN))
   for (const message of messages) {
     if (message.volatile === true) break
     total += count(message.text)
@@ -514,7 +555,12 @@ export function assemble(input: AssembleInput): AssembleResult {
   const count = budget.count
   const cacheFriendly = input.cacheFriendly === true
 
-  const system = renderSystem(contributions, cacheFriendly)
+  // The seams are taken with the same `cacheFriendly` the request is assembled
+  // with, so they describe the system string that is actually sent: a deferred
+  // section left the join, and a segment list that still named it would hand a
+  // trace offsets past the end of the string.
+  const segments = systemSegments(contributions, cacheFriendly)
+  const system = segments.map(segment => segment.text).join(SYSTEM_JOIN)
   // The three terms of the charge below must **partition** the contributions:
   // `moved` and `promoted` hold every relocated one, so the depth term has to
   // drop exactly those, or a relocated injection would be charged twice and the
@@ -552,6 +598,7 @@ export function assemble(input: AssembleInput): AssembleResult {
 
   return {
     system,
+    systemSegments: segments,
     messages,
     tokens,
     stablePrefixTokens: stablePrefixTokens(contributions, messages, cacheFriendly, count),

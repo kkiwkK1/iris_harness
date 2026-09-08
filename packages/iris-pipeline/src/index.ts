@@ -10,6 +10,8 @@ export {
   injectAtDepth,
   itemize,
   renderSystem,
+  SYSTEM_JOIN,
+  systemSegments,
   trimHistory,
 } from './assemble.ts'
 
@@ -24,5 +26,6 @@ export type {
   PipelineMessage,
   Placement,
   Role,
+  SystemSegment,
   TokenCounter,
 } from './types.ts'

@@ -74,6 +74,7 @@ export type {
   ConnectionTestError,
   ConnectionTestErrorCode,
   DebugReport,
+  DivergenceState,
   HostDefaultConnection,
   ReportGrade,
   ContinuePostfix,
@@ -86,6 +87,8 @@ export type {
   PresetManagerView,
   PresetPromptView,
   PresetSummary,
+  PromptDivergence,
+  PromptDivergenceItem,
   PromptItemEntry,
   PromptItemization,
   ReasoningEffort,
@@ -110,6 +113,8 @@ export type {
   WorldbookSettingsView,
   WorldbookSummary,
 } from './views.ts'
+
+export { CACHE_STALE_MS, HISTORY_ITEM_PREFIX, providerExcuse } from './views.ts'
 
 export {
   PROVIDER_PRESETS,

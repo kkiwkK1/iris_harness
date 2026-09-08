@@ -39,7 +39,7 @@
 import { useEffect, useRef } from 'react'
 import type { MutableRefObject, ReactElement } from 'react'
 
-import type { PromptItemization, TurnUsage } from '@iris/protocol'
+import type { PromptDivergence, PromptItemization, TurnUsage } from '@iris/protocol'
 
 import {
   averageCacheHit,
@@ -49,6 +49,7 @@ import {
   type ContextCategory,
   type ContextOccupancy,
 } from './context-occupancy.ts'
+import { cacheCeiling, itemName } from './divergence.ts'
 import { formatExactTokens, formatTokens } from './token-format.ts'
 import { t, useLanguage } from './i18n/use-language.ts'
 import type { StringKey } from './i18n/strings.ts'
@@ -148,6 +149,18 @@ export interface ContextCardProps {
   state: 'loading' | 'ready' | { error: string }
   /** The conversation's summed usage, for the cache-hit line. */
   usage: TurnUsage | undefined
+  /**
+   * Where the newest request stopped matching the one before it.
+   *
+   * Absent covers three states on purpose — still fetching, the record is
+   * switched off, and this conversation has only sent one request — because the
+   * card's answer to all three is the same: say nothing. A line reading "no
+   * comparison available" on a first turn would be a report about the instrument
+   * where the reader is looking for a report about their prompt.
+   */
+  divergence: PromptDivergence | undefined
+  /** Opens the prompt panel, where the per-part marks are. */
+  onOpenPanel: () => void
   /** The capsule, so a press on it is not treated as a press outside the card. */
   anchor: MutableRefObject<HTMLButtonElement | null>
   onClose: () => void
@@ -163,6 +176,8 @@ export function ContextCard({
   itemization,
   state,
   usage,
+  divergence,
+  onOpenPanel,
   anchor,
   onClose,
 }: ContextCardProps): ReactElement {
@@ -214,7 +229,16 @@ export function ContextCard({
                 : t('contextCardLoading')}
             </p>
           )
-        : <ContextBody occupancy={occupancy} itemization={itemization} usage={usage} reserve={budget.reserve} />}
+        : (
+            <ContextBody
+              occupancy={occupancy}
+              itemization={itemization}
+              usage={usage}
+              reserve={budget.reserve}
+              divergence={divergence}
+              onOpenPanel={onOpenPanel}
+            />
+          )}
     </div>
   )
 }
@@ -233,11 +257,15 @@ function ContextBody({
   itemization,
   usage,
   reserve,
+  divergence,
+  onOpenPanel,
 }: {
   occupancy: ContextOccupancy
   itemization: PromptItemization | undefined
   usage: TurnUsage | undefined
   reserve: number
+  divergence: PromptDivergence | undefined
+  onOpenPanel: () => void
 }): ReactElement {
   const segments = meterSegments(occupancy)
   const cacheHit = averageCacheHit(usage)
@@ -328,6 +356,42 @@ function ContextBody({
                 percent: String(prefix.percent),
                 tokens: formatTokens(prefix.tokens),
               })}
+            </p>
+          )}
+      {/*
+        Where this request stopped matching the last one.
+        **Bytes, not tokens, and it sits under the cache-hit line for that
+        reason**: the line above is a share of the conversation's billed tokens,
+        this is a share of one request's bytes, and they are two measurements of
+        the same disappointment. The cache line says what the provider gave; this
+        says what it *could* have given, and the gap between them is the only
+        thing that can tell "we changed the prompt" from "the provider did not
+        serve it".
+
+        A press opens the prompt panel, where the per-part marks are — one
+        sentence cannot name eleven sections, and this is a button rather than a
+        note because it goes somewhere.
+      */}
+      {divergence === undefined
+        ? null
+        : (
+            <p className="iris-context-card__note">
+              <button
+                type="button"
+                className="iris-context-card__diverge"
+                data-control="context-divergence"
+                onClick={onOpenPanel}
+                title={t('divergenceOpen')}
+              >
+                {divergence.divergedAt >= divergence.bytes
+                  ? t('divergenceIdentical')
+                  : t('divergenceLine', {
+                      percent: percent(cacheCeiling(divergence)),
+                      item: divergence.divergedIn === undefined
+                        ? t('divergenceStateChanged')
+                        : itemName(divergence.divergedIn, floor => t('divergenceFloor', { n: floor })),
+                    })}
+              </button>
             </p>
           )}
       <p className="iris-context-card__note iris-context-card__note--source">

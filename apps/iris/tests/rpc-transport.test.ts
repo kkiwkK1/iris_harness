@@ -263,6 +263,7 @@ const PROBES: Record<string, unknown> = {
   },
   'backup.delete': { backupId: 'no-such-card/no-such-chat/20260101-000000-000-f1-save-chat.jsonl' },
   'prompt.itemize': { chatId: 'no-such-chat' },
+  'prompt.divergence': { chatId: 'no-such-chat' },
   'script.slash': { chatId: 'no-such-chat', command: '/send hi|/trigger' },
   'script.runEnded': { chatId: 'no-such-chat', runId: 'probe-run' },
   'script.getVariables': { chatId: 'no-such-chat', scope: 'chat' },

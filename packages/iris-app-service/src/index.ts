@@ -23,6 +23,7 @@ import { DEFAULT_TIMEOUTS, OpenAiCompatAdapter } from '@iris/llm-openai-compat'
 import { versionRoute } from './version.ts'
 
 import { BackupStore, DEFAULT_BACKUP_KEEP } from './backups.ts'
+import { CacheTraceStore, DEFAULT_CACHE_TRACE_KEEP } from './cache-trace.ts'
 import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
@@ -103,13 +104,31 @@ export {
   type ReportPage,
 } from './diagnostics.ts'
 export {
+  canonicalBody,
+  fingerprintBody,
   fingerprintLine,
   fingerprintRequest,
   parseFingerprint,
   serialiseRequest,
   PREFIX_BYTES,
+  type BodySlot,
+  type CanonicalBody,
   type PromptFingerprint,
 } from './fingerprint.ts'
+export {
+  CacheTraceStore,
+  divergenceOf,
+  spansOf,
+  traceOf,
+  CACHE_TRACE_VERSION,
+  DEFAULT_CACHE_TRACE_KEEP,
+  TAIL_SPAN_ID,
+  type CacheTraceFile,
+  type CacheTraceOptions,
+  type TraceSpan,
+  type TraceSpanKind,
+  type TraceTarget,
+} from './cache-trace.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
 export {
   DEFAULT_PERSONA_DEPTH,
@@ -282,6 +301,20 @@ export interface Config {
    * @default 50
    */
   backupKeep?: number
+  /**
+   * Request bodies kept per conversation for cache attribution, or `0` for none.
+   *
+   * The record is what makes a cache miss answerable after the fact:
+   * `cache-trace.ts` carries the argument and `CACHE-PREFIX.md` §5.3 the
+   * measurement that asked for it. Bounded because a prompt is tens of
+   * kilobytes — at this default, and measured against the user's own longest
+   * conversation, one chat holds roughly 700 KB.
+   *
+   * A count rather than a boolean beside a count, so one knob cannot disagree
+   * with itself about whether the record exists.
+   * @default 8
+   */
+  cacheTraceKeep?: number
 }
 
 /** Runtime schema for the application row. */
@@ -320,6 +353,7 @@ export const Config: z<Config> = z.object({
   pruneKeepRecent: z.natural().default(20),
   templateDeadlineMs: z.natural().default(2000),
   backupKeep: z.natural().default(DEFAULT_BACKUP_KEEP),
+  cacheTraceKeep: z.natural().default(DEFAULT_CACHE_TRACE_KEEP),
 })
 
 /**
@@ -510,6 +544,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     onError: error => { ctx.logger.warn(`backups: ${error.message}`) },
   })
 
+  // The bodies of the most recent requests, for cache attribution. Constructed
+  // unconditionally and switched off by a retention of `0` — the store answers
+  // `enabled: false` and every method becomes a no-op — so "off" is one
+  // reading of one number rather than an absent object some call sites check
+  // for and others do not.
+  const cacheTrace = new CacheTraceStore(paths.cacheTrace, {
+    keep: config.cacheTraceKeep ?? DEFAULT_CACHE_TRACE_KEEP,
+    onError: error => { ctx.logger.warn(`cache trace: ${error.message}`) },
+  })
+
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset
   // cannot hand a card the page document.
@@ -682,6 +726,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     installConnection,
     scriptVariables,
     backups,
+    cacheTrace,
     preset: storedPreset ?? await loadPreset(config.presetPath),
     ...storedPresetName === undefined ? {} : { presetName: storedPresetName },
     presets,
@@ -755,6 +800,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('backup.restore', handlers['backup.restore']),
       ctx.irisRpc.register('backup.delete', handlers['backup.delete']),
       ctx.irisRpc.register('prompt.itemize', handlers['prompt.itemize']),
+      ctx.irisRpc.register('prompt.divergence', handlers['prompt.divergence']),
       ctx.irisRpc.register('script.getVariables', handlers['script.getVariables']),
       ctx.irisRpc.register('script.setVariables', handlers['script.setVariables']),
       ctx.irisRpc.register('script.swipeTo', handlers['script.swipeTo']),

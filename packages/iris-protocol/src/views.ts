@@ -850,6 +850,215 @@ export interface PromptItemization {
   preview: boolean
 }
 
+/** What happened to one assembly part between two requests. */
+export type DivergenceState = 'same' | 'changed' | 'added' | 'gone'
+
+/**
+ * What a conversation floor's part id begins with, the floor number following.
+ *
+ * In the shared vocabulary rather than in either end, because both ends need it
+ * and for opposite reasons: the host mints these ids and the interface has to
+ * recognise them to print a floor number instead of `history.6`. Two constants
+ * spelled the same in two packages is the shape where one of them changes.
+ */
+export const HISTORY_ITEM_PREFIX = 'history.'
+
+/** One assembly part, compared across two requests. */
+export interface PromptDivergenceItem {
+  /** The part's stable id: a contribution's, or `history.N` for a floor. */
+  id: string
+  /** What to show a person; the id when there is nothing better. */
+  label: string
+  kind: 'system' | 'depth' | 'history' | 'tail'
+  role?: ViewRole
+  state: DivergenceState
+  /** Bytes it occupies in the newer body; `0` when it is `gone`. */
+  bytes: number
+  /** Bytes it occupied in the older body; `0` when it is `added`. */
+  previousBytes: number
+  /**
+   * Bytes of it that fall after the divergence point, and so cannot be served
+   * from cache however unchanged they are.
+   *
+   * This is the figure that makes depth injection legible. A world-info block
+   * anchored at depth 0 is byte-identical every turn and sits *after* the newest
+   * floor, so every byte of it is re-billed every turn — `state: 'same'` with
+   * `uncachedBytes` equal to `bytes` is exactly that shape, and it is invisible
+   * in any account that only asks what changed.
+   */
+  uncachedBytes: number
+}
+
+/**
+ * Where two adjacent requests of one conversation stopped being the same bytes.
+ *
+ * DeepSeek's context cache matches the request **prefix** in 64-token blocks, so
+ * the first differing byte decides everything after it: a turn that diverges at
+ * 20% of the body can be served at most 20% from cache no matter how much of the
+ * remaining 80% it sent verbatim last turn. This view is that measurement, taken
+ * on the bodies actually sent rather than on a replay.
+ *
+ * **Bytes, and no percentages.** Every figure here is a byte count, because
+ * bytes are the unit the comparison is exact in; a share is a division two
+ * readers can disagree about (the newer body or the older one as the
+ * denominator) and is left to whoever renders it, so the ratio is chosen once,
+ * visibly, in one place rather than baked in here.
+ */
+export interface PromptDivergence {
+  /** The chat both requests belong to. */
+  chatId: string
+  /** The newer request's sequence number in this chat's trace. */
+  seq: number
+  /** The older one's. */
+  previousSeq: number
+  /** When the newer request went out; Unix epoch milliseconds. */
+  at: number
+  /** When the older one did. */
+  previousAt: number
+  /**
+   * What each request was: `send`, `regenerate`, `continue`, `impersonate`, or
+   * one of the card-initiated kinds.
+   *
+   * Carried because the two requests need not be the same kind of thing, and
+   * "the prompt grew by 3 000 tokens" reads very differently for two swipes of
+   * one turn than for two consecutive turns.
+   */
+  kind: string
+  previousKind: string
+  /**
+   * Where each request went.
+   *
+   * Carried as fields rather than folded into the bytes, and that is a
+   * correction: the canonical body used to open with the route, so the prefix
+   * hash moved whenever a model was switched and a switch read as "the prompt
+   * head changed". A cache lives on one model, so a route change is a complete
+   * and sufficient explanation for a miss — but it is a *different* explanation
+   * from a prompt change, and the two must not arrive as one number.
+   */
+  model: string
+  previousModel: string
+  provider: string
+  previousProvider: string
+  /** Byte length of the newer canonical body. */
+  bytes: number
+  /** Byte length of the older one. */
+  previousBytes: number
+  /**
+   * The first byte at which the two bodies differ.
+   *
+   * Equal to the shorter body's length when one is a prefix of the other, and
+   * equal to {@link bytes} when they are byte-identical — which is what two
+   * swipes of an unchanged conversation should produce and, measured, do not.
+   */
+  divergedAt: number
+  /** The part the divergence lands in, or absent when it lands in JSON framing. */
+  divergedIn?: { id: string, label: string, kind: PromptDivergenceItem['kind'] }
+  /** `bytes - divergedAt`: what this request must pay full price for. */
+  uncacheableBytes: number
+  /** Of {@link uncacheableBytes}: parts no earlier request carried. */
+  addedBytes: number
+  /** Of {@link uncacheableBytes}: parts that were there and now read differently. */
+  changedBytes: number
+  /**
+   * Of {@link uncacheableBytes}: parts whose bytes are identical to last time
+   * and still cannot be served, because they sit after the divergence.
+   *
+   * The one number that says whether a conversation's cost is a content problem
+   * or a *placement* problem. Nothing can be done about `addedBytes` — a new
+   * floor is new text — but a large `repeatedBytes` is text being re-billed for
+   * where it sits.
+   */
+  repeatedBytes: number
+  /**
+   * Of {@link uncacheableBytes}: JSON framing and role names, which belong to
+   * no part.
+   *
+   * Reported rather than swallowed so the four terms add up to
+   * {@link uncacheableBytes} exactly. An account that came within a few hundred
+   * bytes of its own total invites the reader to assume the rest is rounding,
+   * and there is no rounding here.
+   */
+  structureBytes: number
+  /** Every part, compared; ordered as the newer body lays them out. */
+  items: PromptDivergenceItem[]
+  /**
+   * What the provider said it served from cache for the newer request, when it
+   * said anything.
+   *
+   * Placed beside the byte measurement deliberately, and **the two are in
+   * different units**: this is tokens as the provider counts them, while
+   * {@link divergedAt} is bytes as this host wrote them, and the bytes-per-token
+   * ratio of CJK text is not the ratio of the JSON framing around it. So the two
+   * shares are comparable in *magnitude* and not in the last digit. A share far
+   * below the byte ceiling is the finding — it means the prefix was identical
+   * and the provider still did not serve it, which is a provider-side fact and
+   * the only thing that can explain a turn reporting zero on an unchanged
+   * prefix.
+   */
+  cacheReadTokens?: number
+  /** Prompt tokens the provider charged in full, when it reported them. */
+  inputTokens?: number
+  /**
+   * False when the byte offsets could not be attributed to parts with
+   * certainty, and why.
+   *
+   * A card template that rewrote a slot after the assembly recorded it, or a
+   * request composed outside the assembler, leaves the offsets sound and the
+   * *attribution* unsound. Saying so is the difference between a reader
+   * distrusting one line and distrusting the instrument.
+   */
+  attributed: boolean
+  /** Present when {@link attributed} is false: what could not be mapped. */
+  attributionNote?: string
+}
+
+/**
+ * How long a gap between two requests puts a provider's cache out of reach.
+ *
+ * DeepSeek documents a lifetime of "hours to days" and commits to nothing
+ * narrower, so this is a **reporting** threshold rather than a measurement: half
+ * an hour is short enough that a shortfall inside it is worth asking about, and
+ * long enough that a normal back-and-forth never trips it. Here rather than in
+ * either consumer because the interface and the offline report must draw the
+ * same line — two thresholds spelled the same in two places is the shape where
+ * one of them moves.
+ */
+export const CACHE_STALE_MS = 30 * 60 * 1000
+
+/**
+ * Why a provider might legitimately have served nothing.
+ *
+ * Not "why it did" — nothing on this side can see the provider's. These are the
+ * conditions under which a shortfall is **expected**, so a reader is not sent
+ * looking for a prompt defect that is not there:
+ *
+ * - `cold-start`: DeepSeek stores a prefix only once it has seen it twice, so
+ *   the first two requests of a conversation cannot hit however identical they
+ *   are. The first recorded turn of `爱衣` reported `0`, and this is the whole
+ *   explanation of it.
+ * - `stale`: the gap exceeds {@link CACHE_STALE_MS}, so the entry may be gone.
+ * - `route`: the two requests went to different models. A cache lives on one
+ *   model, so this is sufficient on its own — and it is the reason the route was
+ *   moved out of the prompt hash, because a switch used to read as the prompt's
+ *   head changing.
+ *
+ * Checked before any shortfall is reported, and the ordering is the point: three
+ * ordinary conditions each produce a miss on an identical prompt, and reporting
+ * those as findings spends a reader's attention on false alarms.
+ * @param divergence - the comparison.
+ * @returns the condition, or null when none applies.
+ */
+export function providerExcuse(divergence: PromptDivergence): 'cold-start' | 'stale' | 'route' | null {
+  if (divergence.model !== divergence.previousModel || divergence.provider !== divergence.previousProvider) {
+    return 'route'
+  }
+  // `seq` counts recorded requests of this conversation from zero, so `1` is the
+  // second one — the last that cannot have a stored prefix to match.
+  if (divergence.seq <= 1) return 'cold-start'
+  if (divergence.at - divergence.previousAt > CACHE_STALE_MS) return 'stale'
+  return null
+}
+
 /**
  * One saved connection: an endpoint, a model and a preset, switched together.
  *

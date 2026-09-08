@@ -11,7 +11,7 @@
 
 export { createFakeClient, FakeRpcError, type FakeClient, type FakeClientOptions } from './client.ts'
 export { readCard, type ReadCard } from './card.ts'
-export { fakeItemization } from './prompt.ts'
+export { fakeDivergence, fakeItemization } from './prompt.ts'
 export {
   activateConnection,
   deleteConnection,

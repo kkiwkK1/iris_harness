@@ -84,6 +84,14 @@ export function historyFromSession(session: Session, options: HistoryOptions = {
     return {
       role,
       text,
+      // The floor number, so a cache trace can name *which* floor changed
+      // rather than saying "the conversation did". The index is over the
+      // projection, and the projection only ever drops from the tail
+      // (`dropTrailingReply`), so a floor keeps this id from one turn to the
+      // next — which is the whole reason two turns' records can be compared
+      // item by item. Provenance, never content: `PipelineMessage.id` says why
+      // it cannot reach a provider.
+      id: `history.${String(index)}`,
       ...name === undefined ? {} : { name },
       ...pinFirst && index === 0 ? { pinned: true } : {},
     }

@@ -19,6 +19,30 @@
  * every chat file forever — a 64-hex digest per swipe is four times the bytes
  * for a comparison that is already decided in the first eight.
  *
+ * ## The route is not in the hash — a correction, 2026-09-08
+ *
+ * The canonical body used to open with `{"provider":…,"model":…` and the prefix
+ * window is the first {@link PREFIX_BYTES} bytes *of that string*, so **a model
+ * switch changed `prefixHash` while the prompt was untouched**. That is not a
+ * theoretical hazard: the composer lets a model be chosen per conversation, and
+ * the two swipes of `爱衣` message 25 that were read as "the head 4 KB changed"
+ * are arithmetically inconsistent with that reading — the second reports 7 424
+ * cached tokens, which is a shared wire prefix of roughly 20 KB, and a request
+ * whose first 4 KB really differed could not have had one.
+ *
+ * So the hashes now cover the **prompt only**: the system slot and every
+ * message's role and text. The route is a fact about the *destination* — a cache
+ * lives on one model, so it certainly matters — and it is recorded as its own
+ * fields (`UsageRoute`, and the cache trace's `provider` / `model`), where a
+ * change reads as a route change rather than as a prompt change.
+ *
+ * **Consequence, stated because it is silent otherwise**: hashes stored before
+ * this change were taken over a different string and cannot be compared with
+ * ones taken after it. One boundary turn per conversation will therefore read as
+ * "the prompt changed" when it may not have. Nothing repairs that — the old
+ * bodies are gone — and the alternative was leaving a measurement that answers a
+ * different question from the one it is read as answering.
+ *
  * @module @iris/app-service/fingerprint
  */
 
@@ -59,28 +83,107 @@ function textOf(message: { readonly content: readonly { readonly type: string, r
 }
 
 /**
- * The request as one canonical string.
+ * One text slot of the canonical body, and where its bytes are.
  *
- * **What is in it**: the route (provider and model, because a cache lives on
- * one model), the system slot, and every message's role and text — everything
- * that decides what the provider's cache can match. **What is not**: sampling,
- * `maxTokens`, `stop`, the abort signal. A temperature that jitters between
- * turns must not make two identical prompts look different; that would hide the
- * very drift this is for behind noise from a knob the cache never reads.
+ * The offsets bound the **escaped** content between a JSON string's quotes, not
+ * the text itself: the body is what a provider's cache is decided over, so the
+ * only coordinate system in which "the divergence is at byte 5 239" means
+ * anything is the body's own. `JSON.parse('"' + slice + '"')` recovers the text
+ * from a slice, and the trace's tests assert exactly that.
+ */
+export interface BodySlot {
+  /**
+   * Which slot this is: the system prompt, or the *n*th message.
+   *
+   * `-1` for the system slot, so a caller can order slots by this field and get
+   * wire order, which is what the system prompt occupies in every serialiser
+   * this host has.
+   */
+  message: number
+  /** First byte of the escaped content, inclusive. */
+  start: number
+  /** One past the last byte of the escaped content. */
+  end: number
+  /** The text the slot carries, unescaped. */
+  text: string
+}
+
+/** The canonical body and the position of every text slot inside it. */
+export interface CanonicalBody {
+  body: string
+  /** In wire order: the system slot first when there is one, then the messages. */
+  slots: BodySlot[]
+  /** `Buffer.byteLength(body)`, computed once because every reader needs it. */
+  bytes: number
+}
+
+/**
+ * The prompt as one canonical string, with the position of every text slot.
  *
- * Keys are written in a fixed order by construction rather than sorted, so the
- * string is stable across runs without depending on `JSON.stringify` key order
- * for an object built somewhere else.
+ * **What is in it**: the system slot, and every message's role and text — the
+ * text a provider's cache matches on. **What is not**: the route, sampling,
+ * `maxTokens`, `stop`, the abort signal. The route's exclusion is the 2026-09-08
+ * correction this module's header records; the rest were never in, because a
+ * temperature that jitters between turns must not make two identical prompts look
+ * different — that would hide the very drift this is for behind noise from a knob
+ * the cache never reads.
+ *
+ * Written out chunk by chunk rather than handed to `JSON.stringify` as one
+ * object, because the offsets have to be exact and a second pass that *searched*
+ * the finished string for each text would be a different answer wearing this
+ * one's clothes: two messages with identical text would both match the first
+ * occurrence. The bytes are identical to the object form — `tests/cache-trace`
+ * pins that against a literal `JSON.stringify`, which is the only reference
+ * worth checking it against.
+ * @param options - the request as the adapter is about to receive it.
+ * @returns the canonical body, its slots, and its byte length.
+ */
+export function canonicalBody(options: GenerateOptions): CanonicalBody {
+  const slots: BodySlot[] = []
+  const chunks: string[] = []
+  let bytes = 0
+
+  /** Append a chunk that is not a text slot. */
+  const structure = (chunk: string): void => {
+    chunks.push(chunk)
+    bytes += Buffer.byteLength(chunk, 'utf8')
+  }
+  /** Append one JSON string and record where its content landed. */
+  const slot = (message: number, text: string): void => {
+    const escaped = JSON.stringify(text).slice(1, -1)
+    structure('"')
+    const start = bytes
+    structure(escaped)
+    slots.push({ message, start, end: bytes, text })
+    structure('"')
+  }
+
+  structure('{"system":')
+  // `null`, not `""`, when there is no system slot: the two are different facts
+  // about a request and the fingerprint has always distinguished them.
+  if (options.system === undefined) structure('null')
+  else slot(-1, options.system)
+  structure(',"messages":[')
+  options.messages.forEach((message, index) => {
+    if (index > 0) structure(',')
+    structure('{"role":')
+    structure(JSON.stringify(message.role))
+    structure(',"text":')
+    slot(index, textOf(message))
+    structure('}')
+  })
+  structure(']}')
+
+  return { body: chunks.join(''), slots, bytes }
+}
+
+/**
+ * The prompt as one canonical string.
  * @param options - the request as the adapter is about to receive it.
  * @returns the canonical body string.
  */
 export function serialiseRequest(options: GenerateOptions): string {
-  return JSON.stringify({
-    provider: options.provider,
-    model: options.model,
-    system: options.system ?? null,
-    messages: options.messages.map(message => ({ role: message.role, text: textOf(message) })),
-  })
+  return canonicalBody(options).body
 }
 
 /** The first 16 hex characters of a `sha256`. */
@@ -89,12 +192,16 @@ function digest(input: string | Uint8Array): string {
 }
 
 /**
- * Fingerprint one request.
- * @param options - the request as the adapter is about to receive it.
+ * Fingerprint one already-serialised body.
+ *
+ * Separate from {@link fingerprintRequest} so the cache trace, which has the
+ * body in hand and its slots with it, hashes the same bytes rather than
+ * serialising a second time — two serialisations of one request are two chances
+ * to disagree about what went out.
+ * @param body - the canonical body.
  * @returns the whole-body hash and the prefix hash.
  */
-export function fingerprintRequest(options: GenerateOptions): PromptFingerprint {
-  const body = serialiseRequest(options)
+export function fingerprintBody(body: string): PromptFingerprint {
   const bytes = Buffer.from(body, 'utf8')
   return {
     promptHash: digest(body),
@@ -103,6 +210,15 @@ export function fingerprintRequest(options: GenerateOptions): PromptFingerprint 
     // short request and not a defect.
     prefixHash: digest(bytes.subarray(0, PREFIX_BYTES)),
   }
+}
+
+/**
+ * Fingerprint one request.
+ * @param options - the request as the adapter is about to receive it.
+ * @returns the whole-body hash and the prefix hash.
+ */
+export function fingerprintRequest(options: GenerateOptions): PromptFingerprint {
+  return fingerprintBody(serialiseRequest(options))
 }
 
 /**

@@ -11,7 +11,14 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 
-import type { PromptItemEntry, PromptItemization } from '@iris/protocol'
+import {
+  CACHE_STALE_MS,
+  providerExcuse,
+  type PromptDivergence,
+  type PromptDivergenceItem,
+  type PromptItemEntry,
+  type PromptItemization,
+} from '@iris/protocol'
 
 import {
   averageCacheHit,
@@ -21,6 +28,13 @@ import {
   CONTEXT_CATEGORIES,
   meterSegments,
 } from '../src/app/context-occupancy.ts'
+import {
+  cacheCeiling,
+  itemName,
+  providerFellShort,
+  providerShare,
+  unservedItems,
+} from '../src/app/divergence.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -282,4 +296,153 @@ test('no two categories share a tint, in any of the three themes', () => {
       )
     }
   }
+})
+
+/**
+ * Two adjacent requests, byte-for-byte, as the divergence line reads them.
+ *
+ * Every number here disagrees with the plausible wrong denominator: 28 209
+ * shared of 34 563 sent is 81.6% against the newer body and 83.2% against the
+ * older, and the newer is the one a prefix cache serves — `CACHE-PREFIX.md`
+ * §1.2 computes its ceiling column the same way, so the two are comparable.
+ * @param over - fields to replace.
+ * @returns the comparison.
+ */
+function divergence(over: Partial<PromptDivergence> = {}): PromptDivergence {
+  return {
+    chatId: 'aiyi',
+    seq: 7,
+    previousSeq: 6,
+    at: Date.UTC(2026, 8, 7, 4, 12, 30),
+    previousAt: Date.UTC(2026, 8, 7, 4, 9, 12),
+    kind: 'send',
+    previousKind: 'send',
+    model: 'deepseek-reasoner',
+    previousModel: 'deepseek-reasoner',
+    provider: 'deepseek',
+    previousProvider: 'deepseek',
+    bytes: 34_563,
+    previousBytes: 33_905,
+    divergedAt: 28_209,
+    uncacheableBytes: 6_354,
+    addedBytes: 1_350,
+    changedBytes: 3_157,
+    repeatedBytes: 1_647,
+    structureBytes: 200,
+    items: [],
+    attributed: true,
+    ...over,
+  }
+}
+
+test('the ceiling divides by the request being sent, not the one before it', () => {
+  // 28 209 / 34 563 = 81.6%. Against the previous body it would be 83.2%, and
+  // those two are what this assertion chooses between: a prefix cache serves a
+  // prefix of the *new* request, so the new body is the denominator.
+  assert.equal(Math.round(cacheCeiling(divergence()) * 1000) / 10, 81.6)
+  assert.notEqual(Math.round(cacheCeiling(divergence()) * 1000) / 10, 83.2)
+})
+
+test('the provider share is over billed tokens, cache included', () => {
+  // `inputTokens` excludes what the cache served, so the billed total is the
+  // sum — the same arithmetic `billedInputTokens` does for the usage line. A
+  // reader who divided by `inputTokens` alone would get 46%, not 31.4%, and the
+  // fixture is chosen so the two disagree.
+  const row = divergence({ cacheReadTokens: 3_456, inputTokens: 7_563 })
+  assert.equal(Math.round((providerShare(row) ?? 0) * 1000) / 10, 31.4)
+})
+
+test('a provider that reports no caching gets no share, not a zero', () => {
+  assert.equal(providerShare(divergence()), null)
+  assert.equal(providerShare(divergence({ cacheReadTokens: 0, inputTokens: 8_612 })), 0)
+})
+
+test('a shortfall is only reported when nothing ordinary explains it', () => {
+  /*
+   * The measured case first: `OVERLORD-沙盒` line 3 → line 5 in the user's own
+   * corpus has a byte-identical prefix and reports `prompt_cache_hit_tokens: 0`.
+   * That is the finding, and it must survive.
+   */
+  const bare = divergence({ cacheReadTokens: 0, inputTokens: 8_612 })
+  assert.equal(providerExcuse(bare), null)
+  assert.equal(providerFellShort(bare), true)
+
+  /*
+   * And the three conditions under which the same numbers mean nothing. Each is
+   * a documented property of DeepSeek's cache, and each on its own explains a
+   * miss on an identical prompt — so each must suppress the finding, or the
+   * report opens with three false alarms.
+   */
+  assert.equal(providerExcuse(divergence({ ...bare, seq: 1, previousSeq: 0 })), 'cold-start')
+  assert.equal(providerFellShort(divergence({ ...bare, seq: 1, previousSeq: 0 })), false)
+
+  const gap = divergence({ ...bare, previousAt: bare.at - (CACHE_STALE_MS + 1) })
+  assert.equal(providerExcuse(gap), 'stale')
+  assert.equal(providerFellShort(gap), false)
+
+  const switched = divergence({ ...bare, previousModel: 'deepseek-chat' })
+  assert.equal(providerExcuse(switched), 'route')
+  assert.equal(providerFellShort(switched), false)
+
+  // Just inside the window is not stale: a threshold that fired at exactly the
+  // boundary would suppress the finding on an ordinary two-minute exchange.
+  const near = divergence({ ...bare, previousAt: bare.at - (CACHE_STALE_MS - 1) })
+  assert.equal(providerExcuse(near), null)
+  assert.equal(providerFellShort(near), true)
+})
+
+test('a floor is named by its number, and every other part by its own label', () => {
+  const floor = (n: string): string => `floor ${n}`
+  assert.equal(itemName({ id: 'history.6', label: 'history.6', kind: 'history' }, floor), 'floor 6')
+  // A part whose author gave it a name keeps it, generated ids being the only
+  // ones this translates — a blanket rewrite would replace 「状态栏格式」 with
+  // something a user has never seen in SillyTavern either.
+  assert.equal(itemName({ id: 'worldInfoAfter', label: 'World Info (after)', kind: 'system' }, floor), 'World Info (after)')
+})
+
+test('the parts worth showing are the ones that cost something, worst first', () => {
+  const item = (id: string, uncachedBytes: number, state: PromptDivergenceItem['state']): PromptDivergenceItem => (
+    { id, label: id, kind: 'system', state, bytes: uncachedBytes, previousBytes: 0, uncachedBytes }
+  )
+  const rows = unservedItems(divergence({
+    items: [
+      item('cached', 0, 'same'),
+      item('small', 100, 'changed'),
+      // The measured shape: unchanged to the byte and re-billed in full. It must
+      // outrank a part that actually changed, because it is the larger cost and
+      // the recoverable one.
+      item('stranded', 5_367, 'same'),
+      item('vanished', 0, 'gone'),
+    ],
+  }))
+  assert.deepEqual(rows.map(row => row.id), ['stranded', 'small'])
+})
+
+test('the card carries the divergence line, its handle, and no seventh swatch', () => {
+  /*
+   * Read off the source, because the card only renders once the capsule is
+   * pressed and neither the server render nor this file can press it. Three
+   * properties, and each has a way of going wrong that nothing else here
+   * notices:
+   *
+   * 1. **The handle.** `data-control` is how the QA locators address a control,
+   *    and a line with no handle cannot be driven or screenshotted.
+   * 2. **The line goes somewhere.** One sentence cannot name eleven sections, so
+   *    it opens the prompt panel; a `<p>` that only printed the percentage would
+   *    look finished and be a dead end.
+   * 3. **No swatch.** The test below asserts that every
+   *    `iris-context-card__swatch--*` rule names a context category and only a
+   *    category, so a new card row that introduced one would fail there with a
+   *    message about colours rather than about this line.
+   */
+  const source = readFileSync(join(HERE, '..', 'src', 'app', 'ContextMeter.tsx'), 'utf8')
+  assert.match(source, /data-control="context-divergence"/, 'the divergence line has no locator handle')
+  assert.match(source, /onClick=\{onOpenPanel\}/, 'the divergence line does not open the prompt panel')
+  assert.match(source, /t\('divergenceLine'/, 'the divergence line is not built from the dictionary')
+  assert.match(source, /t\('divergenceIdentical'/, 'two identical requests get no sentence of their own')
+  assert.equal(
+    /iris-context-card__swatch--diverge/.test(source),
+    false,
+    'the divergence line must not mint a swatch class, which the tint census would then refuse',
+  )
 })

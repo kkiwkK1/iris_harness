@@ -1218,6 +1218,62 @@ export const en = {
   contextFromPreview: 'A preview of the next request',
 
   /*
+   * Where this request stopped matching the last one (`divergence.ts`).
+   *
+   * **This family is neither 「估算」 nor 「用量」 — it compares two requests, in
+   * bytes.** Everything else on the capacity card is tokens: the host's estimate
+   * or the provider's count. These are bytes, because bytes are the unit a
+   * prefix cache is decided in and the only unit the comparison is exact in. So
+   * the wording never says "token", and where a byte figure sits beside a
+   * provider's token figure the difference is stated rather than smoothed over.
+   */
+  divergenceLine: 'Diverges from the last request at {percent} · in {item}',
+  /** Two requests that came out byte-identical. Rare, and worth saying plainly. */
+  divergenceIdentical: 'Byte-identical to the last request',
+  /** No pair: the first request of a conversation, or the record is switched off. */
+  divergenceNone: 'No earlier request to compare with',
+  divergenceOpen: 'See which parts changed',
+  /** A conversation floor, whose part id is generated rather than authored. */
+  divergenceFloor: 'Floor {n}',
+  /**
+   * **'The newest' rather than 'this turn's'.** The panel can be opened for an
+   * older turn's itemization, while a comparison is always of the two newest
+   * recorded requests — a turn can have sent several, since every swipe is one.
+   * Saying which pair it is stops the block being read as a statement about the
+   * turn above it.
+   */
+  divergenceHeading: 'The newest request ({kind}) against the one before it ({previousKind})',
+  divergenceCeiling: '{percent} of these bytes could have come from cache',
+  divergenceServed: 'the provider served {percent}',
+  divergenceUnreported: 'the provider did not report caching',
+  /**
+   * The finding this record exists for: the prefix matched and the cache was
+   * not served anyway. Worded as an observation, because that is all it is —
+   * the cause is on the provider's side and nothing here can see it.
+   */
+  divergenceShortfall: 'far below what the bytes allowed',
+  /**
+   * The three conditions under which serving nothing is expected, so a reader is
+   * not sent hunting for a prompt defect that is not there. DeepSeek stores a
+   * prefix only after seeing it twice, entries live hours to days, and a cache
+   * belongs to one model.
+   */
+  divergenceColdStart: 'one of this conversation’s first two requests — a prefix has to be seen twice before it is stored',
+  divergenceStale: 'more than half an hour since the previous request, so the cached prefix may have expired',
+  divergenceRoute: 'a different model from the previous request ({from} → {to}), and a cache belongs to one model',
+  /** The four terms of the loss, which add up exactly. */
+  divergenceSplit: '{total} B unservable: {added} new, {changed} rewritten, {repeated} unchanged but out of reach, {structure} framing',
+  divergenceStateSame: 'unchanged',
+  divergenceStateChanged: 'rewritten',
+  divergenceStateAdded: 'new',
+  divergenceStateGone: 'gone',
+  /** A part that did not change and still could not be served. */
+  divergenceStranded: 'unchanged, re-sent in full',
+  divergenceBytes: '{bytes} B',
+  /** The offsets are sound and their attribution to parts is not. */
+  divergenceUnattributed: 'Byte offsets are exact; which part they belong to is not — {reason}',
+
+  /*
    * The composer's command line (`commands.ts`).
    *
    * `commandRow` is the completion menu's row — its `command` slot is
@@ -2314,6 +2370,28 @@ export const zh: Record<StringKey, string> = {
   contextStablePrefix: '稳定前缀 约 {percent}%（{tokens}）',
   contextFromRecord: '第 {turn} 回实测',
   contextFromPreview: '下一条请求的预览',
+
+  divergenceLine: '与上一条请求在 {percent} 处分叉 · 落在〈{item}〉',
+  divergenceIdentical: '与上一条请求逐字节相同',
+  divergenceNone: '没有更早的请求可比',
+  divergenceOpen: '看看是哪几段变了',
+  divergenceFloor: '第 {n} 层',
+  divergenceHeading: '最新那条请求（{kind}）与它前面那条（{previousKind}）相比',
+  divergenceCeiling: '这些字节里有 {percent} 本可以由缓存供出',
+  divergenceServed: '提供方实际给了 {percent}',
+  divergenceUnreported: '提供方没报缓存',
+  divergenceShortfall: '远低于字节允许的上限',
+  divergenceColdStart: '这是本对话最前两条请求之一 —— 前缀要被看到两次才会存下来',
+  divergenceStale: '距上一条请求超过半小时，缓存的前缀可能已经过期',
+  divergenceRoute: '与上一条请求不是同一个模型（{from} → {to}），而缓存只属于一个模型',
+  divergenceSplit: '{total} 字节命不中：新增 {added}、改写 {changed}、逐字未变却落在前缀之后 {repeated}、框架 {structure}',
+  divergenceStateSame: '未变',
+  divergenceStateChanged: '改写',
+  divergenceStateAdded: '新增',
+  divergenceStateGone: '消失',
+  divergenceStranded: '逐字未变，仍整段重发',
+  divergenceBytes: '{bytes} 字节',
+  divergenceUnattributed: '字节偏移是准的，落在哪一段不准 —— {reason}',
 
   commandRow: '{command} —— {summary}',
   commandArgHeading: '{command} 可以填的值',

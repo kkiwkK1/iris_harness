@@ -30,7 +30,7 @@ import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper
 import { checkScriptFetch, extractScripts } from '@iris/script'
 import { defaultRegistry } from '@iris/macro'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
-import { historyFromSession, squashSystemRuns, TurnDriver, type GenerateEvents, type HistoryProjection, type StreamFn } from '@iris/turn'
+import { historyFromSession, slotsOf, squashSystemRuns, TurnDriver, type GenerateEvents, type HistoryProjection, type StreamFn } from '@iris/turn'
 import { randomUUID } from 'node:crypto'
 
 import { PresetStore } from './presets.ts'
@@ -73,6 +73,7 @@ import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
+import { CacheTraceStore, traceOf } from './cache-trace.ts'
 import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
 import { PersonaStore, type ActivePersona } from './persona.ts'
 import type { PruneOptions } from './prune.ts'
@@ -460,6 +461,17 @@ export interface AppServiceOptions {
    * the honest answer from a host that keeps no copies.
    */
   backups?: BackupStore
+  /**
+   * Where the bodies of recent requests are kept, for cache attribution.
+   *
+   * Optional, and absent is the *quiet* reading: nothing is recorded and
+   * `prompt.divergence` answers with no comparison rather than refusing, which
+   * is the same answer a conversation with one turn gets. A host that keeps no
+   * copies of its prompts is a normal host, not a broken one — and this is the
+   * one store that holds whole prompts, so absence must be a first-class state
+   * rather than an error to be worked around.
+   */
+  cacheTrace?: CacheTraceStore
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
   /**
@@ -484,7 +496,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings' | 'backups' | 'hostConnection'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection'>>
     & {
       onError: (error: Error) => void
       hostConnection?: HostConnection
@@ -507,6 +519,7 @@ export class IrisAppService {
       favorites?: FavoriteStore
       worldbookBindings?: WorldbookBindingStore
       backups?: BackupStore
+      cacheTrace?: CacheTraceStore
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -573,6 +586,7 @@ export class IrisAppService {
       ...options.favorites === undefined ? {} : { favorites: options.favorites },
       ...options.worldbookBindings === undefined ? {} : { worldbookBindings: options.worldbookBindings },
       ...options.backups === undefined ? {} : { backups: options.backups },
+      ...options.cacheTrace === undefined ? {} : { cacheTrace: options.cacheTrace },
     }
     // The manager's live state starts on whatever the caller assembled: a
     // stored selection is applied by the caller (the plugin) before the
@@ -1467,6 +1481,23 @@ export class IrisAppService {
         // whose record went when the chat last closed. `preview` says which.
         const recorded = turn === undefined ? undefined : entry.itemizations.get(turn)
         return { itemization: recorded ?? await this.#previewItemization(entry) }
+      },
+
+      'prompt.divergence': async ({ chatId, seq }) => {
+        // **The chat is not opened.** Unlike `prompt.itemize`, which assembles a
+        // preview and therefore needs the live entry, this reads two files the
+        // profile already holds — so it answers for a conversation nobody has
+        // opened, and it cannot be the call that loads a 244 KB chat into
+        // memory. The id is still checked, by the store, through the same
+        // `fileFor` guard a chat file's name goes through.
+        const store = this.#options.cacheTrace
+        if (store === undefined) return {}
+        const divergence = await store.divergence(chatId, seq)
+        // Absent rather than refused: "this conversation has fewer than two
+        // recorded requests" is the ordinary state of a chat that has just
+        // started, and of every chat if the record is switched off. A refusal
+        // would put a failure in front of a user who has done nothing wrong.
+        return { ...divergence === undefined ? {} : { divergence } }
       },
 
       'script.getVariables': async ({ chatId, scope, messageId, scriptId }) => {
@@ -2997,7 +3028,7 @@ export class IrisAppService {
     if (seed !== undefined && entry.pending !== undefined) {
       entry.pending.text = continuedSeedText(seedTextOf(seed), continuePostfix ?? '')
     }
-    const driver = this.#driver(entry, generationType)
+    const driver = this.#driver(entry, generationType, request.kind)
     const events: GenerateEvents = {
       onText: (delta) => {
         if (entry.pending !== undefined) entry.pending.text += delta
@@ -3267,14 +3298,25 @@ export class IrisAppService {
     })
   }
 
-  /** Build the driver for one chat, with its current settings. */
-  #driver(entry: ChatEntry, generationType = 'normal'): TurnDriver {
+  /**
+   * Build the driver for one chat, with its current settings.
+   * @param entry - the conversation.
+   * @param generationType - upstream's word for what is being generated, which
+   *   the preset's `injection_trigger` lists are matched against.
+   * @param traceKind - what to call this generation in the cache trace: Iris's
+   *   own word rather than upstream's, because the trace is read by a person
+   *   asking why *this* turn missed, and `send` answers that where `normal`
+   *   does not. Defaults to the generation type, so a caller with no request
+   *   kind in hand still labels its traces with something true.
+   * @returns the driver.
+   */
+  #driver(entry: ChatEntry, generationType = 'normal', traceKind = generationType): TurnDriver {
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
     const count = (text: string): number => this.#counter.count(text)
     const names = entry.names
 
     return new TurnDriver({
-      stream: options => this.#stream(options, entry),
+      stream: options => this.#stream(options, entry, { chatId: entry.chatId, kind: traceKind }),
       provider: settings.provider,
       model: settings.model,
       // The generation type travels with the driver so the assembly it drives
@@ -3617,7 +3659,15 @@ export class IrisAppService {
       ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...sampling === undefined ? {} : { sampling },
-    })) {
+      // No `entry`, for the reasons this method's doc gives, but a trace target
+      // all the same: this request goes to the same provider on the same route
+      // and its prefix competes for the same cache, so a chat whose card fires
+      // one of these between turns is a chat whose turn-to-turn traces have a
+      // stranger in between. Leaving it out would make that stranger invisible
+      // and the gap in sequence numbers unexplained. It carries no layout —
+      // nothing here was assembled — so its spans are unattributed, and the
+      // trace says so rather than guessing.
+    }, undefined, { chatId: entry.chatId, kind: 'side', caller: 'script.generateRaw', turn: -1 })) {
       assembler.push(chunk)
     }
 
@@ -3668,7 +3718,11 @@ export class IrisAppService {
 
     const result = assemble({
       contributions: await this.#contributions(entry, entry.session, count, false),
-      history: [...kept, { role: 'user' as const, text: userInput }],
+      // The card's prompt is a floor of its own with an id of its own, so a
+      // trace of this request can name it. Without an id its slot would be
+      // unattributed and the whole trace would be marked so — a routine path
+      // reading as a defect.
+      history: [...kept, { role: 'user' as const, text: userInput, id: 'script.userInput' }],
       // **Against this chat's own window**, not the composition's. A chat with a
       // per-chat `contextWindow` override used to have its side generations
       // assembled against the host default, so the trim cut at a different
@@ -3687,9 +3741,17 @@ export class IrisAppService {
     // skipped it would send this conversation's injections in a different
     // shape than the turn beside it, so the two requests would stop sharing a
     // prefix at the first injection.
-    const messages = settings.squashSystemMessages === true
-      ? squashSystemRuns(result.messages)
-      : result.messages
+    //
+    // It runs over **slots**, not over bare messages, because the squash is
+    // also the one pass that changes how many messages go out: a layout taken
+    // from `result.messages` would describe one slot per assembled message and
+    // the body would carry fewer, which a trace reads as "the layout describes
+    // more messages than the body has" and refuses wholesale. Squashing the
+    // slots merges each run's provenance with its text in the same step.
+    const slots = settings.squashSystemMessages === true
+      ? squashSystemRuns(slotsOf(result.messages))
+      : slotsOf(result.messages)
+    const messages = slots.map(slot => slot.message)
     for await (const chunk of this.#stream({
       provider: settings.provider,
       model: settings.model,
@@ -3705,7 +3767,22 @@ export class IrisAppService {
       ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...sampling === undefined ? {} : { sampling },
-    })) {
+      // The layout the driver would have attached, built here because this path
+      // assembles its own request rather than going through the driver. A card
+      // that passed its own `systemPrompt` replaced the assembled string, so the
+      // segments describing what it replaced would be confidently wrong offsets
+      // — the one output the trace must not produce. Its own text becomes one
+      // named segment instead, which is both exact and the honest label.
+      layout: {
+        system: systemPrompt === undefined
+          ? result.systemSegments
+          : [{ id: 'script.systemPrompt', text: systemPrompt }],
+        messages: slots.map(slot => ({
+          parts: slot.parts.map(part => ({ ...part })),
+          role: slot.message.role,
+        })),
+      },
+    }, undefined, { chatId: entry.chatId, kind: 'side', caller: 'script.generate', turn: -1 })) {
       assembler.push(chunk)
     }
 
@@ -4005,8 +4082,18 @@ export class IrisAppService {
    * the number just estimated, free of charge. Feeding it back is the only way
    * a character-class estimator converges, because the residual is vocabulary
    * dependent and no static table fixes it.
+   * @param options - the composed request.
+   * @param entry - the conversation, when this generation belongs to one.
+   * @param trace - the conversation and the kind to file a cache trace under.
+   *   Separate from `entry` on purpose: the host's *own* utility generations —
+   *   the compaction summarizer — belong to a chat and are not requests a user
+   *   is comparing, so they pass an entry and no trace target.
    */
-  async *#stream(options: GenerateOptions, entry?: ChatEntry): AsyncIterable<StreamChunk> {
+  async *#stream(
+    options: GenerateOptions,
+    entry?: ChatEntry,
+    trace?: { chatId: string, kind: string, caller?: string, turn?: number },
+  ): AsyncIterable<StreamChunk> {
     // The templates run here because here is the only place that has both the
     // assembled prompt and the chat it belongs to. `#generateRaw` reaches this
     // with no entry and is left alone deliberately: its prompt is written by
@@ -4069,9 +4156,15 @@ export class IrisAppService {
     // after the fact nothing could tell them apart, because the request is
     // gone. Taken from `request` rather than from `options`: the templates and
     // the macro pass above have already run, so this is the body the provider
-    // sees. A side generation (`#generateRaw`, `script.generate`) arrives here
-    // with no entry, has no candidate to file a record against, and is not part
-    // of any turn-to-turn comparison, so it records nothing.
+    // sees. A side generation (`#generateRaw`, `#sideGenerate`) arrives here
+    // with no entry and has no candidate to file this record against, so it
+    // records nothing *here*.
+    //
+    // **It is not thereby invisible.** The `finally` below writes it a cache
+    // trace, labelled `kind: 'side'`, because it is billed like any other
+    // request and sits between two turns' traces — and because the usage page
+    // cannot see it either (`DEVIATIONS.md` §36 records that gap and why fixing
+    // it is not this round's).
     const fingerprint = fingerprintRequest(request)
     const pendingTurn = entry?.pending?.turn
     if (entry !== undefined && pendingTurn !== undefined) {
@@ -4097,6 +4190,11 @@ export class IrisAppService {
       })
     }
     let cacheReadTokens: number | undefined
+    let inputTokens: number | undefined
+    // The request's moment, taken once. The trace and the report line below
+    // both describe this request, and two `Date.now()` calls around a stream
+    // that ran for a minute would describe two.
+    const sentAt = Date.now()
     try {
       for await (const chunk of this.#options.stream(request)) {
         if (chunk.type === 'usage') {
@@ -4106,6 +4204,7 @@ export class IrisAppService {
           const recorded = turn === undefined ? undefined : entry?.itemizations.get(turn)
           if (recorded !== undefined) recorded.actualTokens = chunk.usage.inputTokens
           cacheReadTokens = chunk.usage.cacheReadTokens
+          inputTokens = chunk.usage.inputTokens
           // **The whole report, kept.** The estimator above takes one number out
           // of it and throws the rest away, which is what this code did in full
           // until now: `cacheReadTokens` — the figure that decides what a long
@@ -4137,6 +4236,35 @@ export class IrisAppService {
           // instead of the provider's — the generation error would be lost on
           // the way out of the generator.
         }
+      }
+      // **The body itself, kept on disk.** The line above settles whether the
+      // prompt changed; this settles *where* and *whose text*, which no hash
+      // can. In the same `finally` and for the same reason: an aborted turn is
+      // a turn whose cache figure is missing, and it is exactly the turn a
+      // reader is trying to place.
+      //
+      // Written last, so a store that is slow or full cannot delay the report.
+      // `write` never throws — the trace exists to explain a cost and must not
+      // be able to fail the generation that paid it — so there is no `catch`
+      // here to add.
+      const store = this.#options.cacheTrace
+      if (trace !== undefined && store !== undefined && store.enabled) {
+        await store.write(traceOf(
+          request,
+          {
+            chatId: trace.chatId,
+            kind: trace.kind,
+            ...trace.caller === undefined ? {} : { caller: trace.caller },
+            // The turn a caller stated, or the one in flight. A side generation
+            // states `-1`: it is billed and it is not a turn, and folding it
+            // onto whatever turn happened to be pending would file a card's
+            // request against the user's.
+            turn: trace.turn ?? entry?.pending?.turn ?? -1,
+          },
+          sentAt,
+          { ...inputTokens === undefined ? {} : { inputTokens },
+            ...cacheReadTokens === undefined ? {} : { cacheReadTokens } },
+        ))
       }
     }
   }
