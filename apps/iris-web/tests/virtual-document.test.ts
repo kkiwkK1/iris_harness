@@ -127,6 +127,51 @@ test('adding head widens nothing else', () => {
   }, ReadOnlyApiError)
 })
 
+test('the event-target members delegate to the frame document', () => {
+  /*
+   * The card that asked: 人贩子物语's 黑市手机 walks `window.parent` outwards
+   * until a document reads, holds the result as `hostDocument`, and its next
+   * statement is `hostDocument.addEventListener('click', …, true)` — page-level
+   * delegation whose handler reads `event.target` and walks the node. The
+   * virtual document used to answer that read with `undefined`, and the walk's
+   * success made the failure a TypeError one line later instead of a named
+   * refusal.
+   *
+   * The delegation is asserted with the language's own EventTarget rather than
+   * a recording stub, because the contract is not "the call was forwarded" but
+   * "a listener registered here hears a DOM event dispatched on the target" —
+   * the property a card's capture-phase delegation rests on.
+   */
+  const target = new EventTarget()
+  const { doc } = source({ eventTarget: target })
+
+  const heard: Event[] = []
+  const listener = (event: Event): void => { heard.push(event) }
+  ;(doc['addEventListener'] as EventTarget['addEventListener']).call(doc, 'click', listener)
+  ;(doc['dispatchEvent'] as (event: Event) => boolean).call(doc, new Event('click'))
+  assert.equal(heard.length, 1, 'a listener registered on the document stand-in never heard the event')
+  assert.equal(heard[0]?.type, 'click')
+
+  ;(doc['removeEventListener'] as EventTarget['removeEventListener']).call(doc, 'click', listener)
+  ;(doc['dispatchEvent'] as (event: Event) => boolean).call(doc, new Event('click'))
+  assert.equal(heard.length, 1, 'a removed listener kept hearing events')
+})
+
+test('a document without an event target refuses the members by name', () => {
+  // The `head` policy: absent is still not silent. The names follow the
+  // unprovided-name policy — `undefined` plus one report — rather than
+  // half-working stubs that swallow registrations.
+  const notes: string[] = []
+  const { doc } = source({ report: (message, failed) => {
+    if (!failed) notes.push(message)
+  } })
+
+  assert.equal(doc['addEventListener'], undefined)
+  assert.equal(doc['removeEventListener'], undefined)
+  assert.equal(doc['dispatchEvent'], undefined)
+  assert.match(notes.join(' '), /document\.addEventListener/)
+})
+
 test('lookups are scoped to the container', () => {
   const { doc, selectors } = source()
   const query = doc['querySelector'] as (selector: string) => unknown
@@ -254,9 +299,9 @@ test('symbol reads are absent rather than refused', () => {
 
 test('membership probes answer instead of throwing', () => {
   // `'body' in doc` is a question about the policy, not a request for access.
-  // The realm hands over a head, as a real frame's does, so the enumeration is
-  // the surface a card actually sees.
-  const { doc } = source({ head: { tagName: 'HEAD' } })
+  // The realm hands over a head and an event target, as a real frame's does, so
+  // the enumeration is the surface a card actually sees.
+  const { doc } = source({ head: { tagName: 'HEAD' }, eventTarget: new EventTarget() })
 
   assert.equal('body' in doc, true)
   assert.equal('head' in doc, true)
@@ -273,6 +318,7 @@ test('membership probes answer instead of throwing', () => {
    */
   assert.deepEqual(Object.keys(doc).sort(), [
     'URL',
+    'addEventListener',
     'body',
     'characterSet',
     'charset',
@@ -280,6 +326,7 @@ test('membership probes answer instead of throwing', () => {
     'createDocumentFragment',
     'createElement',
     'createTextNode',
+    'dispatchEvent',
     'documentElement',
     'documentURI',
     'getElementById',
@@ -291,6 +338,7 @@ test('membership probes answer instead of throwing', () => {
     'querySelectorAll',
     'readyState',
     'referrer',
+    'removeEventListener',
     'title',
     'visibilityState',
   ])
