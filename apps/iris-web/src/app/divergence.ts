@@ -70,9 +70,9 @@ export function providerShare(divergence: PromptDivergence): number | null {
  * byte-identical prefix and reports zero.
  *
  * **{@link providerExcuse} is checked first**, and that ordering is the point: a
- * cold start, an expired entry and a model switch all produce a shortfall that
- * is nobody's defect, and reporting those as findings would spend the reader's
- * attention on three false alarms before the real one.
+ * cold start, an expired entry, a model switch and an interrupted reply all
+ * produce a shortfall that is nobody's defect, and reporting those as findings
+ * would spend the reader's attention on false alarms before the real one.
  *
  * **The threshold is coarse on purpose.** The ceiling is a share of bytes and
  * the provider's figure is a share of tokens; the bytes-per-token ratio of CJK

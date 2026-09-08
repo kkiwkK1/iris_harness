@@ -1292,14 +1292,15 @@ export const en = {
    */
   divergenceShortfall: 'far below what the bytes allowed',
   /**
-   * The three conditions under which serving nothing is expected, so a reader is
-   * not sent hunting for a prompt defect that is not there. DeepSeek stores a
-   * prefix only after seeing it twice, entries live hours to days, and a cache
-   * belongs to one model.
+   * The conditions under which serving nothing is expected, so a reader is not
+   * sent hunting for a prompt defect that is not there. DeepSeek stores a prefix
+   * only after seeing it twice, entries live hours to days, a cache belongs to
+   * one model, and a reply that never completed was never billed.
    */
   divergenceColdStart: 'one of this conversation’s first two requests — a prefix has to be seen twice before it is stored',
   divergenceStale: 'more than half an hour since the previous request, so the cached prefix may have expired',
   divergenceRoute: 'a different model from the previous request ({from} → {to}), and a cache belongs to one model',
+  divergenceInterrupted: 'the reply never completed (the provider closed it or never answered), so no usage was reported',
   /** The four terms of the loss, which add up exactly. */
   divergenceSplit: '{total} B unservable: {added} new, {changed} rewritten, {repeated} unchanged but out of reach, {structure} framing',
   divergenceStateSame: 'unchanged',
@@ -2433,6 +2434,7 @@ export const zh: Record<StringKey, string> = {
   divergenceColdStart: '这是本对话最前两条请求之一 —— 前缀要被看到两次才会存下来',
   divergenceStale: '距上一条请求超过半小时，缓存的前缀可能已经过期',
   divergenceRoute: '与上一条请求不是同一个模型（{from} → {to}），而缓存只属于一个模型',
+  divergenceInterrupted: '这条回复没有走完（提供方中途断开，或一直没有应答），所以没有上报用量',
   divergenceSplit: '{total} 字节命不中：新增 {added}、改写 {changed}、逐字未变却落在前缀之后 {repeated}、框架 {structure}',
   divergenceStateSame: '未变',
   divergenceStateChanged: '改写',

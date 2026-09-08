@@ -1203,6 +1203,18 @@ export interface PromptDivergence {
   /** Prompt tokens the provider charged in full, when it reported them. */
   inputTokens?: number
   /**
+   * What surfaced in the report panel when the newer request's reply did not
+   * complete, verbatim.
+   *
+   * Present together with absent usage fields — never zero, just absent — because
+   * a reply that never finished was never billed, and zero would read as a free
+   * turn to a reader comparing adjacent sequence numbers. It is the one fact that
+   * distinguishes "the provider served nothing and I do not know why" from "the
+   * provider never got to say", which is the same line the {@link providerExcuse}
+   * `interrupted` answer draws.
+   */
+  error?: string
+  /**
    * False when the byte offsets could not be attributed to parts with
    * certainty, and why.
    *
@@ -1245,14 +1257,23 @@ export const CACHE_STALE_MS = 30 * 60 * 1000
  *   model, so this is sufficient on its own — and it is the reason the route was
  *   moved out of the prompt hash, because a switch used to read as the prompt's
  *   head changing.
+ * - `interrupted`: the newer request's reply never completed — the provider
+ *   closed the connection mid-stream, or never answered within budget. There is
+ *   no shortfall to explain: usage was never reported because the request was
+ *   never served, and a reader hunting a prompt defect would be hunting the one
+ *   thing that did not happen.
  *
- * Checked before any shortfall is reported, and the ordering is the point: three
+ * Checked before any shortfall is reported, and the ordering is the point: four
  * ordinary conditions each produce a miss on an identical prompt, and reporting
  * those as findings spends a reader's attention on false alarms.
  * @param divergence - the comparison.
  * @returns the condition, or null when none applies.
  */
-export function providerExcuse(divergence: PromptDivergence): 'cold-start' | 'stale' | 'route' | null {
+export function providerExcuse(divergence: PromptDivergence): 'cold-start' | 'stale' | 'route' | 'interrupted' | null {
+  // Checked first: an interrupted reply is not a miss to explain, it is a
+  // request that never got an answer — and every other check below reads fields
+  // that were never reported for it.
+  if (divergence.error !== undefined) return 'interrupted'
   if (divergence.model !== divergence.previousModel || divergence.provider !== divergence.previousProvider) {
     return 'route'
   }

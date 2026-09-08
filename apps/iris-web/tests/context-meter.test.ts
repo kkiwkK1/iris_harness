@@ -376,10 +376,10 @@ test('a shortfall is only reported when nothing ordinary explains it', () => {
   assert.equal(providerFellShort(bare), true)
 
   /*
-   * And the three conditions under which the same numbers mean nothing. Each is
-   * a documented property of DeepSeek's cache, and each on its own explains a
-   * miss on an identical prompt — so each must suppress the finding, or the
-   * report opens with three false alarms.
+   * And the conditions under which the same numbers mean nothing. Each is a
+   * documented property of DeepSeek's cache, or of a reply that never finished,
+   * and each on its own explains a miss on an identical prompt — so each must
+   * suppress the finding, or the report opens with false alarms.
    */
   assert.equal(providerExcuse(divergence({ ...bare, seq: 1, previousSeq: 0 })), 'cold-start')
   assert.equal(providerFellShort(divergence({ ...bare, seq: 1, previousSeq: 0 })), false)
@@ -391,6 +391,22 @@ test('a shortfall is only reported when nothing ordinary explains it', () => {
   const switched = divergence({ ...bare, previousModel: 'deepseek-chat' })
   assert.equal(providerExcuse(switched), 'route')
   assert.equal(providerFellShort(switched), false)
+
+  /*
+   * The interrupted case is a *stronger* suppressor than the other three: the
+   * request was never served, so `0` is not a provider refusing the cache but
+   * the absence of any bill — and it is exactly the shape measured on 爱衣's own
+   * turns (2026-09-09), where a saved profile's cut-short replies reported the
+   * bare word `terminated` and nothing in the record said the turn had failed.
+   */
+  const interrupted = divergence({ ...bare, error: 'connection to the provider was closed by the peer while the reply was streaming; no usage was reported for this turn' })
+  assert.equal(providerExcuse(interrupted), 'interrupted')
+  assert.equal(providerFellShort(interrupted), false)
+  // A long gap and an interrupted reply both apply; the interruption must win,
+  // because it is checked first and because its reading of the absent usage is
+  // the only one that is not a guess.
+  const interruptedAndStale = divergence({ ...interrupted, previousAt: interrupted.at - (CACHE_STALE_MS + 1) })
+  assert.equal(providerExcuse(interruptedAndStale), 'interrupted')
 
   // Just inside the window is not stale: a threshold that fired at exactly the
   // boundary would suppress the finding on an ordinary two-minute exchange.
