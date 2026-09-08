@@ -3203,6 +3203,315 @@ prints the first differing character with 60 characters of context on each side,
 so the next reading names the floor and the script that touched it rather than a
 byte offset.
 
+## 44. The context window is clamped to the model's, on every read rather than by overwriting the setting — and the model's window is learned from the endpoint before any table
+
+**Kind: deliberate improvement.** It was written as "a compatibility gap
+closed" until the user's own SillyTavern settings were read — see the
+correction after the upstream table. Upstream's clamp exists, but not on the
+route this host has.
+
+### What was reported, and where the number came from
+
+A conversation running `deepseek-v4-flash` was assembling against a window of
+2 000 000 tokens. The capacity card printed 1 998 976 — which is that window
+minus the 1 024-token reply reserve — under a model DeepSeek documents at 1M.
+
+The number was not read from anywhere clever. `windowOf` was
+`settings.contextWindow ?? fallback`, and `settings.json` on the reported
+install carries:
+
+```
+/global/model          = "deepseek-v4-flash"
+/global/contextWindow  = 2000000
+```
+
+`/global/contextWindow` was written by `presetScalarPatch`, which maps a
+preset's `openai_max_context` onto the **global** settings layer. And the
+active preset asked for it — `/preset/name` is `[主预设] V19.5 狐神抚 · 毓忻`
+and `/preset/body` carries both keys:
+
+```
+openai_max_context   = 2000000
+max_context_unlocked = true
+```
+
+*(An earlier draft of this entry called the 2M a residue left by a preset
+switched away from, on the strength of the other preset in the profile —
+`咩咩预设 - ver 5.8.1`, which genuinely carries no `openai_max_context`. That
+was wrong: the 2M preset is the active one, `/chats` is `{}` so no per-chat
+override is involved, and the simpler reading was on the file the whole time.
+Recorded rather than deleted because the wrong version changed what the fix
+looked like — see the note on `contextUnlocked` below.)*
+
+Two facts about that pair are worth stating separately, because only one of
+them is upstream's doing:
+
+- **2 000 000 is exactly upstream's `unlocked_max`** (`openai.js:137`,
+  `max_2mil`). A preset carrying that number was saved by someone whose slider
+  bound *was* 2M, which is what the same file's `max_context_unlocked: true`
+  bought them.
+- **This host read the number and ignored the flag.** `max_context_unlocked`
+  appeared nowhere in the tree before this entry.
+
+**What that means for the reported conversation, stated plainly because it is
+not the obvious answer.** Once the flag travels (below), applying that preset
+writes `contextUnlocked: true`, and `resolveWindow` then takes its `'unlocked'`
+branch: the window is **2 000 000 again, deliberately, and the card says
+「窗口 2M，未夹 —— deepseek-v4-flash 已知只到 1M」** instead of saying nothing.
+That is the compatible answer — it is what the preset asks for and what
+upstream does on this route — and it is not what the user asked for. The clamp
+they want is one switch away, and the switch is now in the drawer and named.
+Today the profile clamps to 1M only because `/global/contextUnlocked` is still
+absent: the preset was applied before the flag existed. Nothing here silently
+reinstates the 2M; the first preset re-apply does, visibly.
+
+### Upstream
+
+Upstream decides the window entirely at **settings/UI time**, never at request
+time. `onModelChange` (`openai.js:5346`) runs on every model change and, two
+hops away through `$('#chat_completion_source').trigger('change')` → the source
+handler (`:6832-6842`) → `toggleChatCompletionForms` (`:5974`), at init
+(`:4303`), on preset apply when the preset is bound to the connection
+(`:4947`), and on the unlock toggle (`:6847`).
+
+**That last one is gated, and the gate is the case this host models.**
+`:6846` is `if (data?.source !== 'preset')` — so when the unlock checkbox is
+moved *by a preset* (`updateCheckbox` passes `{source: 'preset'}`, `:4908`),
+upstream deliberately does **not** re-clamp. Upstream re-clamps on a *user*
+toggle only, which is exactly the path `presetScalarPatch` now reproduces.
+
+Every source branch is the same two steps — set the slider's `max` attribute to
+the model's maximum, then
+
+```js
+oai_settings.openai_max_context = Math.min(<attr max>, oai_settings.openai_max_context)
+```
+
+DeepSeek's branch, in full (`openai.js:5756-5761`):
+
+```js
+if (oai_settings.chat_completion_source === chat_completion_sources.DEEPSEEK) {
+    const maxContext = oai_settings.max_context_unlocked ? unlocked_max : max_1mil;
+    $('#openai_max_context').attr('max', maxContext);
+    oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
+```
+
+At generation time there is **no** re-check: `prepareOpenAIMessages` passes
+`oai_settings.openai_max_context` straight into `setTokenBudget`
+(`openai.js:1558`, `:3887`) with no bounding at all. So upstream's clamp is a
+write, and any value that slips past the write is used verbatim — an unbound
+preset load is exactly such a path (`:4936-4948` assigns the raw preset value
+*after* the browser-clamped `updateInput`, and only re-clamps when
+`bind_preset_to_connection`).
+
+Where upstream gets the per-model maximum varies by source, and both kinds
+matter here (SillyTavern 1.18.0, read 2026-09-08):
+
+| source | how the maximum is found |
+| --- | --- |
+| OpenAI / Azure | `getMaxContextOpenAI`, a 15-row regex table (`:4973-4987`, inside `contextMap` at `:4972-4988`), falling back to `max_128k` |
+| DeepSeek | flat `max_1mil`, no per-model table (`:5756`) |
+| Claude | inline regex if/else, 1M or 200k (`:5604-5616`) |
+| OpenRouter, Mistral, Groq, Moonshot, Fireworks, Chutes, ElectronHub, NanoGPT, AIMLAPI, Workers AI, Gemini | read off the **provider's own model list**, under eleven different names: `context_length`, `max_context_length`, `context_window`, `inputTokenLimit`, `properties[].property_id === 'context_window'`, `info.contextLength`, and — ElectronHub, `:5318-5319` — plain `tokens` |
+| Custom | always `unlocked_max` |
+
+`max_context_unlocked` short-circuits 23 of those 24 branches to `unlocked_max`
+(2 000 000). It does not remove the bound; it raises it, and the `Math.min`
+still runs. The exception is MiniMax (`:5869-5871`), which never reads the flag
+— its ceiling is a ternary on the model name. What MiniMax skips is the
+*unlock*, not the clamp: the `Math.min` claim above holds for every branch.
+
+**Correction, and it changes what kind of entry this is.** The last row of that
+table is the one that applies to the reported install. Measured on the user's
+own SillyTavern (`E:/sillyTavern/SillyTavern/data/default-user/settings.json`):
+
+```
+oai_settings.chat_completion_source = "custom"
+oai_settings.custom_url             = "https://api.deepseek.com"
+oai_settings.custom_model           = "deepseek-v4-flash"
+oai_settings.openai_max_context     = 2000000
+oai_settings.max_context_unlocked   = true
+```
+
+They are on the **CUSTOM** source, not the DeepSeek one, and upstream's CUSTOM
+branch is (`openai.js:5704-5710`, in full):
+
+```js
+if (oai_settings.chat_completion_source == chat_completion_sources.CUSTOM) {
+    $('#openai_max_context').attr('max', unlocked_max);
+    oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
+```
+
+No model table, no `max_context_unlocked` check — the bound is 2 000 000
+unconditionally. So **upstream would not have clamped this conversation
+either.** 2M under a 1M model is what SillyTavern does for an endpoint it was
+handed as a URL, and the user's preset was saved in exactly that state.
+
+That matters twice. It means this entry is a **deliberate improvement**, not a
+compatibility fix — the clamp is borrowed from upstream's *named* source
+branches and applied to a route upstream leaves unbounded. And it means the
+route shape decides everything: this host has one route, an OpenAI-compatible
+endpoint with a base URL and a model name, which is structurally always
+upstream's CUSTOM case. There is no source constant here to switch on, so the
+choice is between "never clamp" (upstream's answer for this route, and the
+reported bug) and "clamp on what the model id and the endpoint can tell us"
+(this entry). `contextUnlocked: true` is what hands the first answer back, and
+it is exactly upstream-on-CUSTOM.
+
+### Iris
+
+**`resolveWindow`** (`src/model-context.ts`) is the one place the window is
+decided, and every caller goes through it — `#chatBudget` for the view, and the
+three assembly sites that used to call `windowOf` directly. The rule:
+
+1. no stored `contextWindow` → the host composition's value, `source: 'host'`
+2. stored value ≤ the model's known window, or the model unknown → the stored
+   value, `source: 'settings'`
+3. `contextUnlocked: true` → the stored value, `source: 'unlocked'`
+4. otherwise → the model's window, `source: 'model'`
+
+**Two deliberate differences from upstream.**
+
+*The clamp is a reading, not a write.* Upstream overwrites
+`openai_max_context` with the smaller number, so a user's 2 000 000 is
+destroyed the moment they touch a 1M model and does not come back when they
+unlock. Here the stored value is untouched and the clamp is applied on every
+resolution, so unlocking restores exactly what they asked for. Pinned:
+*the stored window is left alone — the clamp is a reading, not a write*.
+
+*The unlock removes the bound instead of raising it to 2 000 000.* This host has
+no 2M ceiling of its own, and borrowing upstream's would cap a future 4M model
+at a 2026 constant. What is left is one ceiling, `MAX_CONTEXT_WINDOW` =
+4 000 000, and it is a bound on *credulity* rather than a capability claim.
+
+**That ceiling now lives in `@iris/protocol`, and it had to move.** Three
+layers check it — the settings store bounds what a person may type, the probe
+bounds what an endpoint may report about a model, and `connection.save`'s zod
+schema bounds what crosses the wire — and the third is not host-side, so a
+constant in the host could only be *restated* there. It was, and the two had
+already diverged from a third: the settings drawer's own slider capped a person
+at **2 000 000**, which is upstream's `unlocked_max` verbatim, so the paragraph
+above argued against a bound this feature's only input control was still
+imposing. All three now read one constant, and a test asserts it — store,
+wire, and the slider's bound read out of `SettingsDrawer.tsx`'s source.
+
+**`max_context_unlocked` now travels with `openai_max_context`.**
+`presetScalarPatch` maps it to `contextUnlocked`, `false` as deliberately as
+`true` — a preset saying "clamp me" has said something, and leaving a previous
+preset's unlock standing would make the window depend on the order presets were
+switched in.
+
+Reading the number and dropping the flag is what let a 2M window be in force
+under a 1M model with nothing said about it — upstream's slider could not have
+*reached* 2M without the flag. But note what carrying it does on the reported
+profile, because it is the opposite of what "fix" suggests: that preset asks to
+be unclamped, so the window goes back to 2 000 000 and the card prints
+「窗口 2M，未夹 —— deepseek-v4-flash 已知只到 1M」. The gain is not a smaller
+number; it is that the number is now attributable and one switch away from the
+1M the user wanted. Pinned: *the reported install's own preset resolves to an
+unclamped 2M, and the card says which* — which also exercises the whole chain
+(the preset's two keys → `presetScalarPatch` → `settings.set` → the view), so
+the patch silently dropping the flag would be red.
+
+**Where the model's window comes from**, in order:
+
+1. **What an endpoint reported to a probe in this process.** `connection.test`
+   used to reduce each `/models` row to a bare id string, discarding every other
+   field. It now also reads a context length off the row —
+   `CONTEXT_LENGTH_FIELDS`, five paths, each annotated with the provider whose
+   documentation spells it that way and the date that page was read:
+   `max_model_len` (vLLM), `context_length` and `top_provider.context_length`
+   (OpenRouter), `max_context_length` (LM Studio), `meta.n_ctx_train`
+   (llama.cpp). Three names that circulate but no surveyed provider documents —
+   `context_window`, `max_input_tokens`, `max_tokens` — are deliberately **not**
+   probed, and so is `loaded_context_length`, which appears only in third-party
+   issue threads. Two documented sources are missing only because this host's
+   probe never requests the endpoint they live on: LM Studio's
+   `/api/v1/models` → `models[].loaded_instances[].config.context_length`, and
+   Ollama's `/api/show` → `model_info["<general.architecture>.context_length"]`.
+   Both need a second request per model. (Upstream reads none of these
+   server-side either; its OpenRouter block in
+   `src/endpoints/backends/chat-completions.js:2031-2043` builds a
+   `context_length` map and then discards it, having already sent the response.)
+
+2. **The built-in table**, `MODEL_CONTEXT_TABLE`. DeepSeek's own documented
+   `/models` row is `{id, object, owned_by}` and nothing else
+   (api-docs.deepseek.com/api/list-models, read 2026-09-08), so for this
+   provider a probe learns nothing and never will — the table is the only
+   answer there is. Its DeepSeek rows: `deepseek-v4-flash` /
+   `deepseek-v4-pro` / `deepseek-v4-flash-vision-exp` → **1 000 000**, from
+   DeepSeek's own Models & Pricing page (CONTEXT LENGTH `1M`, MAX OUTPUT
+   `384K`, read 2026-09-08). The page writes "1M" and gives no exact integer, so
+   this is 1 000 000 rather than 1 048 576 — the same reading upstream takes
+   (`max_1mil = 1000 * 1000`). Every other `deepseek-*` id gets 1 000 000 too,
+   sourced to upstream's flat DeepSeek branch, because `deepseek-chat` and
+   `deepseek-reasoner` have left DeepSeek's pricing page entirely and upstream's
+   answer is the only documented one left. The OpenAI and Claude rows are
+   transcribed from `openai.js` with their line numbers and **in upstream's
+   order**, because the order decides real answers (`/gpt-3\.5-turbo-1106/`
+   before `/gpt-3/`).
+
+3. **Nothing.** An unknown model returns `undefined` and clamps nothing.
+   Upstream's fallbacks are deliberately *not* transcribed: `// Safe default
+   for most modern models` / `return max_128k;` (`openai.js:4996-4997`, two
+   lines) would silently cut every model
+   released after this file was written down to 128k, which is the failure mode
+   a made-up number always has. Pinned: *a model the table has never heard of
+   returns undefined, not a safe default*.
+
+**Two scoping decisions inside step 1.** A probe's readings are kept in a
+process-local map keyed by model id (`#probedContexts`), not read back off the
+saved profiles — a chat's settings name a model, never the connection it came
+from, so "profile X said this id is 128k" cannot be attributed to a chat that
+may be generating through a different endpoint. And only `'provider'` entries
+are cached; caching a `'table'` lookup would be keeping a stale copy of a
+constant. A fresh start therefore answers from the table until something probes,
+which is the right way round: the table cannot be stale about a model it names,
+while a persisted observation can be stale about an endpoint that has since been
+reconfigured.
+
+**One thing the endpoint's answer is allowed to do that the table is not.** A
+serve running `deepseek-v4-flash` behind a shorter window — a proxy, a quantised
+local copy — is telling the truth about itself, and a constant compiled in
+months ago is not in a position to overrule it. Pinned: *the endpoint's own
+answer wins over the table*.
+
+**What `provider` could not be.** The brief for the table asked for
+provider + model. This host's `GenerationSettings.provider` is the cordis route
+name a request generates through — `'default'` on the reported install — not a
+vendor, and a chat's settings carry no link to the connection profile that was
+active when they were written. So the model id is the whole key, which is also
+what upstream's own tables match on inside a source branch. One consequence:
+the lookup folds case, which upstream never has to (its regexes run against
+whatever its own `<select>` stored).
+
+**One existing per-model window is deliberately not consulted.**
+`@iris/llm-openai-compat`'s `ModelEntry.contextWindow` already exists and
+`resolveModel` already returns it — but `apps/iris/cordis.yml:49-51` seeds
+exactly one entry, `{ id: IRIS_MODEL ?? 'local-model', contextWindow: 32768 }`.
+On a host launched with `IRIS_MODEL=deepseek-v4-flash` that row would assert a
+32 768-token window for a 1M model, and wiring it in would have clamped the
+reported conversation to 32k — a worse wrong answer than the one being fixed.
+
+**Tests.** `tests/model-context.test.ts` (22) covers the table (prefix, case,
+unknown, upstream's ordering, every row carrying a dated source), the row reader
+(each documented spelling, the ranked order, a present-but-null field), the four
+clamp branches, the preset flag, and the whole thing through the service —
+including that the assembler and the capacity readout divide by the same number.
+`tests/connections.test.ts` adds six over a real `node:http` `/models` endpoint,
+including that a probe's reading reaches a chat's budget with nothing being
+saved.
+
+**Where this meets §36–§43.** `resolveWindow` is now the only thing that decides
+a window, which those entries depend on more than this one does: `#budget`
+(§40's shared builder), the cache-friendly assembly's own call, the card's
+`script.generate`, the preview, and the recorded itemization all read it, so the
+trace a divergence report reads describes a request assembled against the same
+number the capacity card divides by. The record-side window bug §36's census
+pass found is the same one this pass found from the clamp side — recorded twice
+in `service.ts`, because a defect two independent readings converge on is worth
+more than either reading.
+
 ## 45. The continue nudge and the impersonation prompt come from the preset, not from a constant — and `continue_prefill` cancels the nudge entirely
 
 **Kind: compatibility fix, plus a remaining gap.** Found by a field-level audit

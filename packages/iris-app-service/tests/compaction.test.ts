@@ -566,5 +566,14 @@ test('the open view carries the budget the assembly runs under', async (t) => {
   // same pair, and a surface dividing by two different denominators is the
   // failure this agreement prevents.
   const { itemization } = await f.handlers['prompt.itemize']({ chatId: view.chatId })
-  assert.deepEqual(opened.view.budget, itemization.budget)
+  // The two *numbers*, not the whole object: the view's budget also names where
+  // its window came from and the itemization's does not, so a deep-equal here
+  // fails the moment that provenance is added — a correct change, and never
+  // what this test was about.
+  assert.equal(opened.view.budget?.context, itemization.budget.context, 'the two windows disagree')
+  assert.equal(opened.view.budget?.reserve, itemization.budget.reserve, 'the two reserves disagree')
+  // And the provenance is on the view, with the answer this fixture's settings
+  // make true: nothing has set a window, so the host composition's value is in
+  // force.
+  assert.equal(opened.view.budget?.source, 'host', 'the view does not say where its window came from')
 })

@@ -29,8 +29,9 @@
  * @module iris-web/app/context-occupancy
  */
 
-import type { PromptItemEntry, PromptItemization, TurnUsage } from '@iris/protocol'
+import type { ContextWindowSource, PromptItemEntry, PromptItemization, TurnUsage } from '@iris/protocol'
 
+import type { StringKey } from './i18n/strings.ts'
 import { billedInputTokens, formatCacheHitPercent } from './token-format.ts'
 
 /**
@@ -180,6 +181,144 @@ export function contextOccupancy(
     available,
     over: usedTokens > available,
     categories: categoryShares(itemization.entries, itemization.tokens),
+  }
+}
+
+/**
+ * Which band a fullness falls in.
+ *
+ * Three, not a gradient, because the capsule's bar is 2px tall and read at a
+ * glance: a continuous hue ramp at that size is a colour nobody can name,
+ * while three bands are a fact a reader can carry away ("it has gone plum").
+ */
+export type ContextPressure
+  /** Under {@link PRESSURE_NEAR}%. Nothing to say; drawn in the faintest ink. */
+  = 'quiet'
+  /** {@link PRESSURE_NEAR}% and up. The window is filling. */
+  | 'near'
+  /** Over {@link PRESSURE_FULL}%. The next long turn starts dropping floors. */
+  | 'full'
+
+/** Where `quiet` becomes `near`, as a percentage. */
+export const PRESSURE_NEAR = 60
+/** Where `near` becomes `full`, as a percentage. */
+export const PRESSURE_FULL = 85
+
+/**
+ * The band one percentage falls in.
+ *
+ * The whole rule, stated once here so the capsule, the stylesheet's class names
+ * and the test that pins the boundaries all read it the same way: `quiet` is
+ * below {@link PRESSURE_NEAR}, `near` runs from {@link PRESSURE_NEAR} through
+ * {@link PRESSURE_FULL} **inclusive at both ends**, and `full` is anything
+ * above. So 59 is `quiet`, 60 is `near`, 85 is `near`, 86 is `full`.
+ * @param percent - 0–100.
+ * @returns the band.
+ */
+export function pressureLevel(percent: number): ContextPressure {
+  if (percent > PRESSURE_FULL) return 'full'
+  if (percent >= PRESSURE_NEAR) return 'near'
+  return 'quiet'
+}
+
+/** What the capsule prints, and how far its bar is drawn. */
+export interface CapsuleReading {
+  /** 0–100, rounded, clamped at 100. */
+  percent: number
+  usedTokens: number
+  /** `context - reserve`. */
+  available: number
+  /** True when the estimate exceeds what the prompt was allowed to spend. */
+  over: boolean
+  level: ContextPressure
+  /**
+   * Which question this reading answers.
+   *
+   * `'record'`: what the newest real turn actually assembled to.
+   * `'preview'`: what the *next* request would assemble to. Different
+   * questions, and the capsule's hover names which one is on screen — a reader
+   * comparing the capsule against the card has to know whether the two are even
+   * about the same request.
+   */
+  basis: 'record' | 'preview'
+  /** The turn a `'record'` was measured on. */
+  turn?: number
+}
+
+/**
+ * The capsule's reading, from whichever account of the prompt exists.
+ *
+ * **The fetched itemization wins when there is one**, which is a correction to
+ * the obvious ordering. A recorded measurement is the cheaper fact and is why
+ * the capsule can draw a bar at all before anything is pressed — but the moment
+ * the card is open the card is showing the *preview*, and a capsule printing a
+ * different number one line below the card that explains it is two surfaces
+ * under one composer disagreeing about one conversation. So: the preview while
+ * the card has one, the record otherwise, and `basis` on the result so the
+ * hover can say which.
+ *
+ * `null` when there is neither — an unmeasured conversation whose card has
+ * never been opened, which is every conversation immediately after the host
+ * restarts. The capsule then states the capacity alone, as it did before any of
+ * this existed.
+ * @param budget - the window and reserve this conversation runs under.
+ * @param itemization - the reading fetched when the card was opened, if it has been.
+ * @param measured - what the host recorded for the newest real turn, if it has one.
+ * @returns the reading, or `null` when nothing has measured this conversation.
+ */
+export function capsuleReading(
+  budget: { context: number, reserve: number },
+  itemization: PromptItemization | undefined,
+  measured: { turn: number, tokens: number } | undefined,
+): CapsuleReading | null {
+  const fetched = contextOccupancy(itemization)
+  if (fetched !== null) {
+    return {
+      percent: fetched.percent,
+      usedTokens: fetched.usedTokens,
+      available: fetched.available,
+      over: fetched.over,
+      level: pressureLevel(fetched.percent),
+      ...itemization?.preview === false
+        ? { basis: 'record' as const, turn: itemization.turn }
+        : { basis: 'preview' as const },
+    }
+  }
+  const available = Math.max(0, budget.context - budget.reserve)
+  if (measured === undefined || available === 0) return null
+  const usedTokens = Math.max(0, measured.tokens)
+  const percent = Math.min(100, Math.round(usedTokens / available * 100))
+  return {
+    percent,
+    usedTokens,
+    available,
+    over: usedTokens > available,
+    level: pressureLevel(percent),
+    basis: 'record',
+    turn: measured.turn,
+  }
+}
+
+/**
+ * Which sentence names where the window came from.
+ *
+ * Here rather than in the component so the branch is a function a node test can
+ * call: the four cases are the whole of feature A's visible half, and the one
+ * that used to be missing entirely (`'model'`, the clamp) is the one nobody
+ * could have noticed the absence of.
+ * @param source - the provenance the host resolved.
+ * @returns the string key for that case.
+ */
+export function windowSourceKey(source: ContextWindowSource): StringKey {
+  switch (source) {
+    case 'model':
+      return 'contextWindowFromModel'
+    case 'unlocked':
+      return 'contextWindowUnlocked'
+    case 'host':
+      return 'contextWindowFromHost'
+    default:
+      return 'contextWindowFromSettings'
   }
 }
 

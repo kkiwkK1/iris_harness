@@ -1,6 +1,8 @@
 /**
- * The context-capacity reading: its classification, its arithmetic, and the
- * one property its six colours have to have.
+ * The context-capacity reading: its classification, its arithmetic, which
+ * account of the prompt the capsule draws, where its window came from, and the
+ * one property both sets of colours have to have — the card's six category
+ * tints and the capsule gauge's three bands.
  *
  * @module iris-web/tests/context-meter
  */
@@ -22,11 +24,16 @@ import {
 
 import {
   averageCacheHit,
+  capsuleReading,
   categoryOf,
   categoryShares,
   contextOccupancy,
   CONTEXT_CATEGORIES,
   meterSegments,
+  PRESSURE_FULL,
+  PRESSURE_NEAR,
+  pressureLevel,
+  windowSourceKey,
 } from '../src/app/context-occupancy.ts'
 import {
   cacheCeiling,
@@ -35,6 +42,7 @@ import {
   providerShare,
   unservedItems,
 } from '../src/app/divergence.ts'
+import { en, zh } from '../src/app/i18n/strings.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -445,4 +453,155 @@ test('the card carries the divergence line, its handle, and no seventh swatch', 
     false,
     'the divergence line must not mint a swatch class, which the tint census would then refuse',
   )
+})
+
+// ------------------------------------------------- the capsule's own gauge
+
+test('the three bands break at 60 and 85, and the middle one owns both ends', () => {
+  /*
+   * The boundaries as boundaries, not as midpoints — a test at 30/70/95 passes
+   * for a rule shifted by five points in either direction, which is the only
+   * way this can be wrong.
+   */
+  assert.equal(pressureLevel(0), 'quiet')
+  assert.equal(pressureLevel(PRESSURE_NEAR - 1), 'quiet')
+  assert.equal(pressureLevel(PRESSURE_NEAR), 'near')
+  assert.equal(pressureLevel(PRESSURE_FULL), 'near')
+  assert.equal(pressureLevel(PRESSURE_FULL + 1), 'full')
+  assert.equal(pressureLevel(100), 'full')
+})
+
+test('the capsule reads a recorded measurement with no itemization at all', () => {
+  // The whole point of `ChatView.measured`: a bar before anything is pressed,
+  // paid for by an assembly that already happened.
+  const reading = capsuleReading({ context: 8192, reserve: 1024 }, undefined, { turn: 7, tokens: 3584 })
+  assert.ok(reading !== null)
+  assert.equal(reading.percent, 50, '3584 / (8192 - 1024) is 50%')
+  assert.equal(reading.available, 7168, 'the reserve was not held back')
+  assert.equal(reading.basis, 'record')
+  assert.equal(reading.turn, 7)
+  assert.equal(reading.level, 'quiet')
+})
+
+test('a fetched preview outranks the recorded measurement', () => {
+  /*
+   * The correction. A record is the cheaper fact, but once the card is open the
+   * card is showing the *preview* — and a capsule printing a different number
+   * one line under the card that explains it is two surfaces disagreeing about
+   * one conversation. So the preview wins while there is one, and `basis` says
+   * which is on screen.
+   */
+  const preview: PromptItemization = {
+    ...itemization([item('main', 'system', 6000)]),
+    preview: true,
+    turn: 9,
+  }
+  const reading = capsuleReading({ context: 8192, reserve: 1024 }, preview, { turn: 7, tokens: 100 })
+  assert.ok(reading !== null)
+  assert.equal(reading.usedTokens, 6000, 'the recorded number won over the fetched one')
+  assert.equal(reading.basis, 'preview')
+  assert.equal(reading.turn, undefined, 'a preview was dated to a turn it is not about')
+  assert.equal(reading.level, 'near', '6000 / 7168 is 84%')
+})
+
+test('a fetched record keeps its own turn rather than the projected one', () => {
+  // `prompt.itemize` with a turn can answer with a record. When it does, the
+  // reading on screen is that turn's, not whatever the view last projected.
+  const record = { ...itemization([item('main', 'system', 700)]), preview: false, turn: 4 }
+  const reading = capsuleReading({ context: 8192, reserve: 1024 }, record, { turn: 7, tokens: 3584 })
+  assert.equal(reading?.basis, 'record')
+  assert.equal(reading?.turn, 4)
+})
+
+test('nothing measured and nothing fetched is no reading, not a zero', () => {
+  // What every conversation looks like right after the host restarts: those
+  // records live in memory. The capsule states its capacity alone there, which
+  // it can only do if this says `null` rather than 0%.
+  assert.equal(capsuleReading({ context: 8192, reserve: 1024 }, undefined, undefined), null)
+  // And a window entirely spoken for by the reserve divides by nothing.
+  assert.equal(capsuleReading({ context: 1024, reserve: 1024 }, undefined, { turn: 1, tokens: 10 }), null)
+})
+
+test('an over-budget measurement clamps its bar and still says it is over', () => {
+  const reading = capsuleReading({ context: 8192, reserve: 1024 }, undefined, { turn: 2, tokens: 9000 })
+  assert.equal(reading?.percent, 100, 'the bar would have drawn past the capsule')
+  assert.equal(reading?.over, true)
+  assert.equal(reading?.level, 'full')
+})
+
+test('each window provenance names a sentence, and both locales carry it', () => {
+  /*
+   * Four cases, four different next steps for the reader — and `'model'`, the
+   * clamped one, is the case that did not exist at all before this task: a
+   * 2 000 000-token window sat under a 1M model with nothing on any surface
+   * saying who had asked for it.
+   */
+  const keys = {
+    model: 'contextWindowFromModel',
+    settings: 'contextWindowFromSettings',
+    unlocked: 'contextWindowUnlocked',
+    host: 'contextWindowFromHost',
+  } as const
+  for (const [source, key] of Object.entries(keys)) {
+    assert.equal(windowSourceKey(source as keyof typeof keys), key, `${source} names the wrong sentence`)
+    assert.ok(en[key].includes('{tokens}'), `${key} does not print the window it is about`)
+    assert.ok(zh[key].includes('{tokens}'), `zh ${key} does not print the window it is about`)
+  }
+  /*
+   * The two that name a model must; the two that do not must not.
+   * `windowSourceText` passes every slot for every case — one call site is what
+   * keeps four sentences from drifting into four vocabularies — so a stray
+   * `{model}` in the host-default sentence would render a real model name in a
+   * sentence that was never judged against one.
+   */
+  assert.ok(en[keys.model].includes('{model}'))
+  assert.ok(en[keys.unlocked].includes('{modelTokens}'), 'the unlocked sentence hides the limit being exceeded')
+  assert.ok(!en[keys.host].includes('{model}'), 'the host default names a model it was not judged against')
+  assert.ok(!en[keys.settings].includes('{model}'), 'the settings sentence names a model that decided nothing')
+})
+
+test('no two gauge bands draw the same colour, in any of the three themes', () => {
+  /*
+   * The property the six category tints are held to above, for the same reason:
+   * a band drawing its neighbour's colour is a gauge with two levels in that
+   * theme and three everywhere else, and 「it has gone plum」 stops being a fact
+   * a reader can carry away.
+   *
+   * Read out of the stylesheet, so a tint changed in `panels.css` is the thing
+   * being checked.
+   */
+  const panels = readFileSync(join(HERE, '..', 'src', 'app', 'panels.css'), 'utf8')
+  const tokens = readFileSync(join(HERE, '..', 'src', 'theme', 'tokens.css'), 'utf8')
+
+  const tintOf = new Map<string, string>()
+  for (const match of panels.matchAll(
+    /\.iris-composer__pill-fill--([a-z]+)\s*\{\s*--iris-gauge-tint:\s*var\((--[a-z-]+)\)/g,
+  )) {
+    tintOf.set(match[1] as string, match[2] as string)
+  }
+  assert.deepEqual(
+    [...tintOf.keys()].sort(),
+    ['full', 'near', 'quiet'],
+    'every band needs a tint rule, and only the bands may have one',
+  )
+
+  for (const theme of ['light', 'dark', 'parchment'] as const) {
+    const block = theme === 'light'
+      ? [...tokens.matchAll(/:root\s*\{([^}]*)\}/g)].map(match => match[1])[1]
+      : new RegExp(`:root\\[data-iris-theme='${theme}'\\]\\s*\\{([^}]*)\\}`).exec(tokens)?.[1]
+    assert.ok(block !== undefined, `no ${theme} palette block`)
+    const values = new Map<string, string>()
+    for (const match of block.matchAll(/(--iris-[a-z-]+):\s*([^;]+);/g)) {
+      values.set(match[1] as string, (match[2] as string).trim())
+    }
+    const drawn = new Map<string, string[]>()
+    for (const [band, token] of tintOf) {
+      const value = values.get(token)
+      assert.ok(value !== undefined, `${theme} does not define ${token}, which ${band} draws`)
+      drawn.set(value, [...(drawn.get(value) ?? []), band])
+    }
+    for (const [value, bands] of drawn) {
+      assert.equal(bands.length, 1, `in ${theme}, ${bands.join(' and ')} both draw ${value}`)
+    }
+  }
 })

@@ -22,7 +22,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import type { ConnectionProfile, GenerationSettings, HostDefaultConnection } from '@iris/protocol'
+import type { ConnectionProfile, GenerationSettings, HostDefaultConnection, ModelContextLength } from '@iris/protocol'
 
 import { notFound } from './errors.ts'
 import { sanitize } from './settings.ts'
@@ -65,6 +65,15 @@ interface StoredProfile {
   models?: string[]
   /** Unix epoch milliseconds of the probe {@link models} came from. */
   modelsProbedAt?: number
+  /**
+   * What is known about those ids' context windows, keyed by id.
+   *
+   * Filed under the same rule as {@link models} and never separately: the two
+   * are one observation of one endpoint, so a window record surviving a list
+   * that was dropped for a moved base URL would describe models this profile
+   * can no longer reach.
+   */
+  modelContexts?: Record<string, ModelContextLength>
 }
 
 /** The file's shape. */
@@ -98,6 +107,15 @@ export interface ProfileInput {
    * record ("probed, advertised nothing"), not a clear.
    */
   models?: string[]
+  /**
+   * What is known about those ids' context windows, keyed by id.
+   *
+   * Merges with {@link models} and never separately: the two are one
+   * observation of one endpoint, and a window record surviving a list that was
+   * dropped for a moved base URL would describe models this profile can no
+   * longer reach.
+   */
+  modelContexts?: Record<string, ModelContextLength>
 }
 
 /**
@@ -196,6 +214,8 @@ export interface HostProbeRecord {
   models: readonly string[]
   /** Unix epoch milliseconds of that read. */
   probedAt: number
+  /** What is known about those ids' context windows, when anything is. */
+  modelContexts?: Record<string, ModelContextLength>
 }
 
 /**
@@ -227,6 +247,7 @@ export function hostDefaultView(
     // The list and its stamp travel together or not at all, as they do on a
     // profile: half of this pair is an undatable claim.
     ...listed === undefined ? {} : { models: [...listed.models], modelsProbedAt: listed.probedAt },
+    ...listed?.modelContexts === undefined ? {} : { modelContexts: { ...listed.modelContexts } },
   }
 }
 
@@ -312,6 +333,7 @@ function toWire(profile: StoredProfile): ConnectionProfile {
     // the shape that turns an observation into a claim.
     ...profile.models === undefined ? {} : { models: [...profile.models] },
     ...profile.modelsProbedAt === undefined ? {} : { modelsProbedAt: profile.modelsProbedAt },
+    ...profile.modelContexts === undefined ? {} : { modelContexts: { ...profile.modelContexts } },
   }
 }
 
@@ -409,9 +431,11 @@ export class ConnectionStore {
     if (input.models !== undefined) {
       stored.models = [...input.models]
       stored.modelsProbedAt = Date.now()
+      if (input.modelContexts !== undefined) stored.modelContexts = { ...input.modelContexts }
     } else if (previous?.models !== undefined && sameEndpointOrigin(previous.baseURL, stored.baseURL)) {
       stored.models = previous.models
       if (previous.modelsProbedAt !== undefined) stored.modelsProbedAt = previous.modelsProbedAt
+      if (previous.modelContexts !== undefined) stored.modelContexts = previous.modelContexts
     }
 
     if (at === -1) this.#file.profiles.push(stored)
@@ -435,13 +459,23 @@ export class ConnectionStore {
    * not a failure of the probe.
    * @param id - the profile the probe was pointed at.
    * @param models - the ids it reported, possibly empty.
+   * @param modelContexts - what is known about those ids' windows, when anything is.
    */
-  async recordModels(id: string, models: readonly string[]): Promise<void> {
+  async recordModels(
+    id: string,
+    models: readonly string[],
+    modelContexts?: Record<string, ModelContextLength>,
+  ): Promise<void> {
     await this.#load()
     const found = this.#file.profiles.find(profile => profile.id === id)
     if (found === undefined) return
     found.models = [...models]
     found.modelsProbedAt = Date.now()
+    // Replaced, not merged: this probe's answer is the whole of what the
+    // endpoint now says, and an id it no longer lists keeping a window from an
+    // older probe would leave a record of a model that is gone.
+    if (modelContexts === undefined) delete found.modelContexts
+    else found.modelContexts = { ...modelContexts }
     await this.#save()
   }
 

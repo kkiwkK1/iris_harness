@@ -33,7 +33,7 @@ import { rowFields,
   type SillyTavernChatHeader,
   type SillyTavernMessage,
 } from '@iris/persistence'
-import type { ChatSummary, ChatView, PromptItemization, ScriptPromptPosition, TurnUsage } from '@iris/protocol'
+import type { ChatBudget, ChatSummary, ChatView, PromptItemization, ScriptPromptPosition, TurnUsage } from '@iris/protocol'
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore, type ScopeBackend, type Variables } from '@iris/variables'
 
@@ -1512,12 +1512,19 @@ export class ChatEntry {
    * the host's reply reserve — and the entry holds neither. A caller that does
    * not know it leaves it out, and the view then says nothing about capacity
    * instead of reporting a zero window it made up.
+   * `measured` **is** read here, because the entry does hold it: every real
+   * turn records its own itemization on this object, and the newest of those is
+   * an account of how full the window actually got that costs nothing to
+   * project. It is the only such account a surface can have without paying for
+   * a second assembly.
    * @param budget - the context window and reply reserve this chat assembles under.
    * @returns the view.
    */
-  toView(budget?: { context: number, reserve: number }): ChatView {
+  toView(budget?: ChatBudget): ChatView {
     const meta = this.meta
+    const measured = this.#newestMeasurement()
     return toChatView({
+      ...measured === undefined ? {} : { measured },
       chatId: this.chatId,
       title: meta.title,
       characterId: meta.characterId,
@@ -1534,6 +1541,32 @@ export class ChatEntry {
       // cache here would be a second copy of the one durable fact.
       compaction: readCompaction(this.header),
     })
+  }
+
+  /**
+   * The newest recorded itemization, as a bare reading.
+   *
+   * **The highest recorded turn, not `lastTurn`.** They usually agree, and the
+   * case where they do not is the one that matters. `lastTurn` advances when a
+   * turn *opens* (`begin`); the record is written later, when that turn's
+   * prompt is assembled. Between those two moments
+   * `itemizations.get(this.lastTurn)` answers `undefined` — a capacity bar that
+   * blanked out from the press of send until the request went out — and a turn
+   * that opened but never reached assembly (a refusal, a crash) leaves
+   * `lastTurn` pointing at a turn with no record at all, permanently.
+   *
+   * (`#autoCompact` reads by `lastTurn` and is right to: it runs *before*
+   * `begin`, at the top of `#start`, so what it reads is the previous turn's
+   * record — the complete one. It is looking backwards; this is looking for the
+   * newest thing there is.)
+   * @returns the reading and the turn it was taken on, or `undefined` when this process has measured none.
+   */
+  #newestMeasurement(): { turn: number, tokens: number } | undefined {
+    let newest: PromptItemization | undefined
+    for (const [turn, itemization] of this.itemizations) {
+      if (newest === undefined || turn > newest.turn) newest = itemization
+    }
+    return newest === undefined ? undefined : { turn: newest.turn, tokens: newest.tokens }
   }
 
   /** The sidebar entry. */

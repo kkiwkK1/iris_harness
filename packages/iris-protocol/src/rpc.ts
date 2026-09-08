@@ -15,7 +15,9 @@
 
 import { z } from 'zod'
 
-import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
+import { MAX_CONTEXT_WINDOW } from './views.ts'
+
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -463,6 +465,25 @@ export const requestSchemas = {
      * nothing", which is a different fact from never having probed.
      */
     models: z.array(z.string().min(1).max(400)).max(2000).optional(),
+    /**
+     * What is known about those ids' context windows, keyed by id — the same
+     * record `connection.test` answers with, carried back so a saved profile
+     * keeps it.
+     *
+     * Sparse: only the ids anything knows a window for appear. `tokens` reads
+     * its ceiling from {@link MAX_CONTEXT_WINDOW} — the same constant the
+     * settings store bounds a typed `contextWindow` by and the probe bounds a
+     * reported one by — so an endpoint cannot put a window on the wire that the
+     * settings layer would refuse a person for typing, and raising the ceiling
+     * cannot raise two of the three.
+     */
+    modelContexts: z.record(
+      z.string().min(1).max(400),
+      z.object({
+        tokens: z.number().int().min(1).max(MAX_CONTEXT_WINDOW),
+        source: z.enum(['provider', 'table']),
+      }),
+    ).optional(),
   }),
   'connection.delete': z.object({ id: z.string().min(1) }),
   /** Apply a profile: globally, or to one chat when `chatId` is given. */
@@ -1915,6 +1936,15 @@ export interface RpcResponseMap {
     latencyMs: number
     /** Model ids from `GET /models`, in the endpoint's own order, when the probe succeeded. */
     models?: string[]
+    /**
+     * What is known about those ids' context windows, keyed by id.
+     *
+     * Sparse, and mixed by source: an id the endpoint annotated carries
+     * `'provider'`, an id it did not but the host's table knows carries
+     * `'table'`, and an id nothing knows is simply absent. Absent as a whole
+     * when the probe failed — there is no list to annotate.
+     */
+    modelContexts?: Record<string, ModelContextLength>
     /**
      * Which key the probe actually sent — always, pass or fail.
      *

@@ -65,6 +65,7 @@ export type {
   ChatCompaction,
   ChatSearchHit,
   ChatSearchMatch,
+  ChatBudget,
   ChatSummary,
   ChatView,
   CardWorldbookView,
@@ -73,6 +74,7 @@ export type {
   ConnectionProfile,
   ConnectionTestError,
   ConnectionTestErrorCode,
+  ContextWindowSource,
   DebugReport,
   DivergenceState,
   HostDefaultConnection,
@@ -82,6 +84,7 @@ export type {
   InsertionStrategy,
   LorebookSettings,
   MessageView,
+  ModelContextLength,
   TurnUsage,
   PersonaView,
   PresetManagerView,
@@ -115,7 +118,7 @@ export type {
   WorldbookSummary,
 } from './views.ts'
 
-export { CACHE_STALE_MS, HISTORY_ITEM_PREFIX, providerExcuse } from './views.ts'
+export { CACHE_STALE_MS, HISTORY_ITEM_PREFIX, MAX_CONTEXT_WINDOW, providerExcuse } from './views.ts'
 
 export {
   PROVIDER_PRESETS,

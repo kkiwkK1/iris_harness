@@ -118,6 +118,18 @@ export const DEFAULT_SETTINGS: GenerationSettings = {
   model: 'local/qwen3-8b',
   temperature: 0.9,
   maxTokens: 1024,
+  /*
+   * The window `FAKE_CHAT_BUDGET` reports, stored here so the fixture's own
+   * provenance is true.
+   *
+   * That budget says `source: 'settings'`, which means "the stored value
+   * stands" — and with nothing stored the real resolver would have answered
+   * `'host'`. The two halves of one fixture disagreeing is exactly what
+   * `prompt.ts`'s docblock warns about, and it was visible on the seeded page:
+   * the settings drawer rendered its 32 768 fallback while the capsule's hover
+   * said the window came from the settings.
+   */
+  contextWindow: 8192,
   topP: 0.95,
   topK: 40,
   repetitionPenalty: 1.05,

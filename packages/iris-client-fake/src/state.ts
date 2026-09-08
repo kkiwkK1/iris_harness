@@ -24,7 +24,7 @@ import type {
   ViewRole,
 } from '@iris/protocol'
 
-import { FAKE_BUDGET } from './prompt.ts'
+import { FAKE_CHAT_BUDGET, FAKE_MEASURED_TOKENS } from './prompt.ts'
 
 /** One alternate reading of a message. */
 export interface Candidate {
@@ -225,6 +225,11 @@ export function toChatView(chat: FakeChat, streamingTurn?: number): ChatView {
   // Every candidate of every message, not the selected ones: a reading the
   // reader swiped away from was generated and charged. Streaming candidates
   // have no usage yet, so nothing has to be excluded here.
+  // The newest turn that has actually been assembled: the highest turn among
+  // the messages a model wrote. A user line typed but not yet answered does not
+  // count, which is the same rule the host's own projection follows.
+  const generated = chat.messages.filter(message => message.role === 'assistant').map(message => message.turn)
+  const newestTurn = generated.length === 0 ? undefined : Math.max(...generated)
   const usage = conversationUsage(
     chat.messages.flatMap(message =>
       message.candidates.map(candidate => candidate.usage).filter(
@@ -239,7 +244,18 @@ export function toChatView(chat: FakeChat, streamingTurn?: number): ChatView {
     messages: chat.messages.map((message, id) =>
       toMessageView(message, id, message.role === 'assistant' && message.turn === streamingTurn),
     ),
-    budget: { ...FAKE_BUDGET },
+    budget: { ...FAKE_CHAT_BUDGET },
+    /*
+     * The host records an itemization for every turn it assembles and projects
+     * the newest one, so the capacity capsule can draw a measured occupancy
+     * with no round trip. Modelled here on the same condition: a conversation
+     * that has generated at least once has a reading, and one that has not has
+     * none — a fixture that always carried one would let a capsule that only
+     * ever works on a measured chat pass this fake.
+     */
+    ...(newestTurn === undefined
+      ? {}
+      : { measured: { turn: newestTurn, tokens: FAKE_MEASURED_TOKENS } }),
     ...(chat.compaction === undefined ? {} : { compaction: chat.compaction }),
     variables: chat.variables,
     ...(usage === undefined ? {} : { usage }),

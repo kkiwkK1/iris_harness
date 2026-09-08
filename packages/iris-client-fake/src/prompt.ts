@@ -27,7 +27,13 @@
  * @module @iris/client-fake/prompt
  */
 
-import type { PromptDivergence, PromptDivergenceItem, PromptItemEntry, PromptItemization } from '@iris/protocol'
+import type {
+  ChatBudget,
+  PromptDivergence,
+  PromptDivergenceItem,
+  PromptItemEntry,
+  PromptItemization,
+} from '@iris/protocol'
 
 /**
  * The budget the seeded conversation assembles under.
@@ -39,6 +45,36 @@ import type { PromptDivergence, PromptDivergenceItem, PromptItemEntry, PromptIte
  * is that they cannot.
  */
 export const FAKE_BUDGET: { context: number, reserve: number } = { context: 8192, reserve: 1024 }
+
+/**
+ * The same budget as the open conversation reports it, provenance included.
+ *
+ * `'settings'`, with a named model and **no** `modelContext` — the
+ * arithmetically honest fixture rather than the demonstrative one. This fake's
+ * route is `local/qwen3-8b` (`seed.ts`), the host's built-in model table has
+ * never heard of that id, and a table that has never heard of an id clamps
+ * nothing. Declaring `source: 'model'` here to light up the clamped wording
+ * would mean a fixture whose numbers cannot all be true at once — 8192 in
+ * force, 8192 as "the model's own window", under a model nothing knows a window
+ * for — and a fixture that cannot be true is a fixture that silences whatever
+ * asserts on it. The clamped, unlocked and host-default wordings are pinned in
+ * `apps/iris-web/tests/context-meter.test.ts`, against `windowSourceKey`
+ * directly.
+ *
+ * **`'settings'` also has to be earned, and once was not.** It means "the
+ * stored value stands", and `DEFAULT_SETTINGS` carried no `contextWindow` at
+ * all — so the real resolver, handed this fake's settings, would have answered
+ * `'host'`. The seeded page showed the disagreement: the settings drawer
+ * rendered its 32 768 fallback while this hover claimed the window came from
+ * the settings. Fixed by storing the window (`seed.ts`) rather than by
+ * relabelling the budget, so {@link FAKE_BUDGET}'s 8192 is the number in both
+ * places.
+ */
+export const FAKE_CHAT_BUDGET: ChatBudget = {
+  ...FAKE_BUDGET,
+  source: 'settings',
+  model: 'local/qwen3-8b',
+}
 
 /** The entries, in assembly order rather than sorted — sorting is the UI's business. */
 const ENTRIES: readonly PromptItemEntry[] = [
@@ -58,6 +94,15 @@ const ENTRIES: readonly PromptItemEntry[] = [
   { id: 'e4a7c209-6b31-4f85-a0d2-3c9e7b1a5f68', label: '开场引导', kind: 'system', tokens: 0 },
   { id: 'chatHistory', label: 'Chat History', kind: 'history', tokens: 27 },
 ]
+
+/**
+ * What the fake's recorded itemization measures, as `ChatView.measured` reports it.
+ *
+ * Summed off {@link ENTRIES} rather than written out, so the capsule's bar and
+ * the card's own figure cannot come to disagree about the same conversation —
+ * the same reason {@link FAKE_BUDGET} is one constant.
+ */
+export const FAKE_MEASURED_TOKENS: number = ENTRIES.reduce((sum, entry) => sum + entry.tokens, 0)
 
 /**
  * Build an itemization.
