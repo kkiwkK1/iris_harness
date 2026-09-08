@@ -32,6 +32,7 @@ import {
   discrepancy,
   itemizationMode,
   rowsFor,
+  splitMembers,
   type ItemOrder,
 } from './itemization.ts'
 import {
@@ -317,6 +318,65 @@ function Breakdown({
             <span className={`iris-prompt__tokens${row.entry.tokens === 0 ? ' iris-prompt__tokens--empty' : ''}`}>
               {row.entry.tokens === 0 ? t('tokenEmpty') : row.entry.tokens.toLocaleString()}
             </span>
+            {/*
+              The entries a split row is the join of, when they did not all go
+              the same way. A world-info depth bucket is one row here and
+              several world-info entries in the request, and once two of them
+              are in the prefix and a third is not, the row above carries no
+              badge at all — deliberately, since none would be true of it. This
+              is where the answer lives instead.
+
+              `splitMembers` holds the decision about *when* to show them —
+              only when the split actually did something — because that
+              condition is worth a test of its own and a condition written in
+              here is only reachable through a rendered DOM.
+            */}
+            {splitMembers(row.entry).length === 0
+              ? null
+              : (
+                  <ul className="iris-prompt__members">
+                    {splitMembers(row.entry).map(member => (
+                      <li
+                        className={`iris-prompt__member${
+                          member.deferred === true ? ' iris-prompt__row--deferred' : ''}${
+                          member.promoted === true ? ' iris-prompt__row--promoted' : ''}`}
+                        key={member.id}
+                      >
+                        <span className="iris-prompt__label" title={member.id}>
+                          {member.label}
+                          {member.deferred !== true && member.promoted !== true
+                            ? null
+                            : (
+                                <span
+                                  className={member.promoted === true
+                                    ? 'iris-prompt__deferred iris-prompt__deferred--promoted'
+                                    : 'iris-prompt__deferred'}
+                                  title={t(member.promoted === true ? 'promptPromotedAria' : 'promptDeferredAria')}
+                                  data-control={member.promoted === true
+                                    ? 'prompt-member-promoted'
+                                    : 'prompt-member-deferred'}
+                                >
+                                  {t(member.promoted === true ? 'promptPromoted' : 'promptDeferred')}
+                                </span>
+                              )}
+                          {/*
+                            The comparison names members by the same id the
+                            itemization does, so an entry that was re-sent
+                            verbatim says so on its own line rather than on its
+                            bucket's — which is the whole reason the bucket was
+                            split.
+                          */}
+                          {compared.get(member.id) === undefined ? null : (
+                            <ItemMark item={compared.get(member.id) as PromptDivergenceItem} />
+                          )}
+                        </span>
+                        <span className="iris-prompt__tokens">
+                          {member.tokens === 0 ? t('tokenEmpty') : member.tokens.toLocaleString()}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
           </li>
         ))}
       </ul>

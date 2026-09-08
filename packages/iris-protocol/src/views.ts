@@ -796,6 +796,44 @@ export interface PromptItemEntry {
    * transcript instead. The row is the only place a person can see that.
    */
   promoted?: boolean
+  /**
+   * The parts this row is the join of, when the reorder placed them separately.
+   *
+   * A world-info **depth bucket** is upstream's newline join of every entry
+   * that landed on one depth and role, and it is routinely the largest row in
+   * this list. With {@link GenerationSettings.cacheFriendly} on the entries are
+   * classified one by one, because the bucket's own text moves whenever its
+   * *membership* does while the entries in it hold still — so two entries can
+   * reach the prefix while a third stays at depth 0.
+   *
+   * When that happens the row above carries **neither** {@link deferred} nor
+   * {@link promoted}: no single mark is true of it any more, and one invented
+   * for it would tell a reader their whole world-info block moved. The marks
+   * are on these sub-rows instead, and the row keeps them only when every
+   * member went the same way.
+   *
+   * Absent when the host did not split this row — with the setting off, always.
+   */
+  members?: PromptItemMember[]
+}
+
+/** One entry inside a split prompt row, and what it cost. */
+export interface PromptItemMember {
+  /**
+   * The member's stable id.
+   *
+   * `<row id>#<book>.<uid>` for a world-info entry. Machine-facing, and the
+   * same id the divergence report names the entry by, so a surface can line the
+   * two up on one row.
+   */
+  id: string
+  /** What to show a person — the entry's own `comment`, or its book and uid. */
+  label: string
+  tokens: number
+  /** True when the reorder sent this member after the conversation. */
+  deferred?: boolean
+  /** True when the reorder sent this member ahead of the conversation. */
+  promoted?: boolean
 }
 
 /**

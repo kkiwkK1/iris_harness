@@ -236,7 +236,15 @@ export interface VolatilityRecord {
    * swipes is exactly the evidence wanted.
    */
   generation: number
-  /** Content hash per contribution id, as of the last recorded assembly. */
+  /**
+   * Content hash per id, as of the last recorded assembly.
+   *
+   * One row per contribution **and** one per member of a composite one
+   * (`Contribution.members` — the entries inside a world-info depth bucket), so
+   * a bucket whose membership changed does not drag its unchanged entries out
+   * of the prefix with it. Older records hold only the contribution rows; a
+   * member absent from here is simply on its first sighting.
+   */
   seen: Record<string, string>
   /** Generation at which each mark lapses. An id absent from here is stable. */
   until: Record<string, number>
@@ -394,9 +402,18 @@ export function classifyVolatility(
   const volatile = new Set<string>()
   const settled = new Set<string>()
 
-  for (const contribution of contributions) {
-    const id = contribution.id
-    const hash = contentHash(contribution.text)
+  /**
+   * Classify one id against what the chat remembers of it.
+   *
+   * The same three rules whether the id names a whole contribution or one
+   * member of one, and deliberately the same code rather than the same rules
+   * written twice: an entry inside a depth bucket is classified by exactly the
+   * measurement, the hold and the prediction its bucket is.
+   * @param id - the contribution's or member's id.
+   * @param text - its rendered text.
+   */
+  const observe = (id: string, text: string): void => {
+    const hash = contentHash(text)
     const previous = record.seen[id]
     const changed = previous !== undefined && previous !== hash
 
@@ -426,6 +443,20 @@ export function classifyVolatility(
     seen[id] = hash
   }
 
+  for (const contribution of contributions) {
+    observe(contribution.id, contribution.text)
+    // **The members too, and the bucket as well as them.** A world-info depth
+    // bucket's own hash moves the moment its *membership* does — an entry
+    // stopped matching, another started — which is not evidence about any entry
+    // in it, and is why the bucket is judged volatile on 爱衣 while all three
+    // of its entries are byte-identical between adjacent turns. The member rows
+    // are what the placement reads (`@iris/pipeline`'s `memberPhase`); the
+    // bucket row is kept because it is still the verdict on the whole slot
+    // wherever the member list cannot be used — the reorder off, or a member
+    // list that no longer rejoins its text.
+    for (const member of contribution.members ?? []) observe(member.id, member.text)
+  }
+
   return {
     volatile,
     settled,
@@ -441,6 +472,10 @@ export function classifyVolatility(
  * must see the same flags — but the objects themselves came from the preset
  * resolver and the world-info scan, and writing into them would leak a
  * per-turn verdict into whatever else holds a reference.
+ * Members are flagged the same way and from the same verdict, because the
+ * assembler places them by their own marks: a bucket handed over with its
+ * members unflagged would keep the whole 19 KB block at depth 0 and read as the
+ * split doing nothing.
  * @param contributions - this assembly's contributions.
  * @param verdict - the classification for this assembly.
  * @returns the same contributions, classified ones flagged.
@@ -449,9 +484,16 @@ export function markCachePhase(
   contributions: readonly Contribution[],
   verdict: Pick<VolatilityVerdict, 'volatile' | 'settled'>,
 ): Contribution[] {
+  const phase = <T extends { id: string }>(part: T): T => {
+    if (verdict.volatile.has(part.id)) return { ...part, volatile: true }
+    if (verdict.settled.has(part.id)) return { ...part, settled: true }
+    return part
+  }
   return contributions.map((contribution) => {
-    if (verdict.volatile.has(contribution.id)) return { ...contribution, volatile: true }
-    if (verdict.settled.has(contribution.id)) return { ...contribution, settled: true }
-    return contribution
+    const marked = phase(contribution)
+    if (contribution.members === undefined) return marked
+    // A new array either way: the members came out of the world-info scan, and
+    // the scan's own objects must not carry this turn's verdict away with them.
+    return { ...marked, members: contribution.members.map(member => phase(member)) }
   })
 }

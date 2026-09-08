@@ -1990,6 +1990,38 @@
   margin-left: -8px;
 }
 
+/* The entries one row is the join of, when the cache-friendly split sent them
+   to different places. Indented under the row's label column rather than given
+   a grid of its own, so the sub-rows read as parts of the row above and are not
+   mistaken for prompt parts in their own right — a world-info depth bucket is
+   one contribution however many entries went into it. */
+.iris-prompt__members {
+  grid-column: 2 / -1;
+  margin: 4px 0 0;
+  padding: 0 0 0 10px;
+  list-style: none;
+  border-left: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-prompt__member {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.6em;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 11.5px;
+  color: var(--iris-ink-secondary);
+}
+
+/* A member row's own gutter marker, on the same two colours the row above uses:
+   warn for sent-after, accent for sent-before. The sub-row is narrower, so the
+   marker sits inside the members' own rule rather than outside it. */
+.iris-prompt__member.iris-prompt__row--deferred,
+.iris-prompt__member.iris-prompt__row--promoted {
+  margin-left: -10px;
+  padding-left: 8px;
+}
+
 .iris-prompt__deferred {
   display: block;
   margin-top: 2px;

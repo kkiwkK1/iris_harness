@@ -338,6 +338,31 @@ function labeller(catalog) {
 
 // --- comparing two requests ------------------------------------------------
 
+/**
+ * Every id the reorder moved in one direction, rows and members alike.
+ *
+ * **Members have to be counted, or the reading is wrong in the direction that
+ * matters.** A world-info depth bucket the split decomposed carries the mark on
+ * its `members`, not on the row: the row keeps it only when every entry in the
+ * bucket went the same way. A collector that read rows alone would report
+ * "moved forward: nothing" for the exact case this measurement exists to show —
+ * two entries of a bucket in the prefix and a third still at depth 0.
+ * @param itemization - one assembly's breakdown.
+ * @param mark - `deferred` or `promoted`.
+ * @returns the ids carrying that mark, rows named plainly and members by their
+ *   own id.
+ */
+function movedIds(itemization, mark) {
+  const ids = []
+  for (const entry of itemization.entries) {
+    if (entry[mark] === true) ids.push(entry.id)
+    for (const member of entry.members ?? []) {
+      if (member[mark] === true) ids.push(member.id)
+    }
+  }
+  return ids
+}
+
 /** Whether two segments are the same piece of request. */
 const sameSegment = (left, right) =>
   left !== undefined && right !== undefined && left.role === right.role && left.text === right.text
@@ -492,10 +517,21 @@ async function walk(host, chatId, options = {}) {
       itemized: [first, second].map(run => ({
         stable: run.itemization.stablePrefixTokens ?? null,
         tokens: run.itemization.tokens,
-        deferred: run.itemization.entries.filter(entry => entry.deferred === true).map(entry => entry.id),
+        deferred: movedIds(run.itemization, 'deferred'),
+        // A split row is written with how many of its members went each way, so
+        // a control below 100% can be read as "this bucket's split flipped"
+        // rather than only "a depth row moved".
         depths: run.itemization.entries
           .filter(entry => entry.kind === 'depth')
-          .map(entry => `${entry.id}@${String(entry.depth)}${entry.deferred === true ? '*' : ''}`),
+          .map((entry) => {
+            const members = entry.members ?? []
+            const tally = members.length === 0
+              ? entry.deferred === true ? '*' : entry.promoted === true ? '^' : ''
+              : `[${String(members.filter(one => one.promoted === true).length)}^`
+                + `/${String(members.filter(one => one.deferred === true).length)}*`
+                + `/${String(members.length)}]`
+            return `${entry.id}@${String(entry.depth)}${tally}`
+          }),
       })),
     }
   } catch (error) {
@@ -540,10 +576,14 @@ async function walk(host, chatId, options = {}) {
       const newer = rounds[rounds.length - 2 - index]
       return { from: older.messages, to: newer.messages, ...compare(older.options, newer.options, label) }
     }),
-    deferred: [...new Set(rounds.flatMap(round =>
-      round.itemization.entries.filter(entry => entry.deferred === true).map(entry => entry.id)))],
-    promoted: [...new Set(rounds.flatMap(round =>
-      round.itemization.entries.filter(entry => entry.promoted === true).map(entry => entry.id)))],
+    deferred: [...new Set(rounds.flatMap(round => movedIds(round.itemization, 'deferred')))],
+    promoted: [...new Set(rounds.flatMap(round => movedIds(round.itemization, 'promoted')))],
+    // Which rows the host split into members, and into how many. A row that is
+    // split but has nothing in `promoted` is the case worth seeing: the bucket
+    // was decomposed and no entry in it has settled yet.
+    split: [...new Set(rounds.flatMap(round => round.itemization.entries
+      .filter(entry => (entry.members ?? []).length > 0)
+      .map(entry => `${entry.id}(${String(entry.members.length)})`)))],
     stable: rounds.map(round => ({
       messages: round.messages,
       prefix: round.itemization.stablePrefixTokens ?? null,
@@ -619,7 +659,11 @@ function reportPass(name, result) {
   const newest = result.stable[0]
   console.log(`    host's own reading, newest round: stable prefix `
     + `${String(newest.prefix)} / ${String(newest.tokens)} tok = ${percent(newest.prefix, newest.tokens)}`)
-  for (const [word, ids] of [['moved back', result.deferred], ['moved forward', result.promoted]]) {
+  for (const [word, ids] of [
+    ['moved back', result.deferred],
+    ['moved forward', result.promoted],
+    ['split into members', result.split ?? []],
+  ]) {
     console.log(`    ${word}: ${ids.length === 0
       ? 'nothing'
       : `${String(ids.length)} — ${ids.slice(0, 6).join(', ')}${ids.length > 6 ? ', …' : ''}`}`)

@@ -246,11 +246,19 @@ export class TurnDriver {
           // The part's recorded text moves with the message's, so the layout
           // still describes the bytes that go out. A separator appended after
           // the provenance was taken is the exact shape that makes a trace's
-          // parts stop laying back down onto their slot — harmless here, since
-          // the slot has one part, and not harmless in the one-part system slot
-          // the trace checks strictly.
-          const only = slot.parts[0]
-          if (only !== undefined && slot.parts.length === 1) only.text = slot.message.text
+          // parts stop laying back down onto their slot.
+          //
+          // **The last part, not the only part.** The postfix is appended to
+          // the end of the slot, so it belongs to whichever part ends there —
+          // which is the only part when a depth injection or a floor is being
+          // continued, and the last of several when the slot is a depth bucket
+          // the cache-friendly split left holding two entries at an assistant
+          // role. The earlier version wrote `slot.parts[0].text =
+          // slot.message.text` under a `length === 1` guard: correct for one
+          // part, and for two it silently left the recorded parts a separator
+          // short of their slot, which the trace reports as unattributed.
+          const last = slot.parts.at(-1)
+          if (last !== undefined) last.text += postfix
         }
         break
       }
@@ -604,8 +612,16 @@ export interface AssembledSlot {
  *
  * The message is copied, because the postfix pass writes into it and
  * `assemble`'s array is the caller's.
+ *
+ * **A message carrying `parts` opens with those.** That is a depth bucket the
+ * cache-friendly split left holding more than one world-info entry: the
+ * assembler joined them and recorded which, and a slot recorded as one part
+ * would attribute the whole block — routinely the largest single part of the
+ * request — to whichever entry happened to come first. Every other message
+ * opens as one part named by its own id, which is what every slot carried
+ * before members existed.
  * @param messages - the assembled conversation, oldest first.
- * @returns one single-part slot per message.
+ * @returns one slot per message, holding the parts the message knows about.
  */
 export function slotsOf(messages: readonly PipelineMessage[]): AssembledSlot[] {
   return messages.map(message => ({
@@ -614,7 +630,13 @@ export function slotsOf(messages: readonly PipelineMessage[]): AssembledSlot[] {
     // function is nothing — `injectAtDepth` stamps every one. Written as a
     // conditional anyway so a caller assembling its own messages produces an
     // unattributed slot rather than a slot claiming to be `undefined`.
-    parts: message.id === undefined ? [] : [{ id: message.id, text: message.text }],
+    parts: message.parts !== undefined && message.parts.length > 0
+      ? message.parts.map(part => ({
+          id: part.id,
+          ...part.label === undefined ? {} : { label: part.label },
+          text: part.text,
+        }))
+      : message.id === undefined ? [] : [{ id: message.id, text: message.text }],
   }))
 }
 

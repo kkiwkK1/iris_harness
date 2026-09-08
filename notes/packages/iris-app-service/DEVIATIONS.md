@@ -2936,7 +2936,13 @@ is history growth, which a single-request reading cannot see.
    `CACHE-CENSUS.md`'s 98.0% synthetic figure; the difference between 88.6% and
    96.5% is exactly this one block. The rest — 1 282 to 13 397 B a turn — is
    genuinely new conversation and cannot be recovered by anyone.
-2. **The next step is granularity, not policy.** That block is *one*
+2. **The next step is granularity, not policy.** *(Done in §50, and its reason
+   for declining was avoidable — the split lives beside the contribution's text
+   rather than in the contribution list, so the `cacheFriendly: false` path
+   never reads it. Measured: +5.0 to +7.1 points on each of eight adjacent
+   pairs, 87.8% → 93.9% at the mean. The
+   paragraph is left standing because the argument it makes about the off path
+   is the constraint §50 was designed against.)* That block is *one*
    contribution because `buildPrompt` joins a whole depth bucket into one, while
    the individual world-info entries inside it are byte-stable —
    `CACHE-CENSUS.md` §4.5 verified three of them (8 223 + 4 020 + 7 114 =
@@ -3507,3 +3513,183 @@ order — the complement of a longest increasing subsequence — not "every bloc
 that now sits after a block with a smaller index". The naive reading names the
 wrong elements: for `a,b,c` against `c,a,b` it reports *a* and *b* as moved when
 **c** is what moved. That is asserted by test rather than argued.
+
+## 50. A world-info depth bucket is classified and placed entry by entry, so the entries that hold still reach the prefix without the bucket having to
+
+§38 item 2 named this as the next step and declined it. Its reason was that "one
+contribution per activated entry … changes the `cacheFriendly: false` assembly
+too (N separate messages where there was one joined block), and that path must
+stay byte-identical". The reason is sound and the conclusion was avoidable: the
+split does not have to live in the contribution list.
+
+**What changed.** A contribution may now carry `members` — the parts its text is
+the join of — beside its text. The text stays authoritative. With cache-friendly
+assembly **off** nothing reads the member list at all, so a depth bucket is one
+message joined with one newline, exactly as before, byte for byte. With it on,
+the classifier keeps a hash row per member and the assembler places each member
+by that member's own verdict: settled ones become their own messages in the
+stable prefix, volatile ones deeper than depth 0 join the volatile segment, and
+whatever is left is re-joined with the same newline and stays in the bucket's
+own slot under the bucket's own id.
+
+### Why the bucket was the wrong unit
+
+SillyTavern merges every world-info entry sharing a depth and a role into a
+single injection (`world-info.js`, one
+`setExtensionPrompt(CUSTOM_WI_DEPTH_ROLE(depth, role), joined, …)` per bucket)
+and Iris reproduces that. The merge is also where this corpus's largest
+remaining loss lived, and **not because the text moves**: the entries in one
+bucket are individually stable while the *set* of them changes as keywords
+match, so the bucket's own hash moves every turn and the whole block is judged
+volatile. `CACHE-CENSUS.md` §4.5 measured three of 爱衣's entries
+(8 223 + 4 020 + 7 114 = 19 357 B) byte-identical across an adjacent pair inside
+a bucket that could never be promoted; §38 item 1 attributed 7.4 of the 11
+points still missing from that conversation's ceiling to exactly this block.
+
+So the fix is granularity, and the smallest granularity that is *upstream's own
+unit* is the entry: world info activates, budgets and orders per entry, and only
+the final registration is per bucket.
+
+### Why the off path cannot notice
+
+Three things, and the third is what makes it a property of the code rather than
+a claim about it:
+
+1. `splitOf` returns nothing unless `cacheFriendly` is on, so with the flag off
+   every read of the member list is short-circuited — the request, the budget
+   charge, the itemization and the prefix reading all take the branch they took
+   before members existed.
+2. The remainder that stays in a slot is **re-joined** with the same separator
+   the builder joined with, so a bucket nothing was taken out of carries the
+   contribution's own text back rather than a reconstruction of it.
+3. `splitOf` refuses a member list that does not rejoin to the contribution's
+   text. A template that rewrote the text after the members were taken, or a
+   builder that changed its separator, produces an unsplit bucket — a turn of
+   rent — rather than a request containing text nobody assembled.
+
+The separator is written out on both sides (`prompt.ts`'s `joinEntries` and the
+pipeline's `MEMBER_JOIN`) for the reason `SYSTEM_JOIN` and the squash separator
+are: they are decided by two independent upstream lines, and one constant
+standing for both would let a change to either silently change the other. What
+keeps them honest is not the comment but `depth-bucket-entries.test.ts`'s "the
+builder's join and the assembler's separator are the same string" — because a
+mismatch here fails **silently**, as a bucket that is simply never split.
+
+### Member identity
+
+`<bucket id>#<book>.<uid>` — `worldInfo.depth.0.0#atlas.10`. The book is part of
+it because uids collide constantly across a global book, a character book and a
+chat book (`PreparedEntry`'s own note), and the bucket prefix is part of it
+because one entry can sit in two buckets at different depths or roles. The id
+has to survive its neighbours coming and going, or the classifier would compare
+two different entries' hashes under one name; it does, because it names the
+entry and nothing about the bucket's membership.
+
+The label is the entry's own `comment`, which is what SillyTavern's editor
+shows, falling back to the book and uid. Not decorative: this is routinely the
+largest row in the itemization, and `#13` names nothing.
+
+### What it was measured to buy
+
+`scripts/cache-friendly-probe.mjs`, 爱衣, eight adjacent pairs, 2026-09-09, the
+conversation at 49 messages. The "on, bucket-level" column is the same code with
+the member list suppressed — a zero-command control rather than an earlier
+reading, and it had to be: the operator's own 爱衣 gained an exchange **twice**
+while this was being written, and the probe's window slides with the
+conversation, so a before column taken an hour earlier describes different
+pairs.
+
+| pair (msgs) | off | on, bucket-level | on, per entry |
+| --- | --- | --- | --- |
+| 33 → 35 | 71.5% | 87.4% | **94.5%** |
+| 35 → 37 | 73.8% | 89.3% | **96.2%** |
+| 37 → 39 | 73.7% | 88.6% | **95.2%** |
+| 39 → 41 | 75.2% | 89.7% | **96.1%** |
+| 41 → 43 | 72.8% | 86.3% | **92.3%** |
+| 43 → 45 | 76.0% | 88.9% | **94.7%** |
+| 45 → 47 | 70.5% | 81.8% | **86.8%** |
+| 47 → 49 | 79.7% | 90.5% | **95.4%** |
+| mean | 74.2% | 87.8% | **93.9%** |
+
+The same-state control — one conversation state assembled twice — is **100%,
+byte-identical**, in all three columns. That is the reading that would catch a
+layout that flips, which is worse than either layout (§38's own measurement: a
+one-generation prediction took a control from 100% to 0.3%).
+
+**The reading is reproducible and the mean is not stable across corpus growth.**
+Both halves matter. The six pairs this window shares with the reading taken at
+45 messages (33 → 35 … 43 → 45) came back **identical to the byte** — same
+bodies, same prefixes, same percentages — so the instrument and the code are
+steady. The mean is not: at 45 messages the same three columns read
+73.7% / 88.8% / **95.5%**, and the drop to 93.9% is entirely the two pairs the
+window gained. `45 → 47` is one exchange of 19 436 B of new prose — the largest
+in the sample — and no assembly change can serve text that did not exist last
+turn. Quoting a single mean as the figure for this change would therefore be
+quoting the conversation's writing rhythm as much as the code; the per-pair
+column is the reading.
+
+The bucket on that conversation has five activated entries; four are promoted
+and one is not. The one left behind is measured volatile — its text really does
+change between turns — and it sits at depth 0, where there is nowhere later to
+send it. `43 → 45`'s remaining loss is 7 026 B, of which 6 605 B is new text.
+§38's arithmetic predicted 96.5% for this change on the pair it had; measured,
+the eight pairs run 86.8% – 96.2%, **five of eight at or above 95%**, and the
+gain over bucket-level classification is 5.0 – 7.1 points on every one of them.
+
+**Ceilings, not acceptance.** `CACHE-TARGET.md` §2 rules that 达标 is the
+provider's own `prompt_cache_hit_tokens / prompt_tokens` over ten consecutive
+turns. The probe sends nothing, so these numbers can say "the assembly is not
+what is stopping you" and cannot say the target is met.
+
+### The instruments follow the entry
+
+- **`PipelineMessage.parts`.** A slot that is the join of several members
+  records them, and `slotsOf` opens it with those parts instead of one. The
+  trace's `subdivide` already lays message-slot parts down with a single newline
+  (the squash separator, which is the same string), so the byte ranges in
+  `cache-trace/` name the entry and `prompt.divergence` aligns entries across
+  two requests by their own ids. A promoted member's message carries a
+  single-part list purely so the entry's *label* can travel — a promoted member
+  is not in the system string, so the seams cannot name it.
+- **The itemization keeps one row per bucket** — the bucket is one contribution
+  however many entries went into it, and a panel that grew five rows would
+  describe a preset the user did not configure. The row's `deferred` /
+  `promoted` now mean **all of its members**, and a bucket whose members went
+  different ways carries neither: no single mark is true of it, and one invented
+  for it would tell a reader their whole world-info block moved. `members`
+  beside it carries the per-entry answer.
+  `notes/apps/iris-web/DEVIATIONS.md` §69 for what the panel does with it.
+- **The probe counts members.** `movedIds` reads the marks off rows *and*
+  members: a collector that read rows alone would have reported "moved forward:
+  nothing" for precisely the case this change exists to produce.
+
+### One fix carried in this change
+
+The continue separator's provenance update in `iris-turn`'s driver was written
+`if (slot.parts.length === 1) only.text = slot.message.text`. Correct for a
+one-part slot, and for a two-part slot it left the recorded parts a separator
+short of their slot — which the trace reports as unattributed. It now appends
+the postfix to the **last** part, which is the part the postfix belongs to
+whatever the count. Reachable before this change only through a squashed run
+whose last message was assistant-role; reachable after it through an
+assistant-role depth bucket the split left holding two entries.
+
+### Two things found and not changed
+
+1. **The author's-note bucket is not split.** `worldInfo.authorNote` joins
+   `anTop` and `anBottom` the same way, but it is a **system** placement: it is
+   folded into one string with its neighbours, and splitting it would move a
+   seam `systemSegments` has already described to the trace. It is also small
+   on this corpus. Named because the mechanism would transfer.
+2. **Outlet buckets are not split either**, for the same reason plus a second
+   one: an outlet's text is consumed by a prompt template through
+   `{{outlet::key}}`, so its parts are not slots of the request at all.
+
+### What would overturn it
+
+A conversation whose depth bucket is split and whose ceiling *falls*. The shape
+that would do it is a bucket whose entries are individually unstable while their
+join is not — the mirror of this corpus — where splitting adds message
+boundaries and buys nothing. The probe's three columns are the instrument: the
+"on, bucket-level" column is reproducible at any time by suppressing the member
+list, which is one branch in `splitOf`.

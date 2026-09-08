@@ -27,7 +27,7 @@ import { test } from 'node:test'
 import type { PromptItemEntry, PromptItemization } from '@iris/protocol'
 
 import { stablePrefix } from '../src/app/context-occupancy.ts'
-import { rowsFor } from '../src/app/itemization.ts'
+import { rowsFor, splitMembers } from '../src/app/itemization.ts'
 import { DICTIONARIES, en, type StringKey } from '../src/app/i18n/strings.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -186,6 +186,59 @@ test('the classes the moved row uses have rules, and the panel still asks for th
   assert.ok(panel.includes('data-control=') && panel.includes("'prompt-deferred'"))
   const meter = readFileSync(join(HERE, '..', 'src', 'app', 'ContextMeter.tsx'), 'utf8')
   assert.ok(meter.includes('data-control="stable-prefix"'))
+})
+
+test('a split row shows its entries only once one of them has moved', () => {
+  const members = [
+    { id: 'wi#atlas.10', label: '常驻·湖', tokens: 40, promoted: true },
+    { id: 'wi#atlas.12', label: '每回都变·运势', tokens: 12 },
+  ]
+  const row = { ...item('worldInfo.depth.0.0', 52), members }
+
+  // A world-info depth bucket is one row here and several entries in the
+  // request. Once one entry is in the prefix and another is not, the row above
+  // carries no badge at all — deliberately, because none would be true of it —
+  // so this is the only place the answer can appear.
+  assert.deepEqual(splitMembers(row).map(member => member.id), ['wi#atlas.10', 'wi#atlas.12'])
+  // Both of them, not only the mover: "this one went forward and that one
+  // stayed" is the reading, and a list of movers alone cannot say the second
+  // half of it.
+  assert.equal(splitMembers(row).length, 2)
+
+  // A bucket that was split and stayed put says nothing. This is the ordinary
+  // case — most world-info rows — and a disclosure under every one of them
+  // would bury the rows that did move.
+  const still = { ...row, members: members.map(({ promoted: _promoted, ...rest }) => rest) }
+  assert.deepEqual(splitMembers(still), [])
+  // A row the host never split says nothing either, and must not throw on the
+  // absent field.
+  assert.deepEqual(splitMembers(item('main', 40)), [])
+})
+
+test('a split row renders its entries, with a badge and a locator per entry', () => {
+  const panel = readFileSync(join(HERE, '..', 'src', 'app', 'PromptPanel.tsx'), 'utf8')
+  const panels = readFileSync(join(HERE, '..', 'src', 'app', 'panels.css'), 'utf8')
+
+  // The decision about *when* to show the sub-list is asserted directly above;
+  // what is left for a source check is that the panel asks for it at all and
+  // that what it renders has rules and locators.
+  assert.ok(panel.includes('splitMembers(row.entry)'), 'the panel never asks for the member rows')
+  assert.ok(panel.includes('member.promoted') && panel.includes('member.deferred'),
+    'a member row must be able to say which way it went')
+  for (const cls of ['iris-prompt__members', 'iris-prompt__member']) {
+    assert.ok(panels.includes(`.${cls}`), `${cls} has no CSS rule`)
+    assert.ok(panel.includes(cls), `${cls} has a rule but nothing renders it`)
+  }
+  // Their own locators, distinct from the row's: a QA run looking for a moved
+  // *entry* must not match its bucket's badge, and the two carry the same words.
+  for (const handle of ["'prompt-member-promoted'", "'prompt-member-deferred'"]) {
+    assert.ok(panel.includes(handle), `${handle} is not rendered`)
+  }
+  // The divergence mark is looked up by the member's own id, which is the whole
+  // reason the ids are minted per entry: "this entry was re-sent verbatim"
+  // belongs on the entry's line, not on its bucket's.
+  assert.ok(panel.includes('compared.get(member.id)'),
+    'a member row must be able to carry what became of that entry')
 })
 
 test('the settings switch reads absence as ON', () => {

@@ -24,9 +24,11 @@
 
 import type {
   AssembledItem,
+  AssembledMember,
   AssembleInput,
   AssembleResult,
   Contribution,
+  ContributionMember,
   HistoryEntry,
   PipelineMessage,
   Role,
@@ -45,12 +47,109 @@ import type {
  */
 export const SYSTEM_JOIN = '\n\n'
 
+/**
+ * What a composite contribution's members are joined with.
+ *
+ * **One newline, because that is what SillyTavern's world info joins a depth
+ * bucket with** — every entry sharing a depth and a role is merged into one
+ * injection before it is registered (`world-info.js`, a single
+ * `setExtensionPrompt(CUSTOM_WI_DEPTH_ROLE(depth, role), joined, …)` per
+ * bucket), and the prompt builder reproduces that join to the byte. It is the
+ * separator the split has to be able to put *back*: a member list that does not
+ * rejoin to the contribution's own text is refused, and this constant is what
+ * "rejoin" means.
+ *
+ * It coincides with the separator `squash_system_messages` uses, which is
+ * convenient for a reader laying either kind of subdivided slot back down, and
+ * a coincidence all the same — the two are decided by two independent upstream
+ * lines, so neither is written in terms of the other.
+ */
+export const MEMBER_JOIN = '\n'
+
 /** A depth contribution with its resolved sort key. */
 interface DepthItem {
   contribution: Contribution
   placement: Extract<Placement, { kind: 'depth' }>
   /** Original position, to keep the sort stable. */
   sequence: number
+}
+
+/** A depth contribution the reorder may split, with its members and its slot. */
+interface SplitBucket {
+  placement: Extract<Placement, { kind: 'depth' }>
+  members: readonly ContributionMember[]
+}
+
+/**
+ * Whether this contribution may be placed member by member, and its members if so.
+ *
+ * Four conditions, and each one is a way the split could be wrong rather than a
+ * formality:
+ *
+ * - **The reorder is on.** With it off the assembly is upstream's, and upstream
+ *   sends a depth bucket as one message. Nothing below is read at all, which is
+ *   what makes "off is byte-identical" a property of the code rather than a
+ *   claim about it.
+ * - **It is a depth placement.** A system section is folded into one string
+ *   with its neighbours; splitting one would move a seam that
+ *   {@link systemSegments} has already described.
+ * - **It has members.** Absent means the caller did not decompose it, and a
+ *   contribution nobody decomposed is one part.
+ * - **The members rejoin to its text exactly.** This is the load-bearing one.
+ *   The members are built where the entries are still separate and the text is
+ *   built by joining them, so the two agree — until something rewrites the text
+ *   afterwards, and then the member list describes bytes that are not in the
+ *   request. Refusing the split there costs a turn of rent; trusting it would
+ *   send the model text nobody assembled.
+ * @param contribution - the contribution.
+ * @param cacheFriendly - whether the reorder is enabled.
+ * @returns the members and the slot they came from, or undefined for a
+ *   contribution that has to be placed whole.
+ */
+function splitOf(contribution: Contribution, cacheFriendly: boolean): SplitBucket | undefined {
+  if (!cacheFriendly) return undefined
+  const placement = contribution.placement
+  if (placement.kind !== 'depth') return undefined
+  const members = contribution.members
+  if (members === undefined || members.length === 0) return undefined
+  if (members.map(member => member.text).join(MEMBER_JOIN) !== contribution.text) return undefined
+  return { placement, members }
+}
+
+/** Where the reorder sends one member of a split bucket. */
+type MemberPhase = 'promote' | 'defer' | 'keep'
+
+/**
+ * Which of the three places one member goes.
+ *
+ * **The same rule {@link moves} and {@link promotes} apply to a whole
+ * contribution, at member granularity** — deliberately the same and not a
+ * second policy, so there is one story about what the reorder does and the
+ * member case is that story with a finer unit. Volatility outranks settling for
+ * the reason it does there: the two must not both claim the same text, and a
+ * measured change is the newer evidence.
+ * @param member - the member.
+ * @param placement - the slot its bucket sits in.
+ * @returns the phase it belongs to.
+ */
+function memberPhase(
+  member: ContributionMember,
+  placement: Extract<Placement, { kind: 'depth' }>,
+): MemberPhase {
+  // Depth 0 is already the last thing before the reply, so there is nowhere
+  // later to send a volatile member — the geometry `moves` explains, unchanged.
+  if (member.volatile === true) return placement.depth >= 1 ? 'defer' : 'keep'
+  if (member.settled === true) return 'promote'
+  return 'keep'
+}
+
+/** A member as the provenance the message will carry: identity and text, no verdict. */
+function partOf(member: ContributionMember): ContributionMember {
+  return {
+    id: member.id,
+    ...member.label === undefined ? {} : { label: member.label },
+    text: member.text,
+  }
 }
 
 /**
@@ -72,6 +171,19 @@ interface DepthItem {
  *   later to put it, and §提案 A's warning applies exactly here: moving it
  *   changes nothing about the prefix and only disturbs the `order` semantics
  *   inside the slot. It stays.
+ *
+ * **This answers for a contribution placed *whole*.** A contribution
+ * {@link splitOf} admits is placed member by member instead, and its
+ * contribution-level verdict is ignored rather than combined: a bucket is
+ * marked volatile the moment its *membership* changes, which says nothing about
+ * any entry in it, and that mark is exactly what the split exists to stop
+ * reading. Combining the two would move the whole bucket *and* its members,
+ * which is the one arrangement that could send text twice. The branch that
+ * prevents that is in the three callers — {@link depthSlots},
+ * {@link depthSegment} and {@link itemize} each ask `splitOf` first and only
+ * consult this function on the `undefined` side. It is not repeated here: a
+ * second guard inside this function would be unreachable, and unreachable code
+ * with no test to fail is worse than none.
  * @param contribution - the contribution.
  * @param cacheFriendly - whether the reorder is enabled.
  * @returns true when it belongs in the volatile segment.
@@ -102,6 +214,10 @@ function moves(contribution: Contribution, cacheFriendly: boolean): boolean {
  * A volatile contribution is never promoted even if some earlier assembly had
  * settled it: {@link moves} and this function must not both claim the same
  * contribution, and volatility is the newer evidence.
+ *
+ * Like {@link moves}, this answers for a contribution placed **whole**; a split
+ * one is decided by {@link memberPhase}, on the other side of a branch its
+ * three callers take first.
  * @param contribution - the contribution.
  * @param cacheFriendly - whether the reorder is enabled.
  * @returns true when it belongs in the stable segment.
@@ -114,30 +230,113 @@ function promotes(contribution: Contribution, cacheFriendly: boolean): boolean {
 }
 
 /**
- * The stable segment: depth injections the reorder pulled into the prefix, in
- * the order the model would have read them.
+ * One message the reorder emits somewhere other than the slot its contribution
+ * asked for.
  *
- * Deepest first, which is that order: a depth-4 entry sat four floors from the
- * end and a depth-1 entry one floor from it, so the deeper one was read first.
- * Ties fall to `order` then to the original sequence, the same rule the depth
- * slots use.
+ * `parts` is set only when the entry is one member of a split bucket, so the
+ * member's own id and label ride to the trace: the message is not in the system
+ * string, so the seams cannot name it, and a promoted entry that could only be
+ * reported as its bucket would defeat the point of splitting it.
+ */
+interface SegmentEntry {
+  id: string
+  text: string
+  role: Role
+  parts?: ContributionMember[]
+}
+
+/** A segment entry with the keys it is sorted by. */
+interface RankedEntry extends SegmentEntry {
+  depth: number
+  order: number
+  sequence: number
+  /** Position among its bucket's members, so a split bucket keeps upstream's order. */
+  member: number
+}
+
+/**
+ * One direction of the reorder, over depth placements and their members.
+ *
+ * Deepest first, which is the order the model would have read them: a depth-4
+ * entry sat four floors from the end and a depth-1 entry one floor from it, so
+ * the deeper one came first. Ties fall to `order`, then to the original
+ * sequence, then — new with the split — to the member's position in its bucket,
+ * so two entries promoted out of one bucket reach the model in the order
+ * upstream joined them. Without that last key the group would keep its
+ * *relative* order only by accident of the sort's stability.
  * @param contributions - every contribution.
  * @param cacheFriendly - whether the reorder is enabled.
- * @returns the promoted contributions with the role each should ride.
+ * @param phase - `promote` for the stable segment, `defer` for the volatile one.
+ * @returns the entries for that segment, in reading order, none of them empty.
+ */
+function depthSegment(
+  contributions: readonly Contribution[],
+  cacheFriendly: boolean,
+  phase: 'promote' | 'defer',
+): SegmentEntry[] {
+  const ranked: RankedEntry[] = []
+  for (const item of depthItems(contributions)) {
+    const rank = {
+      depth: item.placement.depth,
+      order: item.placement.order ?? 0,
+      sequence: item.sequence,
+    }
+    const split = splitOf(item.contribution, cacheFriendly)
+    if (split === undefined) {
+      const takes = phase === 'promote'
+        ? promotes(item.contribution, cacheFriendly)
+        : moves(item.contribution, cacheFriendly)
+      if (takes) {
+        ranked.push({
+          ...rank,
+          member: 0,
+          id: item.contribution.id,
+          text: item.contribution.text,
+          role: item.placement.role,
+        })
+      }
+      continue
+    }
+    split.members.forEach((member, index) => {
+      if (memberPhase(member, split.placement) !== phase) return
+      ranked.push({
+        ...rank,
+        member: index,
+        id: member.id,
+        text: member.text,
+        role: split.placement.role,
+        parts: [partOf(member)],
+      })
+    })
+  }
+  return ranked
+    .sort((left, right) =>
+      right.depth - left.depth
+      || left.order - right.order
+      || left.sequence - right.sequence
+      || left.member - right.member)
+    .filter(entry => entry.text.trim().length > 0)
+    .map(entry => ({
+      id: entry.id,
+      text: entry.text,
+      role: entry.role,
+      ...entry.parts === undefined ? {} : { parts: entry.parts },
+    }))
+}
+
+/**
+ * The stable segment: depth injections, and members of them, the reorder pulled
+ * into the prefix.
+ * @param contributions - every contribution.
+ * @param cacheFriendly - whether the reorder is enabled.
+ * @returns the promoted entries in reading order.
  */
 function stableSegment(
   contributions: readonly Contribution[],
   cacheFriendly: boolean,
-): { contribution: Contribution, role: Role }[] {
+): SegmentEntry[] {
   if (!cacheFriendly) return []
-  return depthItems(contributions)
-    .filter(item => promotes(item.contribution, cacheFriendly))
-    .sort((left, right) =>
-      right.placement.depth - left.placement.depth
-      || (left.placement.order ?? 0) - (right.placement.order ?? 0)
-      || left.sequence - right.sequence)
-    .map(item => ({ contribution: item.contribution, role: item.placement.role }))
-    .filter(item => item.contribution.text.trim().length > 0)
+  return depthSegment(contributions, cacheFriendly, 'promote')
 }
 
 /**
@@ -223,21 +422,15 @@ export function renderSystem(contributions: readonly Contribution[], cacheFriend
 function volatileSegment(
   contributions: readonly Contribution[],
   cacheFriendly: boolean,
-): { contribution: Contribution, role: Role }[] {
+): SegmentEntry[] {
   if (!cacheFriendly) return []
   const moved = systemOrder(contributions)
     .filter(item => moves(item, cacheFriendly))
-    .map(item => ({ contribution: item, role: 'system' as Role }))
+    .map(item => ({ id: item.id, text: item.text, role: 'system' as Role }))
 
-  const lifted = depthItems(contributions)
-    .filter(item => moves(item.contribution, cacheFriendly))
-    .sort((left, right) =>
-      right.placement.depth - left.placement.depth
-      || (left.placement.order ?? 0) - (right.placement.order ?? 0)
-      || left.sequence - right.sequence)
-    .map(item => ({ contribution: item.contribution, role: item.placement.role }))
+  const lifted = depthSegment(contributions, cacheFriendly, 'defer')
 
-  return [...moved, ...lifted].filter(item => item.contribution.text.trim().length > 0)
+  return [...moved, ...lifted].filter(entry => entry.text.trim().length > 0)
 }
 
 /** Collect the depth-placed contributions in stable, sorted order. */
@@ -249,6 +442,82 @@ function depthItems(contributions: readonly Contribution[]): DepthItem[] {
     }
   })
   return items
+}
+
+/** What is left to place in a depth slot after the reorder has taken its share. */
+interface SlottedDepth {
+  placement: Extract<Placement, { kind: 'depth' }>
+  sequence: number
+  /** The contribution's id: a slot keeps its own name even when it is a remainder. */
+  id: string
+  /** The text this slot carries — the whole contribution, or the members that stayed. */
+  text: string
+  /** The members that stayed, when this slot came from a split bucket. */
+  parts?: ContributionMember[]
+  volatile: boolean
+}
+
+/**
+ * The depth slots' occupants: whole contributions the reorder did not take, and
+ * the remainder of the ones it took members out of.
+ *
+ * **The one place that decides what stays**, called by both the placement and
+ * the budget charge, so the two cannot disagree about which text a slot holds.
+ * The three groups — this, {@link stableSegment} and {@link volatileSegment} —
+ * have to *partition* the contributions and their members: a member charged in
+ * two of them would make the trim drop a floor that fits, and one charged in
+ * none would let the conversation grow into space that is already spent.
+ *
+ * A split bucket keeps the **bucket's** id on its remainder rather than taking
+ * the surviving member's, because the slot is still the bucket's slot; the
+ * members ride in `parts`, which is where a reader looks to find out which
+ * entries are left in it.
+ * @param contributions - every contribution.
+ * @param cacheFriendly - whether the reorder is enabled.
+ * @returns one entry per depth slot that still has text, unsorted.
+ */
+function depthSlots(
+  contributions: readonly Contribution[],
+  cacheFriendly: boolean,
+): SlottedDepth[] {
+  const slotted: SlottedDepth[] = []
+  for (const item of depthItems(contributions)) {
+    const split = splitOf(item.contribution, cacheFriendly)
+    if (split === undefined) {
+      // The lifted and the promoted are excluded here rather than skipped
+      // later: a depth injection going into a segment must not also occupy its
+      // original slot, and filtering at the source is the only place that
+      // cannot be forgotten by a later branch.
+      if (moves(item.contribution, cacheFriendly) || promotes(item.contribution, cacheFriendly)) continue
+      slotted.push({
+        placement: item.placement,
+        sequence: item.sequence,
+        id: item.contribution.id,
+        text: item.contribution.text,
+        volatile: item.contribution.volatile === true,
+      })
+      continue
+    }
+    const kept = split.members.filter(member => memberPhase(member, split.placement) === 'keep')
+    if (kept.length === 0) continue
+    slotted.push({
+      placement: item.placement,
+      sequence: item.sequence,
+      id: item.contribution.id,
+      // Re-joined with the separator the bucket was joined with, so a slot
+      // nothing was taken out of carries the contribution's own text back —
+      // byte for byte, which is what makes "the split changed nothing here"
+      // true rather than nearly true.
+      text: kept.map(member => member.text).join(MEMBER_JOIN),
+      parts: kept.map(partOf),
+      // A remainder is volatile when any member left in it is: the flag answers
+      // "will this slot's text differ next turn", and one moving member is
+      // enough. Only depth 0 can be in this position — deeper volatile members
+      // leave for the volatile segment.
+      volatile: kept.some(member => member.volatile === true),
+    })
+  }
+  return slotted
 }
 
 /**
@@ -419,6 +688,14 @@ export function trimHistory(
  *   depth-0 injections — a position that costs nothing, because everything from
  *   the newest floor onward is already past the divergence point, while keeping
  *   depth 0's own promise that it is the last thing before the reply.
+ *
+ * A contribution carrying {@link Contribution.members} takes part in all three
+ * groups at once: its settled entries go into the stable segment as separate
+ * messages, its volatile ones (deeper than 0) into the volatile segment, and
+ * whatever is left is re-joined with {@link MEMBER_JOIN} and stays in the slot
+ * under the bucket's own id. That is the whole point of the member list — the
+ * bucket's hash moves whenever its *membership* does, so the bucket is the
+ * wrong unit to ask "did this change" of.
  * @param history - the surviving conversation, oldest first.
  * @param contributions - every contribution; depth ones are spliced, and the
  *   classified ones become the two segments when `cacheFriendly` is on.
@@ -430,28 +707,40 @@ export function injectAtDepth(
   contributions: readonly Contribution[],
   cacheFriendly = false,
 ): PipelineMessage[] {
-  // The lifted ones are excluded from the slots here rather than skipped later:
-  // a depth injection that is going into the volatile segment must not also
-  // occupy its original slot, and filtering at the source is the only place
-  // that cannot be forgotten by a later branch.
-  const items = depthItems(contributions)
-    .filter(item => !moves(item.contribution, cacheFriendly) && !promotes(item.contribution, cacheFriendly))
+  const items = depthSlots(contributions, cacheFriendly)
   const moved = volatileSegment(contributions, cacheFriendly)
   const promoted = stableSegment(contributions, cacheFriendly)
 
   // One bucket per insertion point, including `history.length` for depth 0.
-  const slots: DepthItem[][] = Array.from({ length: history.length + 1 }, () => [])
+  const slots: SlottedDepth[][] = Array.from({ length: history.length + 1 }, () => [])
 
   for (const item of items) {
     const raw = history.length - item.placement.depth
     const index = Math.min(Math.max(raw, 0), history.length)
-    ;(slots[index] as DepthItem[]).push(item)
+    ;(slots[index] as SlottedDepth[]).push(item)
   }
 
   for (const slot of slots) {
     slot.sort((left, right) =>
       (left.placement.order ?? 0) - (right.placement.order ?? 0) || left.sequence - right.sequence)
   }
+
+  /**
+   * One message for a segment entry.
+   *
+   * `parts` rides when the entry is a promoted or deferred **member**: its
+   * message is not in the system string, so the seams cannot name it, and the
+   * part is the only place the entry's own id and label can travel. A whole
+   * contribution needs none — its `id` already names it, which is what every
+   * segment message carried before the split existed.
+   */
+  const messageOf = (entry: SegmentEntry, volatile: boolean): PipelineMessage => ({
+    role: entry.role,
+    text: entry.text,
+    id: entry.id,
+    ...entry.parts === undefined ? {} : { parts: entry.parts },
+    ...volatile ? { volatile: true } : {},
+  })
 
   const messages: PipelineMessage[] = []
   // The stable segment goes in front of everything, including any injection
@@ -463,21 +752,17 @@ export function injectAtDepth(
   // message is the only place its provenance can ride. A trace that could not
   // attribute these would mark every cache-friendly request unattributed —
   // the reorder's own messages reading as a defect.
-  for (const item of promoted) {
-    messages.push({ role: item.role, text: item.contribution.text, id: item.contribution.id })
-  }
+  for (const item of promoted) messages.push(messageOf(item, false))
   for (let index = 0; index <= history.length; index += 1) {
     // The moved sections go in ahead of depth 0's own bucket, so a depth-0
     // injection stays the last thing before the reply.
     if (index === history.length) {
-      for (const item of moved) {
-        // Same provenance rule as the promoted group: a deferred section left
-        // the system string, so its id has to travel on the message.
-        messages.push({ role: item.role, text: item.contribution.text, id: item.contribution.id, volatile: true })
-      }
+      // Same provenance rule as the promoted group: a deferred section left
+      // the system string, so its id has to travel on the message.
+      for (const item of moved) messages.push(messageOf(item, true))
     }
-    for (const item of slots[index] as DepthItem[]) {
-      if (item.contribution.text.trim().length === 0) continue
+    for (const item of slots[index] as SlottedDepth[]) {
+      if (item.text.trim().length === 0) continue
       // `id` is provenance, not content — `PipelineMessage.id` says why it
       // cannot reach a provider. Stamped here because here is the only place
       // that knows which contribution became which message: after this the
@@ -486,11 +771,17 @@ export function injectAtDepth(
       // make a guess. `volatile` rides beside it and answers a different
       // question — provenance says which item, volatility says whether the
       // squash and the prefix walk may cross this message.
+      //
+      // `parts` is the finer half of the same answer, and it is set for a slot
+      // that came from a member list: "the depth injection changed" names the
+      // largest part of the request and no entry in it, and after a split it is
+      // not even true of the whole slot any more.
       messages.push({
         role: item.placement.role,
-        text: item.contribution.text,
-        id: item.contribution.id,
-        ...item.contribution.volatile === true ? { volatile: true } : {},
+        text: item.text,
+        id: item.id,
+        ...item.parts === undefined ? {} : { parts: item.parts },
+        ...item.volatile ? { volatile: true } : {},
       })
     }
     const entry = history[index]
@@ -561,12 +852,11 @@ export function assemble(input: AssembleInput): AssembleResult {
   // trace offsets past the end of the string.
   const segments = systemSegments(contributions, cacheFriendly)
   const system = segments.map(segment => segment.text).join(SYSTEM_JOIN)
-  // The three terms of the charge below must **partition** the contributions:
-  // `moved` and `promoted` hold every relocated one, so the depth term has to
-  // drop exactly those, or a relocated injection would be charged twice and the
-  // trim would drop a floor that fits.
-  const items = depthItems(contributions)
-    .filter(item => !moves(item.contribution, cacheFriendly) && !promotes(item.contribution, cacheFriendly))
+  // The three terms of the charge below must **partition** the contributions
+  // and their members: `moved` and `promoted` hold every relocated one, and
+  // `depthSlots` returns exactly what is left, or a relocated injection would
+  // be charged twice and the trim would drop a floor that fits.
+  const items = depthSlots(contributions, cacheFriendly)
   const moved = volatileSegment(contributions, cacheFriendly)
   const promoted = stableSegment(contributions, cacheFriendly)
 
@@ -577,12 +867,21 @@ export function assemble(input: AssembleInput): AssembleResult {
   // The moved sections are charged here as their own term, because they left
   // `system` — without it the reorder would hand the trim a budget that looks
   // roomier by exactly the size of what it moved, and the conversation would
-  // grow into space that is already spent. It is deliberately the *same*
-  // total: the reorder changes where text sits, never how much of it there is.
+  // grow into space that is already spent. It is deliberately the *same* text:
+  // the reorder changes where text sits, never how much of it there is.
+  //
+  // Not quite the same *number*, and the difference is separators. Text that
+  // leaves a join takes no separator with it — the blank line between two
+  // system sections, the newline between two members of a depth bucket — so a
+  // reorder that lifts three sections and two entries out of their joins
+  // charges a handful of tokens less than the unreordered assembly did, and the
+  // pieces are counted at their own boundaries rather than across them. Both
+  // effects are bounded by the number of seams moved; neither is a term the
+  // trim can be off by a floor over.
   const fixed = count(system)
-    + moved.reduce((total, item) => total + count(item.contribution.text), 0)
-    + promoted.reduce((total, item) => total + count(item.contribution.text), 0)
-    + items.reduce((total, item) => total + count(item.contribution.text), 0)
+    + moved.reduce((total, item) => total + count(item.text), 0)
+    + promoted.reduce((total, item) => total + count(item.text), 0)
+    + items.reduce((total, item) => total + count(item.text), 0)
     + history.reduce((total, entry) => total + (entry.pinned === true ? count(entry.text) : 0), 0)
 
   const available = budget.context - budget.reserve - fixed
@@ -625,21 +924,49 @@ export function itemize(
   count: TokenCounter,
   cacheFriendly = false,
 ): AssembledItem[] {
-  const items: AssembledItem[] = contributions.map(contribution => ({
-    id: contribution.id,
-    ...contribution.label === undefined ? {} : { label: contribution.label },
-    kind: contribution.placement.kind,
-    tokens: count(contribution.text),
-    ...contribution.placement.kind === 'depth'
-      ? { depth: contribution.placement.depth, role: contribution.placement.role }
-      : {},
-    // Reported even for a section that rendered empty and therefore was not
-    // actually emitted: the row exists to answer "where did my text go", and
-    // an empty volatile section is still classified volatile, which is the
-    // fact a reader is checking.
-    ...moves(contribution, cacheFriendly) ? { deferred: true } : {},
-    ...promotes(contribution, cacheFriendly) ? { promoted: true } : {},
-  }))
+  const items: AssembledItem[] = contributions.map((contribution) => {
+    const split = splitOf(contribution, cacheFriendly)
+    const phases = split?.members.map(member => memberPhase(member, split.placement)) ?? []
+    /** Whether every member went the same way, which is when the row can speak for them. */
+    const all = (phase: MemberPhase): boolean => phases.length > 0 && phases.every(one => one === phase)
+    const members: AssembledMember[] = (split?.members ?? []).map((member, index) => ({
+      id: member.id,
+      ...member.label === undefined ? {} : { label: member.label },
+      tokens: count(member.text),
+      ...phases[index] === 'defer' ? { deferred: true } : {},
+      ...phases[index] === 'promote' ? { promoted: true } : {},
+    }))
+    return {
+      id: contribution.id,
+      ...contribution.label === undefined ? {} : { label: contribution.label },
+      kind: contribution.placement.kind,
+      tokens: count(contribution.text),
+      ...contribution.placement.kind === 'depth'
+        ? { depth: contribution.placement.depth, role: contribution.placement.role }
+        : {},
+      // Reported even for a section that rendered empty and therefore was not
+      // actually emitted: the row exists to answer "where did my text go", and
+      // an empty volatile section is still classified volatile, which is the
+      // fact a reader is checking.
+      //
+      // For a split bucket the two marks mean **all of its members**, because
+      // that is the only reading under which one mark on one row is true. A
+      // bucket whose members went different ways carries neither and is read
+      // through `members` instead — a 19 KB injection with two entries in the
+      // prefix and one still at depth 0 has no honest single-row answer, and
+      // inventing one would tell a reader their whole world-info block moved.
+      ...split === undefined
+        ? {
+            ...moves(contribution, cacheFriendly) ? { deferred: true } : {},
+            ...promotes(contribution, cacheFriendly) ? { promoted: true } : {},
+          }
+        : {
+            ...all('defer') ? { deferred: true } : {},
+            ...all('promote') ? { promoted: true } : {},
+            members,
+          },
+    }
+  })
 
   items.push({
     id: 'chatHistory',

@@ -3021,3 +3021,47 @@ host reorders anyway. The card's one-line summary names it only when it is
 **off** (「缓存顺序已关」), the mirror of how the other two switches are named
 only when on: for a default-on control, the state worth surfacing without
 opening the card is having been switched off.
+
+## 69. A world-info row that was split shows which of its entries moved, because no badge on the row itself would be true
+
+§67 put one badge on one row: 「已前移（缓存友好）」 or 「已后移（缓存友好）」,
+with the position the row came from. That works while a row is one thing that
+either moved or did not.
+
+`notes/packages/iris-app-service/DEVIATIONS.md` §50 broke that assumption on the
+largest row in the panel. A world-info depth bucket is **one** contribution and
+several entries in the request, and the host now classifies the entries
+separately — so on the operator's own 爱衣 four of five entries in one bucket
+are sent ahead of the transcript and the fifth stays after it. There is no
+single badge for that. 「已前移」 on the row would tell the reader their whole
+19 KB world-info block moved, and no badge at all would leave the panel silent
+about the one row it exists to explain.
+
+**So the row keeps a badge only when every one of its entries went the same
+way**, and otherwise the answer moves to a sub-list under the row: one line per
+entry, the entry's own `comment` as its name, its own token count, and its own
+badge where it has one. The sub-list is rendered **only when at least one entry
+carries a badge** — a bucket that was split and stayed put is the ordinary case,
+and five unmarked sub-rows under it would bury the rows that did move.
+
+Three details are decisions rather than styling:
+
+- **The row count does not change.** Five entries do not become five rows. The
+  list is contribution order — the order the preset and the card asked for — and
+  a panel that grew a row per world-info entry would describe a configuration
+  the user never made. The bucket's token count stays the bucket's.
+- **The entries get their own locators**, `prompt-member-promoted` and
+  `prompt-member-deferred`, distinct from the row's `prompt-promoted` /
+  `prompt-deferred`. The badges carry the same words, so a QA locator asking for
+  a moved *entry* would otherwise match its bucket's badge.
+- **The divergence mark is looked up by the entry's own id.** The host names
+  members `<bucket>#<book>.<uid>` in both the itemization and
+  `prompt.divergence`, so 「未变但重发」 lands on the entry that was re-sent
+  rather than on its bucket — which is the whole reason the ids are minted per
+  entry.
+
+The sub-list has no `origin` line ("row *n* of *m*"), and that is the one place
+this is thinner than §67's row badge. The position a reader would go to in order
+to change an entry is inside a world book, not at an index in this list, and a
+number pointing into the panel's own ordering would be a place that does not
+exist. The entry's name is the handle instead.
