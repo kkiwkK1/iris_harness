@@ -20,7 +20,7 @@ import type { ScriptContext } from '@iris/protocol'
  *   `seeded` hands the frame the inlined-snapshot seed a srcdoc would carry —
  *   the document-order guarantee that lets a parse-time call answer truth.
  */
-function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext }): {
+function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext, eventTarget?: EventTarget }): {
   posted: FromFrame[]
   send: (message: ToFrame) => void
   /** The globals the last evaluation was handed, by name. */
@@ -109,6 +109,7 @@ function realm(options?: { interfaceFrame?: boolean, seeded?: ScriptContext }): 
     token: 'tok',
     container,
     ...(options?.interfaceFrame === true ? { interfaceFrame: true } : {}),
+    ...(options?.eventTarget === undefined ? {} : { eventTarget: options.eventTarget }),
     // The seed a srcdoc would have inlined ahead of this bootstrap. The real
     // reader (frame-entry) consumes and deletes the global; here the snapshot
     // itself is the fixture, and "was it read before the body ran" is what the
@@ -435,6 +436,33 @@ test('parent.document is the virtual document, and body is the card container', 
   })
 
   assert.equal(scope.posted.at(-1)?.type, 'ran')
+})
+
+test('parent.document delegates its event surface to the frame document', () => {
+  /*
+   * 人贩子物语's 黑市手机 walks `window.parent` outwards until a document
+   * reads — here that walk stops at the virtual parent, whose `.document` is
+   * this stand-in — and its next statement is
+   * `hostDocument.addEventListener('click', …, true)`. The bus is asserted to
+   * be the **frame's own document** (the realm's event target), not the parent
+   * proxy's message bus: the handler reads `event.target` off a real DOM event,
+   * which only the document produces.
+   */
+  const target = new EventTarget()
+  const scope = realm({ eventTarget: target })
+  let registered: ((event: unknown) => void) | undefined
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    const doc = parent['document'] as Record<string, unknown>
+    const add = doc['addEventListener'] as ((type: string, listener: (event: unknown) => void) => void)
+      | undefined
+    assert.notEqual(add, undefined, 'the document stand-in answered addEventListener with undefined')
+    add('click', event => { registered = event })
+  })
+
+  const event = new Event('click')
+  target.dispatchEvent(event)
+  assert.equal(registered, event, 'the listener ran against something other than the frame document')
 })
 
 test('the viewport a card reads is the one the shell reported', () => {

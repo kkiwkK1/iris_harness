@@ -52,6 +52,17 @@ export interface FrameEnv {
   head?: unknown
   /** The frame's own document, for node construction. */
   factory: NodeFactory
+  /**
+   * The frame's own document as an event target — what `parent.document`'s
+   * `addEventListener`/`removeEventListener`/`dispatchEvent` delegate to.
+   *
+   * Handed over rather than read off {@link FrameEnv.realWindow} for the same
+   * reason `head` is a parameter: this module knows nothing about the document
+   * it installs into. Optional so a test can install without a DOM; absent, the
+   * virtual document refuses the three names by name, as it does for any other
+   * member the realm did not hand over.
+   */
+  eventTarget?: EventTarget
   /** The real window of this frame, proxied through for everything not overridden. */
   realWindow: object
   /** Send a message to the shell. */
@@ -423,6 +434,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   const virtualDocument = createVirtualDocument({
     container: env.container,
     ...(env.head === undefined ? {} : { head: env.head }),
+    ...(env.eventTarget === undefined ? {} : { eventTarget: env.eventTarget }),
     viewport: readViewport,
     factory: env.factory,
     anchors,

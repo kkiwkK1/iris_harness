@@ -1793,6 +1793,11 @@ try {
   // this card's own document, and `parent.document.head` is where a script
   // that finished mounting injects its stylesheet.
   ...(document.head === null ? {} : { head: document.head }),
+  // The same document as an event target: a script that walks `window.parent`
+  // outwards lands its `hostDocument` here and delegates page-level `click` and
+  // `change` through it. The frame's document is the only page those events
+  // happen in, so it is the only honest bus for them.
+  eventTarget: document,
   // What relative fetches resolve against. For a srcdoc frame `baseURI` is the
   // shell page's URL, so the bridge resolves a card's `fetch('/x')` the same
   // way the browser would have.
