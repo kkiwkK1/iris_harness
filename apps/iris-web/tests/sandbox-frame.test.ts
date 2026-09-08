@@ -450,14 +450,20 @@ test('parent.document delegates its event surface to the frame document', () => 
    */
   const target = new EventTarget()
   const scope = realm({ eventTarget: target })
-  let registered: ((event: unknown) => void) | undefined
+  // The event itself, held to compare against what was dispatched. Typed
+  // `unknown` because what a listener receives is exactly that — the assertion
+  // below compares it by identity, which needs no more than that.
+  let registered: unknown
   evaluate(scope, globals => {
     const parent = globals['parent'] as Record<string, unknown>
     const doc = parent['document'] as Record<string, unknown>
     const add = doc['addEventListener'] as ((type: string, listener: (event: unknown) => void) => void)
       | undefined
     assert.notEqual(add, undefined, 'the document stand-in answered addEventListener with undefined')
-    add('click', event => { registered = event })
+    // The assert above is the test's guard, and it is a runtime one; the
+    // non-null assertion carries it to the compiler without changing what the
+    // test checks.
+    add!('click', event => { registered = event })
   })
 
   const event = new Event('click')

@@ -63,12 +63,15 @@ test('a card overwrite with the named export still answers the z → .z chain', 
   assert.equal(typeof (r['z'] as unknown as Record<string, unknown>)['prettifyError'], 'function')
 
   // The work the helper does at registration: build through `r.z`, and match a
-  // schema against the copy the card built its own schemas from.
+  // schema against the copy the card built its own schemas from. The class on
+  // the right of `instanceof` is read through that same dereference
+  // (`zViaHelper` is `r['z']`), typed as zod's own class so the compiler sees
+  // what the runtime value is.
   const zViaHelper = r['z'] as unknown as typeof zodNamespace.z
   const schema = zViaHelper.object({ stage: zViaHelper.string() })
   assert.deepEqual(schema.parse({ stage: '犯罪期' }), { stage: '犯罪期' })
   assert.equal(
-    schema instanceof (r['z'] as unknown as Record<string, unknown>)['ZodObject'],
+    schema instanceof zViaHelper.ZodObject,
     true,
     'instanceof must see the class of the copy the card built from',
   )
