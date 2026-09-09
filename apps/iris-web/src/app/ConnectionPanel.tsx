@@ -219,10 +219,31 @@ function testErrorText(error: ConnectionTestError): string {
     case 'unauthorized': return t('testErrUnauthorized')
     case 'timeout': return t('testErrTimeout')
     case 'network': return t('testErrNetwork')
+    case 'bad-url': return t('testErrBadUrl')
+    case 'bad-key': return t('testErrBadKey')
     case 'http-error': return t('testErrHttp')
     case 'bad-response': return t('testErrBadResponse')
     case 'no-endpoint': return t('testErrNoEndpoint')
   }
+}
+
+/**
+ * The host's own words for a failed probe, shown under the translated sentence.
+ *
+ * The sentence says what kind of thing went wrong; the host's message says
+ * *which* — the address it tried, the status it got, the `ENOTFOUND` or
+ * `ECONNREFUSED` underneath a "could not reach". Measured 2026-09-09: a probe
+ * that failed in one millisecond showed only 「无法连接到端点」 and the person
+ * spent the afternoon on their network, when the host had the reason all
+ * along. The protocol promises the message never carries a credential, so
+ * every code's detail is shown; the two that are pure host boilerplate
+ * (`missing-key`, `no-endpoint`) add nothing to their sentence and are left out.
+ * @param error - the failure half of a probe result.
+ * @returns the detail line, or `undefined` when the sentence already says it all.
+ */
+function testErrorDetail(error: ConnectionTestError): string | undefined {
+  if (error.code === 'missing-key' || error.code === 'no-endpoint') return undefined
+  return error.message.length === 0 ? undefined : error.message
 }
 
 /**
@@ -250,6 +271,8 @@ export function ConnectionPanel(): ReactElement {
       models?: string[]
       keySource: ConnectionKeySource
       errorText?: string
+      /** The host's own reason, under the sentence. See `testErrorDetail`. */
+      errorDetail?: string
     }
   >({ phase: 'idle' })
   const [savedNote, setSavedNote] = useState(false)
@@ -339,12 +362,14 @@ export function ConnectionPanel(): ReactElement {
           ...(result.models === undefined ? {} : { models: result.models }),
         })
       } else {
+        const detail = result.error === undefined ? undefined : testErrorDetail(result.error)
         setTestState({
           phase: 'done',
           ok: false,
           latencyMs: result.latencyMs,
           keySource: result.keySource,
           ...(result.error === undefined ? {} : { errorText: testErrorText(result.error) }),
+          ...(detail === undefined ? {} : { errorDetail: detail }),
         })
       }
     } catch (error: unknown) {
@@ -450,7 +475,14 @@ export function ConnectionPanel(): ReactElement {
         </p>
       )
     }
-    return <p className="iris-field__note iris-conn__test-error">{testState.errorText ?? t('testErrHttp')}</p>
+    return (
+      <p className="iris-field__note iris-conn__test-error">
+        {testState.errorText ?? t('testErrHttp')}
+        {testState.errorDetail === undefined
+          ? null
+          : <span className="iris-conn__test-detail">{testState.errorDetail}</span>}
+      </p>
+    )
   }
 
   const active = profiles.find(profile => profile.id === activeId)

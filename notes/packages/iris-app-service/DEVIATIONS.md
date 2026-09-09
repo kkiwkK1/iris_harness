@@ -4201,3 +4201,48 @@ fields stay absent rather than zero on such a trace. What would overturn it: a t
 whose `error` disagrees with the `stream.error` the panel showed for the same turn,
 or an interrupted turn whose divergence is reported under any excuse but
 `interrupted`.
+
+## 57. A connection test names a fault in the field, and says the reason under "could not reach"
+
+**Kind: fix to how `connection.test` classifies a `fetch` that threw.**
+
+Reported 2026-09-09: 「无法连接到端点。请检查地址与网络。」 from the connection form,
+one millisecond after pressing test, with a DeepSeek key and endpoint that worked on
+every other client the same afternoon. The host's own probe from the same process to
+`https://api.deepseek.com/v1/models` answered 200 with three models in about one
+second, so the network was not the fault. What was: `#probeEndpoint` caught every
+non-`TimeoutError` throw from `fetch` and filed it under `network` — including the
+two `TypeError`s `fetch` throws **before any packet leaves**: an address it cannot
+parse as a URL (no scheme; a full-width `：` from an IME; a stray word in the
+field), and a header value it cannot carry (a code unit above 0xFF, or a control
+character — a key with a CJK character pasted into it). The message did carry the
+`TypeError` text, but the web panel showed only the translated sentence for the
+code, so the reason never reached anyone.
+
+Upstream has no probe of this kind (its connection test is the first generation),
+so there is nothing to diverge from; the divergence recorded is against this
+host's own previous answer.
+
+**What changed.**
+- Two refusals before the wire, each its own code: `bad-url` when `isRequestableUrl`
+  (the WHATWG parser, `http:`/`https:` only) rejects the address the request would
+  use, and `bad-key` when `headerValueFault` finds a character a ByteString header
+  cannot carry. `latencyMs` is 0 for both, and the endpoint sees no request (pinned).
+- The `bad-key` message names the **index and code point** of the offending
+  character and nothing of the value around it, so it can be shown beside the
+  credential's field (pinned: the message contains neither the key's body nor the
+  character).
+- A key with a trailing newline is **not** a `bad-key`: the platform trims header
+  values, the request leaves, and the endpoint judges it (pinned by a test that
+  asserts the request arrived).
+- `fetchFailureReason` reads through undici's `TypeError: fetch failed` to the
+  `.cause` chain, so a `network` message now ends in `ECONNREFUSED`, `ENOTFOUND`,
+  `CERT_HAS_EXPIRED` and the like rather than in "fetch failed" (pinned on the
+  refused loopback port).
+- Protocol: `ConnectionTestErrorCode` gains `'bad-url' | 'bad-key'` with the reason
+  in their docblocks. Web side in web §75.
+
+**What would overturn it.** A probe that reaches the endpoint and still answers
+`bad-url` or `bad-key`; a `bad-key` message that contains any character of the key
+other than the index and code point; a `network` message on a refused port that
+does not carry the socket code.

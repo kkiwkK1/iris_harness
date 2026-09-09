@@ -1472,8 +1472,21 @@ export type ConnectionTestErrorCode =
   | 'unauthorized'
   /** The endpoint did not answer within the probe's budget. */
   | 'timeout'
-  /** The request never reached an endpoint — DNS, refused, reset. */
+  /** The request never reached an endpoint — DNS, refused, reset, TLS. */
   | 'network'
+  /**
+   * The address typed is not one a request can be sent to — no scheme, a
+   * full-width character from an IME, a stray word pasted into the field. Said
+   * before any request, because "could not reach" would point the person at
+   * their network when the fix is in the field in front of them.
+   */
+  | 'bad-url'
+  /**
+   * The key holds a character an HTTP header cannot carry (outside Latin-1, or
+   * a control character inside it). Same reason as `bad-url`: `fetch` throws
+   * this as a `TypeError` that a naive catch would file under `network`.
+   */
+  | 'bad-key'
   /** The endpoint answered, with a status that is not one of the named kinds. */
   | 'http-error'
   /** The endpoint answered 200, but not with a model list the probe can read. */

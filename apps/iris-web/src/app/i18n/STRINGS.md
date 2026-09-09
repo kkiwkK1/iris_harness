@@ -28,6 +28,7 @@
 | `SettingsDrawer.tsx` | 抽屉 aria/标题（两种）/关闭/未加载；路由与采样全部标签与注释；主题选项；正文字号/每行长度；语言项 | `drawer* defaults* thisConversation close settingsNotLoaded section* provider model temperature* … langEn langZh` |
 | `fields.tsx` | host default / use host default | `hostDefault useHostDefault` |
 | `ConnectionPanel.tsx` | 宿主行、种子注记、空态、删除 aria、启用连接两句话、命名输入、保存连接 | `host seededNotReal noSavedConnections deleteNamed activate* nameThisConnection connectionName saveConnection` |
+| `ConnectionPanel.tsx` 测试连接判定句 | 每个失败码一句（缺密钥/401/超时/网络/地址不是 URL/密钥含请求头无法携带的字符/HTTP 错误/不是模型列表/无端点）；宿主自己的原因句（英文技术细节:尝试的地址、状态码、`ENOTFOUND` 之类）不翻译,原样显示在判定句下方 | `testErr*` |
 | `ScriptPanel.tsx` | 面板头、读取中、无脚本、已拒绝摘要、允许脚本、撤回/更早运行注记、页面访问权全部文案、授权风险对话框四条、随卡运行/你已关闭、卡内关闭、运行它们/不运行 | `sectionCardScripts readingCard cardNoScripts declined* allowScripts runThem dontRunThem withdrawn fromEarlierRun pageAccess* grantDialog* runsWithCard youTurnedThisOff cardOffNote` |
 | `ConsentAsk.tsx` | 区域 aria（复用 `sectionCardScripts`） | — |
 | `consent.ts` `describeConsentAsk` | 授权问句全部变体（全运行/部分运行/覆盖关闭/沙箱句） | `consent*` |

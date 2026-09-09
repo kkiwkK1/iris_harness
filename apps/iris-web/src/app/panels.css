@@ -4201,3 +4201,16 @@
       'script script';
   }
 }
+
+/*
+ * The host's own reason under a failed connection test — the address it
+ * tried, the status it got, the code under "fetch failed". A quieter, smaller
+ * line so the translated sentence stays the thing read first.
+ */
+.iris-conn__test-detail {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.85em;
+  opacity: 0.8;
+  overflow-wrap: anywhere;
+}
