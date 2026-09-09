@@ -16,15 +16,26 @@
  *   scratch field, never a read.** No read ever returns a key, so a `value`
  *   sourced from a profile would either render `undefined` or — worse, the day
  *   somebody "fixes" the protocol — render the credential. There is exactly one
- *   `<input type="password">` in this panel and its `value` must be
- *   `form.apiKey`.
+ *   `<input type="password">` in this module and its `value` must be
+ *   `form.apiKey`. (The editor and the list live in one module deliberately, so
+ *   "exactly one credential field in the whole connection surface" stays a
+ *   statement this file can make.)
  * - **The model control is a `<select>` when there is a list**, which is the
  *   user's request ("改从 models list 里面选择"), with the text input kept only
  *   as the named fallback.
  *
+ * Three wirings the panel around them depends on are pinned here for the same
+ * reason — they are decisions visible in the source and invisible in a render:
+ * the editor is *mounted* only while a provider is being edited (which is what
+ * makes "no field in the panel body" structural rather than a habit), editing
+ * the provider in use re-uses it afterwards (because `connection.save` writes
+ * the file and installs no route), and the panel's "use" is global (no `chatId`
+ * on the wire).
+ *
  * The copy half is checked properly: every key the panel names must exist in
  * both dictionaries. `i18n.test.ts` holds the other direction for the whole
- * shell.
+ * shell, and `tools/render-check.tsx` holds the panel's *shape* — three blocks,
+ * one current row, no resident field — on a real render.
  *
  * @module iris-web/tests/connection-key-field
  */
@@ -39,6 +50,7 @@ import { DICTIONARIES, en, type StringKey } from '../src/app/i18n/strings.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PANEL = readFileSync(join(HERE, '..', 'src', 'app', 'ConnectionPanel.tsx'), 'utf8')
+const STORE = readFileSync(join(HERE, '..', 'src', 'client', 'store.ts'), 'utf8')
 
 test('the key field is password-typed, and there is exactly one of it', () => {
   const password = PANEL.match(/type="password"/g) ?? []
@@ -124,6 +136,62 @@ test('the model saved off-list is reported, not refused', () => {
     /if \(!form\.models\.includes\(form\.model\)\) return/,
     'an off-list model must not block the save',
   )
+})
+
+test('the editor is mounted only while a provider is being edited', () => {
+  // This is what makes the render check's "no field in the panel body" a
+  // property rather than a coincidence: a `Modal` kept mounted and merely
+  // closed would still be a form holding state, and re-opening it for another
+  // provider would show the previous one's endpoint under the new one's title.
+  assert.match(PANEL, /<Modal/, 'the editor is not a Modal any more — the render check assumes it is')
+  assert.match(
+    PANEL,
+    /\{editing === undefined \? null : \(\s*\n\s*<ProviderEditor/,
+    'the editor is not conditionally mounted, so its form survives being closed',
+  )
+})
+
+test('editing the provider in use re-uses it, because a save installs no route', () => {
+  /*
+   * The load-bearing line. `connection.save` writes the profile file and
+   * nothing else — it does not call `#installConnectionFor` and does not write
+   * the settings layer that names the route; only `connection.activate` does
+   * either (`packages/iris-app-service/src/service.ts`, read 2026-09-09). So
+   * changing the endpoint or model of the row in force would sit in the file
+   * while generation kept going to the old address, silently, and the only
+   * symptom would be a reply from a provider the panel says is not selected.
+   */
+  const at = PANEL.indexOf('onSaved={result')
+  assert.ok(at > 0, 'the editor no longer reports its saves to the panel')
+  const handler = PANEL.slice(at, at + 1600)
+  assert.match(handler, /const wasCurrent = result\.editId !== undefined && result\.editId === activeId/)
+  assert.match(
+    handler,
+    /wasCurrent[\s\S]{0,200}actions\.activateConnection\(result\.editId\)/,
+    'saving the provider in use does not re-apply it',
+  )
+})
+
+test('the panel’s “use” is global — no chatId reaches connection.activate', () => {
+  // The user's separation: the provider list is the host's list, and the
+  // per-conversation switch is the model capsule under the composer
+  // (`setChatModel`). Scoped to whichever chat happened to be open, one list
+  // meant two different things depending on where the reader was standing.
+  const at = STORE.indexOf('async activateConnection')
+  assert.ok(at > 0)
+  const action = STORE.slice(at, at + 1800)
+  assert.match(action, /client\.call\('connection\.activate',/, 'the action no longer activates anything')
+  // Scoped to the activation's own argument list, not to the whole action: the
+  // follow-up `settings.get` below legitimately carries a `chatId`, and a
+  // pattern wide enough to see it would fail on the correct code.
+  assert.doesNotMatch(
+    action,
+    /connection\.activate',[^)]*chatId/,
+    'a chatId is being sent with the activation again',
+  )
+  // The follow-up read is not optional: the global layer moved under an open
+  // conversation, so what that conversation effectively generates with changed.
+  assert.match(action, /client\.call\('settings\.get', \{ chatId \}\)/, 'the open chat’s settings are not re-read')
 })
 
 test('every copy key the panel names exists in both dictionaries', () => {

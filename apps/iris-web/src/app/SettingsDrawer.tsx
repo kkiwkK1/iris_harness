@@ -179,24 +179,22 @@ export function SettingsDrawer({
             */}
             <ScopedRegexPanel />
 
-            <CollapsibleSection
-              id="route"
-              title={t('sectionRoute')}
-              summary={`${settings.provider} · ${settings.model}`}
-            >
-              <TextField
-                label={t('provider')}
-                value={settings.provider}
-                onCommit={value => patch('provider', value)}
-              />
-              <TextField
-                label={t('model')}
-                value={settings.model}
-                placeholder={t('modelPlaceholder')}
-                onCommit={value => patch('model', value)}
-              />
-            </CollapsibleSection>
-
+            {/*
+              **The 「路由」 card is gone** (2026-09-09, with the connection
+              panel's rebuild). It was `provider` and `model` as two free-text
+              fields on the global settings layer — a third place to set the
+              route, beside the provider list above and the model capsule under
+              the composer, and the only one of the three that took a typed
+              string with nothing to check it against. That is the failure the
+              whole connection surface is built to prevent: the profile measured
+              on a real SillyTavern install was named `deepseek deepseek-chat`
+              and pointed at Gemini, and a free-text `model` is how the same
+              drift starts here. Both values are still fully settable — a
+              provider's own editor writes them together with the endpoint and
+              the credential they belong to, and `settings.set` still carries
+              them for anything that asks — so nothing is lost but the loose
+              field.
+            */}
             <CollapsibleSection
               id="sampling"
               title={t('sectionSampling')}

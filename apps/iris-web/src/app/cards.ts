@@ -23,7 +23,13 @@ export type CardId =
   | 'presetRegex'
   | 'scopedRegex'
   | 'scriptLibrary'
-  | 'route'
+  // `'route'` was here until 2026-09-09: a card holding `provider` and `model`
+  // as two free-text fields. It is gone because a route typed by hand is the
+  // failure the connection panel exists to prevent — the profile measured on a
+  // real install was named `deepseek deepseek-chat` and pointed at Gemini — and
+  // because the user's ruling is that every change to a provider goes through
+  // that provider's own editor. A stored `route: true` from before simply falls
+  // out of `loadCardState`'s allowlist, which is what it is for.
   | 'sampling'
   | 'replies'
   | 'appearance'
@@ -92,7 +98,7 @@ export function isOpen(state: Readonly<Partial<Record<CardId, boolean>>>, id: Ca
  * list that will not be. A comment asking for it would not have gone red.
  */
 const ALL_CARDS = [
-  'connection', 'presets', 'backups', 'regex', 'presetRegex', 'scopedRegex', 'route', 'sampling', 'replies',
+  'connection', 'presets', 'backups', 'regex', 'presetRegex', 'scopedRegex', 'sampling', 'replies',
   'appearance', 'reading', 'worldbooks', 'scripts', 'scriptLibrary', 'usage', 'about',
 ] as const satisfies readonly CardId[]
 

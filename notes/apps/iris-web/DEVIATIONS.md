@@ -1824,6 +1824,8 @@ So on this profile the strong ownership rule — what this host materialised, an
 
 **Kind:** two compatibility gaps, closed — plus one deliberate improvement, recorded separately in entry 50.
 
+> **Where this now lives:** every decision in this entry still holds, but the surface it describes was rearranged on 2026-09-09 — entry **77**. "The panel" below means the connection card's *editor*, which is now a dialog opened from a provider list; the card body itself carries no field at all. Read 77 for the shape and this entry for why the key and the model behave as they do inside it.
+
 **The report** (user, 2026-09-07, verbatim): 「设置里面的连接，每次测试连接都要重新填一次 apikey，众所周知 apikey 在绝大多数平台都是只能看到一次」 and 「路由这块模型选择怎么让用户自己输字填，那填不对咋办，所以要改从 models list 里面选择」.
 
 **Upstream does both of these already**, which is what makes them gaps rather than ideas:
@@ -3702,3 +3704,125 @@ one this frame's own rulers cannot read, which the note beside the `height
 sources` line is there to reveal; an upstream release in which SillyTavern core
 or TavernHelper starts consuming an upward message, which would make the
 drop-and-count a divergence rather than parity.
+
+---
+
+## 77. The connection card is a provider list with three verbs, not a form — and the typed route is gone
+
+**Kind:** deliberate divergence from SillyTavern, on the user's ruling. Entry 49's
+two compatibility fixes (the key typed once, the model picked from a list) are kept
+whole; what changes is the shape they sit in.
+
+**The ruling** (user, 2026-09-09, verbatim): 「现在连接这个部分做的就很不好，这个逻辑
+很混乱呀，这个部分不必效仿 ST 做，ST 那个就做的很抽象了，我们可以按照 CC Switch 的
+逻辑：我们保存供应商是一回事，从列表中用哪个连接是一回事；连接折叠卡中就不需要有
+提供方/端点地址/模型这三个选项常驻了；这个连接就是 添加供应商、选择供应商（对现有
+供应商的编辑或删除）、测试连接 三个部分；然后可以添加些展示信息，但是修改都得走对
+当前供应商的修改。」
+
+**What was there.** One resident form — provider preset, base URL, key, model — with
+a list under it and five buttons in a row (Test, Save, Cancel, plus "save the current
+settings as a connection" and its naming input at the bottom). Two things about the
+same provider were on screen at once and neither said which was in force: the form
+held whatever was last typed or last loaded for editing, the list held what was
+saved, and "the connection" meant either depending on which button you pressed. On
+top of that the drawer carried a **third** place to set the route: a 「路由」 card
+with `provider` and `model` as free-text fields on the global settings layer.
+
+**Upstream is the shape being left behind, and that is the point.** SillyTavern's
+connection page *is* a form: `#openai_form`'s fields are the connection, the profile
+list (`connection-manager`) is a saver/loader bolted beside it, and pressing Connect
+acts on the fields. That is why a profile there can be named `deepseek deepseek-chat`
+and point at Gemini — the name is a snapshot of the fields taken once. CC Switch's
+shape is the other one: a row per provider, one marked current, `编辑/删除/测试` per
+row, and "use" as its own act. This entry adopts the second.
+
+**Iris, now.** Three blocks in the card body and nothing else (`data-block`
+`providers` / `add` / `test`, counted by the render check):
+
+- **The provider list.** The host's own connection is the fixed first row — read-only,
+  testable, and adoptable, never editable or deletable, because it lives in the
+  environment the process was launched with. Every saved provider follows, each with
+  its label (or the derived summary when unnamed), the derived summary regardless
+  (entry 49's rule: a label can go stale, the derived half cannot), and a meta line
+  of endpoint origin, model, key state, bound preset, model window and probe age.
+  Exactly one row is marked 「当前」 — the provider in use, or the host row when none
+  is. Row verbs: **使用** (global), **编辑**, **测试**, **删除**.
+- **添加供应商.** One button, opening the same editor an 编辑 opens, seeded
+  differently. Beside it the sentence the whole rearrangement exists for
+  (`connSaveVsUse`): saving writes the provider into this host's list, using decides
+  which one generates.
+- **测试连接.** One verdict area for the whole card. A row's Test reports into it with
+  the row's name in the sentence (`connTestedRow`), because two verdicts on screen are
+  two answers to one question. Entry 75's judgement sentence and untranslated host
+  detail line are unchanged.
+
+**No field is resident.** The editor is a `Modal` (`iris-conn-dialog`, 440px — §19's
+finding that the primitive's card is 380px and clips, so the width goes on the card),
+mounted only while a provider is being edited. So "the panel body carries no input"
+is structural rather than a habit: a closed `Modal` renders `null`. `render-check`
+pins zero `<input>`, `<select>` and `<textarea>` in the card body, exactly three
+blocks by name, exactly one current row, and that the marked row is the provider in
+use; each of those was verified to fail on a mutation of its own (eleven mutations,
+eleven distinct red assertions).
+
+**The 「路由」 card is deleted**, and with it the only route in the product a person
+could type. Both values are still fully settable — a provider's editor writes
+`provider` and `model` together with the endpoint and credential they belong to, and
+`settings.set` still carries them for anything that asks — so what is gone is the
+loose field, not the capability. `CardId` loses `'route'`, and a `route: true` left in
+someone's `localStorage` falls out of `loadCardState`'s allowlist, which is what that
+allowlist is for.
+
+**Using a provider is global, always.** `activateConnection` no longer sends the open
+chat's `chatId`. Scoped to whichever conversation happened to be open, one list meant
+two different things depending on where the reader was standing, and there was no way
+at all to move the global layer while a conversation was open. The per-conversation
+switch has had its own control and its own method since entry 50: the model capsule
+under the composer, through `setChatModel`. The protocol keeps `connection.activate`'s
+optional `chatId`; nothing in the browser asks for it.
+
+**Editing the provider in use re-applies it.** Measured in
+`packages/iris-app-service/src/service.ts` (2026-09-09): `connection.save` writes the
+profile file and does nothing else — it does not call `#installConnectionFor` and does
+not write the settings layer that names the route; only `connection.activate` does
+either. So changing the endpoint or model of the row in force would have sat in the
+file while generation kept going to the old address, with no symptom but a reply from
+a provider the panel says is not selected. The panel therefore re-uses that provider
+after such a save, which is the host's own path for it — asked for from here rather
+than added to a handler another branch is editing.
+
+**What it costs.**
+
+- **「宿主环境」 has no 「使用」 button**, which the dispatch asked for. The gap is
+  real and it is host-side, in two parts. `#hostConnection()` reads `provider` and
+  `model` from the **global settings layer** (`service.ts`), and `apps/iris` never
+  passes an explicit `hostConnection`, so after any global activation that row already
+  describes the activated profile's route rather than the launch configuration; and
+  `ConnectionStore` has `markActive(id)` with no clearing path, so nothing can put
+  `activeId` back to absent. An honest "use the host environment" needs the launch
+  route snapshotted at construction *and* a clear — both in `connections.ts` /
+  `service.ts`, which `dev/route-resolution` is editing in the same round. Rather than
+  ship a button that would re-apply the current profile's own values and call it
+  "back to the host", the row says why (`connHostUseGap`) and offers the act that does
+  work: **存为供应商** copies the host's credential into an editable, selectable
+  profile, host-side, without the key crossing the wire. Note this is not a
+  regression — the old panel could not get back to the host row either.
+- **No confirmation on delete.** A row's 删除 fires immediately, as it did before.
+  The list is cheap to rebuild and a `RiskConfirmation` on every provider row would be
+  a dialog per row; if this bites, that is the change to make.
+- **A new provider cannot capture the drawer's current sampling.** The deleted
+  「把当前设置存为一个连接」 button was the only path for that. Sampling a provider
+  already carries survives every edit (the editor sends it back untouched, because an
+  absent field clears on a replacement), and sampling itself stays the sampling card's
+  business — which is where a reader looks for it. CC Switch has no sampling in a
+  provider row either.
+- **One verdict area, so a row's Test is reported below the list rather than on the
+  row.** A reader who tests the fourth row reads the answer at the bottom of the card.
+  The row's name in the sentence is what makes that legible; per-row verdicts would be
+  four places for the same kind of sentence to differ.
+
+**What would overturn it.** A host that records the route it was launched with (which
+would make 「使用」 on the host row honest and this entry's first cost obsolete); a
+user who wants the endpoint field back on the card body, which would mean the ruling
+above has been revised.

@@ -516,6 +516,27 @@
   color: var(--iris-danger);
 }
 
+/*
+ * A word-action that cannot fire yet.
+ *
+ * Nothing in the shell needed this until the provider list gave every row its
+ * own Test — refused while another probe is in flight — because a word that
+ * does nothing when pressed and looks identical to the three beside it is
+ * indistinguishable from a broken one. The hover is taken back too: a ground
+ * lighting up under the pointer is the shell's own promise that a press does
+ * something.
+ */
+.iris-act:disabled {
+  color: var(--iris-ink-faint);
+  cursor: default;
+  opacity: 0.55;
+}
+
+.iris-act:disabled:hover {
+  background: none;
+  color: var(--iris-ink-faint);
+}
+
 .iris-edit {
   width: 100%;
   resize: vertical;
