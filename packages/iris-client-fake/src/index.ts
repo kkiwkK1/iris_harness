@@ -14,6 +14,7 @@ export { readCard, type ReadCard } from './card.ts'
 export { fakeDivergence, fakeItemization, FAKE_CHAT_BUDGET, FAKE_MEASURED_TOKENS } from './prompt.ts'
 export {
   activateConnection,
+  deactivateConnection,
   deleteConnection,
   hostDefault,
   listConnections,

@@ -850,6 +850,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('connection.save', handlers['connection.save']),
       ctx.irisRpc.register('connection.delete', handlers['connection.delete']),
       ctx.irisRpc.register('connection.activate', handlers['connection.activate']),
+      ctx.irisRpc.register('connection.deactivate', handlers['connection.deactivate']),
       ctx.irisRpc.register('connection.test', handlers['connection.test']),
       ctx.irisRpc.register('character.list', handlers['character.list']),
       ctx.irisRpc.register('character.import', handlers['character.import']),

@@ -405,7 +405,7 @@ Iris 此前只有两档，而切进来的预设 body 一直是整份存着的—
 | `ConnectionPanel.tsx` 保存与删除之后 | 已保存（在上方列表里，点「使用」才生效）／已保存并重新应用（改的就是当前那一行）／已删除／已删除且它原是当前（当前回到宿主环境）。**删除那句只说列表**，不说路由：设置层里还留着什么是宿主那侧的事（`dev/route-resolution`），这里不替它宣布 | `connSavedNote connSavedCurrent connDeleted connDeletedWasCurrent` |
 | `ConnectionPanel.tsx` 编辑器 | 标题（编辑供应商；新增时复用 `connAddProvider`）、名字与它的占位、绑定预设三句（选项「不绑定预设」、说明、预设库还没读到时退回手填）。绑定预设照模型字段的三态办：能读到库就是 `<select>`，读不到就手填并说明——一个不存在的预设名是一次悄悄没发生的切换 | `connEditorEditTitle connProviderName connProviderNamePlaceholder connBoundPreset connBoundPresetNone connBoundPresetNote connPresetsUnknown` |
 | `ConnectionPanel.tsx` 模型不在列表里 | 编辑器里当场标一句。已有的 `modelNotInList`（保存之后那句「已照常保存」）留着——两句讲的是同一处不一致的两个时刻，一个还能改，一个已经落盘 | `modelOffListNote` |
-| `ConnectionPanel.tsx` 宿主环境那一行 | 标题从「宿主默认（只读）」改成「宿主环境」（「只读」移进徽标）；说明句改成「在没有选中任何供应商时由它生成」；「存为连接」改成「存为供应商」；新增一句说明这一行为什么没有「使用」按钮 | `hostDefaultTitle hostDefaultNote adoptHostConnection hostAdopted connHostUseGap` |
+| `ConnectionPanel.tsx` 宿主环境那一行 | 标题从「宿主默认（只读）」改成「宿主环境」（「只读」移进徽标）；「存为连接」改成「存为供应商」。说明句现在说的是「启动时配置的路由与模型，点使用即可把全局路由放回它」——这一行如今有「使用」，复用行上的 `connUse` / `connUseNamed`，所以原先那句解释「为什么没有使用按钮」的 `connHostUseGap` 一并删掉（web §78） | `hostDefaultTitle hostDefaultNote adoptHostConnection hostAdopted` |
 
 **删掉的键（12 个）。** 连接面这 8 个：`activateForDefaults` `activateForThisChat`
 （启用的两句话——启用从此只有全局一种，两句合成 `connUseNote` 一句）、
@@ -418,6 +418,11 @@ Iris 此前只有两档，而切进来的预设 body 一直是整份存着的—
 里唯一一个接受手打字符串而无从校验的。**`i18n.test.ts` 查的是「源码里用到的键必须在词典里」
 这一个方向**，不查反向，所以未用键从来不会被它发现——这也是 `modelsListLabel` 与
 `testKeyNone` 能一直留着的原因，删键这件事得靠人做。
+
+**再删掉一个键（`connHostUseGap`，web §78）。** 它整句话都是在解释宿主环境那一行为什么
+不能被选回——而那个限制在宿主侧（启动路由的快照 + `ConnectionStore.clearActive`，host §60）
+补上之后就不存在了。一句解释某个缺口的文案，在缺口填掉之后就是一句错话，比没有更糟；
+同一个方向上 `hostDefaultNote` 也从「在没有选中任何供应商时由它生成」改成了正面的说明。
 
 **没有为「名字 · 模型」造模板键。** 折叠卡头是两段各自已经存在的数据用 ` · ` 接起来，
 和容量胶囊的 hover 同一个理由：一条只有分隔符的模板键会在两本词典里各存一份排版，

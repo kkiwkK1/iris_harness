@@ -39,6 +39,7 @@ import { cardFileExtension, readCard } from './card.ts'
 import { fakeDivergence, fakeItemization } from './prompt.ts'
 import {
   activateConnection,
+  deactivateConnection,
   deleteConnection,
   hostDefault,
   listConnections,
@@ -685,6 +686,21 @@ class InMemoryClient implements FakeClient {
           chat.settings = { ...result.settings }
         }
         return result
+      }
+
+      case 'connection.deactivate': {
+        const launch = deactivateConnection()
+        // Merged into the global layer, not written over it: the host's own
+        // `settings.set` patches `provider` and `model` and leaves the sampling
+        // beside them alone, because a launch configuration carries none. The
+        // activation arm above replaces wholesale for the opposite reason — a
+        // profile's own sampling is part of what it applies.
+        this.#globalSettings = { ...this.#globalSettings, ...launch }
+        // The open conversation is deliberately **not** touched. Using a
+        // provider is global (web §77), so a chat that overrides the model keeps
+        // overriding it — and the interface re-reads that chat's settings after
+        // the call, exactly as it does after an activation.
+        return this.#withHostRow({ settings: { ...this.#globalSettings }, host: hostDefault() })
       }
 
       case 'connection.test':

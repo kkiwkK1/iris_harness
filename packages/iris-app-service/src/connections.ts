@@ -563,6 +563,28 @@ export class ConnectionStore {
   }
 
   /**
+   * Record that **no** profile is applied any more.
+   *
+   * The other half of {@link markActive}, and it was missing: `activeId` could
+   * only be moved from one profile to another or dropped as a side effect of
+   * deleting the profile it named, so "back to the connection this host was
+   * started with" was a state this store could not express — which is why the
+   * panel's host row carried a sentence instead of a button (web §77 recorded
+   * it as an open gap, now §78).
+   *
+   * A write only when something changes: clearing a store that already has no
+   * active profile is the panel pressing 使用 on the row that is already
+   * current, and rewriting a user's file to record nothing is a modification
+   * time that lies about what happened.
+   */
+  async clearActive(): Promise<void> {
+    await this.#load()
+    if (this.#file.activeId === undefined) return
+    delete this.#file.activeId
+    await this.#save()
+  }
+
+  /**
    * The settings patch that applying a profile amounts to.
    * @param profile - the stored profile.
    * @param route - the provider route the patch should name, when it differs

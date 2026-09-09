@@ -893,6 +893,107 @@ test('adopting is ignored where there is no host credential, and outranked by a 
 })
 
 /* ------------------------------------------------------------------------- *
+ * The launch snapshot, and the way back to it (host §60).
+ *
+ * The host row used to read its `provider` and `model` from the **global
+ * settings layer**, which is where every global activation writes: so the row
+ * the panel labels 「宿主环境」 described the profile in force the moment one was
+ * used, and there was no way at all to put the layer back — `ConnectionStore`
+ * could only move `activeId` from one profile to another.
+ * ------------------------------------------------------------------------- */
+
+test('the host row describes the launch configuration, not the profile in use', async (t) => {
+  const { handlers, settings } = await fixture(t, {
+    env: {
+      IRIS_BASE_URL: 'https://api.deepseek.com/v1',
+      IRIS_API_KEY_ENV: 'PROBE_KEY',
+      PROBE_KEY: 'sk-host-secret-9999',
+    },
+  })
+  // What this fixture's "composition" configured: `default` / `local-model`.
+  // These two strings are the whole content of the claim the row makes.
+  const before = await handlers['connection.list']({})
+  assert.equal(before.host?.provider, 'default')
+  assert.equal(before.host?.model, 'local-model')
+
+  const saved = await handlers['connection.save']({
+    provider: 'deepseek', model: 'deepseek-chat', baseURL: 'https://api.deepseek.com/v1',
+  })
+  const id = saved.profiles[0]?.id
+  assert.ok(id !== undefined)
+  await handlers['connection.activate']({ id })
+
+  // The global layer moved, which is what an activation is for.
+  assert.equal(settings.get().provider, 'deepseek', 'the activation did not write the route')
+  assert.equal(settings.get().model, 'deepseek-chat')
+
+  // And the row did not. Read from the layer, both of these would now be the
+  // activated profile's own values — the row would describe the connection it
+  // exists to be the alternative to, and a 「使用」 on it would re-apply that
+  // profile under the host's name.
+  const after = await handlers['connection.list']({})
+  assert.equal(after.host?.provider, 'default', 'the host row followed the activation')
+  assert.equal(after.host?.model, 'local-model', 'the host row followed the activation')
+  // The endpoint and the key still come from the environment, which the
+  // settings layer never carried: the snapshot moved two fields, not four.
+  assert.equal(after.host?.baseURL, 'https://api.deepseek.com/v1')
+  assert.equal(after.host?.keySource, 'env')
+})
+
+test('deactivating returns the global layer to the launch route and model, and keeps the sampling', async (t) => {
+  const { handlers, settings, dir } = await fixture(t, { env: {} })
+  const saved = await handlers['connection.save']({
+    provider: 'deepseek',
+    model: 'deepseek-chat',
+    baseURL: 'https://api.deepseek.com/v1',
+    sampling: { temperature: 0.7 },
+  })
+  const id = saved.profiles[0]?.id
+  assert.ok(id !== undefined)
+  await handlers['connection.activate']({ id })
+  assert.equal((await handlers['connection.list']({})).activeId, id, 'nothing was applied to begin with')
+
+  const back = await handlers['connection.deactivate']({})
+
+  // Shaped to be read like `activate`'s answer and `list`'s: the browser writes
+  // `activeConnectionId: result.activeId` after all three, so an `activeId`
+  // present here — even holding `undefined` — would be a profile still applied.
+  assert.equal('activeId' in back, false, 'the answer claims a profile is still applied')
+  // Route **and** model, because choosing the host environment is choosing a
+  // connection, and the launch configuration is both.
+  assert.equal(back.settings.provider, 'default')
+  assert.equal(back.settings.model, 'local-model')
+  assert.equal(settings.get().provider, 'default')
+  assert.equal(settings.get().model, 'local-model')
+  // The sampling stays: §59's rule, in the place it applies — a launch
+  // configuration carries no temperature, so anything written would be invented.
+  assert.equal(back.settings.temperature, 0.7, 'the sampling was cleared with the route')
+  assert.equal(settings.get().temperature, 0.7)
+  // The row that is now current comes back with the answer, so the list does
+  // not have to be re-fetched to redraw the badge.
+  assert.equal(back.host?.provider, 'default')
+
+  assert.equal((await handlers['connection.list']({})).activeId, undefined, 'the list still names a profile')
+  // On disk, not merely in memory — the next process reads the file.
+  const file = JSON.parse(await readFile(join(dir, 'connections.json'), 'utf8')) as Record<string, unknown>
+  assert.equal('activeId' in file, false, 'the cleared active id is still in the file')
+})
+
+test('clearing an active id that was never set writes nothing at all', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-conn-clear-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const path = join(dir, 'connections.json')
+  const store = new ConnectionStore(path)
+
+  await store.clearActive()
+
+  // The store's write creates the file, so "no file" is the observable form of
+  // "no write": pressing 使用 on the row that is already current must not touch
+  // a user's data to record that nothing changed.
+  await assert.rejects(readFile(path, 'utf8'), 'clearing nothing still wrote the file')
+})
+
+/* ------------------------------------------------------------------------- *
  * The route generates with the key the probe would have used.
  *
  * The report, 2026-09-09: a profile on the deepseek preset, saved with the key

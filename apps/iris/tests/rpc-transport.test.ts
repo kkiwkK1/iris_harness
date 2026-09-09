@@ -273,6 +273,10 @@ const PROBES: Record<string, unknown> = {
   'connection.save': { provider: 'default', model: 'mock-model' },
   'connection.delete': { id: 'no-such-profile' },
   'connection.activate': { id: 'no-such-profile' },
+  // The one connection arm with no id to get wrong: it applies *no* profile, so
+  // it succeeds here — and what it writes is the route this probe host booted
+  // with, which is where its settings already were.
+  'connection.deactivate': {},
   // A profile that does not exist answers not-found, which proves the handler
   // ran; the probe's verdict-on-failure shape is the connections suite's business.
   'connection.test': { profileId: 'no-such-profile' },

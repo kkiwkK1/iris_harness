@@ -492,6 +492,22 @@ export const requestSchemas = {
     chatId: z.string().min(1).optional(),
   }),
   /**
+   * Apply **no** profile: back to the connection the host was launched with.
+   *
+   * The counterpart of `connection.activate`, and not a "clear" of it —
+   * choosing the host's own connection is a choice like any other row's. The
+   * launch configuration is a route *and* a model, so the global layer takes
+   * both from the host's launch snapshot (host §60), while sampling is left
+   * exactly as it stands: the launch configuration carries none, so anything
+   * written there would be invented.
+   *
+   * **Global only, and therefore parameterless.** There is no per-conversation
+   * form for the same reason nothing in the browser sends `connection.activate`
+   * a `chatId` (web §77): the provider list is the host's list, and one
+   * conversation's own model is the composer capsule's business.
+   */
+  'connection.deactivate': z.object({}),
+  /**
    * Probe an endpoint the way a model list would be fetched, and say what
    * happened in words a form can show.
    *
@@ -2024,6 +2040,23 @@ export interface RpcResponseMap {
     }
   }
   'connection.activate': { settings: GenerationSettings, activeId: string }
+  /**
+   * The settings the launch configuration leaves in force, and the row that now
+   * describes what generates.
+   *
+   * Shaped to be read like `connection.activate`'s answer and `connection.list`'s
+   * together, so a caller writes the same three assignments after any of the
+   * three: `activeId` is **always absent here** — it is declared because a
+   * caller reading `result.activeId` and storing it is what makes "no profile is
+   * applied" arrive through the same line as "this profile is". `host` is the
+   * re-projected host row (absent on a host that does not describe its own
+   * route), which after this call is the row marked current.
+   */
+  'connection.deactivate': {
+    settings: GenerationSettings
+    activeId?: string
+    host?: HostDefaultConnection
+  }
   /**
    * The probe's verdict, said in full even when it failed.
    *

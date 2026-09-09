@@ -4744,9 +4744,127 @@ usage record names the route the provider was actually billed on. Four answers:
   and the first generation of every restart would have installed it a second
   time.
 
+**Postscript, 2026-09-09 (§60).** The first departure above describes
+`#hostConnection()` as answering from the global settings layer. It no longer
+does: §60 gives the service a launch snapshot and both readers take the provider
+from it, so the two readings agree by construction rather than by which one a
+guard reached for. The ordering rule survives unchanged, and is now the reason
+the snapshot exists — the launch configuration is the only reading of "the
+host's own route" that cannot dangle.
+
 **What would overturn it.** A generation that reaches `ctx.llm.stream` with a
 route no registration has answered for; a deletion that leaves a `provider`
 naming the deleted profile's route in any layer, or that removes a `model` or a
 sampling field; a fall back that repairs a setting without a report, or reports
 without repairing; a route this process installed being installed again by the
 next turn.
+
+## 60. The host's own connection is a launch snapshot, and there is a way back to it
+
+**Kind: fix to an Iris-only surface** — upstream has no "the connection this
+process was started with" row at all (§27). Closes the open gap web §77 recorded
+as its first cost.
+
+**What was wrong, in two parts that only bite together.**
+
+1. **`#hostConnection()` read `provider` and `model` from the global settings
+   layer.** Its docblock said the row "describes the route the host actually
+   generates through rather than a second copy of the same configuration" — true
+   of a host that has never applied a profile, false from the first
+   `connection.activate` onwards, because `ConnectionStore.patchOf` writes
+   `{ provider, model, ...sampling }` into exactly that layer. So the panel's
+   fixed first row, labelled 「宿主环境」 and documented as the launch
+   configuration, quietly began describing the profile in force instead. The
+   endpoint and the key state beside them come from the environment and stayed
+   right, which is what made the wrong half hard to see: the row read
+   `deepseek · deepseek-chat · https://api.deepseek.com` and every part of it
+   was true of *something* — two of the connection, two of the launch.
+2. **`ConnectionStore` had `markActive(id)` and no clearing path.** `activeId`
+   could be moved from one profile to another, or dropped as a side effect of
+   deleting the profile it named, and that was all. "No profile is applied" was
+   reachable only by deleting something.
+
+Together they made 「使用」 on the host row impossible to implement honestly: a
+button reading that row's own `provider` and `model` back into the settings
+would have re-applied the profile in force under the host's name, and nothing
+could have put `activeId` back to absent afterwards.
+
+**The snapshot.** `IrisAppService` takes `#launch = { provider, model }` in its
+constructor: `hostConnection?.provider ?? settings.configuredRoute()` — the
+reading §59 established for `#hostRoute()`, which now returns it — and
+`hostConnection?.model ?? settings.configuredModel()`, a new accessor beside the
+existing one and for the same reason: the store's constructed defaults are the
+composition's decision, while the layer is where activations write. On the
+shipped composition both come from `apps/iris/cordis.yml`'s `app` row, so the
+model is `IRIS_MODEL`. Nothing short of a restart can move either.
+
+**Three readers of `#hostConnection()`, one behaviour change.** Named because
+"who benefits" is the question a change to a shared reader has to answer, and
+two of the three read fields the snapshot does not touch:
+
+- `connection.list` / `connection.save`'s `host` row (`#hostDefaultRow` →
+  `hostDefaultView`) — **changed, and this is the point**: the row keeps
+  describing the launch configuration after any activation.
+- `connection.test`'s host branch (`#probeCredential`) — **unchanged**: it reads
+  `baseURL`, `apiKey` and `apiKeyHeader`, none of which the settings layer ever
+  held. A bare probe of the host's endpoint still adopts the startup credential
+  at the same origin.
+- `routeCredential`'s host argument (`#installConnectionFor`) — **unchanged**,
+  the same three fields, so §58's ladder is untouched. `#recordHostModels`
+  compares origins and is unaffected for the same reason.
+
+**The way back: `connection.deactivate`.** No parameters, global only — the same
+rule as `connection.activate` from the browser (web §77). It clears `activeId`
+through the new `ConnectionStore.clearActive()` and writes the launch route
+**and the launch model** into the global layer.
+
+- **Why the model too, when §59 insists a deletion keeps it.** §59's rule is for
+  a *deletion*: clear the reference, keep the values, because a model id
+  outlives the profile that supplied it and losing it is a second loss nobody
+  asked for. This is not a deletion. It is the same act as the activation one
+  handler up — a person choosing which connection generates — and the
+  connection they chose is the launch configuration, whose model is as much a
+  part of it as its route. Writing the route alone would answer
+  「使用宿主环境」 with a route from the environment and a model left behind by a
+  connection the list now says is not in use.
+- **Sampling is untouched**, which is §59's rule doing its job where it does
+  apply: a launch configuration carries no temperature, so anything written
+  there would be invented.
+- `provider` is *written* rather than cleared (`{ provider: null }`, which
+  `SettingsStore.set` restores to `configuredRoute()`), because the snapshot is
+  the wider answer: a composition that hands a `hostConnection` in has a route
+  the settings defaults never saw, and a clear would leave the layer naming a
+  route `#hostRoute()` does not — which `#resolveRoute` would then repair on the
+  next turn, reporting a fault for a setting this handler had just written.
+- **No conflict with §59's ladder**, and it is pinned: after a deactivation the
+  global `provider` *is* `#hostRoute()`, so the first rung passes, the
+  generation goes out on that route, and nothing is reported or repaired.
+- The adapter the last activation installed is left registered. Nothing names
+  it, `installConnection` offers no un-install, and an unreferenced route costs
+  one map entry until the process ends.
+- The answer is `{ settings, activeId?: undefined, host }`, shaped so the
+  browser writes the same three assignments it writes after `connection.activate`
+  and `connection.list`. `activeId` is **absent**, not present-and-undefined.
+- A retained `host` note says the layer went back to the launch route and model
+  and that the sampling was left as it stands. Not pushed: the person is looking
+  at the panel they pressed it in.
+- `clearActive()` writes only when something changes — pressing 使用 on the row
+  that is already current must not touch a user's file to record nothing.
+
+**Pinned.** `connections.test.ts`: the host row still reads `default` /
+`local-model` after a profile with its own provider and model is activated, with
+the endpoint and key state asserted as still coming from the environment so the
+test says which two fields moved; a deactivation puts route and model back,
+keeps `temperature: 0.7`, answers with no `activeId` key at all, and clears the
+id in the file on disk; `clearActive()` on a store with nothing active creates
+no file. `route-resolution.test.ts`: a generation after a deactivation takes the
+ladder's first rung, reports nothing and pushes nothing.
+
+**What would overturn it.** A composition that hands a `hostConnection` in whose
+provider or model can change while the process runs — the snapshot would then be
+a stale copy rather than a launch record, and the field should become a reader
+of that object; a report that the 「宿主环境」 row ought to describe what is
+generating rather than what the host was launched with, which is the opposite
+reading of one row and would make the old sentence 「在没有选中任何供应商时，回复由
+它生成」 the truer one; a deactivation being asked to restore sampling, which
+would mean launch configurations have grown some.

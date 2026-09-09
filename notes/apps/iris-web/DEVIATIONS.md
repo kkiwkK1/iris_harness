@@ -3794,20 +3794,19 @@ than added to a handler another branch is editing.
 
 **What it costs.**
 
-- **「宿主环境」 has no 「使用」 button**, which the dispatch asked for. The gap is
-  real and it is host-side, in two parts. `#hostConnection()` reads `provider` and
-  `model` from the **global settings layer** (`service.ts`), and `apps/iris` never
-  passes an explicit `hostConnection`, so after any global activation that row already
-  describes the activated profile's route rather than the launch configuration; and
-  `ConnectionStore` has `markActive(id)` with no clearing path, so nothing can put
-  `activeId` back to absent. An honest "use the host environment" needs the launch
-  route snapshotted at construction *and* a clear — both in `connections.ts` /
-  `service.ts`, which `dev/route-resolution` is editing in the same round. Rather than
-  ship a button that would re-apply the current profile's own values and call it
-  "back to the host", the row says why (`connHostUseGap`) and offers the act that does
-  work: **存为供应商** copies the host's credential into an editable, selectable
-  profile, host-side, without the key crossing the wire. Note this is not a
-  regression — the old panel could not get back to the host row either.
+- **「宿主环境」 had no 「使用」 button**, which the dispatch asked for. **Closed the
+  same day by entry 78 — read that instead of this paragraph.** What stood here was
+  the diagnosis: the gap was host-side in two parts, `#hostConnection()` reading
+  `provider` and `model` from the **global settings layer** (`service.ts`) on a
+  composition that passes no explicit `hostConnection`, so after any global activation
+  that row described the activated profile's route rather than the launch
+  configuration; and `ConnectionStore` having `markActive(id)` with no clearing path,
+  so nothing could put `activeId` back to absent. Rather than ship a button that would
+  re-apply the current profile's own values and call it "back to the host", the row
+  said why (`connHostUseGap`) and offered the act that did work: **存为供应商**. Host
+  §60 supplies both halves — a launch snapshot and `clearActive()` — and entry 78 puts
+  the verb on the row; the sentence is deleted, and 存为供应商 keeps the narrower job
+  it always had (an *editable* copy).
 - **No confirmation on delete.** A row's 删除 fires immediately, as it did before.
   The list is cheap to rebuild and a `RiskConfirmation` on every provider row would be
   a dialog per row; if this bites, that is the change to make.
@@ -3823,6 +3822,81 @@ than added to a handler another branch is editing.
   four places for the same kind of sentence to differ.
 
 **What would overturn it.** A host that records the route it was launched with (which
-would make 「使用」 on the host row honest and this entry's first cost obsolete); a
-user who wants the endpoint field back on the card body, which would mean the ruling
-above has been revised.
+would make 「使用」 on the host row honest and this entry's first cost obsolete —
+**it did, hours later: host §60, entry 78**); a user who wants the endpoint field back
+on the card body, which would mean the ruling above has been revised.
+
+## 78. 「宿主环境」 is a selectable row, not an explained exception
+
+**Kind: completion of entry 77**, on the host work that entry named as the reason it
+could not be done then (host §60, same day).
+
+**What entry 77 shipped and why.** Every row in the provider list carried 使用 except
+the first one, which carried a sentence instead: `connHostUseGap`, 「一旦开始使用某个
+供应商，这一行就无法再被选回：宿主没有留下启动时那条路由的记录」. That was an honest
+report of a host limitation, and the limitation was real — the row's `provider` and
+`model` came from the global settings layer, so a 使用 built on them would have
+re-applied the profile in force and called it "back to the host", and `activeId` had
+no path back to absent either way.
+
+**What changed.** Host §60 snapshots the launch route and model at construction and
+adds `ConnectionStore.clearActive()`, exposed as `connection.deactivate` (global, no
+parameters). So:
+
+- The host row's actions gain **使用**, first in the row and offered on exactly the
+  condition every provider row uses: shown while this row is *not* current, replaced
+  by the 「当前」 badge when it is. A press that could only be a no-op is not offered.
+- It calls `deactivateConnection()` on the store, which is `activateConnection`'s
+  shape with no id: `connection.deactivate` with `{}`, then
+  `{ settings, activeConnectionId: result.activeId, hostConnection: result.host }`
+  from the answer — `activeId` read back rather than assumed, because the host is what
+  decides no profile is applied. The list's badge and the collapsed head
+  (`hostDefaultTitle · host.model`) follow from that one write.
+- **The composer capsule follows the same way an activation makes it follow**: with a
+  conversation open, the action re-reads `settings.get({ chatId })` afterwards, because
+  the global layer just moved under that conversation and a chat overriding nothing is
+  now generating with the launch model. A chat that *does* override the model keeps its
+  override — using a provider is global (entry 77), and this is that verb.
+- `connHostUseGap` is **deleted** from both dictionaries and from `STRINGS.md`. A
+  sentence explaining a gap that has been filled is worse than no sentence: it is
+  read as a live limitation. `hostDefaultNote` is reworded in the same direction —
+  from 「在没有选中任何供应商时，回复由它生成」 (a description of an absence) to
+  「这是宿主启动时配置的路由与模型。点「使用」即可把全局路由放回它」 (the row's own
+  content, and the act available on it).
+- **存为供应商 stays**, with the narrower job it always had. It used to double as the
+  only way back to the host's connection; now it is what it says — an *editable* copy,
+  whose endpoint, model or key can then differ from the one the process was launched
+  with. Its docblock no longer claims the other role.
+
+**Pinned.** `render-check.tsx` renders the card in both states: with the seeded
+profile in use the host row carries `aria-label="Use Host environment"` beside its
+Test, and with nothing applied it carries the 「当前」 badge, no 使用, and is the single
+`aria-current="true"` row. `connection-key-field.test.ts` pins the source decisions a
+render cannot see — no `chatId` reaches `connection.deactivate` (the same absence
+already pinned for `connection.activate`), the button is guarded by `activeId ===
+undefined ? null : …` rather than by something a fixture happens to make false, the
+panel no longer calls `t('connHostUseGap')`, and the key is gone from the dictionary
+rather than merely unused (`i18n.test.ts` checks used → dictionary only, so an unused
+key is never reported).
+
+**What it costs.**
+
+- **The capsule's 「回到连接的模型」 row can now name the launch model while the
+  global layer holds a different one.** `modelMenu` reads `connectionModel` as
+  `active?.model ?? host?.model`, and with no profile active that used to *be* the
+  global layer's model. It is now the launch model, and the two disagree in one narrow
+  state: the active profile was **deleted** (host §59 deliberately leaves its `model`
+  in the layer as a value), so clearing a chat's own override returns to that leftover
+  rather than to the launch model the footer names. Not changed here, for two reasons —
+  the fix belongs in `modelMenu`, which would need the global layer's model passed in
+  beside the chat's merged one, and the state now has an obvious way out that it did
+  not have before: press 使用 on 「宿主环境」. Reported rather than filed silently.
+- **No transient sentence after pressing 使用 on the host row**, and none after
+  pressing it on a provider row either. The panel's `note` states cover saving,
+  deleting and adopting; using a row is reported by the badge moving, which is the
+  same feedback every other row gets.
+
+**What would overturn it.** A host whose 「宿主环境」 row is expected to describe what
+is generating rather than what it was launched with (host §60 records that reading and
+why it was rejected); a user who reads 使用 on a read-only row as an offer to edit it,
+which would mean the 「只读」 badge is doing less work than it looks.

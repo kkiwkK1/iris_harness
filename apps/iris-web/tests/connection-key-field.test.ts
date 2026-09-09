@@ -24,13 +24,15 @@
  *   user's request ("改从 models list 里面选择"), with the text input kept only
  *   as the named fallback.
  *
- * Three wirings the panel around them depends on are pinned here for the same
+ * Five wirings the panel around them depends on are pinned here for the same
  * reason — they are decisions visible in the source and invisible in a render:
  * the editor is *mounted* only while a provider is being edited (which is what
  * makes "no field in the panel body" structural rather than a habit), editing
  * the provider in use re-uses it afterwards (because `connection.save` writes
- * the file and installs no route), and the panel's "use" is global (no `chatId`
- * on the wire).
+ * the file and installs no route), the panel's "use" is global (no `chatId` on
+ * the wire) — for a provider row *and* for the host row, whose 使用 is
+ * `connection.deactivate` (web §78) — and that row offers the verb only while
+ * something else is in use.
  *
  * The copy half is checked properly: every key the panel names must exist in
  * both dictionaries. `i18n.test.ts` holds the other direction for the whole
@@ -192,6 +194,55 @@ test('the panel’s “use” is global — no chatId reaches connection.activat
   // The follow-up read is not optional: the global layer moved under an open
   // conversation, so what that conversation effectively generates with changed.
   assert.match(action, /client\.call\('settings\.get', \{ chatId \}\)/, 'the open chat’s settings are not re-read')
+})
+
+test('the host row’s “use” is global too — no chatId reaches connection.deactivate', () => {
+  // The same rule as the activation above, on the row that is not a profile:
+  // 使用 on 「宿主环境」 puts the *global* layer back on the launch route (host
+  // §60). Scoped to the open conversation it would be a second, silent meaning
+  // for the one list — the confusion web §77 separated out.
+  const at = STORE.indexOf('async deactivateConnection')
+  assert.ok(at > 0, 'the store cannot select the host row back')
+  const action = STORE.slice(at, at + 1800)
+  // Loose on the call, strict on the argument list — the same division as the
+  // activation's pins above, so it is the `chatId` assertion below that carries
+  // the property rather than a literal `{}` that happens to forbid everything.
+  assert.match(action, /client\.call\('connection\.deactivate',/, 'the action no longer deactivates anything')
+  assert.doesNotMatch(
+    action,
+    /connection\.deactivate',[^)]*chatId/,
+    'a chatId is being sent with the deactivation',
+  )
+  // And the same follow-up read, for the same reason: a conversation that
+  // overrides nothing is now generating with the launch model.
+  assert.match(action, /client\.call\('settings\.get', \{ chatId \}\)/, 'the open chat’s settings are not re-read')
+})
+
+test('the host row offers 使用 only while a profile is in use', () => {
+  /*
+   * The absence half, pinned in the source because that is where the condition
+   * lives: `tools/render-check.tsx` renders both states, and this sees that the
+   * button is guarded *at all* rather than guarded by something that happens to
+   * be false in a fixture. Until web §78 this row carried a sentence instead
+   * (`connHostUseGap`), so the deleted key is pinned as deleted here too — a
+   * string explaining a gap that has since been filled is worse than none.
+   */
+  const at = PANEL.indexOf('iris-conn--host')
+  assert.ok(at > 0, 'the host row is gone from the panel')
+  const row = PANEL.slice(at, at + 3000)
+  assert.match(
+    row,
+    /\{activeId === undefined \? null : \([\s\S]{0,500}deactivateConnection\(\)/,
+    'the host row’s 使用 is not guarded by a profile being in use',
+  )
+  // The *call*, not the name: this module's own prose says what the key used to
+  // be for, and a pattern wide enough to see that would go red on the
+  // explanation of why it is gone.
+  assert.doesNotMatch(PANEL, /t\('connHostUseGap'\)/, 'the panel still shows a gap that has been filled')
+  // And the key is gone from the dictionary, not merely unused: `i18n.test.ts`
+  // checks used → dictionary only, so an unused key is never reported — which
+  // is how two of them survived until web §77 went looking.
+  assert.equal(Object.hasOwn(en, 'connHostUseGap'), false, 'the deleted string is still in the dictionary')
 })
 
 test('every copy key the panel names exists in both dictionaries', () => {
