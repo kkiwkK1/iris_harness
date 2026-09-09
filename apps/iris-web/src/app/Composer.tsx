@@ -236,16 +236,15 @@ export function Composer({
   const connections = useIris(state => state.connections)
   const activeConnectionId = useIris(state => state.activeConnectionId)
   /*
-   * The host's own startup connection — the source the menu falls back to.
-   *
-   * Read here rather than left to the connection panel because of the reported
-   * bug: with the route configured as `IRIS_*` variables and no profile ever
-   * saved, `activeConnectionId` is undefined and the menu used to conclude
-   * "no connection is active" about a host that was generating replies at the
-   * time. The row was already on the wire (`connection.list`'s `host`); nothing
-   * under the composer was reading it.
+   * `hostConnection` was read here: the host's own startup connection, the
+   * source the capsule fell back to while no profile was in use. It was added
+   * for a reported bug (the menu concluding "no connection is active" about a
+   * host generating replies from its `IRIS_*` variables), and it is gone for
+   * the ruling that answers the same report from the other end: the
+   * environment is not a connection, and a host with no provider in use is not
+   * generating at all (web §79, host §61). The capsule now says that instead of
+   * offering the environment's models.
    */
-  const hostConnection = useIris(state => state.hostConnection)
   const actions = useIrisActions()
   const [modelOpen, setModelOpen] = useState(false)
   const [plusOpen, setPlusOpen] = useState(false)
@@ -519,7 +518,6 @@ export function Composer({
     overrides,
     connections,
     activeId: activeConnectionId,
-    host: hostConnection,
   })
 
   /*
@@ -558,14 +556,18 @@ export function Composer({
   const argument = commandArgumentCompletions(draft, commands)
   const showCommands = commandOpen && (completions.length > 0 || argument !== undefined)
 
-  /** The heading's words: which connection this list belongs to. */
+  /**
+   * The heading's words: which connection this list belongs to.
+   *
+   * Two forms, where there were three. The 「宿主环境」 form named the connection
+   * the process was launched with, which is what the capsule fell back to while
+   * no profile was in use; that is not a connection any more (web §79), so the
+   * remaining fallback is the generic heading — and the note below it says why
+   * there is no list.
+   */
   const heading = menu.source === 'profile' && menu.connectionName !== undefined
     ? t('modelMenuFromConnection', { connection: menu.connectionName })
-    : menu.source === 'host'
-      ? menu.hostKeyEnv === undefined
-        ? t('modelMenuFromHost')
-        : t('modelMenuFromHostEnv', { keyEnv: menu.hostKeyEnv })
-      : t('modelMenuHeading')
+    : t('modelMenuHeading')
   /*
    * The one row about the list itself.
    *

@@ -390,43 +390,45 @@ async function main(): Promise<void> {
 
   // ------------------------------------- the model control with no profile
   /*
-   * The reported bug's own state: a host configured from its environment, with
-   * no profile ever saved. The menu used to answer 「没有活动连接，因此没有可选
-   * 的模型列表」 about a host that was generating replies at the time.
+   * With no provider in use, the capsule has **nothing to offer and says so**.
+   *
+   * This check used to assert the opposite, and was right to: the host's own
+   * launch connection was a second model source, and ignoring it was a reported
+   * bug (a configured host reading as "no connection is active" while it
+   * answered messages). The user's ruling of 2026-09-10 removes that source —
+   * the environment is not a connection (web §79) — and host §61 makes the same
+   * state honest from the other end: nothing generates either, so `no-connection`
+   * is a report rather than the mistake it used to be.
    *
    * What a server render can and cannot show here has to be said plainly. The
    * menu's open state is `useState` inside `Composer` and there is no click in
-   * this harness, so the *rows* are not in the markup — `tests/model-menu.test.ts`
-   * pins those. What this adds, and what a unit test cannot, is the **seam**:
-   * the host row survives `connection.list` → the fake's projection → the
-   * store, and the decision run over that live store state offers the host's
-   * models rather than the empty sentence. The capsule itself is rendered in
-   * the same state to prove the tree does not fall over without a profile.
+   * this harness, so the *rows* are not in the markup —
+   * `tests/model-menu.test.ts` pins those. What this adds, and what a unit test
+   * cannot, is the **seam**: the decision is run over the live store state that
+   * `connection.list` → the fake → the store produced, and the capsule is
+   * rendered in the same state to prove the tree does not fall over with no
+   * provider in use.
    */
   wired.store.setState({ activeConnectionId: undefined })
   const state = wired.store.getState()
-  const hostRow = state.hostConnection
-  assert.ok(hostRow !== undefined, 'the fake host row did not reach the store')
-  // A floor on the fixture before concluding anything from it: with no seeded
-  // host list, "the menu offers the host's models" would pass by offering none.
-  assert.ok((hostRow.models ?? []).length >= 2, 'the seeded host row carries no model list')
+  // A floor on the fixture: the seeded profiles are still there, so this is
+  // "nothing in use" and not "nothing saved" — the two are different states
+  // and only one of them is what this check means.
+  assert.ok(state.connections.length >= 2, 'the fixture lost its saved providers')
 
-  const hostMenu = modelMenu({
+  const noneInUse = modelMenu({
     model: state.settings?.model ?? '',
     overrides: state.settingsOverrides,
     connections: state.connections,
     activeId: state.activeConnectionId,
-    host: hostRow,
   })
-  assert.equal(hostMenu.empty, undefined, 'the reported bug: a configured host read as no connection')
-  assert.equal(hostMenu.source, 'host')
-  for (const id of hostRow.models ?? []) {
-    assert.ok(hostMenu.models.includes(id), `the host row's ${id} is not offered`)
-  }
-  // The model in force leads, whatever the endpoint lists — the seeded chat
-  // runs a local model this endpoint has never heard of.
-  assert.equal(hostMenu.models[0], state.settings?.model)
-  assert.equal(hostMenu.hostKeyEnv, hostRow.keyEnv, 'the heading cannot name the variable to change')
+  assert.equal(noneInUse.empty, 'no-connection', 'the capsule found a model source with no provider in use')
+  assert.equal(noneInUse.source, undefined, 'a source was named with no provider in use')
+  assert.equal(noneInUse.probe, undefined, 'the capsule would fire a probe at nothing')
+  assert.equal(noneInUse.connectionModel, undefined, 'the restore row names a model no connection supplies')
+  // The model in force is still offered — it is what this conversation is set
+  // to, whether or not anything will generate with it.
+  assert.deepEqual(noneInUse.models, [state.settings?.model])
 
   const profileless = render(wired.store, slots.core)
   assert.match(
@@ -1135,9 +1137,9 @@ async function main(): Promise<void> {
     assert.match(connPanel, new RegExp(`data-block="${block}"`), `the "${block}" block is missing`)
   }
 
-  // 3. Exactly one row is current — the provider in use, or the host's row when
-  //    none is. Two marked rows and none marked are both reports nobody can act
-  //    on, and both are what a `find` returning the wrong thing produces.
+  // 3. Exactly one row is current — the provider in use. Two marked rows and
+  //    none marked are both reports nobody can act on, and both are what a
+  //    `find` returning the wrong thing produces.
   assert.equal(
     (connPanel.match(/aria-current="true"/g) ?? []).length,
     1,
@@ -1154,57 +1156,65 @@ async function main(): Promise<void> {
   assert.ok(marked.includes(inUse.label), 'the marked row is not the provider in use')
   assert.match(marked, /iris-conn__badge">/, 'the current row carries no 「current」 badge')
 
-  // The host's row is read-only: testable and adoptable, never editable or
-  // deletable. Its `aria-label`s are the check, because they are the only
-  // per-row strings that name the act.
-  const hostAt = connPanel.indexOf('iris-conn--host')
-  assert.ok(hostAt > 0, 'the host environment row is missing')
-  const hostMarkup = connPanel.slice(
-    hostAt,
-    connPanel.indexOf('</div>', connPanel.indexOf('iris-conn__actions', hostAt)),
-  )
-  assert.match(hostMarkup, /aria-label="Test Host environment"/, 'the host row cannot be tested')
-  assert.doesNotMatch(hostMarkup, /aria-label="Edit /, 'the host row offers an edit it cannot honour')
-  assert.doesNotMatch(hostMarkup, /aria-label="Delete /, 'the host row offers a delete it cannot honour')
-
   /*
-   * ...and **selectable**, which it was not (web §77's first cost, now §78).
-   * 使用 on this row is `connection.deactivate`: the global layer goes back to
-   * the route and model the host was launched with, from the snapshot host §60
-   * takes at construction. A profile is in use in this render, so the verb is
-   * offered here.
-   */
-  assert.match(hostMarkup, /aria-label="Use Host environment"/, 'the host row cannot be selected back')
-
-  /*
-   * And with nothing applied it is the other way round: the 「current」 badge and
-   * no verb, exactly as a provider row does it — a press whose only possible
-   * effect is nothing is not offered.
+   * 4. **The environment is not a row** (web §79).
    *
-   * Rendered from a written store state and put straight back, the same
-   * concession the host-row check above the connections block already makes:
-   * the fake seeds an active profile, and "no profile applied" is a state the
-   * seed cannot be in while every other check below wants the seeded one.
+   * Nine assertions stood here about that row: read-only, testable, adoptable,
+   * never editable or deletable, carrying 使用 while a profile was in use and
+   * the 「current」 badge when none was. The user's ruling of 2026-09-10 retires
+   * it, so what is pinned is its absence — the class it rendered under, the
+   * verbs only it had, and the string that named it. An absence is exactly what
+   * a render check is for: a row creeping back is markup, and no source pattern
+   * excludes the shape somebody would use.
    */
-  const seededActive = wired.store.getState().activeConnectionId
-  assert.ok(seededActive !== undefined, 'the fixture must seed an active profile for this contrast')
-  wired.store.setState({ activeConnectionId: undefined })
-  const onHost = render(wired.store, slots.core, <ConnectionPanel />)
-  wired.store.setState({ activeConnectionId: seededActive })
-  const onHostAt = onHost.indexOf('iris-conn--host')
-  const onHostRow = onHost.slice(
-    onHostAt,
-    onHost.indexOf('</div>', onHost.indexOf('iris-conn__actions', onHostAt)),
-  )
-  assert.doesNotMatch(onHostRow, /aria-label="Use Host environment"/, 'the row in use still offers 使用')
-  assert.match(onHostRow, /iris-conn__badge">current</, 'the host row is not marked current with nothing applied')
-  assert.equal(
-    (onHost.match(/aria-current="true"/g) ?? []).length,
-    1,
-    'exactly one row should be marked current when the host row is the one in use',
-  )
+  assert.doesNotMatch(connPanel, /iris-conn--host/, 'the 「宿主环境」 row is back in the provider list')
+  assert.doesNotMatch(connPanel, /Host environment/, 'something still names the environment as a connection')
+  assert.doesNotMatch(connPanel, /Save as a provider/, 'the adopt button is back')
+  assert.doesNotMatch(connPanel, /read-only/, 'a read-only row is back in the list')
+  // Every row in the list is a profile, so every row offers all four verbs.
+  // Counted rather than sampled: the host row was the one exception, and a
+  // count is what notices a new one.
+  const connRows = (connPanel.match(/class="iris-conn"/g) ?? []).length
+  assert.equal(connRows, wired.store.getState().connections.length, 'the list does not hold one row per provider')
+  for (const [verb, label] of [['Edit', /aria-label="Edit /g], ['Delete', /aria-label="Delete /g]] as const) {
+    assert.equal(
+      (connPanel.match(label) ?? []).length,
+      connRows,
+      `${verb} is not offered on every row, so some row is not an ordinary provider`,
+    )
+  }
 
-  // 4. The collapsed head is a reading, not a control: name · model, and no
+  /*
+   * 5. **The empty state**, which is now the whole of what a fresh install
+   * sees — and, since host §61, the one thing between the reader and a reply:
+   * with no provider in use the host refuses to generate. So it is a sentence
+   * that says what to do and the button that does it, not a note about an
+   * absent list.
+   *
+   * Written into the store and put straight back, the same concession the
+   * capsule check above makes: the fake seeds three providers, and "none saved"
+   * is a state the seed cannot be in while the checks around it want the seeded
+   * one.
+   */
+  const seededProviders = wired.store.getState().connections
+  const seededActive = wired.store.getState().activeConnectionId
+  assert.ok(seededProviders.length > 0 && seededActive !== undefined, 'the fixture seeds nothing to put back')
+  wired.store.setState({ connections: [], activeConnectionId: undefined })
+  const empty = render(wired.store, slots.core, <ConnectionPanel />)
+  wired.store.setState({ connections: seededProviders, activeConnectionId: seededActive })
+  assert.match(empty, /No providers yet — add one to generate\./, 'the empty state does not say what to do')
+  assert.match(empty, /iris-conn-panel__empty/, 'the empty state has no block of its own')
+  // The button is *inside* the empty state, not only in the add block below it:
+  // the reader should not have to find a second place to start.
+  const emptyAt = empty.indexOf('iris-conn-panel__empty')
+  assert.match(
+    empty.slice(emptyAt, emptyAt + 600),
+    /<button[^>]*>Add a provider</,
+    'the empty state offers no way to add a provider',
+  )
+  assert.equal((empty.match(/aria-current="true"/g) ?? []).length, 0, 'a row is marked current with no rows')
+
+  // 6. The collapsed head is a reading, not a control: name · model, and no
   //    field or nested press inside the summary.
   const headAt = connPanel.indexOf('iris-card__summary')
   assert.ok(headAt > 0, 'the connection card has no summary line')
@@ -1214,6 +1224,18 @@ async function main(): Promise<void> {
     `the collapsed head should read "name · model"; it reads ${head}`,
   )
   assert.doesNotMatch(head, /<button|<input|<select/, 'the collapsed head summary holds a control')
+
+  /*
+   * ...and with no provider in use it names no connection at all. It used to
+   * read 「宿主环境 · <model>」 there, which was true while the environment was a
+   * route; naming it now would point the reader at the one thing that is not an
+   * answer (web §79).
+   */
+  const headEmptyAt = empty.indexOf('iris-card__summary')
+  assert.ok(headEmptyAt > 0)
+  const headEmpty = empty.slice(headEmptyAt, empty.indexOf('</span>', headEmptyAt))
+  assert.match(headEmpty, /no provider selected/, 'the collapsed head does not say nothing is selected')
+  assert.doesNotMatch(headEmpty, /Host environment/, 'the collapsed head still names the environment')
 
   // ------------------------------------------------------------------ slots
   // `iris.message.actions` is projected as one folded menu per floor

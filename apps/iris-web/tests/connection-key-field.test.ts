@@ -29,10 +29,21 @@
  * the editor is *mounted* only while a provider is being edited (which is what
  * makes "no field in the panel body" structural rather than a habit), editing
  * the provider in use re-uses it afterwards (because `connection.save` writes
- * the file and installs no route), the panel's "use" is global (no `chatId` on
- * the wire) — for a provider row *and* for the host row, whose 使用 is
- * `connection.deactivate` (web §78) — and that row offers the verb only while
- * something else is in use.
+ * the file and installs no route), and the panel's "use" is global (no `chatId`
+ * on the wire).
+ *
+ * **The 「宿主环境」 row's own pins are gone with the row** (web §79). What stands
+ * in their place is the other kind of assertion: that the strings, the store
+ * action and the protocol member it used are deleted rather than merely
+ * unreferenced — `i18n.test.ts` checks used → dictionary only, so an unused key
+ * is never reported, and a store action nobody calls is a path back to a
+ * decision the user reversed.
+ *
+ * The model control gains the half the user asked for on 2026-09-10 (「模型要
+ * 支持添加自定义名称的模型」): a fixed 「自定义…」 option that turns the dropdown
+ * back into a field. It is pinned here rather than in `render-check` for the
+ * reason the editor's other decisions are — the dialog is a `Modal` mounted
+ * only while editing, and a server render cannot open it.
  *
  * The copy half is checked properly: every key the panel names must exist in
  * both dictionaries. `i18n.test.ts` holds the other direction for the whole
@@ -98,11 +109,17 @@ test('a stored key is announced, so an empty field does not read as "paste it ag
 
 test('the model control is a select when a list exists, and a text field only as the named fallback', () => {
   // Ordered: the `<select>` branch has to be the one guarded by a non-empty
-  // list, with the input in the else. Matching on the guard rather than on
-  // "there is a select somewhere" — the provider dropdown is also a select.
+  // list *and* by the reader not having asked to type, with the input in the
+  // else. Matching on the guard rather than on "there is a select somewhere" —
+  // the provider dropdown is also a select.
   assert.match(
     PANEL,
-    /form\.models !== undefined && form\.models\.length > 0 \? \([\s\S]{0,200}<select/,
+    /const listed = form\.models !== undefined && form\.models\.length > 0/,
+    'the "is there a list" question is not asked in one place',
+  )
+  assert.match(
+    PANEL,
+    /\{listed && form\.modelTyping !== true \? \([\s\S]{0,200}<select/,
     'the model control is not a select driven by the probed list',
   )
   // The current value survives a list that does not contain it. Without this
@@ -196,53 +213,119 @@ test('the panel’s “use” is global — no chatId reaches connection.activat
   assert.match(action, /client\.call\('settings\.get', \{ chatId \}\)/, 'the open chat’s settings are not re-read')
 })
 
-test('the host row’s “use” is global too — no chatId reaches connection.deactivate', () => {
-  // The same rule as the activation above, on the row that is not a profile:
-  // 使用 on 「宿主环境」 puts the *global* layer back on the launch route (host
-  // §60). Scoped to the open conversation it would be a second, silent meaning
-  // for the one list — the confusion web §77 separated out.
-  const at = STORE.indexOf('async deactivateConnection')
-  assert.ok(at > 0, 'the store cannot select the host row back')
-  const action = STORE.slice(at, at + 1800)
-  // Loose on the call, strict on the argument list — the same division as the
-  // activation's pins above, so it is the `chatId` assertion below that carries
-  // the property rather than a literal `{}` that happens to forbid everything.
-  assert.match(action, /client\.call\('connection\.deactivate',/, 'the action no longer deactivates anything')
-  assert.doesNotMatch(
-    action,
-    /connection\.deactivate',[^)]*chatId/,
-    'a chatId is being sent with the deactivation',
+test('a list is a shortcut, never a gate: 「自定义…」 turns the dropdown back into a field', () => {
+  /*
+   * The user's ruling, 2026-09-10, verbatim: 「供应商编辑这里模型要支持添加自定义
+   * 名称的模型，以防止用户无法使用到还在内测的模型」. The pre-existing off-list path
+   * only *preserved* such a name (a stored model the list lacks keeps a row of
+   * its own); nothing let anyone enter one, so a provider whose model was in
+   * closed testing could be read and never written.
+   */
+  // The option is in the select, and it is the last child — a reader scanning
+  // for their model reads the endpoint's own list first.
+  const selectAt = PANEL.indexOf("{listed && form.modelTyping !== true ? (")
+  assert.ok(selectAt > 0, 'the model select is gone')
+  const control = PANEL.slice(selectAt, selectAt + 1600)
+  assert.match(
+    control,
+    /form\.models \?\? \[\]\)\.map\(model =>[\s\S]{0,200}<option value=\{CUSTOM_MODEL\}>\{t\('modelCustomOption'\)\}/,
+    'the custom option is missing, or it is not after the endpoint’s own list',
   )
-  // And the same follow-up read, for the same reason: a conversation that
-  // overrides nothing is now generating with the launch model.
-  assert.match(action, /client\.call\('settings\.get', \{ chatId \}\)/, 'the open chat’s settings are not re-read')
+  // The sentinel is not a model name and never becomes one: choosing it
+  // switches the control and leaves the value alone, so the save cannot store
+  // it and a blanked field cannot disable 保存 the moment it is chosen.
+  assert.match(
+    control,
+    /if \(event\.target\.value === CUSTOM_MODEL\) patchForm\(\{ modelTyping: true \}\)/,
+    'the custom option writes itself into the model instead of switching the control',
+  )
+  assert.doesNotMatch(control, /modelTyping: true, model: ''/, 'choosing 「自定义…」 blanks the model')
+  // The field it switches to is focused, and only in that case: autofocusing
+  // the never-probed provider would take the caret off the endpoint field
+  // every time the dialog opens.
+  assert.match(PANEL, /autoFocus=\{form\.modelTyping === true\}/, 'the typed field is not focused')
+  // And there is a way back while a list exists, so it is not a one-way door.
+  assert.match(
+    PANEL,
+    /\{listed && form\.modelTyping === true \? \([\s\S]{0,400}modelFromList/,
+    'nothing offers the list back once 「自定义…」 is chosen',
+  )
+  // The sentence that says why the field exists at all.
+  assert.match(PANEL, /modelCustomTyped/, 'the typed field explains nothing')
 })
 
-test('the host row offers 使用 only while a profile is in use', () => {
+test('the panel’s empty state says what to do, and offers the act', () => {
+  // With no provider in use the host refuses to generate (host §61), so this is
+  // the one thing between a fresh install and a reply. `render-check` renders
+  // it; what a render cannot see is that the *button* is inside the branch
+  // rather than only in the add block below it.
+  const at = PANEL.indexOf('{profiles.length === 0 ? (')
+  assert.ok(at > 0, 'the panel no longer has an empty state at all')
+  const branch = PANEL.slice(at, at + 900)
+  assert.match(branch, /t\('noSavedConnections'\)/, 'the empty state says nothing')
+  assert.match(branch, /setEditing\(freshForm\(\)\)/, 'the empty state offers no way to add a provider')
+  assert.match(branch, /t\('connAddProvider'\)/, 'the empty state’s button is unlabelled')
+})
+
+test('the environment is gone from the panel, the store and the dictionary', () => {
   /*
-   * The absence half, pinned in the source because that is where the condition
-   * lives: `tools/render-check.tsx` renders both states, and this sees that the
-   * button is guarded *at all* rather than guarded by something that happens to
-   * be false in a fixture. Until web §78 this row carried a sentence instead
-   * (`connHostUseGap`), so the deleted key is pinned as deleted here too — a
-   * string explaining a gap that has since been filled is worse than none.
+   * The absence half of the user's ruling of 2026-09-10 (「宿主环境这个功能废弃了」),
+   * pinned three ways because three different things would bring it back.
+   *
+   * The **panel** would bring the row back as markup — `render-check` holds
+   * that end on a real render. What this file holds is the two ends a render
+   * cannot see.
    */
-  const at = PANEL.indexOf('iris-conn--host')
-  assert.ok(at > 0, 'the host row is gone from the panel')
-  const row = PANEL.slice(at, at + 3000)
-  assert.match(
-    row,
-    /\{activeId === undefined \? null : \([\s\S]{0,500}deactivateConnection\(\)/,
-    'the host row’s 使用 is not guarded by a profile being in use',
+  /*
+   * The store action: a caller-less path back to "no profile applied" is a path
+   * back to a decision the user reversed.
+   *
+   * The *call* and the *declaration*, not the word — `store.ts` records in
+   * prose what it used to do, and an assertion wide enough to see that sentence
+   * would go red on the explanation of why the code is gone. Written after
+   * exactly that: the first spelling was `STORE.includes('connection.deactivate')`
+   * and it failed on the comment recording the deletion.
+   */
+  assert.doesNotMatch(
+    STORE,
+    /client\.call\('connection\.deactivate'/,
+    'the store can still ask for no profile to be applied',
   )
-  // The *call*, not the name: this module's own prose says what the key used to
-  // be for, and a pattern wide enough to see that would go red on the
-  // explanation of why it is gone.
-  assert.doesNotMatch(PANEL, /t\('connHostUseGap'\)/, 'the panel still shows a gap that has been filled')
-  // And the key is gone from the dictionary, not merely unused: `i18n.test.ts`
-  // checks used → dictionary only, so an unused key is never reported — which
-  // is how two of them survived until web §77 went looking.
-  assert.equal(Object.hasOwn(en, 'connHostUseGap'), false, 'the deleted string is still in the dictionary')
+  assert.doesNotMatch(STORE, /async deactivateConnection\(/, 'the store still declares the action')
+  assert.doesNotMatch(STORE, /adoptHostKey\??:/, 'the store can still ask the host to copy its own key')
+  /*
+   * The strings. **Deleted from the dictionary, not merely unreferenced** —
+   * `i18n.test.ts` checks used → dictionary only, so an unused key is never
+   * reported, which is how two of them survived until web §77 went looking.
+   *
+   * All twelve, including the four the *composer* owned (`STRINGS.md`'s own
+   * count for this section), because the dictionary is one object and this is
+   * the only check that reads it in the deleting direction.
+   */
+  const deleted = [
+    // The 「宿主环境」 row itself: its title, its explanation, its three key
+    // states, its 存为供应商 button and that button's receipt.
+    'hostDefaultTitle', 'hostDefaultNote', 'hostDefaultKeyEnv', 'hostDefaultKeyAnon', 'hostDefaultNoKey',
+    'adoptHostConnection', 'hostAdopted',
+    // Only that row was read-only, and only that row could carry no endpoint.
+    'connReadOnly', 'connTestNeedsEndpoint',
+    // The collapsed head's old summary key, replaced by `connNoneSelected`.
+    'noActiveConnection',
+    // The capsule's two headings for the environment as a source.
+    'modelMenuFromHost', 'modelMenuFromHostEnv',
+  ]
+  assert.equal(deleted.length, 12, 'the count STRINGS.md states and the list checked here have drifted')
+  for (const key of deleted) {
+    assert.equal(Object.hasOwn(en, key), false, `the deleted string "${key}" is still in the dictionary`)
+  }
+  // And the panel names none of them. The *call*, not the word: this module's
+  // prose says what these used to be for, and a pattern wide enough to see the
+  // prose would go red on the explanation.
+  for (const key of deleted) {
+    assert.doesNotMatch(PANEL, new RegExp(`t\\('${key}'`), `the panel still names t('${key}')`)
+  }
+  // And the row's class, which is the one thing a stale style would keep alive.
+  assert.doesNotMatch(PANEL, /iris-conn--host/, 'the host row’s own class is still rendered')
 })
 
 test('every copy key the panel names exists in both dictionaries', () => {

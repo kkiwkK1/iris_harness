@@ -441,20 +441,16 @@ export const requestSchemas = {
     apiKey: z.string().max(2000).optional(),
     /** The header the key is sent in. Absent means the OpenAI-compatible `Authorization: Bearer`. */
     apiKeyHeader: z.string().max(200).optional(),
-    /**
-     * Copy the **host's own startup credential** into this profile, host-side.
-     *
-     * This is how the read-only `host` row of `connection.list` becomes an
-     * editable profile. The alternative — showing the environment key so the
-     * form could send it back — is the one thing this whole surface exists to
-     * prevent, so the copy happens where the key already is and the browser
-     * only ever asks for it by name.
-     *
-     * Ignored when the host holds no environment credential, and outranked by
-     * an explicit non-empty {@link apiKey}: a key the user just typed is a
-     * newer decision than a flag the form set when it opened.
+    /*
+     * `adoptHostKey` stood here: a flag asking the host to copy its own startup
+     * credential into the profile being saved, which is what turned the
+     * read-only 「宿主环境」 row of `connection.list` into an editable profile in
+     * one press. That row is gone (the user's ruling of 2026-09-10; host §61,
+     * web §79) and so is its 存为供应商 button, the flag's only caller. The copy
+     * survives where it is now needed: `importLaunchConnection()` writes the
+     * environment's endpoint, model and credential into a profile once, at
+     * first start, so the key still never crosses the wire in either direction.
      */
-    adoptHostKey: z.boolean().optional(),
     /**
      * The model ids a probe of this profile's endpoint just reported, recorded
      * on the profile so a picker elsewhere has a list without probing again.
@@ -491,22 +487,16 @@ export const requestSchemas = {
     id: z.string().min(1),
     chatId: z.string().min(1).optional(),
   }),
-  /**
-   * Apply **no** profile: back to the connection the host was launched with.
-   *
-   * The counterpart of `connection.activate`, and not a "clear" of it —
-   * choosing the host's own connection is a choice like any other row's. The
-   * launch configuration is a route *and* a model, so the global layer takes
-   * both from the host's launch snapshot (host §60), while sampling is left
-   * exactly as it stands: the launch configuration carries none, so anything
-   * written there would be invented.
-   *
-   * **Global only, and therefore parameterless.** There is no per-conversation
-   * form for the same reason nothing in the browser sends `connection.activate`
-   * a `chatId` (web §77): the provider list is the host's list, and one
-   * conversation's own model is the composer capsule's business.
+  /*
+   * `connection.deactivate` stood here: apply **no** profile and put the global
+   * layer back on the route and model the host was launched with (host §60, web
+   * §78, both one day old when this was written). It was the 「宿主环境」 row's
+   * own verb, and the row is gone — the user's ruling of 2026-09-10 retires the
+   * environment as something a person can select, so "no profile applied" is no
+   * longer a state the interface can ask for. A generation with nothing in use
+   * is refused by name (`no-provider`) rather than served from the environment.
+   * Host §61 and web §79.
    */
-  'connection.deactivate': z.object({}),
   /**
    * Probe an endpoint the way a model list would be fetched, and say what
    * happened in words a form can show.
@@ -2041,23 +2031,6 @@ export interface RpcResponseMap {
   }
   'connection.activate': { settings: GenerationSettings, activeId: string }
   /**
-   * The settings the launch configuration leaves in force, and the row that now
-   * describes what generates.
-   *
-   * Shaped to be read like `connection.activate`'s answer and `connection.list`'s
-   * together, so a caller writes the same three assignments after any of the
-   * three: `activeId` is **always absent here** — it is declared because a
-   * caller reading `result.activeId` and storing it is what makes "no profile is
-   * applied" arrive through the same line as "this profile is". `host` is the
-   * re-projected host row (absent on a host that does not describe its own
-   * route), which after this call is the row marked current.
-   */
-  'connection.deactivate': {
-    settings: GenerationSettings
-    activeId?: string
-    host?: HostDefaultConnection
-  }
-  /**
    * The probe's verdict, said in full even when it failed.
    *
    * A failed probe is a **result, not an error**: the method answered, and the
@@ -2282,6 +2255,22 @@ export interface RpcError {
      * they already handle, under a name they do not recognise.
      */
     | 'quota-exceeded'
+    /**
+     * No saved provider is in use, so there is nothing to generate through.
+     *
+     * Its own code rather than `invalid-request`, because the request was
+     * perfectly well formed and the fix is somewhere else entirely: the
+     * connection card, where a provider is added and put in use. The user's
+     * ruling of 2026-09-10 retired the host's own launch route as a fallback
+     * (「以后都从在 Iris 中自己添加供应商来调用模型」), and a refusal that named
+     * no next step would be the worse half of that change — so the code exists
+     * to let the interface say which card to open, in the reader's own
+     * language, rather than passing through a host sentence about routes.
+     *
+     * Raised at the one funnel every generation passes (host §61), so it
+     * reaches a turn as `stream.error`'s code and an `script.generate` as this.
+     */
+    | 'no-provider'
     | 'internal'
   /** Human-readable detail. Safe to show; must not carry a credential. */
   message: string

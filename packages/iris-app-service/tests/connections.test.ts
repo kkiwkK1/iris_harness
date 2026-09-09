@@ -63,6 +63,11 @@ async function fixture(
   } = {},
 ): Promise<{
   handlers: Handlers
+  /**
+   * The service itself, for the one thing that is not a handler: the boot-time
+   * import of the launch environment into the provider list (host §61).
+   */
+  service: IrisAppService
   settings: SettingsStore
   dir: string
 }> {
@@ -76,16 +81,16 @@ async function fixture(
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'default', model: 'local-model' })
   const connections = new ConnectionStore(join(dir, 'connections.json'))
 
-  const handlers = new IrisAppService({
+  const service = new IrisAppService({
     stream, library, chats, settings, connections,
     broadcast: () => {},
     userName: 'Traveller',
     env: options.env ?? {},
     ...options.probeTimeoutMs === undefined ? {} : { probeTimeoutMs: options.probeTimeoutMs },
     ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
-  }).handlers()
+  })
 
-  return { handlers, settings, dir }
+  return { handlers: service.handlers(), service, settings, dir }
 }
 
 test('a profile’s summary follows its contents, because it is not stored', async (t) => {
@@ -847,62 +852,176 @@ test('a host with no environment credential says so rather than staying silent',
   assert.equal(listed.host?.baseURL, undefined)
 })
 
-test('adopting the host connection copies its key without the browser touching it', async (t) => {
-  const { handlers, dir } = await fixture(t, {
+/* ------------------------------------------------------------------------- *
+ * The launch environment is imported into the provider list, once (host §61).
+ *
+ * The user's ruling, 2026-09-10: 「宿主环境这个功能废弃了，以后都从在 Iris 中自己
+ * 添加供应商来调用模型」. So the 「宿主环境」 row is gone, `connection.deactivate`
+ * with it, and a generation with no provider in use is refused. Which leaves
+ * one migration to get right: a host whose `connections.json` is empty while
+ * its `.env` names an endpoint used to generate through that endpoint, and
+ * would now refuse everything until the user retyped what the file says.
+ *
+ * The `adoptHostKey` tests stood here — the flag the 存为供应商 button sent,
+ * asking the host to copy its own credential into a profile. The copy is what
+ * survives; the press is what is gone.
+ * ------------------------------------------------------------------------- */
+
+test('a first start with an empty list imports the launch environment and applies it', async (t) => {
+  const installs: { route: string, endpoint: ConnectionEndpoint }[] = []
+  const { service, handlers, settings, dir } = await fixture(t, {
+    installConnection: (route, endpoint) => { installs.push({ route, endpoint }) },
     env: {
+      // No `IRIS_MODEL` here on purpose: this runtime never reads it. The
+      // endpoint and the credential come from the environment; the model comes
+      // from the composition (this fixture's settings default, `local-model`).
       IRIS_BASE_URL: 'https://api.deepseek.com/v1',
-      IRIS_MODEL: 'deepseek-chat',
       IRIS_API_KEY_ENV: 'PROBE_KEY',
       PROBE_KEY: 'sk-host-secret-9999',
     },
   })
+  // The premise, asserted before anything is concluded from the change: this
+  // host has no providers at all, which is the only state that imports.
+  assert.deepEqual((await handlers['connection.list']({})).profiles, [])
 
-  // The whole request, as the panel sends it: no key field at all.
-  const saved = await handlers['connection.save']({
+  const id = await service.importLaunchConnection()
+  assert.ok(id !== undefined, 'nothing was imported')
+
+  const listed = await handlers['connection.list']({})
+  assert.equal(listed.profiles.length, 1, 'the import did not produce exactly one provider')
+  const imported = listed.profiles[0]
+  assert.equal(imported?.id, id)
+  assert.equal(imported?.baseURL, 'https://api.deepseek.com/v1')
+  // The endpoint and the key come from the **environment**; the model comes
+  // from the launch snapshot, which is the composition's own configured model
+  // (this fixture's `local-model`, `IRIS_MODEL` on the shipped composition).
+  // Two sources, said here because a reader will assume one.
+  assert.equal(imported?.model, 'local-model')
+  assert.equal(imported?.label, '启动环境', 'the row does not say where it came from')
+  // The credential came across **inside the host**, and the answer says so the
+  // only way a read ever may: a state and a mask.
+  assert.equal(imported?.hasKey, true, 'the import left the key in the environment')
+  assert.equal(imported?.keyTail, '9999')
+
+  // In use, not merely saved. A provider in the list that nothing generates
+  // through is exactly the state this method exists to prevent.
+  assert.equal(listed.activeId, id, 'the imported provider is not the one in use')
+  const route = routeOf({
+    id,
     provider: 'default',
-    model: 'deepseek-chat',
+    model: 'local-model',
     baseURL: 'https://api.deepseek.com/v1',
-    adoptHostKey: true,
   })
+  assert.equal(settings.get().provider, route, 'the settings layer does not name the imported route')
+  assert.equal(settings.get().model, 'local-model')
+  // And the adapter for it is installed, with the copied key — otherwise the
+  // first turn would reach a route the registry has never heard of.
+  assert.deepEqual(installs.map(entry => entry.route), [route])
+  assert.equal(installs[0]?.endpoint.baseURL, 'https://api.deepseek.com/v1')
+  assert.equal(installs[0]?.endpoint.apiKey, 'sk-host-secret-9999')
 
-  assert.equal(saved.profiles[0]?.hasKey, true, 'the adoption did not carry the key across')
-  assert.equal(saved.profiles[0]?.keyTail, '9999')
-  assert.equal(JSON.stringify(saved).includes('sk-host-secret-9999'), false, 'the response leaked the key')
-  // On disk it is there, which is the point of adopting: an editable profile
-  // that can generate on its own.
+  // The key is on disk, which is the whole point of importing rather than
+  // borrowing: a later host started without the variable still generates.
   const file = await readFile(join(dir, 'connections.json'), 'utf8')
-  assert.equal(file.includes('sk-host-secret-9999'), true)
+  assert.equal(file.includes('sk-host-secret-9999'), true, 'the key was borrowed rather than imported')
 })
 
-test('adopting is ignored where there is no host credential, and outranked by a typed one', async (t) => {
-  const { handlers } = await fixture(t, { env: {} })
-  const none = await handlers['connection.save']({
-    provider: 'default', model: 'm', adoptHostKey: true,
+test('the boot after an import installs the route once, not twice', async (t) => {
+  // The plugin calls `importLaunchConnection()` and then
+  // `restoreActiveConnection()`, in that order. The import installs what it
+  // applied, so the restore must see it as served — otherwise every first start
+  // installs one connection twice and logs two "connection now generates
+  // through…" lines for it.
+  const installs: string[] = []
+  const { service } = await fixture(t, {
+    installConnection: (route) => { installs.push(route) },
+    env: { IRIS_BASE_URL: 'https://api.deepseek.com/v1' },
   })
-  assert.equal(none.profiles[0]?.hasKey, undefined, 'a flag invented a key out of an empty environment')
+  const id = await service.importLaunchConnection()
+  assert.ok(id !== undefined, 'nothing was imported, so this test is about nothing')
+  assert.equal(installs.length, 1, 'the import did not install the route it applied')
 
-  const { handlers: withHost } = await fixture(t, {
-    env: { IRIS_API_KEY_ENV: 'PROBE_KEY', PROBE_KEY: 'sk-host-secret-9999' },
+  assert.equal(await service.restoreActiveConnection(), undefined, 'the restore claimed a route it did not install')
+  assert.equal(installs.length, 1, 'the boot installed one connection twice')
+})
+
+test('the imported key never crosses the protocol, in either direction', async (t) => {
+  const { service, handlers } = await fixture(t, {
+    env: {
+      IRIS_BASE_URL: 'https://api.deepseek.com/v1',
+      IRIS_API_KEY_ENV: 'PROBE_KEY',
+      PROBE_KEY: 'sk-host-secret-9999',
+    },
   })
-  const typed = await withHost['connection.save']({
-    provider: 'default', model: 'm', adoptHostKey: true, apiKey: 'sk-typed-key-1234',
+  await service.importLaunchConnection()
+  const listed = await handlers['connection.list']({})
+  assert.equal(JSON.stringify(listed).includes('sk-host-secret-9999'), false, 'the list leaked the imported key')
+  const id = listed.profiles[0]?.id
+  assert.ok(id !== undefined)
+  const saved = await handlers['connection.save']({ id, provider: 'default', model: 'local-model' })
+  assert.equal(JSON.stringify(saved).includes('sk-host-secret-9999'), false, 'a save leaked the imported key')
+  // And the key survived that save, which is the merge rule doing its job on
+  // the one profile nobody ever typed a key into.
+  assert.equal(saved.profiles[0]?.hasKey, true, 'editing the imported provider disarmed it')
+})
+
+test('a host that already has a provider is left alone, however its environment is configured', async (t) => {
+  const { service, handlers, settings } = await fixture(t, {
+    env: { IRIS_BASE_URL: 'https://api.deepseek.com/v1' },
   })
-  // The newer decision of the two wins: the flag was set when the form opened,
-  // the key was typed after.
-  assert.equal(typed.profiles[0]?.keyTail, '1234')
+  // One provider of the user's own, and deliberately **not** in use: "nothing
+  // is active" is not the condition — an empty *list* is. A user who has saved
+  // anything has made this decision themselves, and a row appearing at their
+  // next start would be this host editing their list behind them.
+  const saved = await handlers['connection.save']({ provider: 'openrouter', model: 'x/y' })
+  const before = settings.get().provider
+
+  assert.equal(await service.importLaunchConnection(), undefined, 'the import ran on a list that was not empty')
+  const listed = await handlers['connection.list']({})
+  assert.deepEqual(
+    listed.profiles.map(row => row.id),
+    saved.profiles.map(row => row.id),
+    'the list gained a row',
+  )
+  assert.equal(listed.activeId, undefined, 'the import applied something on a host it should not have touched')
+  assert.equal(settings.get().provider, before, 'the settings layer moved')
+})
+
+test('an environment that names no endpoint imports nothing, rather than inventing one', async (t) => {
+  // `IRIS_BASE_URL` unset is the composition's `http://127.0.0.1:11434/v1`
+  // default, which lives in a `!!js` expression this runtime cannot read. A
+  // copy of it here would be a constant that drifts, so the import declines and
+  // the user adds a provider by hand — the one behaviour cost of the ruling.
+  const { service, handlers } = await fixture(t, { env: {} })
+  assert.equal(await service.importLaunchConnection(), undefined)
+  assert.deepEqual((await handlers['connection.list']({})).profiles, [])
+})
+
+test('an endpoint with no key still imports, because a local serve needs none', async (t) => {
+  const { service, handlers } = await fixture(t, {
+    env: { IRIS_BASE_URL: 'http://127.0.0.1:11434/v1' },
+  })
+  const id = await service.importLaunchConnection()
+  assert.ok(id !== undefined, 'a keyless environment was refused, which locks out the simplest setup')
+  const listed = await handlers['connection.list']({})
+  assert.equal(listed.profiles[0]?.hasKey, undefined, 'a key was invented out of an empty environment')
+  assert.equal(listed.profiles[0]?.baseURL, 'http://127.0.0.1:11434/v1')
+  assert.equal(listed.activeId, id)
 })
 
 /* ------------------------------------------------------------------------- *
- * The launch snapshot, and the way back to it (host §60).
+ * The environment is not a connection any more (host §61).
  *
- * The host row used to read its `provider` and `model` from the **global
- * settings layer**, which is where every global activation writes: so the row
- * the panel labels 「宿主环境」 described the profile in force the moment one was
- * used, and there was no way at all to put the layer back — `ConnectionStore`
- * could only move `activeId` from one profile to another.
+ * Host §60 gave this file three tests: the 「宿主环境」 row kept describing the
+ * launch configuration after an activation, `connection.deactivate` put the
+ * global layer back on it, and `clearActive()` on a store with nothing active
+ * wrote no file. All three pinned a row a person could select, which the ruling
+ * of the following day retires — so what is pinned here now is the absence,
+ * field by field, because a projection that keeps answering `provider` is one
+ * an interface can keep reading.
  * ------------------------------------------------------------------------- */
 
-test('the host row describes the launch configuration, not the profile in use', async (t) => {
+test('the host row carries the credential’s facts and nothing that describes a connection', async (t) => {
   const { handlers, settings } = await fixture(t, {
     env: {
       IRIS_BASE_URL: 'https://api.deepseek.com/v1',
@@ -910,87 +1029,47 @@ test('the host row describes the launch configuration, not the profile in use', 
       PROBE_KEY: 'sk-host-secret-9999',
     },
   })
-  // What this fixture's "composition" configured: `default` / `local-model`.
-  // These two strings are the whole content of the claim the row makes.
-  const before = await handlers['connection.list']({})
-  assert.equal(before.host?.provider, 'default')
-  assert.equal(before.host?.model, 'local-model')
+  const listed = await handlers['connection.list']({})
+  const host = listed.host
+  assert.ok(host !== undefined, 'the host stopped describing its environment at all')
+  // What is left, and why: the provider editor reads exactly these to explain a
+  // key field left blank at this origin (§58's ladder, now a fallback).
+  assert.equal(host.baseURL, 'https://api.deepseek.com/v1')
+  assert.equal(host.keySource, 'env')
+  assert.equal(host.keyEnv, 'PROBE_KEY')
 
+  // And what is gone. Checked as **keys on the object**, which is what a
+  // browser reading `host.provider` would find — the fields, not their values,
+  // because a field answering `undefined` is still a field to code against.
+  for (const field of ['provider', 'model', 'models', 'modelsProbedAt', 'modelContexts']) {
+    assert.equal(
+      Object.hasOwn(host, field),
+      false,
+      `the host row still carries "${field}", so it still describes a connection`,
+    )
+  }
+
+  // The verb that row had for one day is gone from the handler table with it,
+  // so "apply no profile" is not a state anything can ask for.
+  assert.equal(
+    Object.hasOwn(handlers, 'connection.deactivate'),
+    false,
+    'connection.deactivate is still registered',
+  )
+
+  // An activation still moves the settings layer, which is the half of §60's
+  // first test that outlives it: the row cannot follow an activation, because
+  // there is nothing left on the row for it to follow with.
   const saved = await handlers['connection.save']({
     provider: 'deepseek', model: 'deepseek-chat', baseURL: 'https://api.deepseek.com/v1',
   })
   const id = saved.profiles[0]?.id
   assert.ok(id !== undefined)
   await handlers['connection.activate']({ id })
-
-  // The global layer moved, which is what an activation is for.
   assert.equal(settings.get().provider, 'deepseek', 'the activation did not write the route')
-  assert.equal(settings.get().model, 'deepseek-chat')
-
-  // And the row did not. Read from the layer, both of these would now be the
-  // activated profile's own values — the row would describe the connection it
-  // exists to be the alternative to, and a 「使用」 on it would re-apply that
-  // profile under the host's name.
   const after = await handlers['connection.list']({})
-  assert.equal(after.host?.provider, 'default', 'the host row followed the activation')
-  assert.equal(after.host?.model, 'local-model', 'the host row followed the activation')
-  // The endpoint and the key still come from the environment, which the
-  // settings layer never carried: the snapshot moved two fields, not four.
-  assert.equal(after.host?.baseURL, 'https://api.deepseek.com/v1')
+  assert.equal(after.host?.baseURL, 'https://api.deepseek.com/v1', 'the environment’s endpoint moved')
   assert.equal(after.host?.keySource, 'env')
-})
-
-test('deactivating returns the global layer to the launch route and model, and keeps the sampling', async (t) => {
-  const { handlers, settings, dir } = await fixture(t, { env: {} })
-  const saved = await handlers['connection.save']({
-    provider: 'deepseek',
-    model: 'deepseek-chat',
-    baseURL: 'https://api.deepseek.com/v1',
-    sampling: { temperature: 0.7 },
-  })
-  const id = saved.profiles[0]?.id
-  assert.ok(id !== undefined)
-  await handlers['connection.activate']({ id })
-  assert.equal((await handlers['connection.list']({})).activeId, id, 'nothing was applied to begin with')
-
-  const back = await handlers['connection.deactivate']({})
-
-  // Shaped to be read like `activate`'s answer and `list`'s: the browser writes
-  // `activeConnectionId: result.activeId` after all three, so an `activeId`
-  // present here — even holding `undefined` — would be a profile still applied.
-  assert.equal('activeId' in back, false, 'the answer claims a profile is still applied')
-  // Route **and** model, because choosing the host environment is choosing a
-  // connection, and the launch configuration is both.
-  assert.equal(back.settings.provider, 'default')
-  assert.equal(back.settings.model, 'local-model')
-  assert.equal(settings.get().provider, 'default')
-  assert.equal(settings.get().model, 'local-model')
-  // The sampling stays: §59's rule, in the place it applies — a launch
-  // configuration carries no temperature, so anything written would be invented.
-  assert.equal(back.settings.temperature, 0.7, 'the sampling was cleared with the route')
-  assert.equal(settings.get().temperature, 0.7)
-  // The row that is now current comes back with the answer, so the list does
-  // not have to be re-fetched to redraw the badge.
-  assert.equal(back.host?.provider, 'default')
-
-  assert.equal((await handlers['connection.list']({})).activeId, undefined, 'the list still names a profile')
-  // On disk, not merely in memory — the next process reads the file.
-  const file = JSON.parse(await readFile(join(dir, 'connections.json'), 'utf8')) as Record<string, unknown>
-  assert.equal('activeId' in file, false, 'the cleared active id is still in the file')
-})
-
-test('clearing an active id that was never set writes nothing at all', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-conn-clear-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
-  const path = join(dir, 'connections.json')
-  const store = new ConnectionStore(path)
-
-  await store.clearActive()
-
-  // The store's write creates the file, so "no file" is the observable form of
-  // "no write": pressing 使用 on the row that is already current must not touch
-  // a user's data to record that nothing changed.
-  await assert.rejects(readFile(path, 'utf8'), 'clearing nothing still wrote the file')
 })
 
 /* ------------------------------------------------------------------------- *
@@ -1127,19 +1206,20 @@ test('a global read carries no overrides at all, because presence is scope', asy
 })
 
 /* ------------------------------------------------------------------------- *
- * The host's own connection gets a model list too.
+ * A bare probe records nothing (host §61).
  *
- * The reported failure (user, 2026-09-07): the composer's model menu answered
- * 「没有活动连接，因此没有可选的模型列表」 on a host configured entirely from
- * `IRIS_*` variables, with no profile ever saved. The menu's fallback source is
- * the `host` row, and until this section the row had nowhere to carry a list:
- * `recordModels` files against a profile id, and the host default has none.
+ * Five tests stood here, all of them about a model list the host kept **in
+ * memory** for its own endpoint: a probe filled it, a probe of a neighbouring
+ * endpoint neither filled nor displaced it, a profile at the same origin filled
+ * both, the projection dropped it when the route moved, and it never reached
+ * the connections file. Its reader was the composer capsule's fallback list for
+ * a host with no profile in use, which is a state the interface no longer has —
+ * so `#hostProbe`, `#recordHostModels` and `HostProbeRecord` are gone, and what
+ * is pinned here is that a bare probe answers its caller and files nothing.
  *
- * So the list is held in the **service process's memory**. Not a shortcut —
- * the choice is argued in `service.ts`: the host default is the environment the
- * process was launched with rather than a decision of the user's, and a
- * one-off observation about it does not belong in the file that records their
- * decisions. The last test here holds the "not on disk" half.
+ * `hostEndpointFixture` stays: the context-window tests below run against a
+ * host whose own `IRIS_BASE_URL` is a live endpoint, which is still a real
+ * shape (it is where the environment credential comes from).
  * ------------------------------------------------------------------------- */
 
 /**
@@ -1168,146 +1248,33 @@ async function hostEndpointFixture(t: TestContext): Promise<{
   return { handlers, endpoint, dir }
 }
 
-test('probing the host’s own endpoint gives its row a model list', async (t) => {
-  const { handlers, endpoint } = await hostEndpointFixture(t)
+test('a bare probe of the host’s own endpoint files nothing anywhere', async (t) => {
+  const { handlers, endpoint, dir } = await hostEndpointFixture(t)
 
-  // The state every launch starts in, asserted before anything is concluded
-  // from the change: absent, not empty. A default-to-`[]` reader would call
-  // this "the host advertises nothing" and never offer to look.
-  const before = await handlers['connection.list']({})
-  assert.equal(before.host?.models, undefined, 'a fresh process already carried a host model list')
-  assert.equal(before.host?.modelsProbedAt, undefined)
-
-  // The bare probe the composer's menu fires: the host's own endpoint, and no
-  // key — the credential is the one the process was started with.
+  // The probe still works, and still borrows the startup credential at the
+  // host's own origin — that is §58's ladder, which the ruling keeps as a
+  // fallback. What it must not do any more is record.
   const verdict = await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1` })
   assert.equal(verdict.ok, true)
   assert.equal(verdict.keySource, 'host', 'the probe did not use the startup credential')
-
-  const after = await handlers['connection.list']({})
-  assert.deepEqual(after.host?.models, ['deepseek-v4-flash', 'deepseek-v4-chat', 'deepseek-reasoner'])
-  assert.equal(typeof after.host?.modelsProbedAt, 'number', 'the list is not stamped')
-  // No profile was created by any of this: the row is read-only and a probe of
-  // it is not a save.
-  assert.deepEqual(after.profiles, [])
-  // And the credential is still nowhere on the wire.
-  assert.equal(JSON.stringify(after).includes('sk-real-key'), false)
-})
-
-test('a probe of a different endpoint does not become the host row’s list', async (t) => {
-  const { handlers, endpoint } = await hostEndpointFixture(t)
-  // A second server, on its own port: a neighbouring provider the user is
-  // testing in the connection form while the host generates elsewhere.
-  const elsewhere = new ModelsEndpoint()
-  await elsewhere.start()
-  t.after(async () => { await elsewhere.close() })
-  assert.notEqual(elsewhere.baseURL, endpoint.baseURL, 'both fixtures landed on one port')
-
-  // A *successful* probe — which is what makes this discriminating. A failed
-  // one would record nothing anyway, and the test would pass on the wrong
-  // reason.
-  const verdict = await handlers['connection.test']({
-    baseURL: `${elsewhere.baseURL}/v1`,
-    apiKey: 'sk-real-key',
-  })
-  assert.equal(verdict.ok, true)
-  assert.ok((verdict.models ?? []).length >= 3, 'the other endpoint answered with no list')
+  // The floor on the fixture: the endpoint really did answer with a list, so
+  // "nothing was recorded" is not "there was nothing to record".
+  assert.ok((verdict.models ?? []).length >= 3, 'the endpoint answered with no list to file')
 
   const listed = await handlers['connection.list']({})
-  assert.equal(
-    listed.host?.models,
-    undefined,
-    'another endpoint’s list was filed against the host’s own connection',
-  )
-
-  /*
-   * And the other direction, which is the one a projection-time origin check
-   * alone would not catch: with the host row's own list already recorded, a
-   * successful probe of somewhere else must not **displace** it. Written after
-   * a teeth-check found the first half of this test still green with the
-   * recording guard removed — the row was being cleaned up on the way out
-   * instead of never being polluted, and the difference shows exactly here.
-   */
-  await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1` })
-  const mine = (await handlers['connection.list']({})).host?.models
-  assert.ok((mine ?? []).length >= 3, 'the host’s own probe did not land')
-
-  await handlers['connection.test']({ baseURL: `${elsewhere.baseURL}/v1`, apiKey: 'sk-real-key' })
-  assert.deepEqual(
-    (await handlers['connection.list']({})).host?.models,
-    mine,
-    'a probe of a neighbouring endpoint wiped the host row’s own list',
-  )
-})
-
-test('a profile pointed at the host’s endpoint fills both, because it is one server', async (t) => {
-  const { handlers, endpoint } = await hostEndpointFixture(t)
-  // The origin is what decides, not how the caller addressed the probe: this
-  // profile and the host row describe the same server, so its answer is both
-  // rows' answer. Addressed by `profileId` with no `baseURL` and no key, which
-  // is the ask the menu sends for an active profile.
-  const saved = await handlers['connection.save']({
-    provider: 'deepseek',
-    model: 'deepseek-v4-flash',
-    baseURL: `${endpoint.baseURL}/v1`,
-  })
-  const id = saved.profiles[0]?.id
-  assert.ok(id !== undefined)
-  assert.equal(saved.host?.models, undefined, 'saving a profile invented a host list')
-
-  const verdict = await handlers['connection.test']({ profileId: id })
-  assert.equal(verdict.ok, true)
-
-  const listed = await handlers['connection.list']({})
-  assert.ok((listed.profiles[0]?.models ?? []).length >= 3, 'the profile lost its own record')
-  assert.deepEqual(listed.host?.models, listed.profiles[0]?.models)
-})
-
-test('a recorded host list is dropped rather than reattributed when the route moves', () => {
-  /*
-   * The projection's own guard, which is a different failure from the
-   * recording guard above and is why both exist. The record is held for the
-   * life of the process and the host connection it describes is read fresh on
-   * every answer — a composition that hands a new one in, or an environment
-   * that now says something else. A list attributed to whatever the host
-   * happens to point at *now* would be a claim about an endpoint nobody
-   * probed, so it goes.
-   */
-  const probe = {
-    origin: 'https://api.deepseek.com/v1',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
-    probedAt: 1_800_000_000_000,
+  assert.deepEqual(listed.profiles, [], 'a bare probe created a profile')
+  for (const field of ['models', 'modelsProbedAt']) {
+    assert.equal(
+      Object.hasOwn(listed.host ?? {}, field),
+      false,
+      `a bare probe filed "${field}" against the environment row`,
+    )
   }
-  const same = hostDefaultView({ provider: 'default', baseURL: 'https://api.deepseek.com/v1/' }, probe)
-  // Same origin, different trailing slash: one server, one list. The origin is
-  // what is compared, as everywhere else a key or a list is reused.
-  assert.deepEqual(same.models, probe.models)
-  assert.equal(same.modelsProbedAt, probe.probedAt)
-
-  const moved = hostDefaultView({ provider: 'default', baseURL: 'https://api.example.test/v1' }, probe)
-  assert.equal(moved.models, undefined, 'the list followed the host to another endpoint')
-  assert.equal(moved.modelsProbedAt, undefined, 'the stamp outlived the list it dates')
-
-  const nowhere = hostDefaultView({ provider: 'default' }, probe)
-  assert.equal(nowhere.models, undefined, 'a host with no endpoint inherited a list')
-})
-
-test('the host row’s list is never written to the connections file', async (t) => {
-  const { handlers, endpoint, dir } = await hostEndpointFixture(t)
-  await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1` })
-  assert.ok(((await handlers['connection.list']({})).host?.models ?? []).length >= 3)
-
-  // The file is the record of the *user's* decisions. Nothing here was one:
-  // the endpoint is in the environment, and the list is an observation of it.
-  // A missing file is the strongest form of this passing — there were no
-  // profiles to write — so both shapes are accepted and neither may contain
-  // the list.
+  // And nothing reached the user's file either, which was already true and is
+  // now true for the simpler reason that nothing is recorded at all.
   const file = await readFile(join(dir, 'connections.json'), 'utf8').catch(() => undefined)
-  assert.equal(
-    file?.includes('deepseek-v4-chat') ?? false,
-    false,
-    'the in-memory host list reached the user’s connections file',
-  )
+  assert.equal(file?.includes('deepseek-v4-chat') ?? false, false, 'a probe wrote a list into the file')
+  assert.equal(JSON.stringify(listed).includes('sk-real-key'), false, 'the credential reached the wire')
 })
 
 test('a probe reads the context length the endpoint put on the row', async (t) => {

@@ -1123,17 +1123,14 @@ export interface IrisActions {
    * @param id - the provider to generate through.
    */
   activateConnection(id: string): Promise<void>
-  /**
-   * Use the **host's own** connection: the one it was launched with.
-   *
-   * The same verb as {@link activateConnection}, on the one row that is not a
-   * profile — so it takes no id, and it is global for the same reason that one
-   * is. What the host does with it is put the global layer back on its launch
-   * route and model and forget which profile was applied (host §60); what this
-   * does with the answer is exactly what it does with an activation's, which is
-   * why the two answers are shaped alike.
+  /*
+   * `deactivateConnection()` stood here: the same verb as
+   * {@link activateConnection} on the one row that was not a profile, putting
+   * the global layer back on the host's launch route (host §60, web §78). The
+   * row is gone — the environment is not a connection anyone selects (web §79)
+   * — so nothing asks for "no profile applied", and `connection.deactivate` is
+   * off the protocol.
    */
-  deactivateConnection(): Promise<void>
   saveConnection(patch: {
     id?: string
     label?: string
@@ -1149,14 +1146,12 @@ export interface IrisActions {
      */
     apiKey?: string
     apiKeyHeader?: string
-    /**
-     * Ask the host to copy **its own** startup credential into this profile.
-     *
-     * How the read-only host row becomes an editable profile. The browser is
-     * naming a key it has never been shown and will never be shown; the copy
-     * happens inside the host.
+    /*
+     * `adoptHostKey` stood here: ask the host to copy its own startup credential
+     * into this profile, which is how the read-only host row became an editable
+     * one in a single press. The row and the flag are both gone (web §79); the
+     * host still makes that copy, once, at first start (host §61).
      */
-    adoptHostKey?: boolean
     /** The model list a probe just reported, filed on the profile for later pickers. */
     models?: string[]
   }): Promise<void>
@@ -2741,40 +2736,6 @@ export function createIrisStore(
         })
       },
 
-      async deactivateConnection(): Promise<void> {
-        const chatId = get().chatId
-        await guard(async () => {
-          /*
-           * **No `chatId`, for the same reason `connection.activate` sends
-           * none.** This is the provider list's own verb on the one row that is
-           * not a profile, and that list is the host's; a conversation's own
-           * model is the composer control's business (`setChatModel`).
-           *
-           * `activeConnectionId` comes from the answer rather than being set to
-           * `undefined` here: the host is the one that decides no profile is
-           * applied any more, and reading it back is what makes this line the
-           * same line the activation writes.
-           */
-          const result = await client.call('connection.deactivate', {})
-          set({
-            settings: result.settings,
-            activeConnectionId: result.activeId,
-            ...result.host === undefined ? {} : { hostConnection: result.host },
-          })
-          // The same follow-up read an activation does, for the same reason: the
-          // global layer moved under an open conversation, so a chat that
-          // overrides nothing is now generating with a different model and the
-          // composer's model control has to say so. Silent on failure — the switch
-          // itself succeeded.
-          if (chatId !== undefined) {
-            const refreshed = await client.call('settings.get', { chatId }).catch(() => undefined)
-            if (refreshed !== undefined && get().chatId === chatId) {
-              set({ settings: refreshed.settings, settingsOverrides: refreshed.overrides })
-            }
-          }
-        })
-      },
-
       async saveConnection(patch): Promise<void> {
         await guard(async () => {
           const listed = await client.call('connection.save', patch)
@@ -3584,7 +3545,22 @@ const HANDLERS: { [T in IrisEvent['type']]: (event: EventOf<T>, store: IrisStore
 
   'stream.error': forOpenChat((event, store) => {
     store.setState({ stream: undefined })
-    store.getState().notify('error', event.message)
+    /*
+     * The host's own message, **except** for the one code whose sentence is a
+     * next step rather than a reason.
+     *
+     * `no-provider` (host §61) is raised before the request leaves: no saved
+     * provider is in use, so there is nothing to generate through. The host's
+     * detail says that in English and in terms of routes; what the reader needs
+     * is which card to open and which verb to press, in their own language, so
+     * the copy comes from the dictionary and the code is what selects it. Every
+     * other failure keeps the host's words — a provider's refusal reason is the
+     * information, and rewriting it would lose the diagnosis.
+     */
+    store.getState().notify(
+      'error',
+      event.code === 'no-provider' ? translate(getLanguage(), 'errNoProvider') : event.message,
+    )
   }),
 
   'chat.updated': forOpenChat((event, store) => {

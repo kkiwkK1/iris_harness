@@ -27,7 +27,7 @@
 | `StatePanel.tsx` | 面板头、aria、空态、布尔值（是/否） | `state* booleanYes booleanNo` |
 | `SettingsDrawer.tsx` | 抽屉 aria/标题（两种）/关闭/未加载；路由与采样全部标签与注释；主题选项；正文字号/每行长度；语言项 | `drawer* defaults* thisConversation close settingsNotLoaded section* provider model temperature* … langEn langZh` |
 | `fields.tsx` | host default / use host default | `hostDefault useHostDefault` |
-| `ConnectionPanel.tsx` | 宿主行、种子注记、空态、删除 aria、立即生效那一句 | `host seededNotReal noSavedConnections deleteNamed activationImmediate`（这一行 2026-09-09 按 CC Switch 重做，其余键见文末「连接面重做」一节） |
+| `ConnectionPanel.tsx` | 是哪台宿主在服务这页、种子注记、空态、删除 aria、立即生效那一句 | `host seededNotReal noSavedConnections deleteNamed activationImmediate`（这一行 2026-09-09 按 CC Switch 重做，2026-09-10 又删掉了宿主环境那一行，两节都在文末） |
 | `ConnectionPanel.tsx` 测试连接判定句 | 每个失败码一句（缺密钥/401/超时/网络/地址不是 URL/密钥含请求头无法携带的字符/HTTP 错误/不是模型列表/无端点）；宿主自己的原因句（英文技术细节:尝试的地址、状态码、`ENOTFOUND` 之类）不翻译,原样显示在判定句下方 | `testErr*` |
 | `ScriptPanel.tsx` | 面板头、读取中、无脚本、已拒绝摘要、允许脚本、撤回/更早运行注记、页面访问权全部文案、授权风险对话框四条、随卡运行/你已关闭、卡内关闭、运行它们/不运行 | `sectionCardScripts readingCard cardNoScripts declined* allowScripts runThem dontRunThem withdrawn fromEarlierRun pageAccess* grantDialog* runsWithCard youTurnedThisOff cardOffNote` |
 | `ConsentAsk.tsx` | 区域 aria（复用 `sectionCardScripts`） | — |
@@ -44,7 +44,7 @@
 
 | 来源 | 内容 | 键 |
 | --- | --- | --- |
-| `fields.tsx` / `SettingsDrawer.tsx` / 各面板 | 折叠卡各区标题与卡头摘要（连接/预设/采样/回复/阅读/世界书/脚本/通用与关于——「路由」那一区 2026-09-09 删掉了，见文末） | `sectionReplies sectionAbout noActiveConnection presetNoneActive worldbookSummary scriptSummary samplingDefault samplingSet repliesTrim repliesSquash repliesContinue aboutSummary` |
+| `fields.tsx` / `SettingsDrawer.tsx` / 各面板 | 折叠卡各区标题与卡头摘要（连接/预设/采样/回复/阅读/世界书/脚本/通用与关于——「路由」那一区 2026-09-09 删掉了，见文末；连接卡头的摘要键 2026-09-10 从 `noActiveConnection` 换成 `connNoneSelected`） | `sectionReplies sectionAbout connNoneSelected presetNoneActive worldbookSummary scriptSummary samplingDefault samplingSet repliesTrim repliesSquash repliesContinue aboutSummary` |
 | `SettingsDrawer.tsx` 回复卡 | 三个回复形态键：裁剪未完成句、续写分隔符（四选）、合并相邻注入 | `trimSentences* continuePostfix* postfix* squashSystemMessages*` |
 | `SettingsDrawer.tsx` 阅读卡 | 楼层号开关（`mesIDDisplay_enabled` 的等价物，每设备） | `showFloorNumbers*` |
 | `AboutCard.tsx` | 启动自动打开开关、设置导出/导入全部文案、凭据安全声明两句 | `autoOpenChat* exportSettings importSettings settingsExported settingsImport* settingsTransferNote credentialHead credentialBody credentialBodyTransport` |
@@ -174,7 +174,7 @@ provider counted」是另一件事（上游 ST 每条消息显示的 `token_coun
 
 | 来源 | 内容 | 键 |
 | --- | --- | --- |
-| `Composer.tsx` 模型菜单标题 | 列表来自宿主启动时那条连接（env 配置、还没存过 profile 时的常态）。两句分开是因为宿主可能不持凭据：持有时把**变量名**说出来，那是读者唯一能去改的地方；不持有时就不提。变量的名字，永远不是它的值 | `modelMenuFromHost modelMenuFromHostEnv` |
+| ~~`Composer.tsx` 模型菜单标题~~ | ~~列表来自宿主启动时那条连接~~ | ~~`modelMenuFromHost modelMenuFromHostEnv`~~ **2026-09-10 两键删除**：宿主环境不再是一条连接，胶囊只有「在用的供应商」这一个来源（web §79）。同一任务里 `modelMenuNoConnection` 从「没有活动连接，因此没有可选的模型列表」改成「没有在用的供应商。到 设置 → 连接 添加一个，然后点『使用』」——因为这个状态如今还意味着不会有任何生成 |
 | `Composer.tsx` 列表状态那一行 | 点开菜单时列表缺席就当场探一次，所以多了两种状态：在读、以及读失败。失败那句原样转述宿主命名过的拒绝（`unauthorized` / `network` / `no-endpoint` …），不改写成一句「获取失败」——那三种指向的下一步不同 | `modelMenuReading modelMenuReadFailed` |
 | `Composer.tsx` | **改写** `modelMenuNoList`：原文写「可在连接面板里探测一次」。现在点开菜单自己就会探，那句话把读者指向一条不再需要走的路；剩下的只说事实 | （改写一键） |
 
@@ -460,3 +460,43 @@ Iris 此前只有两档，而切进来的预设 body 一直是整份存着的—
 **没有为「模型名＋努力度」造模板键。** 两段各自已有的数据在一行里并排，和折叠卡头
 「名字 · 模型」同一个理由：一条只有排版的模板键会在两本词典里各存一份，而排版差异正是
 两个面互相对不上的来由。这里连分隔符都没有——中间是控件自己 5px 的 flex gap。
+
+
+## 连接面：宿主环境废弃（`dev/connection-no-host-row`，web §79）
+
+用户裁定 2026-09-10，原话：「宿主环境这个功能废弃了，以后都从在 Iris 中自己添加供应商来
+调用模型；然后供应商编辑这里模型要支持添加自定义名称的模型，以防止用户无法使用到还在内测
+的模型。」上一节（CC Switch 形态）把宿主环境做成列表的第一行，web §78 又给它加了「使用」；
+这一节把整行删掉。词典层因此有两条原则：
+
+**「宿主」这个词只留在它确实描述一个供应商字段的地方。** 面板里现在只剩一处
+（`hostDefaultEndpointRidden`：某个供应商自己没填端点，于是走组合注册的那条路由），加上
+密钥阶梯的两句（`connKeyFromHost` / `apiKeyFromHost*`，host §58 的兜底：同源时宿主环境的
+凭据仍会被借给一条路由，这不是路由的来源，只是密钥的来源）。其余凡是把环境说成「一条可选
+连接」的键，全部删除。
+
+**没有在用的供应商，如今是一个有后果的状态。** 宿主会拒绝生成（host §61），所以空态与
+拒绝句都不能只说「没有列表」，必须说下一步在哪。
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `ConnectionPanel.tsx` 空态 | 「还没有供应商——添加一个来调用模型。」**改写** `noSavedConnections`：原文「还没有保存任何供应商。」只报告了一件事实；如今这一句是新装机与回复之间唯一的一步，得说要做什么，旁边还配了「添加供应商」按钮（复用 `connAddProvider`） | `noSavedConnections` |
+| `ConnectionPanel.tsx` 卡头摘要 | 没有在用的供应商时读「未选择供应商」。原先读「宿主环境 · 模型」，那在环境还是一条路由时是真话，现在会把读者指向唯一不是答案的东西 | `connNoneSelected` |
+| `ConnectionPanel.tsx` 删除之后 | **改写** `connDeletedWasCurrent`：原文「当前回到『宿主环境』」，现在说「现在没有在用的供应商，在某一行点『使用』之前不会有任何生成」——删掉的是一句会失效的承诺，换成这次删除的真实后果 | `connDeletedWasCurrent` |
+| `ConnectionPanel.tsx` 编辑器模型控件 | 下拉框末尾固定一项「自定义…」，选中后变成输入框（自动聚焦）＋一句为什么、一个占位例子、一个退回列表的出口。`/models` 给的是端点愿意公开的那些，内测中的模型恰恰不在其中——所以列表是捷径，不是关卡 | `modelCustomOption modelCustomTyped modelCustomPlaceholder modelFromList` |
+| `Composer.tsx` 模型胶囊 | **改写** `modelMenuNoConnection`（见上表）。菜单标题少了一种形态：宿主那两句删除后只剩「来自「X」」与通用标题 | `modelMenuNoConnection` |
+| `errors.ts` COPY + `store.ts` 的 `stream.error` | 新错误码 `no-provider` 的读者文案。**前端映射而不是转述宿主原句**：宿主那句讲的是路由（「本宿主不再走启动时那条路由」），读者要的是下一步（打开哪张卡、按哪个动词），而且要按语言给。回合走事件（`stream.error` 的 `code`），卡片脚本走 RPC 错误码，两条路印同一句 | `errNoProvider` |
+
+**删掉的键（12 个）。** 宿主环境那一行的全部：`hostDefaultTitle` `hostDefaultNote`
+`hostDefaultKeyEnv` `hostDefaultKeyAnon` `hostDefaultNoKey`（行上的标题、说明与三种密钥
+状态）、`adoptHostConnection` `hostAdopted`（「存为供应商」及其回执——那次复制如今由宿主在
+首启时自己做，没有按钮可按，host §61）、`connReadOnly`（只有那一行是只读的）、
+`connTestNeedsEndpoint`（只有那一行可能没有端点可探）、`noActiveConnection`（卡头摘要的旧
+键，换成 `connNoneSelected`）、`modelMenuFromHost` 与 `modelMenuFromHostEnv`（胶囊标题的
+宿主两句）——共 12 个，其中 `noActiveConnection` 是换名而非净删。**`i18n.test.ts` 查的仍
+只有「源码里用到的键必须在词典里」这一个方向**，所以删键要靠人核对；这一节的 12 个由
+`connection-key-field.test.ts` 里一条 `Object.hasOwn(en, key) === false` 的循环钉住，删了
+文案却留在词典里会红。
+
+**`hostDefault`（fields.tsx 的「宿主默认」）没有动。** 它说的是某个采样值没有设定、由宿主
+的默认值兜着，和这一节无关——同名不同物，删错了会让采样卡说不出话。

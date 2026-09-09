@@ -109,6 +109,33 @@ before(async () => {
   origin = `http://127.0.0.1:${String(ctx.webServer.port)}`
   client = new IrisHttpClient({ baseUrl: origin })
   await waitUntil(() => client.connected, 'the event socket to connect')
+
+  /*
+   * **A provider, in use, before anything generates.**
+   *
+   * The product refuses to generate while no saved provider is in use — the
+   * user's ruling of 2026-09-10, wired as `requireProvider: true` in the app
+   * plugin (host §61). This composition writes to a throwaway data directory,
+   * so its provider list starts empty, and every turn below would time out
+   * waiting for a reply that is never generated.
+   *
+   * Seeded **through the protocol** rather than by writing `connections.json`
+   * or by pointing `IRIS_BASE_URL` at the mock: two acts, `connection.save` and
+   * `connection.activate`, are what a person does in the connection card, and
+   * doing it that way keeps these tests about the wire while making the state
+   * they run in the state the product is actually in. The route this installs
+   * (`conn/<id>`, because the profile is on the `default` provider and carries
+   * its own endpoint) is the one the turns below generate through.
+   */
+  const saved = await client.call('connection.save', {
+    provider: 'default',
+    model: 'mock-model',
+    baseURL: mock.baseURL,
+    label: 'mock',
+  })
+  const seededId = saved.profiles[0]?.id
+  if (seededId === undefined) throw new Error('the transport fixture could not save a provider')
+  await client.call('connection.activate', { id: seededId })
 })
 
 after(async () => {
@@ -273,10 +300,6 @@ const PROBES: Record<string, unknown> = {
   'connection.save': { provider: 'default', model: 'mock-model' },
   'connection.delete': { id: 'no-such-profile' },
   'connection.activate': { id: 'no-such-profile' },
-  // The one connection arm with no id to get wrong: it applies *no* profile, so
-  // it succeeds here — and what it writes is the route this probe host booted
-  // with, which is where its settings already were.
-  'connection.deactivate': {},
   // A profile that does not exist answers not-found, which proves the handler
   // ran; the probe's verdict-on-failure shape is the connections suite's business.
   'connection.test': { profileId: 'no-such-profile' },

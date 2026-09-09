@@ -242,19 +242,22 @@ export const en = {
   modelMenuOpen: 'Change the model for this conversation ({model})',
   modelMenuHeading: 'Model for this conversation',
   modelMenuFromConnection: 'From {connection}',
-  /**
-   * The heading when the list belongs to the host's own startup connection —
-   * where a host configured from its environment stays until the user saves a
-   * profile. The variable's *name* is named because that is where the reader
-   * goes to change the route; its value appears nowhere.
+  /*
+   * `modelMenuFromHost` / `modelMenuFromHostEnv` stood here: the heading when
+   * the list belonged to the host's own startup connection, which is where a
+   * host configured from its environment stayed until a profile was saved. The
+   * capsule has one model source now — the provider in use — because the
+   * environment is not a connection (web §79).
    */
-  modelMenuFromHost: 'From the host’s own connection',
-  modelMenuFromHostEnv: 'From the host’s own connection ({keyEnv})',
   modelRestoreConnectionDefault: 'Back to the connection’s model ({model})',
   /** The dot beside the capsule: this chat is not on the connection's model. */
   modelOverriddenHere: 'This conversation overrides the model',
   modelMenuNoList: 'No model list for this connection yet.',
-  modelMenuNoConnection: 'No connection is active, so there is no model list to offer.',
+  /**
+   * No provider is in use — which now means nothing will generate either, so
+   * this row is where a reader first meets that and has to be told where to go.
+   */
+  modelMenuNoConnection: 'No provider is in use. Add one under Settings → Connection, and press Use.',
   /** Opening the menu asked the endpoint for its list, and the answer is not back. */
   modelMenuReading: 'Reading the model list…',
   /** It came back a no. `reason` is the host's own named refusal, passed through. */
@@ -362,7 +365,6 @@ export const en = {
   sectionAbout: 'General & about',
 
   /** Card summaries — what a folded card says in its head. */
-  noActiveConnection: 'no active connection',
   presetNoneActive: 'no preset active',
   worldbookSummary: '{count} of {total} selected',
   scriptSummary: '{count} scripts',
@@ -894,7 +896,12 @@ export const en = {
   /** Connection panel: a provider list, an add button, and a test. */
   host: 'Host:',
   seededNotReal: '— seeded, not a real host',
-  noSavedConnections: 'No providers saved yet.',
+  /**
+   * The empty state, which is now the *only* thing a host with no providers
+   * shows: the environment is not a row any more, so there is nothing else on
+   * screen to explain why nothing generates.
+   */
+  noSavedConnections: 'No providers yet — add one to generate.',
   deleteNamed: 'Delete {name}',
   activationImmediate: 'Switching takes effect immediately — the host needs no restart.',
   /** The panel's one block heading; the other two blocks are a button each. */
@@ -902,7 +909,6 @@ export const en = {
   connAddProvider: 'Add a provider',
   /** Row markers and row actions. Saving a provider and using one are two acts. */
   connCurrent: 'current',
-  connReadOnly: 'read-only',
   connUse: 'Use',
   connUseNamed: 'Use {name}',
   connEditNamed: 'Edit {name}',
@@ -910,6 +916,11 @@ export const en = {
   /** What a row says about its key — a state, never a credential. */
   connKeySaved: 'key ****{tail}',
   connKeySavedNoTail: 'key saved',
+  /**
+   * The profile has no key of its own, and the host's environment holds one for
+   * this very origin — so it generates and probes anyway (host §58's ladder).
+   * A fallback, not a route: nothing generates *through* the environment.
+   */
   connKeyFromHost: 'key from the host environment',
   connKeyNone: 'no key',
   /** Display-only extras a row carries when anything already knows them. */
@@ -924,12 +935,11 @@ export const en = {
   /** Test: the third block, and the row action that reports into it. */
   connTestCurrent: 'Test the current provider',
   connTestedRow: 'Tested {name}.',
-  connTestNeedsEndpoint: 'This row carries no endpoint of its own, so there is nothing to probe.',
   /** Said after a save or a delete, about where the list now stands. */
   connSavedNote: 'Saved. It is in the list above — press Use to generate through it.',
   connSavedCurrent: 'Saved, and re-applied: this is the provider in use.',
   connDeleted: 'Deleted.',
-  connDeletedWasCurrent: 'Deleted. Nothing is selected now, so the host environment is current again.',
+  connDeletedWasCurrent: 'Deleted. No provider is selected now, so nothing will generate until you press Use on one.',
 
   /** Connection editor: pick a provider, point it at an endpoint, give it a key. */
   connEditorEditTitle: 'Edit provider',
@@ -962,6 +972,20 @@ export const en = {
   modelsProbedAt: '{count} models, last checked {when}.',
   /** The current value is not in the list; kept as a row so picking never loses it. */
   modelCustomCurrent: '(custom) {model}',
+  /**
+   * The last row of the model dropdown, which turns it back into a field.
+   *
+   * The user's ruling, 2026-09-10: 「模型要支持添加自定义名称的模型，以防止用户无法
+   * 使用到还在内测的模型」. A `/models` list is what the endpoint chooses to
+   * advertise, and a model in closed testing is exactly the one it does not —
+   * measured on `deepseek-v4.1-flash-expires-on-0910`, which generates and is
+   * not listed. So the list is a shortcut, never a gate.
+   */
+  modelCustomOption: 'Custom…',
+  modelCustomTyped: 'Type the model id, exactly as the provider spells it — a model in closed testing will not be in the list above.',
+  modelCustomPlaceholder: 'e.g. deepseek-v4.1-flash-expires-on-0910',
+  /** The way back out of the typed field, while a list exists to go back to. */
+  modelFromList: 'Pick from the list',
   refreshModels: 'Refresh the model list',
   /** No list yet: the field falls back to typing, and says why. */
   modelsNoneYet: 'No model list yet — test the connection to fetch one, or type the name.',
@@ -979,15 +1003,14 @@ export const en = {
   testKeyStored: 'Used the saved key — you did not have to re-enter it.',
   testKeyHost: 'Used the host’s own key from its environment.',
 
-  /** The connection the host process was started with: the list's first row, not a profile. */
-  hostDefaultTitle: 'Host environment',
-  hostDefaultNote: 'The route and model this host was launched with. Use it to put the global route back on it.',
-  hostDefaultKeyEnv: 'Key from the environment variable {env}',
-  hostDefaultKeyAnon: 'Key from the host’s environment',
-  hostDefaultNoKey: 'No key configured',
+  /**
+   * A profile with no endpoint of its own rides the route the composition
+   * registered. The one surviving 「宿主」 word in the panel, and it describes a
+   * *profile's* endpoint field being empty — not a row of its own.
+   */
   hostDefaultEndpointRidden: 'the host’s configured endpoint',
-  adoptHostConnection: 'Save as a provider',
-  hostAdopted: 'Saved as a provider. The host copied its own key across — the browser never saw it.',
+  /** The collapsed head, and the empty list's own heading, when nothing is in use. */
+  connNoneSelected: 'no provider selected',
   testErrMissingKey: 'This endpoint needs an API key — paste one above, then test again.',
   testErrUnauthorized: 'The endpoint refused the key (401/403). Check it and try again.',
   testErrTimeout: 'The endpoint did not answer in time. Is the address right, and is it up?',
@@ -1145,6 +1168,15 @@ export const en = {
   errUnsupported: 'This build of Iris cannot do that yet.',
   errQuota: 'The cards’ shared storage is full. Its contents are shared across every card in this profile, so the one that ran out may not be the one that filled it.',
   errInternal: 'Something broke on the host side.',
+  /**
+   * The refusal a generation with no provider in use produces (host §61).
+   *
+   * Written here rather than passed through from the host, because the host's
+   * own sentence is about routes and this one has to be a next step: which card
+   * to open, and which verb to press in it. The code is what carries the
+   * distinction — `provider-error` would send the reader to the endpoint.
+   */
+  errNoProvider: 'No provider is in use, so there is nothing to generate through. Add one under Settings → Connection, then press Use.',
   irisOwnFault: 'Iris hit a problem of its own: {detail}',
   cardCallFailed: 'A card’s call "{method}" failed: {detail}',
   cleanedOne: 'cleaned 1 message',
@@ -1650,14 +1682,12 @@ export const zh: Record<StringKey, string> = {
   modelMenuOpen: '为本对话切换模型（当前 {model}）',
   modelMenuHeading: '本对话使用的模型',
   modelMenuFromConnection: '来自「{connection}」',
-  /** 列表来自宿主启动时的那条连接（env 配置、还没存过 profile 时的常态）。只说变量名，不说值。 */
-  modelMenuFromHost: '来自宿主默认连接',
-  modelMenuFromHostEnv: '来自宿主默认连接（{keyEnv}）',
   modelRestoreConnectionDefault: '恢复连接默认（{model}）',
   /** 胶囊旁的小点：本对话没有跟随连接的模型。 */
   modelOverriddenHere: '本对话覆盖了模型',
   modelMenuNoList: '这个连接还没有模型列表。',
-  modelMenuNoConnection: '没有活动连接，因此没有可选的模型列表。',
+  /** 没有在用的供应商——如今这同时意味着不会有任何生成，所以这一句要指路。 */
+  modelMenuNoConnection: '没有在用的供应商。到 设置 → 连接 添加一个，然后点「使用」。',
   /** 打开菜单已经去问端点要列表了，答案还没回来。 */
   modelMenuReading: '正在读取模型列表…',
   /** 回来的是「不行」。{reason} 原样转述宿主自己那句命名过的拒绝。 */
@@ -1757,7 +1787,6 @@ export const zh: Record<StringKey, string> = {
   sectionAbout: '通用与关于',
 
   /** 折叠卡卡头摘要。 */
-  noActiveConnection: '没有活动连接',
   presetNoneActive: '未启用预设',
   worldbookSummary: '已选 {count} / {total}',
   scriptSummary: '{count} 个脚本',
@@ -2251,7 +2280,8 @@ export const zh: Record<StringKey, string> = {
   /** 连接面板：一份供应商列表、一个添加按钮、一次测试。 */
   host: '宿主：',
   seededNotReal: '——种子数据，不是真实宿主',
-  noSavedConnections: '还没有保存任何供应商。',
+  /** 空态——如今宿主环境不再是一行，没有供应商时屏幕上就只剩这一句。 */
+  noSavedConnections: '还没有供应商——添加一个来调用模型。',
   deleteNamed: '删除 {name}',
   activationImmediate: '切换立即生效——无需重启宿主。',
   /** 面板里唯一的分区标题；另外两块各自就是一个按钮。 */
@@ -2259,7 +2289,6 @@ export const zh: Record<StringKey, string> = {
   connAddProvider: '添加供应商',
   /** 行上的标记与操作。保存供应商与使用供应商是两个动作。 */
   connCurrent: '当前',
-  connReadOnly: '只读',
   connUse: '使用',
   connUseNamed: '使用 {name}',
   connEditNamed: '编辑 {name}',
@@ -2267,6 +2296,7 @@ export const zh: Record<StringKey, string> = {
   /** 一行对密钥的说法——只说状态，绝不带密钥本身。 */
   connKeySaved: '密钥 ****{tail}',
   connKeySavedNoTail: '已保存密钥',
+  /** 这个供应商自己没有密钥，而宿主环境正好持有同源的一把（host §58 的兜底阶梯）。 */
   connKeyFromHost: '密钥由宿主环境提供',
   connKeyNone: '无密钥',
   /** 已经知道的额外展示信息，只展示，不影响判断。 */
@@ -2281,12 +2311,11 @@ export const zh: Record<StringKey, string> = {
   /** 测试：第三块，行上的测试按钮把结论报到这里。 */
   connTestCurrent: '测试当前供应商',
   connTestedRow: '测试的是「{name}」。',
-  connTestNeedsEndpoint: '这一行没有自己的端点地址，没有可探测的对象。',
   /** 保存或删除之后，说清列表现在的状态。 */
   connSavedNote: '已保存。它已在上方列表里——点「使用」才会由它生成。',
   connSavedCurrent: '已保存，并已重新应用：它就是当前在用的供应商。',
   connDeleted: '已删除。',
-  connDeletedWasCurrent: '已删除。现在没有选中的供应商，当前回到「宿主环境」。',
+  connDeletedWasCurrent: '已删除。现在没有在用的供应商，在某一行点「使用」之前不会有任何生成。',
 
   /** 连接编辑表单：选提供方、填端点、给密钥。 */
   connEditorEditTitle: '编辑供应商',
@@ -2319,6 +2348,19 @@ export const zh: Record<StringKey, string> = {
   modelsProbedAt: '{count} 个模型，上次探测于{when}。',
   /** 当前值不在列表里；保留成一项，选择时就不会把它丢掉。 */
   modelCustomCurrent: '（自定义）{model}',
+  /**
+   * 下拉框最后固定的一项，选中后它就变回一个输入框。
+   *
+   * 用户裁定 2026-09-10：「模型要支持添加自定义名称的模型，以防止用户无法使用到还在
+   * 内测的模型」。`/models` 给出的是端点愿意公开的那些，而内测中的模型恰恰不在其中
+   * ——`deepseek-v4.1-flash-expires-on-0910` 就是量到的例子：能生成，不在列表里。
+   * 所以列表是捷径，不是关卡。
+   */
+  modelCustomOption: '自定义…',
+  modelCustomTyped: '按供应商的写法手填模型 id——内测中的模型不会出现在上面的列表里。',
+  modelCustomPlaceholder: '例如 deepseek-v4.1-flash-expires-on-0910',
+  /** 手填状态下退回列表的出口，只在确实有列表可退时出现。 */
+  modelFromList: '从列表选择',
   refreshModels: '刷新模型列表',
   /** 还没有列表：退回文本框，并说明原因。 */
   modelsNoneYet: '还没有模型列表——测试一次连接即可获取，也可以手填。',
@@ -2336,15 +2378,13 @@ export const zh: Record<StringKey, string> = {
   testKeyStored: '使用了已保存的密钥——无需重填。',
   testKeyHost: '使用了宿主环境里的密钥。',
 
-  /** 宿主启动时所用的那条连接：列表的第一行，不是一个 profile。 */
-  hostDefaultTitle: '宿主环境',
-  hostDefaultNote: '这是宿主启动时配置的路由与模型。点「使用」即可把全局路由放回它。',
-  hostDefaultKeyEnv: '密钥来自环境变量 {env}',
-  hostDefaultKeyAnon: '密钥来自宿主环境',
-  hostDefaultNoKey: '未配置密钥',
+  /**
+   * 一个自己没有端点的供应商，会走组合注册的那条路由。这是面板里仅剩的一个「宿主」
+   * 字眼，而它说的是某个 *供应商* 的端点字段为空——不是一行自己的东西。
+   */
   hostDefaultEndpointRidden: '宿主配置的端点',
-  adoptHostConnection: '存为供应商',
-  hostAdopted: '已存为供应商。密钥由宿主自行复制，浏览器全程没有经手。',
+  /** 没有在用的供应商时，卡头摘要与列表标题都读这一句。 */
+  connNoneSelected: '未选择供应商',
   testErrMissingKey: '该端点需要 API 密钥——请在上方粘贴后重新测试。',
   testErrUnauthorized: '端点拒绝了这个密钥（401/403）。请检查后重试。',
   testErrTimeout: '端点未在时限内应答。地址是否正确？服务是否在运行？',
@@ -2495,6 +2535,8 @@ export const zh: Record<StringKey, string> = {
   errUnsupported: '这一版 Iris 还做不到。',
   errQuota: '卡片的共享存储已满。它在整个配置中由所有卡片共用，所以用满的未必是正在运行的那张卡。',
   errInternal: '宿主侧出了点问题。',
+  /** 没有在用的供应商时那次生成的拒绝（host §61）：说的是下一步，不是路由。 */
+  errNoProvider: '没有在用的供应商，无从生成。请到 设置 → 连接 添加一个，然后点「使用」。',
   irisOwnFault: 'Iris 自身出了问题：{detail}',
   cardCallFailed: '卡片调用 "{method}" 失败：{detail}',
   cleanedOne: '已清理 1 条消息',

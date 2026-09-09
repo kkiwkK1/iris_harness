@@ -2727,29 +2727,30 @@
   padding: 7px 0 7px 8px;
 }
 
-/* The provider in use. One row carries this at a time — the host's row when no
-   provider is selected — and the render check pins that it is exactly one. */
+/* The provider in use. At most one row carries this — none while nothing is in
+   use — and the render check pins the count either way. */
 .iris-conn[aria-current='true'] {
   border-left-color: var(--iris-accent);
   background: var(--iris-accent-wash);
 }
 
 /*
- * The host's own connection: the same row, with a dashed edge.
+ * The empty list: the sentence and the act, side by side.
  *
- * The dash says what the 「只读」 badge beside its name says: this row comes
- * from the environment the process was launched with, not from the list under
- * it that this panel owns. It keeps the accent edge when it is the current one,
- * because `[aria-current]` above is written after nothing and this rule only
- * moves the style, not the colour — so the order below matters.
+ * `.iris-conn--host` stood here, giving the 「宿主环境」 row a dashed edge to say
+ * it came from the environment rather than from the list. The row is gone (web
+ * §79) and what took its place in that first slot is this: with no provider in
+ * use the host generates nothing, so an empty list is the one thing between the
+ * reader and a reply. Column rather than a row, because the button under the
+ * sentence reads as its consequence; `align-items: flex-start` so it takes its
+ * own width instead of the drawer's.
  */
-.iris-conn--host {
-  border-left-style: dashed;
-  border-left-color: var(--iris-rule);
-}
-
-.iris-conn--host[aria-current='true'] {
-  border-left-color: var(--iris-accent);
+.iris-conn-panel__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 0 4px;
 }
 
 .iris-conn__main {
@@ -2764,10 +2765,10 @@
 /*
  * The row's verbs: use, edit, test, delete.
  *
- * Wrapping, because four of them plus a Chinese 「存为供应商」 do not fit the
- * drawer's 300-odd pixels beside a name, and a row that overflows horizontally
- * hides its own delete button. `justify-content: flex-end` so a wrapped second
- * line stays under the first rather than drifting left into the facts.
+ * Wrapping, because four of them do not fit the drawer's 300-odd pixels beside
+ * a name, and a row that overflows horizontally hides its own delete button.
+ * `justify-content: flex-end` so a wrapped second line stays under the first
+ * rather than drifting left into the facts.
  */
 .iris-conn__actions {
   display: flex;
@@ -2798,11 +2799,12 @@
   padding: 0 5px;
 }
 
-/* The same shape without the claim: read-only is a constraint, not a state. */
-.iris-conn__badge--quiet {
-  color: var(--iris-ink-tertiary);
-  border-color: var(--iris-rule);
-}
+/*
+ * `.iris-conn__badge--quiet` stood here: the same badge shape without the
+ * claim, for the 「只读」 marker on the 「宿主环境」 row (read-only is a constraint,
+ * not a state). Its one element went with that row (web §79), and a rule with
+ * no element is a style nobody can see go wrong.
+ */
 
 /*
  * Always shown, never replaced by the label. A profile named after a model it no

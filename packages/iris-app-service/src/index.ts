@@ -740,6 +740,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const service = new IrisAppService({
     stream: options => ctx.llm.stream(options),
+    // **The product requires a provider in use.** The user's ruling of
+    // 2026-09-10: 「宿主环境这个功能废弃了，以后都从在 Iris 中自己添加供应商来调用
+    // 模型」. Hard-coded rather than a `Config` row, because it is not a
+    // deployment preference — it is what the connection card now means, and a
+    // row would invite a composition to turn the card's own promise off. The
+    // service's default is the opposite (see its option's docblock): a host
+    // composed without a `connections` store cannot have a provider in use and
+    // must not be locked out of generating by a flag it cannot satisfy.
+    requireProvider: true,
     library,
     chats,
     settings,
@@ -792,6 +801,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     onError: error => { ctx.logger.warn(error instanceof Error ? error.message : String(error)) },
   })
 
+  // A host whose provider list is empty while its environment names an endpoint
+  // is a host that used to generate through that environment and now cannot
+  // (`requireProvider` above). So the environment is copied into the list as an
+  // ordinary provider, once, and applied — the first turn after the upgrade
+  // goes where the last turn before it went. Before the restore below, so the
+  // profile it just applied is the one that gets its adapter installed; on
+  // every later start this does nothing and the restore does the work.
+  await service.importLaunchConnection()
   // The last activated profile comes back the same way after a restart: its
   // adapter is in place before any handler is registered, because a persisted
   // route (`conn/<id>` or the profile's provider) in `settings.json` is a
@@ -850,7 +867,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('connection.save', handlers['connection.save']),
       ctx.irisRpc.register('connection.delete', handlers['connection.delete']),
       ctx.irisRpc.register('connection.activate', handlers['connection.activate']),
-      ctx.irisRpc.register('connection.deactivate', handlers['connection.deactivate']),
       ctx.irisRpc.register('connection.test', handlers['connection.test']),
       ctx.irisRpc.register('character.list', handlers['character.list']),
       ctx.irisRpc.register('character.import', handlers['character.import']),

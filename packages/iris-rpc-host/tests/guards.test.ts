@@ -77,7 +77,8 @@ test('every code the contract defines is recognised at run time', () => {
    * rebuilt the set from something narrower.
    */
   const codes: RpcError['code'][] = [
-    'not-found', 'invalid-request', 'provider-error', 'busy', 'unsupported', 'quota-exceeded', 'internal',
+    'not-found', 'invalid-request', 'provider-error', 'busy', 'unsupported', 'quota-exceeded',
+    'no-provider', 'internal',
   ]
   for (const code of codes) {
     assert.equal(isRpcErrorCode(code), true, `${code} is in the contract but not recognised`)

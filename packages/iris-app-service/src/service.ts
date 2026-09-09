@@ -44,7 +44,6 @@ import {
   routeCredential,
   sameEndpointOrigin,
   type HostConnection,
-  type HostProbeRecord,
 } from './connections.ts'
 import type { ChatStore } from './chats.ts'
 import {
@@ -165,12 +164,24 @@ const GENERATION_TYPE_OF = {
  * already in `dsh-llm`'s default retryable set — so this reads a taxonomy
  * instead of inventing a parallel one. Anything else is the provider's, which
  * is what `provider-error` has always meant.
+ *
+ * **`no-provider` is carried through rather than folded in** (host §61). It is
+ * raised by this host *before* the request leaves — no provider is in use, so
+ * there is nothing to generate through — and calling that a `provider-error`
+ * would name a provider as the author of a refusal it never heard about, and
+ * send the reader to the endpoint instead of to the connection card. The
+ * browser reads the code and prints its own sentence, so the wire has to keep
+ * the distinction the sentence turns on.
  * @param signal - the caller's cancellation, aborted only by a real stop.
  * @param error - what the driver raised.
  * @returns the `stream.error` code for this failure.
  */
-function failureCode(signal: AbortSignal, error: unknown): 'aborted' | 'timeout' | 'provider-error' {
+function failureCode(
+  signal: AbortSignal,
+  error: unknown,
+): 'aborted' | 'timeout' | 'provider-error' | 'no-provider' {
   if (signal.aborted) return 'aborted'
+  if (error instanceof AppError && error.code === 'no-provider') return 'no-provider'
   if (isHarnessError(error) && error.code === 'TIMEOUT') return 'timeout'
   return 'provider-error'
 }
@@ -480,12 +491,15 @@ export interface AppServiceOptions {
   /**
    * The connection this host process was **started** with.
    *
-   * Two things need it, and neither can be done without it. A probe run from a
-   * form with an empty key field falls back to the credential the process
-   * already holds — which is the whole point of the field being allowed to be
-   * empty — and the panel shows the startup route as a row rather than
-   * reporting "no active connection" about a host that has been generating
-   * happily all along.
+   * Three things read it, and none of them offers it as a route any more (the
+   * user's ruling of 2026-09-10; host §61). A probe run from a form with an
+   * empty key field falls back to the credential the process already holds —
+   * the whole point of the field being allowed to be empty; an installed route
+   * borrows that credential at the same origin (§58's ladder); and
+   * {@link IrisAppService.importLaunchConnection} copies the endpoint, the
+   * model and the key into a **saved provider** once, at first start, so an
+   * environment-configured host arrives in the new world with a provider in its
+   * list instead of nothing.
    *
    * Given by the composition where it can be; when it is absent this runtime
    * falls back to reading the same environment variables the composition's own
@@ -495,6 +509,26 @@ export interface AppServiceOptions {
    * a hard-coded environment read.
    */
   hostConnection?: HostConnection
+  /**
+   * Refuse to generate while **no saved provider is in use**.
+   *
+   * The user's ruling, 2026-09-10, verbatim: 「宿主环境这个功能废弃了，以后都从在
+   * Iris 中自己添加供应商来调用模型」. With this on, a generation whose settings
+   * would fall through to the environment's own route is refused by name
+   * (`no-provider`) at the one funnel every generation passes, so "which
+   * provider is this reply coming from" has exactly one answer: the row marked
+   * 当前 in the connection card.
+   *
+   * **Default `false`, and the product turns it on** (`index.ts` passes
+   * `true`). Two reasons for the asymmetry rather than one default: a host
+   * composed with no `connections` store has no way to *have* a provider in
+   * use, so requiring one would leave it unable to generate with no interface
+   * to fix it in; and every generation test in this package is composed that
+   * way. The flag is ignored — not honoured with a refusal — when no store is
+   * configured, for the same reason.
+   * @default false
+   */
+  requireProvider?: boolean
   /**
    * The environment the host-connection fallback reads. Defaults to
    * `process.env`; injected by tests so nothing depends on the real shell.
@@ -703,24 +737,21 @@ export class IrisAppService {
   #activePreset: ChatCompletionPreset
   /** The active preset's library name, when it has one. */
   #activePresetName: string | undefined
-  /**
-   * What a probe of the **host's own** endpoint reported, for this process only.
-   *
-   * A saved profile's list goes in the user's file; this one deliberately does
-   * not go anywhere. The host default is not a decision of the user's — it is
-   * the environment the process was launched with — so the only thing being
-   * remembered here is an observation, and an observation belongs in memory
-   * with the process that made it. It is also what makes the composer's model
-   * menu answerable on a host with no saved profiles: the list is fetched once
-   * per launch and read from here after that.
+  /*
+   * `#hostProbe` stood here: what a bare probe of the host's **own** endpoint
+   * reported, held for the life of the process because it was an observation
+   * rather than a decision of the user's. Its two readers were the 「宿主环境」
+   * row's model chips and the composer capsule's fallback list for a host with
+   * no profile in use — both retired on 2026-09-10 (host §61, web §79), because
+   * the environment is no longer a connection anything generates through. A
+   * profile's own list is still recorded, in the user's file, where a decision
+   * of theirs belongs.
    */
-  #hostProbe: HostProbeRecord | undefined
 
   /**
    * Context windows endpoints reported to this process's own probes, by model id.
    *
-   * Not persisted, and that is the same ruling {@link #hostProbe} above
-   * carries for the same reason: it is an observation rather than a decision.
+   * Not persisted, because it is an observation rather than a decision.
    * The scope is narrower than a profile's stored `modelContexts`, which is
    * filed as a record of one endpoint's answer; this map is read by the window
    * resolver, which has only a model name to go on, so a persisted entry could
@@ -793,6 +824,9 @@ export class IrisAppService {
       fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
       probeTimeoutMs: options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
       env: options.env ?? process.env,
+      // Off unless a composition says otherwise: see the option's docblock for
+      // why the *product* says otherwise and a library caller does not.
+      requireProvider: options.requireProvider ?? false,
       ...options.hostConnection === undefined ? {} : { hostConnection: options.hostConnection },
       ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
@@ -952,7 +986,14 @@ export class IrisAppService {
    * {@link #installedRoutes} — the set would have said "not installed" for the
    * one route the host had just installed, and a generation on it would have
    * re-installed it on the first turn of every restart.
-   * @returns the route that was restored, when one was.
+   *
+   * A route this process has **already** installed is left alone, which is the
+   * same set being read for the same reason one line later in the boot:
+   * {@link importLaunchConnection} runs first and installs what it applied, and
+   * without this the very next call would install it a second time and report a
+   * second "connection now generates through…" line for one connection.
+   * @returns the route that was restored, when one was — absent when there was
+   *   nothing to restore *or* when it was already served.
    */
   async restoreActiveConnection(): Promise<string | undefined> {
     const store = this.#options.connections
@@ -966,7 +1007,115 @@ export class IrisAppService {
     const profile = await store.get(listed.activeId).catch(() => undefined)
     if (profile?.baseURL === undefined || profile.baseURL.length === 0) return undefined
     const route = routeOf(profile)
+    if (this.#installedRoutes.has(route)) return undefined
     return this.#installConnectionFor(route, { ...profile, baseURL: profile.baseURL }) ? route : undefined
+  }
+
+  /**
+   * Move the launch environment into the provider list, once, on a host that
+   * has no providers at all.
+   *
+   * **The migration the deprecation needs.** Until 2026-09-10 a host configured
+   * from `IRIS_BASE_URL` / `IRIS_MODEL` / `IRIS_API_KEY_ENV` generated through
+   * that configuration with no profile saved at all, and the interface said so
+   * in a row of its own. The ruling that day retires the row and
+   * {@link AppServiceOptions.requireProvider} refuses to generate without a
+   * provider — so a user who upgrades with an empty `connections.json` would
+   * find a host that answers nothing until they retype what their `.env`
+   * already says. This copies it in instead, and **applies** it, so the first
+   * turn after the upgrade goes exactly where the last turn before it went.
+   *
+   * **It is not the old route under a new name.** What arrives is an ordinary
+   * saved provider: editable, deletable, replaceable, and the credential is in
+   * the profile rather than borrowed from the environment at install time. The
+   * environment stops being consulted for *which* provider generates; it is
+   * only where these three values were read from, once.
+   *
+   * Conditions, all of them:
+   *
+   * - a `connections` store is configured (otherwise there is no list to write
+   *   into, and `requireProvider` is ignored for the same reason);
+   * - the list is **empty** — not "nothing is active", *empty*. A user who has
+   *   ever saved a provider has made this decision themselves, and a second
+   *   row appearing at their next start would be this host editing their list
+   *   behind them;
+   * - the launch configuration names an endpoint **and** a model. Both are
+   *   stored fields of a profile and the protocol refuses one with no model, so
+   *   a host that never said where it points cannot be copied. `IRIS_BASE_URL`
+   *   unset is exactly that case: the composition's
+   *   `http://127.0.0.1:11434/v1` default lives in a `!!js` expression this
+   *   runtime cannot read, and inventing a copy of it here would be a constant
+   *   that drifts (`hostConnectionFromEnv` makes the same choice for the same
+   *   reason).
+   *
+   * **Where each of the three values comes from**, because they do not share a
+   * source and a reader will assume they do. The endpoint and the credential
+   * are read from the environment (`hostConnectionFromEnv`, or whatever the
+   * composition handed in). The **model** is the launch snapshot's, which is
+   * the composition's own configured model — `apps/iris/cordis.yml`'s `app`
+   * row, `!!js process.env.IRIS_MODEL` — and not a second read of that
+   * variable here: the composition is the authority on what this host
+   * generates with, and a runtime that re-read the variable could disagree with
+   * the settings layer it was constructed from.
+   *
+   * The key travels **inside the host**, as an adoption always did: the browser
+   * is not involved, and the report names its source rather than its value. A
+   * host with an endpoint and no key still imports — a local llama.cpp or
+   * Ollama serve needs none, and refusing there would leave precisely the
+   * simplest configuration unable to generate.
+   * @returns the id of the profile it created, or `undefined` when it did
+   *   nothing — which is the normal answer on every start after the first.
+   */
+  async importLaunchConnection(): Promise<string | undefined> {
+    const store = this.#options.connections
+    if (store === undefined) return undefined
+    const listed = await store.list()
+    if (listed.profiles.length > 0) return undefined
+
+    const host = this.#hostConnection()
+    if (host.baseURL === undefined || host.baseURL.length === 0) return undefined
+    if (host.model === undefined || host.model.length === 0) return undefined
+
+    const saved = await store.save({
+      // The launch route's own provider name, so `routeOf` derives the same
+      // route an ordinary saved provider gets (`conn/<id>` on the shipped
+      // composition, whose `app` row is `provider: default`) and the adapter
+      // installed below is this profile's, not the composition's registration.
+      provider: host.provider,
+      model: host.model,
+      baseURL: host.baseURL,
+      // Stored data, not a dictionary string: a label lives in the user's file
+      // and cannot follow the interface's language. It says where the row came
+      // from, which is the one thing about it a reader cannot derive.
+      label: '启动环境',
+      ...host.apiKey === undefined || host.apiKey.length === 0 ? {} : { apiKey: host.apiKey },
+      ...host.apiKeyHeader === undefined || host.apiKeyHeader.length === 0
+        ? {}
+        : { apiKeyHeader: host.apiKeyHeader },
+    })
+    const profile = saved.profiles[0]
+    if (profile === undefined) return undefined
+
+    // Applied, by the same three acts `connection.activate` performs: the
+    // adapter for its endpoint, the settings layer naming that route, and the
+    // active id. Anything less would leave a provider in the list that nothing
+    // generates through, which is the state this method exists to prevent.
+    const route = routeOf({ ...profile, baseURL: host.baseURL })
+    this.#installConnectionFor(route, {
+      baseURL: host.baseURL,
+      ...host.apiKey === undefined ? {} : { apiKey: host.apiKey },
+      ...host.apiKeyHeader === undefined ? {} : { apiKeyHeader: host.apiKeyHeader },
+    })
+    await this.#options.settings.set(undefined, { provider: route, model: host.model })
+    await store.markActive(profile.id)
+    this.#report(
+      `the launch environment was imported as connection profile "${profile.id}" and applied: `
+      + `${new URL(host.baseURL).origin} with model "${host.model}", route "${route}", `
+      + `key: ${host.apiKey === undefined || host.apiKey.length === 0 ? 'none' : 'copied from the environment'}. `
+      + 'Providers are now chosen from the connection card; the environment is no longer a route.',
+      { kind: 'host', grade: 'note' },
+    )
+    return profile.id
   }
 
   /**
@@ -1047,16 +1196,40 @@ export class IrisAppService {
    * no installer at all: the reference is not dangling, this host merely cannot
    * honour it, and clearing a good setting because of a missing capability
    * would lose the user's choice to a host that is temporarily less able.
+   *
+   * **Before any of that**, when the composition asked for it
+   * ({@link AppServiceOptions.requireProvider}): a generation with **no saved
+   * provider in use** is refused rather than served. The user's ruling of
+   * 2026-09-10 retires the environment's own route as something a reply can
+   * come from, and this is the one place that decision can be enforced once —
+   * the same funnel, the same reason the four callers do not each carry a
+   * check of their own. It is deliberately the *first* question asked, because
+   * the route the settings name in that state is usually the host's own, which
+   * rung 1 would wave straight through.
    * @param provider - the route the effective settings named.
    * @param chatId - the conversation the settings were read for, for the report.
    * @returns the route to actually generate on.
+   * @throws {AppError} `no-provider` when nothing is in use and this host
+   *   requires a provider.
    */
   async #resolveRoute(provider: string, chatId?: string): Promise<string> {
+    const store = this.#options.connections
+    // One read for both questions below. The store caches the file after its
+    // first load, so this is not a stat per turn.
+    const listed = store === undefined ? undefined : await store.list()
+    if (this.#options.requireProvider && listed !== undefined && listed.activeId === undefined) {
+      throw new AppError(
+        'no-provider',
+        'no connection provider is in use, so there is nothing to generate through: '
+        + 'add a provider in the connection card and press 使用. '
+        + 'This host no longer generates through the route it was launched with.',
+      )
+    }
+
     const host = this.#hostRoute()
     if (provider === host || this.#installedRoutes.has(provider)) return provider
 
-    const store = this.#options.connections
-    const profiles = store === undefined ? [] : (await store.list()).profiles
+    const profiles = listed?.profiles ?? []
     const named = profiles.find(profile => routeOf(profile) === provider)
     /**
      * Report the fall back and answer with the host's route.
@@ -1141,48 +1314,27 @@ export class IrisAppService {
   }
 
   /**
-   * The host's own connection as every `connection.*` answer projects it.
+   * What the browser may know about this host's environment credential.
    *
-   * One method rather than four bare `hostDefaultView(host)` call sites,
-   * because the model list is now part of the projection and a call site that
-   * forgot to pass it would answer "the host advertises nothing" — which reads
-   * as a fact about the endpoint rather than as a missing argument.
-   * @returns the read-only row, with this process's probe of it when the probe
-   * was of the endpoint the host still points at.
+   * One method rather than three bare `hostDefaultView(…)` call sites, kept for
+   * that reason alone now that the projection is three fields wide: the
+   * endpoint the process was configured with, whether it holds a key for it,
+   * and the variable's name. It is **not** a connection row any more — nothing
+   * generates through the environment (host §61) — and its only readers are the
+   * two sentences a provider editor says about a key left blank at that origin.
+   * @returns the environment's endpoint and key source, never the key.
    */
   #hostDefaultRow(): HostDefaultConnection {
-    return hostDefaultView(this.#hostConnection(), this.#hostProbe)
+    return hostDefaultView(this.#hostConnection())
   }
 
-  /**
-   * File a successful probe against the host's own connection, when that is
-   * what was probed.
-   *
-   * Keyed on the **origin**, not on how the caller addressed the probe: a
-   * profile that carries the host's endpoint and a bare `baseURL` typed into
-   * the form are the same server answering, and the list is that server's
-   * answer either way. A probe of anywhere else leaves this alone — the whole
-   * value of the row is that it describes the endpoint the host generates
-   * through, and a list from a neighbouring provider would quietly make it
-   * describe something else.
-   * @param baseURL - where the probe actually went.
-   * @param models - what it reported.
-   * @param modelContexts - what is known about those models' windows, when anything is.
+  /*
+   * `#recordHostModels` stood here: a successful bare probe of the host's own
+   * endpoint filed its model list against `#hostProbe`, keyed on the origin so
+   * a neighbouring provider's answer could not be attributed to it. Both are
+   * gone with the row they filled (host §61). A probe naming a **profile**
+   * still records its list — on the profile, in the user's file.
    */
-  #recordHostModels(
-    baseURL: string,
-    models: readonly string[],
-    modelContexts?: Record<string, ModelContextLength>,
-  ): void {
-    const host = this.#hostConnection()
-    if (!sameEndpointOrigin(host.baseURL, baseURL)) return
-    this.#hostProbe = {
-      origin: baseURL,
-      models: [...models],
-      probedAt: Date.now(),
-      ...modelContexts === undefined ? {} : { modelContexts: { ...modelContexts } },
-    }
-  }
 
   /**
    * Decide which key a probe sends, and say where it came from.
@@ -2162,17 +2314,11 @@ export class IrisAppService {
       }),
 
       'connection.save': async (input) => {
-        // Adopting the host's credential happens **here**, where the key
-        // already is. The browser asked for it by name and never saw it; a
-        // key the user has just typed outranks the flag, because it is the
-        // newer decision of the two.
-        const host = this.#hostConnection()
-        const adopted = input.adoptHostKey === true
-          && (input.apiKey === undefined || input.apiKey.length === 0)
-          && host.apiKey !== undefined
-          && host.apiKey.length > 0
-          ? host.apiKey
-          : undefined
+        // `adoptHostKey` used to be read here, copying the process's own
+        // environment credential into the profile being saved — the 存为供应商
+        // button's whole implementation. The button and the flag are gone
+        // (host §61); the copy lives in `importLaunchConnection()`, which does
+        // it once at first start rather than on a press.
         const saved = await this.#connections().save({
           provider: input.provider,
           model: input.model,
@@ -2183,16 +2329,12 @@ export class IrisAppService {
           ...input.baseURL === undefined ? {} : { baseURL: input.baseURL },
           // Passed through untouched: the merge-or-clear decision belongs to the
           // store, which is the only place that can still see the stored key.
-          ...adopted !== undefined
-            ? { apiKey: adopted }
-            : input.apiKey === undefined ? {} : { apiKey: input.apiKey },
-          ...input.apiKeyHeader === undefined
-            ? adopted === undefined || host.apiKeyHeader === undefined ? {} : { apiKeyHeader: host.apiKeyHeader }
-            : { apiKeyHeader: input.apiKeyHeader },
+          ...input.apiKey === undefined ? {} : { apiKey: input.apiKey },
+          ...input.apiKeyHeader === undefined ? {} : { apiKeyHeader: input.apiKeyHeader },
           ...input.models === undefined ? {} : { models: input.models },
           ...input.modelContexts === undefined ? {} : { modelContexts: input.modelContexts },
         })
-        return { ...saved, host: hostDefaultView(host, this.#hostProbe) }
+        return { ...saved, host: this.#hostDefaultRow() }
       },
 
       'connection.delete': async ({ id }) => {
@@ -2267,54 +2409,16 @@ export class IrisAppService {
         return { settings: applied, activeId: id }
       },
 
-      'connection.deactivate': async () => {
-        const store = this.#connections()
-        await store.clearActive()
-        /*
-         * **The global layer goes back to the launch configuration — route and
-         * model both.**
-         *
-         * §59's rule for a *deletion* is the opposite one: clear the reference,
-         * keep the values, because a model id and a temperature outlive the
-         * profile that supplied them and losing them is a second loss nobody
-         * asked for. This is not a deletion. It is the same act as
-         * `connection.activate` one row up — the user choosing which connection
-         * generates — and the row they chose is the launch configuration, whose
-         * model is as much a part of it as its route. Writing the route and
-         * leaving the last profile's model behind would answer 「使用宿主环境」
-         * with a route from the environment and a model from a connection the
-         * list now says is not in use.
-         *
-         * Sampling is untouched, and that is §59's rule doing its job in the
-         * place it belongs: the launch configuration carries no temperature to
-         * restore, so anything here would be inventing one.
-         *
-         * `provider` is written rather than cleared (`{ provider: null }`,
-         * which `SettingsStore.set` restores to `configuredRoute()`) because
-         * the snapshot is the wider answer: a composition that handed a
-         * `hostConnection` in has a route its settings defaults never saw, and
-         * a clear would put the layer on a route `#hostRoute()` does not name —
-         * which `#resolveRoute` would then have to repair on the next turn.
-         */
-        const applied = await settings.set(undefined, {
-          provider: this.#launch.provider,
-          model: this.#launch.model,
-        })
-        // The adapter the last activation installed is left registered. It is
-        // this process's own registry entry, nothing names it any more, and
-        // un-installing is not something `installConnection` offers — a route
-        // nobody references costs a map entry until the process ends.
-        this.#report(
-          `no connection profile is applied any more: the global layer is back on the launch route `
-          + `"${this.#launch.provider}" with model "${this.#launch.model}" (sampling is left as it stands)`,
-          { kind: 'host', grade: 'note' },
-        )
-        // `activeId` is deliberately absent rather than a field holding
-        // `undefined`: the browser writes `activeConnectionId: result.activeId`
-        // from this answer exactly as it does from `activate` and `list`, and
-        // the three shapes being one shape is what lets it.
-        return { settings: applied, host: this.#hostDefaultRow() }
-      },
+      /*
+       * `connection.deactivate` stood here for one day (host §60): clear
+       * `activeId` and put the global layer back on the launch route and model,
+       * so 「宿主环境」 could be chosen back. The user's ruling of 2026-09-10
+       * retires the environment as a connection a person selects, so there is
+       * nothing to go back *to* — a generation with no provider in use is
+       * refused by name in `#resolveRoute` instead. The last profile stays in
+       * use until another one is used or that one is deleted, which is the only
+       * remaining way `activeId` becomes absent.
+       */
 
       'connection.test': async (input) => {
         /*
@@ -2416,13 +2520,10 @@ export class IrisAppService {
             if (known.source === 'provider') this.#probedContexts.set(model.trim().toLowerCase(), known)
           }
         }
-        // And a successful probe of the host's **own** endpoint is filed in
-        // memory, which is the one connection with no file to file it on. The
-        // two are not exclusive: a profile pointed at the host's endpoint
-        // records on both, because both rows describe that server.
-        if (verdict.ok && verdict.models !== undefined) {
-          this.#recordHostModels(baseURL, verdict.models, verdict.modelContexts)
-        }
+        // A probe of the host's **own** endpoint used to be filed in memory too,
+        // for the 「宿主环境」 row and the capsule's fallback list. Neither exists
+        // (host §61), so a bare probe now answers its caller and records
+        // nothing: the only list anything reads is a profile's own, above.
         return { ...verdict, keySource: resolved.keySource }
       },
 
