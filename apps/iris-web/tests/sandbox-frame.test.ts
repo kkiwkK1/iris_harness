@@ -25,6 +25,7 @@ function realm(options?: {
   seeded?: ScriptContext
   eventTarget?: EventTarget
   schedulers?: FrameSchedulers
+  postToParent?: (message: unknown, targetOrigin?: unknown, transfer?: unknown) => void
 }): {
   posted: FromFrame[]
   send: (message: ToFrame) => void
@@ -116,6 +117,7 @@ function realm(options?: {
     ...(options?.interfaceFrame === true ? { interfaceFrame: true } : {}),
     ...(options?.eventTarget === undefined ? {} : { eventTarget: options.eventTarget }),
     ...(options?.schedulers === undefined ? {} : { schedulers: options.schedulers }),
+    ...(options?.postToParent === undefined ? {} : { postToParent: options.postToParent }),
     // The seed a srcdoc would have inlined ahead of this bootstrap. The real
     // reader (frame-entry) consumes and deletes the global; here the snapshot
     // itself is the fixture, and "was it read before the body ran" is what the
@@ -559,6 +561,130 @@ test('a parent without schedulers refuses them by name', () => {
       && String((message as { message?: string }).message).includes('parent.setTimeout'),
   )
   assert.notEqual(note, undefined, 'the absent scheduler read was silent')
+})
+
+test('parent.postMessage hands the card\'s own arguments to the injected sink', () => {
+  /*
+   * The measured fault, 2026-09-09 on the live host with the preset-embedded
+   * regex tier switched on: every message reported *"an uncaught error before
+   * the card body message arrived: TypeError: window.parent.postMessage is not
+   * a function at about:srcdoc:922:31"*, from
+   * `[主预设] V19.5 狐神抚 · 毓忻`'s 【行动选项美化 · 狐策】 —
+   * `window.parent.postMessage({type:'resizeIframe', height:
+   * document.body.scrollHeight}, '*')`. That markup runs while the document
+   * parses, so the throw took the rest of the interface with it.
+   *
+   * All three arguments are asserted, and by identity: the sink decides what
+   * the message *means*, and a bridge that dropped `targetOrigin` or the
+   * transfer list would leave that decision reading a different call than the
+   * card made.
+   */
+  const calls: unknown[][] = []
+  const port = { name: 'a transferable' }
+  const scope = realm({
+    postToParent: (message, targetOrigin, transfer) => {
+      calls.push([message, targetOrigin, transfer])
+    },
+  })
+
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    assert.equal(typeof parent['postMessage'], 'function', 'parent.postMessage was not answered')
+    // The membership probe with it: `has` must agree with `get`, or a card that
+    // feature-tests before calling skips a member that works.
+    assert.equal('postMessage' in parent, true, 'has must agree with get')
+
+    const message = { type: 'resizeIframe', height: 912 }
+    ;(parent['postMessage'] as (...args: unknown[]) => void)(message, '*', [port])
+    // The bare-global path too: a card holding `window.parent` and one holding
+    // the shadowed `window` reach the same member.
+    const own = globals['window'] as Record<string, unknown>
+    const viaWindow = (own['parent'] as Record<string, unknown>)['postMessage']
+    assert.equal(viaWindow, parent['postMessage'], 'two reads answered two different sinks')
+    ;(viaWindow as (...args: unknown[]) => void)('toggle-forum-overlay')
+  })
+
+  assert.equal(calls.length, 2, 'the card\'s posts did not reach the sink')
+  assert.deepEqual(calls[0]?.[0], { type: 'resizeIframe', height: 912 })
+  assert.equal(calls[0]?.[1], '*', 'the target origin was dropped')
+  assert.equal((calls[0]?.[2] as unknown[] | undefined)?.[0], port, 'the transfer list was dropped')
+  assert.equal(calls[1]?.[0], 'toggle-forum-overlay', 'a bare string message was not carried')
+})
+
+test('a card may not overwrite parent.postMessage', () => {
+  /*
+   * Read-only like `document` and the schedulers, and here the rule is
+   * load-bearing rather than merely faithful: this frame runs all of a card's
+   * scripts, so a script assigning `parent.postMessage` would be replacing
+   * every sibling's sink — and the name is one character away from the
+   * shell's own channel, which `tools/check-bootstrap.mjs` keeps captured once
+   * at boot precisely so that no late read of it exists to hijack.
+   */
+  const scope = realm({ postToParent: () => undefined })
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    assert.throws(() => {
+      parent['postMessage'] = () => undefined
+    }, UnsupportedApiError)
+    assert.throws(() => {
+      delete parent['postMessage']
+    }, UnsupportedApiError)
+  })
+})
+
+test('a parent without a message sink refuses the name instead of pretending', () => {
+  // The unpublished-name policy, as the schedulers and the document stand-in's
+  // members follow it: `undefined` plus one report. A half-working stub that
+  // swallowed the post would be the silence this whole path exists to remove.
+  const scope = realm()
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    assert.equal(parent['postMessage'], undefined, 'postMessage was answered with no sink')
+    assert.equal('postMessage' in parent, false, 'has must agree with get')
+  })
+
+  const note = scope.posted.find(
+    message => (message as { type?: string }).type === 'note'
+      && String((message as { message?: string }).message).includes('parent.postMessage'),
+  )
+  assert.notEqual(note, undefined, 'the absent sink read was silent')
+})
+
+test('a membership probe answers for every injected parent member', () => {
+  /*
+   * `has` disagreeing with `get` is a shape this proxy has already shipped
+   * once: `_.has(window, 'Mvu')` polled false forever while `in` said true,
+   * and the feature failed with both halves apparently correct. The schedulers
+   * had the same disagreement facing the other way — six working functions
+   * that `in` denied — which is why this walks the injected set rather than a
+   * hand-written list of names.
+   */
+  const scope = realm({
+    postToParent: () => undefined,
+    schedulers: {
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
+      setInterval: () => 0,
+      clearInterval: () => undefined,
+      requestAnimationFrame: () => 0,
+      cancelAnimationFrame: () => undefined,
+    },
+  })
+
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    let checked = 0
+    for (const name of [...VIRTUAL_PARENT_SCHEDULER_MEMBERS, 'postMessage']) {
+      assert.equal(typeof parent[name], 'function', `parent.${name} was not answered`)
+      assert.equal(name in parent, true, `'${name}' in parent disagreed with the read`)
+      checked += 1
+    }
+    // The compared count as a floor: a loop that silently skipped its own
+    // sample would otherwise pass with nothing compared.
+    assert.equal(checked, VIRTUAL_PARENT_SCHEDULER_MEMBERS.length + 1)
+    // And a name nothing bridges stays absent on both traps.
+    assert.equal('cookie' in parent, false)
+  })
 })
 
 test('the parent scheduler list is exactly the standard set', () => {
