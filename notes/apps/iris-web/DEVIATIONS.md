@@ -3571,3 +3571,134 @@ search or a bug report.
 **What would overturn it.** A host message that carries a credential (the contract
 is the host's, the exposure would be here); a code whose message is boilerplate
 being shown twice.
+
+## 76. A card's `parent.postMessage` is answered, and its resize request is honoured by measurement
+
+**Kind:** fix, plus one documented improvement over the single upstream consumer.
+
+**Measured.** 2026-09-09 on the live host (8788), with the preset-embedded regex
+tier switched on (PR #43, `dev/preset-regex-tier`, unmerged), every message
+reported:
+
+> an uncaught error before the card body message arrived: TypeError:
+> `window.parent.postMessage` is not a function at about:srcdoc:922:31 — this
+> frame carries the card's markup, which runs while the document parses, so this
+> is most likely that markup rather than the frame's own setup
+
+The attribution was right. The sender is
+`apps/iris/data/default-user/presets/[主预设] V19.5 狐神抚 · 毓忻.json`,
+`extensions.regex_scripts[37]` 【行动选项美化 · 狐策】 (`markdownOnly: true`,
+`replaceString` 41,831 characters), which ships:
+
+```js
+function requestParentResize() {
+  if (window.parent && window.parent !== window) {
+    requestAnimationFrame(() => {
+      window.parent.postMessage({ type: 'resizeIframe', height: document.body.scrollHeight }, '*')
+    })
+  }
+}
+```
+
+`postMessage` was not on the virtual parent's bridged list, so the read took the
+unpublished-name path, answered `undefined`, and the call threw. Because the
+sender is markup rather than a script, the throw took the rest of the interface
+with it.
+
+### Who calls it
+
+Both corpora, both columns (a card's *scripts* and the *interface text* it ships
+as markup), deduplicated by content hash, read through `decodeCardPng` and
+`extractScripts`:
+
+| message | sites | owners | distinct bodies | column |
+| --- | --- | --- | --- | --- |
+| `{type:'resizeIframe', height}` | 15 | 3 preset files (2 presets: V19.5 狐神抚, Kemini 5.17) | 5 | interface text |
+| `'toggle-forum-overlay'` — a bare **string** | 2 | 1 card (不要被神隐挑战-V1.5, script 论坛覆盖层) | 1 | script |
+| `{event:'__devtools-kit…'}` | 1 | 1 cached script bundle (Vue devtools) | 1 | script |
+
+`iframeResize` — the spelling the one upstream consumer matches — appears **zero**
+times in either corpus. `parent.addEventListener('message', …)` also appears zero
+times: no card listens on the parent bus, while eight sites listen on their *own*
+window for messages from their *own* children, a direction `nested-frame.ts`
+already serves.
+
+### Who listens upstream
+
+- **SillyTavern core listens for nothing.** No `window`/`document` `message`
+  listener in `public/script.js` or `public/scripts/**`; the four hits are Worker
+  and AudioWorklet ports.
+- **TavernHelper (JS-Slash-Runner 4.9.1) never receives a height.**
+  `src/iframe/adjust_iframe_height.js:21` writes `frameElement.style.height`
+  directly, same-origin, from inside the frame. Iris cannot — the shell is a
+  different origin — which is why the height travels as a protocol message and
+  `reportHeight`/`heightSignal` exist at all.
+- **One listener in the whole page consumes an upward message**:
+  ST-Prompt-Template `src/utils/iframe.ts:108-120` (confirmed in the shipped
+  `dist/index.js`), matching `event.data.type === 'iframeResize'` and then
+  `document.getElementById(event.data.id).style.height = Math.ceil(height)`.
+
+So the message the corpus actually sends matches no upstream listener on either
+count: wrong spelling, and no `id`. **Upstream's behaviour for every row of the
+table above is silent discard** — no `else`, no warning, no counter, in any of
+the three listeners.
+
+**Now.** `parent.postMessage(message, targetOrigin?, transfer?)` is a bridged,
+read-only member, injected through `FrameEnv.postToParent` like the event target
+and the schedulers, so `frame.ts` still knows nothing about the realm it installs
+into; absent, the name follows the unpublished-name policy (`undefined`, reported
+once). The sink is `sandbox/parent-messages.ts`, built from the **fetched member
+table** rather than inlined, and it:
+
+- answers a height request — **either** spelling — by asking this frame's own
+  height reporter for a fresh measurement (`reportHeight` now returns its
+  rAF-coalesced schedule);
+- drops everything else, **counted and named once per shape**, then again at each
+  ten-fold, so a card posting in a loop bounds its own noise;
+- never throws, for any value a card can pass;
+- never touches the shell↔frame protocol channel. That channel carries the run
+  token and can run code; `tools/check-bootstrap.mjs` still pins that the frame
+  reads `.postMessage` exactly once, at boot, before this bridge is published.
+
+**Why measurement rather than the card's number.** The card's `height` is
+`document.body.scrollHeight` of *this* document — the same quantity
+`reportHeight` reads, in the same realm — so re-measuring costs nothing in
+fidelity and keeps the reported height inside `heightSignal`'s echo and `sizing`
+guards, whose absence was measured as an endless flicker on four real cards
+(`height-loop.test.ts`). A forwarded number would bypass them. The claimed height
+is put in the note so a reader can compare it against the `height sources` line
+beside it — which is the reading that would falsify this choice.
+
+### Three deliberate divergences from the one upstream consumer
+
+1. **`id` is ignored; a request is always about the sending frame.** Upstream
+   resolves `getElementById(event.data.id)` against the whole host page with no
+   `event.source` and no origin check (the origin check is present as a comment),
+   so any frame can resize any element that has an id — and upstream's own stable
+   id from `evaluate.ts:151` is overwritten by a random one at `iframe.ts:16`.
+   Reproducing that would reproduce a hole. Costless here: no measured sender
+   sends an `id`.
+2. **Both spellings are honoured.** `iframeResize` is what upstream matches;
+   `resizeIframe` is what all 15 measured sites send. Honouring one would either
+   serve nobody here or diverge from the only consumer that exists.
+3. **`targetOrigin` is accepted and ignored, and a non-cloneable message is
+   accepted rather than refused.** All 15 sites pass `'*'`; a real `postMessage`
+   would throw `DataCloneError` on a function or a symbol. Being more permissive
+   than the platform cannot break a card the platform would have refused, and
+   there is no origin here that would mean what the DOM's comparison means.
+
+**Cost.** The bootstrap grew 311 bytes (52,177 → 52,488), which is 264 past the
+47 bytes of headroom 52 KiB had left, so `FRAME_OVERHEAD_BYTES` moves to 53 KiB.
+`FRAME_COUNT_LIMIT` stays at **19** — 19 against a half-degradation point of 19.3
+— the first increment since 41 KiB that costs no frame. The policy half is
+unavoidably inline (which name is bridged, that it is read-only, where the
+argument goes); everything that decides what a message *means* went into the
+member table, the answer the popup API gave the last time this line was crossed.
+
+**What would overturn it.** A card that sends an `id` and expects a sibling frame
+to move (then the choice in divergence 1 is between fidelity and the hole, and it
+should be argued rather than inherited); a measured card whose claimed height is
+one this frame's own rulers cannot read, which the note beside the `height
+sources` line is there to reveal; an upstream release in which SillyTavern core
+or TavernHelper starts consuming an upward message, which would make the
+drop-and-count a divergence rather than parity.

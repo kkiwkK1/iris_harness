@@ -43,6 +43,7 @@ import {
 import { createNestedFrame, virtualiseNestedFrames } from './nested-frame.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import { createPopupApi } from './popup-api.ts'
+import { createParentMessages } from './parent-messages.ts'
 import {
   SETTLED_EVENT_NAMES,
   STARTED_EVENTS,
@@ -76,6 +77,7 @@ host[MEMBERS_GLOBAL] = {
   virtualiseNestedFrames,
   createReportingToastr,
   createPopupApi,
+  createParentMessages,
 }
 
 /*

@@ -672,7 +672,29 @@ function applyScrollStyles(
   else element.style.setProperty(property, value, 'important')
 }
 
-function reportHeight(run: string, post: (message: FromFrame) => void): void {
+/**
+ * Ask for a fresh height measurement, once the reporter below has started.
+ *
+ * A card's `parent.postMessage({type:'resizeIframe', …})` is answered through
+ * this — `parent-messages.ts` says why by re-measuring rather than by applying
+ * the card's own number. It is a `let` because the sink is built **before**
+ * `installSandbox` (the member has to work from the moment the bridge is
+ * published) while the reporter starts after it. `srcdoc.ts` puts the whole
+ * bootstrap ahead of the card's markup, so in a real frame this is always
+ * assigned before any card code runs; the optional call is what keeps the
+ * impossible case *counted and named* rather than silently dropped, which is
+ * the failure this whole path exists to remove.
+ */
+let requestRemeasure: (() => void) | undefined
+
+/**
+ * Report this frame's content height to the shell, and go on reporting it.
+ * @param run - the run token every message carries.
+ * @param post - the channel to the shell.
+ * @returns the rAF-coalesced measurement schedule, so a card's own resize
+ *   request can ask for one.
+ */
+function reportHeight(run: string, post: (message: FromFrame) => void): () => void {
   let scheduled = false
   /*
    * Counters, because they answer a question the measures cannot.
@@ -965,6 +987,14 @@ function reportHeight(run: string, post: (message: FromFrame) => void): void {
   if (typeof document.fonts?.ready?.then === 'function') void document.fonts.ready.then(schedule)
 
   send()
+  /*
+   * The schedule, not `send`: a card's resize request has to join the same
+   * rAF coalescing every other trigger uses, or a card posting on each
+   * animation frame would measure the document synchronously as often as it
+   * asks — and one of the measured senders posts from inside a
+   * `requestAnimationFrame` callback already.
+   */
+  return schedule
 }
 
 /** The last viewport applied, so a re-push that changes nothing stays silent. */
@@ -1799,6 +1829,19 @@ try {
   // `change` through it. The frame's document is the only page those events
   // happen in, so it is the only honest bus for them.
   eventTarget: document,
+  /*
+   * Where a card's upward `postMessage` goes. Built from the **fetched member
+   * table** rather than inlined here, like the popup API: the policy is one
+   * bridged name in `frame.ts`, and everything that decides what the message
+   * means is a member.
+   *
+   * The note channel is this frame's, so a dropped card message reads in the
+   * panel beside the height sources it is about.
+   */
+  postToParent: members.createParentMessages({
+    remeasure: () => { requestRemeasure?.() },
+    note: message => { post({ iris: run, type: 'note', scriptId: undefined, message }) },
+  }),
   // The frame's own timers, bound to this window: a card that walked outwards
   // holds the virtual parent as `hostWindow` and arms its delays and animation
   // frames through it. There is one realm here, so the scheduler the parent
@@ -2215,7 +2258,7 @@ try {
   reportBlocked(run, post)
   reportStorage(run, post)
   reportBodySummary(run, post)
-  reportHeight(run, post)
+  requestRemeasure = reportHeight(run, post)
   // Read here rather than captured earlier: the attribute is on the body the
   // document was built with, and this is the one decision the handshake timing
   // turns on — see `announceReady` for which side waits for what.

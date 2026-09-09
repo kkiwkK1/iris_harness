@@ -61,4 +61,5 @@ export interface MemberTable {
   createNestedFrame: typeof import('./nested-frame.ts').createNestedFrame
   virtualiseNestedFrames: typeof import('./nested-frame.ts').virtualiseNestedFrames
   createReportingToastr: typeof import('./toastr-report.ts').createReportingToastr
+  createParentMessages: typeof import('./parent-messages.ts').createParentMessages
 }

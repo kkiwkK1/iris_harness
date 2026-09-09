@@ -122,8 +122,20 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * 224 over; not squeezable to the line without gambling on minifier weather.
  * So the constant moves as the table below always said it would, and the count
  * gate moves with it.
+ *
+ * **53 KiB, and this time the gate does not move.** `parent.postMessage` became
+ * a bridged member (`frame.ts`, `sandbox/parent-messages.ts`): a card's upward
+ * post used to throw, and the throw took the rest of a real card's interface
+ * with it. The *policy* half is unavoidably inline — which name is bridged,
+ * that it is read-only, and where its argument goes — while everything that
+ * decides what the message *means* went into the fetched member table, the same
+ * answer the popup API gave. That kept the increment to 311 bytes (52177 →
+ * 52488), which is 264 past the 47 bytes of headroom 52 KiB had left. The
+ * invariant holds at 53 KiB with `FRAME_COUNT_LIMIT` where it is — 19 against a
+ * half-degradation point of 19.3 — which is what the 52 KiB paragraph meant by
+ * "19 holds to about 55 KiB", and the row is in the table below.
  */
-export const FRAME_OVERHEAD_BYTES = 52 * 1024
+export const FRAME_OVERHEAD_BYTES = 53 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -139,9 +151,10 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * The most frames that may be live at once, whatever they weigh.
  *
  * [notes/apps/iris-web/WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
- * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` ≈ 41 frames the
- * fixed overhead eats the entire budget on its own and not one byte of card
- * content fits. A pure byte budget therefore degrades into "all scaffolding, no
+ * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` frames — a figure
+ * that moves every time the bootstrap does, so it is read from the table below
+ * rather than written here — the fixed overhead eats the entire budget on its
+ * own and not one byte of card content fits. A pure byte budget therefore degrades into "all scaffolding, no
  * content" exactly when there are most frames.
  *
  * 20 leaves about 1 MiB for content (overhead ≈ 1000 KiB, 49%), and 20 live
@@ -172,6 +185,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * | 49 KiB | 41.8 | 20.9 | 20 | held |
  * | 50 KiB | 41.0 | 20.5 | 20 | held, half a frame from the line; 52 KiB would move the gate |
  * | 52 KiB | 39.4 | 19.7 | 20 | **false** → gate 19, the move 50 said 52 would cost |
+ * | 53 KiB | 38.6 | 19.3 | 19 | held — the first increment since 41 KiB that cost no frame |
  *
  * Both times the reasonable-looking response was to raise the constant above and
  * treat the ratio as incidental; both times the invariant said otherwise, and
@@ -211,6 +225,12 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * holds — it holds to about 55 KiB, so the next bootstrap increment that trips
  * `build:sandbox` has real room to answer with a slimming pass instead of
  * another frame.
+ *
+ * **That room was spent once and the gate stayed at 19.** The bridged
+ * `parent.postMessage` took the bootstrap to 53 KiB (the constant above says
+ * why, and how much of the change went into the member table instead), and 19
+ * against a half-degradation point of 19.3 is the first increment since 41 KiB
+ * that cost no frame. About 2 KiB of the room is left.
  */
 export const FRAME_COUNT_LIMIT = 19
 

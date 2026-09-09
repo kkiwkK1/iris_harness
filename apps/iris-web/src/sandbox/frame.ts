@@ -119,6 +119,25 @@ export interface FrameEnv {
    * like every other name this proxy does not bridge.
    */
   schedulers?: FrameSchedulers
+  /**
+   * Where a card's `parent.postMessage(message, targetOrigin?, transfer?)` goes.
+   *
+   * Injected like the event target and the schedulers, and for a reason this
+   * module is stricter about than either: the member's *name* is
+   * `postMessage`, and the one channel a card must never reach is the shell's
+   * — which is `window.parent.postMessage` read once at boot and captured
+   * before this bridge is published (`frame-entry.ts`, and
+   * `tools/check-bootstrap.mjs` counts the reads to keep it once). Taking the
+   * sink as a parameter is what keeps this file from being able to name that
+   * channel at all.
+   *
+   * What the sink does with the message is `parent-messages.ts`: a height
+   * request is answered by re-measuring this frame, anything else is dropped,
+   * counted and named — the way the whole SillyTavern page drops it, except
+   * for the silence. Absent, the name follows the unpublished-name policy like
+   * every other name this proxy does not bridge: `undefined`, reported once.
+   */
+  postToParent?: (message: unknown, targetOrigin?: unknown, transfer?: unknown) => void
   /** The real window of this frame, proxied through for everything not overridden. */
   realWindow: object
   /** Send a message to the shell. */
@@ -1090,6 +1109,14 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     property === 'addEventListener' ||
     property === 'removeEventListener' ||
     property === 'dispatchEvent' ||
+    /*
+     * `postMessage` with them, and here the read-only rule is load-bearing
+     * rather than merely faithful: a card that could assign
+     * `parent.postMessage` would be replacing the sink for every sibling
+     * script in this frame, and the name it was replacing is one character
+     * away from the shell's own channel. Native and unwritable upstream too.
+     */
+    property === 'postMessage' ||
     // The schedulers with them: same native read-only shape upstream, and a
     // script rearming a sibling's timer through the proxy is the same kind of
     // accident the read-only rule exists to prevent.
@@ -1126,6 +1153,18 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (property === 'addEventListener') return parentEventTarget.addEventListener
       if (property === 'removeEventListener') return parentEventTarget.removeEventListener
       if (property === 'dispatchEvent') return parentEventTarget.dispatchEvent
+      /*
+       * `parent.postMessage`, the member whose absence threw. It is **not**
+       * routed onto the bus the three above use: upstream a card's upward post
+       * goes to the host page's `message` listeners, and no card in either
+       * corpus registers one on the parent (measured: zero
+       * `parent.addEventListener('message', …)` in both columns of both
+       * corpora), while eight sites listen on their *own* window for messages
+       * from their *own* children — a direction `nested-frame.ts` already
+       * serves. Delivering upward posts onto the parent bus would invent a
+       * loopback nothing asked for.
+       */
+      if (property === 'postMessage' && env.postToParent !== undefined) return env.postToParent
 
       /*
        * The scheduler set, answered from the frame's own realm. Dispatch walks
@@ -1275,6 +1314,20 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         property === 'addEventListener' ||
         property === 'removeEventListener' ||
         property === 'dispatchEvent' ||
+        /*
+         * The injected members, each answered here **exactly when `get`
+         * answers it** — which is the rule this trap already carries for `$`,
+         * and which the schedulers were missing: `parent.setTimeout` has been
+         * a working function since the scheduler set landed, while
+         * `'setTimeout' in parent` said false. A card that feature-tests
+         * before calling (the corpus does: `_pw.$ || _pw.jQuery`,
+         * `_.has(parent, …)`, `typeof tw.EjsTemplate.evalTemplate ===
+         * 'function'`) would have skipped a member that works, and a skipped
+         * branch is the silent failure this proxy keeps choosing against.
+         */
+        (property === 'postMessage' && env.postToParent !== undefined) ||
+        (env.schedulers !== undefined
+          && (VIRTUAL_PARENT_SCHEDULER_MEMBERS as readonly string[]).includes(property)) ||
         ((property === 'SillyTavern' || property === 'extension_settings') && context !== undefined)
       )
     },
