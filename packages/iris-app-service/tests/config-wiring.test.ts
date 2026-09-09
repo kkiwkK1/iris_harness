@@ -41,6 +41,42 @@ test('every config key is read off the parsed config by something', async () => 
 })
 
 /**
+ * The product's own answer to "may a reply come from the launch environment?"
+ *
+ * `requireProvider` is **not** a config key, deliberately (host §61): it is not
+ * a deployment preference but what the connection card now means, and a row
+ * would invite a composition to turn the card's own promise off. That makes it
+ * the same shape of invisible failure `config-wiring` exists for — the service
+ * has the option, every unit test that needs it passes it directly, and the one
+ * edit that puts the product in that state is a line in the plugin nothing else
+ * reads. Deleted, every test in this package would still be green and the
+ * shipped host would go back to generating from its environment.
+ *
+ * A structural check because there is no behaviour here to observe: the plugin
+ * body only runs inside a booted composition.
+ */
+test('the plugin turns the provider requirement on, which is the user’s ruling', async () => {
+  const source = await readFile(join(import.meta.dirname, '..', 'src', 'index.ts'), 'utf8')
+  // Inside the constructor call, not merely somewhere in the file: a mention in
+  // a comment is what this check must not accept.
+  const at = source.indexOf('new IrisAppService({')
+  assert.ok(at > 0, 'the plugin no longer constructs the service')
+  const construction = source.slice(at, source.indexOf('\n  })', at))
+  assert.match(
+    construction,
+    /requireProvider: true,/,
+    'the shipped host no longer requires a provider in use, so a reply can come from the environment again',
+  )
+  // And the boot-time import beside it, without which that requirement locks
+  // out every existing user whose route lives in their `.env`.
+  assert.match(
+    source,
+    /await service\.importLaunchConnection\(\)/,
+    'the launch environment is never imported, so an upgrade leaves the provider list empty',
+  )
+})
+
+/**
  * The two defaults a reader is most likely to assume the other way.
  *
  * `pruneVariables` defaults **off**. It reached this state the hard way: the

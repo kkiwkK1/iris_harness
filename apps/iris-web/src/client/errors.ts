@@ -50,6 +50,16 @@ const COPY: Record<RpcError['code'], StringKey | undefined> = {
    * would send a reader to delete the wrong thing.
    */
   'quota-exceeded': 'errQuota',
+  /*
+   * No provider is in use, so nothing generated (host §61). The host's own
+   * detail is about routes — it says this host no longer generates through the
+   * one it was launched with — and what a reader needs instead is the next
+   * step, in their own language, which is why this is one of the codes whose
+   * copy is written here. The turn path prints the same sentence from the same
+   * key (`store.ts`'s `stream.error`), because a card's refusal and a turn's
+   * are one refusal.
+   */
+  'no-provider': 'errNoProvider',
   internal: 'errInternal',
 }
 

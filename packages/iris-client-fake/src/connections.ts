@@ -58,60 +58,34 @@ const KEY_TAIL_MIN_LENGTH = 8
  */
 const SEEDED_PROBE_AT = 1_772_323_200_000
 
-/**
- * The route and model the fake "host" was launched on.
- *
- * Its own constant because two answers read it and they must not drift: the
- * host row the panel renders ({@link HOST_DEFAULT}) and the settings
- * {@link deactivateConnection} puts back. On the real host both come from one
- * launch snapshot (host §60); one literal here is the same property.
- *
- * A plain pair rather than a slice of `HostDefaultConnection`, whose `model` is
- * optional — a caller that has to cope with an absent model would be coping
- * with a shape this fixture never produces.
+/*
+ * `HOST_LAUNCH` stood here: the route and model the fake "host" was launched
+ * on, read by the 「宿主环境」 row and by the settings `connection.deactivate`
+ * put back. Both are gone (web §79) — the environment is not a connection a
+ * person selects, so the fake has no launch route left to describe. `HOST_ENV_KEY`
+ * went with them: it was the credential an adoption copied, and adopting was
+ * that row's third verb.
  */
-const HOST_LAUNCH = { provider: 'default', model: 'deepseek-chat' } as const
 
 /**
- * The connection the fake "host" was started with.
+ * What the fake "host" holds from its environment: an endpoint, and a key for
+ * it.
  *
- * Modelled because the interface has a **branch** for it — a host configured
- * from its environment shows a read-only row where the panel used to say "no
- * active connection" — and a branch nothing renders in development is a branch
- * whose first execution is in front of a user. It carries a key *source* and
- * the *name* of the variable, never a key, which is the shape the real host
+ * Modelled because the provider **editor** has a branch for it — a key field
+ * left blank at the host's own origin says where the key comes from rather than
+ * looking unfilled — and a branch nothing renders in development is a branch
+ * whose first execution is in front of a user. It carries the key's *source*
+ * and the *name* of the variable, never a key, which is the shape the real host
  * projects.
+ *
+ * No seeded profile points here, so the branch is reached in development the
+ * way a user reaches it: point an editor's endpoint field at this origin.
  */
 const HOST_DEFAULT: HostDefaultConnection = {
-  provider: HOST_LAUNCH.provider,
   baseURL: 'https://api.deepseek.com/v1',
-  model: HOST_LAUNCH.model,
   keySource: 'env',
   keyEnv: 'DEEPSEEK_API_KEY',
-  /**
-   * A list against the host's own endpoint, seeded on the same licence as the
-   * profiles' lists: fixture data *about a connection* rather than a verdict
-   * about a network, so it teaches the model menu nothing a real host would
-   * contradict while `connection.test` stays refused here.
-   *
-   * It carries more weight than it looks. This is the row the composer's model
-   * menu falls back to when no profile is active — which, on a host configured
-   * from its environment, is **the normal state**, and the state the bug was
-   * reported from. With no list seeded here, that path could only ever be
-   * developed against its own empty case.
-   */
-  models: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-chat-0711'],
-  modelsProbedAt: SEEDED_PROBE_AT,
 }
-
-/**
- * The key the fake's "host environment" holds, for an adoption to copy.
- *
- * No read returns it — {@link hostDefault} projects the source instead — so the
- * fake reproduces the property that matters: adopting the host's credential is
- * something the host does, never something the browser relays.
- */
-const HOST_ENV_KEY = 'sk-fake-host-env-1a2b3c4d'
 
 const STORED: StoredProfile[] = [
   {
@@ -207,19 +181,14 @@ function project(profile: StoredProfile): ConnectionProfile {
 }
 
 /**
- * The connection the fake host was started with.
- * @param options.models - whether the row carries a recorded model list.
- * `false` is the **never-probed** host: a real host holds this list in memory
- * only, so every launch starts without one, and the model menu's "fetch it
- * now" path is reachable in development only if something can serve that shape.
- * `createFakeClient({ empty: true })` is where it comes from.
- * @returns the read-only row, carrying the key's source and never the key.
+ * What the fake host holds from its environment.
+ *
+ * The `{ models: false }` parameter is gone with the model list it dropped: the
+ * environment's endpoint carries no list any more, because the only list
+ * anything reads is the provider in use's own (web §79).
+ * @returns the endpoint and the key's source, never the key.
  */
-export function hostDefault(options: { models?: boolean } = {}): HostDefaultConnection {
-  if (options.models === false) {
-    const { models: _dropped, modelsProbedAt: _stamp, ...rest } = HOST_DEFAULT
-    return rest
-  }
+export function hostDefault(): HostDefaultConnection {
   return { ...HOST_DEFAULT }
 }
 
@@ -259,7 +228,6 @@ export function saveConnection(patch: {
   baseURL?: string | undefined
   apiKey?: string | undefined
   apiKeyHeader?: string | undefined
-  adoptHostKey?: boolean | undefined
   models?: string[] | undefined
 }): { profiles: ConnectionProfile[], activeId?: string, host: HostDefaultConnection } {
   const stored: StoredProfile = {
@@ -279,11 +247,11 @@ export function saveConnection(patch: {
   const at = STORED.findIndex(row => row.id === stored.id)
   const previous = at === -1 ? undefined : STORED[at]
   if (patch.apiKey === undefined || patch.apiKey.length === 0) {
-    // Adopting the host's credential happens here, where the fake's "host
-    // environment" holds it — the browser asked for it by name. A typed key
-    // outranks the flag, as it does on the real host: it is the newer decision.
-    if (patch.adoptHostKey === true && patch.apiKey === undefined) stored.apiKey = HOST_ENV_KEY
-    else if (patch.apiKey === undefined && previous?.apiKey !== undefined) stored.apiKey = previous.apiKey
+    // An `adoptHostKey` arm stood here, copying the fake's own environment key
+    // into the profile being saved. The flag is gone from the protocol with the
+    // button that sent it (web §79); what remains is the merge every save has
+    // always done.
+    if (patch.apiKey === undefined && previous?.apiKey !== undefined) stored.apiKey = previous.apiKey
   } else {
     stored.apiKey = patch.apiKey
   }
@@ -339,20 +307,11 @@ export function activateConnection(
   }
 }
 
-/**
- * Apply no profile: back to the connection this fake "host" was launched with.
- *
- * The route and model come from {@link HOST_LAUNCH} — the host row's own — and
- * **not** from `DEFAULT_SETTINGS` (`seed.ts`), which looks like the same thing
- * and is not: that fixture is the *activated* seed profile's own values
- * (`local-qwen`'s provider, model and sampling, because `activeId` starts on
- * it), so returning there would answer "use the host environment" with the
- * route of the profile being left. The real host answers from its launch
- * snapshot for exactly this reason (host §60).
- * @returns the route and model the global layer goes back to; sampling is not
- * part of a launch configuration and is left as it stands.
+/*
+ * `deactivateConnection()` stood here: clear `activeId` and answer with the
+ * route and model the global layer goes back to. It served the 「宿主环境」 row's
+ * 使用 button for one day (web §78). With the environment retired as a route
+ * (web §79) nothing can ask for "no profile applied", so the only way `activeId`
+ * becomes absent in this fixture is the deletion above — the same as on the
+ * real host.
  */
-export function deactivateConnection(): { provider: string, model: string } {
-  activeId = undefined
-  return { ...HOST_LAUNCH }
-}

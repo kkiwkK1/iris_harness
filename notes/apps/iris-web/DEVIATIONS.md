@@ -3826,6 +3826,15 @@ would make 「使用」 on the host row honest and this entry's first cost obsol
 **it did, hours later: host §60, entry 78**); a user who wants the endpoint field back
 on the card body, which would mean the ruling above has been revised.
 
+**Postscript, 2026-09-10 (§79).** The three-block shape, the two verbs and the
+editor-in-a-`Modal` all stand. What is gone is the **fixed first row**: the
+environment is no longer a connection anything generates through, so the list
+holds saved providers and nothing else, and the paragraph above about 「宿主环境」
+having no 「使用」 button is now history twice over. The 「no confirmation on
+delete」 cost is unchanged and has grown slightly sharper — deleting the row in
+use now means nothing generates until another is chosen, which the note after a
+delete says.
+
 ## 78. 「宿主环境」 is a selectable row, not an explained exception
 
 **Kind: completion of entry 77**, on the host work that entry named as the reason it
@@ -3900,6 +3909,154 @@ key is never reported).
 is generating rather than what it was launched with (host §60 records that reading and
 why it was rejected); a user who reads 使用 on a read-only row as an offer to edit it,
 which would mean the 「只读」 badge is doing less work than it looks.
+
+**Postscript, 2026-09-10 — overturned, one day old (§79).** The user retired the
+row this entry completed: 「宿主环境这个功能废弃了，以后都从在 Iris 中自己添加供应商
+来调用模型」. So 使用 on it, the 「只读」 badge, 存为供应商 and the row itself are
+gone, along with the launch snapshot's browser-side readers. This entry's own
+first cost — the capsule's 「回到连接的模型」 row naming the launch model while the
+global layer holds another — is closed by the same change from the other end:
+the capsule has one model source now, the provider in use, and names nothing
+when none is.
+
+## 79. The provider list is the only way to a model, and a model can be typed
+
+**Kind: deliberate divergence from SillyTavern and from Iris's own two previous
+entries, on the user's ruling.** Entries 77 and 78 stand except for the row this
+one deletes; entry 49's two compatibility fixes (the key typed once, the model
+picked from a list) are both kept, and the second is *widened*.
+
+**The ruling** (user, 2026-09-10, verbatim): 「宿主环境这个功能废弃了，以后都从在
+Iris 中自己添加供应商来调用模型；然后供应商编辑这里模型要支持添加自定义名称的模型，
+以防止用户无法使用到还在内测的模型。」 Two changes in one sentence, and they pull
+the same way: the card is the one place a route comes from, and nothing in it may
+be a dead end.
+
+### A. The environment is not a row
+
+**What was there.** The list's fixed first row: 「宿主环境」, read-only, with the
+launch route and model as its summary, the environment variable its key came
+from on its meta line, 测试, 存为供应商, and — for one day, entry 78 — 使用.
+Below it, `hostDefaultNote` explaining what it was.
+
+**What is there now.** Saved providers, and nothing else. Every row is a
+profile, so every row carries all four verbs; the render check counts the rows
+against the store and counts 编辑 and 删除 against the rows, because the host row
+was the one exception and a count is what notices a new one.
+
+- **The empty state is the change with the most weight.** It used to be a note
+  under a working connection (「还没有保存任何供应商。」); it is now the one thing
+  between a fresh install and a reply, because the host refuses to generate with
+  no provider in use (host §61). So it says what to do — 「还没有供应商——添加一个
+  来调用模型。」 — and carries the button that does it, inside the branch rather
+  than only in the add block below.
+- **The collapsed head reads 「未选择供应商」** whenever nothing is in use, whether
+  or not the list has rows. It used to read 「宿主环境 · <model>」 there, which was
+  true while the environment was a route and is now the one sentence that would
+  send a reader away from the thing they have to do.
+- **The composer capsule loses its second source.** `modelMenu` took a `host`
+  argument, read when no profile was active — which, on a host configured from
+  its environment, was *the normal state*. That fall back existed for a reported
+  bug (user, 2026-09-07: 「没有活动连接，因此没有可选的模型列表」 shown on a host
+  that was plainly connected). The ruling answers that report from the other
+  end: with nothing in use the host really is connected to nothing, so
+  `no-connection` is now a correct report — and its sentence was rewritten to
+  say where to go (「到 设置 → 连接 添加一个，然后点『使用』」) rather than only
+  what is absent. `ModelMenuSource` loses `'host'`, `hostKeyEnv` goes, and the
+  menu heading loses two of its three forms.
+- **A refusal has copy of its own.** The new `no-provider` code is one of the
+  three whose sentence is written in the browser rather than taken from the
+  host: the host's detail is about routes, and what a reader needs is which card
+  to open and which verb to press, in their own language. It arrives two ways
+  and prints the same sentence both times — as `stream.error`'s `code` for a
+  turn (`store.ts`), and as an `RpcError` code for a card's own generation
+  (`errors.ts`'s `COPY`).
+- **What still says 「宿主」, and why.** Three sentences: a provider with no
+  endpoint of its own 「走宿主配置的端点」 (`hostDefaultEndpointRidden`), and the
+  two that say a blank key at the host's own origin is supplied by the
+  environment (`connKeyFromHost`, `apiKeyFromHost*`). Host §58's ladder still
+  lends that credential to a route, so removing those would make a profile that
+  generates fine read as 「无密钥」. The environment is the source of a *key*, not
+  of a route — and the whole point of this entry is that those are different
+  claims.
+
+### B. 「自定义…」: the list is a shortcut, never a gate
+
+Entry 49 made the model **picked** rather than typed, because a mistyped model is
+a request that fails at generation time with a provider's own error, one screen
+away from the field that caused it. That reasoning is intact. What it missed is
+that `/models` is what an endpoint *chooses to advertise*, and a model in closed
+testing is exactly the one it does not — measured:
+`deepseek-v4.1-flash-expires-on-0910` generates and is not listed.
+
+The dropdown therefore ends in a fixed 「自定义…」 option, and choosing it gives
+the same text field a never-probed provider gets, focused, with the sentence
+that says why it exists and a way back to the list. Four decisions inside that:
+
+- **The option's value is a sentinel** (`CUSTOM_MODEL`, spelled with a control
+  character no endpoint could advertise) and it never reaches `form.model`:
+  choosing it switches the control and leaves the value where it was. An empty
+  value would have been indistinguishable from a form that had lost its model.
+- **The current value is carried into the field rather than blanked.** Most
+  custom ids are a variant of a listed one, and blanking would disable 保存 the
+  instant the reader asked to type.
+- **Focus only in that branch.** Autofocusing the never-probed case would take
+  the caret off the endpoint field every time the dialog opens for a new
+  provider.
+- **The off-list path is untouched.** A stored model the list does not carry
+  still keeps a row of its own and is still marked (`modelCustomCurrent`,
+  `modelOffListNote`, `modelNotInList`) — that path *preserves* such a name, and
+  this one *enters* it. Both are needed, which is why neither replaced the other.
+
+### What it costs
+
+- **The 「自定义…」 option cannot be pinned on a render.** The editor is a `Modal`
+  mounted only while editing, and `render-check` cannot open it (React's server
+  renderer has no click and no portal), so the option, the sentinel's handling,
+  the focus and the way back are pinned as **source** assertions in
+  `connection-key-field.test.ts` — the same concession that file already makes
+  for the key field, and for the same stated reason. The empty state and the
+  collapsed head *are* pinned on a real render, because both are in the panel
+  body.
+- **A host started with no `IRIS_BASE_URL` now shows an empty list and generates
+  nothing** until the user adds a provider. Host §61 argues why the composition's
+  default endpoint is not copied in; the browser's part is that the empty state
+  has to be a usable instruction rather than a report, which is what it was
+  rewritten to be.
+- **Twelve dictionary keys deleted**, listed in `STRINGS.md` with the reason
+  each one existed. `i18n.test.ts` checks used → dictionary only, so an unused
+  key is never reported; the twelve are held by a loop in
+  `connection-key-field.test.ts` asserting `Object.hasOwn(en, key) === false`,
+  and the count is asserted against the number `STRINGS.md` states so the two
+  cannot drift apart quietly.
+- **`.iris-conn--host` and `.iris-conn__badge--quiet` are deleted from
+  `panels.css`**, and the empty state took the first slot with a rule of its
+  own. A style with no element is a style nobody can see go wrong.
+
+**Pinned.** `render-check.tsx`: the environment row's class, its name, its adopt
+button and the 「只读」 word are all absent from a real render; one row per saved
+provider with 编辑 and 删除 on every one; exactly one 当前 row with providers and
+**zero** with none; the empty state's sentence, its own block and its button
+inside that block; the collapsed head reading 「未选择供应商」 with nothing in use
+and naming no environment. `connection-key-field.test.ts`: the 「自定义…」 option
+after the endpoint's own list, the sentinel switching the control rather than
+being stored, the focus condition, the way back, the empty state's own button,
+and the three-way absence (panel calls, store action, dictionary keys).
+`model-menu.test.ts`: nothing in use offers no list, names no source, probes
+nothing and names no default — and offers no *other* profile's models either,
+which is the failure removing a fall back can produce by accident.
+`store.test.ts`: a `no-provider` frame prints the dictionary's sentence and not
+the host's.
+
+Sixteen mutations across both halves, sixteen distinct reds (host §61 lists the
+two worth reading).
+
+**What would overturn it.** A user asking for the environment back as a row
+(entry 78 is the design to restore, and host §60 the mechanism); a reader who
+takes 「自定义…」 for a model named "custom" — the sentence under the field is what
+prevents that, and its wording is the thing to test if anyone reports it; a
+provider list that stops being reachable while nothing generates, which would
+make the refusal a dead end rather than a redirection.
 
 ## 80. The composer is one card with one bar, and the readings moved outside the paper
 

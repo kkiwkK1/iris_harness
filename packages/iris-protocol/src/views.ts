@@ -1447,27 +1447,38 @@ export type ConnectionKeySource =
   | 'none'
 
 /**
- * The connection the host process was **started** with, as a read-only row.
+ * The credential the host process holds from its environment, and where it
+ * points — **not a connection a user can choose.**
  *
- * A host configured from its environment (`IRIS_BASE_URL` / `IRIS_MODEL` /
- * `IRIS_API_KEY_ENV`) has always generated perfectly well while the connection
- * panel said "no active connection" — true of the *profile* list and useless as
- * a report, because the thing answering the user's messages was right there and
- * unnamed. This is that thing, named.
+ * This used to be a row in the provider list: the connection the process was
+ * launched with (`IRIS_BASE_URL` / `IRIS_MODEL` / `IRIS_API_KEY_ENV`), read-only,
+ * testable, and — since web §78 — selectable. The user's ruling of 2026-09-10
+ * retires that idea: 「宿主环境这个功能废弃了，以后都从在 Iris 中自己添加供应商来调用
+ * 模型」. A generation now needs a saved provider in use, the environment
+ * configuration is imported into the provider list once at first start (host
+ * §61), and nothing in the interface offers the environment as a route.
  *
- * It is not a profile: it has no id, cannot be edited, and cannot be deleted,
- * because it lives in the environment the process was launched with. What the
- * user can do is adopt it — `connection.save` with `adoptHostKey`, which copies
- * the credential into a real profile **inside the host**, so an editable copy
- * exists without the key ever crossing the wire.
+ * What survives is the one fact the *provider editor* still needs: the process
+ * holds a credential for a particular origin, so a provider saved with a blank
+ * key at that origin generates and probes anyway (host §58's ladder, which is
+ * now a fallback rather than a route). Every field describing the environment
+ * as a *connection* — its provider, its model, and the model list a probe of it
+ * reported — is gone, because nothing reads them any more and a field nobody
+ * reads is a claim nobody checks.
+ *
+ * The name is older than this shape. It is kept because renaming it touches the
+ * wire field, the store and the panel for no reader-visible gain; host §61
+ * records the debt.
  */
 export interface HostDefaultConnection {
-  /** The adapter route the composition registered it under. */
-  provider: string
-  /** The endpoint it generates through, when the host was told one. */
+  /**
+   * The endpoint the credential belongs to, when the host was told one.
+   *
+   * Compared by *origin* against a provider's own endpoint — both sides of
+   * that comparison exist so a form can say "the key you left blank comes from
+   * the environment", and for nothing else.
+   */
   baseURL?: string
-  /** The model the host was configured with. */
-  model?: string
   /** Whether the host holds a credential for it. **Never the credential.** */
   keySource: 'env' | 'none'
   /**
@@ -1475,36 +1486,6 @@ export interface HostDefaultConnection {
    * to change it knows where to look. The variable's *name*, never its value.
    */
   keyEnv?: string
-  /**
-   * The model ids a probe of {@link baseURL} last reported.
-   *
-   * The same field a saved profile carries, for the same reason and with one
-   * difference: **the host keeps this in memory only, for the life of the
-   * process.** A profile's list is filed beside the user's own decisions, so it
-   * belongs in their file; this one is filed against a connection that lives in
-   * the environment the process was launched with, and it is an *observation*
-   * rather than a decision of theirs — nothing the user did created it and
-   * nothing they can do edits it, so persisting it would leave a record of a
-   * moment in a file that reads as a record of choices.
-   *
-   * Absent means nobody has probed the host's endpoint since it started, which
-   * is the state every launch begins in. A picker reading this must offer to
-   * fetch one rather than report that the host advertises nothing.
-   */
-  models?: string[]
-  /**
-   * Unix epoch milliseconds of the probe {@link models} came from.
-   *
-   * Travels with the list and never without it: a list nobody can date is the
-   * shape that turns an observation into a claim about the present.
-   */
-  modelsProbedAt?: number
-  /**
-   * What is known about those ids' context windows — the same field a saved
-   * profile carries ({@link ConnectionProfile.modelContexts}), in memory only
-   * for the life of the process, like {@link models} beside it.
-   */
-  modelContexts?: Record<string, ModelContextLength>
 }
 
 /**

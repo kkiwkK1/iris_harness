@@ -19,7 +19,6 @@ import {
   type ChatSearchMatch,
   type ChatSummary,
   type GenerationSettings,
-  type HostDefaultConnection,
   type IrisClient,
   type IrisEvent,
   type RpcError,
@@ -39,9 +38,7 @@ import { cardFileExtension, readCard } from './card.ts'
 import { fakeDivergence, fakeItemization } from './prompt.ts'
 import {
   activateConnection,
-  deactivateConnection,
   deleteConnection,
-  hostDefault,
   listConnections,
   saveConnection,
 } from './connections.ts'
@@ -263,25 +260,19 @@ class InMemoryClient implements FakeClient {
    * fresh profile is in — stays reachable without a second option.
    */
   readonly #worldbooks: readonly FakeWorldbook[]
-  /**
-   * Whether this client's host row carries a recorded model list.
-   *
-   * Per client rather than per module, unlike the profiles: on a real host the
-   * host row's list lives in the service process's memory and is therefore
-   * absent on every launch until something probes. Both shapes have a reader —
-   * the composer's model menu offers the list when there is one and offers to
-   * fetch one when there is not — so both have to be renderable, and the
-   * `empty` switch that already means "show me the first-run states" is the
-   * honest place to hang it.
+  /*
+   * `#hostModels` stood here: whether this client's 「宿主环境」 row carried a
+   * recorded model list, per client because on a real host that list lived in
+   * the process's memory and was therefore absent until something probed. The
+   * row is gone (web §79) and so is the list it carried — the capsule's only
+   * model source is the provider in use.
    */
-  readonly #hostModels: boolean
 
   constructor(options: FakeClientOptions) {
     this.#chats = options.empty === true ? [] : seedChats()
     this.#characters = options.empty === true ? [] : seedCharacters()
     this.#worldbooks = options.empty === true ? [] : FAKE_WORLDBOOKS
     this.#globalSelect = options.empty === true ? [] : [...FAKE_GLOBAL_SELECT]
-    this.#hostModels = options.empty !== true
     this.#globalSettings = { ...DEFAULT_SETTINGS }
     this.#chunkDelayMs = options.chunkDelayMs ?? 24
     this.#chunkCount = options.chunkCount ?? 28
@@ -655,16 +646,16 @@ class InMemoryClient implements FakeClient {
       }
 
       case 'connection.list':
-        return this.#withHostRow(listConnections())
+        return listConnections()
 
       case 'connection.save':
-        return this.#withHostRow(saveConnection(params as RpcRequest<'connection.save'>))
+        return saveConnection(params as RpcRequest<'connection.save'>)
 
       case 'connection.delete': {
         const { id } = params as RpcRequest<'connection.delete'>
         const result = deleteConnection(id)
         if (result === undefined) throw new FakeRpcError('not-found', `no connection "${id}"`)
-        return this.#withHostRow(result)
+        return result
       }
 
       case 'connection.activate': {
@@ -688,20 +679,13 @@ class InMemoryClient implements FakeClient {
         return result
       }
 
-      case 'connection.deactivate': {
-        const launch = deactivateConnection()
-        // Merged into the global layer, not written over it: the host's own
-        // `settings.set` patches `provider` and `model` and leaves the sampling
-        // beside them alone, because a launch configuration carries none. The
-        // activation arm above replaces wholesale for the opposite reason — a
-        // profile's own sampling is part of what it applies.
-        this.#globalSettings = { ...this.#globalSettings, ...launch }
-        // The open conversation is deliberately **not** touched. Using a
-        // provider is global (web §77), so a chat that overrides the model keeps
-        // overriding it — and the interface re-reads that chat's settings after
-        // the call, exactly as it does after an activation.
-        return this.#withHostRow({ settings: { ...this.#globalSettings }, host: hostDefault() })
-      }
+      /*
+       * `connection.deactivate` was answered here: the global layer went back
+       * to `HOST_LAUNCH`, the fake's own launch snapshot, because 「宿主环境」 was
+       * a row a person could select (web §78). It is not, any more (web §79) —
+       * the environment is not a connection — so there is nothing to answer
+       * and the method is gone from the protocol.
+       */
 
       case 'connection.test':
         // Refused, not modelled: the one thing this method exists to do is put
@@ -1896,21 +1880,13 @@ class InMemoryClient implements FakeClient {
     }
   }
 
-  /**
-   * Put this client's own host row on a connection answer.
-   *
-   * The profiles are module state — one seeded list every client shares — but
-   * whether the *host* row carries a recorded model list is this client's
-   * decision, because it is the one thing about that row a launch decides
-   * rather than a user. Applied to all three connection answers, not just the
-   * list: a save has no business turning a never-probed host into a probed one.
-   * @param listed - the answer as the module built it.
-   * @returns the same answer with the host row this client projects.
+  /*
+   * `#withHostRow` stood here, putting this client's own 「宿主环境」 row (with or
+   * without a recorded model list) on all three connection answers. The row is
+   * gone; what `connection.list` still carries as `host` is the environment's
+   * endpoint and key *source*, which is module state like the profiles and has
+   * no per-client half left to vary (web §79).
    */
-  #withHostRow<T extends { host: HostDefaultConnection }>(listed: T): T {
-    if (this.#hostModels) return listed
-    return { ...listed, host: hostDefault({ models: false }) }
-  }
 
   #require(chatId: string): FakeChat {
     const chat = this.#chats.find(row => row.chatId === chatId)

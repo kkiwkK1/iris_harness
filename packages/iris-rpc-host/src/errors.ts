@@ -32,6 +32,7 @@ const CODES_BY_NAME: Record<RpcError['code'], true> = {
   busy: true,
   unsupported: true,
   'quota-exceeded': true,
+  'no-provider': true,
   internal: true,
 }
 

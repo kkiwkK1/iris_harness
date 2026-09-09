@@ -4643,6 +4643,16 @@ future one. Adopting into the file (`adoptHostKey`) remains the durable choice.
 profile would not have sent; a host key reaching an origin other than the
 host's; a `none` install that does not warn.
 
+**Postscript, 2026-09-10 (§61).** The ladder is unchanged and is now a
+**fallback rather than a route**: nothing generates through the environment any
+more, but a provider saved with a blank key at the host's own origin still
+borrows the process's credential, and the two sentences that say so
+(`connKeyFromHost`, `apiKeyFromHost`) are the last readers of the environment
+row the browser is given. The durable choice this entry recommended — adopting
+into the file — is now what happens by itself, once, at first start
+(`importLaunchConnection`), so a host started later without the variable keeps
+generating.
+
 ## 59. A connection's `provider` is a reference to a runtime route, not a snapshot of values — so a deletion cleans the layers and a generation resolves the route
 
 **Kind: divergence from upstream (pre-existing), plus two fixes to what the
@@ -4868,3 +4878,192 @@ generating rather than what the host was launched with, which is the opposite
 reading of one row and would make the old sentence 「在没有选中任何供应商时，回复由
 它生成」 the truer one; a deactivation being asked to restore sampling, which
 would mean launch configurations have grown some.
+
+**Postscript, 2026-09-10 — overturned, one day old (§61).** The user retired the
+whole idea: 「宿主环境这个功能废弃了，以后都从在 Iris 中自己添加供应商来调用模型」.
+So the row this entry made selectable is gone, `connection.deactivate` and
+`ConnectionStore.clearActive()` are deleted, and the three tests that pinned them
+are replaced by pins on their absence. **Two halves of this entry survive and are
+load-bearing**, which is why it is not simply struck out: `#launch` is still the
+launch snapshot, and it is still what `#hostRoute()` reads for §59's ordering rule
+(the reading that cannot dangle) and what `importLaunchConnection()` reads for the
+model it copies into the imported provider. What died is the reading of it *as a
+connection a person can choose*.
+
+## 61. The environment is not a connection: a provider must be in use, and the launch configuration is imported into the list once
+
+**Kind: deliberate divergence from Iris's own past, on the user's ruling** —
+upstream has nothing to diverge from here (it has no "the connection this
+process was launched with" at all, §27), so what this entry records is the
+retirement of an Iris-only surface, two entries and one day old.
+
+**The ruling** (user, 2026-09-10, verbatim): 「宿主环境这个功能废弃了，以后都从在
+Iris 中自己添加供应商来调用模型；然后供应商编辑这里模型要支持添加自定义名称的模型，
+以防止用户无法使用到还在内测的模型。」 The second half is a browser change (web
+§79). The first half is this entry, and it is one sentence with three
+consequences: nothing generates through the environment, so the environment must
+stop being offered; a host that has no provider must **say** so rather than
+silently generate; and every existing host — whose route lives in a `.env` file
+— has to arrive in the new world with a provider already in its list.
+
+**What was there.** `IRIS_BASE_URL` / `IRIS_MODEL` / `IRIS_API_KEY_ENV`
+configured the composition's own `llm-openai-compat` row, `settings.provider`
+defaulted to that route, and a host with an empty `connections.json` generated
+perfectly well through it. §27 gave that state a name (the panel's read-only
+first row), §58 lent its credential to a same-origin profile, §60 snapshotted it
+so the row could be selected back, and web §78 put 使用 on the row. It was a
+coherent design. It was also two answers to "where does a reply come from",
+and the user has settled which one stays.
+
+### The refusal, in one place
+
+`#resolveRoute` — the funnel a turn, `script.generateRaw`, `script.generate` and
+the compaction summarizer all pass through, which is where §59 put the
+dangling-route net for the same reason. Asked **first**, before the ladder's own
+rungs: the route the settings name in this state is usually the host's own, and
+rung 1 would wave it straight through.
+
+- The condition is `activeId === undefined` on the connections store — *no
+  provider is in use* — and not "the settings name the host's route". A route
+  reference can be stale, cleared or shared (§59); `activeId` is the record of
+  the act the panel offers, and the panel's 当前 badge reads the same field, so
+  the interface and the refusal cannot disagree.
+- It raises `AppError('no-provider', …)`, a **new protocol code**. Not
+  `invalid-request`: the request was well formed and the fix is in another card
+  entirely, and the browser needs a code to select a sentence that names which
+  one (web §79 writes the copy). `failureCode` carries it through to
+  `stream.error`'s `code` rather than folding it into `provider-error`, because
+  naming a provider as the author of a refusal it never heard about sends the
+  reader to the endpoint.
+- The reference read is one `store.list()` for both questions, and the store
+  caches its file after the first load, so this is not a stat per turn.
+
+### `requireProvider`, and why it has two defaults
+
+The service option defaults to **false** and `apps/iris`'s plugin passes
+**true**. Two defaults is a smell, so the reason is written down: a host
+composed with no `connections` store cannot *have* a provider in use, so
+requiring one would leave it unable to generate with no interface to fix it in —
+and every generation test in this package is composed that way (57 files
+construct the service; 2 pass a connections store). The flag is therefore
+ignored, not honoured, when no store is configured.
+
+It is **not** a `Config` key. It is not a deployment preference but what the
+connection card now means, and a row would invite a composition to turn the
+card's own promise off. That makes it the one shape `config-wiring.test.ts`
+exists to catch — an edit in the plugin that nothing else reads — so that file
+gained a pin for it and for the import beside it.
+
+### The import: the environment moves into the list, once
+
+`IrisAppService.importLaunchConnection()`, called by the plugin before
+`restoreActiveConnection()` (so the profile it just applied is the one whose
+adapter the restore installs). All of these, or it does nothing:
+
+- a `connections` store is configured;
+- the list is **empty** — not "nothing is active", *empty*. A user who has ever
+  saved a provider has made this decision themselves, and a row appearing at
+  their next start would be this host editing their list behind them;
+- the launch configuration names an endpoint **and** a model.
+
+What arrives is an ordinary provider: `provider` from the launch route (so
+`routeOf` derives `conn/<id>` on the shipped composition and the adapter
+installed is the profile's, not the composition's registration), the endpoint
+and the credential from the environment, the model from `#launch`, and the label
+`启动环境` — stored data rather than a dictionary string, because a label lives
+in the user's file and cannot follow the interface's language. Then it is
+**applied**, by the same three acts `connection.activate` performs: the adapter,
+the settings layer naming that route, `markActive`. Anything less would leave a
+provider in the list that nothing generates through, which is the state the
+method exists to prevent.
+
+**The boot installs it once.** `restoreActiveConnection()` now returns early for
+a route already in `#installedRoutes`, which is the same set §59 reads for the
+same reason one step later: the import runs first and installs what it applied,
+so without this every first start would install one connection twice and log two
+「connection now generates through…」 lines for it. Pinned, and red with the guard
+deleted.
+
+**Three values, three sources** — said because a reader will assume one. The
+endpoint and the credential are read from the environment
+(`hostConnectionFromEnv`, or whatever the composition handed in). The **model**
+is the launch snapshot's, which is the *composition's* configured model
+(`cordis.yml`'s `app` row, `!!js process.env.IRIS_MODEL`) and not a second read
+of that variable here: the composition is the authority on what this host
+generates with, and a runtime that re-read the variable could disagree with the
+settings layer it was constructed from. The first draft of the test asserted
+`IRIS_MODEL` and went red on exactly this.
+
+**A departure from the dispatch, reported rather than buried.** It asked for the
+import to require 「`IRIS_BASE_URL` + 可用 key」. It does not require a key: a
+local llama.cpp or Ollama serve needs none, and refusing there would leave
+precisely the simplest configuration unable to generate — which is the failure
+this migration exists to prevent, arrived at from the other side. A keyless
+environment imports; the report says `key: none`.
+
+**What is not migrated.** `IRIS_BASE_URL` unset. The composition's
+`http://127.0.0.1:11434/v1` default lives in a `!!js` expression this runtime
+cannot read, and a copy of it here would be a constant that drifts —
+`hostConnectionFromEnv` already makes that choice for the same reason. Such a
+host starts with an empty list and refuses to generate until the user adds a
+provider, which is a real behaviour cost and the one this entry accepts.
+
+### What was deleted, member by member
+
+- **`connection.deactivate`** — method, params schema, response type, handler,
+  plugin registration, fake-client arm, store action, panel button, and the
+  transport suite's probe row. Nothing can ask for "no profile applied" any
+  more, so the only way `activeId` becomes absent is the deletion of the profile
+  it named.
+- **`ConnectionStore.clearActive()`** — a setter with no caller is a state the
+  product cannot reach, kept alive by a test.
+- **`adoptHostKey`** on `connection.save`'s input — the flag the 存为供应商
+  button sent. The copy it performed survives as the import above.
+- **`HostDefaultConnection.provider` / `.model` / `.models` / `.modelsProbedAt`
+  / `.modelContexts`**, with `HostProbeRecord`, `#hostProbe` and
+  `#recordHostModels`. What the browser is still told about the environment is
+  `{ baseURL?, keySource, keyEnv? }` — the credential's origin and source, whose
+  only readers are the two sentences a provider editor says about a key left
+  blank at that origin. A bare probe of the host's endpoint now answers its
+  caller and records nothing.
+- The type is **still called `HostDefaultConnection`**, which is now a name for
+  something that is not a connection. Renaming it would touch the wire field,
+  the store and the panel for no reader-visible gain, so the debt is recorded
+  here rather than paid: it is the shape of mistake `notes/METHODS.md` warns
+  about (same name, different object), and the honest fix is a rename to
+  something like `HostEnvironmentKey` in a commit of its own.
+
+### Pinned
+
+`connections.test.ts`: the import applies (profile on disk with the key, `activeId`,
+the settings layer naming `conn/<id>`, the adapter installed with the copied
+key), the key crosses no answer in either direction and survives an edit, a
+non-empty list is left alone, an endpoint-less environment imports nothing, a
+keyless environment imports anyway, and the environment row carries none of the
+five fields that described it as a connection (checked as keys, because a field
+answering `undefined` is still a field to code against) with
+`connection.deactivate` absent from the handler table. `route-resolution.test.ts`:
+a turn with nothing in use reaches the provider with nothing at all and fails as
+`no-provider` with the user's message surviving, an activation lifts it, a card's
+`script.generateRaw` is refused through the same funnel as the RPC code, and a
+host composed without the requirement still generates. `config-wiring.test.ts`:
+the plugin passes `requireProvider: true` inside the constructor call and calls
+the import.
+
+Sixteen mutations, sixteen distinct reds. Two are worth recording. Narrowing the
+endpoint guard to `host.baseURL === undefined` stayed **green** — the
+`length === 0` half is unreachable through `hostConnectionFromEnv`, which omits
+an empty variable, and is defensive against a composition that hands a
+`hostConnection` in; deleting the guard outright is the mutation with teeth.
+And `requireProvider` defaulting to `true` reddens six of §59's tests, not one —
+which is the measurement behind the two-defaults decision above rather than an
+argument against it.
+
+**What would overturn it.** A user asking for the environment back as a
+selectable route (that is the ruling being reversed, and web §78 is the design
+to restore); a generation that reaches `ctx.llm.stream` with no provider in use
+on a host that requires one; an import that runs on a list somebody has already
+saved into, or that copies a credential into a place a read can reach; a host
+whose provider list is empty *and* whose environment names an endpoint, on a
+composition that calls the import — that combination should not survive a
+restart.

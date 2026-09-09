@@ -64,6 +64,14 @@ interface Host {
   reports: () => Promise<DebugReport[]>
   /** The report frames this host pushed to the browser, in order. */
   pushed: Extract<IrisEvent, { type: 'report' }>[]
+  /**
+   * Every failed turn, in order.
+   *
+   * Collected because a refusal is not a rejection of `chat.send`: the turn is
+   * already running when the route is resolved, so "no provider is in use"
+   * reaches the reader as this frame's `code` and `message` (host §61).
+   */
+  errors: Extract<IrisEvent, { type: 'stream.error' }>[]
   /** Resolve once the next generation has finished, however it finished. */
   settled: () => Promise<void>
 }
@@ -76,9 +84,15 @@ interface Host {
  * the only way to test the boot restore without pretending the in-memory
  * stores of the first process survived a restart.
  * @param dir - the data directory this host is started on.
+ * @param options.requireProvider - compose this host the way the **product**
+ * composes it (`apps/iris` passes `true`): refuse to generate while no saved
+ * provider is in use. Off here by default, which is the service's own default
+ * and what every other test in this file needs — they are about resolving a
+ * route the settings named, and a refusal before that would answer a different
+ * question.
  * @returns the host's handlers and what it recorded.
  */
-async function host(dir: string): Promise<Host> {
+async function host(dir: string, options: { requireProvider?: boolean } = {}): Promise<Host> {
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const chats = new ChatStore(join(dir, 'chats'), library)
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'default', model: 'local-model' })
@@ -92,6 +106,7 @@ async function host(dir: string): Promise<Host> {
   const installs: { route: string, endpoint: ConnectionEndpoint }[] = []
   const seen: string[] = []
   const pushed: Extract<IrisEvent, { type: 'report' }>[] = []
+  const errors: Extract<IrisEvent, { type: 'stream.error' }>[] = []
   const diagnostics = new DiagnosticBuffer()
   let ends = 0
   let waited = 0
@@ -111,16 +126,18 @@ async function host(dir: string): Promise<Host> {
     // host row would then depend on whoever ran the suite having `IRIS_BASE_URL`.
     env: {},
     userName: 'Traveller',
+    ...options.requireProvider === undefined ? {} : { requireProvider: options.requireProvider },
     installConnection: (route, endpoint) => { installs.push({ route, endpoint }) },
     broadcast: (event: IrisEvent) => {
       if (event.type === 'stream.end' || event.type === 'stream.error') ends += 1
       if (event.type === 'report') pushed.push(event)
+      if (event.type === 'stream.error') errors.push(event)
     },
   })
   const handlers = service.handlers()
 
   return {
-    handlers, service, settings, connections, installs, seen, pushed,
+    handlers, service, settings, connections, installs, seen, pushed, errors,
     reports: async () => (await handlers['debug.reports']({})).reports,
     settled: async () => {
       waited += 1
@@ -129,13 +146,22 @@ async function host(dir: string): Promise<Host> {
   }
 }
 
-/** A data directory with one card in it, and the first host over it. */
-async function fixture(t: TestContext): Promise<Host & { dir: string }> {
+/**
+ * A data directory with one card in it, and the first host over it.
+ * @param t - the test context, for cleaning the directory up.
+ * @param options - passed to {@link host}; `requireProvider` composes this host
+ * the way the product does.
+ * @returns the host and the directory it runs on.
+ */
+async function fixture(
+  t: TestContext,
+  options: { requireProvider?: boolean } = {},
+): Promise<Host & { dir: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-route-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
-  return { dir, ...await host(dir) }
+  return { dir, ...await host(dir, options) }
 }
 
 /**
@@ -358,33 +384,101 @@ test('a dangling route in the global layer is caught, and not by reading that la
   assert.equal(fixed.pushed.length, 1, 'a repair of the global route was not pushed')
 })
 
-test('a generation after a deactivation takes the ladder’s first rung and reports nothing', async (t) => {
-  const fixed = await fixture(t)
+/* ------------------------------------------------------------------------- *
+ * With no provider in use, nothing generates (host §61).
+ *
+ * The user's ruling, 2026-09-10: 「宿主环境这个功能废弃了，以后都从在 Iris 中自己
+ * 添加供应商来调用模型」. `#resolveRoute` is where that is enforced, because it is
+ * the one funnel a turn, `script.generateRaw`, `script.generate` and the
+ * compaction summarizer all pass through — the same reason §59 put the dangling
+ * -route net here rather than at four call sites.
+ *
+ * A test of §60's `connection.deactivate` stood here (a generation after one
+ * took the ladder's first rung and reported nothing). The method is gone: the
+ * state it produced — nothing applied, generating from the environment — is the
+ * state these tests refuse.
+ * ------------------------------------------------------------------------- */
+
+test('a turn with no provider in use is refused by name, and the message says where to go', async (t) => {
+  const fixed = await fixture(t, { requireProvider: true })
+  const chat = (await fixed.handlers['chat.create']({ characterId: 'aria' })).view.chatId
+  // The state a fresh install is in, and the state the environment used to
+  // cover: no profile saved, the global layer on the composition's own route.
+  assert.equal(fixed.settings.get().provider, 'default')
+
+  await fixed.handlers['chat.send']({ chatId: chat, text: 'Go on.' })
+  await fixed.settled()
+
+  // Nothing reached the provider. This is the assertion that separates a
+  // refusal from a failed request: a generation that went out and came back
+  // 401 would also produce an error frame.
+  assert.deepEqual(fixed.seen, [], 'a request went out with no provider in use')
+  assert.equal(fixed.errors.length, 1, 'the turn failed without saying so')
+  const failure = fixed.errors[0]
+  // The **code**, not the sentence: the browser prints its own copy from this,
+  // in the reader's language, and pointing at the connection card is the whole
+  // value of the distinction (`provider-error` would send them to the endpoint).
+  assert.equal(failure?.code, 'no-provider')
+  // The host's own sentence is still legible on its own — a log line, a
+  // non-browser caller — and names the act, not the internals.
+  assert.match(failure?.message ?? '', /no connection provider is in use/u)
+  assert.match(failure?.message ?? '', /使用/u)
+  // No fault report and no repair: nothing is wrong with the settings.
+  assert.deepEqual(fallbacks(await fixed.reports()), [], 'a refusal was reported as a dangling route')
+  assert.equal(fixed.settings.get().provider, 'default', 'a refusal rewrote a setting')
+
+  // And the user's message survives, which is what makes "add a provider and
+  // press send again" a real instruction.
+  const view = (await fixed.handlers['chat.open']({ chatId: chat })).view
+  assert.equal(view.messages.at(-1)?.text, 'Go on.')
+})
+
+test('using a provider lifts the refusal — the same host, one activation later', async (t) => {
+  // The control the test above needs: without it, a refusal for any other
+  // reason would read as this rule working.
+  const fixed = await fixture(t, { requireProvider: true })
   const chat = (await fixed.handlers['chat.create']({ characterId: 'aria' })).view.chatId
   const saved = await fixed.handlers['connection.save']({
     provider: 'deepseek', model: 'deepseek-chat', baseURL: ENDPOINT, apiKey: 'sk-x',
   })
   const id = saved.profiles[0]?.id
   assert.ok(id !== undefined)
+  // Saved is not enough — the ruling is about which provider is **in use**.
+  await fixed.handlers['chat.send']({ chatId: chat, text: 'Not yet.' })
+  await fixed.settled()
+  assert.deepEqual(fixed.seen, [], 'a saved-but-unused provider was treated as in use')
+
   await fixed.handlers['connection.activate']({ id })
-
-  await fixed.handlers['connection.deactivate']({})
-
-  // What the deactivation wrote is the host's own route, so `#resolveRoute`'s
-  // first question — `provider === #hostRoute()` — answers yes. The failure
-  // this rules out is a deactivation that put the layer on a *name* rather than
-  // on the host's route: the request would still generate, by falling back, and
-  // it would report a fault and rewrite the setting on every turn.
-  assert.equal(fixed.settings.get().provider, 'default')
-  await fixed.handlers['chat.send']({ chatId: chat, text: 'Go on.' })
+  await fixed.handlers['chat.send']({ chatId: chat, text: 'Now.' })
   await fixed.settled()
 
+  assert.deepEqual(fixed.seen, ['deepseek'], 'the activation did not lift the refusal')
+  assert.equal(fixed.errors.length, 1, 'the second turn failed too')
+})
+
+test('a card’s own generation is refused the same way, through the same funnel', async (t) => {
+  const fixed = await fixture(t, { requireProvider: true })
+  const chat = (await fixed.handlers['chat.create']({ characterId: 'aria' })).view.chatId
+  // `script.generateRaw` awaits its generation inside the call, so here the
+  // refusal is the *rejection* — the same `AppError`, reaching a card as the
+  // protocol code rather than as a stream frame.
+  await assert.rejects(
+    fixed.handlers['script.generateRaw']({ chatId: chat, prompt: 'Classify this.' }),
+    (error: unknown) => (error as { code?: string }).code === 'no-provider',
+  )
+  assert.deepEqual(fixed.seen, [], 'a card’s generation went out with no provider in use')
+})
+
+test('a host composed without the requirement still generates from its own route', async (t) => {
+  // The service's own default, which is what every other test in this file
+  // relies on and what a host with no `connections` store depends on: a flag it
+  // cannot satisfy must not be the thing that stops it generating.
+  const fixed = await fixture(t)
+  const chat = (await fixed.handlers['chat.create']({ characterId: 'aria' })).view.chatId
+  await fixed.handlers['chat.send']({ chatId: chat, text: 'Go on.' })
+  await fixed.settled()
   assert.deepEqual(fixed.seen, ['default'])
-  assert.deepEqual(fallbacks(await fixed.reports()), [], 'the route the deactivation wrote read as dangling')
-  assert.deepEqual(fixed.pushed, [], 'a deactivation interrupted the reader')
-  // The adapter the activation installed is still registered and simply
-  // unreferenced: nothing un-installs, and nothing needs to.
-  assert.equal(fixed.installs.length, 1)
+  assert.deepEqual(fixed.errors, [])
 })
 
 test('a card’s own generation resolves the route the same way a turn does', async (t) => {

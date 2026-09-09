@@ -32,19 +32,23 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { hostDefault, listConnections } from '@iris/client-fake'
+import { listConnections } from '@iris/client-fake'
 
 import { modelMenu, MODEL_LIST_FRESH_MS } from '../src/app/model-menu.ts'
 
-const { profiles, host: HOST } = listConnections()
+const { profiles } = listConnections()
 /** The seed's active profile: a local serve with several tags recorded. */
 const LOCAL = profiles.find(profile => profile.id === 'local-qwen')!
 /** A profile whose recorded list does **not** contain its own model. */
 const MISNAMED = profiles.find(profile => profile.id === 'misnamed')!
 /** A profile nothing has ever probed. */
 const UNPROBED = profiles.find(profile => profile.id === 'unnamed')!
-/** The host row as a launch that nothing has probed yet serves it. */
-const HOST_UNPROBED = hostDefault({ models: false })
+/*
+ * `HOST` and `HOST_UNPROBED` stood here: the fake's own 「宿主环境」 row, with and
+ * without a recorded model list, which was this capsule's second model source
+ * while no profile was in use. The user's ruling of 2026-09-10 retires it (web
+ * §79), so the capsule has one source and "none in use" is a real emptiness.
+ */
 
 test('the fixtures this test needs are the ones the fake actually seeds', () => {
   // A floor on the sample. Every assertion below is about a list's contents,
@@ -58,15 +62,9 @@ test('the fixtures this test needs are the ones the fake actually seeds', () => 
     'the off-list fixture stopped being off-list',
   )
   assert.equal(UNPROBED.models, undefined, 'the never-probed fixture gained a list')
-  // The host row is the other source, and the two shapes of it are both
-  // fixtures this file reads: probed, and not yet.
-  assert.ok((HOST.models ?? []).length >= 2, 'the seeded host row carries no model list')
-  assert.equal(typeof HOST.modelsProbedAt, 'number', 'the host row’s list is not stamped')
-  assert.equal(HOST_UNPROBED.models, undefined, 'the never-probed host row gained a list')
-  assert.ok(
-    (HOST.baseURL ?? '').length > 0,
-    'the host row carries no endpoint, so nothing here can test the probe it would address',
-  )
+  // And the fixture has more than one provider, which is what makes "no
+  // provider in use" distinguishable from "no provider saved" below.
+  assert.ok(profiles.length >= 2, 'the fake stopped seeding more than one provider')
 })
 
 test('the menu offers the active connection’s recorded list, in the endpoint’s order', () => {
@@ -191,22 +189,18 @@ test('the two empty states are named apart, because the next step differs', () =
   assert.equal(neverProbed.connectionModel, UNPROBED.model)
 })
 
-test('an active id pointing at nothing falls through to the host row', () => {
+test('an active id pointing at nothing is no connection at all', () => {
   // Deleted out of band, or a stale `activeId` from a host restart. There is no
-  // profile to read, so the source is whatever answers when no profile
-  // displaces it — which is the host's own connection, not "no connection".
-  const withHost = modelMenu({
-    model: 'm', overrides: {}, connections: profiles, activeId: 'deleted-out-of-band', host: HOST,
-  })
-  assert.equal(withHost.source, 'host')
-  assert.equal(withHost.connectionName, undefined, 'a host row has no user-given name to show')
-
-  // With no host row either, this is the one true no-connection case.
-  const alone = modelMenu({
+  // profile to read, and there is no second source to fall through to any more:
+  // this used to become the host's own connection, which is exactly the state
+  // that now generates nothing (host §61).
+  const stale = modelMenu({
     model: 'm', overrides: {}, connections: profiles, activeId: 'deleted-out-of-band',
   })
-  assert.equal(alone.empty, 'no-connection')
-  assert.equal(alone.connectionName, undefined)
+  assert.equal(stale.source, undefined)
+  assert.equal(stale.empty, 'no-connection')
+  assert.equal(stale.connectionName, undefined)
+  assert.equal(stale.probe, undefined, 'a probe was addressed to a profile that is not there')
 })
 
 test('the menu names the connection its list came from', () => {
@@ -226,147 +220,109 @@ test('the menu names the connection its list came from', () => {
 })
 
 /* ------------------------------------------------------------------------- *
- * The host's own connection as the source.
+ * The environment is not a source (web §79).
  *
- * The reported bug, from the reader's side: 「我点击输入框下方的模型标签希望快速
- * 切换模型但是确实提示：『没有活动连接，因此没有可选的模型列表。』当很明显我是
- * 连接着模型的。」 The route was configured as `IRIS_*` variables and no profile
- * had ever been saved, so `activeId` was undefined and the menu answered about
- * the profile list — a true statement about the wrong object.
+ * Seven tests stood here, all of them about the host's own launch connection
+ * being the capsule's fallback list. They were written for a reported bug,
+ * verbatim: 「我点击输入框下方的模型标签希望快速切换模型但是确实提示：『没有活动
+ * 连接，因此没有可选的模型列表。』当很明显我是连接着模型的。」 — the route came from
+ * the `IRIS_*` variables, no profile had ever been saved, and the menu answered
+ * about the profile list, which was a true statement about the wrong object.
+ *
+ * The user's ruling of 2026-09-10 answers that report from the other end
+ * instead: the environment is not a connection, and a host with no provider in
+ * use is not connected to anything — it refuses to generate (host §61). So the
+ * sentence the reader met is now correct, and what these tests pin is that the
+ * second source is gone rather than merely unused: a stale `host` argument
+ * would be accepted silently by a structural type, so the assertions are about
+ * what the answer *cannot* contain.
  * ------------------------------------------------------------------------- */
 
-test('with no profile active the list comes from the host’s own connection', () => {
+test('no provider in use offers no list, names no source, and probes nothing', () => {
   const menu = modelMenu({
-    model: HOST.model!, overrides: {}, connections: profiles, activeId: undefined, host: HOST,
+    model: 'local-model', overrides: {}, connections: profiles, activeId: undefined,
   })
-  assert.equal(menu.empty, undefined, 'the reported bug: a configured host read as no connection')
-  assert.equal(menu.source, 'host')
-  assert.deepEqual(menu.models, HOST.models, 'the host row’s own list, in its own order')
-  // The heading has something to name it by that the reader can act on: the
-  // variable the key is read from, never the key.
-  assert.equal(menu.hostKeyEnv, HOST.keyEnv)
+  // The floor on the fixture: there are providers saved, so this is "none in
+  // use" and not "none saved" — the fall back this section removed only ever
+  // ran in the first of those.
+  assert.ok(profiles.length >= 2, 'the fake stopped seeding providers')
+  assert.equal(menu.empty, 'no-connection')
+  assert.equal(menu.source, undefined)
+  assert.equal(menu.sourceKey, undefined)
+  assert.equal(menu.probe, undefined, 'a probe was addressed to an endpoint nothing generates through')
+  assert.equal(menu.connectionModel, undefined, 'a default was named with no connection to be the default of')
   assert.equal(menu.connectionName, undefined)
-  // "Back to the default" means the model the process was started with.
-  assert.equal(menu.connectionModel, HOST.model)
-  // Nothing to fetch: there is a list, and the stamp the host wrote against it
-  // is recent enough that opening the menu must not spend a round trip. The
-  // stamp itself is not projected — see the note on the interface.
-  assert.equal(menu.probe, undefined)
+  // The model in force is still the first row: it is what this conversation is
+  // set to, which the capsule has to be able to say either way.
+  assert.deepEqual(menu.models, ['local-model'])
 })
 
-test('a profile outranks the host row, because it is what is generating', () => {
+test('no profile in use offers no other profile’s list either', () => {
+  // The failure this rules out is the one the fall back's removal could
+  // produce by accident: reaching for *a* profile rather than *the* one in use.
   const menu = modelMenu({
-    model: LOCAL.model, overrides: {}, connections: profiles, activeId: LOCAL.id, host: HOST,
+    model: 'local-model', overrides: {}, connections: profiles, activeId: undefined,
+  })
+  for (const profile of profiles) {
+    for (const model of profile.models ?? []) {
+      assert.equal(menu.models.includes(model), false, `${model} is ${profile.id}'s, offered with nothing in use`)
+    }
+  }
+})
+
+test('a profile in use is the only source, and its own list is what is offered', () => {
+  const menu = modelMenu({
+    model: LOCAL.model, overrides: {}, connections: profiles, activeId: LOCAL.id,
   })
   assert.equal(menu.source, 'profile')
   assert.deepEqual(menu.models, LOCAL.models)
-  for (const foreign of HOST.models ?? []) {
+  for (const foreign of MISNAMED.models ?? []) {
     assert.equal(
       menu.models.includes(foreign),
       false,
-      `${foreign} is the host endpoint's model, offered while a profile is active`,
+      `${foreign} belongs to another profile and is offered anyway`,
     )
   }
-  // And nothing of the host row leaks into the heading's provenance.
-  assert.equal(menu.hostKeyEnv, undefined)
   assert.equal(menu.connectionName, LOCAL.label)
-})
-
-test('the current model leads the host row’s list too, even when it is not on it', () => {
-  // The state a fresh install is in: the settings layer names one model and the
-  // host's endpoint advertises others. The menu still has to say which one is
-  // running.
-  const menu = modelMenu({
-    model: 'local/qwen3-8b', overrides: {}, connections: profiles, activeId: undefined, host: HOST,
-  })
-  assert.equal((HOST.models ?? []).includes('local/qwen3-8b'), false, 'the fixture stopped being off-list')
-  assert.equal(menu.models[0], 'local/qwen3-8b')
-  assert.deepEqual(menu.models.slice(1), HOST.models)
-})
-
-test('a host row nobody has probed offers to fetch its list, addressed to its endpoint', () => {
-  const menu = modelMenu({
-    model: HOST_UNPROBED.model!,
-    overrides: {},
-    connections: profiles,
-    activeId: undefined,
-    host: HOST_UNPROBED,
-  })
-  // Not "no connection" — the connection is right there, only its list is
-  // missing, and the next step is a probe rather than a trip to the panel.
-  assert.equal(menu.empty, 'no-list')
-  assert.equal(menu.source, 'host')
-  assert.deepEqual(menu.probe, { baseURL: HOST_UNPROBED.baseURL })
-  // The ask carries no key. The host resolves the credential from what it
-  // already holds and origin-checks it on its side; a key in this object would
-  // be a key this module had to have been given.
-  assert.deepEqual(Object.keys(menu.probe ?? {}), ['baseURL'])
-})
-
-test('a host row with no endpoint of its own has nothing to probe', () => {
-  // `IRIS_BASE_URL` unset: the host rides whatever route its composition
-  // registered, and this protocol has no address to point a probe at. The menu
-  // says the list is missing and stops there rather than inventing an endpoint.
-  const { baseURL: _dropped, ...noEndpoint } = HOST_UNPROBED
-  const menu = modelMenu({
-    model: 'deepseek-chat', overrides: {}, connections: profiles, activeId: undefined, host: noEndpoint,
-  })
-  assert.equal(menu.empty, 'no-list')
-  assert.equal(menu.probe, undefined)
-})
-
-test('an unprobed profile is probed by id, so the host names its own refusal', () => {
-  const menu = modelMenu({
-    model: UNPROBED.model, overrides: {}, connections: profiles, activeId: UNPROBED.id,
-  })
-  // By id even though this profile carries no endpoint: the host answers
-  // `no-endpoint` with a sentence naming what to do, which is better than
-  // anything this module could guess from a missing field.
-  assert.deepEqual(menu.probe, { profileId: UNPROBED.id })
-  assert.equal(UNPROBED.baseURL, undefined, 'the endpointless fixture gained an endpoint')
+  assert.equal(menu.connectionModel, LOCAL.model)
 })
 
 test('a recent look is not repeated, and an old one is', () => {
   const probedAt = 1_800_000_000_000
   // A list that came back empty is the case that needs the window: the source
   // has been asked, and the answer was "nothing". Without the stamp being read,
-  // every open would ask again.
-  const empty = { ...HOST_UNPROBED, models: [], modelsProbedAt: probedAt }
+  // every open would ask again. Carried on a *profile* now — the row that used
+  // to serve this case was the host's.
+  const asked = [{ ...UNPROBED, models: [], modelsProbedAt: probedAt }]
 
   const justAsked = modelMenu({
-    model: 'deepseek-chat',
+    model: UNPROBED.model,
     overrides: {},
-    connections: profiles,
-    activeId: undefined,
-    host: empty,
+    connections: asked,
+    activeId: UNPROBED.id,
     now: probedAt + MODEL_LIST_FRESH_MS - 1,
   })
   assert.equal(justAsked.empty, 'no-list', 'an empty list is still an absent list to the reader')
   assert.equal(justAsked.probe, undefined, 'the menu re-probed inside the freshness window')
 
   const staleNow = modelMenu({
-    model: 'deepseek-chat',
+    model: UNPROBED.model,
     overrides: {},
-    connections: profiles,
-    activeId: undefined,
-    host: empty,
+    connections: asked,
+    activeId: UNPROBED.id,
     now: probedAt + MODEL_LIST_FRESH_MS,
   })
-  assert.deepEqual(staleNow.probe, { baseURL: empty.baseURL }, 'the window never reopens')
+  assert.deepEqual(staleNow.probe, { profileId: UNPROBED.id }, 'the window never reopens')
 })
 
 test('the source key changes with the source, so one source’s failure cannot label another', () => {
-  const onHost = modelMenu({
-    model: 'm', overrides: {}, connections: profiles, activeId: undefined, host: HOST,
-  })
   const onProfile = modelMenu({
-    model: 'm', overrides: {}, connections: profiles, activeId: LOCAL.id, host: HOST,
+    model: 'm', overrides: {}, connections: profiles, activeId: LOCAL.id,
   })
   const onOther = modelMenu({
-    model: 'm', overrides: {}, connections: profiles, activeId: MISNAMED.id, host: HOST,
+    model: 'm', overrides: {}, connections: profiles, activeId: MISNAMED.id,
   })
-  assert.ok(onHost.sourceKey !== undefined && onProfile.sourceKey !== undefined)
-  assert.notEqual(onHost.sourceKey, onProfile.sourceKey)
+  assert.ok(onProfile.sourceKey !== undefined && onOther.sourceKey !== undefined)
   assert.notEqual(onProfile.sourceKey, onOther.sourceKey)
   // And no key at all when there is no source, so a note keyed on one cannot be
   // shown against nothing.
@@ -394,11 +350,16 @@ const COMPOSER = readFileSync(
   'utf8',
 )
 
-test('the composer hands the host row to the decision it belongs to', () => {
-  // Without this line every host-source assertion in this file describes a
-  // code path the product never enters, and the reported bug is still live.
-  assert.match(COMPOSER, /host: hostConnection,/u, 'the capsule stopped passing the host row')
-  assert.match(COMPOSER, /state\.hostConnection/u, 'the host row is not read from the store')
+test('the composer hands the capsule nothing but the provider in use', () => {
+  // The other direction from the pins above, and the one this file can state:
+  // the environment must not come back as a second source through the call
+  // site. It used to be passed as `host: hostConnection` and read from the
+  // store beside it (web §78); both are gone (web §79), so a fall back cannot
+  // be restored by the caller while the decision says there is none.
+  assert.doesNotMatch(COMPOSER, /host: hostConnection/u, 'the capsule passes the environment as a source again')
+  assert.doesNotMatch(COMPOSER, /state\.hostConnection/u, 'the composer reads the environment row again')
+  // And the call it does make is the whole of what the decision needs.
+  assert.match(COMPOSER, /activeId: activeConnectionId,/u, 'the capsule stopped naming the provider in use')
 })
 
 test('opening the menu spends the probe the decision offered, unchanged', () => {

@@ -199,55 +199,27 @@ export function hostConnectionFromEnv(
 }
 
 /**
- * What a probe of the host's own endpoint reported, held in memory.
+ * Project what the browser may know about the host's own environment —
+ * **the credential's origin and source, never the credential.**
  *
- * `origin` is stored beside the list rather than assumed: the host connection
- * this runtime reads can change between two reads (a composition that hands one
- * in, an environment read that now answers differently), and a list attributed
- * to the wrong endpoint is worse than no list at all. {@link hostDefaultView}
- * drops the record rather than project it when the origins disagree.
- */
-export interface HostProbeRecord {
-  /** The origin the list was read from. */
-  origin: string
-  /** The ids the endpoint advertised, in its own order. */
-  models: readonly string[]
-  /** Unix epoch milliseconds of that read. */
-  probedAt: number
-  /** What is known about those ids' context windows, when anything is. */
-  modelContexts?: Record<string, ModelContextLength>
-}
-
-/**
- * Project the host's own connection onto the wire — **without the credential**.
- *
- * The whole point of the row is that a user can see what is answering their
- * messages, and the whole point of this function is that seeing it does not
- * mean holding its key.
+ * This used to project a *connection*: the route, the model and the model list
+ * of the row the panel showed first, which a user could test, adopt and (host
+ * §60) select. The user's ruling of 2026-09-10 retires that row, so what is
+ * left is the one fact the provider editor still has to be able to say — the
+ * process holds a key for this origin, so a provider saved with a blank key
+ * there generates and probes anyway (§58's ladder, now a fallback rather than a
+ * route). `provider`, `model` and the probe record went with the row: nothing
+ * read them once the row was gone, and `HostProbeRecord` (the in-memory list a
+ * bare probe of the host's endpoint filed) existed only to fill them.
  * @param host - what the composition told this runtime.
- * @param probe - what a probe of that endpoint reported, when one has run in
- * this process. Projected only when it was read from the endpoint this host
- * currently points at, so a moved route cannot inherit the old one's list.
- * @returns the read-only row, carrying the key's *source* and never the key.
+ * @returns the environment's endpoint and key *source*, never the key.
  */
-export function hostDefaultView(
-  host: HostConnection,
-  probe?: HostProbeRecord | undefined,
-): HostDefaultConnection {
+export function hostDefaultView(host: HostConnection): HostDefaultConnection {
   const hasKey = host.apiKey !== undefined && host.apiKey.length > 0
-  const listed = probe !== undefined && sameEndpointOrigin(host.baseURL, probe.origin)
-    ? probe
-    : undefined
   return {
-    provider: host.provider,
     ...host.baseURL === undefined || host.baseURL.length === 0 ? {} : { baseURL: host.baseURL },
-    ...host.model === undefined || host.model.length === 0 ? {} : { model: host.model },
     keySource: hasKey ? 'env' : 'none',
     ...hasKey && host.keyEnv !== undefined && host.keyEnv.length > 0 ? { keyEnv: host.keyEnv } : {},
-    // The list and its stamp travel together or not at all, as they do on a
-    // profile: half of this pair is an undatable claim.
-    ...listed === undefined ? {} : { models: [...listed.models], modelsProbedAt: listed.probedAt },
-    ...listed?.modelContexts === undefined ? {} : { modelContexts: { ...listed.modelContexts } },
   }
 }
 
@@ -562,27 +534,15 @@ export class ConnectionStore {
     await this.#save()
   }
 
-  /**
-   * Record that **no** profile is applied any more.
-   *
-   * The other half of {@link markActive}, and it was missing: `activeId` could
-   * only be moved from one profile to another or dropped as a side effect of
-   * deleting the profile it named, so "back to the connection this host was
-   * started with" was a state this store could not express — which is why the
-   * panel's host row carried a sentence instead of a button (web §77 recorded
-   * it as an open gap, now §78).
-   *
-   * A write only when something changes: clearing a store that already has no
-   * active profile is the panel pressing 使用 on the row that is already
-   * current, and rewriting a user's file to record nothing is a modification
-   * time that lies about what happened.
+  /*
+   * `clearActive()` stood here, one day: the other half of `markActive`, added
+   * so 「宿主环境」 could be selected back (host §60). Nothing can ask for "no
+   * profile applied" any more — the environment is not a connection a person
+   * chooses (host §61) — so the only way `activeId` becomes absent is the
+   * deletion of the profile it named, which `delete` above does inline. A
+   * setter with no caller is a state the product cannot reach, kept alive by a
+   * test.
    */
-  async clearActive(): Promise<void> {
-    await this.#load()
-    if (this.#file.activeId === undefined) return
-    delete this.#file.activeId
-    await this.#save()
-  }
 
   /**
    * The settings patch that applying a profile amounts to.

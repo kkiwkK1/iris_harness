@@ -174,6 +174,38 @@ test('stream.error clears the buffer and raises a notice', () => {
   dispose()
 })
 
+test('a refusal for having no provider is worded here, not passed through', () => {
+  /*
+   * The one `stream.error` code whose sentence is written in the browser
+   * (host §61, web §79). The host's own detail is about routes — it says this
+   * host no longer generates through the one it was launched with — and what
+   * the reader needs is the next step: which card to open, which verb to press,
+   * in their own language. So the code selects the copy and the detail is
+   * dropped, which is the opposite of the rule for every other failure above.
+   */
+  const { store, push, dispose } = openedStore()
+
+  push({ type: 'stream.start', chatId: 'c1', turn: 0, key: 'k0' })
+  push({
+    type: 'stream.error',
+    chatId: 'c1',
+    turn: 0,
+    code: 'no-provider',
+    message: 'no connection provider is in use, so there is nothing to generate through',
+  })
+
+  assert.equal(store.getState().stream, undefined, 'the buffer survived a refusal')
+  assert.equal(store.getState().notice?.kind, 'error')
+  const text = store.getState().notice?.text ?? ''
+  // The dictionary's sentence, and the two things it has to carry: that nothing
+  // is in use, and where to go. Matched on the copy rather than on the key so a
+  // sentence that stopped pointing anywhere goes red.
+  assert.match(text, /No provider is in use/, 'the reader was not told what is missing')
+  assert.match(text, /Settings → Connection/, 'the reader was not told where to fix it')
+  assert.doesNotMatch(text, /generate through$/, 'the host’s own route sentence was passed through instead')
+  dispose()
+})
+
 test('chats.updated is not filtered by the open chat', () => {
   const { store, push, dispose } = openedStore()
 

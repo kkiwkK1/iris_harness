@@ -9,6 +9,17 @@
  * connection page does not have (theirs is one always-present form whose values
  * *are* the connection) and the shape CC Switch does.
  *
+ * **The list is the whole of it** — the user's ruling of 2026-09-10, verbatim:
+ * 「宿主环境这个功能废弃了，以后都从在 Iris 中自己添加供应商来调用模型」. Until then
+ * the first row was the environment the process was launched with: read-only,
+ * testable, adoptable and (for one day, web §78) selectable. It is gone, with
+ * every string that described it. Two things follow and both are visible here:
+ * with no provider in use the host **refuses to generate** (host §61) rather
+ * than falling back to that environment, so the empty state is not a note about
+ * an absent list but the one thing standing between the reader and a reply; and
+ * the collapsed head reads 「未选择供应商」 rather than naming the environment,
+ * because there is no longer anything true to name.
+ *
  * What that replaced: a resident form (preset, endpoint, key, model, name) with
  * a list under it, where "the connection" was whatever the form happened to
  * hold and saving was one of five buttons in a row. Two things about the same
@@ -145,6 +156,19 @@ interface FormState {
    * survive an edit anyway, because an absent field on a replacement clears it.
    */
   originalSampling?: Record<string, unknown>
+  /**
+   * The reader asked to type the model id, with a list on screen.
+   *
+   * The user's ruling, 2026-09-10: 「模型要支持添加自定义名称的模型，以防止用户无法
+   * 使用到还在内测的模型」. A `/models` list is what an endpoint chooses to
+   * advertise, and a model in closed testing is exactly the one it does not —
+   * `deepseek-v4.1-flash-expires-on-0910` generates and is not listed. The
+   * existing off-list path (a value the list lacks keeps a row of its own) only
+   * *preserves* such a name; it gives nobody a way to enter one. This flag is
+   * that way: it survives only as long as the dialog, because it is a state of
+   * the control rather than of the provider.
+   */
+  modelTyping?: boolean
   /** Whether the stored key exists (shown masked) and, when long enough, its tail. */
   hasKey: boolean
   keyTail?: string
@@ -162,6 +186,16 @@ interface FormState {
   models?: string[]
   modelsProbedAt?: number
 }
+
+/**
+ * The `<option>` value that means "let me type it", which is not a model id.
+ *
+ * A sentinel rather than an empty value: `''` is what an unset model already
+ * looks like, so a reader picking it would be indistinguishable from a form
+ * that had lost its model. Spelled with a control character no endpoint could
+ * ever advertise.
+ */
+const CUSTOM_MODEL = '\u0000iris:custom-model'
 
 /** A fresh form, pointed at the first preset. */
 function freshForm(): FormState {
@@ -313,7 +347,9 @@ function TestVerdict({ state }: { state: TestState }): ReactElement | null {
 /**
  * What a row says about its key. A state, never a credential.
  * @param row - the saved provider's key facts, as a read returns them.
- * @param host - the host's row, whose environment key may cover this origin.
+ * @param host - what the host holds from its environment. **Not a connection**
+ * any more (web §79) — the only thing read off it is whether its credential
+ * covers this row's origin, which host §58's ladder still lends to a route.
  * @returns the phrase for the row's meta line.
  */
 function keyStateText(
@@ -382,7 +418,7 @@ export function ConnectionPanel(): ReactElement {
   const [testState, setTestState] = useState<TestState>({ phase: 'idle' })
   /** The one transient sentence the panel says about its own last act. */
   const [note, setNote] = useState<
-    'saved' | 'savedCurrent' | 'deleted' | 'deletedCurrent' | 'adopted' | undefined
+    'saved' | 'savedCurrent' | 'deleted' | 'deletedCurrent' | undefined
   >(undefined)
   /** A model saved that the last list did not contain. A note, never a block. */
   const [offListModel, setOffListModel] = useState<string | undefined>(undefined)
@@ -400,8 +436,10 @@ export function ConnectionPanel(): ReactElement {
    *
    * A saved provider is named by id and nothing else: that is what lets the
    * host use the profile's stored key and file the model list against it. The
-   * host row is probed by its endpoint, because it has no id to name.
-   * @param params - `profileId` for a provider, `baseURL` for the host row.
+   * `baseURL` form is still on the protocol and is what the *editor* sends for
+   * a provider that has not been saved yet; nothing in this list uses it any
+   * more, because every row in the list is a saved provider (web §79).
+   * @param params - `profileId` for a provider, `baseURL` for an unsaved form.
    * @param of - the row's name, so the verdict says which row it is about.
    */
   const runProbe = async (params: { profileId?: string, baseURL?: string }, of: string): Promise<void> => {
@@ -433,34 +471,14 @@ export function ConnectionPanel(): ReactElement {
     }
   }
 
-  /**
-   * Adopt the host's own connection as an editable provider.
-   *
-   * One press, and the key does not travel: `adoptHostKey` asks the host to
-   * copy the credential it already holds into the new profile. The browser
-   * names a key it has never been shown.
-   *
-   * This used to double as the only way **back** to the host's connection,
-   * which is why it carried the `connHostUseGap` sentence beside it. It does
-   * not any more — the row's own 使用 is that way (web §78) — so what adopting
-   * is for is what it says: an *editable* copy, whose endpoint, model or key
-   * can then differ from the one the process was launched with.
+  /*
+   * `adoptHost` stood here: one press turned the 「宿主环境」 row into an editable
+   * provider, with `adoptHostKey` asking the host to copy the credential it
+   * already held so the browser never named a key it had been shown. The row is
+   * gone (web §79) and the flag with it — what the press did now happens once,
+   * at first start, inside the host (`importLaunchConnection`, host §61), which
+   * is the same copy without a button to press.
    */
-  const adoptHost = async (): Promise<void> => {
-    // A profile must name a model — the protocol refuses one that does not — so
-    // a host that never said which model it runs cannot be adopted in one
-    // press. The button is disabled in that case rather than this being a
-    // silent return only; both guards exist because either alone is a way for
-    // the press to do nothing without saying so.
-    if (host === undefined || host.model === undefined || host.model === '') return
-    await actions.saveConnection({
-      provider: host.provider,
-      model: host.model,
-      ...(host.baseURL === undefined ? {} : { baseURL: host.baseURL }),
-      adoptHostKey: host.keySource === 'env',
-    })
-    setNote('adopted')
-  }
 
   /** Delete a provider, and say what the list now shows as current. */
   const remove = async (id: string): Promise<void> => {
@@ -468,12 +486,11 @@ export function ConnectionPanel(): ReactElement {
     await actions.deleteConnection(id)
     // The host clears `activeId` when the deleted profile was the active one,
     // and the store takes `activeId` from that response rather than keeping it
-    // — so the list's marker moves to the host row on its own and this
-    // sentence only has to report where it went. What the *settings* layer
-    // still holds after such a delete is the host's business
-    // (`dev/route-resolution`), and this copy deliberately claims nothing
-    // about it: it says the list has nothing selected, not that generation has
-    // moved.
+    // — so the marker leaves the list on its own and this sentence has to say
+    // what that now means. It used to say the marker had moved to the host row;
+    // there is no such row, and no provider in use means **nothing generates**
+    // (host §61), which is the one consequence a reader has to be told about
+    // before they type their next message.
     setNote(wasCurrent ? 'deletedCurrent' : 'deleted')
     setTestState({ phase: 'idle' })
   }
@@ -482,24 +499,29 @@ export function ConnectionPanel(): ReactElement {
    * What the collapsed section says it is set to: **name · model**, and only
    * that.
    *
-   * The provider in use when there is one; otherwise the **host's own** row,
-   * because a host generating happily from its environment used to collapse to
-   * "no active connection" — a sentence that was true of the profile list and
-   * a lie about the page. The model rides beside the name for §49's reason: a
-   * label the user wrote can go stale, and the derived half cannot.
+   * The provider in use when there is one, and 「未选择供应商」 when there is
+   * not — whether or not the list has rows in it, because a saved provider
+   * nobody has pressed 使用 on is not generating anything. This used to name the
+   * host's own environment in that state, which was true while the environment
+   * was a route and is now the one sentence that would send a reader away from
+   * the thing they have to do (web §79). The model rides beside the name for
+   * §49's reason: a label the user wrote can go stale, and the derived half
+   * cannot.
    */
-  const summaryLine = active !== undefined
-    ? [active.label ?? active.provider, active.model].filter(part => part !== '').join(' · ')
-    : host === undefined
-      ? t('noActiveConnection')
-      : [t('hostDefaultTitle'), host.model].filter(part => part !== undefined && part !== '').join(' · ')
+  const summaryLine = active === undefined
+    ? t('connNoneSelected')
+    : [active.label ?? active.provider, active.model].filter(part => part !== '').join(' · ')
 
-  /** The row the panel's own test block probes: the provider in use. */
-  const currentTarget = active !== undefined
-    ? { params: { profileId: active.id }, of: nameOf(active) }
-    : host !== undefined && host.baseURL !== undefined && host.baseURL !== ''
-      ? { params: { baseURL: host.baseURL }, of: t('hostDefaultTitle') }
-      : undefined
+  /**
+   * The row the panel's own test block probes: the provider in use.
+   *
+   * Absent when none is, which disables the button. The host's environment used
+   * to be the fallback target here; probing it would now answer a question
+   * about an endpoint nothing generates through.
+   */
+  const currentTarget = active === undefined
+    ? undefined
+    : { params: { profileId: active.id }, of: nameOf(active) }
 
   const noteText = ((): string | undefined => {
     switch (note) {
@@ -507,7 +529,6 @@ export function ConnectionPanel(): ReactElement {
       case 'savedCurrent': return t('connSavedCurrent')
       case 'deleted': return t('connDeleted')
       case 'deletedCurrent': return t('connDeletedWasCurrent')
-      case 'adopted': return t('hostAdopted')
       case undefined: return undefined
     }
   })()
@@ -548,109 +569,38 @@ export function ConnectionPanel(): ReactElement {
           </div>
 
           {/*
-            **The connection the host itself was started with**, as the fixed
-            first row.
+            **The environment the process was launched with is not a row.**
 
-            This used to be the absence at the top of the panel: a host
-            configured from `IRIS_BASE_URL` / `IRIS_MODEL` / `IRIS_API_KEY_ENV`
-            answered every message perfectly while the panel reported "no active
-            connection" — true of the profile list, and useless as a report,
-            because the thing doing the answering was right there and unnamed.
+            It was, until 2026-09-10: a read-only first row reading
+            `IRIS_BASE_URL` / `IRIS_MODEL` / `IRIS_API_KEY_ENV`, with 使用 (host
+            §60's `connection.deactivate`), 测试 and 存为供应商 on it, and a
+            sentence under it explaining what it was. The user retired the whole
+            idea — 「宿主环境这个功能废弃了，以后都从在 Iris 中自己添加供应商来调用
+            模型」 — so the list holds saved providers and nothing else. What the
+            host still tells the browser about its environment is one fact, read
+            in the editor and in a row's meta line: whether it holds a key for a
+            given origin (`keyStateText`).
 
-            Read-only, because it is not a profile: it has no id, it lives in
-            the environment the process was launched with, and editing or
-            deleting it here would be editing something this page cannot reach.
-            **Selectable, though** — 使用 on this row is `connection.deactivate`,
-            which puts the global layer back on the route and model the host was
-            launched with and forgets which profile was applied. It used to
-            carry a sentence explaining why it could not be chosen (web §77's
-            first cost): the row read the *global settings layer*, so after any
-            activation it described the profile in force, and a 「使用」 on it
-            would have re-applied that profile under the host's name. Host §60
-            snapshots the launch configuration and gives the store a clearing
-            path, so the button is honest and the sentence is gone (web §78).
-
-            It can also be tested, and it can be **saved as a provider** — one
-            press, and the host copies its own credential into a real profile.
-            The key does not pass through the browser in either direction.
+            The **empty state** is therefore not a footnote about an absent list
+            any more. With no provider in use the host refuses to generate (host
+            §61), so this is the one thing between the reader and a reply — a
+            sentence that says what to do, and the button that does it.
           */}
-          {host === undefined ? null : (
-            <div className="iris-conn iris-conn--host" aria-current={activeId === undefined}>
-              <div className="iris-conn__main">
-                <span className="iris-conn__name">{t('hostDefaultTitle')}</span>
-                {activeId === undefined
-                  ? <span className="iris-conn__badge">{t('connCurrent')}</span>
-                  : null}
-                <span className="iris-conn__badge iris-conn__badge--quiet">{t('connReadOnly')}</span>
-                <span className="iris-conn__summary">
-                  {[
-                    host.provider,
-                    host.model,
-                    host.baseURL === undefined ? t('hostDefaultEndpointRidden') : originOf(host.baseURL),
-                  ].filter(part => part !== undefined && part !== '').join(' · ')}
-                </span>
-                <span className="iris-conn__meta">
-                  {[
-                    host.keySource === 'none'
-                      ? t('hostDefaultNoKey')
-                      : host.keyEnv === undefined
-                        ? t('hostDefaultKeyAnon')
-                        : t('hostDefaultKeyEnv', { env: host.keyEnv }),
-                    ...rowExtras(host.model ?? '', host.modelContexts, host.models, host.modelsProbedAt),
-                  ].join(' · ')}
-                </span>
-              </div>
-              <div className="iris-conn__actions">
-                {/*
-                  Same verb, same position, same condition as a provider row's:
-                  offered while this row is not the current one, and replaced by
-                  the 「当前」 badge above when it is. A row that showed 使用 while
-                  already in use would be a press with nothing to do.
-                */}
-                {activeId === undefined ? null : (
-                  <button
-                    type="button"
-                    className="iris-act"
-                    aria-label={t('connUseNamed', { name: t('hostDefaultTitle') })}
-                    onClick={() => void actions.deactivateConnection()}
-                  >
-                    {t('connUse')}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="iris-act"
-                  aria-label={t('connTestNamed', { name: t('hostDefaultTitle') })}
-                  disabled={testState.phase === 'testing' || host.baseURL === undefined || host.baseURL === ''}
-                  onClick={() => {
-                    if (host.baseURL === undefined) return
-                    void runProbe({ baseURL: host.baseURL }, t('hostDefaultTitle'))
-                  }}
-                >
-                  {t('testConnection')}
-                </button>
-                <button
-                  type="button"
-                  className="iris-act"
-                  disabled={host.model === undefined || host.model === ''}
-                  onClick={() => void adoptHost()}
-                >
-                  {t('adoptHostConnection')}
-                </button>
-              </div>
-            </div>
-          )}
-          {host === undefined ? null : (
-            <>
-              <p className="iris-field__note">{t('hostDefaultNote')}</p>
-              {host.baseURL === undefined || host.baseURL === ''
-                ? <p className="iris-field__note">{t('connTestNeedsEndpoint')}</p>
-                : null}
-            </>
-          )}
-
           {profiles.length === 0 ? (
-            <p className="iris-list__empty">{t('noSavedConnections')}</p>
+            <div className="iris-conn-panel__empty">
+              <p className="iris-list__empty">{t('noSavedConnections')}</p>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  setEditing(freshForm())
+                  setNote(undefined)
+                  setOffListModel(undefined)
+                }}
+              >
+                {t('connAddProvider')}
+              </Button>
+            </div>
           ) : (
             profiles.map(profile => {
               const name = nameOf(profile)
@@ -1002,6 +952,8 @@ function ProviderEditor({
   }
 
   const offList = form.models !== undefined && form.model !== '' && !form.models.includes(form.model)
+  /** Whether the endpoint's own list has anything in it to pick from. */
+  const listed = form.models !== undefined && form.models.length > 0
 
   return (
     <Modal
@@ -1133,15 +1085,25 @@ function ProviderEditor({
         )}
 
         {/*
-          **The model is picked, not typed** — the request the user made of this
-          panel, and upstream's own shape (`model_openai_select`, filled from
-          `/models`).
+          **The model is picked, and can always be typed** — the picker is
+          upstream's shape (`model_openai_select`, filled from `/models`), and
+          the typing half is the user's ruling of 2026-09-10: 「模型要支持添加自定义
+          名称的模型，以防止用户无法使用到还在内测的模型」.
 
-          Three states, kept apart because they are three different facts:
+          Four states, kept apart because they are four different facts:
 
           - a list with entries → a real `<select>`, with the current value kept
             as a row of its own when the list does not carry it, so choosing from
-            the list can never be the thing that loses a working model name;
+            the list can never be the thing that loses a working model name, and
+            with **「自定义…」 fixed at the end**;
+          - that option chosen → the same field a no-list provider gets, focused,
+            with the sentence that says why it exists. A **list is a shortcut,
+            never a gate**: it holds what the endpoint chooses to advertise, and a
+            model in closed testing is exactly the one it does not
+            (`deepseek-v4.1-flash-expires-on-0910` generates and is not listed).
+            The current value is carried into the field rather than blanked —
+            most custom ids are a variant of a listed one, and blanking would
+            also disable 保存 the instant the reader asked to type;
           - a list that came back **empty** → the endpoint answered and offers
             nothing, so the field falls back to typing and says that;
           - **no list at all** → nobody has probed yet, which is a different
@@ -1154,17 +1116,24 @@ function ProviderEditor({
         <div className="iris-field">
           <span className="iris-field__label">{t('modelLabel')}</span>
           <span />
-          {form.models !== undefined && form.models.length > 0 ? (
+          {listed && form.modelTyping !== true ? (
             <select
               className="iris-text iris-field__control"
               value={form.model}
               aria-label={t('modelLabel')}
-              onChange={event => { patchForm({ model: event.target.value }) }}
+              onChange={event => {
+                // The sentinel is not a model name, so it never reaches the
+                // form's `model`: it switches the control and leaves the value
+                // where it was.
+                if (event.target.value === CUSTOM_MODEL) patchForm({ modelTyping: true })
+                else patchForm({ model: event.target.value })
+              }}
             >
-              {form.model === '' || form.models.includes(form.model) ? null : (
+              {form.model === '' || form.models?.includes(form.model) === true ? null : (
                 <option value={form.model}>{t('modelCustomCurrent', { model: form.model })}</option>
               )}
-              {form.models.map(model => <option key={model} value={model}>{model}</option>)}
+              {(form.models ?? []).map(model => <option key={model} value={model}>{model}</option>)}
+              <option value={CUSTOM_MODEL}>{t('modelCustomOption')}</option>
             </select>
           ) : (
             <input
@@ -1172,24 +1141,47 @@ function ProviderEditor({
               type="text"
               value={form.model}
               aria-label={t('modelLabel')}
+              placeholder={t('modelCustomPlaceholder')}
               spellCheck={false}
+              // Only when the reader just asked for this field. Autofocusing the
+              // never-probed case would take the caret off the endpoint field
+              // every time the dialog opens for a new provider.
+              autoFocus={form.modelTyping === true}
               onChange={event => { patchForm({ model: event.target.value }) }}
             />
           )}
           <p className="iris-field__note">
-            {form.models === undefined
-              ? t('modelsNoneYet')
-              : form.models.length === 0
-                ? t('modelsEndpointOffersNone')
-                : form.modelsProbedAt === undefined
-                  ? t('modelsFromEndpoint', { count: form.models.length })
-                  : t('modelsProbedAt', {
-                    count: form.models.length,
-                    when: since(form.modelsProbedAt, Date.now(), getLanguage()),
-                  })}
+            {form.modelTyping === true
+              ? t('modelCustomTyped')
+              : form.models === undefined
+                ? t('modelsNoneYet')
+                : form.models.length === 0
+                  ? t('modelsEndpointOffersNone')
+                  : form.modelsProbedAt === undefined
+                    ? t('modelsFromEndpoint', { count: form.models.length })
+                    : t('modelsProbedAt', {
+                      count: form.models.length,
+                      when: since(form.modelsProbedAt, Date.now(), getLanguage()),
+                    })}
             {/* Marked while it can still be changed, not only after the save. */}
             {offList ? <> {t('modelOffListNote')}</> : null}
             {' '}
+            {/*
+              The way back, so 「自定义…」 is not a one-way door for the rest of the
+              dialog's life. Offered only while there is a list to go back to.
+            */}
+            {listed && form.modelTyping === true ? (
+              <>
+                <button
+                  type="button"
+                  className="iris-act"
+                  onClick={() => { patchForm({ modelTyping: false }) }}
+                >
+                  {t('modelFromList')}
+                </button>
+                {' '}
+              </>
+            ) : null}
             {/*
               Refreshing *is* testing — one probe, one list — so this is the same
               action under the name that answers the question the dropdown raises.
