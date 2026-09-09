@@ -1925,7 +1925,29 @@ export interface RpcResponseMap {
    */
   'connection.list': { profiles: ConnectionProfile[], activeId?: string, host?: HostDefaultConnection }
   'connection.save': { profiles: ConnectionProfile[], activeId?: string, host?: HostDefaultConnection }
-  'connection.delete': { profiles: ConnectionProfile[], activeId?: string, host?: HostDefaultConnection }
+  /**
+   * The profiles that remain — and which settings layers stopped naming the
+   * deleted one.
+   *
+   * `cleared` exists because a profile's `provider` is stored as a **reference**
+   * to a runtime route rather than as a copy of its values (host §59): the
+   * layer that named the deleted connection would otherwise keep naming it, and
+   * the next generation on that layer would fail in the adapter registry
+   * instead of here. Absent means this host does not clean the layers (the fake
+   * client does not); `{ global: false, chats: [] }` means it does and nothing
+   * was pointing at the profile.
+   */
+  'connection.delete': {
+    profiles: ConnectionProfile[]
+    activeId?: string
+    host?: HostDefaultConnection
+    cleared?: {
+      /** Whether the global layer was returned to the host's configured route. */
+      global: boolean
+      /** The conversations whose own `provider` override was removed. */
+      chats: string[]
+    }
+  }
   'connection.activate': { settings: GenerationSettings, activeId: string }
   /**
    * The probe's verdict, said in full even when it failed.

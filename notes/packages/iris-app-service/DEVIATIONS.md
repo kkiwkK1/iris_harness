@@ -4434,3 +4434,111 @@ host's own previous answer.
 `bad-url` or `bad-key`; a `bad-key` message that contains any character of the key
 other than the index and code point; a `network` message on a refused port that
 does not carry the socket code.
+
+## 59. A connection's `provider` is a reference to a runtime route, not a snapshot of values — so a deletion cleans the layers and a generation resolves the route
+
+**Kind: divergence from upstream (pre-existing), plus two fixes to what the
+divergence leaves behind.**
+
+Reported 2026-09-09 from the operator's own profile. `settings.json` carried
+`chats["爱衣-20260909-001924"] = { "provider": "deepseek" }` with
+`global.provider = "default"`, and `connections.json` carried
+`profiles: []` — an empty list. The timeline behind that pair: at 20:40 a
+connection with `provider: deepseek` and `baseURL: https://api.deepseek.com`
+was activated on host **A** (its own log line: `connection now generates through
+route "deepseek" at https://api.deepseek.com`), the activation carried a
+`chatId`, so `ConnectionStore.patchOf` wrote `provider: deepseek` into that
+conversation's own layer; the connection was then deleted and the override
+stayed. A second host process **B**, started from the same data directory and
+never asked to activate anything, opened that conversation and generated:
+`no adapter registered for provider "deepseek"`.
+
+**Two layers, and only the first is about the deletion.**
+
+1. `provider` in either settings layer is a **reference to a runtime adapter
+   route** — `routeOf(profile)`, which is `conn/<id>` for a profile on the
+   `default` provider and the provider's own name otherwise
+   (§27, `connections.ts:552`). `connection.delete` cleaned nothing, so the
+   reference outlived the profile.
+2. The registry holding those routes is **per process** and is filled by exactly
+   two things: `connection.activate` and the boot restore. Neither has to have
+   happened in the process that reads the settings file, so a name that was true
+   when host A wrote it is a name host B's registry has never heard of.
+
+**Upstream is not exposed to either, because it stores values rather than a
+reference.** A SillyTavern connection profile is a *snapshot*: applying it writes
+the api, the model and the preset into `oai_settings`, and deleting the profile
+leaves those values in the settings — nothing in the generation path dereferences
+the profile's name, so a deleted profile cannot break a chat. Iris stores the
+route instead, and that is what makes a runtime-installed adapter for a
+user-supplied endpoint possible at all (a snapshot has nowhere to put "the
+adapter that can see this endpoint and its key"). **The storage decision is not
+being reversed here** — two nets are added under it.
+
+**Net one: `connection.delete` clears the layers that named the deleted route.**
+- The route is derived **before** the splice (nothing is left to derive it from
+  after) and the layers are cleaned only when that route has lost its last
+  owner: the composition's own route and a sibling profile of the same provider
+  are both still served (`#routeStillServed`), and clearing a layer that names
+  one of those would undo a choice the deletion never touched.
+- A live install of *this* process is deliberately **not** counted as an owner.
+  The adapter would answer this turn and be gone at the next start, so leaving
+  the reference in place would defer the failure rather than remove it.
+- **`provider` only.** `patchOf` writes `{ provider, model, ...sampling }`, and
+  the other two are *values*: a model id and a temperature stay meaningful when
+  the profile that supplied them is gone, which is exactly what upstream leaves
+  behind. Clearing them would turn "the endpoint you chose is gone" into "your
+  model choice is gone too". The global layer returns to the composition's
+  configured route; a chat layer loses the key entirely, so the layer below
+  shows through.
+- The method answers with `cleared: { global, chats }` (protocol), and a
+  retained `host` note says which layers changed and that the model stayed. Not
+  pushed: the user is looking at the panel they just deleted from.
+
+**Net two: `#stream` resolves the route before the request leaves.** One place,
+not four — a turn, `script.generateRaw`, `script.generate` and the compaction
+summarizer each compose `provider: settings.provider` from their own settings
+read, and a check written per caller is a check the fifth caller will not have.
+The substitution lands before the prompt fingerprint and `noteRoute`, so the
+usage record names the route the provider was actually billed on. Four answers:
+1. **The host's own route** — always served.
+2. **A route this process installed** — `#installedRoutes`, written by
+   `#installConnectionFor` and therefore by all three install paths.
+3. **A saved profile resolves to it** — installed here and now, which is
+   precisely host B's case: the profile was on disk the whole time. A matching
+   profile with no endpoint of its own names a route some other plugin
+   registered; not ours to install and not ours to judge, so it passes through
+   as before.
+4. **Nothing resolves to it** — the request goes out on the host's own route
+   rather than failing, the layer that named it is cleared, and both halves are
+   reported as one `fault` sentence naming the dead route, the route used
+   instead, and the layer repaired. **Pushed** (`irreversible`), because the
+   value that layer held is gone and nothing else in the interface will say so:
+   the panel reads settings when it is opened, so a mid-turn repair is otherwise
+   invisible until something refetches. A fall back that changed **no** setting
+   — a profile that exists on a host composed with no installer — is retained
+   and not pushed, and leaves the setting alone: the connection is not the thing
+   that is missing.
+
+**Two deliberate departures from the task as written.**
+- The host's own route is read as `hostConnection?.provider ??
+  settings.configuredRoute()`, **not** as `#hostConnection().provider`. With no
+  connection handed in by the composition — and the shipped composition hands
+  none — that reader answers from the *global settings layer*, which is one of
+  the two places a dangling name sits: the guard would have compared the
+  dangling name with itself, passed, and sent the request to a route with no
+  adapter. The configured default cannot dangle; it is the `llm-openai-compat`
+  row's own registration. A test whose only difference is this reading holds it.
+- The boot restore moved out of `index.ts` into
+  `IrisAppService.restoreActiveConnection()`, called after construction and
+  before any handler is registered. Not tidying: the inline version called the
+  installer directly, so the restored route was invisible to `#installedRoutes`
+  and the first generation of every restart would have installed it a second
+  time.
+
+**What would overturn it.** A generation that reaches `ctx.llm.stream` with a
+route no registration has answered for; a deletion that leaves a `provider`
+naming the deleted profile's route in any layer, or that removes a `model` or a
+sampling field; a fall back that repairs a setting without a report, or reports
+without repairing; a route this process installed being installed again by the
+next turn.

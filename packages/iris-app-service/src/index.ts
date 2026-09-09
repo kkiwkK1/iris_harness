@@ -34,7 +34,7 @@ import { DiagnosticBuffer } from './diagnostics.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import { IrisAppService } from './service.ts'
-import { ConnectionStore, routeOf } from './connections.ts'
+import { ConnectionStore } from './connections.ts'
 import { PersonaStore } from './persona.ts'
 import { FavoriteStore } from './favorites.ts'
 import { ExtensionSettingsStore } from './context.ts'
@@ -647,28 +647,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       `irisApp: adapter ${route}`,
     ))
   }
-  // The last activated profile comes back the same way after a restart: its
-  // adapter is in place before any handler can be reached, because a
-  // persisted route (`conn/<id>` or the preset id) in `settings.json` is a
-  // promise the registry has to be able to keep on the first turn.
-  const storedActive = await (async () => {
-    const listed = await connections.list()
-    if (listed.activeId === undefined) return undefined
-    try {
-      return await connections.get(listed.activeId)
-    } catch {
-      // The active id points at a profile that was removed out-of-band; the
-      // list itself clears it on the next write.
-      return undefined
-    }
-  })()
-  if (storedActive?.baseURL !== undefined && storedActive.baseURL.length > 0) {
-    installConnection(routeOf(storedActive), {
-      baseURL: storedActive.baseURL,
-      ...storedActive.apiKey === undefined ? {} : { apiKey: storedActive.apiKey },
-      ...storedActive.apiKeyHeader === undefined ? {} : { apiKeyHeader: storedActive.apiKeyHeader },
-    })
-  }
   // Shared across the profile, matching upstream's one `localStorage` per
   // origin. Not partitioned per card, and deliberately not forgotten when a
   // card is deleted — see `character.delete`.
@@ -762,6 +740,18 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // needs regardless of how any exporter renders objects.
     onError: error => { ctx.logger.warn(error instanceof Error ? error.message : String(error)) },
   })
+
+  // The last activated profile comes back the same way after a restart: its
+  // adapter is in place before any handler is registered, because a persisted
+  // route (`conn/<id>` or the profile's provider) in `settings.json` is a
+  // promise the registry has to be able to keep on the first turn.
+  //
+  // Asked of the **service** rather than performed here, which is not tidying:
+  // the service keeps the set of routes this process has installed, and an
+  // install performed behind its back is one it cannot see — the boot-restored
+  // route would read as "never installed" and the first generation on it would
+  // install it a second time. Same installer, same effect wrapper, one owner.
+  await service.restoreActiveConnection()
 
   const handlers = service.handlers()
 
