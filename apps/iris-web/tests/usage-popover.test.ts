@@ -50,15 +50,17 @@ test('neither usage trigger carries a native title any more', () => {
     'the strip does not open the hover card',
   )
   assert.match(composer, /usageSummaryRows\(usage, lang\)/, 'the strip card is not built from the shared rows')
-  // The split-by-source sentence the old native `title` carried now rides as
-  // the card's note — how the composer strip's hover card (#36) keeps the
-  // card's own share (#39) reachable without adding a fourth group to the
-  // strip. Pinned here so dropping the note from the trigger is caught at the
-  // source even though the card is closed to any server render.
+  // The split-by-source sentences the old native `title` carried now ride as
+  // the card's notes — how the composer strip's hover card (#36) keeps the
+  // card's own share (#39) and the host's compaction share (#74) reachable
+  // without adding groups to the strip. Pinned here so dropping the notes from
+  // the trigger is caught at the source even though the card is closed to any
+  // server render, and pinned with **both** arguments so a version that kept
+  // only the card share fails rather than reading as complete.
   assert.match(
     composer,
-    /note=\{usageScriptShareSentence\(scriptUsage, lang\)\}/,
-    'the strip card does not carry the card-script share as its note',
+    /notes=\{usageSideShareSentences\(scriptUsage, compactionUsage, lang\)\}/,
+    'the strip card does not carry both side shares as its notes',
   )
 })
 

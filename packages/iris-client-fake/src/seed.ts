@@ -114,6 +114,29 @@ const SCRIPT_SILENT: TurnUsage = {
   source: 'script',
 }
 
+/**
+ * The **host's own** compaction summary, on a cache-reporting route.
+ *
+ * `source: 'compaction'`: a request Iris made to fold this conversation's older
+ * floors into a summary. Billed like a turn, no reply, no candidate — the same
+ * standing as `SCRIPT_CACHED` above and a different asker, which is the whole
+ * reason it is a seed of its own.
+ *
+ * **Every bucket is a different number from every other seed's**, and it is
+ * placed on the one conversation that also carries a card share. That pairing
+ * is what gives the split teeth: the plausible wrong implementation folds both
+ * side populations into one bucket and calls it "not a turn", and it agrees
+ * with the correct one on every conversation where only one of the two exists.
+ * Here it does not — the card share is two requests and this is one, and a
+ * merged figure reads `3`.
+ */
+const COMPACTION_SUMMARY: TurnUsage = {
+  inputTokens: 2_140,
+  outputTokens: 512,
+  cacheReadTokens: 768,
+  source: 'compaction',
+}
+
 /** One day, for placing the seeded costs on a chart that has more than one column. */
 const DAY_MS = 24 * 60 * 60 * 1_000
 
@@ -540,26 +563,30 @@ export function seedChats(): FakeChat[] {
   ]
 
   /**
-   * The card's own generations, on the conversation above.
+   * The generations on the conversation above that are **not turns**: the
+   * card's own two, and the host's one compaction summary.
    *
    * **This conversation and not the other two, for two reasons.** The
    * lamplighter's totals are quoted as measurements in three comments
    * (`SILENT_CACHE`, `sumUsage`, and the note above), and the survey is the one
    * seeded conversation that must carry no cost anywhere — it is what an
    * imported chat looks like and the only thing that renders the "no usage
-   * line at all" state. So the card share lands here, which also leaves two of
-   * the three conversations with a **blank** card column: the subtotal list's
+   * line at all" state. So the side shares land here, which also leaves two of
+   * the three conversations with **blank** side columns: the subtotal list's
    * empty cell is a branch of its own, and a fixture where every row had a
    * figure would leave it unrendered.
    *
-   * Two records rather than one, dated where the turn record above is not, and
-   * `2` where that turn count is `1`: every figure the split produces is a
+   * Two card records rather than one, dated where the turn record above is not,
+   * and `2` where that turn count is `1`: every figure the split produces is a
    * different number from every figure beside it, so a check that read the
-   * wrong one cannot accidentally agree.
+   * wrong one cannot accidentally agree. The compaction record makes that
+   * three-way — one request against the card's two — so a page that merged the
+   * two side populations reports a count no correct reading produces.
    */
   const ledgerScripts: TurnUsage[] = [
     routed(SCRIPT_CACHED, { model: 'deepseek-reasoner', provider: 'deepseek' }, booted - 9 * DAY_MS),
     routed(SCRIPT_SILENT, { model: 'deepseek-reasoner', provider: 'deepseek' }, booted - 9 * DAY_MS),
+    routed(COMPACTION_SUMMARY, { model: 'deepseek-reasoner', provider: 'deepseek' }, booted - 9 * DAY_MS),
   ]
 
   const now = Date.now()

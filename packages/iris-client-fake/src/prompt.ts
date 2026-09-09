@@ -43,6 +43,14 @@ import type {
  * and the prompt panel's percentage report different fullnesses for the same
  * conversation — and the whole point of the two dividing by `context - reserve`
  * is that they cannot.
+ *
+ * **`reserve` equals `DEFAULT_SETTINGS.maxTokens` (`seed.ts`), and that is the
+ * fixture being true rather than a coincidence**: the host resolves a chat's
+ * reserve as `settings.maxTokens ?? reserveTokens` (`@iris/app-service`'s
+ * `#reserveFor`, transcribed from upstream's `openai_max_context -
+ * openai_max_tokens`), so a fake reporting a reserve unrelated to the
+ * `maxTokens` it also reports would be a shape the product cannot produce — and
+ * a fixture that cannot be true silences whatever asserts on it.
  */
 export const FAKE_BUDGET: { context: number, reserve: number } = { context: 8192, reserve: 1024 }
 

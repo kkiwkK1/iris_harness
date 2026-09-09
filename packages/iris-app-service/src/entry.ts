@@ -45,7 +45,9 @@ import { busy } from './errors.ts'
 import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
 import { scriptsOf, type ScopedRegexPolicy } from './regex.ts'
 import { parseFingerprint, type PromptFingerprint } from './fingerprint.ts'
-import { appendSideUsage, readSideUsage, scriptUsage, type SideUsage } from './side-usage.ts'
+import {
+  appendSideUsage, compactionUsage, readSideUsage, scriptUsage, type SideUsage,
+} from './side-usage.ts'
 import { fingerprintBySeq, parseUsage, usageBySeq, usageFieldOf, USAGE_FIELD } from './usage.ts'
 import { projectMessages, textOf, toChatView, type Names, type PendingTurn, type UsageRoute } from './views.ts'
 
@@ -1550,6 +1552,10 @@ export class ChatEntry {
   toView(budget?: ChatBudget): ChatView {
     const meta = this.meta
     const measured = this.#newestMeasurement()
+    // One walk of the header's side array, two shares off it: the split is by
+    // `source` and both readings come from the same records
+    // (`./side-usage.ts`'s `sideShare`).
+    const side = readSideUsage(this.header)
     return toChatView({
       ...measured === undefined ? {} : { measured },
       chatId: this.chatId,
@@ -1567,10 +1573,11 @@ export class ChatEntry {
       // compaction lands on the header and the next view has to show it, and a
       // cache here would be a second copy of the one durable fact.
       compaction: readCompaction(this.header),
-      // The same reading, for the same reason: a card's generation lands on the
-      // header mid-conversation and the composer's running total has to include
-      // it on the next projection.
-      scriptUsage: scriptUsage(readSideUsage(this.header)),
+      // The same reading, for the same reason: a card's generation and a
+      // compaction summary both land on the header mid-conversation, and the
+      // composer's running total has to include them on the next projection.
+      scriptUsage: scriptUsage(side),
+      compactionUsage: compactionUsage(side),
     })
   }
 

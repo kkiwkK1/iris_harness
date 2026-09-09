@@ -292,13 +292,32 @@ C 的预期是**在卡作者不改条目的前提下上界锁在 9.6%**，任何
 
 本 profile 现在还没有任何一条会话有 `iris_compaction` 记录
 （`grep -l iris_compaction chats/*.jsonl` 无输出），所以本轮没有实测样本。
-但用户的 `contextWindow` 设的是 **2 000 000**（settings.json），
-所以 80% 阈值是 160 万 token——按现在最大的 `银麒赎世` 单轮约 5.5 万 token
-估，短期内不会触发。**协议要求 PR 明确写一句"本次验收期间 compaction 未触发"，
+**协议要求 PR 明确写一句"本次验收期间 compaction 未触发"，
 并附 `grep -c iris_compaction` 的输出**：这条排除项如果只写在文档里而没人查，
 它就是一个随时会安静地推翻整段验收的原因。
 
-### 4.5 卡脚本自己的请求：曾经在总体之外，现在进了总体
+**阈值的算法这一轮改了，数字要按新的算**（`DEVIATIONS.md` §56）。
+分母是 `context − reserve`，而 reserve 现在取 `settings.maxTokens`
+（照上游 `openai.js:1558`→`:3887` 的 `max_context − max_tokens`），
+不再是宿主常量 1 024。用产品自己的读数在 `爱衣` 上量过（`chat.open` 的
+`ChatBudget` 与 `prompt.itemize`，只读拷贝，未发请求，2026-09-09）：
+
+| | 改之前（reserve 1 024） | 改之后（reserve 65 535） |
+| --- | --- | --- |
+| context（受 §44 模型钳制，存的是 2 000 000） | 1 000 000 | 1 000 000 |
+| available | 998 976 | 934 465 |
+| 80% 阈值 | 799 180 | **747 572** |
+| 16% 保留尾 | 159 836 | 149 514 |
+| `爱衣` 下一条请求 | 22 546 tok（2.8%） | 22 546 tok（3.0%） |
+
+所以阈值低了 6.5%，方向正确（上游同样是这个分母），
+但 `爱衣` 离两个阈值都还有 33 倍，短期内仍不会触发。
+
+**而且：compaction 的摘要请求现在会进用量与命中率的分母。**
+见下面 §4.5 末尾——它带 `source: 'compaction'`，
+所以 PR 报数时它是**单独一列**，不能混进 (a) 或 (b)。
+
+### 4.5 不是回合的那些请求：曾经在总体之外，现在进了总体
 
 **这一节写的是原来的缺陷与它的现状，不是一条待办。**
 原来：`script.generate` → `#sideGenerate` → `this.#stream({...})` **不传
@@ -319,19 +338,40 @@ C 的预期是**在卡作者不改条目的前提下上界锁在 9.6%**，任何
 `ChatView.usage` 与 `usage.summary` 的每个数字都已把它们算在内，
 并用 `ChatView.scriptUsage` / `UsageTotals.script` 单独报出这一份。
 
-**协议因此要求 PR 写清三个数**：
-(a) 用户可见回次（消息行上的 `iris_usage`）的命中率；
-(b) 卡脚本请求（对话头上的 `iris_side_usage`）的命中率，**单独一列**；
-(c) 两者合起来的命中率，也就是最接近账单的那个数。
-三条都要，因为 (c) 是用户付的钱，而 (a) 与 (b) 的分母上界不一样：
-`script.generate` 会把整段前缀重发一遍，`script.generateRaw` 只发卡递给它的
-那点东西，混在一个分母里会把两种现象平均掉——和 §4.6 对 swipe 的理由相同。
+**同一个数组现在装两群人**（`DEVIATIONS.md` §55），所以
+"位置就是权威"这条规则拆成了两半：**位置**判定"这不是一个回合"
+（数组里写 `source: 'turn'` 仍然被拒），**存下来的字段**在两种 side source
+之间选。读不出 side source 的记录按 `'script'` 计——这不是猜，
+而是那一群人：`'compaction'` 在 §55 之前不存在，
+所以此前写进这个 key 的每一条都是卡的。
 
-**仍在总体之外的一项，明写在这里**：compaction 的摘要请求（`#summarize`）
-同样被计费、同样不产生候选、同样既不传 `entry` 也不传 trace，所以它至今不进
-任何数字。本轮范围之外（`DEVIATIONS.md` §51 末尾）。§4.4 已经要求 PR 附
-`grep -c iris_compaction` 的输出；只要那个数是 0，这一项对本次验收无影响，
-而这正是那条排除项要被人真去查的原因。
+**协议因此要求 PR 写清四个数**：
+(a) 用户可见回次（消息行上的 `iris_usage`）的命中率；
+(b) 卡脚本请求（对话头上 `iris_side_usage` 里 `source: 'script'` 的那些）
+的命中率，**单独一列**；
+(c) compaction 摘要请求（同一个数组里 `source: 'compaction'` 的那些）的命中率，
+**也单独一列**；
+(d) 三者合起来的命中率，也就是最接近账单的那个数。
+四条都要，因为 (d) 是用户付的钱，而前三条的分母上界互不相同：
+`script.generate` 会把整段前缀重发一遍，`script.generateRaw` 只发卡递给它的
+那点东西，`#summarize` 重发的是**被折叠掉的那一段**——混在一个分母里会把三种
+现象平均掉，和 §4.6 对 swipe 的理由相同。
+
+**原来在总体之外的那一项，现在进了总体**（`DEVIATIONS.md` §55）：
+compaction 的摘要请求（`#summarize`）同样被计费、同样不产生候选，
+过去既不传 `entry` 也不传 trace，所以不进任何数字——一个压缩过的 profile
+每次 compaction 少算一条，页面上也没有任何数字说少了什么。
+现在它走 `#stream(..., { entry, caller: 'host.compaction', source: 'compaction' })`，
+和卡脚本的记录落在**同一个** `iris_side_usage` 数组里，
+并另留一条 `kind: 'compaction'`、`turn: -1` 的 trace
+（摘要坐在下一条请求历史的最前面，所以它是唯一能解释"之后每一轮前缀为什么都变了"
+的那份请求体）。`UsageTotals.compaction` 与 `ChatView.compactionUsage`
+是它自己那一份，和 `script` 并列而不合并：卡的花费是卡作者的决定，
+compaction 的是 Iris 自己的策略，读者要少花哪一种，动的地方不一样。
+
+§4.4 仍然要求 PR 附 `grep -c iris_compaction` 的输出：那个数是 0 时
+(c) 这一列是空的，而这正是那条排除项要被人真去查的原因——
+一旦它不是 0，(c) 就有值，而它的分母是被折叠的那一段，永远不该被平均进 (a)。
 
 **一条前提纠正**：普查把 MVU 那个"35 字符随机 uuid 头"记成了 gemini 路径的
 问题（`CACHE-CENSUS.md` §7.1 与本文件旧版本）。它是**卡自己的代码**：

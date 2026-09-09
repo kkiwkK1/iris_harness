@@ -26,14 +26,15 @@
  * in `undatedTurns`**, so a reader can see how much of a time-sliced chart is a
  * reconstruction rather than a reading.
  *
- * **Two populations.** A conversation's cost is not only its turns: a card's
- * own `TavernHelper.generate` / `generateRaw` is billed on the same route to
- * the same account and produces no reply, so it is stored on the chat header
- * (`./side-usage.ts`) rather than on a message. Both are counted here, and the
- * split is reported as `UsageTotals.script` — because a total that left the
- * card out was about a population narrower than the user's bill, and one that
- * folded it in silently would leave a reader unable to explain why the figure
- * is twice the replies they can see.
+ * **Three populations.** A conversation's cost is not only its turns. A card's
+ * own `TavernHelper.generate` / `generateRaw` and this host's own compaction
+ * summary are billed on the same route to the same account and produce no
+ * reply, so they are stored on the chat header (`./side-usage.ts`) rather than
+ * on a message. All three are counted here, and the two side shares are
+ * reported as `UsageTotals.script` and `UsageTotals.compaction` — because a
+ * total that left them out was about a population narrower than the user's
+ * bill, and one that folded them in silently would leave a reader unable to
+ * explain why the figure is larger than the replies they can see.
  *
  * @module @iris/app-service/usage-summary
  */
@@ -141,22 +142,34 @@ function emptyTotals(): UsageTotals {
  * as the reasoning share of the completion it is already inside, and adding it
  * would bill the same tokens twice.
  *
- * **A card's generation is folded in twice: into the whole, and into
- * `script`.** Into the whole because it was billed to the same account on the
- * same route, so a total that left it out would be a total of something other
- * than the bill; into `script` so a surface can say how much of the figure it
- * is. The two are not parallel populations to be added — `script` is a subset,
- * and a reader wanting the turn share subtracts.
+ * **A generation that is not a turn is folded in twice: into the whole, and
+ * into its own share.** Into the whole because it was billed to the same
+ * account on the same route, so a total that left it out would be a total of
+ * something other than the bill; into `script` or `compaction` so a surface can
+ * say how much of the figure it is. The shares are not parallel populations to
+ * be added — each is a subset of the enclosing figure, and a reader wanting the
+ * turn share subtracts both.
+ *
+ * Two shares rather than one merged "not a turn" figure, for the reason
+ * `UsageTotals.compaction` gives: a card's spend is the card author's doing and
+ * a compaction's is this host's own policy, so a reader who wants less of one
+ * acts somewhere different from a reader who wants less of the other.
  * @param into - the accumulator, mutated.
  * @param record - one generation.
  */
 export function addUsage(into: UsageTotals, record: DatedUsage): void {
   foldBuckets(into, record.usage)
   if (record.undated) into.undatedTurns += 1
-  if (record.usage.source !== 'script') return
-  const script = into.script ?? emptyBuckets()
-  into.script = script
-  foldBuckets(script, record.usage)
+  const source = record.usage.source
+  if (source !== 'script' && source !== 'compaction') return
+  // Keyed by the source rather than branched per share. The field name and the
+  // source spelling are the same word by construction, so a third side source
+  // folds by widening the guard above rather than by someone remembering to
+  // copy an arm — and a forgotten arm here does not fail, it reports a share of
+  // zero, which reads as "this profile does not do that" on every page.
+  const share = into[source] ?? emptyBuckets()
+  into[source] = share
+  foldBuckets(share, record.usage)
 }
 
 /**
@@ -222,14 +235,17 @@ function countable(value: number): number {
  * such (`undatedTurns`) rather than smoothed, because smoothing would invent a
  * distribution the file does not contain.
  *
- * **Two populations, two locations.** The turns are on the message lines; a
- * card's own generations are on the **header**, because they produced no
- * candidate to hang off (`./side-usage.ts`). Both are read here, and this is
- * the one place that decides a record's `source` — from where it was found
- * rather than from what it claims, so a file that arrived from elsewhere cannot
- * move a card's spend into the turn column or the reverse. Records written
- * before card generations were recorded at all carry no `source` and are turns,
- * which is what they are.
+ * **Three populations, two locations.** The turns are on the message lines; a
+ * card's own generations and this host's compaction summaries are on the
+ * **header**, because none of them produced a candidate to hang off
+ * (`./side-usage.ts`). Both locations are read here, and between them they
+ * decide whether a record is a turn: a per-message array is by construction a
+ * candidate's and the header array is by construction not, so neither can be
+ * talked out of its column by a `source` a file from elsewhere wrote. *Which*
+ * side source a header record is comes from its own field — one location holds
+ * two askers, so the location cannot say — and `parseSideUsage` refuses
+ * anything but a side source there. Records written before generations were
+ * recorded at all carry no `source` and are turns, which is what they are.
  * @param chatId - the file's stem, which is the conversation's id.
  * @param text - the whole file.
  * @returns the conversation's records, or undefined when the file is not a chat.

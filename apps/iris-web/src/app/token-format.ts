@@ -394,24 +394,37 @@ export function usageLineGroups(
 }
 
 /**
- * The summary card's note: one sentence accounting for the card's own share.
+ * The summary card's notes: one sentence per share of this conversation's cost
+ * that was **not a turn** — the card scripts' requests, and the host's own
+ * compaction summaries.
  *
- * The composer's visible line already counts a card's requests — they are
- * summed into `ChatView.usage` because they were billed to this conversation —
- * so the note under the card's rows is a breakdown of the figures above it,
- * never an addition to them. Absent a share there is nothing to break down,
- * and the caller draws no note at all.
+ * The composer's visible line already counts both — they are summed into
+ * `ChatView.usage` because they were billed to this conversation — so these
+ * notes are a breakdown of the figures above them, never an addition to them.
+ *
+ * **An array rather than one joined sentence.** The two shares are
+ * independently absent, so a single string would need a separator whose
+ * spelling differs per language and which would sit between two clauses that
+ * already use `·` inside themselves. Separate sentences also let the card draw
+ * each as its own paragraph, which is what it does.
  * @param script - the card share the host reported, absent when there is none.
- * @param lang - the language the sentence is read in.
- * @returns the share sentence, or the empty string when there is none.
+ * @param compaction - the compaction share, same rule.
+ * @param lang - the language the sentences are read in.
+ * @returns the sentences present, in that order; empty when there are none.
  */
-export function usageScriptShareSentence(
+export function usageSideShareSentences(
   script: { turns: number, usage: TurnUsage } | undefined,
+  compaction: { turns: number, usage: TurnUsage } | undefined,
   lang: Language = 'en',
-): string {
-  if (script === undefined) return ''
-  return translate(lang, 'usageScriptShare', {
-    n: script.turns,
-    tokens: formatExactTokens(totalTokens(script.usage), lang),
-  })
+): readonly string[] {
+  return [
+    ...script === undefined ? [] : [translate(lang, 'usageScriptShare', {
+      n: script.turns,
+      tokens: formatExactTokens(totalTokens(script.usage), lang),
+    })],
+    ...compaction === undefined ? [] : [translate(lang, 'usageCompactionShare', {
+      n: compaction.turns,
+      tokens: formatExactTokens(totalTokens(compaction.usage), lang),
+    })],
+  ]
 }

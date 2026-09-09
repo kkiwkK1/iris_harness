@@ -45,6 +45,7 @@ import {
   chartData,
   chartHasSpend,
   chartLayout,
+  compactionTokens,
   hitRate,
   linePath,
   seriesDomKey,
@@ -406,12 +407,20 @@ function dashSwatch(color: string): string {
  * and the rest are a grid of capsules beside it. Nothing was dropped: the same
  * seven figures, ranked.
  *
- * The card generations' share is a **line under the total**, not an eighth
- * capsule, because it is not another way of dividing the total — it is a
- * statement about the same figure directly above it: how much of that was
- * something the user did not ask for. It appears only when the host reported
- * the share; a `0 次 · 0 token` line on every profile that runs no card
- * scripts is a line a reader learns to skip.
+ * The share taken by generations nobody asked for is a **line under the
+ * total**, not an eighth capsule, because it is not another way of dividing the
+ * total — it is a statement about the same figure directly above it: how much
+ * of that was something the user did not ask for. Each half appears only when
+ * the host reported that share; a `0 次 · 0 token` line on every profile that
+ * runs no card scripts is a line a reader learns to skip, and the same holds
+ * for a profile that has never compacted.
+ *
+ * **Two sentences in one note, not two notes.** The note is the hairline block
+ * under the figure, and a second one would draw a second rule across the card
+ * for a fact of the same rank. Inside it each sentence is its own `<span>`
+ * carrying its own hint, because the two are explained differently — one is the
+ * card author's spend, the other is Iris's own policy — and a `title` belongs
+ * to one element.
  * @param props.totals - the range's aggregate.
  * @returns the cards.
  */
@@ -423,12 +432,24 @@ function Cards({ totals }: { totals: UsageTotals }): ReactElement {
       <div className="iris-usage__hero">
         <span className="iris-usage__total">{formatExactTokens(totalTokens(totals))}</span>
         <span className="iris-label">{t('usageCardTotal')}</span>
-        {totals.script === undefined ? null : (
-          <span className="iris-usage__hero-note" title={t('usageScriptBasis')}>
-            {t('usageScriptShare', {
-              n: totals.script.turns,
-              tokens: formatExactTokens(scriptTokens(totals)),
-            })}
+        {totals.script === undefined && totals.compaction === undefined ? null : (
+          <span className="iris-usage__hero-note">
+            {totals.script === undefined ? null : (
+              <span title={t('usageScriptBasis')}>
+                {t('usageScriptShare', {
+                  n: totals.script.turns,
+                  tokens: formatExactTokens(scriptTokens(totals)),
+                })}
+              </span>
+            )}
+            {totals.compaction === undefined ? null : (
+              <span title={t('usageCompactionBasis')}>
+                {t('usageCompactionShare', {
+                  n: totals.compaction.turns,
+                  tokens: formatExactTokens(compactionTokens(totals)),
+                })}
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -876,13 +897,36 @@ function ChatRows({
                   <ShareBar share={share} />
                   <span className="iris-meta">{share === null ? '—' : `${share}%`}</span>
                 </span>
+                {/*
+                  One cell for both side shares, stacked the way the hero note
+                  stacks its two sentences. Not two grid columns: a column that
+                  is blank on every conversation but the compacted ones would
+                  take width from the title on every row to say nothing, and the
+                  two facts belong to the same question — how much of this row
+                  was not a reply. Blank, never `0`, on a conversation with
+                  neither.
+                */}
                 <span className="iris-usage__chat-script iris-meta">
                   {chat.script === undefined
-                    ? ''
-                    : t('usageScriptCell', {
-                      n: chat.script.turns,
-                      tokens: formatTokens(scriptTokens(chat)),
-                    })}
+                    ? null
+                    : (
+                        <span>
+                          {t('usageScriptCell', {
+                            n: chat.script.turns,
+                            tokens: formatTokens(scriptTokens(chat)),
+                          })}
+                        </span>
+                      )}
+                  {chat.compaction === undefined
+                    ? null
+                    : (
+                        <span>
+                          {t('usageCompactionCell', {
+                            n: chat.compaction.turns,
+                            tokens: formatTokens(compactionTokens(chat)),
+                          })}
+                        </span>
+                      )}
                 </span>
                 <span className="iris-usage__chat-total">{formatTokens(totalTokens(chat))}</span>
               </button>

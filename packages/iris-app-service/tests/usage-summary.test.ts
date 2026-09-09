@@ -662,3 +662,134 @@ test('a source claimed on a message line is not read as a card’s spend', () =>
   assert.equal(read.records[0]?.usage.source, undefined)
   assert.equal(summariseUsage([read]).totals.script, undefined)
 })
+
+/*
+ * ------------------------------------------------------- the third population
+ *
+ * Iris's own compaction summary. Same standing as a card's generation — billed
+ * on this conversation's route, no candidate, stored on the header — and a
+ * different asker, so it is a share of its own rather than a second entry in
+ * the card column. The tests below are the ones that separate "two shares" from
+ * "one merged not-a-turn figure", which is the implementation that agrees with
+ * the correct one on every profile that only ever does one of the two.
+ */
+
+test('a compaction summary is counted in the whole and reported as its own share', () => {
+  const summary = summariseUsage([
+    chat('folded', [
+      record(NOON, 'deepseek-chat', { inputTokens: 100, outputTokens: 10, cacheReadTokens: 900 }),
+      record(NOON, 'deepseek-chat', {
+        inputTokens: 40, outputTokens: 4, cacheReadTokens: 360, source: 'script',
+      }),
+      record(NOON, 'deepseek-chat', {
+        inputTokens: 2_140, outputTokens: 96, cacheReadTokens: 768, source: 'compaction',
+      }),
+    ]),
+  ], { granularity: 'day' })
+
+  // In the whole, which is what keeps the total a total of the bill.
+  assert.equal(summary.totals.turns, 3)
+  assert.equal(summary.totals.cacheMiss, 2_280)
+  assert.equal(summary.totals.output, 110)
+  assert.equal(summary.totals.cacheRead, 2_028)
+
+  /*
+   * And the two shares, apart. Every figure here is a different number from
+   * every other, so the three wrong readings all fail: a merge reports
+   * `script.turns` 2, a swap reports `compaction.cacheMiss` 40, and dropping
+   * the compaction from the whole reports `cacheMiss` 140.
+   */
+  assert.equal(summary.totals.script?.turns, 1)
+  assert.equal(summary.totals.script?.cacheMiss, 40)
+  assert.equal(summary.totals.compaction?.turns, 1)
+  assert.equal(summary.totals.compaction?.cacheMiss, 2_140)
+  assert.equal(summary.totals.compaction?.output, 96)
+  assert.equal(summary.totals.compaction?.cacheRead, 768)
+
+  // The same split on the cell and on the conversation subtotal, because the
+  // three figures on the page have to be one reading of one set.
+  assert.equal(summary.buckets[0]?.compaction?.turns, 1)
+  assert.equal(summary.chats[0]?.compaction?.turns, 1)
+})
+
+test('the two side shares are independently absent', () => {
+  /*
+   * A profile can run card scripts and never compact, or compact and run no
+   * cards, and the page draws each sentence only for the share it has. An
+   * implementation with one merged bucket cannot express either of these rows,
+   * and one that emitted both shares whenever either existed would put
+   * 「其中压缩摘要 0 次」 on every profile with a card — the line
+   * `usageCompactionShare`'s absence rule exists to prevent.
+   */
+  const cardsOnly = summariseUsage([
+    chat('cards-only', [
+      record(NOON, 'deepseek-chat', { inputTokens: 40, outputTokens: 4, source: 'script' }),
+    ]),
+  ], { granularity: 'day' })
+  assert.equal(cardsOnly.totals.script?.turns, 1)
+  assert.equal(cardsOnly.totals.compaction, undefined)
+  assert.equal(cardsOnly.buckets[0]?.compaction, undefined)
+  assert.equal(cardsOnly.chats[0]?.compaction, undefined)
+
+  const foldedOnly = summariseUsage([
+    chat('folded-only', [
+      record(NOON, 'deepseek-chat', { inputTokens: 2_140, outputTokens: 96, source: 'compaction' }),
+    ]),
+  ], { granularity: 'day' })
+  assert.equal(foldedOnly.totals.compaction?.turns, 1)
+  assert.equal(foldedOnly.totals.script, undefined)
+  assert.equal(foldedOnly.buckets[0]?.script, undefined)
+  assert.equal(foldedOnly.chats[0]?.script, undefined)
+  // And the tokens were still counted: an absent share is not an absent record.
+  assert.equal(foldedOnly.totals.turns, 1)
+  assert.equal(foldedOnly.totals.cacheMiss, 2_140)
+})
+
+test('a compaction summary is read off the header beside a card’s, from one array', () => {
+  /*
+   * The scan half. Both populations live under the same header key, so the read
+   * has to split them by their stored `source` — the location cannot, and a
+   * reader that stamped the whole array as a card's (which is what this module
+   * shipped with) files Iris's own spend in the card column.
+   */
+  const text = chatFile({ chatId: 'both', title: 'Both', updatedAt: NOON }, [
+    [{ inputTokens: 100, outputTokens: 10, model: 'deepseek-chat', at: NOON }],
+  ]).replace(
+    '"chat_metadata":{}',
+    `"chat_metadata":{},${JSON.stringify(SIDE_USAGE_FIELD)}:${JSON.stringify([
+      {
+        inputTokens: 40, outputTokens: 4, model: 'deepseek-chat', provider: 'deepseek',
+        at: LATER_SAME_DAY, source: 'script', caller: 'script.generate',
+      },
+      {
+        inputTokens: 2_140, outputTokens: 96, model: 'deepseek-chat', provider: 'deepseek',
+        at: LATER_SAME_DAY, source: 'compaction', caller: 'host.compaction',
+      },
+    ])}`,
+  )
+  const read = readChatUsage('both', text)
+  assert.ok(read !== undefined)
+  assert.equal(read.records.length, 3, 'a header record was lost, or the message record was')
+  const summary = summariseUsage([read], { granularity: 'day' })
+  assert.equal(summary.totals.script?.turns, 1)
+  assert.equal(summary.totals.script?.cacheMiss, 40)
+  assert.equal(summary.totals.compaction?.turns, 1)
+  assert.equal(summary.totals.compaction?.cacheMiss, 2_140)
+})
+
+test('a compaction claimed on a message line is not read as one', () => {
+  /*
+   * The location's half of the rule, in the direction the new source opens: a
+   * per-message array is by construction a candidate's, so `source:
+   * 'compaction'` written there must leave the record a turn. The inverse — the
+   * header array refusing `'turn'` — is pinned in `side-usage.test.ts`.
+   */
+  const text = chatFile({ chatId: 'lying-host', title: 'Lying', updatedAt: NOON }, [
+    [{ inputTokens: 100, outputTokens: 10, at: NOON, source: 'compaction' }],
+  ])
+  const read = readChatUsage('lying-host', text)
+  assert.ok(read !== undefined)
+  assert.equal(read.records.length, 1, 'the record was refused rather than read as a turn')
+  assert.equal(read.records[0]?.usage.source, undefined)
+  assert.equal(summariseUsage([read]).totals.compaction, undefined)
+})

@@ -1214,6 +1214,28 @@ export const en = {
    * bare number after a count of requests reads as a second count.
    */
   usageScriptCell: '{n} card · {tokens} tok',
+  /*
+   * The compaction share: the same three places, the same 「其中」 framing, and a
+   * **separate sentence rather than a widened one**.
+   *
+   * The two shares are independently absent — a profile can run card scripts
+   * and never compact, or compact and run no cards — so one sentence covering
+   * both would have to be assembled from clauses at four different
+   * combinations, which is a sentence in neither language. Two sentences that
+   * each appear only when their own share does say the same thing and read as
+   * written copy in both columns.
+   *
+   * 「压缩摘要」 names the request, not the feature: what was billed is one
+   * summary request, and a reader who has met the 「/compact」 command already
+   * has the word.
+   */
+  usageCompactionShare: 'of which {n} compaction summaries · {tokens} tok',
+  usageCompactionBasis: 'Requests Iris itself made to fold this range’s older history into summaries. They are billed like a turn, produce no reply, and are counted inside every figure on this page.',
+  /**
+   * The subtotal list's compaction column, sharing the card column's cell. Same
+   * blank-never-zero rule, and the same reason `tok` is spelled out.
+   */
+  usageCompactionCell: '{n} compaction · {tokens} tok',
   /** Nothing to draw, because this figure was never billed — not a chart of zeros. */
   usageChartEmpty: 'Nothing was billed to this figure in this range.',
   /**
@@ -2410,6 +2432,9 @@ export const zh: Record<StringKey, string> = {
   usageScriptShare: '其中卡脚本请求 {n} 次 · {tokens} tok',
   usageScriptBasis: '卡自己的脚本发起的请求（TavernHelper.generate / generateRaw）。它们和一次回合一样计费，但不产生任何回复，本页每个数字都已把它们算在内。',
   usageScriptCell: '卡脚本 {n} 次 · {tokens} tok',
+  usageCompactionShare: '其中压缩摘要 {n} 次 · {tokens} tok',
+  usageCompactionBasis: 'Iris 自己发起的请求，用来把这段时间较早的历史折成摘要。它们和一次回合一样计费，但不产生任何回复，本页每个数字都已把它们算在内。',
+  usageCompactionCell: '压缩摘要 {n} 次 · {tokens} tok',
   usageChartEmpty: '这段时间这个指标没有产生计费。',
   contextPill: '上下文 {used}/{total} · {percent}%',
   contextPillCapacity: '上下文 {total}',

@@ -21,7 +21,7 @@ import {
   totalTokens,
   usageDetailRows,
   usageLineGroups,
-  usageScriptShareSentence,
+  usageSideShareSentences,
   usageSummaryRows,
 } from '../src/app/token-format.ts'
 import { DICTIONARIES } from '../src/app/i18n/strings.ts'
@@ -295,22 +295,52 @@ test('the composer line is the session rows, flattened', () => {
   }
 })
 
-test('the summary card’s share note reads as a breakdown, only when there is one', () => {
+test('the summary card’s share notes read as a breakdown, one per share that exists', () => {
   /*
-   * The composer's visible groups already count a card's requests — they are
-   * summed into `ChatView.usage` because they were billed to this conversation,
-   * which is what makes the note agree with the bill — so the sentence under
-   * the card's rows is a breakdown of the figures above it and never an
-   * addition to them. A reader adding the two would double-count, which is what
-   * the 「其中」 / "of which" wording is for.
+   * The composer's visible groups already count a card's requests and the
+   * host's compaction summaries — they are summed into `ChatView.usage` because
+   * they were billed to this conversation, which is what makes the notes agree
+   * with the bill — so the sentences under the card's rows are a breakdown of
+   * the figures above them and never an addition to them. A reader adding them
+   * would double-count, which is what the 「其中」 / "of which" wording is for.
    */
-  const share = { turns: 2, usage: { inputTokens: 400, outputTokens: 60 } }
+  const script = { turns: 2, usage: { inputTokens: 400, outputTokens: 60 } }
+  const compaction = { turns: 1, usage: { inputTokens: 900, outputTokens: 140 } }
 
-  // No card share means no note: the state every conversation whose cards
-  // never generated is in.
-  assert.equal(usageScriptShareSentence(undefined), '')
-  // With one, the count and the tokens of the share's own buckets, never the
-  // whole row's. 460 and not 2,300.
-  assert.equal(usageScriptShareSentence(share), 'of which 2 card-script requests · 460 tok')
-  assert.equal(usageScriptShareSentence(share, 'zh'), '其中卡脚本请求 2 次 · 460 tok')
+  // Neither share means no notes: the state every conversation whose cards
+  // never generated and which has never been compacted is in.
+  assert.deepEqual(usageSideShareSentences(undefined, undefined), [])
+  /*
+   * **The four combinations, because the two shares are independently
+   * absent.** A conversation can run card scripts and never compact, or
+   * compact and run no cards, and an implementation that drew the second
+   * sentence only when the first was there would pass a check that only ever
+   * looked at "both" and "neither".
+   */
+  assert.deepEqual(
+    usageSideShareSentences(script, undefined),
+    ['of which 2 card-script requests · 460 tok'],
+  )
+  assert.deepEqual(
+    usageSideShareSentences(undefined, compaction),
+    ['of which 1 compaction summaries · 1,040 tok'],
+  )
+  // Both, card first — the order the panel's own note stacks them in.
+  assert.deepEqual(
+    usageSideShareSentences(script, compaction),
+    [
+      'of which 2 card-script requests · 460 tok',
+      'of which 1 compaction summaries · 1,040 tok',
+    ],
+  )
+  /*
+   * Each sentence carries the count and the tokens of **its own** share's
+   * buckets: 460 and 1,040, never each other and never the 1,500 they add to.
+   * The two fixtures differ in every bucket for that reason — a reader that
+   * took the wrong share would otherwise print a right-looking number.
+   */
+  assert.deepEqual(
+    usageSideShareSentences(script, compaction, 'zh'),
+    ['其中卡脚本请求 2 次 · 460 tok', '其中压缩摘要 1 次 · 1,040 tok'],
+  )
 })

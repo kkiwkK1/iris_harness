@@ -493,6 +493,27 @@ class InMemoryClient implements FakeClient {
           at: Date.now(),
           model: chat.settings.model,
         }
+        /*
+         * **The summary request's own bill**, because the host records one:
+         * `#summarize` goes through `#stream` with `source: 'compaction'`, and
+         * the record lands on the header beside a card's generations. A fake
+         * that compacted for free would render a compacted conversation with no
+         * compaction share — a state the product can no longer produce, and
+         * exactly the one a surface reading that share has to be exercised on.
+         *
+         * The figures are the fake's own crude ratio and not a reading: the
+         * span it just replaced is what went out as the prompt, the summary is
+         * what came back. No cache bucket, so the absent-versus-zero rule stays
+         * live inside the share as well as outside it.
+         */
+        chat.sideUsage = [...chat.sideUsage ?? [], {
+          inputTokens: spanTokens,
+          outputTokens: chat.compaction.summaryTokens,
+          model: chat.settings.model,
+          provider: chat.settings.provider,
+          at: chat.compaction.at,
+          source: 'compaction',
+        }]
         chat.updatedAt = Date.now()
         return {
           view: toChatView(chat),
