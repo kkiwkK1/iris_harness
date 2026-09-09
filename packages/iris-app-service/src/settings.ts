@@ -265,6 +265,25 @@ export class SettingsStore {
   }
 
   /**
+   * The model the composition configured this host with.
+   *
+   * The same reading as {@link configuredRoute}, one field over, and it exists
+   * for the same reason: the global layer's `model` is whatever the last
+   * activation wrote there, so a reader asking "what model did this host start
+   * on?" of that layer is told about the newest connection instead. On the
+   * shipped composition this is `IRIS_MODEL` (`apps/iris/cordis.yml`'s `app`
+   * row), which is what the panel's 「宿主环境」 row means by its model.
+   *
+   * Unlike the route it *can* be a value nothing serves — a model id the
+   * endpoint has since dropped — and that is not this accessor's business:
+   * it reports the configuration, and the endpoint judges the id.
+   * @returns the configured model.
+   */
+  configuredModel(): string {
+    return this.#defaults.model
+  }
+
+  /**
    * Drop every layer whose `provider` names one route, and say which.
    *
    * The write a deleted connection needs (`connection.delete`) and the write a

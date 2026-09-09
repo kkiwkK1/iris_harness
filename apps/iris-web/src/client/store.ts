@@ -1123,6 +1123,17 @@ export interface IrisActions {
    * @param id - the provider to generate through.
    */
   activateConnection(id: string): Promise<void>
+  /**
+   * Use the **host's own** connection: the one it was launched with.
+   *
+   * The same verb as {@link activateConnection}, on the one row that is not a
+   * profile — so it takes no id, and it is global for the same reason that one
+   * is. What the host does with it is put the global layer back on its launch
+   * route and model and forget which profile was applied (host §60); what this
+   * does with the answer is exactly what it does with an activation's, which is
+   * why the two answers are shaped alike.
+   */
+  deactivateConnection(): Promise<void>
   saveConnection(patch: {
     id?: string
     label?: string
@@ -2721,6 +2732,40 @@ export function createIrisStore(
           // Re-read rather than let the composer keep marking a stale
           // difference. Silent on failure: the switch itself succeeded, and a
           // notice here would attribute a follow-up read's failure to it.
+          if (chatId !== undefined) {
+            const refreshed = await client.call('settings.get', { chatId }).catch(() => undefined)
+            if (refreshed !== undefined && get().chatId === chatId) {
+              set({ settings: refreshed.settings, settingsOverrides: refreshed.overrides })
+            }
+          }
+        })
+      },
+
+      async deactivateConnection(): Promise<void> {
+        const chatId = get().chatId
+        await guard(async () => {
+          /*
+           * **No `chatId`, for the same reason `connection.activate` sends
+           * none.** This is the provider list's own verb on the one row that is
+           * not a profile, and that list is the host's; a conversation's own
+           * model is the composer capsule's business (`setChatModel`).
+           *
+           * `activeConnectionId` comes from the answer rather than being set to
+           * `undefined` here: the host is the one that decides no profile is
+           * applied any more, and reading it back is what makes this line the
+           * same line the activation writes.
+           */
+          const result = await client.call('connection.deactivate', {})
+          set({
+            settings: result.settings,
+            activeConnectionId: result.activeId,
+            ...result.host === undefined ? {} : { hostConnection: result.host },
+          })
+          // The same follow-up read an activation does, for the same reason: the
+          // global layer moved under an open conversation, so a chat that
+          // overrides nothing is now generating with a different model and the
+          // composer's capsule has to say so. Silent on failure — the switch
+          // itself succeeded.
           if (chatId !== undefined) {
             const refreshed = await client.call('settings.get', { chatId }).catch(() => undefined)
             if (refreshed !== undefined && get().chatId === chatId) {

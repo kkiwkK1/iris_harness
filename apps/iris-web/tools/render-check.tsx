@@ -1030,6 +1030,43 @@ async function main(): Promise<void> {
   assert.doesNotMatch(hostMarkup, /aria-label="Edit /, 'the host row offers an edit it cannot honour')
   assert.doesNotMatch(hostMarkup, /aria-label="Delete /, 'the host row offers a delete it cannot honour')
 
+  /*
+   * ...and **selectable**, which it was not (web §77's first cost, now §78).
+   * 使用 on this row is `connection.deactivate`: the global layer goes back to
+   * the route and model the host was launched with, from the snapshot host §60
+   * takes at construction. A profile is in use in this render, so the verb is
+   * offered here.
+   */
+  assert.match(hostMarkup, /aria-label="Use Host environment"/, 'the host row cannot be selected back')
+
+  /*
+   * And with nothing applied it is the other way round: the 「current」 badge and
+   * no verb, exactly as a provider row does it — a press whose only possible
+   * effect is nothing is not offered.
+   *
+   * Rendered from a written store state and put straight back, the same
+   * concession the host-row check above the connections block already makes:
+   * the fake seeds an active profile, and "no profile applied" is a state the
+   * seed cannot be in while every other check below wants the seeded one.
+   */
+  const seededActive = wired.store.getState().activeConnectionId
+  assert.ok(seededActive !== undefined, 'the fixture must seed an active profile for this contrast')
+  wired.store.setState({ activeConnectionId: undefined })
+  const onHost = render(wired.store, slots.core, <ConnectionPanel />)
+  wired.store.setState({ activeConnectionId: seededActive })
+  const onHostAt = onHost.indexOf('iris-conn--host')
+  const onHostRow = onHost.slice(
+    onHostAt,
+    onHost.indexOf('</div>', onHost.indexOf('iris-conn__actions', onHostAt)),
+  )
+  assert.doesNotMatch(onHostRow, /aria-label="Use Host environment"/, 'the row in use still offers 使用')
+  assert.match(onHostRow, /iris-conn__badge">current</, 'the host row is not marked current with nothing applied')
+  assert.equal(
+    (onHost.match(/aria-current="true"/g) ?? []).length,
+    1,
+    'exactly one row should be marked current when the host row is the one in use',
+  )
+
   // 4. The collapsed head is a reading, not a control: name · model, and no
   //    field or nested press inside the summary.
   const headAt = connPanel.indexOf('iris-card__summary')

@@ -753,6 +753,27 @@ export class IrisAppService {
   readonly #installedRoutes = new Set<string>()
 
   /**
+   * The route and model this host was **launched** with, read once.
+   *
+   * A snapshot rather than a reader, and the difference is the whole point.
+   * `#hostConnection()` used to answer its `provider` and `model` from the
+   * **global settings layer**, which is where every global activation writes
+   * (`ConnectionStore.patchOf`) — so after one 使用 the panel's 「宿主环境」 row
+   * described the activated profile's route while claiming to describe the
+   * launch configuration, and a 「使用」 on that row would have re-applied the
+   * profile it was offering to leave. Both halves come from places nothing but
+   * a restart can move: the composition's own `hostConnection`, else the
+   * settings store's constructed defaults ({@link SettingsStore.configuredRoute}
+   * / {@link SettingsStore.configuredModel}, which on the shipped composition
+   * are `apps/iris/cordis.yml`'s `app` row and therefore `IRIS_MODEL`).
+   *
+   * Taken in the constructor, before `settings.load()` can have replaced the
+   * layer — though it would not matter if it had, because `#defaults` is not
+   * the layer.
+   */
+  readonly #launch: { provider: string, model: string }
+
+  /**
    * @param options - domain stores, the model stream, and the event sink.
    */
   constructor(options: AppServiceOptions) {
@@ -798,6 +819,11 @@ export class IrisAppService {
     // handlers are ever registered, so nothing here needs to read files.
     this.#activePreset = this.#options.preset
     this.#activePresetName = options.presetName
+    // Read here and never again: see {@link #launch}.
+    this.#launch = {
+      provider: this.#options.hostConnection?.provider ?? this.#options.settings.configuredRoute(),
+      model: this.#options.hostConnection?.model ?? this.#options.settings.configuredModel(),
+    }
   }
 
   /** How well the token estimate currently tracks the provider, for diagnostics. */
@@ -946,17 +972,22 @@ export class IrisAppService {
   /**
    * The route the **composition** registered, which is always served.
    *
-   * Deliberately not `#hostConnection().provider`. That reader answers from the
-   * global settings layer when the composition handed no connection in (the
-   * shipped one does not), and the global layer is one of the two places a
-   * dangling route name can sit — so a check of "is this the host's own route?"
-   * written against it would answer yes *for the dangling name itself* and pass
-   * exactly the request it exists to catch. The configured default cannot
-   * dangle: it is the `llm-openai-compat` row's own registration.
+   * Read off {@link #launch}, and never off the **global settings layer**: that
+   * layer is one of the two places a dangling route name can sit, so a check of
+   * "is this the host's own route?" written against it would answer yes *for
+   * the dangling name itself* and pass exactly the request it exists to catch.
+   * The launch snapshot cannot dangle — it is the `llm-openai-compat` row's own
+   * registration.
+   *
+   * This docblock used to warn "deliberately not `#hostConnection().provider`",
+   * because that reader *did* answer from the global layer. Since 2026-09-09
+   * (host §60) it reads the same snapshot as this method, so the two agree by
+   * construction rather than by which one a caller happened to reach for; the
+   * warning survives as the reason the snapshot exists at all.
    * @returns the route key the host generates through with no connection applied.
    */
   #hostRoute(): string {
-    return this.#options.hostConnection?.provider ?? this.#options.settings.configuredRoute()
+    return this.#launch.provider
   }
 
   /**
@@ -1093,17 +1124,20 @@ export class IrisAppService {
    * The connection this host was started with, as the composition told it or
    * as the environment still says.
    *
-   * The provider and model come from the **global settings layer**, which is
-   * where the composition's own `provider` / `model` row landed — so the row
-   * describes the route the host actually generates through rather than a
-   * second copy of the same configuration.
+   * The provider and model come from {@link #launch} — the **launch snapshot**,
+   * not the global settings layer. Reading the layer (which is what this did
+   * until 2026-09-09, host §60) made the answer follow every global activation:
+   * `ConnectionStore.patchOf` writes `provider` and `model` there, so one 使用
+   * and this method described the profile in force while every caller's
+   * docblock said it described the launch configuration. The endpoint and the
+   * credential still come from the environment, because those are the two
+   * fields the settings layer never held.
    * @returns the host's own connection, credential included (in-process only).
    */
   #hostConnection(): HostConnection {
     const explicit = this.#options.hostConnection
     if (explicit !== undefined) return explicit
-    const global = this.#options.settings.get()
-    return hostConnectionFromEnv(this.#options.env, { provider: global.provider, model: global.model })
+    return hostConnectionFromEnv(this.#options.env, this.#launch)
   }
 
   /**
@@ -2231,6 +2265,55 @@ export class IrisAppService {
         }
         await store.markActive(id)
         return { settings: applied, activeId: id }
+      },
+
+      'connection.deactivate': async () => {
+        const store = this.#connections()
+        await store.clearActive()
+        /*
+         * **The global layer goes back to the launch configuration — route and
+         * model both.**
+         *
+         * §59's rule for a *deletion* is the opposite one: clear the reference,
+         * keep the values, because a model id and a temperature outlive the
+         * profile that supplied them and losing them is a second loss nobody
+         * asked for. This is not a deletion. It is the same act as
+         * `connection.activate` one row up — the user choosing which connection
+         * generates — and the row they chose is the launch configuration, whose
+         * model is as much a part of it as its route. Writing the route and
+         * leaving the last profile's model behind would answer 「使用宿主环境」
+         * with a route from the environment and a model from a connection the
+         * list now says is not in use.
+         *
+         * Sampling is untouched, and that is §59's rule doing its job in the
+         * place it belongs: the launch configuration carries no temperature to
+         * restore, so anything here would be inventing one.
+         *
+         * `provider` is written rather than cleared (`{ provider: null }`,
+         * which `SettingsStore.set` restores to `configuredRoute()`) because
+         * the snapshot is the wider answer: a composition that handed a
+         * `hostConnection` in has a route its settings defaults never saw, and
+         * a clear would put the layer on a route `#hostRoute()` does not name —
+         * which `#resolveRoute` would then have to repair on the next turn.
+         */
+        const applied = await settings.set(undefined, {
+          provider: this.#launch.provider,
+          model: this.#launch.model,
+        })
+        // The adapter the last activation installed is left registered. It is
+        // this process's own registry entry, nothing names it any more, and
+        // un-installing is not something `installConnection` offers — a route
+        // nobody references costs a map entry until the process ends.
+        this.#report(
+          `no connection profile is applied any more: the global layer is back on the launch route `
+          + `"${this.#launch.provider}" with model "${this.#launch.model}" (sampling is left as it stands)`,
+          { kind: 'host', grade: 'note' },
+        )
+        // `activeId` is deliberately absent rather than a field holding
+        // `undefined`: the browser writes `activeConnectionId: result.activeId`
+        // from this answer exactly as it does from `activate` and `list`, and
+        // the three shapes being one shape is what lets it.
+        return { settings: applied, host: this.#hostDefaultRow() }
       },
 
       'connection.test': async (input) => {

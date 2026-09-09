@@ -59,6 +59,20 @@ const KEY_TAIL_MIN_LENGTH = 8
 const SEEDED_PROBE_AT = 1_772_323_200_000
 
 /**
+ * The route and model the fake "host" was launched on.
+ *
+ * Its own constant because two answers read it and they must not drift: the
+ * host row the panel renders ({@link HOST_DEFAULT}) and the settings
+ * {@link deactivateConnection} puts back. On the real host both come from one
+ * launch snapshot (host §60); one literal here is the same property.
+ *
+ * A plain pair rather than a slice of `HostDefaultConnection`, whose `model` is
+ * optional — a caller that has to cope with an absent model would be coping
+ * with a shape this fixture never produces.
+ */
+const HOST_LAUNCH = { provider: 'default', model: 'deepseek-chat' } as const
+
+/**
  * The connection the fake "host" was started with.
  *
  * Modelled because the interface has a **branch** for it — a host configured
@@ -69,9 +83,9 @@ const SEEDED_PROBE_AT = 1_772_323_200_000
  * projects.
  */
 const HOST_DEFAULT: HostDefaultConnection = {
-  provider: 'default',
+  provider: HOST_LAUNCH.provider,
   baseURL: 'https://api.deepseek.com/v1',
-  model: 'deepseek-chat',
+  model: HOST_LAUNCH.model,
   keySource: 'env',
   keyEnv: 'DEEPSEEK_API_KEY',
   /**
@@ -323,4 +337,22 @@ export function activateConnection(
     settings: { provider: profile.provider, model: profile.model, ...profile.sampling },
     activeId: id,
   }
+}
+
+/**
+ * Apply no profile: back to the connection this fake "host" was launched with.
+ *
+ * The route and model come from {@link HOST_LAUNCH} — the host row's own — and
+ * **not** from `DEFAULT_SETTINGS` (`seed.ts`), which looks like the same thing
+ * and is not: that fixture is the *activated* seed profile's own values
+ * (`local-qwen`'s provider, model and sampling, because `activeId` starts on
+ * it), so returning there would answer "use the host environment" with the
+ * route of the profile being left. The real host answers from its launch
+ * snapshot for exactly this reason (host §60).
+ * @returns the route and model the global layer goes back to; sampling is not
+ * part of a launch configuration and is left as it stands.
+ */
+export function deactivateConnection(): { provider: string, model: string } {
+  activeId = undefined
+  return { ...HOST_LAUNCH }
 }

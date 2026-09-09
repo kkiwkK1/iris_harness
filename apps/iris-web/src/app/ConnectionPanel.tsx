@@ -438,9 +438,13 @@ export function ConnectionPanel(): ReactElement {
    *
    * One press, and the key does not travel: `adoptHostKey` asks the host to
    * copy the credential it already holds into the new profile. The browser
-   * names a key it has never been shown. This is also the way **back** to the
-   * host's connection once a provider is in use — see `connHostUseGap` and
-   * DEVIATIONS §77 for why the row itself cannot be re-selected.
+   * names a key it has never been shown.
+   *
+   * This used to double as the only way **back** to the host's connection,
+   * which is why it carried the `connHostUseGap` sentence beside it. It does
+   * not any more — the row's own 使用 is that way (web §78) — so what adopting
+   * is for is what it says: an *editable* copy, whose endpoint, model or key
+   * can then differ from the one the process was launched with.
    */
   const adoptHost = async (): Promise<void> => {
     // A profile must name a model — the protocol refuses one that does not — so
@@ -556,9 +560,19 @@ export function ConnectionPanel(): ReactElement {
             Read-only, because it is not a profile: it has no id, it lives in
             the environment the process was launched with, and editing or
             deleting it here would be editing something this page cannot reach.
-            It can be tested, and it can be **saved as a provider** — one press,
-            and the host copies its own credential into a real profile. The key
-            does not pass through the browser in either direction.
+            **Selectable, though** — 使用 on this row is `connection.deactivate`,
+            which puts the global layer back on the route and model the host was
+            launched with and forgets which profile was applied. It used to
+            carry a sentence explaining why it could not be chosen (web §77's
+            first cost): the row read the *global settings layer*, so after any
+            activation it described the profile in force, and a 「使用」 on it
+            would have re-applied that profile under the host's name. Host §60
+            snapshots the launch configuration and gives the store a clearing
+            path, so the button is honest and the sentence is gone (web §78).
+
+            It can also be tested, and it can be **saved as a provider** — one
+            press, and the host copies its own credential into a real profile.
+            The key does not pass through the browser in either direction.
           */}
           {host === undefined ? null : (
             <div className="iris-conn iris-conn--host" aria-current={activeId === undefined}>
@@ -587,6 +601,22 @@ export function ConnectionPanel(): ReactElement {
                 </span>
               </div>
               <div className="iris-conn__actions">
+                {/*
+                  Same verb, same position, same condition as a provider row's:
+                  offered while this row is not the current one, and replaced by
+                  the 「当前」 badge above when it is. A row that showed 使用 while
+                  already in use would be a press with nothing to do.
+                */}
+                {activeId === undefined ? null : (
+                  <button
+                    type="button"
+                    className="iris-act"
+                    aria-label={t('connUseNamed', { name: t('hostDefaultTitle') })}
+                    onClick={() => void actions.deactivateConnection()}
+                  >
+                    {t('connUse')}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="iris-act"
@@ -616,7 +646,6 @@ export function ConnectionPanel(): ReactElement {
               {host.baseURL === undefined || host.baseURL === ''
                 ? <p className="iris-field__note">{t('connTestNeedsEndpoint')}</p>
                 : null}
-              <p className="iris-field__note">{t('connHostUseGap')}</p>
             </>
           )}
 

@@ -332,7 +332,7 @@ test('a generation on a deleted connection’s route falls back to the host, say
   assert.equal(fallbacks(await fixed.reports()).length, 1, 'the repair did not hold')
 })
 
-test('a dangling route in the global layer is caught, though the host row is read from that layer', async (t) => {
+test('a dangling route in the global layer is caught, and not by reading that layer', async (t) => {
   const fixed = await fixture(t)
   const chat = (await fixed.handlers['chat.create']({ characterId: 'aria' })).view.chatId
   // A global activation whose profile has since been deleted — the same state
@@ -344,17 +344,47 @@ test('a dangling route in the global layer is caught, though the host row is rea
   await fixed.settled()
 
   // **The case that separates the two readings of "the host's own provider".**
-  // `#hostConnection()` answers from the global settings layer when the
-  // composition hands no connection in, so a guard written against it would
-  // compare the dangling name with itself, pass, and send the request to a
-  // route with no adapter. The configured default is the only reading that
-  // cannot dangle.
+  // A guard written against the global settings layer would compare the
+  // dangling name with itself, pass, and send the request to a route with no
+  // adapter. The launch snapshot is the only reading that cannot dangle — and
+  // since host §60 it is the one `#hostConnection()` uses too, so the two
+  // readings agree by construction rather than by which one the guard reached
+  // for. This test held while they disagreed and holds now that they do not.
   assert.deepEqual(fixed.seen, ['default'])
   assert.equal(fixed.settings.get().provider, 'default', 'the global layer kept a route nothing serves')
   const said = fallbacks(await fixed.reports())
   assert.equal(said.length, 1)
   assert.match(said[0]?.message ?? '', /the global setting/u)
   assert.equal(fixed.pushed.length, 1, 'a repair of the global route was not pushed')
+})
+
+test('a generation after a deactivation takes the ladder’s first rung and reports nothing', async (t) => {
+  const fixed = await fixture(t)
+  const chat = (await fixed.handlers['chat.create']({ characterId: 'aria' })).view.chatId
+  const saved = await fixed.handlers['connection.save']({
+    provider: 'deepseek', model: 'deepseek-chat', baseURL: ENDPOINT, apiKey: 'sk-x',
+  })
+  const id = saved.profiles[0]?.id
+  assert.ok(id !== undefined)
+  await fixed.handlers['connection.activate']({ id })
+
+  await fixed.handlers['connection.deactivate']({})
+
+  // What the deactivation wrote is the host's own route, so `#resolveRoute`'s
+  // first question — `provider === #hostRoute()` — answers yes. The failure
+  // this rules out is a deactivation that put the layer on a *name* rather than
+  // on the host's route: the request would still generate, by falling back, and
+  // it would report a fault and rewrite the setting on every turn.
+  assert.equal(fixed.settings.get().provider, 'default')
+  await fixed.handlers['chat.send']({ chatId: chat, text: 'Go on.' })
+  await fixed.settled()
+
+  assert.deepEqual(fixed.seen, ['default'])
+  assert.deepEqual(fallbacks(await fixed.reports()), [], 'the route the deactivation wrote read as dangling')
+  assert.deepEqual(fixed.pushed, [], 'a deactivation interrupted the reader')
+  // The adapter the activation installed is still registered and simply
+  // unreferenced: nothing un-installs, and nothing needs to.
+  assert.equal(fixed.installs.length, 1)
 })
 
 test('a card’s own generation resolves the route the same way a turn does', async (t) => {

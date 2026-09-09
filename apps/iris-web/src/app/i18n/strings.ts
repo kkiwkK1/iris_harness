@@ -958,15 +958,13 @@ export const en = {
 
   /** The connection the host process was started with: the list's first row, not a profile. */
   hostDefaultTitle: 'Host environment',
-  hostDefaultNote: 'What this host was started with. It generates while no provider is selected.',
+  hostDefaultNote: 'The route and model this host was launched with. Use it to put the global route back on it.',
   hostDefaultKeyEnv: 'Key from the environment variable {env}',
   hostDefaultKeyAnon: 'Key from the host’s environment',
   hostDefaultNoKey: 'No key configured',
   hostDefaultEndpointRidden: 'the host’s configured endpoint',
   adoptHostConnection: 'Save as a provider',
   hostAdopted: 'Saved as a provider. The host copied its own key across — the browser never saw it.',
-  /** Why this row has no Use button. See DEVIATIONS §77. */
-  connHostUseGap: 'This row cannot be selected back once a provider is in use: the host holds no record of the route it was started with. Save it as a provider to get an editable, selectable copy.',
   testErrMissingKey: 'This endpoint needs an API key — paste one above, then test again.',
   testErrUnauthorized: 'The endpoint refused the key (401/403). Check it and try again.',
   testErrTimeout: 'The endpoint did not answer in time. Is the address right, and is it up?',
@@ -2303,15 +2301,13 @@ export const zh: Record<StringKey, string> = {
 
   /** 宿主启动时所用的那条连接：列表的第一行，不是一个 profile。 */
   hostDefaultTitle: '宿主环境',
-  hostDefaultNote: '这是宿主启动时配置的连接。在没有选中任何供应商时，回复由它生成。',
+  hostDefaultNote: '这是宿主启动时配置的路由与模型。点「使用」即可把全局路由放回它。',
   hostDefaultKeyEnv: '密钥来自环境变量 {env}',
   hostDefaultKeyAnon: '密钥来自宿主环境',
   hostDefaultNoKey: '未配置密钥',
   hostDefaultEndpointRidden: '宿主配置的端点',
   adoptHostConnection: '存为供应商',
   hostAdopted: '已存为供应商。密钥由宿主自行复制，浏览器全程没有经手。',
-  /** 这一行为什么没有「使用」按钮。见 DEVIATIONS §77。 */
-  connHostUseGap: '一旦开始使用某个供应商，这一行就无法再被选回：宿主没有留下启动时那条路由的记录。把它存为供应商，就得到一份可编辑、可选用的副本。',
   testErrMissingKey: '该端点需要 API 密钥——请在上方粘贴后重新测试。',
   testErrUnauthorized: '端点拒绝了这个密钥（401/403）。请检查后重试。',
   testErrTimeout: '端点未在时限内应答。地址是否正确？服务是否在运行？',
