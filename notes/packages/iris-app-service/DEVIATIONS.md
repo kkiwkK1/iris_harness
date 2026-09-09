@@ -4597,6 +4597,52 @@ host's own previous answer.
 other than the index and code point; a `network` message on a refused port that
 does not carry the socket code.
 
+## 58. A profile's route generates with the key its probe was passed with
+
+**Kind: fix — the connection test and the installed route resolved the credential differently.**
+
+Reported 2026-09-09 from 8788: a DeepSeek profile (preset `deepseek`, base URL the
+bare `https://api.deepseek.com`) probed green, then every generation answered
+`https://api.deepseek.com/v1/chat/completions responded 401: Authentication Fails (governor)`.
+Measured against the endpoint the same hour: DeepSeek says `(governor)` **only** for
+a request with no `Authorization` header at all; a wrong key gets
+`Your api key: **** is invalid`, an empty Bearer gets `auth header format should be`.
+So the route sent no key. The host's own credential opened both `/models` and
+`/chat/completions` for the public model and the `-expires-on-0910` id alike.
+
+**Why.** `connection.test` resolves its key through `#probeCredential`: typed →
+the named profile's stored key → the host's startup key **at the same origin** →
+none, and reports the source. `connection.activate` (and the boot-time re-install
+in `index.ts`) installed the route with the profile's own `apiKey`/`apiKeyHeader`
+and nothing else. The form's key field, left blank on a same-origin profile,
+reads 「由宿主环境提供，留空即使用它」 — a promise the probe kept and the route did
+not. The profile was saved without a key, the probe passed with the host's, the
+route generated with none.
+
+**Now.** `routeCredential(profile, host)` in `connections.ts` is the one ladder for
+a route: the profile's own key (`stored`), else the host's at the same origin
+(`host`), else none — the same three rungs the probe climbs below "typed", gated by
+the same `sameEndpointOrigin`, so the host's credential still never reaches another
+origin (pinned). Both installers use it: `#installConnectionFor` at activation and
+the `storedActive` restore at boot. The header travels with the key that won. The
+report line now ends in `key: stored|host|none` (grade `note` — the activation was
+served; the word `none` is the diagnosis), so a route about to generate bare is
+visible in the log before the endpoint says so — never the key. The boot restore
+logs a warning for the same case.
+
+**Pinned.** Same-origin profile with no key → installed with the host key; a
+profile with its own key → its own; a different origin → none; the pure ladder's
+four outcomes including the empty stored string.
+
+**Found but not changed.** The form still saves such a profile with `hasKey`
+absent, so a later host started without the environment credential will generate
+bare with the same 401; the panel's sentence covers the running host, not a
+future one. Adopting into the file (`adoptHostKey`) remains the durable choice.
+
+**What would overturn it.** A route installed with a key the probe of the same
+profile would not have sent; a host key reaching an origin other than the
+host's; a `none` install that does not warn.
+
 ## 59. A connection's `provider` is a reference to a runtime route, not a snapshot of values — so a deletion cleans the layers and a generation resolves the route
 
 **Kind: divergence from upstream (pre-existing), plus two fixes to what the

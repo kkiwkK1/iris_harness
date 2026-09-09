@@ -41,6 +41,7 @@ import {
   hostConnectionFromEnv,
   hostDefaultView,
   routeOf,
+  routeCredential,
   sameEndpointOrigin,
   type HostConnection,
   type HostProbeRecord,
@@ -871,22 +872,30 @@ export class IrisAppService {
   /**
    * Hand a profile's endpoint to the composition's installer, saying so in the
    * report without saying the key.
+   *
+   * The credential is resolved by {@link routeCredential} — the profile's own
+   * key, else the host's at the same origin, else none — so a route generates
+   * with exactly the key `connection.test` would have probed with. Measured
+   * 2026-09-09: a same-origin profile saved with the key field blank (the form
+   * says the host supplies it) probed green and then generated with **no**
+   * `Authorization` header at all, which DeepSeek answers
+   * `401 Authentication Fails (governor)`. The report names the source, never
+   * the key, so a `none` is visible in the log before the endpoint says so.
    * @param route - the provider route to serve the endpoint under.
-   * @param baseURL - the endpoint root.
-   * @param credential - the key and the header it is sent in.
+   * @param profile - the profile whose endpoint is being installed.
    * @returns whether an adapter was installed. False means this host was
    *   composed without an installer, so the route is **not** served — the
    *   caller must not treat a silent return as success.
    */
   #installConnectionFor(
     route: string,
-    baseURL: string,
-    credential: { apiKey?: string | undefined, apiKeyHeader?: string | undefined },
+    profile: { baseURL: string, apiKey?: string | undefined, apiKeyHeader?: string | undefined },
   ): boolean {
     const install = this.#options.installConnection
     if (install === undefined) return false
+    const credential = routeCredential(profile, this.#hostConnection())
     install(route, {
-      baseURL,
+      baseURL: profile.baseURL,
       ...credential.apiKey === undefined ? {} : { apiKey: credential.apiKey },
       ...credential.apiKeyHeader === undefined ? {} : { apiKeyHeader: credential.apiKeyHeader },
     })
@@ -895,7 +904,9 @@ export class IrisAppService {
     // route it was told to use — lands in one set. See {@link #installedRoutes}.
     this.#installedRoutes.add(route)
     this.#report(
-      `connection now generates through route "${route}" at ${new URL(baseURL).origin}`,
+      // `note`, not `fault`: the activation was served. What the sentence adds
+      // is the word `none`, which is the whole diagnosis of a 401 that follows.
+      `connection now generates through route "${route}" at ${new URL(profile.baseURL).origin} — key: ${credential.keySource}`,
       { kind: 'host', grade: 'note' },
     )
     return true
@@ -929,7 +940,7 @@ export class IrisAppService {
     const profile = await store.get(listed.activeId).catch(() => undefined)
     if (profile?.baseURL === undefined || profile.baseURL.length === 0) return undefined
     const route = routeOf(profile)
-    return this.#installConnectionFor(route, profile.baseURL, profile) ? route : undefined
+    return this.#installConnectionFor(route, { ...profile, baseURL: profile.baseURL }) ? route : undefined
   }
 
   /**
@@ -1047,7 +1058,7 @@ export class IrisAppService {
       // the stored profile does, and the adapter is the one place it goes.
       const stored = store === undefined ? undefined : await store.get(named.id).catch(() => undefined)
       const endpoint = stored?.baseURL ?? named.baseURL
-      if (this.#installConnectionFor(provider, endpoint, stored ?? {})) return provider
+      if (this.#installConnectionFor(provider, { ...(stored ?? {}), baseURL: endpoint })) return provider
       return fell(
         `the connection served under route "${provider}" still exists, but this host was composed with no way to `
         + 'install an adapter for it',
@@ -2201,7 +2212,7 @@ export class IrisAppService {
         // adapter that can actually see this profile's endpoint and key.
         const route = routeOf(profile)
         if (profile.baseURL !== undefined && profile.baseURL.length > 0) {
-          this.#installConnectionFor(route, profile.baseURL, profile)
+          this.#installConnectionFor(route, { ...profile, baseURL: profile.baseURL })
         }
         // Applied through `settings.set`, so a profile cannot install a value
         // that setting it by hand would have been refused.
