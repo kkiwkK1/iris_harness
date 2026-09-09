@@ -1117,7 +1117,7 @@ export interface IrisActions {
    * Use one saved provider, **globally**.
    *
    * The connection panel's "use" verb. Never scoped to the open conversation:
-   * that switch is `setChatModel`, driven by the model capsule under the
+   * that switch is `setChatModel`, driven by the model control under the
    * composer, and one list that meant "everywhere" or "here" depending on
    * whether a chat was open was the confusion this separation removes.
    * @param id - the provider to generate through.
@@ -1566,7 +1566,7 @@ export function createIrisStore(
             client.call('settings.get', {}),
             /*
              * The connections are read at boot now, because the **composer**
-             * needs them: its model capsule offers the active connection's
+             * needs them: its model control offers the active connection's
              * recorded model list, and it is on screen from the first frame,
              * long before anyone opens the settings drawer.
              *
@@ -2719,7 +2719,7 @@ export function createIrisStore(
            * to move the global layer while a conversation was open.
            *
            * The per-conversation switch has its own control and its own
-           * method: the model capsule under the composer, through
+           * method: the model control under the composer, through
            * `setChatModel` (a chat-scoped `settings.set`). `connection.activate`
            * keeps its optional `chatId` — the protocol still expresses the
            * scoped form — and nothing in the browser asks for it.
@@ -2748,7 +2748,7 @@ export function createIrisStore(
            * **No `chatId`, for the same reason `connection.activate` sends
            * none.** This is the provider list's own verb on the one row that is
            * not a profile, and that list is the host's; a conversation's own
-           * model is the composer capsule's business (`setChatModel`).
+           * model is the composer control's business (`setChatModel`).
            *
            * `activeConnectionId` comes from the answer rather than being set to
            * `undefined` here: the host is the one that decides no profile is
@@ -2764,7 +2764,7 @@ export function createIrisStore(
           // The same follow-up read an activation does, for the same reason: the
           // global layer moved under an open conversation, so a chat that
           // overrides nothing is now generating with a different model and the
-          // composer's capsule has to say so. Silent on failure — the switch
+          // composer's model control has to say so. Silent on failure — the switch
           // itself succeeded.
           if (chatId !== undefined) {
             const refreshed = await client.call('settings.get', { chatId }).catch(() => undefined)

@@ -18,8 +18,16 @@
  * shadows is spent here, once.
  *
  * Four moves, in the order they read: a branch across the top edge in place of
- * the hairline, the paper dyed 藕粉 downward, the writing surface as a sheet
- * laid on that paper, and the send key as a plum seal.
+ * the hairline, the paper dyed 藕粉 downward, one rounded card of raised paper
+ * laid on that — draft above, controls along its bottom edge — and the send key
+ * as a plum disc.
+ *
+ * **The card and its bar are a 2026-09-10 redesign** (web §80), against a
+ * reference image the user supplied: 「按照图片重新设计对话框并在配色上和本系统
+ * 保持一致」. Two of the four moves are unchanged, and the other two changed
+ * weight rather than kind — the branch and the seal are still the only
+ * decoration on the screen, at half contrast, because the card's emptiness is
+ * now what the surface is for.
  */
 .iris-composer {
   position: relative;
@@ -56,6 +64,20 @@
   right: 0;
   height: 34px;
   pointer-events: none;
+}
+
+/*
+ * Half contrast under the redesigned composer (web §80).
+ *
+ * The geometry is untouched — the artboards' curve, its offsets and its eight
+ * blossoms are still exactly what `marks.tsx` draws — because the change is
+ * about *weight*, not about the drawing: the card below it is now the subject of
+ * this panel, and a branch at full strength was the loudest thing on a surface
+ * whose whole point is the empty space above the bar. Scoped to the composer,
+ * so a branch drawn anywhere else keeps its own weight.
+ */
+.iris-composer .iris-branch {
+  opacity: 0.5;
 }
 
 .iris-branch__line {
@@ -123,60 +145,64 @@
   min-height: max-content;
 }
 
-/* Field and stamp on one line, the stamp stretching to the field's height. */
-.iris-composer__write {
-  display: flex;
-  align-items: stretch;
-  gap: 12px;
-}
-
 /*
- * The writing surface: a sheet of the raised paper laid on the dyed page.
+ * The card: the draft and the bar on one sheet of raised paper.
  *
- * Two shadows and they do different jobs — a 1px white inset that gives the
- * sheet a lit top edge, and a plum-tinted drop that lifts it off the page. The
- * plum is the token (`--iris-accent-soft`) rather than a literal because 墨
- * needs more alpha for the same effect.
+ * It replaces `__sheet` (the writing surface) and `__row` (a strip of capsules
+ * under it) with one box, which is the redesign's whole structural move: the
+ * controls are on the paper the reader is writing on, along its bottom edge, and
+ * nothing else is. Web §80 has the reasoning; what the stylesheet has to say is
+ * that the field inside carries no ground, border or ring of its own — this box
+ * draws all three — which is what lets the blossom sit *inside* the paper and
+ * the bar sit *on* it.
+ *
+ * One shadow, plum-tinted through the token because 墨 needs more alpha for the
+ * same lift. The 1px white inset the sheet used to carry is gone with it: at
+ * this radius and this height it read as a second edge rather than as a lit one,
+ * and it was the last literal colour in the composer.
  */
-.iris-composer__sheet {
+.iris-composer__card {
   position: relative;
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  /* Border-box, because the 64px below is the artboards' box height and not
-     64px of type inside 30px of padding. */
   box-sizing: border-box;
-  min-height: 64px;
-  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 10px;
   background: var(--iris-bg-raised);
-  border: var(--iris-hairline) solid var(--iris-rule-strong);
-  border-radius: var(--iris-radius-send);
-  box-shadow:
-    0 1px 0 rgb(255 255 255 / 60%) inset,
-    0 6px 18px var(--iris-accent-soft);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius-lg);
+  box-shadow: 0 6px 18px var(--iris-accent-soft);
   transition: border-color var(--iris-fast) var(--iris-ease);
 }
 
 /*
- * Focus is drawn on the **sheet**, not on the textarea inside it: the field has
- * no border of its own any more, so a ring on the field would appear inside the
- * paper it sits on. `:focus-within` is what lets the container answer for its
- * child without any JavaScript knowing the field exists.
+ * Focus is drawn on the **card**, not on the textarea inside it: the field has
+ * no border of its own, so a ring on the field would appear inside the paper it
+ * sits on. `:focus-within` is what lets the container answer for its child
+ * without any JavaScript knowing the field exists — and it answers for the bar's
+ * controls too, which is correct: a reader tabbing to Send is working in this
+ * card.
  */
-.iris-composer__sheet:focus-within {
+.iris-composer__card:focus-within {
   border-color: var(--iris-accent);
   box-shadow:
-    0 1px 0 rgb(255 255 255 / 60%) inset,
     0 6px 18px var(--iris-accent-soft),
     0 0 0 3px var(--iris-accent-wash);
 }
 
-/* The seal on the writing surface: the same blossom as the brand, sized down,
-   with its centre in the raised paper it sits on. */
+/*
+ * The seal: the brand's blossom, sized down, in the corner and out of the way.
+ *
+ * It was in the writing lane, beside the first line of the draft, at 18px. It is
+ * now a watermark on the paper — top right, half contrast, and untouchable — for
+ * the reason the branch above is quieter: the reference's subject is the space
+ * this mark used to stand in.
+ */
 .iris-composer__seal {
-  margin-top: 2px;
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .iris-composer__field {
@@ -190,12 +216,18 @@
    * exactly its padding plus border on every viewport.
    */
   box-sizing: border-box;
-  flex: 1;
-  min-width: 0;
   width: 100%;
   resize: none;
+  /*
+   * The empty card's height comes from here rather than from the card's own
+   * `min-height`: the layout effect writes the field's `height` from its
+   * `scrollHeight`, and `min-height` is the one declaration that outranks an
+   * inline `height` — so a one-line draft keeps the reference's tall, empty
+   * writing area and a three-paragraph one still grows to the cap.
+   */
+  min-height: 44px;
   max-height: 40vh;
-  /* The sheet around it draws the paper, the border and the focus ring, so the
+  /* The card around it draws the paper, the border and the focus ring, so the
      field itself is only type. */
   background: none;
   border: 0;
@@ -218,7 +250,7 @@
 }
 
 /*
- * The field's own ring is suppressed, because `.iris-composer__sheet` draws it
+ * The field's own ring is suppressed, because `.iris-composer__card` draws it
  * one box out. Stated rather than left to the global `:focus-visible` rule,
  * which would otherwise paint a plum outline inside the paper.
  */
@@ -226,8 +258,317 @@
   outline: none;
 }
 
+/* ------------------------------------------------------------ the bottom bar */
+
 /*
- * The send key: a plum seal, 84px wide, arrow over word.
+ * One row along the card's bottom edge: the acts on the left, what is in force
+ * and the send disc on the right.
+ *
+ * `align-items: center` against a 32px disc sets the row's height, so the bar
+ * has no height of its own to keep in step with its contents.
+ */
+.iris-composer__bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-tertiary);
+}
+
+/* What holds the two halves apart. A flexing box rather than
+   `justify-content: space-between`, so the left group stays a group as an
+   extension adds to it and the right group keeps its order. */
+.iris-composer__gap {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+/*
+ * The two discs: 「+」 on the left and Send on the right.
+ *
+ * One geometry, two weights — the shape is what says "this is a key", and the
+ * fill is what says which of them is the one thing on this page that acts.
+ */
+.iris-composer__disc {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--iris-radius-pill);
+  cursor: pointer;
+}
+
+/* 「+」: no ground until it is pointed at, which is the reference's own
+   treatment. The hover ground is what makes a bare mark a target. */
+.iris-composer__disc--quiet {
+  background: none;
+  color: var(--iris-ink-secondary);
+  transition:
+    background var(--iris-fast) var(--iris-ease),
+    color var(--iris-fast) var(--iris-ease);
+}
+
+.iris-composer__disc--quiet:hover,
+.iris-composer__disc--quiet:focus-visible {
+  background: var(--iris-bg-sunken);
+  color: var(--iris-accent);
+}
+
+/*
+ * The two worded controls: the preset, and the model with its effort.
+ *
+ * Both are text with a chevron, both take a hover ground rather than a border,
+ * and neither has a resident box — a bar with two outlined capsules in it was
+ * the shape this redesign replaced, and the outline is the part that made it
+ * read as a form.
+ */
+.iris-composer__choice,
+.iris-composer__model {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 4px 6px 4px 8px;
+  border: 0;
+  border-radius: var(--iris-radius);
+  background: none;
+  font: inherit;
+  font-size: var(--iris-ui-size);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--iris-fast) var(--iris-ease),
+    color var(--iris-fast) var(--iris-ease);
+}
+
+.iris-composer__choice {
+  max-width: 20ch;
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-composer__model {
+  max-width: 30ch;
+  color: var(--iris-ink);
+}
+
+.iris-composer__choice:hover,
+.iris-composer__choice:focus-visible,
+.iris-composer__model:hover,
+.iris-composer__model:focus-visible {
+  background: var(--iris-bg-sunken);
+}
+
+/* The name is the half that gets cut when the bar is narrow: a model id can be
+   40 characters, and the chevron and the effort beside it are what say the
+   control opens something and what it would change. */
+.iris-composer__choice-name,
+.iris-composer__model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The effort, beside the model and one tier down.
+ *
+ * Grey against the model's ink, which is the reference's own hierarchy: the
+ * model is the fact, the effort is a qualifier on it. `flex: none` so a long
+ * model id ellipsises rather than eating the word — the same rule the override
+ * dot follows, and for the same reason.
+ */
+.iris-composer__model-effort {
+  flex: none;
+  color: var(--iris-ink-tertiary);
+}
+
+/*
+ * "This conversation is not on its connection's model."
+ *
+ * A dot rather than a word: the control is meant to be read at a glance and it
+ * already carries a model id that can be long. `flex: none` because the name
+ * ellipsises — without it, a long model id would eat the marker and the one
+ * visible sign of the override would disappear exactly in the case where the
+ * reader most needs it.
+ */
+.iris-composer__model-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--iris-accent);
+}
+
+/* Every control that opens a list carries the same chevron, so "this one opens
+   something" is one shape wherever it appears. One tier below its label, so it
+   is an affordance rather than a second thing to read. */
+.iris-composer__chevron {
+  flex: none;
+  color: var(--iris-ink-faint);
+}
+
+/*
+ * Whatever an extension contributed to `iris.composer.actions`.
+ *
+ * The wrapper exists for the divider: 「the slot contributed nothing」 has
+ * exactly one honest reading in CSS, `:empty`, and `:empty` needs an element to
+ * be empty of. So the slot is wrapped, an empty wrapper is removed from the row
+ * entirely, and a wrapper with something in it grows a hairline on its left —
+ * which is the rule the redesign asked for: no separator when there is nothing
+ * to separate.
+ */
+.iris-composer__slot:empty {
+  display: none;
+}
+
+.iris-composer__slot:not(:empty) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  padding-left: 10px;
+  border-left: var(--iris-hairline) solid var(--iris-rule);
+}
+
+/* ------------------------------------------------------- context capacity */
+
+/*
+ * The capacity ring.
+ *
+ * 28px of target around a 20px mark — the reference's thin circle — and the
+ * same hover ground the two worded controls take, because it is the same kind
+ * of thing: a fact you can press.
+ */
+.iris-composer__ring {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--iris-radius-pill);
+  background: none;
+  cursor: pointer;
+  transition: background var(--iris-fast) var(--iris-ease);
+}
+
+.iris-composer__ring:hover,
+.iris-composer__ring:focus-visible {
+  background: var(--iris-bg-sunken);
+}
+
+.iris-composer__ring-mark {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+/*
+ * The track is the denominator, drawn at full length in the rule colour: unlike
+ * the capsule's gauge — which had the capsule's own border to stand for the
+ * whole — a ring with no track is an arc floating in space, and 20% and 90%
+ * become indistinguishable at a glance.
+ */
+.iris-composer__ring-track {
+  fill: none;
+  stroke: var(--iris-rule-strong);
+  stroke-width: 2;
+}
+
+/*
+ * The occupancy. Rotated so it starts at twelve o'clock, which is where a
+ * reader looks for the start of a ring; `transform-box: fill-box` because an
+ * SVG child's percentage transform origin otherwise resolves against the
+ * viewport and the arc rotates around the wrong point.
+ *
+ * The length is `stroke-dasharray`, computed in `composer-bar.ts` (`ringDash`)
+ * and set inline, for the reason that module gives.
+ */
+.iris-composer__ring-arc {
+  fill: none;
+  stroke: var(--iris-gauge-tint, var(--iris-ink-faint));
+  stroke-width: 2;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: stroke-dasharray var(--iris-slip) var(--iris-ease);
+}
+
+/*
+ * Three bands, `context-occupancy.ts`'s `pressureLevel`: under 60% the faintest
+ * ink, from 60% the accent, past 85% the warning hue.
+ *
+ * Each is a token the page already spends, and each is redefined by all three
+ * themes — which the test in `tests/context-meter.test.ts` checks by reading
+ * this file, because a band drawing the same value as its neighbour in one
+ * theme is a gauge with two levels in that theme and three everywhere else.
+ */
+.iris-composer__ring-arc--quiet { --iris-gauge-tint: var(--iris-ink-faint); }
+.iris-composer__ring-arc--near { --iris-gauge-tint: var(--iris-accent); }
+.iris-composer__ring-arc--full { --iris-gauge-tint: var(--iris-warn); }
+
+/*
+ * Over budget: `--iris-danger`, not `--iris-warn`.
+ *
+ * At this point the assembler is dropping floors to make the request fit, which
+ * is data leaving the prompt — a different kind of fact from "nearly full", and
+ * the one state of this mark that is worth a fourth colour. It overrides the
+ * band tint rather than adding a fifth band, because the reading is still in the
+ * `full` band and the bands are what the three-theme census counts.
+ */
+.iris-composer__ring--over .iris-composer__ring-arc {
+  --iris-gauge-tint: var(--iris-danger);
+}
+
+/*
+ * Waiting.
+ *
+ * The **track** turns, not the whole mark, which is what lets the occupancy stay
+ * still and readable while a reply is arriving: the arc keeps its length and its
+ * band, and the thing going round is the denominator behind it. A dash makes a
+ * segment out of the full circle so the rotation is visible at all.
+ */
+.iris-composer__ring--busy .iris-composer__ring-track {
+  stroke: var(--iris-accent);
+  stroke-dasharray: 14 43;
+  stroke-linecap: round;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: iris-composer-wait 1.05s linear infinite;
+}
+
+@keyframes iris-composer-wait {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* The arc's growth and the wait's rotation are decoration; the length the arc
+   lands on, and the fact that a reply is in flight, are the information — so
+   what is dropped is the movement and not either state. */
+@media (prefers-reduced-motion: reduce) {
+  .iris-composer__ring-arc {
+    transition: none;
+  }
+
+  .iris-composer__ring--busy .iris-composer__ring-track {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------- send */
+
+/*
+ * The send disc: the one saturated control on the page.
  *
  * It is the primitives' `Button` under the paint, with a two-class selector so
  * these declarations outrank the component's own single-class module rules
@@ -236,142 +577,104 @@
  * empty, and a hand-rolled element would have silently dropped both that
  * behaviour and its check.
  *
- * **Saturated in both states, as the artboards draw it.** The earlier rule -
- * quiet until there is something to send, because a permanently-disabled
- * primary button once read as broken - was overturned by the user on
- * 2026-09-07 in favour of the design. The concern it answered is answered
- * another way: the seal is disabled only while the field is empty and inks up
- * on the first keystroke, and the idle state casts no shadow, so a control that
- * cannot be pressed does not stand off the page. Geometry and fill are the
- * same in both states; the shadow and the cursor are what change.
+ * The word 「发送」 is the button's `aria-label` rather than its content, because
+ * the disc is 32px across: the word inside it would either overflow the circle
+ * or shrink below the size anybody reads.
  */
 .iris-composer .iris-composer__send {
   flex: none;
-  width: 84px;
-  height: auto;
-  align-self: stretch;
-  flex-direction: column;
-  gap: 4px;
-  border-radius: var(--iris-radius-send);
-  font-size: var(--iris-ui-size);
-  letter-spacing: 0.1em;
+  width: 32px;
+  height: 32px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--iris-radius-pill);
+  color: var(--iris-ink-inverted);
 }
 
-/* Filled: the seal pressed into the page, casting the one coloured shadow. */
+/* Ready: the disc pressed into the page, casting the one coloured shadow. */
 .iris-composer .iris-composer__send--ready {
   background: var(--iris-accent);
-  color: var(--iris-ink-inverted);
-  box-shadow: 0 6px 18px var(--iris-accent-cast);
+  box-shadow: 0 4px 12px var(--iris-accent-cast);
 }
 
 .iris-composer .iris-composer__send--ready:hover:not(:disabled) {
   background: var(--iris-accent-strong);
 }
 
-/* Idle: the same seal, same ink, resting in the page. No cast shadow and a
-   plain cursor — a control that cannot be pressed must not appear to stand off
-   the page, and this is the whole of what distinguishes it from ready. */
+/*
+ * Idle: the same disc, desaturated, resting in the page.
+ *
+ * This overturns the 2026-09-07 ruling that the seal stays saturated in both
+ * states; the reference image the redesign follows draws the disc quiet on an
+ * empty draft (user, 2026-09-10: 空草稿时降饱和), and web §80 records the
+ * reversal. `--iris-accent-quiet` rather than an opacity, so the disc keeps the
+ * same relationship to the paper in all three themes — under 墨 an opacity on
+ * plum goes brown.
+ */
 .iris-composer .iris-composer__send--idle {
-  background: var(--iris-accent);
-  color: var(--iris-ink-inverted);
+  background: var(--iris-accent-quiet);
   box-shadow: none;
   cursor: default;
   opacity: 1;
 }
 
-.iris-composer__row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  font-size: var(--iris-label-size);
-  color: var(--iris-ink-tertiary);
-}
-
-/*
- * The two capsules under the field: what prompt is in force, and which model
- * answers. Both are buttons, because each states a fact and pressing it answers
- * the question that fact raises — the prompt capsule opens the breakdown of
- * what would be sent, and the model capsule changes the model for this one
- * conversation.
- */
-.iris-composer__pill {
-  /* The positioning context the capacity capsule's gauge is laid against. On
-     the shared rule rather than the capacity capsule's own, because `overflow:
-     hidden` below is what clips the gauge to the capsule's curve and the two
-     have to be declared on the same box. */
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 22ch;
-  padding: 3px 10px 4px;
-  border: var(--iris-hairline) solid var(--iris-rule);
-  border-radius: var(--iris-radius-pill);
-  background: var(--iris-bg-page);
-  font: inherit;
-  font-size: var(--iris-label-size);
-  color: var(--iris-ink-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.iris-composer__pill--action {
-  cursor: pointer;
-  transition:
-    color var(--iris-fast) var(--iris-ease),
-    border-color var(--iris-fast) var(--iris-ease);
-}
-
-.iris-composer__pill--action:hover {
-  color: var(--iris-accent);
-  border-color: var(--iris-accent);
-}
-
-/*
- * "This conversation is not on its connection's model."
- *
- * A dot rather than a word: the capsule is meant to be read at a glance and it
- * already carries a model id that can be long. `flex: 0 0 auto` because the
- * capsule ellipsises its text — without it, a long model name would eat the
- * marker and the one visible sign of the override would disappear exactly in
- * the case where the reader most needs it.
- */
-.iris-composer__pill-dot {
-  flex: 0 0 auto;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
+/* Stop: the ready disc with a square in it. Same place, same weight — what
+   changes is the verb, and the shape is what says so. */
+.iris-composer .iris-composer__send--stop {
   background: var(--iris-accent);
+  box-shadow: 0 4px 12px var(--iris-accent-cast);
+}
+
+.iris-composer .iris-composer__send--stop:hover:not(:disabled) {
+  background: var(--iris-accent-strong);
+}
+
+/* --------------------------------------------------------- under the card */
+
+/*
+ * The two readings under the card: what the keyboard does, and what this
+ * conversation has cost.
+ *
+ * Outside the paper, in the faintest tier, on one line — the layout saying
+ * 「consult these」 rather than a word spent saying it. Baseline-aligned because
+ * the two are both type and one of them is a hover trigger whose box is taller
+ * than its text.
+ */
+.iris-composer__under {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 0 4px;
+  font-size: var(--iris-label-size);
+  color: var(--iris-ink-tertiary);
 }
 
 .iris-composer__hint {
-  flex: 1;
-  text-align: right;
+  min-width: 0;
   color: var(--iris-ink-tertiary);
   /* The hint is the one thing here that may be dropped rather than wrapped: on
-     a narrow composer the capsules are the information. */
+     a narrow composer the figures are the information. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /*
- * What the conversation has cost, one line under the capsules.
+ * What the conversation has cost.
  *
  * `display: block`, not flex, and that is the point: `text-overflow` elides a
- * block's inline content, so a line too long for the track ends in … instead
- * of being cut through a glyph — a flex row would clip mid-character. The box
- * already spans the writing track (it is a child of `__inner`, whose padding
- * is the alignment), so centring the text here centres it on the body column
- * without a second width to keep in step with the field's.
- *
- * The faintest tier and the label size, like the capsules above it: this is a
- * reading a reader consults, not something the page is telling them.
+ * block's inline content, so a line too long for the track ends in … instead of
+ * being cut through a glyph — a flex row would clip mid-character. `margin-left:
+ * auto` puts it on the right edge whether or not the hint beside it is there,
+ * which is what keeps the figures in one place on a narrow window where the hint
+ * is dropped.
  */
 .iris-composer__stats {
   display: block;
-  text-align: center;
+  margin-left: auto;
+  min-width: 0;
+  text-align: right;
   font-size: var(--iris-label-size);
   color: var(--iris-ink-tertiary);
   white-space: nowrap;
@@ -386,77 +689,131 @@
   color: var(--iris-rule-strong);
 }
 
-/* ------------------------------------------------------- context capacity */
+/* -------------------------------------------------------- the bar's menus */
 
 /*
- * The capacity capsule's over-budget state.
+ * The surface all three of the bar's controls open.
  *
- * `--iris-danger`, not `--iris-warn`: at this point the assembler is dropping
- * floors to make the request fit, which is data leaving the prompt. The border
- * carries it as well as the ink so the capsule is findable without reading it,
- * and the hover rule above still wins on colour because the capsule is a
- * control first.
+ * Portalled to `document.body` and placed from its trigger's rect
+ * (`ComposerMenu.tsx` says why it is this file's own component and not the
+ * primitives' `Menu`), so it is `position: fixed` and the component writes only
+ * `left` and `top`. `--iris-drop-z` is the drop-down layer: above the sidebar
+ * and the composer, below the drawer and the modals, which is where a menu
+ * belongs — a list that covered a modal would be a list the reader cannot
+ * dismiss by pressing the thing they were reading.
  */
-.iris-composer__pill--over {
-  border-color: var(--iris-danger);
-  color: var(--iris-danger);
+.iris-composer-menu {
+  position: fixed;
+  z-index: var(--iris-drop-z);
+  box-sizing: border-box;
+  min-width: 184px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--iris-bg-raised);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius);
+  box-shadow: var(--iris-shadow);
+  font-size: var(--iris-ui-size);
+  color: var(--iris-ink-secondary);
+}
+
+.iris-composer-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--iris-radius);
+  background: none;
+  font: inherit;
+  font-size: var(--iris-ui-size);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--iris-fast) var(--iris-ease),
+    color var(--iris-fast) var(--iris-ease);
+}
+
+.iris-composer-menu__item:hover,
+.iris-composer-menu__item:focus-visible {
+  background: var(--iris-bg-sunken);
+  color: var(--iris-ink);
 }
 
 /*
- * The gauge along the capacity capsule's bottom edge.
+ * The row that is in force.
  *
- * 2px, inside the capsule's own `overflow: hidden`, so the fill is clipped to
- * the capsule's curve and needs no radius of its own — which is what keeps a
- * fill at 4% from drawing a square corner outside a rounded box.
- *
- * `bottom: 0` rather than under the text, and that is a reading of the capsule
- * rather than a preference: the capsule ellipsises a label that can be
- * 「上下文 1.4M/2M · 71%」, and a rule under the text would be a second thing
- * competing for the same horizontal space. On the edge it is a gauge; between
- * the text and the border it would be an underline.
- *
- * No track. The capsule's border already draws the full length, so a track
- * would be a second hairline 1px inside the first, and at this size the pair
- * reads as a rendering fault rather than as a scale.
+ * A plum wash and plum ink rather than a tick glyph: every row in these menus
+ * is either a member of a set or an action, `aria-checked` already says which
+ * member is chosen for anyone being read to, and a column of ticks in a list of
+ * six efforts is six marks to carry the one fact that one of them is on.
  */
-.iris-composer__pill-gauge {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2px;
-  pointer-events: none;
+.iris-composer-menu__item--on {
+  background: var(--iris-accent-wash);
+  color: var(--iris-accent);
+}
+
+.iris-composer-menu__item--on:hover,
+.iris-composer-menu__item--on:focus-visible {
+  background: var(--iris-accent-wash);
+  color: var(--iris-accent);
+}
+
+.iris-composer-menu__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The quieter half of a row, for a fact about the row rather than the row's own
+   name. Never the thing the row is chosen by, so it is the half that may be
+   dropped on a narrow menu. */
+.iris-composer-menu__note {
+  flex: none;
+  color: var(--iris-ink-faint);
+  font-size: var(--iris-label-size);
+}
+
+/* A heading over a group of rows: the label tier, and the one thing in these
+   menus that is not pressable. */
+.iris-composer-menu__head {
+  padding: 6px 8px 4px;
+  color: var(--iris-ink-tertiary);
+  font-size: var(--iris-label-size);
 }
 
 /*
- * The filled part. Three bands, `context-occupancy.ts`'s `pressureLevel`:
- * under 60% the faintest ink, from 60% the accent, past 85% the warning hue.
+ * The one row that explains the list's own state — reading, refused, absent,
+ * or a scope the control beside it does not have.
  *
- * Each is a token the page already spends, and each is redefined by all three
- * themes — which the test in `tests/context-meter.test.ts` checks by reading
- * this file, because a band drawing the same value as its neighbour in one
- * theme is a gauge with two levels in that theme and three everywhere else.
+ * A paragraph, so it wraps: these are sentences, and a sentence ellipsised at
+ * 26 characters is a sentence nobody can act on.
  */
-.iris-composer__pill-fill {
-  display: block;
-  height: 100%;
-  /* A width computed from a percentage is set inline; this is the floor that
-     keeps a real-but-tiny occupancy visible. `ContextPill` drops a 0% fill
-     entirely, so this minimum can never paint an empty window. */
-  min-width: 2px;
-  background: var(--iris-gauge-tint, var(--iris-ink-faint));
-  transition: width var(--iris-slip) var(--iris-ease);
+.iris-composer-menu__sentence {
+  margin: 2px 8px 6px;
+  color: var(--iris-ink-tertiary);
+  font-size: var(--iris-label-size);
+  line-height: 1.5;
 }
 
-.iris-composer__pill-fill--quiet { --iris-gauge-tint: var(--iris-ink-faint); }
-.iris-composer__pill-fill--near { --iris-gauge-tint: var(--iris-accent); }
-.iris-composer__pill-fill--full { --iris-gauge-tint: var(--iris-warn); }
-
-/* The gauge's growth is decoration; the width it lands on is the information. */
-@media (prefers-reduced-motion: reduce) {
-  .iris-composer__pill-fill {
-    transition: none;
-  }
+/*
+ * A hairline between the model list and the effort ladder.
+ *
+ * `~` rather than `+`, because the restore row sits between the two groups when
+ * this conversation overrides the model — an adjacency selector would have drawn
+ * the rule in the common case and dropped it in exactly the case where the menu
+ * is longest.
+ */
+.iris-composer-menu__group ~ .iris-composer-menu__group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
 }
 
 /*
@@ -1317,6 +1674,36 @@
    */
   :root {
     --iris-gutter: 34px;
+  }
+
+  /*
+   * The keyboard legend goes, and the cost stays.
+   *
+   * 「Enter 发送 · Shift+Enter 换行 · Alt+←/→ 切换读法」 is three keystrokes
+   * nobody at this width has, and it was competing on one line with figures that
+   * are worth the same at every width. Dropped rather than wrapped, which is the
+   * rule the line already followed inside its own box (`__hint`'s ellipsis) —
+   * this is that rule taken to its end.
+   */
+  .iris-composer__hint {
+    display: none;
+  }
+
+  /*
+   * And the two worded controls give up their measure.
+   *
+   * The bar's fixed parts are 92px of marks (「+」, the ring, the send disc) plus
+   * their gaps; everything else is the two names, and 20ch and 30ch of them do
+   * not fit beside those at this width. Both already ellipsise inside their own
+   * box, so this is the same rule with the ceiling lowered — what gives way is
+   * the tail of a long model id, not the layout.
+   */
+  .iris-composer__choice {
+    max-width: 10ch;
+  }
+
+  .iris-composer__model {
+    max-width: 16ch;
   }
 }
 

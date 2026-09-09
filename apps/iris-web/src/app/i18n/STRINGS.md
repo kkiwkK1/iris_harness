@@ -17,7 +17,7 @@
 | `Masthead.tsx` | 设置钮、导航 aria、重命名 tooltip/aria、回合数（尚未开始/1 回合/N 回合）、writing…、种子数据横幅 | `showConversations settings rename* conversationTitle notStarted oneTurn turns writingNow seeded*` |
 | `App.tsx` | 未连接横幅、通知关闭 aria、拖放提示 | `notConnected dismiss dropCard` |
 | `ChatPane.tsx` | 两个空态、加载更早按钮（含 hidden 计数）、空白页空态 | `openingLastChat nothingOpen pickCharacterHint showEarlier hiddenAbove pageBlank writeFirstLine` |
-| `Composer.tsx` | 占位（两个）、aria、提示词钮、快捷键提示、发送/停止 | `irisWriting writeYourPart yourMessage promptButton composerHint send stop` |
+| `Composer.tsx` | 占位（两个）、aria、提示词（2026-09-10 起是「+」菜单里的一行，不再是胶囊）、快捷键提示、发送/停止（这两个如今是 32px 圆钮的 `aria-label`，钮里没有字） | `irisWriting writeYourPart yourMessage promptButton composerHint send stop` |
 | `Message.tsx` | 保存/取消/复制/编辑/提示词/重新生成/删除、Copied.、生成中 aria | `save cancel copy edit regenerate delete copied generatingAria` |
 | `VariantRail.tsx` | 全部 aria 标签（读法计数/记录态/上一下一） | `rail*` |
 | `Reasoning.tsx` | 思考中 / 推理 · N 词 | `thinking reasoningWords` |
@@ -427,3 +427,36 @@ Iris 此前只有两档，而切进来的预设 body 一直是整份存着的—
 **没有为「名字 · 模型」造模板键。** 折叠卡头是两段各自已经存在的数据用 ` · ` 接起来，
 和容量胶囊的 hover 同一个理由：一条只有分隔符的模板键会在两本词典里各存一份排版，
 而排版差异正是两个面互相对不上的来由。
+
+任务（输入区按参考图重做，`dev/composer-redesign`）追加：
+
+用户的要求（2026-09-10，原话）：「按照图片重新设计对话框并在配色上和本系统保持一致」。
+图里的输入框是一张大圆角卡片：上半留白只放占位文字，底边一行——左边一个圆形「+」和一个
+下拉，右边模型名＋灰色的努力度＋箭头、一个细圆环、一个实心圆形发送键。词典层因此有两条
+原则：
+
+**一、只有两个控件带字，其余是记号。** 底栏原先是三个胶囊（提示词 · 预设名 / 模型 /
+上下文 30.1K/128K · 24%），三条都在印字。现在带字的只有预设与模型，容量成了圆环、发送
+成了圆盘、「+」是一个十字——所以这三个的**名字全在 `aria-label` 里**，键还是原来的
+`send` / `stop`，另加 `composerMore`。一个 32px 的圆里塞不进「发送」两个字，塞进去要么
+溢出要么小到没人认得；而一个没有名字的图形按钮，读屏软件念出来就是「按钮」。
+
+**二、作用范围要写出来，因为并排的两个控件不一样。** 模型只改这一段对话（`setChatModel`，
+一直如此），预设是宿主自己的活动预设（`preset.select`），一切换所有对话都跟着变。读者
+从左边那个控件学到的范围，套到右边就是错的，所以预设菜单底下有一句 `presetGlobalNote`。
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `Composer.tsx` 底栏「+」 | 圆钮的 `aria-label`（也是菜单自己的名字）与菜单里的第二行「斜杠命令」。第一行复用 `promptButton`——它开的还是原来那张提示词逐项面板 | `composerMore composerSlash` |
+| `Composer.tsx` 底栏预设控件 | 菜单标题、控件的 hover（切换预设＋当前是谁）、两种「没有」（宿主拒绝 `preset.list`＝根本没有预设库／有库但一个都没存过）、作用范围那一句。没有预设时控件本身印 `presetNoneActive`（沿用设置面已有的键，同一句话不造第二份） | `presetMenuHead presetMenuOpen presetLibraryAbsent presetLibraryEmpty presetGlobalNote` |
+| `Composer.tsx` 模型控件里的努力度 | 没有新键：菜单里那一节的标题复用设置抽屉的 `reasoningEffort`，六个选项是 `auto min low medium high max` 六个**不翻译的原词**（上游 `reasoning_effort_types`，它们是请求字段的值，见第二节「刻意不翻译」）。`auto` 只在菜单里出现，胶囊上不印——它不增加任何事实，请求里两种情况都不带 `reasoning_effort` | — |
+
+**没有删键。** 这一次没有任何键失去调用者：提示词钮从胶囊搬进「+」菜单，`promptButton`
+照旧；`composerHint` 照旧（搬到卡片外那一行，窄屏 880px 以下整行 CSS 隐藏，键还在）；
+容量胶囊的 `contextPill` / `contextPillCapacity` 也照旧——圆环把它们从可见文字变成了
+`aria-label`，这是同一句话换了个位置，不是换了句话。这一点是手工核对的：`i18n.test.ts`
+只查「源码用到的键必须在词典里」这一个方向，未用键它从来不会发现。
+
+**没有为「模型名＋努力度」造模板键。** 两段各自已有的数据在一行里并排，和折叠卡头
+「名字 · 模型」同一个理由：一条只有排版的模板键会在两本词典里各存一份，而排版差异正是
+两个面互相对不上的来由。这里连分隔符都没有——中间是控件自己 5px 的 flex gap。

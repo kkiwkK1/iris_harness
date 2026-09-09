@@ -215,7 +215,30 @@ export const en = {
   send: 'Send',
   stop: 'Stop',
 
-  /** The composer's model capsule and the menu behind it. */
+  /**
+   * The bar's 「+」 and the two acts behind it.
+   *
+   * `composerMore` is the button's only name — it is a 32px disc with a cross
+   * in it — so it says what the list holds rather than what the mark looks
+   * like.
+   */
+  composerMore: 'Prompt and commands',
+  composerSlash: 'Slash commands',
+
+  /** The bar's preset control and the menu behind it. */
+  presetMenuHead: 'Preset in force',
+  presetMenuOpen: 'Switch the preset ({preset} now)',
+  /** The host refused `preset.list`: this build has no preset library at all. */
+  presetLibraryAbsent: 'This host has no preset library.',
+  /** It has one, and nothing is in it. */
+  presetLibraryEmpty: 'No presets saved yet.',
+  /**
+   * The scope, said because the control beside it has the other one: a model
+   * chosen in this bar moves one conversation, a preset moves the host.
+   */
+  presetGlobalNote: 'A preset switch applies to every conversation.',
+
+  /** The composer's model control and the menu behind it. */
   modelMenuOpen: 'Change the model for this conversation ({model})',
   modelMenuHeading: 'Model for this conversation',
   modelMenuFromConnection: 'From {connection}',
@@ -1609,7 +1632,21 @@ export const zh: Record<StringKey, string> = {
   send: '发送',
   stop: '停止',
 
-  /** 输入框下的模型胶囊与它打开的菜单。 */
+  /** 底栏的「+」与它打开的两件事。按钮本身只有一个 32px 的圆和一个十字，所以名字要说清里面有什么。 */
+  composerMore: '提示词与命令',
+  composerSlash: '斜杠命令',
+
+  /** 底栏的预设控件与它打开的菜单。 */
+  presetMenuHead: '生效的预设',
+  presetMenuOpen: '切换预设（当前 {preset}）',
+  /** 宿主拒绝了 `preset.list`：这个构建根本没有预设库。 */
+  presetLibraryAbsent: '这个宿主没有预设库。',
+  /** 有库，里面是空的。 */
+  presetLibraryEmpty: '还没有保存过预设。',
+  /** 说明作用范围——旁边那个控件是另一种：模型只动这一段对话，预设动整个宿主。 */
+  presetGlobalNote: '切换预设会作用于所有对话。',
+
+  /** 输入框底栏的模型控件与它打开的菜单。 */
   modelMenuOpen: '为本对话切换模型（当前 {model}）',
   modelMenuHeading: '本对话使用的模型',
   modelMenuFromConnection: '来自「{connection}」',

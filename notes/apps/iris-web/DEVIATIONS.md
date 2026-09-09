@@ -3900,3 +3900,184 @@ key is never reported).
 is generating rather than what it was launched with (host §60 records that reading and
 why it was rejected); a user who reads 使用 on a read-only row as an offer to edit it,
 which would mean the 「只读」 badge is doing less work than it looks.
+
+## 80. The composer is one card with one bar, and the readings moved outside the paper
+
+**Kind:** deliberate departure from SillyTavern's send form, on the user's instruction,
+against a reference image. It also overturns one earlier ruling of our own (the
+saturated send key, 2026-09-07) and corrects one of our own readings (the capacity
+capsule, entry 68).
+
+**The instruction** (user, 2026-09-10, verbatim): 「按照图片重新设计对话框并在配色上和
+本系统保持一致」, with an image: a large rounded card, a placeholder 「给智能体发消息」
+in the empty upper half, and **one** bottom row — a circular 「+」 and a dropdown on
+the left; a model name, a grey effort word, a chevron, a thin ring and a filled
+circular send key on the right.
+
+**What was there.** Three boxes stacked inside the composer: the writing sheet with the
+send key beside it (84px wide, arrow over the word 「发送」), a row of three outlined
+capsules under it (「提示词 · 预设名」, the model, 「上下文 30.1K/128K · 24%」) with the
+extension slot and the keyboard hint sharing the same line, and the usage strip under
+that. Five surfaces, four of them printing figures, and the capsules were the loudest
+things on the screen after the branch.
+
+**Upstream is a form and stays one.** SillyTavern's `#send_form` is a bar of icon
+buttons around a textarea — the wand, the options gear, the extensions menu, the
+character-management row — and everything a reader can change about the next request is
+somewhere else entirely (the connection panel, the preset panel, the sliders). Iris put
+the two facts a reader checks before pressing send *under the field* (entry 36) and that
+decision is unchanged; what changes is that they are no longer capsule-shaped and no
+longer share the row with things that are not facts about the next request.
+
+### The bar, left to right
+
+- **「+」** (32px, no ground until pointed at) opens two rows: 「提示词」 — the
+  itemization panel, which is what the first capsule's press did — and 「斜杠命令」,
+  which sets the draft to `/` and opens the completion list. Not a second code path:
+  the completion menu reads the draft, so a reader who chose the row can keep typing to
+  filter, exactly as one who typed the key can. Two acts, and they are here rather than
+  in the bar because neither is a *fact about the next request*.
+- **The preset**, in words, with a chevron: the name in force, or 「未启用预设」. Its
+  menu lists the library (`preset.list` through the store's `loadPresets`, re-read on
+  every open, the model menu's rule) and switches with `preset.select`. It carries a
+  sentence the model control does not need: **a preset switch is global**, and a reader
+  who learned the scope from the control beside it would guess wrong.
+- **The extension slot** (`iris.composer.actions`) stays in the bar, wrapped in a span
+  whose `:empty` state removes it and its divider. It is *not* folded into 「+」: a
+  contribution is a component, not a labelled action, so it cannot become a menu row
+  without asking every extension to describe itself twice — and mounting the same
+  component in two places would give one control two states. The brief allowed either;
+  this is the half of it that keeps every existing contribution working unchanged.
+- **The model**, with the **effort** beside it one tier quieter, a dot when this
+  conversation overrides the model, and a chevron. The menu is the same
+  `model-menu.ts` decision as before (list, heading, the two nothings, the probe on
+  open, the restore row) plus a second group: the six effort words.
+- **The capacity ring** (20px, three bands, `--iris-danger` when over budget, the track
+  turning while a reply is in flight). It replaces the capsule that printed
+  「上下文 30.1K/128K · 24%」.
+- **The send disc** (32px, up arrow, `--iris-accent`; a square while generating).
+
+Under the card, outside the paper, one line of the faintest type: the keyboard hint on
+the left and the usage strip on the right. Both are readings a reader *consults* rather
+than controls, and putting them outside the sheet is the layout saying so without
+spending a word on it. Below 880px the hint goes and the figures stay — three keystrokes
+nobody at that width has, against figures that are worth the same everywhere.
+
+### The four judgements worth arguing
+
+**One: the effort is in the model's control, and writes the conversation's layer.**
+It is the same decision at a lower resolution — which model answers, and how hard it
+thinks — so it is the same control and the same menu. The write goes through
+`patchSettings`, which is the settings drawer's own action and scopes itself to the open
+conversation; the composer only ever renders with a chat open, so an effort chosen here
+lands beside the model override the dot reports. `auto` writes `null` rather than the
+word: `@iris/llm-openai-compat` omits `reasoning_effort` for both an absent value and
+the literal `'auto'`, so storing it would be an override with no effect — visible in the
+layer, invisible in the request. The plausible wrong implementation writes the global
+layer, looks identical on the control, and silently moves every other conversation;
+`tools/render-check.tsx` writes an effort against the live store and asserts which layer
+caught it.
+
+**Two: the figures left the bar, and the ring's `aria-label` is where they went.**
+Entry 68 argued the trigger should be a capsule *because the row was a row of capsules*
+— 「a progress ring beside them would be a fourth vocabulary in a strip of two」. That
+premise is gone: the redesigned bar has two worded controls and three marks, and a
+fourth line of figures would be the only thing on it a reader has to read rather than
+glance at. So the reading became a mark, and the sentence the capsule printed became
+the button's accessible name (the long form — exact figures, the window's provenance,
+which request the reading is about — stays on the `title`, and the card a press opens is
+unchanged). **What this costs:** the occupancy is no longer legible at rest to a reader
+who is not hovering, and 「how full am I」 now takes a hover or a press. That is a real
+loss and it is the price of the row the reference draws. What would overturn it: a
+report that a reader stopped noticing a filling window.
+
+**Three: the send disc is quiet on an empty draft, which reverses our own ruling.**
+On 2026-09-07 the user overturned the older 「quiet until there is something to send」
+rule in favour of the artboards, and the seal has been saturated in both states since.
+The reference image draws it desaturated on an empty draft and the instruction says so
+(空草稿时降饱和), so it is desaturated again — with `--iris-accent-quiet` rather than an
+opacity, because an opacity on plum goes brown under 墨. The concern the 2026-09-07
+ruling answered — a permanently-disabled primary control reading as broken — is answered
+by the disc inking up on the first keystroke, which is a change the reader causes and
+therefore sees. `render-check` still pins what it pinned before: the idle class and the
+`disabled` attribute travel together.
+
+**Four: the bar's menus are this file's own component, not the primitives' `Menu`.**
+The slash-command completion list still uses the primitive, because for a typeahead it
+is right. The bar's three menus do not, and the reason is one attribute: the primitive's
+rows are `role="menuitem"`, minted inside the component from a data array. The effort
+ladder is a **radio set** — six mutually exclusive answers, exactly one in force — and so
+is the model list; announced as independent menu items, a screen reader is told there are
+six things to do here and not that choosing one un-chooses the rest. `ComposerMenu.tsx`
+transcribes what the primitive does well (the portal out of the composer's scroll
+container, placement from the trigger's rect, re-placement on scroll and resize, one
+`pointerdown` and one `keydown` listener while open) and adds the keyboard walk the
+primitive leaves out. **What this costs:** a second menu implementation in the app, and
+two menu surfaces that must be kept looking alike by hand. What would overturn it: the
+primitives growing a role on `MenuItem`.
+
+### Smaller decisions
+
+- **The 「梅花」 decoration stays and is halved.** The branch across the panel's top
+  edge and the blossom in the card's corner are what canvas.json spends this screen's
+  whole decorative budget on, so removing them was never on the table; the blossom moves
+  out of the writing lane to the top-right corner at 14px and both drop to half
+  contrast. The subject of the surface is now the empty space above the bar, and a mark
+  at full strength stood in it. The 1px white inset the writing sheet carried is gone
+  with the sheet — at the card's radius it read as a second edge, and it was the last
+  literal colour in the composer.
+- **The composer asks for the preset library on mount.** `loadPresets` was the preset
+  panel's alone, deliberately (a host with no library refuses `preset.list`, and a
+  refusal at startup would raise a notice about a feature that host never had). That
+  reason survives — the action swallows its own refusal and records the absence — and the
+  cost is one round trip per session. The payoff: the control names the preset in force
+  instead of saying 「未启用预设」 about every host until somebody opens the drawer. The
+  visible cost is one frame: between mount and the answer the control prints the absence.
+- **The model name is ink, not the accent.** The instruction says 模型名主色字; read as
+  「the primary text colour」 against 努力度灰字 beside it, which is the hierarchy the
+  reference image draws (a dark name, a grey qualifier). Plum type on the model name
+  would have made the bar's quietest fact its loudest mark, and the one saturated thing
+  on this screen is the send disc.
+- **`capsuleReading` is now `ringReading`.** The function outlived the shape it was
+  named for, and a name that describes the wrong object is the trap a future reader falls
+  into; `context-occupancy.ts`'s prose about 「the capsule's 2px bar」 went with it.
+- **The fake now keeps a chosen effort.** `mergeSettings` / `mergeOverrides` dropped
+  `reasoningEffort` — not numeric, not `stop`, not the route — so against the seeded
+  transport a chosen effort was forgotten and the control looked broken while being
+  correct against a host. Its neighbours are **still** dropped and deliberately not
+  fixed here: `contextWindow`, `contextUnlocked`, `continuePostfix`, `trimSentences`,
+  `squashSystemMessages` and `cacheFriendly`. Each needs its own check and none is on
+  this path.
+
+### What is pinned, and the one state nothing can reach
+
+`tools/render-check.tsx` holds the structure on a real render: the card, the bar, each
+of the three controls announcing its menu, the preset control's sentence, `__under`, the
+slot's wrapper, no menu in the markup while all three are closed, the model name and its
+dot, the effort word appearing and disappearing with the layer it is written to, the
+ring's arc in the right band at the right length, and — on the mid-stream render — the
+stop disc and the turning ring together. `tests/composer-bar.test.ts` holds what a render
+cannot see: the six words against the host's validator *and* the fake's, both directions;
+the layer rule as a property of two source files; the ring's arithmetic against its own
+length; `menuitemradio`; every mark-only control's name; and — the check that stands in
+for looking at three screenshots — that **every colour the composer draws is a
+`var(--iris-…)`**, since the three palettes redefine the same properties and a rule that
+names a colour is the only way one theme can be wrong on its own. The three arc bands
+are still held to being three distinct values in each palette, in
+`tests/context-meter.test.ts`, where the capsule gauge's were.
+
+**The one state nothing renders:** a composer with a draft in it. The draft is `useState`
+inside the component, `renderToString` runs no effects, and the card bus that could write
+one is installed by an effect — so 「ready」 is pinned against the source (the
+`empty ? 'idle' : 'ready'` branch) and not on a render. Two of the three states are real
+renders; the third is a source pin, and this is the sentence that says which.
+
+**What would overturn it.** A reference image or a ruling that puts the figures back
+in the bar (the ring is the one part of this that trades information for quiet, and it
+is the part most likely to be reported against); a reader who cannot find 「提示词」 now
+that it is behind 「+」, which would mean a two-row menu is one row too far for the act a
+reader most often wants; a report that a preset switched from the bar surprised somebody
+in another conversation, which would mean the sentence in the menu is not enough and the
+verb belongs somewhere global-looking; the primitives growing a role on `MenuItem`,
+which would delete `ComposerMenu.tsx` and half of what `tests/composer-bar.test.ts`
+holds.

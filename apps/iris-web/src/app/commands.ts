@@ -342,7 +342,7 @@ export function irisCommands(actions: {
   exportChat: (chatId: string) => Promise<void>
   /** Set or clear this conversation's model override. `null` clears it. */
   setModel: (model: string | null) => Promise<void>
-  /** What the model capsule's menu is showing, read live. */
+  /** What the model control's menu is showing, read live. */
   modelChoices: () => ModelChoices
   /** Open the capacity card, or say why there is nothing to open. */
   showCapacity: () => boolean
@@ -396,7 +396,7 @@ export function irisCommands(actions: {
       summary: () => t('commandModelSummary'),
       usage: () => t('commandModelUsage'),
       /*
-       * **Not** gated, and that is the same decision the model capsule already
+       * **Not** gated, and that is the same decision the model control already
        * made: its menu is open and selectable while a reply arrives, because an
        * override applies from the *next* request and the one in flight has
        * already left. Gating the keyboard entry to a control the mouse can
@@ -485,7 +485,7 @@ export function irisCommands(actions: {
 /**
  * What `/chat-model` reads about the model in force.
  *
- * The same four facts `model-menu.ts` computes for the capsule — read through a
+ * The same four facts `model-menu.ts` computes for the control — read through a
  * thunk rather than passed as a value, because the endpoint's list arrives from
  * a probe the reader fires by opening that menu, which may happen long after
  * this table was built.
@@ -493,7 +493,7 @@ export function irisCommands(actions: {
 export interface ModelChoices {
   /** The model this conversation is generating with. */
   current: string
-  /** The rows the capsule offers: {@link current} first, then the source's own. */
+  /** The rows the control offers: {@link current} first, then the source's own. */
   models: readonly string[]
   /** Whether {@link current} is this conversation's own choice. */
   overridden: boolean
@@ -510,7 +510,7 @@ export interface ModelChoices {
  *
  * A keyword rather than the menu's sentinel id: `RESTORE_ID` in `Composer.tsx`
  * is a leading space, which nobody can type. The cost is that a model whose id
- * is literally `default` cannot be set from this command — the capsule's menu
+ * is literally `default` cannot be set from this command — the control's menu
  * still can, and that is recorded in `notes/apps/iris-web/DEVIATIONS.md` §61
  * rather than papered over.
  */

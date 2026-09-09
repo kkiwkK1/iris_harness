@@ -36,6 +36,7 @@ import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView } from '@iris/protocol'
 import { contributing, discrepancy, rowsFor } from '../src/app/itemization.ts'
 import { pressureLevel } from '../src/app/context-occupancy.ts'
+import { ringDash } from '../src/app/composer-bar.ts'
 import { ContextCard } from '../src/app/ContextMeter.tsx'
 import { cacheCeiling, providerExcuse, providerFellShort } from '../src/app/divergence.ts'
 import {
@@ -211,26 +212,92 @@ async function main(): Promise<void> {
   // carries and nothing else in the interface was using.
   assert.match(settled, /好感度/, 'the state margin does not show the chat variables')
 
-  // Disabled until there is something to send. The seal is drawn saturated in
-  // both states (the design's call, 2026-09-07); what stays pinned is that it
-  // cannot fire on an empty field - the idle class and the disabled attribute
-  // travel together.
+  // Disabled until there is something to send, and quiet while it is: the disc
+  // is desaturated on an empty draft (the design's call, 2026-09-10, overturning
+  // the 2026-09-07 "saturated in both states" ruling — web §80). What stays
+  // pinned is what was pinned before: it cannot fire on an empty field, and the
+  // idle class and the disabled attribute travel together.
   assert.match(settled, /iris-composer__send--idle[^"]*"[^>]*disabled/, 'Send is not disabled while the composer is empty')
+  // The word is the disc's name, because the disc is 32px across and the word
+  // does not fit inside it.
+  assert.match(settled, /aria-label="Send"/, 'the send disc has no accessible name')
 
-  // ---------------------------------------------------- model capsule
+  // ------------------------------------------------------- the composer bar
   /*
-   * The model capsule is a **control**, and switching it moves only this
+   * The card and the one row along its bottom edge (web §80).
+   *
+   * What a server render can hold here is the **structure**: the card exists,
+   * the bar exists, each of the three controls that open a list says so, the
+   * readings moved out of the card, and no menu is in the markup while they are
+   * all closed. The rows inside those menus cannot be reached — the open state
+   * is `useState` in the component and there is no click in this harness — so
+   * they are pinned in `tests/composer-bar.test.ts` and
+   * `tests/model-menu.test.ts`, which is the division the capsules had before.
+   */
+  assert.match(settled, /class="iris-composer__card"/, 'the composer card is missing')
+  assert.match(settled, /class="iris-composer__bar"/, 'the bar along the card’s bottom edge is missing')
+  assert.match(
+    settled,
+    /<button[^>]*iris-composer__disc--quiet[^>]*aria-haspopup="menu"/,
+    'the 「+」 key is not a button with a menu behind it',
+  )
+  assert.match(settled, /aria-label="Prompt and commands"/, 'the 「+」 key has no accessible name')
+  assert.match(
+    settled,
+    /<button[^>]*iris-composer__choice[^>]*aria-haspopup="menu"/,
+    'the preset control is not a button with a menu behind it',
+  )
+  /*
+   * And it says which preset is in force — which here is none, honestly.
+   *
+   * **The fake refuses the whole `preset.*` family on purpose** (`client.ts`:
+   * they write host-side files, and a fake that answered would teach the
+   * interface a library that does not exist), so `activePreset` is `undefined`
+   * against this transport and the control prints the absence. That is the
+   * assertion worth making here: the branch a seeded page actually takes, with
+   * the fixture's premise stated rather than assumed. The *populated* branch is
+   * one `activePreset` away and is what a host build shows; nothing in this
+   * harness can reach it, because the composer's own `loadPresets` is an effect
+   * and `renderToString` runs no effects.
+   */
+  assert.equal(
+    wired.store.getState().activePreset,
+    undefined,
+    'the fake now serves a preset library, so this check is testing the wrong branch',
+  )
+  assert.ok(
+    settled.includes('<span class="iris-composer__choice-name">no preset active</span>'),
+    'the preset control does not say that no preset is in force',
+  )
+  // Nothing is open, so nothing is portalled: each menu is mounted only while it
+  // is showing, which is what keeps its document listeners and its layout effect
+  // off every keystroke of an ordinary message.
+  assert.doesNotMatch(settled, /iris-composer-menu/, 'a bar menu is in the markup while it is closed')
+  // The two readings sit outside the paper, on one line under the card.
+  assert.match(settled, /class="iris-composer__under"/, 'the line under the card is missing')
+  // The slot keeps its wrapper with nothing in it, because 「the slot contributed
+  // nothing」 is `:empty` in the stylesheet and `:empty` needs an element to be
+  // empty of. A slot rendered bare would take the divider rule with it.
+  assert.match(
+    settled,
+    /<span class="iris-composer__slot"><\/span>/,
+    'the actions slot lost the wrapper the divider rule reads',
+  )
+
+  // ---------------------------------------------------- model control
+  /*
+   * The model control is a **control**, and switching it moves only this
    * conversation.
    *
    * The reported failure was that the model name under the field could not be
    * pressed at all, so the first assertion is the crudest one that would have
-   * caught it: the capsule is a `<button>` with a menu behind it, not a `<span>`
-   * readout. What a server render cannot do is open that menu — the open state
-   * is `useState` inside the component and there is no click here — so the
-   * menu's *contents* are pinned in `tests/model-menu.test.ts`, against these
-   * same seeded profiles, and what is pinned here is the wiring on either side
-   * of it: the capsule offers a press, and a choice from the seeded list lands
-   * on this chat and shows on the capsule.
+   * caught it: it is a `<button>` with a menu behind it, not a `<span>` readout.
+   * What a server render cannot do is open that menu — the open state is
+   * `useState` inside the component and there is no click here — so the menu's
+   * *contents* are pinned in `tests/model-menu.test.ts`, against these same
+   * seeded profiles, and what is pinned here is the wiring on either side of it:
+   * the control offers a press, and a choice from the seeded list lands on this
+   * chat and shows on the control.
    */
   const connections = wired.store.getState().connections
   const activeProfile = connections.find(row => row.id === wired.store.getState().activeConnectionId)
@@ -242,19 +309,23 @@ async function main(): Promise<void> {
 
   assert.match(
     settled,
-    /<button[^>]*iris-composer__pill--action[^>]*aria-haspopup="menu"/,
-    'the model capsule is not a button with a menu',
+    /<button[^>]*iris-composer__model[^>]*aria-haspopup="menu"/,
+    'the model control is not a button with a menu',
   )
-  assert.match(settled, /local\/qwen3-8b<\/button>|local\/qwen3-8b<span/, 'the capsule does not name the model in force')
-  assert.doesNotMatch(settled, /iris-composer__pill-dot/, 'the seeded chat is marked as overriding the model')
+  assert.match(
+    settled,
+    /iris-composer__model-name">local\/qwen3-8b</,
+    'the control does not name the model in force',
+  )
+  assert.doesNotMatch(settled, /iris-composer__model-dot/, 'the seeded chat is marked as overriding the model')
 
   // The switch. `offered[1]` rather than a literal, so this cannot pass by
   // agreeing with a hard-coded name the fixture has stopped carrying.
   const picked = offered[1]!
   await wired.store.getState().setChatModel(picked)
   const switched = render(wired.store, slots.core)
-  assert.match(switched, new RegExp(`${picked.replace('/', '\\/')}<`), 'the capsule did not follow the switch')
-  assert.match(switched, /iris-composer__pill-dot/, 'the per-conversation override is not marked')
+  assert.match(switched, new RegExp(`${picked.replace('/', '\\/')}<`), 'the control did not follow the switch')
+  assert.match(switched, /iris-composer__model-dot/, 'the per-conversation override is not marked')
   assert.equal(
     wired.store.getState().settingsOverrides?.model,
     picked,
@@ -264,10 +335,60 @@ async function main(): Promise<void> {
   // And the undo puts it back, which is what makes the override safe to make.
   await wired.store.getState().setChatModel(null)
   const restored = render(wired.store, slots.core)
-  assert.doesNotMatch(restored, /iris-composer__pill-dot/, 'clearing the override left the marker behind')
+  assert.doesNotMatch(restored, /iris-composer__model-dot/, 'clearing the override left the marker behind')
   assert.equal(wired.store.getState().settingsOverrides?.model, undefined)
 
-  // ------------------------------------------- the capsule with no profile
+  // ------------------------------------------------------- reasoning effort
+  /*
+   * The other half of the model control, and the layer it writes to.
+   *
+   * The effort ladder is a section of the same menu, so its rows are as
+   * unreachable here as the model rows are — but the **write** is reachable, and
+   * it is the half worth holding on a live store: the bar goes through
+   * `patchSettings`, whose scope rule is "the open conversation when there is
+   * one", and the plausible wrong implementation writes the global layer, which
+   * looks identical on the control and silently changes every other
+   * conversation. `tests/composer-bar.test.ts` pins that the composer reaches
+   * for that action; this pins where that action's write lands and that the word
+   * reaches the control.
+   *
+   * Written through the store's own action rather than by pressing a row, for
+   * the same reason `setChatModel` is above.
+   */
+  assert.equal(
+    wired.store.getState().settings?.reasoningEffort,
+    undefined,
+    'the fixture already carries an effort, so the control below cannot show a change',
+  )
+  const unset = render(wired.store, slots.core)
+  assert.doesNotMatch(unset, /iris-composer__model-effort/, 'a word is printed for an effort nobody chose')
+  await wired.store.getState().patchSettings({ reasoningEffort: 'high' })
+  const effortful = render(wired.store, slots.core)
+  assert.equal(
+    wired.store.getState().settingsOverrides?.reasoningEffort,
+    'high',
+    'the effort did not land on the open conversation’s own layer',
+  )
+  assert.match(
+    effortful,
+    /<span class="iris-composer__model-effort">high<\/span>/,
+    'the control does not print the effort in force beside the model',
+  )
+  // And `auto` clears rather than storing a word, so the layer goes back to
+  // having no opinion — the row's own rule (`effortPatch`), end to end.
+  await wired.store.getState().patchSettings({ reasoningEffort: null })
+  assert.equal(
+    wired.store.getState().settingsOverrides?.reasoningEffort,
+    undefined,
+    'choosing auto left an override behind',
+  )
+  assert.doesNotMatch(
+    render(wired.store, slots.core),
+    /iris-composer__model-effort/,
+    'the word stayed on the control after the effort was cleared',
+  )
+
+  // ------------------------------------- the model control with no profile
   /*
    * The reported bug's own state: a host configured from its environment, with
    * no profile ever saved. The menu used to answer 「没有活动连接，因此没有可选
@@ -310,8 +431,8 @@ async function main(): Promise<void> {
   const profileless = render(wired.store, slots.core)
   assert.match(
     profileless,
-    /<button[^>]*iris-composer__pill--action[^>]*aria-haspopup="menu"/,
-    'the capsule stopped being a control once no profile was active',
+    /<button[^>]*iris-composer__model[^>]*aria-haspopup="menu"/,
+    'the model control stopped being a control once no profile was active',
   )
   // Put the seed back: everything below reads the store as booted.
   await wired.store.getState().loadConnections()
@@ -500,6 +621,22 @@ async function main(): Promise<void> {
   const streaming = render(wired.store, slots.core)
   assert.match(streaming, /iris-caret/, 'the streaming caret is missing')
   assert.match(streaming, /那你说，我该怎么办。/, 'the sent message is not on the page')
+  /*
+   * The composer's third state, and the only one of the three a server render
+   * can reach besides the empty one: a reply is arriving.
+   *
+   * The disc becomes Stop in the disc's own place — not a fourth control beside
+   * it — and the ring turns. Both are on the *same* render, which is the point:
+   * a bar that showed Stop while the ring still looked idle, or a ring that
+   * spun with Send still under it, would each be half of this state. The
+   * with-a-draft state is unreachable here (the draft is `useState` and there is
+   * no keyboard in a server render), so `tests/composer-bar.test.ts` holds the
+   * ready branch against the source instead.
+   */
+  assert.match(streaming, /iris-composer__send--stop/, 'the send disc did not become Stop mid-turn')
+  assert.match(streaming, /aria-label="Stop"/, 'the stop disc has no accessible name')
+  assert.doesNotMatch(streaming, /iris-composer__send--(idle|ready)/, 'Send is still on the page mid-turn')
+  assert.match(streaming, /iris-composer__ring--busy/, 'the capacity ring does not show a reply in flight')
   const buffered = wired.store.getState().stream?.text ?? ''
   assert.ok(buffered.length > 0, 'nothing was buffered')
   // The reply being written has to be visible, which is the whole point of
@@ -1824,68 +1961,82 @@ async function main(): Promise<void> {
    *
    * A server render cannot press anything, so the card's own contents are
    * pinned in `tests/context-meter.test.ts` and what is checked here is the
-   * wiring on either side of it: the capsule is on the page, it is a button
-   * that opens a dialog, and it states the capacity — which is what the
-   * capsule says before it has been pressed, because the reading costs a round
-   * trip. Same division as the model menu two sections up.
+   * wiring on either side of it: the ring is on the page, it is a button that
+   * opens a dialog, and it *names itself* with the reading — which is what the
+   * mark carries before it has been pressed, because the figures no longer have
+   * a line of their own (web §80). Same division as the model menu two sections
+   * up.
    */
   const capacity = wired.store.getState().view
   assert.ok(capacity?.budget !== undefined, 'the fake no longer reports a budget on the open chat')
   const available = capacity.budget.context - capacity.budget.reserve
   assert.ok(available > 0, `the seeded budget leaves ${String(available)} for the prompt`)
   const metered = render(wired.store, slots.core)
-  assert.match(metered, /data-control="context-meter"/, 'the capacity capsule is missing')
+  assert.match(metered, /data-control="context-meter"/, 'the capacity ring is missing')
   assert.match(
     metered,
     /aria-haspopup="dialog"[^>]*data-control="context-meter"/,
-    'the capsule does not announce the card it opens',
+    'the ring does not announce the card it opens',
   )
   // Computed from the seeded budget, not spelled out, so a change to the fake
   // moves the expectation instead of turning this into a wrong-answer check.
   /*
-   * The capsule states the reading, and draws it.
+   * The ring names the reading, and draws it.
    *
    * It used to state the capacity alone until pressed, because the only account
    * of the prompt cost a round trip. The host now projects the itemization it
-   * already recorded for the newest real turn, so an unpressed capsule has a
-   * measured occupancy — which is what the gauge is drawn from.
+   * already recorded for the newest real turn, so an unpressed mark has a
+   * measured occupancy — which is what the arc is drawn from.
    *
    * Both halves of this task are pinned here rather than only in the unit
-   * suite, because both depend on wiring a server render can see: the gauge
-   * needs `ChatView.measured` to have survived the store, and the provenance
-   * needs `ChatView.budget.source` to have.
+   * suite, because both depend on wiring a server render can see: the arc needs
+   * `ChatView.measured` to have survived the store, and the provenance needs
+   * `ChatView.budget.source` to have.
+   *
+   * **The reading is now the `aria-label`**, and that is the one thing the
+   * redesign changed about this check: the mark carries no words, so the
+   * sentence the capsule used to print is the button's name. A ring with a
+   * generic name would pass every other assertion here and leave a screen
+   * reader with 「button」.
    */
   const measured = capacity.measured
   assert.ok(measured !== undefined, 'the fake no longer reports a measured turn on the open chat')
   assert.ok(
-    metered.includes(`Context ${formatTokens(measured.tokens)}/${formatTokens(available)}`),
-    `the capsule does not state the measured reading (${formatTokens(measured.tokens)}/${formatTokens(available)})`,
+    metered.includes(`aria-label="Context ${formatTokens(measured.tokens)}/${formatTokens(available)}`),
+    `the ring is not named by the measured reading (${formatTokens(measured.tokens)}/${formatTokens(available)})`,
   )
-  assert.match(metered, /data-control="context-gauge"/, 'the capsule draws no gauge')
+  assert.match(metered, /data-control="context-gauge"/, 'the ring draws no arc')
   // Computed from the fake rather than spelled out, the same rule the figures
   // above follow — a change to the seed moves the expectation instead of
   // turning this into a wrong-answer check.
   const gaugePercent = Math.min(100, Math.round(measured.tokens / available * 100))
   assert.ok(
     gaugePercent > 0 && gaugePercent < 100,
-    `the seeded reading is ${String(gaugePercent)}%, which draws no distinguishable bar`,
+    `the seeded reading is ${String(gaugePercent)}%, which draws no distinguishable arc`,
   )
   assert.match(
     metered,
-    new RegExp(`iris-composer__pill-fill--${pressureLevel(gaugePercent)}`),
-    `the gauge is not in the ${pressureLevel(gaugePercent)} band at ${String(gaugePercent)}%`,
+    new RegExp(`iris-composer__ring-arc--${pressureLevel(gaugePercent)}`),
+    `the arc is not in the ${pressureLevel(gaugePercent)} band at ${String(gaugePercent)}%`,
   )
-  assert.match(
-    metered,
-    new RegExp(`width:${String(gaugePercent)}%`),
-    `the gauge is not drawn at ${String(gaugePercent)}%`,
+  /*
+   * And it is drawn at that percentage.
+   *
+   * The dash is `ringDash`'s, called here rather than restated, which keeps
+   * this an assertion about the *wiring* — the reading reached the mark — rather
+   * than a second copy of the arithmetic `tests/composer-bar.test.ts` already
+   * holds against the ring's own length.
+   */
+  assert.ok(
+    metered.includes(`stroke-dasharray:${ringDash(gaugePercent)}`),
+    `the arc is not drawn at ${String(gaugePercent)}% (${ringDash(gaugePercent)})`,
   )
   // And the hover says which window it divides by, and who chose it. The fake's
   // route is a model nothing knows a window for, so the settings' own value is
   // what is in force — the one of the four wordings this fixture can be true of.
   assert.ok(
     metered.includes(`Window ${formatTokens(capacity.budget.context)}, from the settings or a preset`),
-    'the capsule hover does not name the window it divides by',
+    'the ring’s hover does not name the window it divides by',
   )
   /*
    * The card's own copy of that line, rendered directly.

@@ -17,11 +17,12 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
-import type { ContinuePostfix, GenerationSettings } from '@iris/protocol'
+import type { ContinuePostfix, GenerationSettings, ReasoningEffort } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
+import { effortInForce, effortPatch, REASONING_EFFORTS } from './composer-bar.ts'
 import { ChoiceField, CollapsibleSection, NumberField, TextField, ToggleField } from './fields.tsx'
 import { AboutCard } from './AboutCard.tsx'
 import { BackupPanel } from './BackupPanel.tsx'
@@ -325,18 +326,16 @@ export function SettingsDrawer({
                   />
                   <ChoiceField
                     label={t('reasoningEffort')}
-                    value={settings.reasoningEffort ?? 'auto'}
-                    options={[
-                      // Upstream's own value words (`reasoning_effort_types`);
-                      // they name provider request fields and stay as written.
-                      { id: 'auto', label: 'auto' },
-                      { id: 'min', label: 'min' },
-                      { id: 'low', label: 'low' },
-                      { id: 'medium', label: 'medium' },
-                      { id: 'high', label: 'high' },
-                      { id: 'max', label: 'max' },
-                    ]}
-                    onSelect={id => patch('reasoningEffort', id === 'auto' ? null : id)}
+                    value={effortInForce(settings.reasoningEffort)}
+                    /*
+                      Upstream's own value words (`reasoning_effort_types`); they
+                      name provider request fields and stay as written. The list
+                      is `composer-bar.ts`'s, because the composer's bar offers
+                      the same ladder (web §80) and two copies of six words is
+                      how one surface comes to offer five.
+                    */
+                    options={REASONING_EFFORTS.map(effort => ({ id: effort, label: effort }))}
+                    onSelect={id => patch('reasoningEffort', effortPatch(id as ReasoningEffort))}
                   />
                   <p className="iris-field__note">{t('reasoningEffortNote')}</p>
                   <NumberField

@@ -11,11 +11,18 @@
  *
  * Three things are Iris's rather than the harness's.
  *
- * **The trigger is a capsule, not a ring.** The composer's row already states
- * what is in force as capsules — the prompt and the model — and each answers
- * the question it raises when pressed. A third capsule is the shape that row
- * already has; a progress ring beside them would be a fourth vocabulary in a
- * strip of two.
+ * **The trigger is a ring, and that is a correction.** It was a capsule, in a
+ * row of capsules — the prompt and the model each stated a fact in words, so a
+ * third one saying 「上下文 30.1K/128K · 24%」 was the shape that row already
+ * had. The redesigned bar (web §80) has no capsules in it: two controls carry
+ * words and the rest are marks, and a fourth line of figures in a bar built for
+ * two would be the only thing on it a reader has to *read* rather than glance
+ * at. So the reading moves into the mark — a 20px ring drawn at the measured
+ * occupancy, in the same three bands the gauge used — and the figures move to
+ * where they were already duplicated: the hover, and the card a press opens.
+ * The one thing lost is the figure at rest, which is why the ring's
+ * `aria-label` **is** the sentence the capsule printed rather than a name for
+ * the control.
  *
  * **It is split in two components on purpose.** `.iris-composer__inner` is a
  * scroll container (`panels.css` says why: it reserves the scrollbar lane so
@@ -30,13 +37,13 @@
  * until the conversation changes underneath it — never on a render, and never
  * on a keystroke.
  *
- * That rule used to mean the capsule showed its capacity and nothing else until
+ * That rule used to mean the mark showed its capacity and nothing else until
  * pressed. It no longer has to: the host records an itemization for every turn
  * it assembles anyway, and now projects the newest one (`ChatView.measured`),
- * so the capsule draws a *measured* occupancy off a fact the view already
+ * so the ring draws a *measured* occupancy off a fact the view already
  * carries. Nothing is assembled to draw the bar; a conversation with no record
  * — nothing generated yet, or a host that has just restarted — still states its
- * capacity alone, because a capsule that showed nothing until a round trip
+ * capacity alone, because a mark that showed nothing until a round trip
  * completed would be a control that looks broken.
  *
  * @module iris-web/app/ContextMeter
@@ -49,7 +56,7 @@ import type { ChatBudget, PromptDivergence, PromptItemization, TurnUsage } from 
 
 import {
   averageCacheHit,
-  capsuleReading,
+  ringReading,
   contextOccupancy,
   meterSegments,
   stablePrefix,
@@ -57,6 +64,7 @@ import {
   type ContextCategory,
   type ContextOccupancy,
 } from './context-occupancy.ts'
+import { RING_RADIUS, ringDash } from './composer-bar.ts'
 import { cacheCeiling, itemName } from './divergence.ts'
 import { formatExactTokens, formatTokens } from './token-format.ts'
 import { t, useLanguage } from './i18n/use-language.ts'
@@ -119,8 +127,8 @@ function windowSourceText(budget: ChatBudget): string {
   })
 }
 
-/** What the capsule needs. */
-export interface ContextPillProps {
+/** What the ring needs. */
+export interface ContextRingProps {
   budget: ChatBudget
   /** The reading, once the card has been opened for this conversation. */
   itemization: PromptItemization | undefined
@@ -129,38 +137,48 @@ export interface ContextPillProps {
   open: boolean
   onToggle: () => void
   anchor: MutableRefObject<HTMLButtonElement | null>
+  /**
+   * Whether a reply is arriving.
+   *
+   * The ring turns while it is, which is the one piece of state the composer's
+   * bar shows that is not about the conversation's settings — and it belongs on
+   * this mark rather than on a fourth one, because a reply in flight is
+   * precisely what is about to change the reading the ring is drawing.
+   */
+  busy: boolean
 }
 
 /**
- * The capsule in the composer's row.
+ * The ring in the composer's bar.
  *
  * Renders only when a budget is known. That is not defensive: `ChatView.budget`
  * is absent when whoever projected the view had no settings to resolve, and a
- * capsule reading 「上下文 0」 would be a confident statement about a window
- * nobody measured.
+ * ring drawn against 「0」 would be a confident statement about a window nobody
+ * measured.
  *
- * **The bar is drawn from a reading that already exists.** The module doc above
+ * **The arc is drawn from a reading that already exists.** The module doc above
  * says an itemization is never paid for on a render, and that still holds: what
  * changed is that the host now projects the measurement it *already recorded*
  * for the newest real turn (`ChatView.measured`), so there is a number to draw
  * without asking for one. A conversation nobody has generated in yet — and
  * every conversation right after a restart, since those records live in memory
- * — has no bar, and states its capacity as it always did.
+ * — draws no arc, and says its capacity in the hover as it always did.
  * @param props - the budget, whichever readings exist, and the open state.
- * @returns the capsule, or null when there is no capacity to report.
+ * @returns the ring, or null when there is no capacity to report.
  */
-export function ContextPill({
+export function ContextRing({
   budget,
   itemization,
   measured,
   open,
   onToggle,
   anchor,
-}: ContextPillProps): ReactElement | null {
+  busy,
+}: ContextRingProps): ReactElement | null {
   useLanguage()
   const available = Math.max(0, budget.context - budget.reserve)
   if (available === 0) return null
-  const reading = capsuleReading(budget, itemization, measured)
+  const reading = ringReading(budget, itemization, measured)
   const label = reading === null
     ? t('contextPillCapacity', { total: formatTokens(available) })
     : t('contextPill', {
@@ -169,7 +187,7 @@ export function ContextPill({
       percent: String(reading.percent),
     })
   /*
-   * The hover carries what the capsule has no room for: the exact figures, the
+   * The hover carries what the mark has no room for: the exact figures, the
    * window's provenance, and which request the reading is about. Not a
    * duplicate of the label — the label rounds (「30.1K」) and this does not, and
    * a reader checking a figure against a receipt needs the unrounded one.
@@ -191,41 +209,52 @@ export function ContextPill({
     <button
       ref={anchor}
       type="button"
-      className={`iris-composer__pill iris-composer__pill--action${
-        reading?.over === true ? ' iris-composer__pill--over' : ''}`}
+      className={`iris-composer__ring${busy ? ' iris-composer__ring--busy' : ''}${
+        reading?.over === true ? ' iris-composer__ring--over' : ''}`}
       aria-haspopup="dialog"
       aria-expanded={open}
+      /*
+       * **The reading is the name.** The capsule this replaces printed it, so
+       * losing it would be losing the one fact the control carries at rest —
+       * and a name like 「context」 would leave a screen reader with a button
+       * whose whole content is a decorative circle. The `title` keeps the long
+       * form for a pointer: exact figures, the window's provenance, and which
+       * request the reading is about.
+       */
+      aria-label={label}
       title={title}
       data-control="context-meter"
       onClick={onToggle}
     >
-      {label}
       {/*
-        The gauge along the capsule's own bottom edge, inside its `overflow:
-        hidden` so the fill is clipped to the capsule's curve.
+        The ring: a full-length track with the occupancy drawn over it.
 
-        `aria-hidden`, deliberately: it draws the percentage already printed in
-        the label beside it, so a screen reader announcing it would read one
-        fact twice — and the label is the reading that carries units. A
-        zero-width fill is not drawn at all, the rule `meterSegments` follows on
-        the card: nothing in the window is a real state, and a hairline of plum
-        is not how to say it.
+        `aria-hidden`, deliberately — it draws the percentage the button's own
+        name already states, so a screen reader announcing it would read one
+        fact twice. An occupancy of zero draws no arc at all, the rule
+        `meterSegments` follows on the card: nothing in the window is a real
+        state, and a hairline of plum is not how to say it.
       */}
-      {reading === null
-        ? null
-        : (
-            <span className="iris-composer__pill-gauge" aria-hidden="true">
-              {reading.percent === 0
-                ? null
-                : (
-                    <span
-                      className={`iris-composer__pill-fill iris-composer__pill-fill--${reading.level}`}
-                      style={{ width: `${String(reading.percent)}%` }}
-                      data-control="context-gauge"
-                    />
-                  )}
-            </span>
-          )}
+      <svg
+        className="iris-composer__ring-mark"
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <circle className="iris-composer__ring-track" cx="12" cy="12" r={RING_RADIUS} />
+        {reading === null || reading.percent === 0
+          ? null
+          : (
+              <circle
+                className={`iris-composer__ring-arc iris-composer__ring-arc--${reading.level}`}
+                cx="12"
+                cy="12"
+                r={RING_RADIUS}
+                style={{ strokeDasharray: ringDash(reading.percent) }}
+                data-control="context-gauge"
+              />
+            )}
+      </svg>
     </button>
   )
 }
@@ -250,7 +279,7 @@ export interface ContextCardProps {
   divergence: PromptDivergence | undefined
   /** Opens the prompt panel, where the per-part marks are. */
   onOpenPanel: () => void
-  /** The capsule, so a press on it is not treated as a press outside the card. */
+  /** The ring, so a press on it is not treated as a press outside the card. */
   anchor: MutableRefObject<HTMLButtonElement | null>
   onClose: () => void
 }
@@ -274,8 +303,8 @@ export function ContextCard({
   const root = useRef<HTMLDivElement | null>(null)
 
   // The harness's dismissal, transcribed: one document listener each while
-  // open. A pointerdown inside the card or on the capsule is not "outside" —
-  // the capsule has to be excluded explicitly, or its own press would close
+  // open. A pointerdown inside the card or on the ring is not "outside" —
+  // the ring has to be excluded explicitly, or its own press would close
   // the card on pointerdown and its click would reopen it, leaving a toggle
   // that never toggles.
   useEffect(() => {
