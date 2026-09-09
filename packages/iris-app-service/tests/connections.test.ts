@@ -499,6 +499,78 @@ test('an unreachable endpoint answers network, by name', async (t) => {
   const result = await handlers['connection.test']({ baseURL: 'http://127.0.0.1:1/v1' })
   assert.equal(result.ok, false)
   assert.equal(result.error?.code, 'network')
+  // The reason under "fetch failed" is the actionable half: undici hangs the
+  // real error on `.cause`, and a message that stopped at the outer sentence
+  // told the person nothing. Port 1 is on WHATWG fetch's bad-port list, so the
+  // cause here is the platform's own "bad port" — carried through verbatim.
+  assert.match(result.error?.message ?? '', /could not reach http:\/\/127\.0\.0\.1:1\/v1\/models: /)
+  assert.match(result.error?.message ?? '', /bad port/)
+})
+
+test('a closed port answers network with the socket code in the reason', async (t) => {
+  const { handlers, endpoint } = await keyedFixture(t)
+  // A port this process just served and then closed: nothing listens there,
+  // the connection is refused at the socket, and that code is the reason.
+  const closed = endpoint.baseURL
+  await endpoint.close()
+  const result = await handlers['connection.test']({ baseURL: `${closed}/v1` })
+  assert.equal(result.ok, false)
+  assert.equal(result.error?.code, 'network')
+  assert.match(result.error?.message ?? '', /ECONNREFUSED/)
+})
+
+/* ------------------------------------------------------------------------- *
+ * Faults in the field, not on the network.
+ *
+ * The report, 2026-09-09: 「无法连接到端点。请检查地址与网络。」 in one
+ * millisecond, with a key and endpoint that worked on every other client. A
+ * `fetch` given an address it cannot parse, or a header value it cannot carry,
+ * throws a `TypeError` before any packet leaves — and the catch filed every
+ * non-timeout throw under `network`. Both are now said by name, before the
+ * wire, and neither message carries the key.
+ * ------------------------------------------------------------------------- */
+
+test('an address without a scheme answers bad-url before any request', async (t) => {
+  const { handlers, endpoint } = await keyedFixture(t)
+  const bare = endpoint.baseURL.replace(/^http:\/\//, '')
+  const result = await handlers['connection.test']({ baseURL: `${bare}/v1` })
+  assert.equal(result.ok, false)
+  assert.equal(result.error?.code, 'bad-url')
+  assert.equal(result.latencyMs, 0)
+  assert.match(result.error?.message ?? '', /https:\/\//)
+  // Nothing left the process: the endpoint saw no request.
+  assert.equal(endpoint.lastHadHeaders, false)
+})
+
+test('a full-width colon from an IME is a bad-url, not a network fault', async (t) => {
+  const { handlers } = await keyedFixture(t)
+  const result = await handlers['connection.test']({ baseURL: 'https：//api.example.test/v1' })
+  assert.equal(result.ok, false)
+  assert.equal(result.error?.code, 'bad-url')
+})
+
+test('a key holding a character a header cannot carry answers bad-key and never echoes the key', async (t) => {
+  const { handlers, endpoint } = await keyedFixture(t)
+  const key = 'sk-secret-键-tail'
+  const result = await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1`, apiKey: key })
+  assert.equal(result.ok, false)
+  assert.equal(result.error?.code, 'bad-key')
+  assert.equal(result.latencyMs, 0)
+  // Position and code point, so the person can find it; nothing of the value.
+  assert.match(result.error?.message ?? '', /index 10/)
+  assert.match(result.error?.message ?? '', /code point 38190/)
+  assert.equal(result.error?.message.includes('secret'), false)
+  assert.equal(result.error?.message.includes('键'), false)
+  assert.equal(endpoint.lastHadHeaders, false)
+})
+
+test('a key pasted with a trailing newline still reaches the endpoint — the platform trims it', async (t) => {
+  const { handlers, endpoint } = await keyedFixture(t)
+  const result = await handlers['connection.test']({ baseURL: `${endpoint.baseURL}/v1`, apiKey: 'sk-fine\n' })
+  // Whatever the fixture endpoint answers, the request left the process: this
+  // is not a `bad-key`, because `fetch` would not have refused it either.
+  assert.notEqual(result.error?.code, 'bad-key')
+  assert.equal(endpoint.lastHadHeaders, true)
 })
 
 /* ------------------------------------------------------------------------- *

@@ -3382,3 +3382,32 @@ own realm**, because that is the only realm a timer here can fire in, which
 makes a scheduler read through the parent and one read bare the same functions
 with mutually cancellable handles. Injected through `FrameEnv` like the event
 target; absent, the six names follow the unpublished-name policy.
+
+## 75. A failed connection test shows the host's reason under the sentence
+
+**Kind:** fix (companion to host §57).
+
+**Measured.** 2026-09-09, the operator's report: the connection form said
+「无法连接到端点。请检查地址与网络。」 and nothing else, one millisecond after the
+test, for a key and endpoint that worked everywhere else. The host's verdict carried
+a `message` — `could not reach …/models: Failed to parse URL …` — and
+`testErrorText` mapped the code to its sentence and dropped the message on the
+floor. Its own docblock promised "falling back to the host's own words"; the code
+never did.
+
+**Now.** `testErrorDetail` returns the host's message for every code except the two
+whose message is host boilerplate that adds nothing to the sentence (`missing-key`,
+`no-endpoint`), and the verdict paragraph renders it as a quieter second line
+(`.iris-conn__test-detail`, smaller, `overflow-wrap: anywhere` because it carries a
+URL). The protocol's contract that the message never carries a credential is what
+makes showing it unconditionally safe; host §57 pins that contract for the new
+`bad-key` code with a test that the message holds neither the key's body nor the
+offending character. Two new sentences, `testErrBadUrl` and `testErrBadKey`, name
+the two faults the host now distinguishes from a network failure; both point at the
+field, not the network. The detail line is deliberately **not translated**: it is
+the address tried, the status, the socket code — the tokens a person pastes into a
+search or a bug report.
+
+**What would overturn it.** A host message that carries a credential (the contract
+is the host's, the exposure would be here); a code whose message is boilerplate
+being shown twice.

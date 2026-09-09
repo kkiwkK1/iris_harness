@@ -245,6 +245,72 @@ export const DEFAULT_PROBE_TIMEOUT_MS = 10_000
 type ProbeVerdict = Omit<RpcResponse<'connection.test'>, 'keySource'>
 
 /**
+ * Whether `fetch` would accept this string as a request URL.
+ *
+ * The WHATWG parser is the judge, because it is the one `fetch` consults: a
+ * missing scheme, a full-width `：`, a space inside the host all fail here and
+ * would otherwise surface as a `TypeError` one millisecond into the probe.
+ * Only `http:`/`https:` count — `file:` parses but no endpoint lives there.
+ * @param url - the string the probe is about to send to.
+ * @returns whether a request can be built from it.
+ */
+export function isRequestableUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The first character of a header value that a header cannot carry, if any.
+ *
+ * Fetch's header values are ByteStrings: every code unit must fit in one byte,
+ * and control characters other than tab are refused. Leading and trailing
+ * whitespace is *trimmed* by the platform, not refused, so a key pasted with a
+ * trailing newline reaches the endpoint and is judged there — that case is not
+ * this fault. The answer names the position and the code point and nothing of
+ * the value around it, so it can be shown beside a credential's field.
+ * @param value - the header value as typed.
+ * @returns where the first unusable character is, or `undefined` when the value is carriable.
+ */
+export function headerValueFault(value: string): { index: number, codePoint: number } | undefined {
+  const trimmed = value.trim()
+  const offset = value.indexOf(trimmed)
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const codePoint = trimmed.codePointAt(i) ?? 0
+    const control = codePoint < 0x20 && codePoint !== 0x09
+    if (codePoint > 0xff || control || codePoint === 0x7f) {
+      return { index: offset + i, codePoint }
+    }
+    if (codePoint > 0xffff) i += 1
+  }
+  return undefined
+}
+
+/**
+ * The reason a `fetch` threw, in the words that name the network fault.
+ *
+ * Undici throws `TypeError: fetch failed` and hangs the real error — `ENOTFOUND`,
+ * `ECONNREFUSED`, `CERT_HAS_EXPIRED` — on `.cause`; a message that stops at the
+ * outer sentence tells the person nothing they can act on. Read inward until a
+ * code or a different message appears.
+ * @param cause - whatever `fetch` rejected with.
+ * @returns a sentence carrying the innermost code and message.
+ */
+export function fetchFailureReason(cause: unknown): string {
+  if (!(cause instanceof Error)) return String(cause)
+  const inner = (cause as { cause?: unknown }).cause
+  const innermost = inner instanceof Error ? fetchFailureReason(inner) : undefined
+  const code = (cause as { code?: unknown }).code
+  const own = typeof code === 'string' && code.length > 0 && !cause.message.includes(code)
+    ? `${code} ${cause.message}`
+    : cause.message
+  return innermost === undefined || innermost.length === 0 ? own : `${own} (${innermost})`
+}
+
+/**
  * Read the model list out of a `/models` response body.
  *
  * The OpenAI-compatible shape is `{ data: [{ id }] }`; Ollama's native list is
@@ -922,12 +988,44 @@ export class IrisAppService {
     apiKeyHeader?: string | undefined
   }): Promise<ProbeVerdict> {
     const url = `${target.baseURL.replace(/\/+$/, '')}/models`
+    /*
+     * Two refusals before the wire, both for inputs `fetch` would reject with a
+     * `TypeError` — which the catch below used to file under `network`, so a
+     * base URL typed without its scheme, or with a full-width `：` from an IME,
+     * came back as 「无法连接到端点。请检查地址与网络。」 in one millisecond, and
+     * the person went looking at their network (measured 2026-09-09: the same
+     * key and endpoint worked on every other client). The address is checked
+     * as the request would see it; the key is checked against what a header
+     * can carry, and the message says *where* the bad character is, never
+     * what surrounds it.
+     */
+    if (!isRequestableUrl(url)) {
+      return {
+        ok: false,
+        latencyMs: 0,
+        error: {
+          code: 'bad-url',
+          message: `"${target.baseURL}" is not an address a request can be sent to — it needs a scheme such as https:// and only plain ASCII in the host`,
+        },
+      }
+    }
     // `Authorization` carries the Bearer scheme; any other header name is a
     // bare value — the same rule the LLM adapter applies, so a probe that
     // passed is a stream that authenticates.
     const headerName = (target.apiKeyHeader ?? 'Authorization').toLowerCase()
     const headers: Record<string, string> = { accept: 'application/json' }
     if (target.apiKey !== undefined && target.apiKey.length > 0) {
+      const bad = headerValueFault(target.apiKey)
+      if (bad !== undefined) {
+        return {
+          ok: false,
+          latencyMs: 0,
+          error: {
+            code: 'bad-key',
+            message: `the key holds a character an HTTP header cannot carry (at index ${String(bad.index)}, code point ${String(bad.codePoint)}) — re-paste it without that character`,
+          },
+        }
+      }
       headers[headerName] = headerName === 'authorization' ? `Bearer ${target.apiKey}` : target.apiKey
     }
 
@@ -948,11 +1046,10 @@ export class IrisAppService {
           error: { code: 'timeout', message: `no answer from ${url} within ${String(this.#options.probeTimeoutMs)}ms` },
         }
       }
-      const reason = cause instanceof Error ? cause.message : String(cause)
       return {
         ok: false,
         latencyMs,
-        error: { code: 'network', message: `could not reach ${url}: ${reason}` },
+        error: { code: 'network', message: `could not reach ${url}: ${fetchFailureReason(cause)}` },
       }
     }
     const latencyMs = Math.round(performance.now() - started)
