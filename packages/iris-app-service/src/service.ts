@@ -264,6 +264,30 @@ export function isRequestableUrl(url: string): boolean {
 }
 
 /**
+ * The `bad-url` verdict for a base URL, or `undefined` when a request can be
+ * built from it.
+ *
+ * Asked twice on purpose: by the handler **before** it resolves a key, because
+ * key adoption compares origins and an address with no origin would otherwise
+ * be answered `missing-key` — true, but not the fault in front of the person —
+ * and by the probe itself, so the probe stays safe to call from anywhere.
+ * @param baseURL - the endpoint as typed.
+ * @returns the refusal, or `undefined`.
+ */
+function badUrlVerdict(baseURL: string): ProbeVerdict | undefined {
+  const url = `${baseURL.replace(/\/+$/, '')}/models`
+  if (isRequestableUrl(url)) return undefined
+  return {
+    ok: false,
+    latencyMs: 0,
+    error: {
+      code: 'bad-url',
+      message: `"${baseURL}" is not an address a request can be sent to — it needs a scheme such as https:// and only plain ASCII in the host`,
+    },
+  }
+}
+
+/**
  * The first character of a header value that a header cannot carry, if any.
  *
  * Fetch's header values are ByteStrings: every code unit must fit in one byte,
@@ -999,16 +1023,8 @@ export class IrisAppService {
      * can carry, and the message says *where* the bad character is, never
      * what surrounds it.
      */
-    if (!isRequestableUrl(url)) {
-      return {
-        ok: false,
-        latencyMs: 0,
-        error: {
-          code: 'bad-url',
-          message: `"${target.baseURL}" is not an address a request can be sent to — it needs a scheme such as https:// and only plain ASCII in the host`,
-        },
-      }
-    }
+    const badUrl = badUrlVerdict(target.baseURL)
+    if (badUrl !== undefined) return badUrl
     // `Authorization` carries the Bearer scheme; any other header name is a
     // bare value — the same rule the LLM adapter applies, so a probe that
     // passed is a stream that authenticates.
@@ -1918,6 +1934,12 @@ export class IrisAppService {
         } else {
           throw invalid('name a saved profile (profileId) or give the endpoint to probe (baseURL)')
         }
+
+        // The address before the key: adoption of a stored or host key compares
+        // origins, and an address with no origin would come back `missing-key`
+        // — true, but the person's fault is in the address field.
+        const badUrl = badUrlVerdict(baseURL)
+        if (badUrl !== undefined) return { ...badUrl, keySource: 'none' }
 
         const resolved = await this.#probeCredential(baseURL, input, profile)
         const preset = presetId === undefined ? undefined : providerPreset(presetId)
