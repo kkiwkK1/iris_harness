@@ -23,7 +23,7 @@ import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribu
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, ChatBudget, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TurnUsage } from '@iris/protocol'
+import type { BackupSummary, ChatBudget, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TurnUsage } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -802,6 +802,17 @@ export class IrisAppService {
     await this.#options.settings.setPreset(name, body)
     const patch = presetScalarPatch(body)
     if (Object.keys(patch).length > 0) await this.#options.settings.set(undefined, patch)
+    // A preset carries its own regex tier, so a switch changes which rules
+    // rewrite the page and the request — and a conversation that is already
+    // open is still composing from the tier it opened with. The refresh is
+    // after the persist, because the tier is read back out of the settings
+    // record this line just wrote (see `activePresetRegexSource`).
+    //
+    // Unconditional, rather than only when either preset carries rules: the
+    // condition would have to compare two `extensions.regex_scripts` fields to
+    // decide, and getting that comparison wrong leaves the *old* preset's
+    // rules running with nothing to show it.
+    await this.#refreshRegex()
   }
 
   /**
@@ -1163,6 +1174,85 @@ export class IrisAppService {
         throw new AppError('unsupported', 'this host keeps no script library')
       }
       return scriptLibrary
+    }
+
+    /**
+     * The policy store, or a refusal that names what is missing.
+     *
+     * The same shape and the same argument as `requireLibrary` above: the
+     * preset regex tier's two writes land in the user's policy file, and a host
+     * without one has nowhere to record a permission — answering
+     * "allowed: false" would be indistinguishable from a decision the user had
+     * actually made.
+     * @returns the store.
+     * @throws {AppError} `unsupported` on a host that keeps no script policy.
+     */
+    const requirePolicy = (): ScriptPolicyStore => {
+      if (scripts === undefined) {
+        throw new AppError('unsupported', 'script policy is not configured on this host')
+      }
+      return scripts
+    }
+
+    /**
+     * Which preset the regex tier belongs to, and the body it is read from.
+     *
+     * **The persisted selection, not the field the assembler holds** — and that
+     * is deliberate: the chat store composes its preset tier from exactly this
+     * pair (the closure in `index.ts`), so a panel reading the live field
+     * instead could show a reader a tier their conversations were not running.
+     * Every path that changes the active preset — a switch, a save over the
+     * active name, a delete of it, and every manager mutation — writes through
+     * `settings.setPreset` before it returns, which is what makes one reading
+     * serve both.
+     *
+     * Read as one pair with no `await` between the two accessors, because they
+     * are two views of one record and a suspension between them is a
+     * suspension in which a switch could land.
+     * @returns the name (absent when the active preset has none) and the body.
+     */
+    const activePresetRegexSource = (): { name: string | undefined, body: unknown } => ({
+      name: settings.presetName(),
+      body: settings.presetBody(),
+    })
+
+    /**
+     * The active preset's library name, or a refusal that says why there is none.
+     *
+     * A decision has to be recorded against something, and upstream's
+     * allow-list is keyed by the preset's name. A host still assembling with
+     * the file its composition configured has no name to key by — so the
+     * refusal names the way out (save it to the library) rather than storing
+     * the permission under an invented key that the next switch would orphan.
+     * @returns the name.
+     * @throws {AppError} `invalid-request` when the active preset has no name.
+     */
+    const activePresetName = (): string => {
+      const name = activePresetRegexSource().name
+      if (name === undefined) {
+        throw invalid(
+          'the active preset has no library name, so its regex tier cannot be allow-listed'
+          + ' — save it to the preset library first',
+        )
+      }
+      return name
+    }
+
+    /**
+     * The active preset's tier as the three preset-regex methods answer it.
+     *
+     * One projection for all three, so the two writes answer with the same
+     * reading the list does — the shape the scoped trio already has.
+     * @returns the rows, the gate, and the refused-row count.
+     */
+    const presetRegexView = async (): Promise<PresetRegexAnswer> => {
+      const store = requirePolicy()
+      const { name, body } = activePresetRegexSource()
+      // No name, no tier: nothing can be allow-listed, so nothing is listed as
+      // switchable either. The absent `presetName` is what the panel reads to
+      // tell this empty state from a preset that simply ships no rules.
+      if (name === undefined) return { scripts: [], allowed: false, malformed: 0 }
+      return { presetName: name, ...await store.presetRegexView(name, body) }
     }
 
     /**
@@ -2156,6 +2246,12 @@ export class IrisAppService {
         if (this.#activePresetName === undefined || this.#activePresetName === name) {
           this.#activePresetName = name
           await this.#options.settings.setPreset(name, this.#activePreset)
+          // The name is what the preset regex allow-list is keyed by, so this
+          // write can change whether the active body's tier is even
+          // addressable — an unnamed body has no entry it could be permitted
+          // under, and saving one under a name the user had already allowed
+          // makes its rules live. Open conversations have to be told.
+          await this.#refreshRegex()
         }
         return {
           presets: (await store.list()).map(preset => ({ name: preset })),
@@ -2173,6 +2269,11 @@ export class IrisAppService {
         if (this.#activePresetName === name) {
           this.#activePresetName = undefined
           await this.#options.settings.setPreset(undefined, this.#activePreset)
+          // And its regex tier stops: the allow-list is keyed by the name that
+          // has just gone, so the permission no longer addresses anything. An
+          // open conversation would otherwise keep running the deleted
+          // preset's rules until it was reopened.
+          await this.#refreshRegex()
         }
         const presets = (await store.list()).map(preset => ({ name: preset }))
         return { presets, ...this.#activePresetName === undefined ? {} : { active: this.#activePresetName } }
@@ -2626,6 +2727,45 @@ export class IrisAppService {
         await scripts.setScopedRegexEnabled(characterId, scriptId, enabled)
         await this.#refreshRegex()
         return scripts.scopedRegexView(characterId, card)
+      },
+
+      /**
+       * The active preset's own regex tier, and whether the user lets it run.
+       *
+       * Listed whether or not it is allowed, for `regex.scopedList`'s reason —
+       * and here the refused state is the *common* one, because this tier
+       * arrives off (§53). A panel that showed nothing until it was allowed
+       * would leave a reader no way to find out that the preset they just
+       * imported carries 18 live rewrite rules.
+       */
+      'regex.presetList': async () => presetRegexView(),
+
+      'regex.setPresetAllowed': async ({ allowed }) => {
+        const store = requirePolicy()
+        // The name is what the allow-list is keyed by, so a preset without one
+        // cannot be allow-listed at all — refused rather than stored under a
+        // manufactured key, which is the same rule the scoped writes keep about
+        // ids no card carries.
+        const presetName = activePresetName()
+        await store.setPresetRegexAllowed(presetName, allowed)
+        await this.#refreshRegex()
+        return presetRegexView()
+      },
+
+      'regex.setPresetEnabled': async ({ scriptId, enabled }) => {
+        const store = requirePolicy()
+        const presetName = activePresetName()
+        // Refused for a rule the preset does not carry, the same gate
+        // `regex.setScopedEnabled` applies — and it also refuses one of the
+        // rows the reader dropped, which is correct: a switch over a rule that
+        // cannot run is a decision with no effect to record.
+        const known = await presetRegexView()
+        if (!known.scripts.some(row => row.script.id === scriptId)) {
+          throw notFound(`preset "${presetName}" has no regex script "${scriptId}"`)
+        }
+        await store.setPresetRegexEnabled(presetName, scriptId, enabled)
+        await this.#refreshRegex()
+        return presetRegexView()
       },
 
       /**

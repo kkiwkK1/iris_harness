@@ -43,7 +43,7 @@ import type { VolatilityRecord } from './cache-friendly.ts'
 import { readCompaction } from './compaction.ts'
 import { busy } from './errors.ts'
 import { applyPrune, periodicWindow, SNAPSHOT_KEY, prunedRowsOf, applyRowPrune, applyPruned, DEFAULT_PRUNE, IGNORE_CLEANUP_KEY, legacyWindow, looksNeverCleaned, PRUNED_KEYS, type FloorRead, planPrune, prunedKeysOf, prunedNote, type PruneOptions } from './prune.ts'
-import { scriptsOf, type ScopedRegexPolicy } from './regex.ts'
+import { scriptsOf, type PresetRegexTier, type ScopedRegexPolicy } from './regex.ts'
 import { parseFingerprint, type PromptFingerprint } from './fingerprint.ts'
 import {
   appendSideUsage, compactionUsage, readSideUsage, scriptUsage, type SideUsage,
@@ -456,6 +456,15 @@ export class ChatEntry {
   #globalScripts: readonly RegexScript[]
   /** The user's decisions about this card's own regex tier; replaced by `setRegex`. */
   #scopedRegex: ScopedRegexPolicy | undefined
+  /**
+   * The active preset's own regex tier, as it stood when this chat opened;
+   * replaced by `setRegex`.
+   *
+   * Absent means there is nothing to run — no named active preset, or one the
+   * user has not allow-listed. Both readings compose identically, which is why
+   * one field carries them.
+   */
+  #presetRegex: PresetRegexTier | undefined
   /** Storage for the `script` scope; outlives `rebuild`, so it is held here. */
   readonly #scriptScope: ScopeBackend
   /** Storage for the `global` scope; outlives `rebuild`, so it is held here. */
@@ -550,6 +559,16 @@ export class ChatEntry {
      * switching a card's rules off.
      */
     scopedRegex?: ScopedRegexPolicy
+    /**
+     * The active preset's own regex tier, at open time.
+     *
+     * A snapshot for `globalScripts`' reason, and **absent means nothing
+     * runs** — the opposite direction from `scopedRegex` above, which is the
+     * point: a construction path that forgets to pass this one keeps a
+     * preset's rules *out* of the conversation rather than silently letting 18
+     * of them in. See `regex.ts`'s `scriptsOf` and §53.
+     */
+    presetRegex?: PresetRegexTier
   }) {
     this.chatId = input.chatId
     this.header = input.header
@@ -559,6 +578,7 @@ export class ChatEntry {
     this.#persona = input.persona
     this.#globalScripts = input.globalScripts ?? []
     this.#scopedRegex = input.scopedRegex
+    this.#presetRegex = input.presetRegex
     // Sticky and cooldown windows outlive the process in upstream: they live in
     // `chat_metadata.timedWorldInfo`, which is saved with the chat file. Restored
     // here rather than by the caller because every construction path — open,
@@ -599,28 +619,37 @@ export class ChatEntry {
    * work proportional to the square of the conversation.
    */
   get scripts(): readonly RegexScript[] {
-    this.#scripts ??= scriptsOf(this.card, this.#globalScripts, this.#scopedRegex)
+    this.#scripts ??= scriptsOf(this.card, this.#globalScripts, this.#scopedRegex, this.#presetRegex)
     return this.#scripts
   }
 
   /**
-   * Replace both regex tiers' inputs and drop the composed list.
+   * Replace all three regex tiers' inputs and drop the composed list.
    *
    * This is how a regex edit reaches chats that are already open: the snapshot
    * each entry composed at open time is otherwise a fact about the past, and a
    * rule the user just switched off would keep rewriting every page until the
    * chat happened to be reopened.
    *
-   * **Both at once, not two setters.** The composed list is one value derived
-   * from both, so a second setter would be a second place to forget to
+   * **All at once, not three setters.** The composed list is one value derived
+   * from all of them, so a second setter would be a second place to forget to
    * invalidate it — and a stale composition is invisible: the text is simply
-   * still the old text.
+   * still the old text. `preset` is **required and nullable** rather than
+   * optional for the same reason: a caller that had nothing to say about it
+   * would otherwise leave the old tier in place, which after a preset switch is
+   * the previous preset's rules still rewriting this conversation.
    * @param scripts - the profile's global tier as it stands now.
    * @param scoped - the user's decisions about this card's tier.
+   * @param preset - the active preset's tier, or undefined when none runs.
    */
-  setRegex(scripts: readonly RegexScript[], scoped: ScopedRegexPolicy): void {
+  setRegex(
+    scripts: readonly RegexScript[],
+    scoped: ScopedRegexPolicy,
+    preset: PresetRegexTier | undefined,
+  ): void {
     this.#globalScripts = scripts
     this.#scopedRegex = scoped
+    this.#presetRegex = preset
     this.#scripts = undefined
   }
 

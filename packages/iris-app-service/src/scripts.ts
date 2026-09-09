@@ -45,9 +45,17 @@ import { dirname } from 'node:path'
 import type { RegexScriptView, ScopedRegexView, ScriptView } from '@iris/protocol'
 import { effectiveButtons, type ScriptButton } from './script-buttons.ts'
 import { extractScripts, type CardScript } from '@iris/script'
-import type { ScopedRegexPolicy } from './regex.ts'
+import { readPresetRegex, type PresetRegexPolicy, type ScopedRegexPolicy } from './regex.ts'
 
-/** Per-character policy, keyed by character id. */
+/**
+ * The user's decisions, in two records: per character, and per preset **name**.
+ *
+ * One file, two subjects, because the file is "what the user has decided about
+ * text and code that came with someone else's document" and a preset is one of
+ * those documents. The alternative — a section of `settings.json` — is the one
+ * this store's own docblock argues against: a settings reset must not be able
+ * to hand anything a permission back.
+ */
 interface PolicyFile {
   characters: Record<string, {
     /** Script ids the user switched off, or back on against the card's wishes. */
@@ -92,6 +100,45 @@ interface PolicyFile {
      */
     scriptsAllowed?: boolean
   }>
+  /**
+   * Per-**preset** policy, keyed by the preset's library name.
+   *
+   * Keyed by name because that is what upstream's own allow-list is keyed by —
+   * `extension_settings.preset_allowed_regex[api]` is a list of preset names
+   * (`extensions/regex/engine.js:126-128`) — and because a preset body has no
+   * other identity here: the library addresses presets by name, a switch
+   * records a name, and a re-import under the same name is the same preset as
+   * far as every other surface is concerned.
+   *
+   * **Kept out of the preset file itself, deliberately.** Upstream's is in
+   * `extension_settings` too, and the reasoning §31 makes about a card holds
+   * with one extra edge for presets: a preset is passed around as a file far
+   * more freely than a card, so a permission written into it would travel to
+   * whoever received it next as a permission *they* had granted.
+   */
+  presets?: Record<string, {
+    /**
+     * Whether this preset's own regex tier may run.
+     *
+     * **Absent means refused**, the mirror image of `regexAllowed` twelve lines
+     * up, and the same direction as upstream. The two defaults disagree because
+     * their subjects do: a card's rules mostly hide the card's own bookkeeping
+     * from its own reader, while the one preset measured here ships 40 rules of
+     * which 18 are live and 6 rewrite the outgoing request — so a preset import
+     * that silently acquired them would change what the model reads with no
+     * moment at which anyone said yes (§53).
+     */
+    regexAllowed?: boolean
+    /**
+     * The user's own switches over this preset's regex rules, by the rule's `id`.
+     *
+     * The same shape and the same reasoning as the per-character
+     * `regexEnabled`: the preset author's `disabled` travels with the file, the
+     * user's switch is about this installation, and nothing here rewrites the
+     * preset to record it.
+     */
+    regexEnabled?: Record<string, boolean>
+  }>
 }
 
 /** Reads and persists the user's decisions about card scripts. */
@@ -113,9 +160,20 @@ export class ScriptPolicyStore {
     this.#loaded = true
     try {
       const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'))
-      if (typeof parsed === 'object' && parsed !== null && 'characters' in parsed) {
-        const characters = (parsed as PolicyFile).characters
-        if (typeof characters === 'object' && characters !== null) this.#file = { characters }
+      if (typeof parsed === 'object' && parsed !== null) {
+        const file = parsed as PolicyFile
+        const characters = 'characters' in parsed && typeof file.characters === 'object' && file.characters !== null
+          ? file.characters
+          : {}
+        // The preset record is read **beside** the character one rather than
+        // instead of it: a file written before this record existed carries
+        // `characters` alone, and a reader that required both would drop every
+        // decision the user had already made. Same shape as the guard above,
+        // and it has to stay separate for exactly that reason.
+        const presets = typeof file.presets === 'object' && file.presets !== null
+          ? file.presets
+          : undefined
+        this.#file = { characters, ...presets === undefined ? {} : { presets } }
       }
     } catch {
       // Unreadable or absent. An unreadable policy file must not stop the app
@@ -255,6 +313,90 @@ export class ScriptPolicyStore {
   }
 
   /**
+   * The user's decisions about one preset's own regex tier.
+   *
+   * **Refused unless the user said otherwise** — `=== true`, the opposite
+   * reading of {@link scopedRegex} one screen up, and upstream's own default
+   * (`preset_allowed_regex[api]` starts empty and membership is added by hand).
+   * The reasoning for the two defaults disagreeing is on the record they are
+   * stored in, and in §53.
+   * @param presetName - the preset's library name.
+   * @returns the policy the regex composer should run that preset's tier under.
+   */
+  async presetRegex(presetName: string): Promise<PresetRegexPolicy> {
+    await this.#load()
+    const record = this.#file.presets?.[presetName]
+    return {
+      allowed: record?.regexAllowed === true,
+      enabled: record?.regexEnabled ?? {},
+    }
+  }
+
+  /**
+   * Allow or refuse one preset's own regex tier.
+   * @param presetName - the preset's library name.
+   * @param allowed - the user's choice.
+   * @returns the choice as stored.
+   */
+  async setPresetRegexAllowed(presetName: string, allowed: boolean): Promise<boolean> {
+    await this.#load()
+    const presets = this.#file.presets ?? {}
+    const record = presets[presetName] ?? {}
+    // `true` is written and `false` deletes — the mirror image of
+    // `setScopedRegexAllowed`, and for the same reason read the other way
+    // round: absent already means refused here, so a stored `false` would be a
+    // second spelling of the default.
+    if (allowed) record.regexAllowed = true
+    else delete record.regexAllowed
+    presets[presetName] = record
+    this.#file.presets = presets
+    await this.#save()
+    return allowed
+  }
+
+  /**
+   * Override one of a preset's regex rules, against the preset's own `disabled`.
+   * @param presetName - the preset's library name.
+   * @param scriptId - the rule's id, as the preset stores it.
+   * @param enabled - the user's choice.
+   */
+  async setPresetRegexEnabled(presetName: string, scriptId: string, enabled: boolean): Promise<void> {
+    await this.#load()
+    const presets = this.#file.presets ?? {}
+    const record = presets[presetName] ?? {}
+    record.regexEnabled = { ...record.regexEnabled, [scriptId]: enabled }
+    presets[presetName] = record
+    this.#file.presets = presets
+    await this.#save()
+  }
+
+  /**
+   * Project one preset's own regex tier for a list view.
+   *
+   * Reads the preset body rather than a store, for `scopedRegexView`'s reason —
+   * the tier lives in the file and only the opinion of it lives here — and
+   * carries {@link malformed} because rows the engine cannot run are dropped
+   * on both paths and a reader who sees 38 rules in a preset that has 40 is
+   * owed the number.
+   * @param presetName - the preset's library name.
+   * @param body - the preset body.
+   * @returns one row per runnable rule, whether the tier may run, and how many
+   *   rows were refused.
+   */
+  async presetRegexView(
+    presetName: string,
+    body: unknown,
+  ): Promise<{ scripts: ScopedRegexView[], allowed: boolean, malformed: number }> {
+    const policy = await this.presetRegex(presetName)
+    const read = readPresetRegex(body)
+    return {
+      scripts: regexRowsWithSwitches(read.scripts as readonly RegexScriptView[], policy.enabled),
+      allowed: policy.allowed,
+      malformed: read.malformed,
+    }
+  }
+
+  /**
    * Whether a card may reach the real page document.
    * @param characterId - the card.
    * @returns the grant, defaulting to denied.
@@ -383,18 +525,37 @@ export function scopedRegexRows(
   card: unknown,
   enabled: Readonly<Record<string, boolean>>,
 ): ScopedRegexView[] {
-  const scoped = scopedRegexOf(card)
-  return scoped.map(script => {
+  return regexRowsWithSwitches(scopedRegexOf(card), enabled)
+}
+
+/**
+ * Pair each rule with the two switches over it.
+ *
+ * Shared by both gated tiers — a card's rules and a preset's — because the
+ * pairing is the same fact in both: the file's author said `disabled`, the user
+ * said this, and a reader needs to see which of the two is answering. Written
+ * once so the panel's "M of N running" cannot mean one thing under a card and
+ * another under a preset.
+ * @param rules - the rules, in the file's own order.
+ * @param enabled - the user's switches, by the rule's `id`.
+ * @returns one row per rule.
+ */
+function regexRowsWithSwitches(
+  rules: readonly RegexScriptView[],
+  enabled: Readonly<Record<string, boolean>>,
+): ScopedRegexView[] {
+  return rules.map(script => {
     const byCard = script.disabled !== true
     const id = script.id
     return {
       script,
       enabledByCard: byCard,
       // A rule with no `id` cannot be addressed by a switch, so it reports the
-      // card's word — the same rule `scriptsOf` applies when it runs them.
+      // file's own word — the same rule `scriptsOf` applies when it runs them.
       // Upstream assigns ids lazily, so a card really can arrive without one;
-      // all 173 rules in the local corpus carry one, but that is the corpus's
-      // fact and not the format's.
+      // all 173 rules in the local card corpus carry one, and so do all 40 in
+      // the measured preset, but that is the corpus's fact and not the
+      // format's.
       enabled: typeof id === 'string' ? enabled[id] ?? byCard : byCard,
     }
   })

@@ -32,6 +32,7 @@ import type {
   IrisEvent,
   PersonaView,
   PresetManagerView,
+  PresetRegexAnswer,
   PresetSummary,
   RegexScriptView,
   RpcRequest,
@@ -732,6 +733,31 @@ export interface IrisState {
   scopedRegexAllowed: boolean
 
   /**
+   * The **active preset's** own regex tier — upstream's third tier.
+   *
+   * `undefined` means "not loaded, or this host keeps no script policy", read
+   * the same way `scopedRegex === undefined` is. There is no `…For` field
+   * beside it, and that absence is deliberate rather than an omission: the
+   * subject is whichever preset is active, which is a single global fact, and
+   * {@link presetRegexName} is what the answer says it was — a name the panel
+   * prints rather than an attribution it has to guard.
+   */
+  presetRegex: ScopedRegexView[] | undefined
+  /**
+   * Which preset {@link presetRegex} came out of.
+   *
+   * `undefined` with a loaded list means the active preset has no library name
+   * (a host still assembling with its configured file), which is also the one
+   * state where the tier can never be permitted — the allow-list is keyed by
+   * name. The panel says that in words instead of showing a dead switch.
+   */
+  presetRegexName: string | undefined
+  /** Whether the user has allow-listed the active preset's tier. Default off. */
+  presetRegexAllowed: boolean
+  /** How many of the preset's stored rows could not be run; see `PresetRegexAnswer`. */
+  presetRegexMalformed: number
+
+  /**
    * The user's own script library, once fetched.
    *
    * Both repositories in one list, each row naming its `scope`, because that is
@@ -1225,6 +1251,19 @@ export interface IrisActions {
   /** The user's own on/off for one of a card's regex rules. */
   setScopedRegexEnabled(characterId: string, scriptId: string, enabled: boolean): Promise<void>
   /**
+   * Fetch the active preset's own regex tier and the user's decisions about it.
+   *
+   * No parameter, because the subject is whichever preset is active — the only
+   * one whose rules can run. Not `guard`-wrapped, for `loadRegex`'s reason: the
+   * expected failure is a host with no script policy, which the panel reads as
+   * absence.
+   */
+  loadPresetRegex(): Promise<void>
+  /** Allow or refuse the active preset's own regex tier. */
+  setPresetRegexAllowed(allowed: boolean): Promise<void>
+  /** The user's own on/off for one of the active preset's regex rules. */
+  setPresetRegexEnabled(scriptId: string, enabled: boolean): Promise<void>
+  /**
    * Fetch the user's script library.
    *
    * With a character, that card's repository beside the global one. Not
@@ -1264,6 +1303,29 @@ export interface IrisActions {
 
 /** The store the whole interface reads. */
 export type IrisStore = StoreApi<IrisState & IrisActions>
+
+/**
+ * One preset-regex answer, as the four state fields it lands in.
+ *
+ * Written once because all three calls — the list and the two writes — answer
+ * with the same envelope, and a hand-copied `set({ … })` in each is three
+ * places for the `malformed` count (the newest field) to be forgotten in two of
+ * them. It is also the only place that decides how an absent `presetName` is
+ * stored, which is the field the panel branches on.
+ * @param answer - what the host said.
+ * @returns the state patch.
+ */
+function presetRegexState(answer: PresetRegexAnswer): Pick<
+  IrisState,
+  'presetRegex' | 'presetRegexName' | 'presetRegexAllowed' | 'presetRegexMalformed'
+> {
+  return {
+    presetRegex: answer.scripts,
+    presetRegexName: answer.presetName,
+    presetRegexAllowed: answer.allowed,
+    presetRegexMalformed: answer.malformed,
+  }
+}
 
 /**
  * Build the store and wire it to a client.
@@ -1464,6 +1526,14 @@ export function createIrisStore(
       scopedRegex: undefined,
       scopedRegexFor: undefined,
       scopedRegexAllowed: true,
+      presetRegex: undefined,
+      presetRegexName: undefined,
+      // `false`, where the scoped default one line up is `true`: the two tiers'
+      // defaults are mirror images on the host too, and a shell that started
+      // optimistic here would flash "18 rules running" before the answer said
+      // none of them were.
+      presetRegexAllowed: false,
+      presetRegexMalformed: 0,
       library: undefined,
       libraryFor: undefined,
       backups: undefined,
@@ -2887,6 +2957,32 @@ export function createIrisStore(
           const answer = await client.call('regex.setScopedEnabled', { characterId, scriptId, enabled })
           if (get().scopedRegexFor !== characterId) return
           set({ scopedRegex: answer.scripts, scopedRegexAllowed: answer.allowed })
+        })
+      },
+
+      async loadPresetRegex(): Promise<void> {
+        try {
+          const answer = await client.call('regex.presetList', {})
+          set(presetRegexState(answer))
+        } catch {
+          // A host with no script policy, saying so. Read as absence, like
+          // `regexScripts === undefined`. No in-flight attribution guard is
+          // needed here, unlike the scoped loads above: the subject is the
+          // active preset rather than one card among many, and the answer
+          // carries the name it was about.
+          set({ presetRegex: undefined })
+        }
+      },
+
+      async setPresetRegexAllowed(allowed: boolean): Promise<void> {
+        await guard(async () => {
+          set(presetRegexState(await client.call('regex.setPresetAllowed', { allowed })))
+        })
+      },
+
+      async setPresetRegexEnabled(scriptId: string, enabled: boolean): Promise<void> {
+        await guard(async () => {
+          set(presetRegexState(await client.call('regex.setPresetEnabled', { scriptId, enabled })))
         })
       },
 

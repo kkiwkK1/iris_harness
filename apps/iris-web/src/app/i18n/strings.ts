@@ -808,6 +808,26 @@ export const en = {
   scopedRegexOffByCard: 'off by the card',
   scopedRegexUnaddressable: 'no identity, cannot be switched',
 
+  /**
+   * The active preset's own regex tier — upstream's third tier, the one that
+   * arrives off. `presetRegexRefusedNote` names the cost of the default in the
+   * same breath as the default, because "refused" here is not a warning about
+   * something broken: it is the state a fresh import is in.
+   */
+  sectionPresetRegex: 'This preset’s regex',
+  presetRegexSummary: '{running} of {count} running',
+  presetRegexRefusedSummary: '{count} rules, not enabled',
+  presetRegexNote: 'Rules the preset “{name}” ships. They run after your global ones and before the card’s own, and they rewrite every conversation this preset is active in. The preset’s author wrote them, so they are listed here rather than edited — export one to keep your own copy.',
+  presetRegexUnnamed: 'The preset running now is the one this host was configured with, and it has no library name — so there is nothing to put on the allow list, and its rules cannot be enabled. Save it to the preset library first.',
+  presetRegexMalformed: '{n} more row(s) in this preset are not rules — no pattern, or an empty one, which would match at every position — so they are skipped.',
+  presetRegexAllowLabel: 'Let them run',
+  presetRegexAllowedNote: 'This preset’s rules run wherever it is active.',
+  presetRegexRefusedNote: 'None of them run yet. A preset is a settings file people pass around, and some of these rules rewrite what the model is sent, not just what you read — so they stay off until you say. SillyTavern asks for the same thing: a preset only runs its regex once its name is on `preset_allowed_regex`.',
+  presetRegexAllow: 'Let them run',
+  presetRegexRefuse: 'Stop them running',
+  presetRegexOffByPreset: 'off by the preset',
+  presetRegexHeldBack: 'waiting on the switch above',
+
   /** The script library — the user's own scripts, TavernHelper's 脚本库. */
   sectionScriptLibrary: 'Your scripts',
   librarySummary: '{count} scripts',
@@ -2108,6 +2128,20 @@ export const zh: Record<StringKey, string> = {
   scopedRegexRefuse: '停止运行',
   scopedRegexOffByCard: '卡作者关掉的',
   scopedRegexUnaddressable: '没有标识，无法开关',
+
+  sectionPresetRegex: '这份预设的正则',
+  presetRegexSummary: '{count} 条，{running} 条在跑',
+  presetRegexRefusedSummary: '{count} 条，未启用',
+  presetRegexNote: '预设「{name}」自带的正则。它们在你的全局正则之后、角色卡自带的之前运行，只要这份预设在用，每一个对话都会被改写。规则是预设作者写的，所以这里只列出、不编辑——想留一份自己的，导出一条即可。',
+  presetRegexUnnamed: '当前在跑的是本机配置里指定的预设文件，它没有库内名称——白名单没有可以登记的对象，所以这些正则无法启用。先把它另存进预设库。',
+  presetRegexMalformed: '这份预设里还有 {n} 条不是规则——没有查找式，或者查找式是空的（空查找式会匹配到每一个位置）——已跳过。',
+  presetRegexAllowLabel: '允许运行',
+  presetRegexAllowedNote: '这份预设的正则会在它生效的所有对话里运行。',
+  presetRegexRefusedNote: '目前一条都不会运行。预设是一份被到处传的设置文件，而这里有些规则改写的是送给模型的文本、不只是你读到的——所以要等你点头。SillyTavern 也是同样的要求：预设名进了 `preset_allowed_regex` 白名单，它自带的正则才会跑。',
+  presetRegexAllow: '允许运行',
+  presetRegexRefuse: '停止运行',
+  presetRegexOffByPreset: '预设作者关掉的',
+  presetRegexHeldBack: '等上面那个开关',
 
   sectionScriptLibrary: '你的脚本',
   librarySummary: '{count} 个脚本',

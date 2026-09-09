@@ -27,7 +27,7 @@ import {
 } from '@iris/persistence'
 import type { ChatSearchHit, ChatSearchMatch, ChatSummary, UsageSummary } from '@iris/protocol'
 import type { RegexScript } from '@iris/regex'
-import type { ScopedRegexPolicy } from './regex.ts'
+import type { PresetRegexTier, ScopedRegexPolicy } from './regex.ts'
 import type { ScopeBackend, Variables } from '@iris/variables'
 
 import { BackupStore } from './backups.ts'
@@ -148,6 +148,19 @@ export class ChatStore {
    */
   readonly #scopedRegex: ((characterId: string) => Promise<ScopedRegexPolicy>) | undefined
   /**
+   * The active preset's own regex tier, read fresh each open.
+   *
+   * The third of the three tiers {@link ChatEntry.scripts} composes, and a
+   * closure for the two reasons above plus one of its own: **which preset is
+   * active is itself runtime state.** A snapshot taken at construction would
+   * keep running the rules of whatever preset the host started on, so a switch
+   * would change every prompt in the assembly and none of the rewrites over it.
+   *
+   * Absent — a host that passes none — means the tier does not run, the same
+   * reading a refused allow-list gets; see `scriptsOf`.
+   */
+  readonly #presetRegex: (() => Promise<PresetRegexTier | undefined>) | undefined
+  /**
    * Where the pre-change copies live.
    *
    * Always present: a store without a snapshot directory would make the
@@ -178,6 +191,7 @@ export class ChatStore {
     charBooks?: (characterId: string) => readonly string[],
     backups?: BackupStore,
     scopedRegex?: (characterId: string) => Promise<ScopedRegexPolicy>,
+    presetRegex?: () => Promise<PresetRegexTier | undefined>,
   ) {
     this.#dir = dir
     this.#library = library
@@ -191,6 +205,7 @@ export class ChatStore {
     this.#charBooks = charBooks
     this.#backups = backups ?? new BackupStore(dir)
     this.#scopedRegex = scopedRegex
+    this.#presetRegex = presetRegex
   }
 
   /**
@@ -229,6 +244,19 @@ export class ChatStore {
       return { allowed: true, enabled: {} }
     }
     return this.#scopedRegex(characterId)
+  }
+
+  /**
+   * The active preset's own regex tier, right now.
+   *
+   * A host that wired no source has no preset tier to run, which composes
+   * exactly as a refused one does — the *opposite* default from `#scoped`
+   * above, and the asymmetry is the ruling in §53, not an oversight: a card's
+   * rules run until refused, a preset's wait to be allowed.
+   * @returns the tier, or undefined when none runs.
+   */
+  async #preset(): Promise<PresetRegexTier | undefined> {
+    return this.#presetRegex?.()
   }
 
   /** Create the folder if this is a first run. */
@@ -370,26 +398,29 @@ export class ChatStore {
   }
 
   /**
-   * Re-read both regex tiers and hand them to every live conversation.
+   * Re-read all three regex tiers and hand them to every live conversation.
    *
-   * Called after any regex edit: the stores' state is what the next open would
-   * compose from, but a chat left open across the edit is still running on the
-   * snapshot it took, and SillyTavern's answer to that is `reloadCurrentChat()` —
-   * the reader sees the new text, not the text the old rules produced.
+   * Called after any regex edit **and after a preset switch**: the stores'
+   * state is what the next open would compose from, but a chat left open across
+   * the change is still running on the snapshot it took, and SillyTavern's
+   * answer to that is `reloadCurrentChat()` — the reader sees the new text, not
+   * the text the old rules produced.
    *
-   * **Both tiers, one method.** It refreshed only the global list until the
-   * card's tier gained a switch; a method named for one tier that a caller
-   * reached for after editing the other is the shape where the second edit
-   * silently does not land until the chat is reopened. There is no
-   * `#globalRegex === undefined` short circuit any more for the same reason:
-   * a host with no global store can still have scoped decisions to apply.
+   * **Every tier, one method.** It refreshed only the global list until the
+   * card's tier gained a switch, and only those two until the preset's arrived;
+   * a method named for one tier that a caller reached for after editing another
+   * is the shape where the second edit silently does not land until the chat is
+   * reopened. There is no `#globalRegex === undefined` short circuit for the
+   * same reason: a host with no global store can still have scoped decisions,
+   * or a preset switch, to apply.
    * @returns the ids of the live conversations that were refreshed.
    */
   async refreshRegex(): Promise<string[]> {
     const scripts = await this.#globals()
+    const preset = await this.#preset()
     const ids: string[] = []
     for (const [chatId, entry] of this.#entries) {
-      entry.setRegex(scripts, await this.#scoped(entry.meta.characterId))
+      entry.setRegex(scripts, await this.#scoped(entry.meta.characterId), preset)
       ids.push(chatId)
     }
     return ids
@@ -421,10 +452,16 @@ export class ChatStore {
 
     const session = importChat(file, chatId)
     const scriptScope = await this.#scriptScope(meta.characterId, card)
+    // Absent stays absent rather than being passed as an explicit `undefined`:
+    // `exactOptionalPropertyTypes` is on, and the entry's own default for the
+    // preset tier is "nothing runs", so the two spellings would have to agree
+    // anyway.
+    const presetRegex = await this.#preset()
     const entry = new ChatEntry({
       chatId, header: file.header, session, card,
       globalScripts: await this.#globals(),
       scopedRegex: await this.#scoped(meta.characterId),
+      ...presetRegex === undefined ? {} : { presetRegex },
       worldbook: await resolveCardWorldbook(
         card, this.#worldbooks, this.#globalSelect?.() ?? [],
         await this.#bookFor?.(meta.characterId, card),
@@ -473,10 +510,12 @@ export class ChatStore {
 
     const session = createSession(chatId)
     const scriptScope = await this.#scriptScope(characterId, card)
+    const presetRegex = await this.#preset()
     const entry = new ChatEntry({
       chatId, header, session, card,
       globalScripts: await this.#globals(),
       scopedRegex: await this.#scoped(characterId),
+      ...presetRegex === undefined ? {} : { presetRegex },
       worldbook: await resolveCardWorldbook(
         card, this.#worldbooks, this.#globalSelect?.() ?? [],
         await this.#bookFor?.(characterId, card),
@@ -570,10 +609,17 @@ export class ChatStore {
     // tables too — branching a conversation does not fork a script's state, any
     // more than starting a second chat with the same character does.
     const scriptScope = await this.#scriptScope(parentMeta.characterId, parent.card)
+    // Re-read rather than inherited from the parent, unlike the world book one
+    // line down: the book is a property of the character and a second
+    // resolution could disagree with the parent's, while the preset tier is a
+    // property of *now* — the branch runs whatever preset is active, which is
+    // also what the parent would compose on its next refresh.
+    const presetRegex = await this.#preset()
     const child = new ChatEntry({
       chatId: childId, header, session, card: parent.card,
       globalScripts: await this.#globals(),
       scopedRegex: await this.#scoped(parentMeta.characterId),
+      ...presetRegex === undefined ? {} : { presetRegex },
       // Reused rather than re-resolved: a branch plays the same character from
       // the same books, and a second resolution could disagree with its parent
       // if a book changed on disk in between.

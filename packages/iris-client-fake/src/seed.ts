@@ -352,6 +352,104 @@ export const FAKE_SCOPED_REGEX: Record<string, RegexScriptView[]> = {
 }
 
 /**
+ * The name the seeded preset regex tier belongs to.
+ *
+ * A name, not a library: `preset.*` stays refused here because a preset library
+ * is host-side *files*, and the fake has no filesystem to keep them in. What it
+ * can hold honestly is the one thing the regex panel needs — which preset is
+ * active, and the rules that preset ships — so the tier is answered while the
+ * library that would list its file is not. The name is shaped after the
+ * measured one (§47) rather than invented, because the panel prints it.
+ */
+export const FAKE_PRESET_NAME = '[主预设] V19.5 狐神抚 · 毓忻'
+
+/**
+ * The active preset's own regex tier, seeded.
+ *
+ * **Four rules, one of each shape the measured preset is made of**, because the
+ * shapes are what the panel renders differently:
+ *
+ * - a `promptOnly` rule that strips a thinking block out of the **request** —
+ *   6 of the measured preset's 18 live rules are this;
+ * - a `markdownOnly` prettifier that changes only what the reader sees — 12 of
+ *   the 18;
+ * - one the preset author shipped `disabled: true`, so the two-switch display
+ *   has a preset-off row;
+ * - and one with an **empty** `findRegex` and `disabled: false` — the UI
+ *   separator, two of which sit in the measured preset's 40. It is here so the
+ *   shell renders the "unrunnable rows skipped" line against something real:
+ *   an empty pattern matches at every position, so a host that ran it would
+ *   splice the replacement between every character of every message.
+ *
+ * The tier arrives **refused**, which is this host's default and upstream's
+ * (`preset_allowed_regex` starts empty): a seed that arrived allowed would show
+ * the shell a state no fresh profile has, and the explanation the panel owes
+ * the reader would never render.
+ */
+export const FAKE_PRESET_REGEX: RegexScriptView[] = [
+  {
+    id: 'p1e5e700-0000-4000-8000-000000000001',
+    scriptName: '去除思维链（发送前）',
+    findRegex: '/<think_fox>[\\s\\S]*?<\\/think_fox>/g',
+    replaceString: '',
+    trimStrings: [],
+    placement: [2],
+    disabled: false,
+    markdownOnly: false,
+    promptOnly: true,
+    runOnEdit: false,
+    substituteRegex: 0,
+    minDepth: null,
+    maxDepth: null,
+  },
+  {
+    id: 'p1e5e700-0000-4000-8000-000000000002',
+    scriptName: '思维链美化（仅显示）',
+    findRegex: '/<think_fox>([\\s\\S]*?)<\\/think_fox>/g',
+    replaceString: '<details><summary>思考</summary>{{match}}</details>',
+    trimStrings: [],
+    placement: [2],
+    disabled: false,
+    markdownOnly: true,
+    promptOnly: false,
+    runOnEdit: false,
+    substituteRegex: 0,
+    minDepth: null,
+    maxDepth: null,
+  },
+  {
+    id: 'p1e5e700-0000-4000-8000-000000000003',
+    scriptName: '备用皮肤',
+    findRegex: '/<fox_front>/g',
+    replaceString: '<div class="fox">',
+    trimStrings: [],
+    placement: [2],
+    disabled: true,
+    markdownOnly: true,
+    promptOnly: false,
+    runOnEdit: false,
+    substituteRegex: 0,
+    minDepth: null,
+    maxDepth: null,
+  },
+  {
+    id: 'p1e5e700-0000-4000-8000-000000000004',
+    scriptName: '——————分隔——————',
+    findRegex: '',
+    replaceString: '',
+    trimStrings: [],
+    placement: [2],
+    disabled: false,
+    markdownOnly: false,
+    promptOnly: false,
+    runOnEdit: false,
+    substituteRegex: 0,
+    minDepth: null,
+    maxDepth: null,
+  },
+]
+
+/**
  * The user's own script library, seeded.
  *
  * One global entry and one against 络络, because those are the two repositories

@@ -1778,7 +1778,16 @@ export interface ScopedRegexView {
    * that kept only the fields this shell renders would write a lossy one.
    */
   script: RegexScriptView
-  /** What the card's author shipped it as: `!script.disabled`. */
+  /**
+   * What the **file's** author shipped it as: `!script.disabled`.
+   *
+   * Named for the card because the card tier was the only one with rows when
+   * this was written, and kept that way when `regex.presetList` began answering
+   * with the same shape: the field means "whoever wrote the document these
+   * rules travel in said this", and a preset is such a document. A second view
+   * type differing in one field's name would be two places to keep one panel's
+   * reading in step. The preset panel renders it as 「预设作者关掉的」.
+   */
   enabledByCard: boolean
   /** Whether it will actually run, once both switches are read. */
   enabled: boolean

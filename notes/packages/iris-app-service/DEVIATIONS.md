@@ -3670,6 +3670,14 @@ explicitly, 咩咩 omits it.
 
 ## 47. A preset's own regex scripts are not run — three tiers exist upstream, two here
 
+**Wired on 2026-09-09; the landing is §53.** This entry stays as written because
+it is the *measurement* — the 40 rules, the 18 live ones, the six that rewrite
+the request, the two separators with an empty pattern, the four preset names on
+the local install's allow-list — and §53 implements the recommendation its last
+section makes rather than replacing it. Everything below was true of this host
+until that round: the tier now runs, behind an allow-list of its own, off until
+the user asks.
+
 **Kind: unimplemented feature, with a measured surface and an upstream gate that
 changes the recommendation.**
 
@@ -4208,6 +4216,160 @@ fields stay absent rather than zero on such a trace. What would overturn it: a t
 whose `error` disagrees with the `stream.error` the panel showed for the same turn,
 or an interrupted turn whose divergence is reported under any excuse but
 `interrupted`.
+
+## 53. The preset's own regex tier now runs — behind an allow-list of its own, off until asked
+
+**Kind: compatibility feature landing, with one deliberate divergence in the
+*storage* of the permission and none in its default. §47 is the measurement this
+implements; read it first for the numbers.**
+
+**Upstream.** `getRegexScripts` walks three tiers —
+`SCRIPT_TYPES = { GLOBAL: 0, PRESET: 2, SCOPED: 1 }`, iterated by key insertion
+order, so the run order is global, preset, character
+(`extensions/regex/engine.js:11-16`, consumed at `:99`; §35 is the correction
+that got that order right here **before** there was a preset tier to observe it
+with). The preset tier reads
+`presetManager.readPresetExtensionField({ path: 'regex_scripts' })` (`:126`) —
+the active preset file's own `extensions.regex_scripts` — and
+`getScriptsByType` refuses it unless
+`extension_settings.preset_allowed_regex[getCurrentPresetAPI()]` contains the
+preset's **name** (`:126-128`), with `getRegexedString` the one caller that asks
+for `allowedOnly: true` (`:346`).
+
+**Iris now carries all three.** `scriptsOf` (`regex.ts`) takes a fourth
+argument, the active preset's tier, and pushes it between the global scripts and
+the card's; `ChatEntry` holds it beside the other two and `ChatStore` reads it
+through a closure exactly as it reads the global list and the per-card policy,
+because *which preset is active is itself runtime state* — a value captured at
+boot would keep the launch preset's rewrites running over prompts assembled from
+a different preset entirely.
+
+### The tier arrives off, and that is upstream's default rather than a divergence
+
+`ScriptPolicyStore.presetRegex` answers `allowed: record?.regexAllowed === true`
+— **absent means refused** — which is the mirror image of the per-card
+`regexAllowed` in the same file (§30, where absent means allowed). The two
+defaults disagree on purpose, and the reason is the subject rather than the
+mechanism:
+
+- a card is a document someone chose to play, and **11 of the 15** local cards
+  that carry a regex tier use it to strip their own bookkeeping blocks out of
+  the reader's page — refusing by default visibly corrupts the reading;
+- a preset is a settings file people pass around by the dozen, and the one
+  measured in §47 ships **40 rules, 18 live: 6 `promptOnly`** ones that rewrite
+  **the outgoing request** and 12 `markdownOnly` prettifiers. §47's own
+  sentence is the ruling: *"a user importing a preset silently gains 18 rewrite
+  rules over their transcript"*, and no moment in an import is a moment anyone
+  said yes.
+
+So the permission is a decision the user makes in the preset panel, per preset,
+and the panel says the same thing SillyTavern would: a preset runs its regex
+once its name is on `preset_allowed_regex`.
+
+### The allow-list is keyed by preset name, and kept out of the preset file
+
+`script-policy.json` grows a second record beside `characters`:
+`presets: Record<presetName, { regexAllowed?: boolean, regexEnabled?: Record<ruleId, boolean> }>`.
+
+**Keyed by name** because that is what upstream's own list is keyed by, and
+because a preset body has no other identity here — the library addresses presets
+by name, a switch records a name, and a re-import under the same name is the
+same preset to every other surface. It is also what makes a switch *carry the
+permission with it*: allow 狐神抚, switch to 咩咩, switch back, and 狐神抚's
+rules are running again without being asked for a second time.
+
+**Kept out of the preset file** — the divergence, and it is §31's ruling applied
+to a document that travels more freely than a card. Upstream stores its
+allow-list in `extension_settings` too, so this is not a divergence from
+upstream's *placement*; the divergence is that Iris also refuses to write the
+**per-rule** switch back into the file, where upstream would
+(`writeExtensionField`, `engine.js:148`). A permission written into a preset
+would reach whoever the file was passed to next as a permission *they* appeared
+to have granted, and a re-import would quietly revive a rule the user had
+switched off. The cost, stated: a rule switched off here and then exported
+carries the *preset author's* `disabled`, not the user's — the same cost §31
+already names for cards.
+
+`presets` is read **beside** `characters` rather than instead of it, because a
+policy file written before this record existed carries `characters` alone and a
+reader that required both would drop every decision the user had already made.
+
+### An unnamed active preset cannot be allow-listed, and says so
+
+The gate needs a name, and this host can be in a state upstream cannot
+represent: assembling with the file its composition configured
+(`config.presetPath`), which has no library name. Such a tier can never be
+permitted, so `regex.presetList` answers `{ scripts: [], allowed: false,
+malformed: 0 }` with **no** `presetName`, the two writes refuse by naming the way
+out ("save it to the preset library first"), and the panel prints the sentence
+instead of a switch that could not be honoured.
+
+### One reading of "the active preset", for both the runner and the panel
+
+Both the chat store's closure and the service's panel projection read the
+**persisted** selection — `settings.json`'s `preset` section, through
+`settings.presetName()` and `settings.presetBody()` — and not the live
+`#activePreset` field the assembler holds. Every path that changes the active
+preset writes through `settings.setPreset` before it returns (`#applyPreset`,
+`#persistActivePreset`, `preset.save` over the active name, `preset.delete` of
+it), which is what makes one reading serve both. Two readings would be two
+places deciding what "the active preset" is, and the day they disagreed the
+panel would show a reader a tier their conversations were not running.
+
+The wiring itself is `presetRegexSource` in `regex.ts` rather than two lines at
+the composition, so the test exercises the wiring the host uses instead of a
+hand-copy of it.
+
+### A preset switch reaches conversations that are already open
+
+`#applyPreset` calls `#refreshRegex()` after persisting, and so do the two paths
+that change only the *name* (`preset.save` over the active name, `preset.delete`
+of it) — the name is what the allow-list is keyed by, so those writes can start
+or stop a tier without touching a rule. `ChatStore.refreshRegex` re-reads all
+three tiers and every open conversation is re-announced, which is upstream's
+`reloadCurrentChat()` after its own panel writes. A manager mutation
+(`preset.setEnabled`, `preset.move`, `preset.upsertPrompt`, …) deliberately does
+**not** refresh: those edit `prompts` and `prompt_order` and cannot reach
+`extensions.regex_scripts`, and a refresh per prompt toggle would re-announce
+every open chat on every click.
+
+### Two of the 40 rules are not rules, and the number is reported
+
+`readPresetRegex` keeps a row only when `findRegex` and `replaceString` are
+strings **and the pattern is not empty**, and returns how many it refused. The
+empty pattern is not a harmless no-op that could be passed through: `new
+RegExp('')` matches at every position, so running one of §47's two UI separators
+would splice its `replaceString` between every character of every message
+(`'abc'.replace(new RegExp('', 'g'), '!')` is `'!a!b!c!'`, pinned in the test).
+
+The count travels on two channels, deliberately: `regex.presetList` carries
+`malformed` so the panel can say it — the durable channel, since a preset with 38
+listed rules and one with 40 of which 2 are unrunnable look identical otherwise —
+and the composition logs it once per preset-and-count for whoever is reading a
+transcript rather than a drawer. It is reported whether or not the tier is
+allowed, because a file carrying unrunnable rows is a fact about the file, and
+hearing it only after switching the tier on would be hearing it at the worst
+moment.
+
+### Where a user sees it
+
+Settings drawer, a new section **「这份预设的正则」** between the global tier and
+the card's — *its subject is the preset section above, but its place is where it
+runs*, because the three regex sections are read as a sequence and a reader
+comparing them is comparing along the axis that decides which rewrite wins. The
+section lists the rules whether or not they run (upstream's own panel does, and
+for this tier "refused" is the ordinary state rather than an edge case), reports
+`M of N running` or `N rules, not enabled`, carries the tier permission and one
+switch per rule, offers export, and badges the three states a row can be in: off
+by the preset, unaddressable (no `id`), and on-but-waiting-on-the-tier.
+
+### What would overturn the default
+
+A preset observed using its tier the way cards use theirs — to hide its own
+bookkeeping from the reader rather than to rewrite the request — measured over
+more than one preset. §47's numbers are one preset's exposure (咩咩预设 ver 5.8.1
+carries no `regex_scripts` at all), and the honest reading is that the default is
+chosen on the *kind of document* rather than on a corpus statistic.
 
 ## 55. The compaction summarizer's own request is billed, so it is now recorded — beside a card's, under its own asker
 
