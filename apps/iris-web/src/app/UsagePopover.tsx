@@ -83,9 +83,10 @@ export interface UsagePopoverProps {
   heading: string
   /** The breakdown rows, in reading order. */
   rows: readonly UsageDetailRow[]
-  /** One sentence under the rows — the composer card's account of its own
-      share. The per-turn chip has none, so this is optional. */
-  note?: string
+  /** Sentences under the rows — the composer card's account of the shares of
+      its figure that were not turns, one paragraph each. The per-turn chip has
+      none, so this is optional, and an empty array draws nothing. */
+  notes?: readonly string[]
   /** The trigger element's class. */
   className: string
   /** The trigger's content — the reading itself, unchanged. */
@@ -97,15 +98,19 @@ export interface UsagePopoverProps {
  *
  * A `dl` rather than a table because the reading is pairs of term and
  * definition — the same element the context card's legend uses — and screen
- * readers announce the pairing natively. An optional note renders under the
- * rows: the composer card carries its share sentence there, the per-turn chip
- * has none. Exported so the render check can prove the rows reach markup
- * without a pointer to hover.
+ * readers announce the pairing natively. Optional notes render under the rows,
+ * one paragraph each: the composer card carries its share sentences there, the
+ * per-turn chip has none. Exported so the render check can prove the rows reach
+ * markup without a pointer to hover.
  */
 export const UsageDetailCard = forwardRef<
   HTMLDivElement,
-  { heading: string, rows: readonly UsageDetailRow[], note?: string } & HTMLAttributes<HTMLDivElement>
->(function UsageDetailCard({ heading, rows, note, ...rest }, ref): ReactElement {
+  {
+    heading: string
+    rows: readonly UsageDetailRow[]
+    notes?: readonly string[]
+  } & HTMLAttributes<HTMLDivElement>
+>(function UsageDetailCard({ heading, rows, notes, ...rest }, ref): ReactElement {
   return (
     <div ref={ref} className="iris-usage-card" data-control="usage-card" {...rest}>
       <span className="iris-label">{heading}</span>
@@ -117,9 +122,9 @@ export const UsageDetailCard = forwardRef<
           </div>
         ))}
       </dl>
-      {note === undefined || note === '' ? null : (
-        <p className="iris-usage-card__note">{note}</p>
-      )}
+      {(notes ?? []).filter(one => one !== '').map(one => (
+        <p className="iris-usage-card__note" key={one}>{one}</p>
+      ))}
     </div>
   )
 })
@@ -130,7 +135,7 @@ export const UsageDetailCard = forwardRef<
  * @param props - the heading, the rows, and the reading to wrap.
  * @returns the trigger with the conditional portaled card.
  */
-export function UsagePopover({ heading, rows, note, className, children }: UsagePopoverProps): ReactElement {
+export function UsagePopover({ heading, rows, notes, className, children }: UsagePopoverProps): ReactElement {
   const anchorRef = useRef<HTMLSpanElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const [reasons, setReasons] = useState<OpenReasons>({ hovered: false, focused: false, pinned: false })
@@ -277,7 +282,7 @@ export function UsagePopover({ heading, rows, note, className, children }: Usage
           role="dialog"
           heading={heading}
           rows={rows}
-          {...(note === undefined ? {} : { note })}
+          {...(notes === undefined ? {} : { notes })}
           // Fixed coordinates from the anchor, clamped into the viewport and
           // re-placed on scroll and resize (`useAnchoredPosition`). Hidden
           // until its first measurement lands, the menu's own mount order.

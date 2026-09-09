@@ -304,26 +304,35 @@ export function toChatView(input: {
    * in a conversation's running total.
    */
   scriptUsage?: { turns: number, usage: TurnUsage } | undefined
+  /**
+   * What this conversation's **compaction summaries** have cost, read from the
+   * same header array. Folded into `usage` on the same terms as `scriptUsage`
+   * and reported separately for the same reason — the protocol's
+   * `ChatView.compactionUsage` says why the two shares are siblings rather
+   * than one merged figure.
+   */
+  compactionUsage?: { turns: number, usage: TurnUsage } | undefined
 }): ChatView {
   const turnTotal = totalUsage(input.session)
   const script = input.scriptUsage
+  const compaction = input.compactionUsage
   /*
-   * The two populations added through `conversationUsage` rather than by hand.
-   * An optional bucket present on one side and absent on the other has to come
-   * out as the side that reported it, and adding two summed objects with `+`
+   * The three populations added through `conversationUsage` rather than by
+   * hand. An optional bucket present on one side and absent on another has to
+   * come out as the side that reported it, and adding summed objects with `+`
    * and a `?? 0` is exactly where "no provider mentioned caching on the turns"
    * would turn into "the cache served nothing" — the one arithmetic this
    * bucket convention exists to prevent.
    *
-   * Both sides are already `conversationUsage` outputs, so neither carries a
+   * Every side is already a `conversationUsage` output, so none carries a
    * `totalTokens` the sum could be uneven about.
    */
-  const usage = turnTotal === undefined && script === undefined
-    ? undefined
-    : conversationUsage([
-      ...turnTotal === undefined ? [] : [turnTotal],
-      ...script === undefined ? [] : [script.usage],
-    ])
+  const parts = [
+    ...turnTotal === undefined ? [] : [turnTotal],
+    ...script === undefined ? [] : [script.usage],
+    ...compaction === undefined ? [] : [compaction.usage],
+  ]
+  const usage = parts.length === 0 ? undefined : conversationUsage(parts)
   return {
     chatId: input.chatId,
     title: input.title,
@@ -340,5 +349,6 @@ export function toChatView(input: {
     ...input.variables === undefined ? {} : { variables: input.variables },
     ...usage === undefined ? {} : { usage },
     ...script === undefined ? {} : { scriptUsage: script },
+    ...compaction === undefined ? {} : { compactionUsage: compaction },
   }
 }

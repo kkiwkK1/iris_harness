@@ -113,6 +113,29 @@ export function scriptTokens(totals: UsageTotals): number {
 }
 
 /**
+ * What **Iris's own compaction** spent, of the figure beside it.
+ *
+ * {@link scriptTokens}'s sibling, with the same `0`-where-absent rule and the
+ * same pairing: the figure is a number so a point on a line can be drawn, and
+ * the header card and per-conversation column are not drawn at all when the
+ * host reported no share.
+ *
+ * There is deliberately **no compaction metric** on the chart's switch beside
+ * the card one. A sixth toggle would earn its place if the series had a shape
+ * to read, and it does not: this is one request per compaction against a card's
+ * one per turn, so its line is flat at zero with an occasional spike, and the
+ * figure a reader actually wants — "how much of this total was the host folding
+ * my history" — is the header card's sentence, which reads it without a mode
+ * switch. `notes/apps/iris-web/DEVIATIONS.md` §74 records the decision so a
+ * later reader can see it was one.
+ * @param totals - a cell, a conversation subtotal, or the whole range.
+ * @returns the compaction share of the total, in tokens.
+ */
+export function compactionTokens(totals: UsageTotals): number {
+  return totals.compaction === undefined ? 0 : totalTokens(totals.compaction)
+}
+
+/**
  * One metric's value.
  *
  * `cacheRead` reads `0` where the bucket is absent, and that is a display

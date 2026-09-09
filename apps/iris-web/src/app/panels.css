@@ -3846,8 +3846,18 @@
  * gap, because a sentence at this weight next to a 30px number needs a
  * boundary or it reads as a stray caption. Wraps freely: nothing in the hero
  * ellipsises, and a sentence is the wrong place to start.
+ *
+ * **A column, because it holds up to two sentences** — the card scripts' share
+ * and the compaction's — and they are independently present. One rule and one
+ * gap for both: they are the same rank of fact about the same figure, so a
+ * second hairline between them would rank one above the other. Inline they
+ * would run together with no separator at all, which is what the column
+ * replaces rather than a punctuation string that would have to be translated.
  */
 .iris-usage__hero-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin-top: 6px;
   padding-top: 6px;
   border-top: var(--iris-hairline) solid var(--iris-rule-faint);
@@ -4152,8 +4162,22 @@
  * nothing on a list where no conversation has a card share — a reserved empty
  * column beside every row would read as a fifth reading that failed to load.
  */
+/*
+ * The row's side-share cell: the card scripts' figure and the compaction's,
+ * stacked, either or both or neither.
+ *
+ * A column like the hero note and for the same reason — two independently
+ * present sentences of the same rank, run together with no separator if they
+ * were inline. `align-items: flex-end` so both read against the total's right
+ * edge, which is the column they are being compared with; each stays `nowrap`
+ * so a figure never breaks between its count and its unit, and the title's
+ * `minmax(0, 1fr)` is what gives back the width a two-line cell asks for.
+ */
 .iris-usage__chat-script {
   grid-area: script;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   white-space: nowrap;
 }
 

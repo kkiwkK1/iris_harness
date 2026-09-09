@@ -3383,6 +3383,86 @@ makes a scheduler read through the parent and one read bare the same functions
 with mutually cancellable handles. Injected through `FrameEnv` like the event
 target; absent, the six names follow the unpublished-name policy.
 
+## 74. Every cost figure also counts Iris's own compaction summaries, and says how many
+
+**Kind:** deliberate improvement, on a surface upstream does not have. §70 is
+the same fix for the *other* population that is not a turn; this is the one §70
+left out, and the host side — record, storage, and the measured before-and-after
+— is `notes/packages/iris-app-service/DEVIATIONS.md` §55.
+
+**The fact being surfaced.** When a conversation gets too big, Iris asks the
+model to fold its older history into a summary (`/compact`, or the automatic
+trigger at 80% of the budget). That request is billed exactly like a turn, on
+the same route, and it produces no reply — so nothing on the page could show it,
+and until §55 nothing recorded it either. One request per compaction, so it is a
+handful over a conversation's life rather than §70's one-per-turn; what makes it
+worth a figure is that it is **Iris's own request**. It appears on a profile that
+has never run a card script, and before it was recorded a compacted profile's
+usage page was short by exactly one summary per compaction with nothing naming
+the gap.
+
+**The ruling is §70's, applied to a sibling and not to a merged bucket.** Both
+shares are inside the enclosing totals — a compaction is spend on this account,
+so leaving it out would make a total disagree with the bill — and each is stated
+beside the figure it is part of rather than folded in silently. What is new here
+is the refusal to merge: `UsageTotals.compaction` sits beside
+`UsageTotals.script` rather than the two becoming one "not a turn" figure,
+because a card's spend is the card author's doing and a compaction's is Iris's
+own policy. A reader who wants less of the first uninstalls or edits a card; a
+reader who wants less of the second changes a threshold. One figure covering
+both would answer neither question.
+
+Three surfaces, the same three amounts of room §70 found, and one shape decision
+each:
+
+- **The usage page's total card** — the second sentence in the note under the
+  figure. One note, two sentences, not two notes: the note is a hairline block
+  under the total and a second one would draw a second rule across the card for
+  a fact of the same rank. Inside it, each sentence is its own `<span>` with its
+  own hover hint, because the two are explained differently and a `title`
+  belongs to one element. `.iris-usage__hero-note` became a flex column to hold
+  them — **which is also why there is no separator string**: inline they would
+  run together, and a punctuation joiner would have to be translated and would
+  sit between two clauses that already use `·` inside themselves.
+- **The per-conversation subtotal list** — the same cell as the card figure,
+  stacked under it, right-aligned against the total column. Not a sixth grid
+  column: a column blank on every row but the compacted ones would take width
+  from the title on every row to say nothing, and the two facts answer the same
+  question — how much of this row was not a reply. Blank, never `0`, when a
+  conversation has neither.
+- **The composer's session strip** — a second paragraph in the hover card's
+  notes. `UsagePopover`'s `note?: string` became `notes?: readonly string[]`,
+  one `<p>` each, for the same reason the panel refuses a joiner: the two shares
+  are **independently absent**, so a single string would need a separator
+  spelled per language.
+
+**Independently absent is the load-bearing part**, and it is what
+`token-format.test.ts` checks in all four combinations. A profile can run card
+scripts and never compact, or compact and run no cards. An implementation that
+drew the compaction sentence only when the card sentence was there would pass a
+check that only ever looked at "both" and "neither" — which is the shape the
+first draft of the render check had, and why the seed now puts both shares on
+one conversation with **different counts** (two card requests against one
+summary) so a merged reading reports a `3` no correct reading produces.
+
+**No sixth chart metric, and that is a decision rather than an omission.** §70
+added `usageMetricScript` as a fifth metric because the card share has a shape
+to read over time — on MVU it tracks the turn count. A compaction share does
+not: one request per compaction draws a line flat at zero with an occasional
+spike, and the figure a reader actually wants ("how much of this total was the
+host folding my history") is the sentence on the header card, which reads
+without a mode switch. So the switch keeps five options, and the render check
+pins the option **count** rather than the absence of a caption — a sixth
+metric arriving for any reason should come back through this paragraph.
+`usage-stats.ts`'s `compactionTokens` carries the same note at the code.
+
+**What would overturn it.** A profile where compaction fires often enough for
+its spend to have a distribution — then the sixth metric earns its place, and
+the per-conversation cell probably wants its own column after all. Or a reader
+who reads the two stacked sentences as an addition to the total rather than a
+breakdown of it, which is the failure the 「其中」/"of which" wording exists to
+prevent and the one thing about this shape that copy alone is holding up.
+
 ## 75. A failed connection test shows the host's reason under the sentence
 
 **Kind:** fix (companion to host §57).

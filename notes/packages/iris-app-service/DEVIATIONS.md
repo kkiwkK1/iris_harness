@@ -4111,19 +4111,26 @@ reply stays a page of rows.
 
 **The source comes from the record's location, not from the stored field.** A
 per-message array is by construction a candidate's and the header array is by
-construction a card's, so `readChatUsage` stamps each population rather than
-trusting `source` — a file arriving from elsewhere cannot move a card's spend
-into the turn column or the reverse. The field is still *written*, so the file
-says what it holds to a reader that is not this code. Records written before the
-field existed carry no `source` and read as turns, which is what they are.
+construction *not one* — so `readChatUsage` decides "turn or not a turn" from
+where the record was found rather than from what it claims, and a file arriving
+from elsewhere cannot move a card's spend into the turn column or the reverse.
+The field is still *written*, so the file says what it holds to a reader that is
+not this code. Records written before the field existed carry no `source` and
+read as turns, which is what they are.
 
-**What is still not recorded, stated because the fix is small and the number is
-not zero.** The compaction summarizer (`#summarize`) is also a generation the
-provider bills that produces no candidate, and it passes neither an `entry` nor
-a trace — so it is invisible on exactly the terms this entry just fixed for
-cards. It is outside this round's scope and would fit the same array under a
-`host.compaction` caller. Until then, a profile that has compacted is a profile
-whose usage page is short by one summary per compaction.
+**Since §55 the header array holds two populations, so the second half of that
+rule has moved.** The location still says "not a turn"; the stored field now
+chooses between the side sources, because a location cannot distinguish two
+things kept in the same place. §55 states the split and why a record with no
+readable `source` defaults to `'script'` rather than to unknown.
+
+**What was still not recorded when this entry landed, and now is.** The
+compaction summarizer (`#summarize`) is also a generation the provider bills
+that produces no candidate, and it passed neither an `entry` nor a trace — so it
+was invisible on exactly the terms this entry fixed for cards. It was outside
+this round's scope, and the note here said it would fit the same array under a
+`host.compaction` caller. That is what §55 did, under `source: 'compaction'`
+with a share of its own on every figure.
 
 **Not fixed, and not ours: the random uuid header on MVU's extra-model
 request.** The census reported it as a gemini-path defect; it is card code.
@@ -4201,6 +4208,183 @@ fields stay absent rather than zero on such a trace. What would overturn it: a t
 whose `error` disagrees with the `stream.error` the panel showed for the same turn,
 or an interrupted turn whose divergence is reported under any excuse but
 `interrupted`.
+
+## 55. The compaction summarizer's own request is billed, so it is now recorded — beside a card's, under its own asker
+
+**Kind: fix to a gap this file already named.** §51's own "what is still not
+recorded" paragraph described it before it was fixed: `#summarize`
+(`service.ts`) is a generation the provider bills that produces no candidate,
+and it passed neither an `entry` nor a trace nor a `side`, so it was invisible
+on exactly the terms §51 had just fixed for cards. A profile that had compacted
+had a usage page short by one summary request per compaction, and nothing on the
+page named the omission.
+
+**Upstream records nothing about what any generation cost** — §51's first
+paragraph has the citation — so as with the card half, this whole area is
+Iris's. Upstream also has no compaction: the Summarize extension injects a
+summary and keeps sending the full history, which is §27. There is therefore no
+upstream behaviour to diverge from here; what this entry records is a *figure
+Iris prints about itself* that was wrong by a knowable amount.
+
+**Where the record goes: the same `iris_side_usage` array on the chat header,
+under `source: 'compaction'` and `caller: 'host.compaction'`.** Same location,
+same append-only rule, same three refusals §51 lists (not a message's
+`iris_usage`, whose array is parallel to `swipes`; not `extra`, which
+SillyTavern replaces on every swipe; not `chat_metadata`, which a card can
+overwrite). One array now holds two populations, and that forced the one
+behaviour change worth naming.
+
+**`side-usage.ts`'s "the location is the authority" rule is now split, because a
+location cannot distinguish two things stored in the same place.** The rule was
+written when the array held one population and it was correct then. It now
+reads: the **location** decides the record is not a turn — a `source: 'turn'` in
+this array is still refused, so a file arriving from elsewhere cannot move a
+card's spend into the turn column — and the **stored field** chooses between the
+side sources. Anything that is not a side source reads as `'script'`, which is
+not a guess but the population: `'compaction'` did not exist until this landed,
+so every record already written under this key without one is a card's.
+`sideSourceOf` is the one place that decides it, and `appendSideUsage`
+normalises on the way in for the same reason it does on the way out.
+
+The consequence for the reading half: `scriptUsage` used to add every record in
+the array, because every record in the array was a card's. It now filters. A
+version that kept summing everything reports a card share that includes the
+host's compactions — a figure labelled "how much of this was the card" that a
+card did not spend, and one that still adds up against the total, which is why
+`side-usage.test.ts` gives the two populations different counts *and* different
+buckets.
+
+**Two shares on the wire, not one merged "not a turn" figure.**
+`UsageTotals.compaction` sits beside `UsageTotals.script`, and `ChatView`
+carries `compactionUsage` beside `scriptUsage`. Merging them was available and
+smaller. It was refused because the two answer different questions: a card's
+spend is the card author's doing, a compaction's is Iris's own policy, and a
+reader who wants less of the second changes a threshold rather than a card.
+Both shares are **inside** the enclosing figures — billed to the same account on
+the same route — and each is absent rather than zero when its population is
+empty, which is the rule the optional buckets follow.
+
+**A trace as well, under `kind: 'compaction'`, `turn: -1`.** The card path needs
+no reason for its trace beyond "it competes for the same cache"; this one has a
+stronger one. A summary lands at the **front** of the next request's history, so
+it is the one body that explains why every later turn's prefix changed — a
+reader comparing two turns across a compaction has no other way to see it.
+`turn: -1` because the request is billed and is not a turn: the automatic
+trigger runs *before* the turn it protects, so "whichever turn was pending" is a
+real turn here, and folding the host's summary onto it would file it against the
+user's reply.
+
+**No `entry` is passed, deliberately, and that is unchanged.** The prompt is the
+host's, so a card's templates must not evaluate in it, its residual macros are
+not a card's fault, and the estimator calibration and the turn's `actualTokens`
+must not be moved by a request that is not the turn. The three parameters answer
+three different questions and this generation answers them differently: no
+`entry`, a `trace`, a `side`. The stale sentence in `#stream`'s own doc — which
+claimed the summarizer "passes an entry and no trace target", true of neither
+half — is corrected.
+
+**The failure rule is inherited, not re-decided.** The bill is written in
+`#stream`'s `finally`, so a summary that reported its usage and then failed is
+still recorded (it was charged); a summary the provider refused before reporting
+anything leaves **no** record rather than a zero-filled one, because an invented
+`0` is a claim about a generation nobody measured. Both directions are pinned in
+`compaction-usage.test.ts`.
+
+**What would overturn it.** A SillyTavern release whose save path rewrites
+unknown top-level header keys — the same thing that would overturn §51 and
+`header.iris` together. Or a future side source that the `'script'` default
+mislabels: the moment a third asker exists, records written *before* it must
+still be distinguishable from it, and the only honest way to do that is what was
+done here — the new asker writes its own name, and the default keeps naming the
+population that predates it.
+
+## 56. The reply reserve is the request's own `max_tokens`, not a host constant
+
+**Upstream, exactly.** One figure does both jobs and it is `openai_max_tokens`:
+
+| what | where |
+| --- | --- |
+| the assembly budget is `context − response` | `public/scripts/openai.js:3887` — `setTokenBudget(context, response) { this.tokenBudget = context - response }` |
+| called with the two settings | `public/scripts/openai.js:1558` — `chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens)` |
+| and the same value goes on the wire | `public/scripts/openai.js:2750` — `'max_tokens': settings.openai_max_tokens` |
+| even the advisory warning divides by it | `public/scripts/PromptManager.js:1677` — `const tokenBudget = this.serviceSettings.openai_max_context - this.serviceSettings.openai_max_tokens` |
+
+There is no separate "reserve" concept upstream at all. `openai_max_tokens` is
+subtracted from the window to get the prompt budget, and it is what the request
+asks the model to write. Read 2026-09-09, SillyTavern 1.18.0.
+
+**The defect.** Iris reserved `AppServiceOptions.reserveTokens` (default 1 024)
+in every assembly and sent `settings.maxTokens` as `max_tokens`. On the
+operator's own profile those are 1 024 and 65 535, so a prompt was allowed to
+fill the window to within 1 024 tokens of the top and then told the provider it
+might write 65 535 more. The overflow is arithmetic, not a risk assessment:
+998 976 + 65 535 = 1 064 511 against a 1 000 000 window, 64 511 over. That is a
+provider error at send time, where a dropped floor would have been a trim.
+Reported by the #38 pass and left unfixed then; `:3571`'s
+`response: settings.maxTokens ?? this.#options.reserveTokens` — the
+`{{maxResponse}}` macro — shows that one site already knew the pair had to
+agree.
+
+**The fix, `service.ts`'s `#reserveFor`:** `settings.maxTokens ??
+this.#options.reserveTokens`. Upstream's formula, with the host's constant kept
+as the fallback for a chat that configures no `maxTokens` — because nothing to
+subtract is not the same as subtracting nothing: a window with no reply
+allowance held back is the one shape that cannot be sent, and a default install
+stores no `maxTokens` at all. The resolved figure now reaches all the places
+that were reading the constant: `#chatBudget` (so `ChatBudget.reserve`, which is
+the capacity card's divisor), `#budget` (the assembly, on all four of its call
+sites), `#itemizationOf` (the record and the preview), and `#contributions` (the
+macro, which already agreed). `#budget`'s `window` and `reserve` are both
+required parameters now, for the reason `#itemizationOf` already gives about
+`window`: a defaulted budget figure is a wrong answer that assembles perfectly.
+
+**Measured, on the operator's own 爱衣, through the product's own readers**
+(`chat.open`'s `ChatBudget` and `prompt.itemize`'s preview, over a scratch copy
+of the profile; nothing was sent). The control is the same conversation with the
+stored `maxTokens` set to 1 024, so the only variable is the reserve:
+
+| | before (reserve = 1 024) | after (reserve = 65 535) | no `maxTokens` stored |
+| --- | --- | --- | --- |
+| window, and its source | 1 000 000, `model` | 1 000 000, `model` | 1 000 000, `model` |
+| reserve | 1 024 | **65 535** | 1 024 |
+| available (`context − reserve`) | 998 976 | **934 465** | 998 976 |
+| compaction threshold (0.8 ×) | 799 180 | **747 572** | 799 180 |
+| retained tail (0.16 ×) | 159 836 | **149 514** | 159 836 |
+| this conversation's next request | 22 546 tok | 22 546 tok | 22 546 tok |
+| `droppedHistory` / `overBudget` | 0 / false | 0 / false | 0 / false |
+| stable prefix | 15 527 tok | 15 527 tok | 15 527 tok |
+
+The window is 1 000 000 and not the stored 2 000 000 because §44's clamp is in
+force: this chat's own model override is `deepseek-v4.1-flash-expires-on-0910`
+and the table answers 1M for the `deepseek-v4-(flash|pro)` family. The third
+column is the fallback control, and it is the reading that a fix written as
+"always send `maxTokens`" fails.
+
+**The knock-on is real, and it is the correct direction.** `assemble` spends
+`context − reserve − fixed` on history, and both §32's block trim and §33's 0.8
+compaction threshold divide by the same difference (`compactionSpec`'s own doc
+explains why it is deliberately the same denominator as the capacity meter's).
+So a larger reserve makes the trimmer bite earlier and the compaction trigger
+fire sooner — 6.5% sooner on this profile, threshold 799 180 → 747 572.
+Upstream does exactly this, and it is what makes the trigger meaningful: a
+compaction threshold sitting *above* the level at which the trimmer starts
+silently dropping floors is a threshold that fires after the damage it exists to
+prevent.
+
+**On this conversation it changes nothing observable**, which is worth stating
+rather than leaving implied: 22 546 tokens is 3.0% of the new threshold and 2.8%
+of the old, so 爱衣 is 33× away from either. This is a correctness fix to the
+arithmetic, not a behaviour change anyone on this profile sees today — the
+profile where it *would* be seen is one whose requests already run near the
+window, which is where the overflow was waiting.
+
+**What would overturn it.** A SillyTavern release that stops subtracting
+`openai_max_tokens` from `openai_max_context` — the four citations above would
+have to move together — or a provider whose `max_tokens` is documented as a cap
+on the reply *inside* the context window rather than in addition to the prompt,
+for which the reserve would be zero and the whole subtraction wrong. The
+fallback is pinned by `reserve-budget.test.ts`'s control, and the identity
+between the reserve and the wire's `max_tokens` by its first test.
 
 ## 57. A connection test names a fault in the field, and says the reason under "could not reach"
 

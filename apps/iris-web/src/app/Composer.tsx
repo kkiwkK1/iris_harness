@@ -37,7 +37,7 @@ import { Slot } from '../slots/Slot.tsx'
 import { PlumBlossom, PlumBranch } from './marks.tsx'
 import { ScriptButtons } from './ScriptButtons.tsx'
 import { registerComposer } from './composer-bus.ts'
-import { usageLineGroups, usageScriptShareSentence, usageSummaryRows } from './token-format.ts'
+import { usageLineGroups, usageSideShareSentences, usageSummaryRows } from './token-format.ts'
 import { modelMenu } from './model-menu.ts'
 import { ContextCard, ContextPill } from './ContextMeter.tsx'
 import { UsagePopover } from './UsagePopover.tsx'
@@ -168,6 +168,17 @@ export function Composer({
    * one ellipsised line, and a fourth group in it is the group that gets cut.
    */
   const scriptUsage = useIris(state => state.view?.scriptUsage)
+  /**
+   * And how much of it this host's own compaction asked for.
+   *
+   * The same standing as the line above, on the same hover, for the same
+   * reason: `#summarize` is billed to this conversation, so the visible figure
+   * counts it, and "why is this bigger than the replies I can see" has a second
+   * answer that is not the card's fault. Selected separately rather than read
+   * off one `side` object because the two are separately absent — a
+   * conversation can have compacted without ever running a card script.
+   */
+  const compactionUsage = useIris(state => state.view?.compactionUsage)
   /*
    * What the capacity capsule divides by, and the two facts that make its
    * reading stale.
@@ -1001,19 +1012,21 @@ export function Composer({
           * gets the whole reading as a table, which is what the old native
           * `title` repeated itself for and could not deliver to anyone.
           *
-          * The card's note is where the split the old `title` used to carry
+          * The card's notes are where the split the old `title` used to carry
           * lives now: how much of the bill above the card a card's own script
-          * asked for (`usageScriptShareSentence`). The visible groups already
-          * count those requests — they were billed to this conversation — so
-          * the note is a breakdown of the figures above it, never an addition
-          * to them.
+          * asked for, and how much this host's own compaction did
+          * (`usageSideShareSentences`). The visible groups already count both
+          * — every one of those requests was billed to this conversation — so
+          * the notes are a breakdown of the figures above them, never an
+          * addition to them. Each appears only when the host reported that
+          * share, so most conversations show one or none.
           */}
         {stats.length === 0 ? null : (
           <UsagePopover
             className="iris-composer__stats"
             heading={t('usageSummaryTitle')}
             rows={usageSummaryRows(usage, lang)}
-            note={usageScriptShareSentence(scriptUsage, lang)}
+            notes={usageSideShareSentences(scriptUsage, compactionUsage, lang)}
           >
             {stats.map((group, at) => (
               <Fragment key={group}>

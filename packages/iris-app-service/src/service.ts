@@ -66,6 +66,7 @@ import { AppError, invalid, notFound } from './errors.ts'
 import { FavoriteStore } from './favorites.ts'
 import type { WorldbookBindingStore } from './materialise.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
+import type { SideSource } from './side-usage.ts'
 import { cardWorldbookDigest, cardWorldbookView, charWorldbookNames, WorldbookStore } from './worldbooks.ts'
 import { activationSettingsOf } from './worldbook-settings.ts'
 import type { CharacterLibrary } from './library.ts'
@@ -3162,11 +3163,53 @@ export class IrisAppService {
     const resolved = this.#resolveWindow(settings)
     return {
       context: resolved.context,
-      reserve: this.#options.reserveTokens,
+      reserve: this.#reserveFor(settings),
       source: resolved.source,
       ...resolved.model === undefined ? {} : { model: resolved.model },
       ...resolved.modelContext === undefined ? {} : { modelContext: resolved.modelContext },
     }
+  }
+
+  /**
+   * What one conversation holds back out of its window for the reply.
+   *
+   * **`settings.maxTokens` when the chat configures one**, because that is what
+   * the request will actually send as `max_tokens` — and upstream's own
+   * arithmetic is exactly this identity, not a coincidence to be reproduced:
+   * `openai.js:1558` calls `setTokenBudget(openai_max_context,
+   * openai_max_tokens)`, `openai.js:3887` is `this.tokenBudget = context -
+   * response`, and `openai.js:2750` puts the same `openai_max_tokens` on the
+   * wire. One figure, both jobs. `PromptManager.js:1677` computes its own
+   * "chat history is getting thin" warning off `openai_max_context -
+   * openai_max_tokens` as well, so even upstream's *advisory* denominator is
+   * this number.
+   *
+   * The defect this closes, measured on this machine: `reserveTokens` defaults
+   * to 1 024 and the stored `maxTokens` is 65 535, so an assembly against a
+   * 1 000 000 window was allowed 998 976 prompt tokens while telling the
+   * provider it might write 65 535 more — 1 064 511 against a 1 000 000 window.
+   * That overflow is a provider error at send time, not a trim, which is the
+   * one failure mode the budget exists to prevent. `#contributions` already
+   * resolved the pair this way for the `{{maxResponse}}` macro
+   * (`settings.maxTokens ?? reserveTokens`), so one site already knew.
+   *
+   * The host's `reserveTokens` stays as the fallback for a chat that configures
+   * no `maxTokens`: nothing to subtract is not the same as subtracting nothing,
+   * and a window with no reply allowance held back is the one shape that cannot
+   * be sent at all.
+   *
+   * **Downstream, deliberately:** a larger reserve makes `context - reserve`
+   * smaller, so the block trimmer starts dropping floors earlier and
+   * `compactionSpec`'s 80% threshold sits lower. Both follow upstream, which
+   * divides by the same difference, and both are the point — a threshold above
+   * the level at which the trimmer silently drops a floor is a threshold that
+   * never fires in time. `notes/packages/iris-app-service/DEVIATIONS.md` §56
+   * carries the measured before-and-after.
+   * @param settings - the conversation's generation settings.
+   * @returns the reply allowance, in tokens.
+   */
+  #reserveFor(settings: GenerationSettings): number {
+    return settings.maxTokens ?? this.#options.reserveTokens
   }
 
   /**
@@ -3631,8 +3674,14 @@ export class IrisAppService {
       history: (session, projection) => this.#history(entry, session, projection),
       // The same builder every other assembly in this host uses, so the trim
       // block cannot be in force on one path and absent on another — fed the
-      // window `resolveWindow` decided, which is the one place that decides it.
-      budget: this.#budget(count, this.#resolveWindow(settings).context),
+      // window `resolveWindow` decided and the reserve `#reserveFor` decided,
+      // which are the one place each of those is decided.
+      //
+      // **The reserve and the `maxTokens` below are the same number** whenever
+      // the chat sets one: what the prompt gives up has to be what the reply is
+      // allowed to take, or the two together overflow the window. `#reserveFor`
+      // has upstream's line numbers.
+      budget: this.#budget(count, this.#resolveWindow(settings).context, this.#reserveFor(settings)),
       ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...settings.stop === undefined ? {} : { stop: settings.stop },
@@ -3681,13 +3730,17 @@ export class IrisAppService {
     const worldbookSettings = this.#options.settings.worldbookSettings()
     const persona = await this.#activePersona()
     // The budget macros report the numbers this generation actually runs under:
-    // the context window, and the reply budget — `maxTokens` when the chat
-    // configures one, else the reserve every assembly holds back for the reply.
-    // Assigned before the prompt is built, because the build's expansions are
-    // what read it.
+    // the context window, and the reply budget. Assigned before the prompt is
+    // built, because the build's expansions are what read it.
+    //
+    // Through `#reserveFor` now, which is the same expression this line always
+    // held — `settings.maxTokens ?? reserveTokens`. This was the one site that
+    // already resolved the pair correctly; naming it made the other four agree
+    // rather than leaving `{{maxResponse}}` reporting one figure while the
+    // assembly it describes subtracted another.
     entry.tokenBudget = {
       context: window,
-      response: settings.maxTokens ?? this.#options.reserveTokens,
+      response: this.#reserveFor(settings),
     }
     const built = buildPrompt({
       card: entry.card,
@@ -3772,7 +3825,7 @@ export class IrisAppService {
       const assembled = assemble({
         contributions,
         history: this.#history(entry, session, projection),
-        budget: this.#budget(count, window),
+        budget: this.#budget(count, window, this.#reserveFor(settings)),
         cacheFriendly,
       })
       // The first floor the budget kept is the one the dropped count names —
@@ -3804,7 +3857,10 @@ export class IrisAppService {
       // generated and `prompt.itemize` is asked *with* its turn, which is the
       // only way to get a record back rather than a fresh preview).
 
-      entry.itemizations.set(turn, this.#itemizationOf(assembled, turn, false, window))
+      entry.itemizations.set(
+        turn,
+        this.#itemizationOf(assembled, turn, false, window, this.#reserveFor(settings)),
+      )
     }
 
     return contributions
@@ -3846,14 +3902,28 @@ export class IrisAppService {
     }
   }
 
-  /** The budget every assembly for this host runs under. */
+  /**
+   * The budget every assembly for this host runs under.
+   *
+   * Both figures are **required parameters** and neither has a default to fall
+   * into, which is the fix `#itemizationOf` already documents for `window`
+   * carried one field further: a defaulted budget figure is a wrong answer that
+   * assembles perfectly, and the reserve now varies per chat
+   * ({@link #reserveFor}) exactly the way the window does, so it is reachable
+   * the same way.
+   * @param count - the token counter.
+   * @param window - the window this assembly runs against, from `#resolveWindow`.
+   * @param reserve - what it holds back for the reply, from `#reserveFor`.
+   * @returns the budget.
+   */
   #budget(
     count: (text: string) => number,
-    window?: number,
+    window: number,
+    reserve: number,
   ): { context: number, reserve: number, count: (text: string) => number, trimBlockFloors: number } {
     return {
-      context: window ?? this.#options.contextWindow,
-      reserve: this.#options.reserveTokens,
+      context: window,
+      reserve,
       count,
       // Carried by every budget this host builds, so the real turn, the
       // preview, a card's own `generate` and the itemization all decide the
@@ -3866,19 +3936,30 @@ export class IrisAppService {
   /**
    * Project an assembly onto the wire shape.
    *
-   * `window` is **required**, and that is the fix for the bug two separate
-   * passes found here: it used to default to the composition's value, so the
-   * one caller that forgot it filed a record claiming 32 768 for an assembly
-   * that had run against something else. A defaulted window is a wrong answer
-   * that renders perfectly, so the parameter no longer has a default to fall
-   * into — a third caller cannot repeat it without the compiler saying so.
+   * `window` and `reserve` are both **required**, and that is the fix for the
+   * bug two separate passes found here: the window used to default to the
+   * composition's value, so the one caller that forgot it filed a record
+   * claiming 32 768 for an assembly that had run against something else. A
+   * defaulted budget figure is a wrong answer that renders perfectly, so
+   * neither parameter has a default to fall into — a third caller cannot repeat
+   * it without the compiler saying so. `reserve` joined the rule when it stopped
+   * being one host-wide constant ({@link #reserveFor}); read off `#options`
+   * here it would have reported 1 024 for assemblies that actually gave up
+   * 65 535, and the capacity card divides by exactly this figure.
    * @param result - what the assembler produced.
    * @param turn - the turn this describes.
    * @param preview - whether this is the next request rather than a record.
    * @param window - the window that assembly actually ran against.
+   * @param reserve - what that assembly held back for the reply.
    * @returns the itemization.
    */
-  #itemizationOf(result: AssembleResult, turn: number, preview: boolean, window: number): PromptItemization {
+  #itemizationOf(
+    result: AssembleResult,
+    turn: number,
+    preview: boolean,
+    window: number,
+    reserve: number,
+  ): PromptItemization {
     return {
       turn,
       entries: result.items.map(item => ({
@@ -3911,7 +3992,7 @@ export class IrisAppService {
       stablePrefixTokens: result.stablePrefixTokens,
       budget: {
         context: window,
-        reserve: this.#options.reserveTokens,
+        reserve,
       },
       droppedHistory: result.overflow.droppedHistory,
       overBudget: result.overflow.overBudget,
@@ -3969,13 +4050,14 @@ export class IrisAppService {
       resolved,
       { entropic: new Set(built.entropic), runtime: runtimeIds(entry) },
     )
+    const reserve = this.#reserveFor(settings)
     const result = assemble({
       contributions: markCachePhase(resolved, verdict),
       history: this.#history(entry, entry.session),
-      budget: this.#budget(count, window),
+      budget: this.#budget(count, window, reserve),
       cacheFriendly: cacheFriendlyOf(settings),
     })
-    return this.#itemizationOf(result, entry.lastTurn + 1, true, window)
+    return this.#itemizationOf(result, entry.lastTurn + 1, true, window, reserve)
   }
 
   /**
@@ -4025,7 +4107,7 @@ export class IrisAppService {
     // Billed to this conversation all the same — see `./side-usage.ts`. The
     // caller is the RPC method name because that is the finest attribution
     // the contract carries: `script.generateRaw` sends no script id.
-    { entry, caller: 'script.generateRaw' })) {
+    { entry, caller: 'script.generateRaw', source: 'script' })) {
       assembler.push(chunk)
     }
 
@@ -4099,7 +4181,12 @@ export class IrisAppService {
       // the real turn ran at the model's 1M would trim at a different floor for
       // the same reason, and it would do it on every chat rather than only on
       // ones carrying an override.
-      budget: this.#budget(count, this.#resolveWindow(settings).context),
+      //
+      // The reserve travels the same way and for the same reason: upstream has
+      // one `openai_max_tokens` for every generation type, so a card's assembly
+      // that held back a different amount would cut at a different floor than
+      // the turn beside it.
+      budget: this.#budget(count, this.#resolveWindow(settings).context, this.#reserveFor(settings)),
     })
 
     const assembler = new BlockAssembler()
@@ -4157,7 +4244,7 @@ export class IrisAppService {
     // The bill, on the conversation this was assembled from. This is the path
     // that re-sends the whole prefix, so it is also the expensive one of the
     // two — which is what makes separating the callers worth storing.
-    { entry, caller: 'script.generate' })) {
+    { entry, caller: 'script.generate', source: 'script' })) {
       assembler.push(chunk)
     }
 
@@ -4192,6 +4279,21 @@ export class IrisAppService {
    * it, its residual macros are not a card's fault, and — the one that would
    * actually corrupt a record — the estimator calibration and the turn's
    * `actualTokens` must not be moved by a request that is not the turn.
+   *
+   * **A `side` and a `trace` are passed, and that is this round's fix.** For
+   * the whole time compaction has existed, this request was billed by the
+   * provider and recorded nowhere: no usage, no fingerprint, no route, no
+   * moment, no trace — so a profile that had compacted was short by exactly one
+   * summary per compaction on every figure Iris printed, and the gap had no
+   * name anywhere on the page. It goes to the same array a card's generation
+   * goes to (`./side-usage.ts`), under `source: 'compaction'` and
+   * `caller: 'host.compaction'`, because it has the same shape of problem: it is
+   * billed, it belongs to this conversation, and it has no candidate to hang
+   * off. The trace is filed under `kind: 'compaction'` for a reason the card
+   * path does not have — a summary lands at the *front* of the next request's
+   * history, so it is the one body that explains why every later turn's prefix
+   * changed, and a reader comparing two turns across a compaction has no other
+   * way to see it.
    * @param entry - the conversation.
    * @param span - the floors to condense, oldest first.
    * @param contributions - this turn's resolved contributions, for the system slot.
@@ -4232,7 +4334,17 @@ export class IrisAppService {
         }),
       ],
       maxTokens: SUMMARY_MAX_TOKENS,
-    })) {
+    },
+    // No `entry` — see this method's doc.
+    undefined,
+    // `turn: -1`, like a card's: this request is billed and it is not a turn,
+    // and folding it onto whichever turn happened to be pending would file the
+    // host's own summary against the user's reply. The automatic trigger runs
+    // *before* the turn it protects, so "whichever turn was pending" is a real
+    // turn here rather than a theoretical one.
+    { chatId: entry.chatId, kind: 'compaction', caller: 'host.compaction', turn: -1 },
+    // The bill, on the conversation whose history was folded.
+    { entry, caller: 'host.compaction', source: 'compaction' })) {
       assembler.push(chunk)
     }
 
@@ -4460,23 +4572,31 @@ export class IrisAppService {
    * @param options - the composed request.
    * @param entry - the conversation, when this generation belongs to one.
    * @param trace - the conversation and the kind to file a cache trace under.
-   *   Separate from `entry` on purpose: the host's *own* utility generations —
-   *   the compaction summarizer — belong to a chat and are not requests a user
-   *   is comparing, so they pass an entry and no trace target.
-   * @param side - the conversation to **bill** a generation that is not a turn.
-   *   A third parameter and not `entry`, because passing `entry` would turn on
-   *   four other things a card's generation must not do: evaluate the card's
-   *   own templates over a prompt the card wrote, move the turn's recorded
-   *   `actualTokens`, file a fingerprint against whatever turn is pending, and
-   *   emit a per-turn report line. The bill is the one thing that *is* shared,
-   *   and it lands on the header rather than on any turn
-   *   (`./side-usage.ts`).
+   *   Separate from `entry` on purpose, because the three parameters answer
+   *   three different questions and no generation here answers them the same
+   *   way: `entry` is "whose templates and whose turn record", `trace` is "which
+   *   request body to keep for comparison", `side` is "whose bill". The host's
+   *   own compaction summary passes a `trace` and a `side` and **no `entry`**
+   *   — its prompt is the host's, so nothing of the card author's may evaluate
+   *   in it and the turn's calibration must not move, but its body is very much
+   *   something a reader compares (a summary sits at the front of the next
+   *   request's history and breaks the prefix there) and it is very much billed.
+   * @param side - the conversation to **bill** a generation that is not a turn,
+   *   with the asker to file it under. A third parameter and not `entry`,
+   *   because passing `entry` would turn on four other things such a generation
+   *   must not do: evaluate the card's own templates over a prompt the card
+   *   wrote, move the turn's recorded `actualTokens`, file a fingerprint against
+   *   whatever turn is pending, and emit a per-turn report line. The bill is the
+   *   one thing that *is* shared, and it lands on the header rather than on any
+   *   turn (`./side-usage.ts`). `source` is stated by the caller rather than
+   *   defaulted: a default would silently file the host's own requests as a
+   *   card's, which is the reading the split exists to make possible.
    */
   async *#stream(
     options: GenerateOptions,
     entry?: ChatEntry,
     trace?: { chatId: string, kind: string, caller?: string, turn?: number },
-    side?: { entry: ChatEntry, caller: string },
+    side?: { entry: ChatEntry, caller: string, source: SideSource },
   ): AsyncIterable<StreamChunk> {
     // The templates run here because here is the only place that has both the
     // assembled prompt and the chat it belongs to. `#generateRaw` reaches this
@@ -4584,7 +4704,7 @@ export class IrisAppService {
     // `Date.now()` calls around a stream that ran for a minute would describe
     // three.
     const sentAt = Date.now()
-    // What a card's generation cost, held until the `finally` can store it.
+    // What a not-a-turn generation cost, held until the `finally` can store it.
     // Held rather than written on the spot for one reason: a record has to
     // reach disk, and `chats.save` is a file write that must not run inside
     // the loop yielding chunks to whoever is consuming this stream.
@@ -4619,7 +4739,7 @@ export class IrisAppService {
               ...request.model === '' ? {} : { model: request.model },
               ...request.provider === '' ? {} : { provider: request.provider },
               at: sentAt,
-              source: 'script',
+              source: side.source,
             }
           }
         }
@@ -4638,8 +4758,8 @@ export class IrisAppService {
       }
       throw error
     } finally {
-      // **A card's generation, billed to its conversation.** First in the
-      // `finally`, and in the `finally` rather than in the loop, because that
+      // **A generation that is not a turn, billed to its conversation.** First
+      // in the `finally`, and in the `finally` rather than in the loop, because that
       // is what covers the abort and the provider error: a request that
       // reported its usage and then failed was still charged, and dropping it
       // would leave a gap exactly where a reader is comparing what they paid

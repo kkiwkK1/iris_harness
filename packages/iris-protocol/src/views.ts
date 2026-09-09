@@ -123,7 +123,8 @@ export interface TurnUsage {
    */
   at?: number
   /**
-   * Who asked for this generation: the user's own turn, or a card's script.
+   * Who asked for this generation: the user's own turn, a card's script, or the
+   * host's own compaction summarizer.
    *
    * **Absent reads as `'turn'`**, which is what every record written before
    * this field existed is — and the reason it is optional rather than required
@@ -141,12 +142,22 @@ export interface TurnUsage {
    * two populations are the same size and a total that counted only one of
    * them was about half the bill.
    *
+   * A `'compaction'` record is the **host's own** summary request
+   * (`@iris/app-service`'s `#summarize`, reached from `/compact` and from the
+   * automatic trigger). Same standing as a script's, and a different asker: no
+   * candidate, billed on this conversation's route, and nobody asked for it in
+   * the turn it happens inside. It is kept apart from `'script'` rather than
+   * folded into one "not a turn" bucket because the two answer different
+   * questions — a card's spend is the card author's doing, a compaction's is
+   * Iris's own policy, and a reader who wants less of the second changes a
+   * threshold rather than a card.
+   *
    * Not a grouping key on the wire's own summary cells: those are cut by
-   * (time, model). The split by source is carried instead as
-   * {@link UsageTotals.script}, so a surface can show a share without the
-   * cell count doubling.
+   * (time, model). The splits by source are carried instead as
+   * {@link UsageTotals.script} and {@link UsageTotals.compaction}, so a surface
+   * can show a share without the cell count doubling.
    */
-  source?: 'turn' | 'script'
+  source?: 'turn' | 'script' | 'compaction'
 }
 
 /**
@@ -251,6 +262,24 @@ export type ContextWindowSource
  */
 export interface ChatBudget {
   context: number
+  /**
+   * Tokens held back out of {@link context} for the reply, so `context -
+   * reserve` is what the prompt may spend.
+   *
+   * **This is the same number the request sends as `max_tokens`**, whenever the
+   * chat configures one — upstream's rule, transcribed: `openai.js:1558` calls
+   * `setTokenBudget(openai_max_context, openai_max_tokens)` and
+   * `openai.js:3887` is `this.tokenBudget = context - response`, while
+   * `openai.js:2750` puts that very `openai_max_tokens` on the wire. So there
+   * is one figure upstream and it does both jobs; a host that reserved less
+   * than it allowed the reply to produce would assemble a prompt that plus the
+   * reply overflows the window, which is a provider error rather than a trim.
+   *
+   * The host's own `reserveTokens` is the fallback for a chat that configures
+   * no `maxTokens` — nothing to subtract is not the same as subtracting
+   * nothing, and a window with no reply allowance held back is the one shape
+   * that cannot be sent.
+   */
   reserve: number
   /**
    * Why {@link context} is that number.
@@ -354,13 +383,15 @@ export interface ChatView {
    * and its tokens are absent from this sum. The host records why (see
    * `@iris/app-service`'s `recordUsage`).
    *
-   * **A card's own generations are in here.** `TavernHelper.generate` /
-   * `generateRaw` are billed to this conversation on this conversation's route,
-   * so they belong in "what this conversation has cost" — which is the reading
-   * the composer's line is asked for. They have no candidate to hang off, so
+   * **A card's own generations are in here, and so are the host's compaction
+   * summaries.** `TavernHelper.generate` / `generateRaw` and `#summarize` are
+   * all billed to this conversation on this conversation's route, so they
+   * belong in "what this conversation has cost" — which is the reading the
+   * composer's line is asked for. None of them has a candidate to hang off, so
    * they are stored on the header instead of on a message
-   * (`@iris/app-service`'s `SIDE_USAGE_FIELD`), and {@link scriptUsage} is how
-   * a surface says how much of this figure they are.
+   * (`@iris/app-service`'s `SIDE_USAGE_FIELD`), and {@link scriptUsage} /
+   * {@link compactionUsage} are how a surface says how much of this figure they
+   * are.
    */
   usage?: TurnUsage
   /**
@@ -377,6 +408,18 @@ export interface ChatView {
    * including every conversation whose file predates the record.
    */
   scriptUsage?: { turns: number, usage: TurnUsage }
+  /**
+   * The part of {@link usage} that **Iris's own compaction** asked for, and how
+   * many summary requests that was.
+   *
+   * The same relationship to `usage` as {@link scriptUsage}, and a sibling of
+   * it rather than a merge: "how much of that was not me" and "how much of that
+   * was the host folding my history" have different answers and different
+   * remedies. One request per compaction, so a conversation that has never been
+   * compacted has none of this — which is most of them, and the reason it is
+   * absent rather than a pair of zeros.
+   */
+  compactionUsage?: { turns: number, usage: TurnUsage }
 }
 
 /** A conversation in the sidebar list. */
@@ -1038,6 +1081,15 @@ export interface PromptItemization {
    * host did not compute one; a surface must not read absence as zero.
    */
   stablePrefixTokens?: number
+  /**
+   * The window this assembly ran against and what it held back for the reply —
+   * the same two figures, resolved the same way, that {@link ChatBudget}
+   * carries, which says why `reserve` is the request's own `max_tokens`.
+   *
+   * Restated inline rather than reusing `ChatBudget` because an itemization is
+   * a *record of one request* and must not gain the window-provenance fields:
+   * those are resolved per read, so a stored copy of them would age.
+   */
   budget: { context: number, reserve: number }
   /** History entries dropped to make the request fit. */
   droppedHistory: number
@@ -2454,10 +2506,31 @@ export interface UsageTotals extends UsageBuckets {
    * zeros. `script.turns` is the count — the "how many" a header card prints.
    *
    * There is no matching `turn` field. The turn share is the enclosing figure
-   * minus this one, which is one subtraction a reader can defend, and a stored
-   * pair that must sum to the whole is two numbers that can disagree with it.
+   * minus this one and {@link compaction}, which is a subtraction a reader can
+   * defend, and a stored share that must sum to the whole is one more number
+   * that can disagree with it.
    */
   script?: UsageBuckets
+  /**
+   * The share of everything above that **Iris's own compaction summarizer**
+   * asked for — `TurnUsage.source` of `'compaction'`.
+   *
+   * Same standing as {@link script}, same absence rule, and a sibling rather
+   * than a merged "not a turn" figure: a card's spend and the host's own are
+   * two different people's decisions, and a reader who wants to spend less on
+   * one does not touch the other. Inside the enclosing figures for the same
+   * reason `script` is — a compaction is billed to the same account on the same
+   * route, so a total that excluded it would be a total of something other than
+   * the bill.
+   *
+   * **Small and structural.** One request per compaction, so the count is a
+   * handful over a conversation's whole life where `script.turns` can equal the
+   * turn count. What makes it worth a figure of its own is that it is *Iris's*
+   * request: it appears in a profile that has never run a card script, and
+   * before it was recorded a compacted profile's usage page was short by
+   * exactly one summary per compaction with nothing naming the gap.
+   */
+  compaction?: UsageBuckets
 }
 
 /**

@@ -39,14 +39,14 @@ import { ContextCard } from '../src/app/ContextMeter.tsx'
 import { cacheCeiling, providerExcuse, providerFellShort } from '../src/app/divergence.ts'
 import {
   billedInputTokens, cacheHitPercent, formatExactTokens, formatTokens, totalTokens, usageDetailRows,
-  usageScriptShareSentence, usageSummaryRows,
+  usageSideShareSentences, usageSummaryRows,
 } from '../src/app/token-format.ts'
 import { UsageDetailCard } from '../src/app/UsagePopover.tsx'
 import { UsageReport } from '../src/app/UsagePanel.tsx'
 // Aliased: `totalTokens` above is the one-generation reader, and this is the
 // aggregate one. Two functions of the same name over different types is exactly
 // the confusion the protocol drops `totalTokens` from every aggregate to avoid.
-import { hitRate, totalTokens as usageTotal } from '../src/app/usage-stats.ts'
+import { hitRate, totalTokens as usageTotal, USAGE_METRICS, USAGE_RANGES } from '../src/app/usage-stats.ts'
 import type { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 
 /**
@@ -1113,40 +1113,72 @@ async function main(): Promise<void> {
     scriptedView?.scriptUsage !== undefined,
     'the seeded card-share conversation reports no scriptUsage, so the hover split is not rendered here',
   )
+  /*
+   * And the host's own compaction share, on the same conversation — the seed
+   * puts both there on purpose (`seed.ts`'s `COMPACTION_SUMMARY`), because a
+   * conversation carrying only one of the two cannot tell a correct split from
+   * an implementation that merged both into "not a turn".
+   */
+  assert.ok(
+    scriptedView.compactionUsage !== undefined,
+    'the seeded conversation reports no compactionUsage, so the second share is not rendered here',
+  )
+  assert.equal(
+    scriptedView.scriptUsage.turns, 2,
+    'the card share is not the seeded two requests, so the counts below cannot tell the shares apart',
+  )
+  assert.equal(
+    scriptedView.compactionUsage.turns, 1,
+    'the compaction share is not the seeded one request; a merged reading would report 3',
+  )
   assert.ok(scriptedView.usage !== undefined, 'a conversation with a card share must still report a total')
   const scriptedTotal = totalTokens(scriptedView.scriptUsage.usage)
+  const compactedTotal = totalTokens(scriptedView.compactionUsage.usage)
   const scriptedPage = render(wired.store, slots.core)
   assert.match(scriptedPage, /class="iris-composer__stats"/, 'the usage line is missing on the card-share chat')
   // The card is portaled and closed unless a reader has opened it, so the
-  // server render must not leak the note anywhere — the native `title` that
+  // server render must not leak the notes anywhere — the native `title` that
   // used to carry this text is gone (pinned against the sources in
   // `tests/usage-popover.test.ts`), and the strip's own content is only the
   // visible groups.
-  const expectedShare = usageScriptShareSentence(scriptedView.scriptUsage)
-  assert.equal(
-    expectedShare,
-    `of which ${String(scriptedView.scriptUsage.turns)} card-script requests · ${formatExactTokens(scriptedTotal)} tok`,
-    'the card-share sentence is not the rendered share strings',
+  const expectedShares = usageSideShareSentences(scriptedView.scriptUsage, scriptedView.compactionUsage)
+  assert.deepEqual(
+    expectedShares,
+    [
+      `of which ${String(scriptedView.scriptUsage.turns)} card-script requests · ${formatExactTokens(scriptedTotal)} tok`,
+      `of which ${String(scriptedView.compactionUsage.turns)} compaction summaries · ${formatExactTokens(compactedTotal)} tok`,
+    ],
+    'the side-share sentences are not the rendered share strings, in card-then-compaction order',
   )
   assert.ok(
     !scriptedPage.includes('of which'),
-    'the card-script share reached the page outside the closed hover card',
+    'a side share reached the page outside the closed hover card',
   )
   // What *does* reach markup is proven the same way the per-turn card is, by
   // rendering the card itself — the component the popover portals — with the
-  // rows and note the composer builds from the very reading on screen.
+  // rows and notes the composer builds from the very reading on screen.
   const summaryCard = renderToString(
     <UsageDetailCard
       heading="Session usage"
       rows={usageSummaryRows(scriptedView.usage)}
-      note={expectedShare}
+      notes={expectedShares}
     />,
   )
-  assert.match(summaryCard, /iris-usage-card__note/, 'the share note did not render under the card rows')
-  assert.ok(
-    summaryCard.includes(expectedShare),
-    'the composer card’s note does not separate the card-script share',
+  assert.match(summaryCard, /iris-usage-card__note/, 'the share notes did not render under the card rows')
+  // Both, separately: one paragraph per share, so a card that rendered only the
+  // first — the shape the single-`note` prop had — fails here rather than
+  // looking complete.
+  assert.equal(
+    summaryCard.split('iris-usage-card__note').length - 1,
+    2,
+    'the card does not draw one note paragraph per reported share',
   )
+  for (const sentence of expectedShares) {
+    assert.ok(
+      summaryCard.includes(sentence),
+      `the composer card’s notes do not carry "${sentence}"`,
+    )
+  }
   for (const row of usageSummaryRows(scriptedView.usage)) {
     assert.ok(summaryCard.includes(row.label), `the summary row "${row.label}" did not reach the card`)
     assert.ok(summaryCard.includes(row.value), `the summary figure "${row.value}" did not reach the card`)
@@ -1173,12 +1205,14 @@ async function main(): Promise<void> {
     `this conversation carries ${String(messageInput.length)} per-message readings; the sum below is only`
     + ' the whole conversation when every billed candidate is a selected one, which holds at exactly one',
   )
-  const expectedInput = (messageInput[0] ?? 0) + billedInputTokens(scriptedView.scriptUsage.usage)
-  assert.ok(expectedInput > (messageInput[0] ?? 0), 'the card share is zero, so the sum proves nothing')
+  const expectedInput = (messageInput[0] ?? 0)
+    + billedInputTokens(scriptedView.scriptUsage.usage)
+    + billedInputTokens(scriptedView.compactionUsage.usage)
+  assert.ok(expectedInput > (messageInput[0] ?? 0), 'the side shares are zero, so the sum proves nothing')
   assert.equal(
     billedInputTokens(scriptedView.usage),
     expectedInput,
-    'the conversation total is not its turns plus its card generations',
+    'the conversation total is not its turns plus its card generations plus its compaction summaries',
   )
   assert.ok(
     scriptedPage.includes(`Input ${formatTokens(expectedInput)} tok`),
@@ -1415,6 +1449,62 @@ async function main(): Promise<void> {
   assert.ok(usagePage.includes('>Card scripts<'), 'the metric switch does not offer the card-script line')
 
   /*
+   * The **compaction** share, the second sentence in the same note.
+   *
+   * Premise asserted the same way, and one more assertion the card share does
+   * not need: the two shares must be *different numbers*. The plausible wrong
+   * implementation folds both side populations into one bucket and prints it
+   * twice, which on a page reads as two facts agreeing.
+   */
+  const compactionShare = usage.totals.compaction
+  assert.ok(
+    compactionShare !== undefined,
+    'the seed no longer carries a compaction summary, so its share line is not rendered here',
+  )
+  assert.ok(
+    compactionShare.turns > 0 && compactionShare.turns < usage.totals.turns,
+    `the seed's compaction share is ${String(compactionShare.turns)} of ${String(usage.totals.turns)}`
+    + ' generations, which no longer distinguishes it from the whole range',
+  )
+  assert.notEqual(
+    compactionShare.turns,
+    scriptShare.turns,
+    'the two side shares report the same count, so a merged "not a turn" figure would pass this check',
+  )
+  const compactionSpend = usageTotal(compactionShare)
+  assert.notEqual(
+    compactionSpend,
+    scriptSpend,
+    'the two side shares report the same tokens, so a merged figure printed twice would pass this check',
+  )
+  assert.ok(
+    compactionSpend > 0 && scriptSpend + compactionSpend < usageTotal(usage.totals),
+    `the side shares are ${String(scriptSpend + compactionSpend)} of ${String(usageTotal(usage.totals))}`
+    + ' tokens; they have to be a strict part of the total or the page cannot be shown to subset it',
+  )
+  assert.ok(
+    usagePage.includes(
+      `of which ${String(compactionShare.turns)} compaction summaries · ${formatExactTokens(compactionSpend)} tok`,
+    ),
+    'the compaction line does not carry both the count and the tokens',
+  )
+  /*
+   * And **no sixth metric**, which is a decision rather than an omission
+   * (`usage-stats.ts`'s `compactionTokens`, `notes/apps/iris-web/DEVIATIONS.md`
+   * §74): one request per compaction draws a line that is flat at zero with an
+   * occasional spike, and the figure a reader wants is the sentence above. The
+   * count is pinned rather than the absence of a caption, because a switch that
+   * grew a sixth option for any reason should come back through that decision.
+   */
+  const metricOptions = usagePage.match(/class="iris-choice__option"/g)?.length ?? 0
+  assert.equal(
+    metricOptions,
+    USAGE_RANGES.length + USAGE_METRICS.length,
+    'the two segmented controls do not offer exactly their own options; a metric was added or dropped',
+  )
+  assert.equal(USAGE_METRICS.length, 5, 'the metric switch gained a sixth reading without a ledger entry')
+
+  /*
    * The per-conversation card column, in **both** of its states.
    *
    * One seeded conversation has a card share and the others do not, and the
@@ -1435,11 +1525,23 @@ async function main(): Promise<void> {
     usagePage.includes(`${String(scriptRow.turns)} card · ${formatTokens(usageTotal(scriptRow))} tok`),
     'the subtotal row does not carry its card-script column',
   )
+  // The compaction figure shares that cell, stacked under the card one.
+  const compactionRow = withScript[0]?.compaction
+  assert.ok(
+    compactionRow !== undefined,
+    'the seeded side-share conversation carries no compaction share, so the stacked cell is not exercised',
+  )
+  assert.ok(
+    usagePage.includes(
+      `${String(compactionRow.turns)} compaction · ${formatTokens(usageTotal(compactionRow))} tok`,
+    ),
+    'the subtotal row does not carry its compaction column',
+  )
   const blankCells = usagePage.match(/class="iris-usage__chat-script iris-meta"><\/span>/g)?.length ?? 0
   assert.equal(
     blankCells,
     usage.chats.length - 1,
-    'a conversation with no card generations should render an empty card cell rather than a zero',
+    'a conversation with no side generations should render an empty cell rather than a zero',
   )
 
   /*

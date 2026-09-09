@@ -94,18 +94,21 @@ export interface FakeChat {
    */
   compaction?: ChatCompaction
   /**
-   * What this conversation's **card scripts** have spent.
+   * What this conversation has spent on generations that are **not turns**:
+   * its card scripts, and the host's own compaction summaries.
    *
    * A flat list rather than something hanging off a message, because that is
-   * the shape of the fact and the shape the host stores: a card's
-   * `TavernHelper.generate` produces no reply, so it belongs to no message and
-   * to no swipe of one — the host keeps these on the chat header
-   * (`@iris/app-service`'s `SIDE_USAGE_FIELD`). Every entry carries
-   * `source: 'script'`, which is what a summary splits on.
+   * the shape of the fact and the shape the host stores: neither a card's
+   * `TavernHelper.generate` nor a compaction summary produces a reply, so
+   * neither belongs to a message or to a swipe of one — the host keeps them all
+   * on the chat header (`@iris/app-service`'s `SIDE_USAGE_FIELD`). Every entry
+   * carries `source: 'script'` or `source: 'compaction'`, which is what a
+   * summary splits on, and one array holding both is the host's own shape
+   * rather than a convenience here.
    *
-   * Absent on a conversation whose cards have never generated, which is most
-   * of them: the interesting states are both, and a fixture where every chat
-   * had a card share would leave the blank column untested.
+   * Absent on a conversation with neither, which is most of them: the
+   * interesting states are both, and a fixture where every chat had a side
+   * share would leave the blank column untested.
    */
   sideUsage?: TurnUsage[]
 }
@@ -242,10 +245,11 @@ export function toChatView(chat: FakeChat, streamingTurn?: number): ChatView {
   // reader swiped away from was generated and charged. Streaming candidates
   // have no usage yet, so nothing has to be excluded here.
   const side = chat.sideUsage ?? []
-  // A card's own generations are inside the conversation's total, because they
+  // Both side populations are inside the conversation's total, because they
   // were billed to it on its own route — the protocol's `ChatView.usage` states
-  // that ruling and the reason the split is reported separately rather than
-  // subtracted from the figure.
+  // that ruling and the reason the splits are reported separately rather than
+  // subtracted from the figure. Split by `source`, one filter each, from the
+  // one array the host stores them in.
   //
   // The newest turn that has actually been assembled: the highest turn among
   // the messages a model wrote. A user line typed but not yet answered does not
@@ -260,7 +264,10 @@ export function toChatView(chat: FakeChat, streamingTurn?: number): ChatView {
     ),
     ...side,
   ])
-  const scriptTotal = side.length === 0 ? undefined : conversationUsage(side)
+  const scriptSide = side.filter(one => one.source === 'script')
+  const compactionSide = side.filter(one => one.source === 'compaction')
+  const scriptTotal = scriptSide.length === 0 ? undefined : conversationUsage(scriptSide)
+  const compactionTotal = compactionSide.length === 0 ? undefined : conversationUsage(compactionSide)
   return {
     chatId: chat.chatId,
     title: chat.title,
@@ -283,7 +290,10 @@ export function toChatView(chat: FakeChat, streamingTurn?: number): ChatView {
     ...(chat.compaction === undefined ? {} : { compaction: chat.compaction }),
     variables: chat.variables,
     ...(usage === undefined ? {} : { usage }),
-    ...(scriptTotal === undefined ? {} : { scriptUsage: { turns: side.length, usage: scriptTotal } }),
+    ...(scriptTotal === undefined ? {} : { scriptUsage: { turns: scriptSide.length, usage: scriptTotal } }),
+    ...(compactionTotal === undefined
+      ? {}
+      : { compactionUsage: { turns: compactionSide.length, usage: compactionTotal } }),
   }
 }
 
@@ -435,10 +445,13 @@ function bucketOf(at: number, granularity: UsageGranularity): number {
  * does. Reasoning is added but never added *into* `output` — the provider
  * reports it as the reasoning share of the completion it is already inside.
  *
- * A `source: 'script'` generation is folded **twice**: into the whole, because
- * it was billed on the same route to the same account, and into `script`, so a
- * surface can say how much of the figure a card asked for. `script` stays
- * absent until one arrives — the same absence rule the optional buckets follow.
+ * A `source: 'script'` or `source: 'compaction'` generation is folded
+ * **twice**: into the whole, because it was billed on the same route to the
+ * same account, and into its own share, so a surface can say how much of the
+ * figure a card asked for and how much this host's compaction did. Each share
+ * stays absent until one arrives — the same absence rule the optional buckets
+ * follow. Keyed by the source, the way `@iris/app-service`'s `addUsage` is, so
+ * the fake cannot drift into having one share the host does not.
  * @param into - the accumulator, mutated.
  * @param usage - one generation.
  * @param undated - whether this generation's moment was reconstructed.
@@ -446,10 +459,11 @@ function bucketOf(at: number, granularity: UsageGranularity): number {
 function foldUsage(into: UsageTotals, usage: TurnUsage, undated: boolean): void {
   foldBuckets(into, usage)
   if (undated) into.undatedTurns += 1
-  if (usage.source !== 'script') return
-  const script = into.script ?? { cacheMiss: 0, output: 0, turns: 0, cacheTurns: 0, cachePrompt: 0 }
-  into.script = script
-  foldBuckets(script, usage)
+  const source = usage.source
+  if (source !== 'script' && source !== 'compaction') return
+  const share = into[source] ?? { cacheMiss: 0, output: 0, turns: 0, cacheTurns: 0, cachePrompt: 0 }
+  into[source] = share
+  foldBuckets(share, usage)
 }
 
 /**
