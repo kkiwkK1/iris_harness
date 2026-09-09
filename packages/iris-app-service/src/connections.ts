@@ -276,6 +276,47 @@ export function sameEndpointOrigin(left: string | undefined, right: string | und
 }
 
 /**
+ * The credential a profile's route generates with, and where it came from.
+ *
+ * The profile's own key when it has one; otherwise the host's startup key,
+ * **only** at the host's own origin ({@link sameEndpointOrigin}); otherwise
+ * none. This is the same ladder `connection.test` climbs for a probe, and it
+ * has to be: measured 2026-09-09, a same-origin profile saved with the key
+ * field blank — which the form labels as "provided by the host environment,
+ * leave blank to use it" — probed green and then generated with no
+ * `Authorization` header, because activation installed the profile's own
+ * credential only. A probe that passes with one key and a route that sends
+ * another (or none) is a form that lies.
+ *
+ * The header travels with the key that won: a host key under a profile's
+ * header, or the reverse, authenticates as neither. An empty stored key counts
+ * as none — the form never writes one, but an imported file might.
+ * @param profile - the profile being installed.
+ * @param host - the host's own connection, credential included (in-process).
+ * @returns the key and header to install, and the source to report — never the key itself in prose.
+ */
+export function routeCredential(
+  profile: { baseURL?: string | undefined, apiKey?: string | undefined, apiKeyHeader?: string | undefined },
+  host: Pick<HostConnection, 'baseURL' | 'apiKey' | 'apiKeyHeader'>,
+): { apiKey?: string, apiKeyHeader?: string, keySource: 'stored' | 'host' | 'none' } {
+  if (profile.apiKey !== undefined && profile.apiKey.length > 0) {
+    return {
+      apiKey: profile.apiKey,
+      ...profile.apiKeyHeader === undefined || profile.apiKeyHeader.length === 0 ? {} : { apiKeyHeader: profile.apiKeyHeader },
+      keySource: 'stored',
+    }
+  }
+  if (host.apiKey !== undefined && host.apiKey.length > 0 && sameEndpointOrigin(host.baseURL, profile.baseURL)) {
+    return {
+      apiKey: host.apiKey,
+      ...host.apiKeyHeader === undefined || host.apiKeyHeader.length === 0 ? {} : { apiKeyHeader: host.apiKeyHeader },
+      keySource: 'host',
+    }
+  }
+  return { keySource: 'none' }
+}
+
+/**
  * The last characters of a stored key, for the mask a form shows.
  * @param key - the stored key, or absent.
  * @returns the tail, or undefined when there is no key or it is too short to show one.

@@ -34,7 +34,7 @@ import { DiagnosticBuffer } from './diagnostics.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import { IrisAppService } from './service.ts'
-import { ConnectionStore, routeOf } from './connections.ts'
+import { ConnectionStore, hostConnectionFromEnv, routeCredential, routeOf } from './connections.ts'
 import { PersonaStore } from './persona.ts'
 import { FavoriteStore } from './favorites.ts'
 import { ExtensionSettingsStore } from './context.ts'
@@ -663,11 +663,24 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }
   })()
   if (storedActive?.baseURL !== undefined && storedActive.baseURL.length > 0) {
+    // The same credential ladder activation uses (`routeCredential`): the
+    // profile's own key, else the host's at the same origin, else none. The
+    // host connection is read the way the service reads it — the process
+    // environment plus the global provider/model row — so a restart restores
+    // the route with the key it generated with before, not a bare one.
+    const global = settings.get()
+    const credential = routeCredential(
+      storedActive,
+      hostConnectionFromEnv(process.env, { provider: global.provider, model: global.model }),
+    )
     installConnection(routeOf(storedActive), {
       baseURL: storedActive.baseURL,
-      ...storedActive.apiKey === undefined ? {} : { apiKey: storedActive.apiKey },
-      ...storedActive.apiKeyHeader === undefined ? {} : { apiKeyHeader: storedActive.apiKeyHeader },
+      ...credential.apiKey === undefined ? {} : { apiKey: credential.apiKey },
+      ...credential.apiKeyHeader === undefined ? {} : { apiKeyHeader: credential.apiKeyHeader },
     })
+    if (credential.keySource === 'none') {
+      ctx.logger.warn(`connection: restored route "${routeOf(storedActive)}" carries no key — it generates unauthenticated until a key is saved`)
+    }
   }
   // Shared across the profile, matching upstream's one `localStorage` per
   // origin. Not partitioned per card, and deliberately not forgotten when a

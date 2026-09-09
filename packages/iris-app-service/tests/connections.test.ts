@@ -9,7 +9,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { StreamFn } from '@iris/turn'
 
 import { ChatStore } from '../src/chats.ts'
-import { ConnectionStore, hostDefaultView, routeOf } from '../src/connections.ts'
+import { ConnectionStore, hostDefaultView, routeCredential, routeOf } from '../src/connections.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type ConnectionEndpoint, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
@@ -890,6 +890,83 @@ test('adopting is ignored where there is no host credential, and outranked by a 
   // The newer decision of the two wins: the flag was set when the form opened,
   // the key was typed after.
   assert.equal(typed.profiles[0]?.keyTail, '1234')
+})
+
+/* ------------------------------------------------------------------------- *
+ * The route generates with the key the probe would have used.
+ *
+ * The report, 2026-09-09: a profile on the deepseek preset, saved with the key
+ * field blank (the form says "由宿主环境提供，留空即使用它"), probed green — the
+ * probe adopts the host's key at the same origin — and then every generation
+ * answered `401 Authentication Fails (governor)`, which is DeepSeek's sentence
+ * for a request carrying **no** Authorization header at all. Activation had
+ * installed the route with the profile's own credential only, and the profile
+ * had none. The probe and the route must resolve the key the same way.
+ * ------------------------------------------------------------------------- */
+
+const HOST_ENV = {
+  IRIS_BASE_URL: 'https://api.deepseek.com/v1',
+  IRIS_MODEL: 'deepseek-chat',
+  IRIS_API_KEY_ENV: 'PROBE_KEY',
+  PROBE_KEY: 'sk-host-secret-9999',
+}
+
+async function activatedEndpoint(
+  t: TestContext,
+  profile: { provider: string, baseURL: string, apiKey?: string },
+): Promise<{ route: string, endpoint: ConnectionEndpoint }> {
+  const installed: { route: string, endpoint: ConnectionEndpoint }[] = []
+  const { handlers } = await fixture(t, {
+    env: HOST_ENV,
+    installConnection: (route, endpoint) => { installed.push({ route, endpoint }) },
+  })
+  const saved = await handlers['connection.save']({ model: 'deepseek-chat', ...profile })
+  const id = saved.profiles[0]?.id
+  assert.ok(id !== undefined)
+  await handlers['connection.activate']({ id })
+  const last = installed.at(-1)
+  assert.ok(last !== undefined, 'activation installed no route')
+  return last
+}
+
+test('a same-origin profile with no key of its own generates with the host key', async (t) => {
+  // Bare origin, as the deepseek preset fills it — the same *place* as the
+  // host's `/v1`, which is the comparison sameEndpointOrigin makes.
+  const { route, endpoint } = await activatedEndpoint(t, { provider: 'deepseek', baseURL: 'https://api.deepseek.com' })
+  assert.equal(route, 'deepseek')
+  assert.equal(endpoint.apiKey, 'sk-host-secret-9999')
+})
+
+test('a profile with its own key generates with that key, not the host’s', async (t) => {
+  const { endpoint } = await activatedEndpoint(t, {
+    provider: 'deepseek', baseURL: 'https://api.deepseek.com', apiKey: 'sk-typed-key-1234',
+  })
+  assert.equal(endpoint.apiKey, 'sk-typed-key-1234')
+})
+
+test('a profile at a different origin never receives the host key', async (t) => {
+  // The guard that makes the adoption safe: the host's credential goes to the
+  // host's endpoint and nowhere else, exactly as the probe already refuses.
+  const { endpoint } = await activatedEndpoint(t, { provider: 'default', baseURL: 'https://other.example/v1' })
+  assert.equal(endpoint.apiKey, undefined)
+})
+
+test('routeCredential names the source it resolved, and the header travels with the key that won', () => {
+  const host = { provider: 'default', baseURL: 'https://api.deepseek.com/v1', apiKey: 'sk-host', apiKeyHeader: 'x-api-key' }
+  assert.deepEqual(
+    routeCredential({ baseURL: 'https://api.deepseek.com', apiKey: 'sk-own' }, host),
+    { apiKey: 'sk-own', keySource: 'stored' },
+  )
+  assert.deepEqual(
+    routeCredential({ baseURL: 'https://api.deepseek.com/' }, host),
+    { apiKey: 'sk-host', apiKeyHeader: 'x-api-key', keySource: 'host' },
+  )
+  assert.deepEqual(routeCredential({ baseURL: 'https://elsewhere.example' }, host), { keySource: 'none' })
+  const { apiKey: _unused, ...keyless } = host
+  assert.deepEqual(routeCredential({ baseURL: 'https://api.deepseek.com' }, keyless), { keySource: 'none' })
+  // An empty stored key is no key — the form's "blank means keep" never writes
+  // one, but an imported profile might carry the empty string.
+  assert.equal(routeCredential({ baseURL: 'https://api.deepseek.com', apiKey: '' }, host).keySource, 'host')
 })
 
 /* ------------------------------------------------------------------------- *
