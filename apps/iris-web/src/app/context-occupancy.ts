@@ -187,8 +187,8 @@ export function contextOccupancy(
 /**
  * Which band a fullness falls in.
  *
- * Three, not a gradient, because the capsule's bar is 2px tall and read at a
- * glance: a continuous hue ramp at that size is a colour nobody can name,
+ * Three, not a gradient, because the mark carrying them is a 20px ring read at
+ * a glance: a continuous hue ramp at that size is a colour nobody can name,
  * while three bands are a fact a reader can carry away ("it has gone plum").
  */
 export type ContextPressure
@@ -207,7 +207,7 @@ export const PRESSURE_FULL = 85
 /**
  * The band one percentage falls in.
  *
- * The whole rule, stated once here so the capsule, the stylesheet's class names
+ * The whole rule, stated once here so the ring, the stylesheet's class names
  * and the test that pins the boundaries all read it the same way: `quiet` is
  * below {@link PRESSURE_NEAR}, `near` runs from {@link PRESSURE_NEAR} through
  * {@link PRESSURE_FULL} **inclusive at both ends**, and `full` is anything
@@ -221,8 +221,8 @@ export function pressureLevel(percent: number): ContextPressure {
   return 'quiet'
 }
 
-/** What the capsule prints, and how far its bar is drawn. */
-export interface CapsuleReading {
+/** What the composer bar’s ring reports, and how far its arc is drawn. */
+export interface RingReading {
   /** 0–100, rounded, clamped at 100. */
   percent: number
   usedTokens: number
@@ -236,8 +236,8 @@ export interface CapsuleReading {
    *
    * `'record'`: what the newest real turn actually assembled to.
    * `'preview'`: what the *next* request would assemble to. Different
-   * questions, and the capsule's hover names which one is on screen — a reader
-   * comparing the capsule against the card has to know whether the two are even
+   * questions, and the ring's hover names which one is on screen — a reader
+   * comparing the ring against the card has to know whether the two are even
    * about the same request.
    */
   basis: 'record' | 'preview'
@@ -246,12 +246,12 @@ export interface CapsuleReading {
 }
 
 /**
- * The capsule's reading, from whichever account of the prompt exists.
+ * The ring's reading, from whichever account of the prompt exists.
  *
  * **The fetched itemization wins when there is one**, which is a correction to
  * the obvious ordering. A recorded measurement is the cheaper fact and is why
- * the capsule can draw a bar at all before anything is pressed — but the moment
- * the card is open the card is showing the *preview*, and a capsule printing a
+ * the ring can draw an arc at all before anything is pressed — but the moment
+ * the card is open the card is showing the *preview*, and a mark reporting a
  * different number one line below the card that explains it is two surfaces
  * under one composer disagreeing about one conversation. So: the preview while
  * the card has one, the record otherwise, and `basis` on the result so the
@@ -259,18 +259,18 @@ export interface CapsuleReading {
  *
  * `null` when there is neither — an unmeasured conversation whose card has
  * never been opened, which is every conversation immediately after the host
- * restarts. The capsule then states the capacity alone, as it did before any of
+ * restarts. The ring then names the capacity alone, as it did before any of
  * this existed.
  * @param budget - the window and reserve this conversation runs under.
  * @param itemization - the reading fetched when the card was opened, if it has been.
  * @param measured - what the host recorded for the newest real turn, if it has one.
  * @returns the reading, or `null` when nothing has measured this conversation.
  */
-export function capsuleReading(
+export function ringReading(
   budget: { context: number, reserve: number },
   itemization: PromptItemization | undefined,
   measured: { turn: number, tokens: number } | undefined,
-): CapsuleReading | null {
+): RingReading | null {
   const fetched = contextOccupancy(itemization)
   if (fetched !== null) {
     return {

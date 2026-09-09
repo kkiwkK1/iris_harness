@@ -34,6 +34,35 @@ function isNumericField(key: string): key is NumericField {
 }
 
 /**
+ * The effort words, which are the host's own set (`@iris/app-service`'s
+ * `REASONING_EFFORTS`) rather than a fresh list.
+ *
+ * Added 2026-09-10 with the composer's bar (web §80), which offers this ladder
+ * beside the model: before it, a patch naming `reasoningEffort` was dropped
+ * here — the key is not numeric, not `stop`, and not the route — so the seeded
+ * page answered a chosen effort by forgetting it, and every surface that offers
+ * one looked broken against the fake while being correct against a host. The
+ * value is checked against the set for the reason the module doc gives: this is
+ * where an open record narrows back to the protocol's shape, so a typo must not
+ * become a stored field.
+ *
+ * **Its neighbours are still dropped**, and deliberately not fixed here:
+ * `contextWindow`, `contextUnlocked`, `continuePostfix`, `trimSentences`,
+ * `squashSystemMessages` and `cacheFriendly` are all settings the drawer can
+ * write and this fake still forgets. Each needs its own kind of check, none is
+ * on this task's path, and a blanket pass-through would defeat the narrowing.
+ */
+const EFFORTS = ['auto', 'low', 'medium', 'high', 'min', 'max'] as const
+
+/** One effort word. */
+type Effort = (typeof EFFORTS)[number]
+
+/** Whether a value is one of the six effort words. */
+function isEffort(value: unknown): value is Effort {
+  return typeof value === 'string' && (EFFORTS as readonly string[]).includes(value)
+}
+
+/**
  * Apply a patch to the settings in force.
  *
  * `null` clears an optional field, which the panel needs: "no explicit top-k"
@@ -61,6 +90,11 @@ export function mergeSettings(
     if (key === 'stop') {
       if (Array.isArray(value)) next.stop = value.filter((row): row is string => typeof row === 'string')
       else if (value === null) delete next.stop
+      continue
+    }
+    if (key === 'reasoningEffort') {
+      if (isEffort(value)) next.reasoningEffort = value
+      else if (value === null) delete next.reasoningEffort
     }
   }
   return next
@@ -103,6 +137,11 @@ export function mergeOverrides(
     if (key === 'stop') {
       if (Array.isArray(value)) next.stop = value.filter((row): row is string => typeof row === 'string')
       else if (value === null) delete next.stop
+      continue
+    }
+    if (key === 'reasoningEffort') {
+      if (isEffort(value)) next.reasoningEffort = value
+      else if (value === null) delete next.reasoningEffort
     }
   }
   return next

@@ -1,8 +1,8 @@
 /**
  * The context-capacity reading: its classification, its arithmetic, which
- * account of the prompt the capsule draws, where its window came from, and the
+ * account of the prompt the ring draws, where its window came from, and the
  * one property both sets of colours have to have — the card's six category
- * tints and the capsule gauge's three bands.
+ * tints and the ring arc's three bands.
  *
  * @module iris-web/tests/context-meter
  */
@@ -24,7 +24,7 @@ import {
 
 import {
   averageCacheHit,
-  capsuleReading,
+  ringReading,
   categoryOf,
   categoryShares,
   contextOccupancy,
@@ -444,7 +444,7 @@ test('the parts worth showing are the ones that cost something, worst first', ()
 
 test('the card carries the divergence line, its handle, and no seventh swatch', () => {
   /*
-   * Read off the source, because the card only renders once the capsule is
+   * Read off the source, because the card only renders once the ring is
    * pressed and neither the server render nor this file can press it. Three
    * properties, and each has a way of going wrong that nothing else here
    * notices:
@@ -471,7 +471,7 @@ test('the card carries the divergence line, its handle, and no seventh swatch', 
   )
 })
 
-// ------------------------------------------------- the capsule's own gauge
+// -------------------------------------------------- the ring's own arc
 
 test('the three bands break at 60 and 85, and the middle one owns both ends', () => {
   /*
@@ -487,10 +487,10 @@ test('the three bands break at 60 and 85, and the middle one owns both ends', ()
   assert.equal(pressureLevel(100), 'full')
 })
 
-test('the capsule reads a recorded measurement with no itemization at all', () => {
+test('the ring reads a recorded measurement with no itemization at all', () => {
   // The whole point of `ChatView.measured`: a bar before anything is pressed,
   // paid for by an assembly that already happened.
-  const reading = capsuleReading({ context: 8192, reserve: 1024 }, undefined, { turn: 7, tokens: 3584 })
+  const reading = ringReading({ context: 8192, reserve: 1024 }, undefined, { turn: 7, tokens: 3584 })
   assert.ok(reading !== null)
   assert.equal(reading.percent, 50, '3584 / (8192 - 1024) is 50%')
   assert.equal(reading.available, 7168, 'the reserve was not held back')
@@ -502,7 +502,7 @@ test('the capsule reads a recorded measurement with no itemization at all', () =
 test('a fetched preview outranks the recorded measurement', () => {
   /*
    * The correction. A record is the cheaper fact, but once the card is open the
-   * card is showing the *preview* — and a capsule printing a different number
+   * card is showing the *preview* — and a mark drawing a different number
    * one line under the card that explains it is two surfaces disagreeing about
    * one conversation. So the preview wins while there is one, and `basis` says
    * which is on screen.
@@ -512,7 +512,7 @@ test('a fetched preview outranks the recorded measurement', () => {
     preview: true,
     turn: 9,
   }
-  const reading = capsuleReading({ context: 8192, reserve: 1024 }, preview, { turn: 7, tokens: 100 })
+  const reading = ringReading({ context: 8192, reserve: 1024 }, preview, { turn: 7, tokens: 100 })
   assert.ok(reading !== null)
   assert.equal(reading.usedTokens, 6000, 'the recorded number won over the fetched one')
   assert.equal(reading.basis, 'preview')
@@ -524,23 +524,23 @@ test('a fetched record keeps its own turn rather than the projected one', () => 
   // `prompt.itemize` with a turn can answer with a record. When it does, the
   // reading on screen is that turn's, not whatever the view last projected.
   const record = { ...itemization([item('main', 'system', 700)]), preview: false, turn: 4 }
-  const reading = capsuleReading({ context: 8192, reserve: 1024 }, record, { turn: 7, tokens: 3584 })
+  const reading = ringReading({ context: 8192, reserve: 1024 }, record, { turn: 7, tokens: 3584 })
   assert.equal(reading?.basis, 'record')
   assert.equal(reading?.turn, 4)
 })
 
 test('nothing measured and nothing fetched is no reading, not a zero', () => {
   // What every conversation looks like right after the host restarts: those
-  // records live in memory. The capsule states its capacity alone there, which
+  // records live in memory. The ring names its capacity alone there, which
   // it can only do if this says `null` rather than 0%.
-  assert.equal(capsuleReading({ context: 8192, reserve: 1024 }, undefined, undefined), null)
+  assert.equal(ringReading({ context: 8192, reserve: 1024 }, undefined, undefined), null)
   // And a window entirely spoken for by the reserve divides by nothing.
-  assert.equal(capsuleReading({ context: 1024, reserve: 1024 }, undefined, { turn: 1, tokens: 10 }), null)
+  assert.equal(ringReading({ context: 1024, reserve: 1024 }, undefined, { turn: 1, tokens: 10 }), null)
 })
 
 test('an over-budget measurement clamps its bar and still says it is over', () => {
-  const reading = capsuleReading({ context: 8192, reserve: 1024 }, undefined, { turn: 2, tokens: 9000 })
-  assert.equal(reading?.percent, 100, 'the bar would have drawn past the capsule')
+  const reading = ringReading({ context: 8192, reserve: 1024 }, undefined, { turn: 2, tokens: 9000 })
+  assert.equal(reading?.percent, 100, 'the arc would have drawn past the ring')
   assert.equal(reading?.over, true)
   assert.equal(reading?.level, 'full')
 })
@@ -584,14 +584,17 @@ test('no two gauge bands draw the same colour, in any of the three themes', () =
    * a reader can carry away.
    *
    * Read out of the stylesheet, so a tint changed in `panels.css` is the thing
-   * being checked.
+   * being checked. The selector is the **ring's** arc since 2026-09-10 (web
+   * §80): the gauge along the capsule's bottom edge became the ring in the
+   * composer's redesigned bar, and the property being checked did not move with
+   * it — three bands, three distinct values, in each of the three themes.
    */
   const panels = readFileSync(join(HERE, '..', 'src', 'app', 'panels.css'), 'utf8')
   const tokens = readFileSync(join(HERE, '..', 'src', 'theme', 'tokens.css'), 'utf8')
 
   const tintOf = new Map<string, string>()
   for (const match of panels.matchAll(
-    /\.iris-composer__pill-fill--([a-z]+)\s*\{\s*--iris-gauge-tint:\s*var\((--[a-z-]+)\)/g,
+    /\.iris-composer__ring-arc--([a-z]+)\s*\{\s*--iris-gauge-tint:\s*var\((--[a-z-]+)\)/g,
   )) {
     tintOf.set(match[1] as string, match[2] as string)
   }

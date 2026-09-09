@@ -1,35 +1,46 @@
 /**
  * Where the reader writes their part.
  *
- * **The one place 「梅花」 lets the hand off the brake** (canvas.json: 这一屏唯一
- * 放开手的地方). A branch crosses the top edge in place of a hairline, the paper
- * is dyed 藕粉 downward, the writing surface is a sheet laid on it with a plum
- * blossom sealed into its corner, and the send key is a plum stamp. Everything
- * decorative on this page is here or over the character page; the rest of Iris
- * is 1px rules.
+ * **One card, one bar** (user, 2026-09-10, with a reference image: 「按照图片
+ * 重新设计对话框并在配色上和本系统保持一致」). The writing surface and the
+ * controls are one rounded sheet of raised paper: the draft at the top with all
+ * the white space, and along the bottom edge a single row — 「+」 and the preset
+ * on the left, the model with its effort, the capacity ring and the send disc on
+ * the right. Nothing else is in the card. Everything the reader only *consults*
+ * — the keyboard hint and what the conversation has cost — is a line of the
+ * faintest type **under** it, outside the paper, which is the difference between
+ * a control and a reading said in the layout rather than in a word.
  *
- * It grows with the draft up to a cap, because a reader writing three paragraphs
- * of scene should see them. Under the field, two capsules say what is in force —
- * the prompt and the model — which is the pair of facts a reader checks before
- * pressing send and which previously lived only behind the settings drawer.
+ * **The 「梅花」 decoration is still here and is now a watermark.** The branch
+ * across the panel's top edge and the blossom sealed into the card's corner are
+ * what canvas.json spends this screen's whole decorative budget on (装饰只在两处
+ * … 这一屏唯一放开手的地方), so they stay — quieter, at half contrast and out of
+ * the writing lane, because the reference's subject is the emptiness above the
+ * bar and a mark that competes with it is a mark in the way. The one saturated
+ * thing left is the send disc.
  *
- * **Both capsules are buttons**, and for the same reason: a capsule states a
- * fact, and the reader's next thought is about that fact. The prompt capsule
- * opens the breakdown of what would be sent. The model capsule changes the
- * model — **for this conversation only**, which is the scope the capsule is
- * already standing in. A model switched here does not follow the reader into
- * the next scene, and a dot beside the name says when this conversation is not
- * on its connection's model: an override nobody can see is one the reader will
- * eventually be surprised by.
+ * The field grows with the draft up to a cap, because a reader writing three
+ * paragraphs of scene should see them.
+ *
+ * **Every control in the bar states a fact and changes it.** That is the rule
+ * the two capsules this bar replaces were built on and it is unchanged: a
+ * control states what is in force, and pressing it answers the question that
+ * fact raises. The preset names the preset and switches it; the model names the
+ * model and its effort and changes them **for this conversation only**, which is
+ * the scope the bar is already standing in — with a dot beside the name when
+ * this conversation is not on its connection's model, because an override
+ * nobody can see is one the reader will eventually be surprised by. The ring
+ * draws how full the window is and opens the breakdown. 「+」 holds the two acts
+ * that are not facts about the next request: the prompt itemization and the
+ * slash commands.
  *
  * @module iris-web/app/Composer
  */
 
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PromptDivergence, PromptItemization } from '@iris/protocol'
+import type { PromptDivergence, PromptItemization, ReasoningEffort } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import type { ResolvedButton } from './script-buttons.ts'
@@ -39,7 +50,9 @@ import { ScriptButtons } from './ScriptButtons.tsx'
 import { registerComposer } from './composer-bus.ts'
 import { usageLineGroups, usageSideShareSentences, usageSummaryRows } from './token-format.ts'
 import { modelMenu } from './model-menu.ts'
-import { ContextCard, ContextPill } from './ContextMeter.tsx'
+import { effortInForce, effortPatch, effortShown, REASONING_EFFORTS } from './composer-bar.ts'
+import { ComposerMenu, ComposerMenuItem, ComposerMenuLabel, ComposerMenuNote } from './ComposerMenu.tsx'
+import { ContextCard, ContextRing } from './ContextMeter.tsx'
 import { UsagePopover } from './UsagePopover.tsx'
 import {
   commandArgumentCompletions,
@@ -55,27 +68,19 @@ import { describeError } from '../client/errors.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
- * The menu row that returns this conversation to its connection's model.
+ * The id of the completion menu's heading row.
  *
- * A leading space so it can never collide with a model id: every other row's id
- * *is* a model id, they come from an endpoint rather than from this file, and
- * `onSelect` hands back only an id. A sentinel that a provider could
- * legitimately mint would make one model unselectable and nobody would know
- * which.
- */
-const RESTORE_ID = ' restore-connection-default'
-
-/**
- * The ids of the menu's non-model rows.
+ * A leading space so it can never collide with a completion: every other row in
+ * that menu is identified by a command name or by one of a command's argument
+ * values, and `onSelect` hands back only an id. A sentinel a command could
+ * legitimately be called would give two rows the same key.
  *
- * Leading space for the same reason {@link RESTORE_ID} has one: every other row
- * in this menu is identified by a model id minted by an endpoint, and a
- * sentinel a provider could legitimately mint would make one model
- * unselectable — or, for these two, give two rows the same key.
+ * The model menu used to need two more of these — a heading and a note — and no
+ * longer does: its rows are this file's own markup (`ComposerMenu.tsx`), where a
+ * heading is a heading element and a sentence is a paragraph rather than a row
+ * with a reserved id.
  */
 const HEADING_ID = ' heading'
-/** The one row that explains the list's state: reading, refused, or absent. */
-const NOTE_ID = ' note'
 
 /**
  * What the menu is doing about a missing model list, for the row that says so.
@@ -138,14 +143,27 @@ export function Composer({
    */
   const scripts = useIris(state => state.scripts)
   /*
-   * What the two capsules report. Both may be absent and both are rendered only
-   * when they are not: `activePreset` is loaded by the preset panel rather than
-   * at boot (`client/store.ts`), so a reader who has never opened that panel has
-   * no preset name to show — and 「提示词 · —」 would be a capsule reporting that
-   * the interface does not know, which is worse than one fewer capsule.
+   * What the bar's two worded controls report.
+   *
+   * `model` may be absent (settings that never loaded), and the model control is
+   * rendered only when it is not: a chevron over an empty name is a control that
+   * cannot say what it would change.
+   *
+   * `effort` is the other half of that control's label, and is absent far more
+   * often than it is set — `composer-bar.ts` says why the absent case prints no
+   * word rather than 「auto」.
+   *
+   * `preset` and `presets` are read together because the control needs both: the
+   * name to print, and the library to offer. Neither is loaded at boot
+   * (`client/store.ts`: the preset panel asks, so a host with no library never
+   * refuses at startup), which is why the effect below asks on mount — a bar
+   * that said 「未启用预设」 about a host with a preset in force would be a
+   * confident false statement, and it would be the *usual* one.
    */
   const model = useIris(state => state.settings?.model)
+  const effort = useIris(state => state.settings?.reasoningEffort)
   const preset = useIris(state => state.activePreset)
+  const presets = useIris(state => state.presets)
   /*
    * What the conversation has cost so far — every generation it ever paid for,
    * summed by the host (`ChatView.usage`), swipes included. Read here because
@@ -180,10 +198,10 @@ export function Composer({
    */
   const compactionUsage = useIris(state => state.view?.compactionUsage)
   /*
-   * What the capacity capsule divides by, and the two facts that make its
+   * What the capacity ring divides by, and the two facts that make its
    * reading stale.
    *
-   * `budget` is on the open chat rather than fetched, precisely so this capsule
+   * `budget` is on the open chat rather than fetched, precisely so this mark
    * costs nothing to render (`ChatView.budget` says why). The other two are the
    * **invalidation key**: a reading is an account of one assembly, and an
    * assembly changes when the conversation gains a floor or when its head is
@@ -193,7 +211,7 @@ export function Composer({
    */
   const budget = useIris(state => state.view?.budget)
   /*
-   * What the host recorded for the newest real turn, so the capsule's gauge has
+   * What the host recorded for the newest real turn, so the ring's arc has
    * a measured number without a round trip (`ChatView.measured` says why it can
    * be read for free). A narrow selector for the same reason as every other one
    * here — this component re-renders on every keystroke.
@@ -209,7 +227,7 @@ export function Composer({
   const floors = useIris(state => state.view?.messages.length ?? 0)
   const compactedAt = useIris(state => state.view?.compaction?.at)
   /*
-   * What the model capsule needs to be a control rather than a readout: which
+   * What the model control needs to be a control rather than a readout: which
    * of the settings this conversation overrides, and the list the active
    * connection last reported. Selected narrowly (four fields, not the whole
    * store) because this component re-renders on every keystroke of the draft.
@@ -230,9 +248,20 @@ export function Composer({
   const hostConnection = useIris(state => state.hostConnection)
   const actions = useIrisActions()
   const [modelOpen, setModelOpen] = useState(false)
+  const [plusOpen, setPlusOpen] = useState(false)
+  const [presetOpen, setPresetOpen] = useState(false)
   const [listRead, setListRead] = useState<ModelListRead | undefined>(undefined)
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
+  /*
+   * The three triggers, for the menus that hang off them: `ComposerMenu` places
+   * itself from its trigger's own rect and hands focus back to it on the way
+   * out, so each one needs a handle. Refs rather than a lookup, because a
+   * portalled list cannot find its trigger in the tree above it.
+   */
+  const plusAnchor = useRef<HTMLButtonElement | null>(null)
+  const presetAnchor = useRef<HTMLButtonElement | null>(null)
+  const modelAnchor = useRef<HTMLButtonElement | null>(null)
   const [meterOpen, setMeterOpen] = useState(false)
   const [reading, setReading] = useState<{
     key: string
@@ -253,6 +282,14 @@ export function Composer({
   /** The reading key a fetch is in flight for, or the last one that succeeded. */
   const fetching = useRef<string | undefined>(undefined)
   const [commandOpen, setCommandOpen] = useState(false)
+  /*
+   * The prefix for the model menu's two heading ids, so each group of rows is
+   * labelled *by* its own visible heading. Generated rather than written down
+   * because two composers on one page — the dev harness mounts one — would
+   * otherwise both claim the same id, and `aria-labelledby` resolves to the
+   * first match in the document.
+   */
+  const menuId = useId()
   // Subscribed so a language switch re-renders the composer's words.
   const { lang } = useLanguage()
 
@@ -272,14 +309,38 @@ export function Composer({
     field.current?.focus()
   }, [chatId])
 
+  /*
+   * Ask for the preset library once, so the bar's left control can be true.
+   *
+   * The store loads presets from the preset panel rather than at boot, and the
+   * reason is in `loadPresets` itself: a host with no library refuses
+   * `preset.list`, and a refusal at startup would raise a notice about a feature
+   * that host never had. That reason survives this call — `loadPresets`
+   * swallows its own refusal and records the absence as `presets: undefined`, so
+   * nothing is announced — and what it costs is one round trip per session
+   * against what it buys, which is a control that names the preset in force
+   * instead of a control that says 「未启用预设」 about every host until somebody
+   * opens the settings drawer.
+   *
+   * Guarded on `presets === undefined` so the panel and the bar do not both
+   * pay, and dependent on nothing else: this is a once-per-session ask, not a
+   * subscription.
+   */
+  useEffect(() => {
+    if (presets !== undefined) return
+    void actions.loadPresets()
+  }, [actions, presets])
+
   const empty = draft.trim() === ''
   const stats = usageLineGroups(usage, lang)
+  /** The word beside the model, when a reader chose one. */
+  const shownEffort = effortShown(effort)
 
   /*
    * The invalidation key.
    *
    * A reading belongs to one conversation at one length with one compaction
-   * record. When any of those moves, the number the capsule is printing is an
+   * record. When any of those moves, the number the ring is drawing is an
    * account of a request that would no longer be assembled — so it is dropped
    * rather than kept with a caveat. Held as a string because that makes the
    * comparison one `!==` and the effect below have one dependency.
@@ -330,7 +391,7 @@ export function Composer({
   }, [actions, meterOpen, readingKey])
 
   // A conversation that moved under a closed card drops the stale reading too,
-  // so the capsule stops printing a fullness that is no longer true rather
+  // so the ring stops drawing a fullness that is no longer true rather
   // than waiting to be pressed again.
   useEffect(() => {
     setReading(current => (current === undefined || current.key === readingKey ? current : undefined))
@@ -434,7 +495,7 @@ export function Composer({
   }), [actions])
 
   /*
-   * The model capsule's menu, decided in `model-menu.ts` and dressed here.
+   * The model control's menu, decided in `model-menu.ts` and dressed here.
    *
    * The heading names the connection the list came from, because the list is
    * the *endpoint's* answer and a menu that showed model names with no
@@ -528,29 +589,46 @@ export function Composer({
       : menu.empty === 'no-connection'
         ? t('modelMenuNoConnection')
         : menu.empty === 'no-list' ? t('modelMenuNoList') : undefined
-  const modelItems: MenuEntry[] = [
-    { type: 'label' as const, id: HEADING_ID, text: heading },
-    ...menu.models.map(id => ({ id, label: id })),
-    ...note === undefined ? [] : [{ id: NOTE_ID, label: note, disabled: true }],
-  ]
-  /*
-   * The undo, pinned below the list so it stays reachable while a long model
-   * list scrolls. Offered only when there is something to undo *and* a
-   * connection whose model to name: "back to the default" with no default named
-   * is a button whose effect the reader has to guess.
+  /**
+   * Choose a model, or put this conversation back on its connection's.
+   *
+   * `null` is the protocol's clear: it drops this chat's override so the
+   * connection's model shows through again. Anything else is a model id straight
+   * from the endpoint's own list.
+   * @param id - the model, or null for the restore row.
    */
-  const modelFooter: MenuEntry[] = menu.overridden && menu.connectionModel !== undefined
-    ? [{
-      id: RESTORE_ID,
-      label: t('modelRestoreConnectionDefault', { model: menu.connectionModel }),
-    }]
-    : []
+  const chooseModel = (id: string | null): void => {
+    setModelOpen(false)
+    void actions.setChatModel(id)
+  }
+
+  /**
+   * Choose how hard a reasoning model thinks.
+   *
+   * **The same write the settings drawer makes, through the same action**, and
+   * that is the whole of the layer rule: `patchSettings` scopes itself to the
+   * open conversation when there is one and to the global defaults when there is
+   * not (`client/store.ts`), which is the rule the model row beside it follows —
+   * a choice made in the composer's bar is a choice about the scene the reader
+   * is in. The composer only ever renders with a chat open, so in practice every
+   * effort chosen here lands on this conversation's own layer, beside the model
+   * override the dot reports.
+   *
+   * `auto` writes `null` rather than the word, because the two are one request
+   * to a provider and a stored `'auto'` would be an override with no effect —
+   * see `composer-bar.ts`.
+   * @param chosen - the row the reader pressed.
+   */
+  const chooseEffort = (chosen: ReasoningEffort): void => {
+    setModelOpen(false)
+    void actions.patchSettings({ reasoningEffort: effortPatch(chosen) })
+  }
 
   /**
    * Open or close the model menu, fetching a missing list on the way open.
    *
    * **The reader should not have to go to the connection panel and press
-   * "Test" before the menu can answer.** Pressing the capsule is already the
+   * "Test" before the menu can answer.** Pressing the control is already the
    * question, so the press is what asks the endpoint — once, and only when
    * `model-menu.ts` says a list is missing and stale enough to be worth a round
    * trip. The ask carries no key: the host resolves the credential from what it
@@ -596,6 +674,52 @@ export function Composer({
         setListRead({ key, phase: 'failed', reason: describeError(error, lang) })
       }
     })()
+  }
+
+  /**
+   * Open or close the preset menu, re-reading the library on the way open.
+   *
+   * The model menu's rule, for the same reason: pressing the control is the
+   * question, so the press is what asks. A preset saved or deleted in the
+   * settings drawer since this session started would otherwise be missing from
+   * a list the reader is choosing out of — and `loadPresets` is a directory
+   * listing that swallows its own refusal, so asking again costs a round trip
+   * and can report nothing.
+   */
+  const togglePresetMenu = (): void => {
+    const opening = !presetOpen
+    setPresetOpen(opening)
+    if (opening) void actions.loadPresets()
+  }
+
+  /**
+   * Switch the active preset.
+   *
+   * **Global, unlike the model beside it** — `preset.select` is the host's own
+   * active preset and applies that preset's scalars host-side, which is why the
+   * menu says so in a sentence rather than leaving the reader to infer the
+   * scope from the control next to it. The store's action re-reads the settings
+   * in force afterwards, so the effort word in the bar follows a switch that
+   * changed it.
+   * @param name - the preset's library name.
+   */
+  const choosePreset = (name: string): void => {
+    setPresetOpen(false)
+    void actions.selectPreset(name)
+  }
+
+  /**
+   * Open the command list, exactly as typing `/` does.
+   *
+   * The draft becomes `/`, which is the state the completion menu reads — not a
+   * second code path that shows the same list. A reader who chose this from
+   * 「+」 is now in the same place as a reader who typed the key, including
+   * being able to keep typing to filter.
+   */
+  const openCommands = (): void => {
+    setDraft('/')
+    setCommandOpen(true)
+    field.current?.focus()
   }
 
   /*
@@ -729,140 +853,387 @@ export function Composer({
           * lines up with the field's own left edge instead of the panel's.
           */}
         <ScriptButtons scripts={scripts} onPress={onPressButton} />
-        <div className="iris-composer__write">
+        {/*
+          The card: the writing surface and the bar on one sheet of paper.
+
+          The textarea has no border or ground of its own — this box draws the
+          paper, the corner and the focus ring (`:focus-within`, so no
+          JavaScript has to know the field exists), which is also what lets the
+          blossom sit *inside* the sheet. The bar is the card's own bottom edge
+          rather than a strip under it, so a press on any control happens on the
+          same piece of paper the draft is on.
+        */}
+        <div className="iris-composer__card">
           {/*
-            The writing surface. The textarea has no border or ground of its own
-            any more — this box draws the paper, the corner and the focus ring
-            (`:focus-within`, so no JavaScript has to know the field exists) —
-            which is what lets the blossom sit *inside* the sheet rather than
-            beside it.
+            The seal, in the corner and out of the writing lane.
+
+            `aria-hidden` through the mark itself, and `pointer-events: none` in
+            the stylesheet: it is a watermark on the paper now, which is what
+            makes the space above the bar read as empty. The centre dot takes
+            the raised paper it sits on, not white — under 墨 a white dot would
+            be a hole in the mark.
           */}
-          <div className="iris-composer__sheet">
-            <span className="iris-composer__seal">
-              {/* The centre dot takes the raised paper it sits on, not white:
-                  under 墨 a white dot would be a hole in the mark. */}
-              <PlumBlossom size={18} on="var(--iris-bg-raised)" />
-            </span>
-            <textarea
-              ref={field}
-              className="iris-composer__field"
-              rows={1}
-              value={draft}
-              placeholder={generating ? t('irisWriting') : t('writeYourPart')}
-              aria-label={t('yourMessage')}
-              onChange={(event) => {
-                const next = event.target.value
-                setDraft(next)
-                // The menu opens on the `/` that starts the line and closes
-                // when the line stops being one. It does not reopen on every
-                // keystroke of a name the reader has already dismissed — see
-                // `commandOpen`.
-                if (!next.startsWith('/')) setCommandOpen(false)
-                else if (draft === '') setCommandOpen(true)
-              }}
-              onKeyDown={(event) => {
-                // The IME guard stays exactly where it was, and now guards
-                // three keys instead of one: a Chinese reader composing a word
-                // presses Enter and Escape to commit and cancel *the
-                // composition*, and neither press is for this component.
-                if (event.nativeEvent.isComposing) return
-                if (event.key === 'Escape' && showCommands) {
+          <span className="iris-composer__seal">
+            <PlumBlossom size={14} on="var(--iris-bg-raised)" />
+          </span>
+          <textarea
+            ref={field}
+            className="iris-composer__field"
+            rows={1}
+            value={draft}
+            placeholder={generating ? t('irisWriting') : t('writeYourPart')}
+            aria-label={t('yourMessage')}
+            onChange={(event) => {
+              const next = event.target.value
+              setDraft(next)
+              // The menu opens on the `/` that starts the line and closes
+              // when the line stops being one. It does not reopen on every
+              // keystroke of a name the reader has already dismissed — see
+              // `commandOpen`.
+              if (!next.startsWith('/')) setCommandOpen(false)
+              else if (draft === '') setCommandOpen(true)
+            }}
+            onKeyDown={(event) => {
+              // The IME guard stays exactly where it was, and now guards
+              // three keys instead of one: a Chinese reader composing a word
+              // presses Enter and Escape to commit and cancel *the
+              // composition*, and neither press is for this component.
+              if (event.nativeEvent.isComposing) return
+              if (event.key === 'Escape' && showCommands) {
+                event.preventDefault()
+                setCommandOpen(false)
+                return
+              }
+              /*
+               * Tab completes the single remaining candidate — of whichever
+               * menu is up. Only when it is unambiguous: completing to the
+               * first of several would put a command, or a model, the reader
+               * did not choose in their field. Ambiguous, Tab is left alone
+               * and moves focus, as it did before there were commands.
+               */
+              if (event.key === 'Tab' && showCommands) {
+                if (argument !== undefined) {
+                  if (argument.values.length !== 1) return
                   event.preventDefault()
+                  setDraft(`/${argument.command.name} ${argument.values[0] as string}`)
                   setCommandOpen(false)
                   return
                 }
+                if (completions.length !== 1) return
+                event.preventDefault()
+                const only = completions[0] as CommandDescriptor
+                setDraft(`/${only.name} `)
                 /*
-                 * Tab completes the single remaining candidate — of whichever
-                 * menu is up. Only when it is unambiguous: completing to the
-                 * first of several would put a command, or a model, the reader
-                 * did not choose in their field. Ambiguous, Tab is left alone
-                 * and moves focus, as it did before there were commands.
+                 * A command that takes an argument keeps the menu open, so
+                 * the values come up in place of the name just chosen. This
+                 * is the one place the menu reopens without a `/` being
+                 * typed, and it is not the case `commandOpen` guards against:
+                 * the reader just chose this command with this keystroke.
                  */
-                if (event.key === 'Tab' && showCommands) {
-                  if (argument !== undefined) {
-                    if (argument.values.length !== 1) return
-                    event.preventDefault()
-                    setDraft(`/${argument.command.name} ${argument.values[0] as string}`)
-                    setCommandOpen(false)
-                    return
-                  }
-                  if (completions.length !== 1) return
-                  event.preventDefault()
-                  const only = completions[0] as CommandDescriptor
-                  setDraft(`/${only.name} `)
-                  /*
-                   * A command that takes an argument keeps the menu open, so
-                   * the values come up in place of the name just chosen. This
-                   * is the one place the menu reopens without a `/` being
-                   * typed, and it is not the case `commandOpen` guards against:
-                   * the reader just chose this command with this keystroke.
-                   */
-                  setCommandOpen(only.argumentCompletions !== undefined)
-                  return
-                }
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  submit()
-                }
-              }}
-            />
+                setCommandOpen(only.argumentCompletions !== undefined)
+                return
+              }
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                submit()
+              }
+            }}
+          />
+          {/*
+            The bar along the card's bottom edge.
+
+            Left, the two acts that are not facts about the next request, plus
+            whatever an extension contributed; right, what is in force, and the
+            one saturated control on the page. The two halves are held apart by
+            a flexing gap rather than by `space-between`, so the left group
+            stays a group as it grows and the right one keeps its order.
+          */}
+          <div className="iris-composer__bar">
+            <button
+              ref={plusAnchor}
+              type="button"
+              className="iris-composer__disc iris-composer__disc--quiet"
+              aria-label={t('composerMore')}
+              aria-haspopup="menu"
+              aria-expanded={plusOpen}
+              onClick={() => setPlusOpen(!plusOpen)}
+            >
+              <PlusMark />
+            </button>
+            {plusOpen && (
+              <ComposerMenu
+                anchor={plusAnchor}
+                label={t('composerMore')}
+                onClose={() => setPlusOpen(false)}
+              >
+                {/* The prompt breakdown: the old 「提示词 · 预设名」 capsule's
+                    press, with the preset name it used to carry now standing on
+                    its own control two places to the right. */}
+                <ComposerMenuItem
+                  onSelect={() => {
+                    setPlusOpen(false)
+                    onPreviewPrompt()
+                  }}
+                >
+                  {t('promptButton')}
+                </ComposerMenuItem>
+                {/* Exactly what typing `/` does, because it *is* that: the
+                    draft becomes `/` and the completion list opens over the
+                    field. A second way in for a reader who has never been told
+                    the interface has commands. */}
+                <ComposerMenuItem
+                  onSelect={() => {
+                    setPlusOpen(false)
+                    openCommands()
+                  }}
+                >
+                  {t('composerSlash')}
+                </ComposerMenuItem>
+              </ComposerMenu>
+            )}
+            <button
+              ref={presetAnchor}
+              type="button"
+              className="iris-composer__choice"
+              aria-haspopup="menu"
+              aria-expanded={presetOpen}
+              title={t('presetMenuOpen', { preset: preset ?? t('presetNoneActive') })}
+              onClick={togglePresetMenu}
+            >
+              <span className="iris-composer__choice-name">{preset ?? t('presetNoneActive')}</span>
+              <Chevron />
+            </button>
+            {presetOpen && (
+              <ComposerMenu
+                anchor={presetAnchor}
+                label={t('presetMenuHead')}
+                onClose={() => setPresetOpen(false)}
+              >
+                <ComposerMenuLabel>{t('presetMenuHead')}</ComposerMenuLabel>
+                {(presets ?? []).map(row => (
+                  <ComposerMenuItem
+                    key={row.name}
+                    checked={row.name === preset}
+                    onSelect={() => choosePreset(row.name)}
+                  >
+                    {row.name}
+                  </ComposerMenuItem>
+                ))}
+                {/*
+                  Two different nothings, like the model menu's: a host with no
+                  preset library at all (`preset.list` refused, which
+                  `loadPresets` records as `undefined`) and a library nobody has
+                  saved a preset into. The next step differs, so one sentence
+                  for both would send the reader to the wrong place.
+                */}
+                {presets === undefined
+                  ? <ComposerMenuNote>{t('presetLibraryAbsent')}</ComposerMenuNote>
+                  : presets.length === 0
+                    ? <ComposerMenuNote>{t('presetLibraryEmpty')}</ComposerMenuNote>
+                    : null}
+                {/*
+                  The scope, stated because the control beside this one has the
+                  other one. A model chosen in this bar moves this conversation
+                  and nothing else; a preset is the host's own active preset
+                  (`preset.select`) and moves every conversation, so a reader
+                  who learned the scope from the model control would guess wrong
+                  here.
+                */}
+                <ComposerMenuNote>{t('presetGlobalNote')}</ComposerMenuNote>
+              </ComposerMenu>
+            )}
+            {/*
+              Whatever an extension put in the composer's row.
+
+              Still in the bar rather than folded into 「+」, and wrapped rather
+              than rendered bare: a contribution is a component, not a labelled
+              action, so it cannot become a menu row without asking every
+              extension to describe itself twice — and mounting the same
+              component in two places would give one control two states. The
+              wrapper is what lets the divider be structural: `:empty` is the
+              only honest reading of 「the slot contributed nothing」, and it
+              needs an element to be empty (`panels.css`).
+            */}
+            <span className="iris-composer__slot">
+              <Slot name="iris.composer.actions" owner={{ chatId, generating }} />
+            </span>
+            <span className="iris-composer__gap" />
+            {model === undefined || model === '' ? null : (
+              <>
+                <button
+                  ref={modelAnchor}
+                  type="button"
+                  className="iris-composer__model"
+                  aria-haspopup="menu"
+                  aria-expanded={modelOpen}
+                  title={t('modelMenuOpen', { model })}
+                  onClick={toggleModelMenu}
+                >
+                  <span className="iris-composer__model-name">{model}</span>
+                  {/*
+                    The effort, in the same control and one tier quieter,
+                    because it is the same decision at a lower resolution: which
+                    model answers, and how hard it thinks. Absent when nobody
+                    chose (`composer-bar.ts`).
+                  */}
+                  {shownEffort === undefined
+                    ? null
+                    : <span className="iris-composer__model-effort">{shownEffort}</span>}
+                  {/*
+                    The override marker. A dot rather than a word, because the
+                    control is meant to be scannable — and `title` carries the
+                    sentence for anyone who wonders what the dot means.
+                  */}
+                  {menu.overridden ? (
+                    <span
+                      className="iris-composer__model-dot"
+                      title={t('modelOverriddenHere')}
+                      aria-label={t('modelOverriddenHere')}
+                    />
+                  ) : null}
+                  <Chevron />
+                </button>
+                {modelOpen && (
+                  <ComposerMenu
+                    anchor={modelAnchor}
+                    label={heading}
+                    align="end"
+                    onClose={() => setModelOpen(false)}
+                  >
+                    <div role="group" aria-labelledby={`${menuId}-model`}>
+                      <ComposerMenuLabel id={`${menuId}-model`}>{heading}</ComposerMenuLabel>
+                      {menu.models.map(id => (
+                        <ComposerMenuItem key={id} checked={id === model} onSelect={() => chooseModel(id)}>
+                          {id}
+                        </ComposerMenuItem>
+                      ))}
+                      {note === undefined ? null : <ComposerMenuNote>{note}</ComposerMenuNote>}
+                    </div>
+                    {/*
+                      The undo, under the list it undoes. Offered only when
+                      there is something to undo *and* a connection whose model
+                      to name: "back to the default" with no default named is a
+                      button whose effect the reader has to guess. Outside the
+                      radio group above, because it is not a seventh model — it
+                      clears this conversation's layer so whichever model the
+                      connection carries shows through.
+                    */}
+                    {menu.overridden && menu.connectionModel !== undefined ? (
+                      <ComposerMenuItem onSelect={() => chooseModel(null)}>
+                        {t('modelRestoreConnectionDefault', { model: menu.connectionModel })}
+                      </ComposerMenuItem>
+                    ) : null}
+                    {/*
+                      The effort ladder, in this menu because it is part of the
+                      same question and because the control already prints it.
+                      A group of `menuitemradio` rows: six mutually exclusive
+                      answers, exactly one in force — which is what
+                      `ComposerMenu.tsx` exists to be able to say.
+                    */}
+                    <div role="group" aria-labelledby={`${menuId}-effort`}>
+                      <ComposerMenuLabel id={`${menuId}-effort`}>{t('reasoningEffort')}</ComposerMenuLabel>
+                      {REASONING_EFFORTS.map(row => (
+                        <ComposerMenuItem
+                          key={row}
+                          checked={row === effortInForce(effort)}
+                          onSelect={() => chooseEffort(row)}
+                        >
+                          {row}
+                        </ComposerMenuItem>
+                      ))}
+                    </div>
+                  </ComposerMenu>
+                )}
+              </>
+            )}
+            {/*
+              How full the window is, as a mark rather than a line of figures —
+              `ContextMeter.tsx` says why that is a correction and what it costs.
+              Before the send disc, which is the last thing in the bar because it
+              is the last thing a reader does.
+            */}
+            {budget === undefined ? null : (
+              <ContextRing
+                budget={budget}
+                itemization={shownReading?.itemization}
+                measured={measured}
+                open={meterOpen}
+                anchor={meterAnchor}
+                busy={generating}
+                onToggle={() => setMeterOpen(!meterOpen)}
+              />
+            )}
+            {generating ? (
+              /*
+               * Stop, in the send disc's own place and shape. A second control
+               * beside Send would be a second thing to aim at in a bar where
+               * the reader has already learned where the one on the right is;
+               * the square is the change of verb.
+               */
+              <Button
+                variant="primary"
+                size="sm"
+                className="iris-composer__disc iris-composer__send iris-composer__send--stop"
+                icon={<StopMark />}
+                aria-label={t('stop')}
+                onClick={onStop}
+              />
+            ) : (
+              /*
+               * The seal, now a disc. Still the primitives' `Button` under the
+               * paint — `tools/render-check.tsx` pins that Send is `disabled`
+               * while the field is empty, and a hand-rolled element would have
+               * silently dropped both that behaviour and its check.
+               *
+               * **Quieter while there is nothing to send**, which overturns the
+               * user's 2026-09-07 ruling that the seal stays saturated in both
+               * states: the reference image draws the disc desaturated on an
+               * empty draft (user, 2026-09-10: 空草稿时降饱和), and the concern
+               * the older rule answered — a permanently-disabled primary
+               * control reading as broken — is answered by the disc inking up
+               * on the first keystroke, which is a change the reader causes and
+               * therefore sees.
+               *
+               * The word is the `aria-label` rather than the content, because
+               * the disc is 32px: 「发送」 inside it would either overflow it or
+               * shrink to a size nobody can read. The arrow points up, as the
+               * reference draws it.
+               */
+              <Button
+                variant="primary"
+                size="sm"
+                className={`iris-composer__disc iris-composer__send iris-composer__send--${empty ? 'idle' : 'ready'}`}
+                icon={<SendArrow />}
+                aria-label={t('send')}
+                onClick={submit}
+                disabled={empty}
+              />
+            )}
           </div>
-          {generating ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="iris-composer__send iris-composer__send--idle"
-              onClick={onStop}
-            >
-              {t('stop')}
-            </Button>
-          ) : (
-            /*
-             * The stamp. Still the primitives' `Button` under the paint, and
-             * saturated in both states, as the artboards draw it (user ruling,
-             * 2026-09-07, overturning the older "quiet until there is something
-             * to send" rule). What the older rule guarded against - a
-             * permanently-disabled primary button reading as broken - is met
-             * differently now: the seal is `disabled` only while the field is
-             * empty and inks up on the first keystroke, and `panels.css` gives
-             * the idle state no cast shadow, so it sits *in* the page rather
-             * than standing off it. `tools/render-check.tsx` pins the disabled
-             * half.
-             *
-             * `icon` puts the arrow above the word, because the button is a flex
-             * *column* here — the component's own `.icon` span is the slot, so
-             * the geometry comes from CSS and no markup is duplicated.
-             */
-            <Button
-              variant="primary"
-              size="sm"
-              className={`iris-composer__send iris-composer__send--${empty ? 'idle' : 'ready'}`}
-              icon={<SendArrow />}
-              onClick={submit}
-              disabled={empty}
-            >
-              {t('send')}
-            </Button>
-          )}
         </div>
         {/*
           The completion list for a `/` line.
           *
           * Anchored to the field's own rect through `getAnchorRect` rather than
-          * by wrapping it: the textarea sits inside the sheet that draws the
-          * paper and the seal, and wrapping it in the menu's anchor slot would
-          * put a layout box between the two. `portal` because `__inner` is a
-          * scroll container and would clip an in-place list; `side="top"`
-          * because the composer is at the bottom of the page.
+          * by wrapping it: the textarea sits inside the card that draws the
+          * paper, the seal and the bar, and wrapping it in the menu's anchor
+          * slot would put a layout box between the two. `portal` because
+          * `__inner` is a scroll container and would clip an in-place list;
+          * `side="top"` because the composer is at the bottom of the page.
           *
           * A display and a click target, not a keyboard surface: focus stays in
           * the field so the reader keeps typing, which is what makes Tab the
           * completion key here rather than the arrow keys.
+          *
+          * **The one menu still using the primitive**, and deliberately: a
+          * typeahead over a list the reader filters by typing is what it is
+          * good at, and its rows are actions rather than a set exactly one
+          * member of which is in force — which is the whole of why the bar's
+          * three menus are `ComposerMenu.tsx` instead.
         */}
-        {/* Mounted only while it is open, unlike the model menu beside it: that
-            one's anchor *is* the capsule and has to be on the page either way,
-            while this one's anchor is a placeholder. Keeping it unmounted also
-            keeps its layout effect off every keystroke of an ordinary message. */}
+        {/* Mounted only while it is open, like the bar's three menus and for the
+            same two reasons: no document listeners while it is closed, and no
+            layout effect on every keystroke of an ordinary message. */}
         {showCommands && (
         <Menu
           open
@@ -905,94 +1276,23 @@ export function Composer({
           onClose={() => setCommandOpen(false)}
         />
         )}
-        <div className="iris-composer__row">
-          {/*
-            What is in force, as two controls. Each capsule states a fact and
-            answers the question that fact raises when pressed: the prompt
-            capsule opens the breakdown of what would actually be sent, and the
-            model capsule changes the model for this conversation. The per-turn
-            record hangs off each message instead.
-          */}
-          <button
-            type="button"
-            className="iris-composer__pill iris-composer__pill--action"
-            onClick={onPreviewPrompt}
-          >
-            {preset === undefined ? t('promptButton') : `${t('promptButton')} · ${preset}`}
-          </button>
-          {model === undefined || model === '' ? null : (
-            <Menu
-              open={modelOpen}
-              portal
-              align="start"
-              side="top"
-              anchor={
-                <button
-                  type="button"
-                  className="iris-composer__pill iris-composer__pill--action"
-                  aria-haspopup="menu"
-                  aria-expanded={modelOpen}
-                  title={t('modelMenuOpen', { model })}
-                  onClick={toggleModelMenu}
-                >
-                  {model}
-                  {/*
-                    The override marker. A dot rather than a word, because the
-                    capsule's job is to be scannable — and `title` carries the
-                    sentence for anyone who wonders what the dot means.
-                  */}
-                  {menu.overridden ? (
-                    <span
-                      className="iris-composer__pill-dot"
-                      title={t('modelOverriddenHere')}
-                      aria-label={t('modelOverriddenHere')}
-                    />
-                  ) : null}
-                </button>
-              }
-              items={modelItems}
-              selectedId={model}
-              footer={modelFooter}
-              onSelect={id => {
-                setModelOpen(false)
-                // `null` is the protocol's clear: it drops this chat's override
-                // so the connection's model shows through again. Anything else
-                // is a model id straight from the endpoint's own list.
-                void actions.setChatModel(id === RESTORE_ID ? null : id)
-              }}
-              onClose={() => setModelOpen(false)}
-            />
-          )}
-          {/*
-            The third capsule: how full the window is.
-            *
-            * In this row rather than in the usage line below it, for two
-            * reasons the two boxes' own comments give. `__stats` is
-            * `display: block` so `text-overflow` can elide it, and a capsule
-            * inside it would fight that; and that row disappears whole until a
-            * generation has reported usage, while capacity is knowable on a
-            * conversation nobody has generated in yet.
-            *
-            * Before `__hint`, which is `flex: 1` and pushes itself to the right
-            * edge — anything after it lands past the hint.
-          */}
-          {budget === undefined ? null : (
-            <ContextPill
-              budget={budget}
-              itemization={shownReading?.itemization}
-              measured={measured}
-              open={meterOpen}
-              anchor={meterAnchor}
-              onToggle={() => setMeterOpen(!meterOpen)}
-            />
-          )}
-          <Slot name="iris.composer.actions" owner={{ chatId, generating }} />
+        {/*
+          Under the card: the two readings, on one line of the faintest type.
+
+          Neither is a control and neither is about the next request — one says
+          what the keyboard does, the other what this conversation has already
+          cost — so they sit outside the paper, which is the layout saying
+          「consult these」 without a word spent on saying it. The hint takes the
+          left, the cost the right, and on a narrow window the hint is the one
+          that goes (`panels.css`): a keyboard legend is worth nothing on a
+          touch screen, and the figures are worth the same everywhere.
+        */}
+        <div className="iris-composer__under">
           <span className="iris-composer__hint">
             {t('composerHint')}
           </span>
-        </div>
-        {/*
-          * What the conversation has cost, under the two capsules.
+          {/*
+          * What the conversation has cost.
           *
           * **No row at all when there is nothing to report**, rather than an
           * empty one: `usage` is absent until a generation reports any, so a
@@ -1021,40 +1321,101 @@ export function Composer({
           * addition to them. Each appears only when the host reported that
           * share, so most conversations show one or none.
           */}
-        {stats.length === 0 ? null : (
-          <UsagePopover
-            className="iris-composer__stats"
-            heading={t('usageSummaryTitle')}
-            rows={usageSummaryRows(usage, lang)}
-            notes={usageSideShareSentences(scriptUsage, compactionUsage, lang)}
-          >
-            {stats.map((group, at) => (
-              <Fragment key={group}>
-                {at === 0 ? null : (
-                  <span className="iris-composer__stats-sep" aria-hidden="true">|</span>
-                )}
-                <span>{group}</span>
-              </Fragment>
-            ))}
-          </UsagePopover>
-        )}
+          {stats.length === 0 ? null : (
+            <UsagePopover
+              className="iris-composer__stats"
+              heading={t('usageSummaryTitle')}
+              rows={usageSummaryRows(usage, lang)}
+              notes={usageSideShareSentences(scriptUsage, compactionUsage, lang)}
+            >
+              {stats.map((group, at) => (
+                <Fragment key={group}>
+                  {at === 0 ? null : (
+                    <span className="iris-composer__stats-sep" aria-hidden="true">|</span>
+                  )}
+                  <span>{group}</span>
+                </Fragment>
+              ))}
+            </UsagePopover>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
 /**
- * The stamp's arrow.
+ * The bar's four icons.
  *
- * Not in `marks.tsx`: that module is the 「梅花」 decoration, and this is an icon
- * — the difference is that a reader is meant to read this one.
- * @returns the arrow.
+ * Not in `marks.tsx`: that module is the 「梅花」 decoration, and these are icons
+ * — the difference is that a reader is meant to read these. One stroke weight
+ * and one cap style across all four, drawn in the same 16-unit box, because
+ * four marks in one 40px bar are read as a set and a set with two weights in it
+ * reads as a rendering fault.
+ * @returns the mark.
  */
 function SendArrow(): ReactElement {
   return (
+    <Mark>
+      {/* Up, as the reference draws it: the disc sends the draft *out* of the
+          card rather than forward through a list. */}
+      <path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7" />
+    </Mark>
+  )
+}
+
+/** @returns the stop mark: a square, the one shape that is not a direction. */
+function StopMark(): ReactElement {
+  return (
+    <Mark>
+      <rect x="5" y="5" width="6" height="6" rx="1" fill="currentColor" stroke="none" />
+    </Mark>
+  )
+}
+
+/** @returns the 「+」 mark, which opens the two acts that are not settings. */
+function PlusMark(): ReactElement {
+  return (
+    <Mark>
+      <path d="M8 3.5v9M3.5 8h9" />
+    </Mark>
+  )
+}
+
+/**
+ * @returns the chevron every control that opens a list carries, so 「this one
+ * opens something」 is one shape wherever it appears.
+ */
+function Chevron(): ReactElement {
+  return (
     <svg
-      width="18"
-      height="18"
+      className="iris-composer__chevron"
+      width="10"
+      height="10"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M4 6.5 8 10.5 12 6.5" />
+    </svg>
+  )
+}
+
+/**
+ * The frame the three disc marks share.
+ * @param props.children - the paths.
+ * @returns the sized, hidden, current-colour svg.
+ */
+function Mark({ children }: { children: ReactElement }): ReactElement {
+  return (
+    <svg
+      width="16"
+      height="16"
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -1064,7 +1425,7 @@ function SendArrow(): ReactElement {
       aria-hidden="true"
       focusable="false"
     >
-      <path d="M2.5 8h9M8 4.5 11.5 8 8 11.5" />
+      {children}
     </svg>
   )
 }
