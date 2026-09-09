@@ -542,6 +542,19 @@ test('an address without a scheme answers bad-url before any request', async (t)
   assert.equal(endpoint.lastHadHeaders, false)
 })
 
+test('a bad address on a keyed preset is a bad-url, not a missing key', async (t) => {
+  // Measured on the live host 2026-09-09: with the deepseek preset and no typed
+  // key, `api.deepseek.com/v1` came back `missing-key`, because the host key is
+  // adopted only at a matching origin and a scheme-less string has none. True,
+  // and beside the point — the fault is in the address field.
+  const { handlers, endpoint } = await keyedFixture(t)
+  const bare = endpoint.baseURL.replace(/^http:\/\//, '')
+  const result = await handlers['connection.test']({ baseURL: `${bare}/v1`, preset: 'deepseek' })
+  assert.equal(result.ok, false)
+  assert.equal(result.error?.code, 'bad-url')
+  assert.equal(result.keySource, 'none')
+})
+
 test('a full-width colon from an IME is a bad-url, not a network fault', async (t) => {
   const { handlers } = await keyedFixture(t)
   const result = await handlers['connection.test']({ baseURL: 'https：//api.example.test/v1' })

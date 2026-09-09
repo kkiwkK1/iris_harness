@@ -4228,6 +4228,10 @@ host's own previous answer.
   (the WHATWG parser, `http:`/`https:` only) rejects the address the request would
   use, and `bad-key` when `headerValueFault` finds a character a ByteString header
   cannot carry. `latencyMs` is 0 for both, and the endpoint sees no request (pinned).
+  The address is judged **before** the key is resolved: adoption of a stored or host
+  key compares origins, and on the live host a scheme-less `api.deepseek.com/v1` with
+  the deepseek preset came back `missing-key` — true, but not the fault in front of
+  the person (pinned: that input is `bad-url`, `keySource: 'none'`).
 - The `bad-key` message names the **index and code point** of the offending
   character and nothing of the value around it, so it can be shown beside the
   credential's field (pinned: the message contains neither the key's body nor the
