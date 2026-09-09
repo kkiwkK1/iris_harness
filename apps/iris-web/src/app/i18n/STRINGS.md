@@ -27,7 +27,7 @@
 | `StatePanel.tsx` | 面板头、aria、空态、布尔值（是/否） | `state* booleanYes booleanNo` |
 | `SettingsDrawer.tsx` | 抽屉 aria/标题（两种）/关闭/未加载；路由与采样全部标签与注释；主题选项；正文字号/每行长度；语言项 | `drawer* defaults* thisConversation close settingsNotLoaded section* provider model temperature* … langEn langZh` |
 | `fields.tsx` | host default / use host default | `hostDefault useHostDefault` |
-| `ConnectionPanel.tsx` | 宿主行、种子注记、空态、删除 aria、启用连接两句话、命名输入、保存连接 | `host seededNotReal noSavedConnections deleteNamed activate* nameThisConnection connectionName saveConnection` |
+| `ConnectionPanel.tsx` | 宿主行、种子注记、空态、删除 aria、立即生效那一句 | `host seededNotReal noSavedConnections deleteNamed activationImmediate`（这一行 2026-09-09 按 CC Switch 重做，其余键见文末「连接面重做」一节） |
 | `ConnectionPanel.tsx` 测试连接判定句 | 每个失败码一句（缺密钥/401/超时/网络/地址不是 URL/密钥含请求头无法携带的字符/HTTP 错误/不是模型列表/无端点）；宿主自己的原因句（英文技术细节:尝试的地址、状态码、`ENOTFOUND` 之类）不翻译,原样显示在判定句下方 | `testErr*` |
 | `ScriptPanel.tsx` | 面板头、读取中、无脚本、已拒绝摘要、允许脚本、撤回/更早运行注记、页面访问权全部文案、授权风险对话框四条、随卡运行/你已关闭、卡内关闭、运行它们/不运行 | `sectionCardScripts readingCard cardNoScripts declined* allowScripts runThem dontRunThem withdrawn fromEarlierRun pageAccess* grantDialog* runsWithCard youTurnedThisOff cardOffNote` |
 | `ConsentAsk.tsx` | 区域 aria（复用 `sectionCardScripts`） | — |
@@ -44,7 +44,7 @@
 
 | 来源 | 内容 | 键 |
 | --- | --- | --- |
-| `fields.tsx` / `SettingsDrawer.tsx` / 各面板 | 折叠卡九区标题与卡头摘要（连接/预设/路由/采样/回复/阅读/世界书/脚本/通用与关于） | `sectionReplies sectionAbout noActiveConnection presetNoneActive worldbookSummary scriptSummary samplingDefault samplingSet repliesTrim repliesSquash repliesContinue aboutSummary` |
+| `fields.tsx` / `SettingsDrawer.tsx` / 各面板 | 折叠卡各区标题与卡头摘要（连接/预设/采样/回复/阅读/世界书/脚本/通用与关于——「路由」那一区 2026-09-09 删掉了，见文末） | `sectionReplies sectionAbout noActiveConnection presetNoneActive worldbookSummary scriptSummary samplingDefault samplingSet repliesTrim repliesSquash repliesContinue aboutSummary` |
 | `SettingsDrawer.tsx` 回复卡 | 三个回复形态键：裁剪未完成句、续写分隔符（四选）、合并相邻注入 | `trimSentences* continuePostfix* postfix* squashSystemMessages*` |
 | `SettingsDrawer.tsx` 阅读卡 | 楼层号开关（`mesIDDisplay_enabled` 的等价物，每设备） | `showFloorNumbers*` |
 | `AboutCard.tsx` | 启动自动打开开关、设置导出/导入全部文案、凭据安全声明两句 | `autoOpenChat* exportSettings importSettings settingsExported settingsImport* settingsTransferNote credentialHead credentialBody credentialBodyTransport` |
@@ -382,3 +382,43 @@ Iris 此前只有两档，而切进来的预设 body 一直是整份存着的—
 | `PresetRegexPanel.tsx` 三个行内标注 | 预设作者关掉的 / 没有标识不能开关（复用 `scopedRegexUnaddressable`）/ **等上面那个开关**。第三个是卡那一节没有的状态：整档被拒绝时单条仍然可以先设好，那一行报的是「如果允许就会跑」而不是「正在跑」，所以要标出来，否则那个勾选框在说谎 | `presetRegexOffByPreset presetRegexHeldBack` |
 | `PresetRegexPanel.tsx` 跳过的行 | 「还有 N 条不是规则——没有查找式，或者查找式是空的」。空查找式不是无害的空转：`new RegExp('')` 在每一个位置都匹配，跑一条就会把替换文本插进每条消息的每个字符之间。这一句是「这份预设有 38 条」与真相之间的差别，所以数目上报到面板（持久渠道），宿主日志再按预设名与数目去重报一次 | `presetRegexMalformed` |
 | `PresetRegexPanel.tsx` 没有库内名称时 | 白名单按预设名登记，而本机可以处在上游表示不出来的状态：跑的是 composition 配置里的那份预设文件，它没有库内名称。这时**整个允许开关不渲染**，只留这一句并给出出路（先另存进预设库）——一个禁用的开关会被读成功能坏了，而这里那句话本身就是控件 | `presetRegexUnnamed` |
+
+任务（连接面按 CC Switch 重做，`dev/connection-providers`）追加：
+
+用户的裁定（2026-09-09，原话）：「这个部分不必效仿 ST 做，ST 那个就做的很抽象了，
+我们可以按照 CC Switch 的逻辑：我们保存供应商是一回事，从列表中用哪个连接是一回事；
+连接折叠卡中就不需要有提供方/端点地址/模型这三个选项常驻了」。词典层因此有一条总原则：
+**「保存」和「使用」是两个动词，两套句子，不共用一个词。** 旧词典里 `saveConnection`
+（把当前设置存为一个连接）与 `activateForDefaults` / `activateForThisChat`（启用）
+并排放着，读者要从两句里推出它们改的是不同的东西；现在一句话直接说出来
+（`connSaveVsUse`），两个动词各有自己的按钮键。
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `ConnectionPanel.tsx` 三块的骨架 | 唯一的分区标题（供应商）与「添加供应商」按钮。第二、三块各自只是一个按钮，所以没有标题键——一个标题下面只有一个同名按钮，是同一句话印两遍 | `connBlockProviders connAddProvider` |
+| `ConnectionPanel.tsx` 行上的标记 | 「当前」与「只读」。**词而不是圆点或颜色**：哪一行在生成是这一面最要紧的一个事实，一个要先学会的颜色不算报告 | `connCurrent connReadOnly` |
+| `ConnectionPanel.tsx` 行上的四个动作 | 「使用」的可见文案，加使用/编辑/测试三条带名字的 aria（删除沿用已有的 `deleteNamed`）。aria 带名字，因为一列里四个「测试」对读屏软件是四个同名按钮 | `connUse connUseNamed connEditNamed connTestNamed` |
+| `ConnectionPanel.tsx` 行上的密钥状态 | 四种：已保存＋末四位／已保存但太短不给尾号／由宿主环境提供（同源，所以不填也能跑）／无密钥。第三种是必须说的：只看文件会写成「无密钥」，而那一行其实测得通 | `connKeySaved connKeySavedNoTail connKeyFromHost connKeyNone` |
+| `ConnectionPanel.tsx` 行上的展示信息 | 窗口大小、上次探测（N 个模型 · 探测于…）。**只用已有数据**：`modelContexts` 与 `modelsProbedAt` 是宿主已经记下的，没人记过的那一格整个不出现，不写「未知」 | `connModelWindow connProbedAt` |
+| `ConnectionPanel.tsx` 两个动词的说明 | 「保存 ≠ 使用」那一句，以及「使用是全局切换、要只改一个对话请点输入框下方的模型名」。第二句是这次改动的必要配文：`connection.activate` 从此不再带 `chatId`，而对话级切换一直在别处 | `connSaveVsUse connUseNote` |
+| `ConnectionPanel.tsx` 测试块 | 「测试当前供应商」按钮、行上测试报回来时的前缀「测试的是「X」」、没有端点可探时的那一句。判定句只有一处：屏幕上同时两个判定，是对同一个问题的两个答案 | `connTestCurrent connTestedRow connTestNeedsEndpoint` |
+| `ConnectionPanel.tsx` 保存与删除之后 | 已保存（在上方列表里，点「使用」才生效）／已保存并重新应用（改的就是当前那一行）／已删除／已删除且它原是当前（当前回到宿主环境）。**删除那句只说列表**，不说路由：设置层里还留着什么是宿主那侧的事（`dev/route-resolution`），这里不替它宣布 | `connSavedNote connSavedCurrent connDeleted connDeletedWasCurrent` |
+| `ConnectionPanel.tsx` 编辑器 | 标题（编辑供应商；新增时复用 `connAddProvider`）、名字与它的占位、绑定预设三句（选项「不绑定预设」、说明、预设库还没读到时退回手填）。绑定预设照模型字段的三态办：能读到库就是 `<select>`，读不到就手填并说明——一个不存在的预设名是一次悄悄没发生的切换 | `connEditorEditTitle connProviderName connProviderNamePlaceholder connBoundPreset connBoundPresetNone connBoundPresetNote connPresetsUnknown` |
+| `ConnectionPanel.tsx` 模型不在列表里 | 编辑器里当场标一句。已有的 `modelNotInList`（保存之后那句「已照常保存」）留着——两句讲的是同一处不一致的两个时刻，一个还能改，一个已经落盘 | `modelOffListNote` |
+| `ConnectionPanel.tsx` 宿主环境那一行 | 标题从「宿主默认（只读）」改成「宿主环境」（「只读」移进徽标）；说明句改成「在没有选中任何供应商时由它生成」；「存为连接」改成「存为供应商」；新增一句说明这一行为什么没有「使用」按钮 | `hostDefaultTitle hostDefaultNote adoptHostConnection hostAdopted connHostUseGap` |
+
+**删掉的键（12 个）。** 连接面这 8 个：`activateForDefaults` `activateForThisChat`
+（启用的两句话——启用从此只有全局一种，两句合成 `connUseNote` 一句）、
+`nameThisConnection` `connectionName` `saveConnection`（「把当前设置存为一个连接」
+整块拿掉：面板只剩三块，命名输入进了编辑器的名字字段）、`savedTakesEffect`（原文写
+「在下方点选该连接即可启用」，而列表已经在上方，改叫 `connSavedNote`）、
+`modelsListLabel` `testKeyNone`（这两个在这次改动之前就已经没有调用者，顺手清掉）。
+「路由」卡这 4 个：`sectionRoute` `provider` `model` `modelPlaceholder`——那张卡是
+`provider` 与 `model` 两个自由文本框，是设置全局层上的**第三个**改路由的地方，也是三者
+里唯一一个接受手打字符串而无从校验的。**`i18n.test.ts` 查的是「源码里用到的键必须在词典里」
+这一个方向**，不查反向，所以未用键从来不会被它发现——这也是 `modelsListLabel` 与
+`testKeyNone` 能一直留着的原因，删键这件事得靠人做。
+
+**没有为「名字 · 模型」造模板键。** 折叠卡头是两段各自已经存在的数据用 ` · ` 接起来，
+和容量胶囊的 hover 同一个理由：一条只有分隔符的模板键会在两本词典里各存一份排版，
+而排版差异正是两个面互相对不上的来由。

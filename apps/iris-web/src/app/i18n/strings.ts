@@ -332,7 +332,6 @@ export const en = {
   close: 'Close',
   settingsNotLoaded: 'Settings have not loaded.',
   sectionConnection: 'Connection',
-  sectionRoute: 'Route',
   sectionSampling: 'Sampling',
   sectionReplies: 'Replies',
   sectionReading: 'Reading',
@@ -575,9 +574,6 @@ export const en = {
   personaRole: 'Role',
   personaSave: 'Save persona',
   personaDelete: 'Delete',
-  provider: 'Provider',
-  model: 'Model',
-  modelPlaceholder: 'e.g. local/qwen3-8b',
   temperature: 'Temperature',
   temperatureNote: 'How far the model strays from its likeliest next word.',
   replyLengthCap: 'Reply length cap',
@@ -872,20 +868,55 @@ export const en = {
   reasoningEffort: 'Reasoning effort',
   reasoningEffortNote: 'How hard a reasoning model thinks. “auto” lets the provider decide.',
 
-  /** Connection panel. */
+  /** Connection panel: a provider list, an add button, and a test. */
   host: 'Host:',
   seededNotReal: '— seeded, not a real host',
-  noSavedConnections: 'No saved connections.',
+  noSavedConnections: 'No providers saved yet.',
   deleteNamed: 'Delete {name}',
-  activateForDefaults: 'Activating a connection sets the defaults for new conversations.',
-  activateForThisChat: 'Activating a connection applies it to this conversation.',
   activationImmediate: 'Switching takes effect immediately — the host needs no restart.',
-  nameThisConnection: 'Name this connection',
-  connectionName: 'Connection name',
-  saveConnection: 'Save the current settings as a connection',
+  /** The panel's one block heading; the other two blocks are a button each. */
+  connBlockProviders: 'Providers',
+  connAddProvider: 'Add a provider',
+  /** Row markers and row actions. Saving a provider and using one are two acts. */
+  connCurrent: 'current',
+  connReadOnly: 'read-only',
+  connUse: 'Use',
+  connUseNamed: 'Use {name}',
+  connEditNamed: 'Edit {name}',
+  connTestNamed: 'Test {name}',
+  /** What a row says about its key — a state, never a credential. */
+  connKeySaved: 'key ****{tail}',
+  connKeySavedNoTail: 'key saved',
+  connKeyFromHost: 'key from the host environment',
+  connKeyNone: 'no key',
+  /** Display-only extras a row carries when anything already knows them. */
+  connModelWindow: 'window {tokens}',
+  connProbedAt: '{count} models · checked {when}',
+  /**
+   * The distinction the panel is arranged around — CC Switch's, and the user's
+   * own words: the list is the saved providers, and "use" is which one generates.
+   */
+  connSaveVsUse: 'Saving a provider and using one are two things: saving writes it into this host’s provider list, using only decides which one generates.',
+  connUseNote: 'Using a provider is a global switch — new conversations, and every conversation with no model of its own. To move one conversation only, press the model name under the composer.',
+  /** Test: the third block, and the row action that reports into it. */
+  connTestCurrent: 'Test the current provider',
+  connTestedRow: 'Tested {name}.',
+  connTestNeedsEndpoint: 'This row carries no endpoint of its own, so there is nothing to probe.',
+  /** Said after a save or a delete, about where the list now stands. */
+  connSavedNote: 'Saved. It is in the list above — press Use to generate through it.',
+  connSavedCurrent: 'Saved, and re-applied: this is the provider in use.',
+  connDeleted: 'Deleted.',
+  connDeletedWasCurrent: 'Deleted. Nothing is selected now, so the host environment is current again.',
 
   /** Connection editor: pick a provider, point it at an endpoint, give it a key. */
-  editConnection: 'Edit this connection',
+  connEditorEditTitle: 'Edit provider',
+  connProviderName: 'Name',
+  connProviderNamePlaceholder: 'What you call it',
+  connBoundPreset: 'Bound preset',
+  connBoundPresetNone: 'No preset',
+  connBoundPresetNote: 'Using this provider also switches to this preset.',
+  connPresetsUnknown: 'The preset library has not been read — type the name.',
+  editConnection: 'Edit',
   cancelEdit: 'Cancel',
   providerPreset: 'Provider',
   presetCustom: 'Custom endpoint',
@@ -903,7 +934,6 @@ export const en = {
   clearKey: 'Clear the saved key',
   keyWillClear: 'The saved key will be removed when you save.',
   modelLabel: 'Model',
-  modelsListLabel: 'Models this endpoint offers',
   modelsFromEndpoint: '{count} models from the endpoint.',
   /** The list is stale by construction, so it says when it was taken. */
   modelsProbedAt: '{count} models, last checked {when}.',
@@ -915,6 +945,8 @@ export const en = {
   modelsEndpointOffersNone: 'The endpoint answered with an empty model list. Type the name by hand.',
   /** Non-blocking: the save goes through. */
   modelNotInList: '“{model}” was not in the last model list from this endpoint. Saved anyway.',
+  /** The same disagreement, marked in the editor while it can still be changed. */
+  modelOffListNote: 'Not in this endpoint’s list.',
   testConnection: 'Test connection',
   testing: 'Testing…',
   testOk: '{latency} ms · {count} models',
@@ -923,17 +955,18 @@ export const en = {
   testKeyTyped: 'Used the key you typed.',
   testKeyStored: 'Used the saved key — you did not have to re-enter it.',
   testKeyHost: 'Used the host’s own key from its environment.',
-  testKeyNone: 'Sent no key.',
 
-  /** The connection the host process was started with: a row, not a profile. */
-  hostDefaultTitle: 'Host default (read-only)',
-  hostDefaultNote: 'What this host was started with. It generates through this until you activate a connection.',
+  /** The connection the host process was started with: the list's first row, not a profile. */
+  hostDefaultTitle: 'Host environment',
+  hostDefaultNote: 'What this host was started with. It generates while no provider is selected.',
   hostDefaultKeyEnv: 'Key from the environment variable {env}',
   hostDefaultKeyAnon: 'Key from the host’s environment',
   hostDefaultNoKey: 'No key configured',
   hostDefaultEndpointRidden: 'the host’s configured endpoint',
-  adoptHostConnection: 'Save as a connection',
-  hostAdopted: 'Saved as a connection. The host copied its own key across — the browser never saw it.',
+  adoptHostConnection: 'Save as a provider',
+  hostAdopted: 'Saved as a provider. The host copied its own key across — the browser never saw it.',
+  /** Why this row has no Use button. See DEVIATIONS §77. */
+  connHostUseGap: 'This row cannot be selected back once a provider is in use: the host holds no record of the route it was started with. Save it as a provider to get an editable, selectable copy.',
   testErrMissingKey: 'This endpoint needs an API key — paste one above, then test again.',
   testErrUnauthorized: 'The endpoint refused the key (401/403). Check it and try again.',
   testErrTimeout: 'The endpoint did not answer in time. Is the address right, and is it up?',
@@ -944,9 +977,8 @@ export const en = {
   testErrBadResponse: 'The endpoint answered, but not with a model list. You can still type the model name.',
   testErrNoEndpoint: 'This profile rides the host’s configured endpoint and carries none of its own.',
   testRefused: 'The test did not run: {message}',
-  saveThisConnection: 'Save this connection',
-  updateConnection: 'Update this connection',
-  savedTakesEffect: 'Saved. Select the connection below to apply it — it takes effect immediately, no restart.',
+  saveThisConnection: 'Save this provider',
+  updateConnection: 'Save changes',
 
   /** Script panel. */
   sectionCardScripts: 'Card scripts',
@@ -1683,7 +1715,6 @@ export const zh: Record<StringKey, string> = {
   close: '关闭',
   settingsNotLoaded: '设置尚未加载。',
   sectionConnection: '连接',
-  sectionRoute: '路由',
   sectionSampling: '采样',
   sectionReplies: '回复',
   sectionReading: '阅读',
@@ -1909,9 +1940,6 @@ export const zh: Record<StringKey, string> = {
   personaRole: '角色',
   personaSave: '保存人格',
   personaDelete: '删除',
-  provider: '提供方',
-  model: '模型',
-  modelPlaceholder: '例如 local/qwen3-8b',
   temperature: '温度',
   temperatureNote: '模型偏离最可能的下一个词的程度。',
   replyLengthCap: '回复长度上限',
@@ -2185,20 +2213,55 @@ export const zh: Record<StringKey, string> = {
   reasoningEffort: '推理力度',
   reasoningEffortNote: '推理模型回答前的思考投入。“auto”由提供方自行决定。',
 
-  /** 连接面板。 */
+  /** 连接面板：一份供应商列表、一个添加按钮、一次测试。 */
   host: '宿主：',
   seededNotReal: '——种子数据，不是真实宿主',
-  noSavedConnections: '暂无已保存的连接。',
+  noSavedConnections: '还没有保存任何供应商。',
   deleteNamed: '删除 {name}',
-  activateForDefaults: '启用一个连接会把它设为新对话的默认值。',
-  activateForThisChat: '启用一个连接会把它应用到当前对话。',
   activationImmediate: '切换立即生效——无需重启宿主。',
-  nameThisConnection: '为这个连接命名',
-  connectionName: '连接名称',
-  saveConnection: '把当前设置存为一个连接',
+  /** 面板里唯一的分区标题；另外两块各自就是一个按钮。 */
+  connBlockProviders: '供应商',
+  connAddProvider: '添加供应商',
+  /** 行上的标记与操作。保存供应商与使用供应商是两个动作。 */
+  connCurrent: '当前',
+  connReadOnly: '只读',
+  connUse: '使用',
+  connUseNamed: '使用 {name}',
+  connEditNamed: '编辑 {name}',
+  connTestNamed: '测试 {name}',
+  /** 一行对密钥的说法——只说状态，绝不带密钥本身。 */
+  connKeySaved: '密钥 ****{tail}',
+  connKeySavedNoTail: '已保存密钥',
+  connKeyFromHost: '密钥由宿主环境提供',
+  connKeyNone: '无密钥',
+  /** 已经知道的额外展示信息，只展示，不影响判断。 */
+  connModelWindow: '窗口 {tokens}',
+  connProbedAt: '{count} 个模型 · 探测于{when}',
+  /**
+   * 整个面板围绕的那条区分——CC Switch 的做法，也是用户自己的原话：
+   * 列表是「保存下来的供应商」，「使用」才是「由哪一个生成」。
+   */
+  connSaveVsUse: '保存供应商和使用供应商是两件事：保存是把它写进这台宿主的供应商列表，使用只决定当前由哪一个生成。',
+  connUseNote: '「使用」是全局切换——影响新对话，以及所有没有自己模型的对话。只想改一个对话，请点输入框下方的模型名。',
+  /** 测试：第三块，行上的测试按钮把结论报到这里。 */
+  connTestCurrent: '测试当前供应商',
+  connTestedRow: '测试的是「{name}」。',
+  connTestNeedsEndpoint: '这一行没有自己的端点地址，没有可探测的对象。',
+  /** 保存或删除之后，说清列表现在的状态。 */
+  connSavedNote: '已保存。它已在上方列表里——点「使用」才会由它生成。',
+  connSavedCurrent: '已保存，并已重新应用：它就是当前在用的供应商。',
+  connDeleted: '已删除。',
+  connDeletedWasCurrent: '已删除。现在没有选中的供应商，当前回到「宿主环境」。',
 
   /** 连接编辑表单：选提供方、填端点、给密钥。 */
-  editConnection: '编辑这个连接',
+  connEditorEditTitle: '编辑供应商',
+  connProviderName: '名字',
+  connProviderNamePlaceholder: '你怎么称呼它',
+  connBoundPreset: '绑定预设',
+  connBoundPresetNone: '不绑定预设',
+  connBoundPresetNote: '使用这个供应商时会同时切到这个预设。',
+  connPresetsUnknown: '还没读到预设库——请手填名称。',
+  editConnection: '编辑',
   cancelEdit: '取消',
   providerPreset: '提供方',
   presetCustom: '自定义端点',
@@ -2216,7 +2279,6 @@ export const zh: Record<StringKey, string> = {
   clearKey: '清除已保存的密钥',
   keyWillClear: '保存后将移除已保存的密钥。',
   modelLabel: '模型',
-  modelsListLabel: '该端点提供的模型',
   modelsFromEndpoint: '来自端点的 {count} 个模型。',
   /** 列表天生会过期，所以要说清是什么时候取的。 */
   modelsProbedAt: '{count} 个模型，上次探测于{when}。',
@@ -2228,6 +2290,8 @@ export const zh: Record<StringKey, string> = {
   modelsEndpointOffersNone: '端点返回的模型列表是空的。请手动填写模型名。',
   /** 非阻塞：保存照常完成。 */
   modelNotInList: '「{model}」不在最近一次从该端点取到的列表里。已照常保存。',
+  /** 同一处不一致，趁还能改的时候在编辑器里标出来。 */
+  modelOffListNote: '不在这个端点的列表里。',
   testConnection: '测试连接',
   testing: '正在测试…',
   testOk: '{latency} 毫秒 · {count} 个模型',
@@ -2236,17 +2300,18 @@ export const zh: Record<StringKey, string> = {
   testKeyTyped: '使用了你刚填的密钥。',
   testKeyStored: '使用了已保存的密钥——无需重填。',
   testKeyHost: '使用了宿主环境里的密钥。',
-  testKeyNone: '没有发送密钥。',
 
-  /** 宿主启动时所用的那条连接：它是一行只读记录，不是一个 profile。 */
-  hostDefaultTitle: '宿主默认（只读）',
-  hostDefaultNote: '这是宿主启动时配置的连接。在你启用某个连接之前，回复都由它生成。',
+  /** 宿主启动时所用的那条连接：列表的第一行，不是一个 profile。 */
+  hostDefaultTitle: '宿主环境',
+  hostDefaultNote: '这是宿主启动时配置的连接。在没有选中任何供应商时，回复由它生成。',
   hostDefaultKeyEnv: '密钥来自环境变量 {env}',
   hostDefaultKeyAnon: '密钥来自宿主环境',
   hostDefaultNoKey: '未配置密钥',
   hostDefaultEndpointRidden: '宿主配置的端点',
-  adoptHostConnection: '存为连接',
-  hostAdopted: '已存为连接。密钥由宿主自行复制，浏览器全程没有经手。',
+  adoptHostConnection: '存为供应商',
+  hostAdopted: '已存为供应商。密钥由宿主自行复制，浏览器全程没有经手。',
+  /** 这一行为什么没有「使用」按钮。见 DEVIATIONS §77。 */
+  connHostUseGap: '一旦开始使用某个供应商，这一行就无法再被选回：宿主没有留下启动时那条路由的记录。把它存为供应商，就得到一份可编辑、可选用的副本。',
   testErrMissingKey: '该端点需要 API 密钥——请在上方粘贴后重新测试。',
   testErrUnauthorized: '端点拒绝了这个密钥（401/403）。请检查后重试。',
   testErrTimeout: '端点未在时限内应答。地址是否正确？服务是否在运行？',
@@ -2257,9 +2322,8 @@ export const zh: Record<StringKey, string> = {
   testErrBadResponse: '端点有应答，但不是模型列表。仍可手动填写模型名。',
   testErrNoEndpoint: '这个连接使用宿主配置的端点，自身不带端点地址。',
   testRefused: '测试未能执行：{message}',
-  saveThisConnection: '保存这个连接',
-  updateConnection: '更新这个连接',
-  savedTakesEffect: '已保存。在下方点选该连接即可启用——立即生效，无需重启宿主。',
+  saveThisConnection: '保存这个供应商',
+  updateConnection: '保存修改',
 
   /** 脚本面板。 */
   sectionCardScripts: '卡片脚本',

@@ -21,6 +21,7 @@ import { createFakeClient, fakeItemization } from '@iris/client-fake'
 
 import { App } from '../src/app/App.tsx'
 import { CharacterPage } from '../src/app/CharacterPage.tsx'
+import { ConnectionPanel } from '../src/app/ConnectionPanel.tsx'
 import { StoreProvider } from '../src/client/provider.tsx'
 import { createIrisStore, type IrisStore } from '../src/client/store.ts'
 import { SlotProvider } from '../src/slots/Slot.tsx'
@@ -152,7 +153,26 @@ async function main(): Promise<void> {
     'a recorded rail should still report how many readings a passage had',
   )
   assert.match(settled, /iris-composer__field/, 'the composer is missing')
-  assert.match(settled, /value="openai-compat"/, 'settings fields did not populate')
+  /*
+   * The drawer's fields are populated from the store.
+   *
+   * This used to read `value="openai-compat"` — the 「路由」 card's `provider`
+   * text field. That card is gone (web §77): `provider` and `model` there were
+   * the one route in the product a reader could type, and a typed route is the
+   * failure the connection panel is built around. The check keeps its job by
+   * moving to a field that still exists, and reads the expected value off the
+   * store rather than repeating a literal, so a fixture that stops seeding a
+   * temperature fails here rather than passing vacuously.
+   */
+  const seededTemperature = wired.store.getState().settings?.temperature
+  assert.ok(seededTemperature !== undefined, 'the fixture must seed a temperature for this check')
+  assert.match(
+    settled,
+    new RegExp(`value="${String(seededTemperature)}"`),
+    'settings fields did not populate',
+  )
+  // And the card that held the typed route has not come back.
+  assert.doesNotMatch(settled, /id="iris-card-route"/, 'the route card is back — the route is typable again')
   // Only the last reply offers a retry; more than one would mean discarding
   // history the protocol has no operation for.
   assert.equal(settled.match(/>Regenerate</g)?.length, 1, 'exactly one Regenerate expected')
@@ -937,6 +957,89 @@ async function main(): Promise<void> {
   assert.ok(unnamed !== undefined, 'the fixture should keep an unnamed profile')
   assert.equal(withConnections.includes(`>${unnamed.id}<`), false, 'an id reached the interface')
   assert.ok(withConnections.includes(unnamed.summary), 'an unnamed profile should fall back to its summary')
+
+  /*
+   * ------------------------------------------- the panel's shape (web §77)
+   *
+   * The user's ruling, 2026-09-09: the connection card is a provider list plus
+   * add / select / test, and 「连接折叠卡中就不需要有提供方/端点地址/模型这三个
+   * 选项常驻了」. Three properties carry that, and all three are *absences or
+   * counts* — which is why they are pinned on a real render rather than on the
+   * source: a resident field creeping back is a line somebody adds, and no
+   * source pattern excludes the shape they will use.
+   *
+   * Mounted alone rather than read out of the whole shell's markup: slicing the
+   * card's body out of `<App/>`'s HTML by its id means matching a closing tag by
+   * hand, and a wrong slice would make every count below describe some other
+   * panel. `CollapsibleSection` renders its body whether or not the card is
+   * open (hidden, never unmounted), so a server render sees all of it.
+   */
+  const connPanel = render(wired.store, slots.core, <ConnectionPanel />)
+
+  // 1. No resident field. The editor is a `Modal`, which renders `null` while
+  //    closed, so "no field in the panel" is structural — and this is the
+  //    assertion that goes red the day somebody puts one back in the body.
+  for (const tag of ['<input', '<select', '<textarea']) {
+    assert.equal(
+      (connPanel.match(new RegExp(tag, 'g')) ?? []).length,
+      0,
+      `the connection panel body carries a ${tag}> — the editor is the only place a provider is edited`,
+    )
+  }
+
+  // 2. Three blocks, named. The count alone would pass on three of anything, so
+  //    each one's `data-block` is checked by name and the total by count.
+  assert.equal(
+    (connPanel.match(/iris-conn-panel__block/g) ?? []).length,
+    3,
+    'the panel body should be exactly three blocks: the list, add, and test',
+  )
+  for (const block of ['providers', 'add', 'test']) {
+    assert.match(connPanel, new RegExp(`data-block="${block}"`), `the "${block}" block is missing`)
+  }
+
+  // 3. Exactly one row is current — the provider in use, or the host's row when
+  //    none is. Two marked rows and none marked are both reports nobody can act
+  //    on, and both are what a `find` returning the wrong thing produces.
+  assert.equal(
+    (connPanel.match(/aria-current="true"/g) ?? []).length,
+    1,
+    'exactly one provider row should be marked current',
+  )
+  const inUse = wired.store.getState().connections
+    .find(row => row.id === wired.store.getState().activeConnectionId)
+  assert.ok(inUse?.label !== undefined, 'the fixture must keep a named active profile for this check')
+  // The marked row is the active one, not merely *a* row. Read off the markup
+  // rather than the store: the store is what the panel was given, and this is
+  // about what it did with it.
+  const markedAt = connPanel.indexOf('aria-current="true"')
+  const marked = connPanel.slice(markedAt, markedAt + 600)
+  assert.ok(marked.includes(inUse.label), 'the marked row is not the provider in use')
+  assert.match(marked, /iris-conn__badge">/, 'the current row carries no 「current」 badge')
+
+  // The host's row is read-only: testable and adoptable, never editable or
+  // deletable. Its `aria-label`s are the check, because they are the only
+  // per-row strings that name the act.
+  const hostAt = connPanel.indexOf('iris-conn--host')
+  assert.ok(hostAt > 0, 'the host environment row is missing')
+  const hostMarkup = connPanel.slice(
+    hostAt,
+    connPanel.indexOf('</div>', connPanel.indexOf('iris-conn__actions', hostAt)),
+  )
+  assert.match(hostMarkup, /aria-label="Test Host environment"/, 'the host row cannot be tested')
+  assert.doesNotMatch(hostMarkup, /aria-label="Edit /, 'the host row offers an edit it cannot honour')
+  assert.doesNotMatch(hostMarkup, /aria-label="Delete /, 'the host row offers a delete it cannot honour')
+
+  // 4. The collapsed head is a reading, not a control: name · model, and no
+  //    field or nested press inside the summary.
+  const headAt = connPanel.indexOf('iris-card__summary')
+  assert.ok(headAt > 0, 'the connection card has no summary line')
+  const head = connPanel.slice(headAt, connPanel.indexOf('</span>', headAt))
+  assert.ok(
+    head.includes(inUse.label) && head.includes(inUse.model),
+    `the collapsed head should read "name · model"; it reads ${head}`,
+  )
+  assert.doesNotMatch(head, /<button|<input|<select/, 'the collapsed head summary holds a control')
 
   // ------------------------------------------------------------------ slots
   // `iris.message.actions` is projected as one folded menu per floor

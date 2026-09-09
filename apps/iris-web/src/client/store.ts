@@ -1113,6 +1113,15 @@ export interface IrisActions {
    */
   runCardAction(method: string, params: unknown): Promise<unknown>
   loadConnections(): Promise<void>
+  /**
+   * Use one saved provider, **globally**.
+   *
+   * The connection panel's "use" verb. Never scoped to the open conversation:
+   * that switch is `setChatModel`, driven by the model capsule under the
+   * composer, and one list that meant "everywhere" or "here" depending on
+   * whether a chat was open was the confusion this separation removes.
+   * @param id - the provider to generate through.
+   */
   activateConnection(id: string): Promise<void>
   saveConnection(patch: {
     id?: string
@@ -2688,18 +2697,29 @@ export function createIrisStore(
       async activateConnection(id: string): Promise<void> {
         const chatId = get().chatId
         await guard(async () => {
-          // Scoped like every other settings write: activating while a chat is
-          // open means "for this scene". Otherwise the reader would change a
-          // conversation's route by touching what looks like a global list.
-          const result = await client.call('connection.activate', {
-            id,
-            ...(chatId === undefined ? {} : { chatId }),
-          })
+          /*
+           * **Global, always — `chatId` is deliberately not sent.**
+           *
+           * Using a provider is one of the connection panel's two verbs (the
+           * other is saving one), and the list it is pressed from is the
+           * host's list, not this conversation's. Scoping it to whichever chat
+           * happened to be open made one list mean two different things
+           * depending on where the reader was standing, and left no way at all
+           * to move the global layer while a conversation was open.
+           *
+           * The per-conversation switch has its own control and its own
+           * method: the model capsule under the composer, through
+           * `setChatModel` (a chat-scoped `settings.set`). `connection.activate`
+           * keeps its optional `chatId` — the protocol still expresses the
+           * scoped form — and nothing in the browser asks for it.
+           */
+          const result = await client.call('connection.activate', { id })
           set({ settings: result.settings, activeConnectionId: result.activeId })
-          // Activating rewrote whichever settings layer it was scoped to, so
-          // the chat's own layer just changed too — re-read it rather than let
-          // the composer keep marking a value that is no longer the override it
-          // was. Silent on failure: the activation itself succeeded, and a
+          // The global layer just moved under an open conversation, so what
+          // that conversation *effectively* generates with has changed and its
+          // own overrides may now agree with the layer they were overriding.
+          // Re-read rather than let the composer keep marking a stale
+          // difference. Silent on failure: the switch itself succeeded, and a
           // notice here would attribute a follow-up read's failure to it.
           if (chatId !== undefined) {
             const refreshed = await client.call('settings.get', { chatId }).catch(() => undefined)

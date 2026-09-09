@@ -2290,56 +2290,131 @@
 
 /* ------------------------------------------------------------- connections */
 
-.iris-conn {
+/*
+ * Three blocks, separated by space rather than by rules.
+ *
+ * The panel is a list, a button and a test, in that order (CC Switch's shape,
+ * the user's ruling 2026-09-09). They are three answers to three questions and
+ * the gaps are what says so; a hairline between each would read as a table of
+ * one-line sections. `gap` and nothing else, so the blocks can be counted in
+ * the render check without a decorative element to skip.
+ */
+.iris-conn-panel {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  border-left: 2px solid transparent;
-  padding-left: 8px;
+  flex-direction: column;
+  gap: 18px;
 }
 
+.iris-conn-panel__block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The list's own head: what the section is, and which host is answering. */
+.iris-conn-panel__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.iris-conn-panel__title {
+  margin: 0;
+}
+
+/*
+ * One saved provider. Name and facts on the left, its four verbs on the right.
+ *
+ * `align-items: flex-start` rather than `center`: the left column grows to
+ * three lines on a row that carries a preset and a probe time, and a centred
+ * action row then floats in the middle of them with nothing to align to.
+ */
+.iris-conn {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  border-left: 2px solid transparent;
+  padding: 7px 0 7px 8px;
+}
+
+/* The provider in use. One row carries this at a time — the host's row when no
+   provider is selected — and the render check pins that it is exactly one. */
 .iris-conn[aria-current='true'] {
   border-left-color: var(--iris-accent);
   background: var(--iris-accent-wash);
 }
 
 /*
- * The host's own connection: the same row, wrapping instead of picking.
+ * The host's own connection: the same row, with a dashed edge.
  *
- * `flex-direction: column` because it has no `__pick` button to stretch — it is
- * not selectable, being what the host is already generating through — and the
- * dashed edge says the same thing the "(read-only)" in its title does: this row
- * comes from the environment the process was launched with, not from the list
- * below that this panel owns.
+ * The dash says what the 「只读」 badge beside its name says: this row comes
+ * from the environment the process was launched with, not from the list under
+ * it that this panel owns. It keeps the accent edge when it is the current one,
+ * because `[aria-current]` above is written after nothing and this rule only
+ * moves the style, not the colour — so the order below matters.
  */
 .iris-conn--host {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
   border-left-style: dashed;
   border-left-color: var(--iris-rule);
-  padding: 8px 0 8px 8px;
 }
 
-.iris-conn__pick {
+.iris-conn--host[aria-current='true'] {
+  border-left-color: var(--iris-accent);
+}
+
+.iris-conn__main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
   align-items: flex-start;
-  background: none;
-  border: 0;
-  padding: 8px 0;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
+}
+
+/*
+ * The row's verbs: use, edit, test, delete.
+ *
+ * Wrapping, because four of them plus a Chinese 「存为供应商」 do not fit the
+ * drawer's 300-odd pixels beside a name, and a row that overflows horizontally
+ * hides its own delete button. `justify-content: flex-end` so a wrapped second
+ * line stays under the first rather than drifting left into the facts.
+ */
+.iris-conn__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 2px 6px;
+  padding-top: 1px;
 }
 
 .iris-conn__name {
   font-size: var(--iris-ui-size);
   color: var(--iris-ink);
   overflow-wrap: anywhere;
+}
+
+/*
+ * 「当前」 and 「只读」. Word-badges rather than dots or colour alone: which row
+ * generates is the single most consequential fact on this panel, and a colour
+ * that has to be learned is not a report.
+ */
+.iris-conn__badge {
+  font-size: var(--iris-meta-size);
+  line-height: 1.5;
+  color: var(--iris-accent);
+  border: var(--iris-hairline) solid var(--iris-accent-quiet);
+  border-radius: var(--iris-radius-field);
+  padding: 0 5px;
+}
+
+/* The same shape without the claim: read-only is a constraint, not a state. */
+.iris-conn__badge--quiet {
+  color: var(--iris-ink-tertiary);
+  border-color: var(--iris-rule);
 }
 
 /*
@@ -2354,11 +2429,38 @@
   overflow-wrap: anywhere;
 }
 
+/*
+ * Endpoint, model, key state, bound preset, window, probe time — the display
+ * information the panel gained when its fields left. Quieter than the summary
+ * because the summary is the row's identity and this is its detail.
+ */
+.iris-conn__meta {
+  font-size: var(--iris-meta-size);
+  line-height: 1.5;
+  color: var(--iris-ink-faint);
+  overflow-wrap: anywhere;
+}
+
 .iris-conn__save {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-top: 4px;
+}
+
+/* The editor's own measure: the primitive's card is 380px and clips, which is
+   what `iris-prompt-dialog` and `iris-usage-dialog` each found separately.
+   440px seats a base URL in the mono face without a scroller. */
+.iris-conn-dialog {
+  width: min(440px, 100%);
+  max-height: calc(100vh - 48px);
+}
+
+.iris-conn-editor {
+  width: 100%;
+  min-width: 0;
+  overflow-y: auto;
 }
 
 /*
