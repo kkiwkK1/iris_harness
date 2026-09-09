@@ -23,7 +23,7 @@ import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribu
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, ChatBudget, ChatView, CharacterSummary, ConnectionKeySource, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TurnUsage } from '@iris/protocol'
+import type { BackupSummary, CharacterSummary, ChatBudget, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TurnUsage } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -729,6 +729,29 @@ export class IrisAppService {
   readonly #probedContexts = new Map<string, ModelContextLength>()
 
   /**
+   * The adapter routes **this process** has installed, by route key.
+   *
+   * The adapter registry is per process and its contents are not readable from
+   * here — `installConnection` writes into it and answers nothing. So a route
+   * name persisted in `settings.json` is a claim about a registry this process
+   * may never have been asked to fill: measured 2026-09-09 on one profile
+   * opened by two hosts, where host A had activated a `deepseek` connection
+   * (writing `chats[<id>].provider = "deepseek"`) and host B, started from the
+   * same data directory and never asked to install anything, answered that
+   * chat's first generation with `no adapter registered for provider
+   * "deepseek"`.
+   *
+   * This is the half of the answer that can be known cheaply: every install
+   * that went through {@link #installConnectionFor} is recorded here, so
+   * {@link #resolveRoute} can tell "already served" from "must be installed
+   * first" without asking the registry. It is deliberately **not** persisted —
+   * it describes this process's registry, and a persisted copy would make the
+   * next process claim installs it never performed, which is the original
+   * defect with an extra file behind it.
+   */
+  readonly #installedRoutes = new Set<string>()
+
+  /**
    * @param options - domain stores, the model stream, and the event sink.
    */
   constructor(options: AppServiceOptions) {
@@ -851,22 +874,207 @@ export class IrisAppService {
    * @param route - the provider route to serve the endpoint under.
    * @param baseURL - the endpoint root.
    * @param credential - the key and the header it is sent in.
+   * @returns whether an adapter was installed. False means this host was
+   *   composed without an installer, so the route is **not** served — the
+   *   caller must not treat a silent return as success.
    */
   #installConnectionFor(
     route: string,
     baseURL: string,
     credential: { apiKey?: string | undefined, apiKeyHeader?: string | undefined },
-  ): void {
+  ): boolean {
     const install = this.#options.installConnection
-    if (install === undefined) return
+    if (install === undefined) return false
     install(route, {
       baseURL,
       ...credential.apiKey === undefined ? {} : { apiKey: credential.apiKey },
       ...credential.apiKeyHeader === undefined ? {} : { apiKeyHeader: credential.apiKeyHeader },
     })
+    // Recorded **here** and nowhere else, so every path that installs — an
+    // activation, the boot restore, and a generation that had to install the
+    // route it was told to use — lands in one set. See {@link #installedRoutes}.
+    this.#installedRoutes.add(route)
     this.#report(
       `connection now generates through route "${route}" at ${new URL(baseURL).origin}`,
       { kind: 'host', grade: 'note' },
+    )
+    return true
+  }
+
+  /**
+   * Re-install the adapter for the profile that was last activated.
+   *
+   * Called by the composition once, after construction and **before any
+   * handler is registered**: a route name persisted in `settings.json`
+   * (`conn/<id>`, or the profile's provider) is a promise the registry has to
+   * be able to keep on the first turn.
+   *
+   * A method on the service rather than the block the plugin used to run
+   * inline, for one reason that is not tidiness: the inline version called the
+   * installer directly, so the boot-restored route was invisible to
+   * {@link #installedRoutes} — the set would have said "not installed" for the
+   * one route the host had just installed, and a generation on it would have
+   * re-installed it on the first turn of every restart.
+   * @returns the route that was restored, when one was.
+   */
+  async restoreActiveConnection(): Promise<string | undefined> {
+    const store = this.#options.connections
+    if (store === undefined) return undefined
+    const listed = await store.list()
+    if (listed.activeId === undefined) return undefined
+    // A profile removed out-of-band is not a failure to boot: the list clears
+    // the stale active id on its next write, and a dangling `provider` left in
+    // the settings layer is answered by `#resolveRoute` on the first
+    // generation rather than by refusing to start.
+    const profile = await store.get(listed.activeId).catch(() => undefined)
+    if (profile?.baseURL === undefined || profile.baseURL.length === 0) return undefined
+    const route = routeOf(profile)
+    return this.#installConnectionFor(route, profile.baseURL, profile) ? route : undefined
+  }
+
+  /**
+   * The route the **composition** registered, which is always served.
+   *
+   * Deliberately not `#hostConnection().provider`. That reader answers from the
+   * global settings layer when the composition handed no connection in (the
+   * shipped one does not), and the global layer is one of the two places a
+   * dangling route name can sit — so a check of "is this the host's own route?"
+   * written against it would answer yes *for the dangling name itself* and pass
+   * exactly the request it exists to catch. The configured default cannot
+   * dangle: it is the `llm-openai-compat` row's own registration.
+   * @returns the route key the host generates through with no connection applied.
+   */
+  #hostRoute(): string {
+    return this.#options.hostConnection?.provider ?? this.#options.settings.configuredRoute()
+  }
+
+  /**
+   * Whether a route still has something behind it after a profile is deleted.
+   *
+   * Two survivors, both real: the composition's own route (a profile naming
+   * `provider: 'default'` with no endpoint of its own routes *there*, and
+   * deleting it takes nothing away), and another saved profile that resolves to
+   * the same route — which is how two profiles of one provider take turns
+   * (host §27).
+   *
+   * A live install of this process is **not** counted. The adapter would answer
+   * this turn and be gone on the next start, so a settings layer left pointing
+   * at it would be a reference that works until the user restarts — the failure
+   * mode being removed, deferred rather than fixed.
+   * @param route - the route the deleted profile was served under.
+   * @param remaining - the profiles left after the deletion.
+   * @returns true when something other than the deleted profile serves it.
+   */
+  #routeStillServed(route: string, remaining: readonly ConnectionProfile[]): boolean {
+    if (route === this.#hostRoute()) return true
+    return remaining.some(profile => routeOf(profile) === route)
+  }
+
+  /**
+   * Make sure the route a generation is about to use is one that exists — and
+   * say so when it is not.
+   *
+   * The measured failure (2026-09-09) is two-layered, and this is the second
+   * net; `connection.delete` is the first. `settings.json` stores `provider` as
+   * a reference to a *runtime* route, the registry holding those routes is per
+   * process and filled only by an activation or the boot restore, and neither
+   * of those has to have happened in *this* process. So a name that was true
+   * when it was written reaches `ctx.llm.stream` as `no adapter registered for
+   * provider "deepseek"` — a message about the registry, from a request whose
+   * settings were never wrong.
+   *
+   * Four answers, in the order that asks the cheapest question first:
+   *
+   * 1. **The host's own route** ({@link #hostRoute}) — always served.
+   * 2. **A route this process installed** ({@link #installedRoutes}) — served
+   *    since the activation or the restore that installed it.
+   * 3. **A saved profile resolves to it.** Carrying an endpoint, it is
+   *    installed here and now, which is the case that makes a second host on
+   *    one data directory work: the profile is on disk, this process simply
+   *    never activated it. Carrying no endpoint, it names a route some *other*
+   *    plugin registered — not ours to install and not ours to judge, so it is
+   *    passed through exactly as before.
+   * 4. **Nothing resolves to it.** The reference is dangling: the request goes
+   *    out on the host's own route rather than failing, and the layer that
+   *    named it is cleared so the next turn does not repeat the fall back.
+   *    Both halves are reported — a silent repair of a user's setting is worse
+   *    than the error it replaces, because the setting simply changes.
+   *
+   * The one case that falls back **without** repairing anything is a profile
+   * that exists and cannot be installed here, on a composition that was given
+   * no installer at all: the reference is not dangling, this host merely cannot
+   * honour it, and clearing a good setting because of a missing capability
+   * would lose the user's choice to a host that is temporarily less able.
+   * @param provider - the route the effective settings named.
+   * @param chatId - the conversation the settings were read for, for the report.
+   * @returns the route to actually generate on.
+   */
+  async #resolveRoute(provider: string, chatId?: string): Promise<string> {
+    const host = this.#hostRoute()
+    if (provider === host || this.#installedRoutes.has(provider)) return provider
+
+    const store = this.#options.connections
+    const profiles = store === undefined ? [] : (await store.list()).profiles
+    const named = profiles.find(profile => routeOf(profile) === provider)
+    /**
+     * Report the fall back and answer with the host's route.
+     * @param reason - why the named route could not be used.
+     * @param repair - what was done about the setting, said in the same sentence.
+     * @param wrote - whether a stored setting of the user's was changed, which
+     *   is what puts this on the pushed channel rather than only in the buffer:
+     *   the value that layer held is gone, and nothing else in the interface
+     *   will ever say so — the panel reads settings when it is opened, so a
+     *   repair made mid-turn is otherwise invisible until something refetches.
+     *   A fall back that changed nothing is retained and not pushed.
+     * @returns the host's own route.
+     */
+    const fell = (reason: string, repair: string, wrote: boolean): string => {
+      this.#report(
+        `${reason}, so this request generates through the host's own route "${host}" instead${repair}`,
+        {
+          kind: 'host',
+          grade: 'fault',
+          ...chatId === undefined ? {} : { chatId },
+          ...wrote ? { irreversible: true } : {},
+        },
+      )
+      return host
+    }
+
+    if (named !== undefined) {
+      if (named.baseURL === undefined || named.baseURL.length === 0) return provider
+      // The key never crosses the wire, so the list's view does not carry it —
+      // the stored profile does, and the adapter is the one place it goes.
+      const stored = store === undefined ? undefined : await store.get(named.id).catch(() => undefined)
+      const endpoint = stored?.baseURL ?? named.baseURL
+      if (this.#installConnectionFor(provider, endpoint, stored ?? {})) return provider
+      return fell(
+        `the connection served under route "${provider}" still exists, but this host was composed with no way to `
+        + 'install an adapter for it',
+        ' — the setting is left alone, because the connection is not the thing that is missing',
+        false,
+      )
+    }
+
+    // Cleared before the report is written, so the sentence can name what it
+    // did rather than what it is about to do.
+    const cleared = await this.#options.settings.clearProviderRoute(provider)
+    // Counted rather than assumed to be this one conversation: one route can be
+    // named by several chats' layers (host A activated it on each of them), and
+    // the clear takes all of them — a sentence saying "this conversation" would
+    // understate what just changed.
+    const others = cleared.chats.filter(id => id !== chatId).length
+    const layers = [
+      ...cleared.chats.includes(chatId ?? '') ? ['this conversation\'s own setting'] : [],
+      ...others === 0 ? [] : [`${String(others)} other conversation(s)' own setting`],
+      ...cleared.global ? ['the global setting'] : [],
+    ]
+    return fell(
+      `the connection named "${provider}" no longer exists`,
+      layers.length === 0
+        ? ' (nothing in the settings still names it, so there was nothing to repair)'
+        : ` — ${layers.join(' and ')} named it and has been cleared, so the next turn starts from the host's route`,
+      cleared.global || cleared.chats.length > 0,
     )
   }
 
@@ -1942,10 +2150,46 @@ export class IrisAppService {
         return { ...saved, host: hostDefaultView(host, this.#hostProbe) }
       },
 
-      'connection.delete': async ({ id }) => ({
-        ...await this.#connections().delete(id),
-        host: this.#hostDefaultRow(),
-      }),
+      'connection.delete': async ({ id }) => {
+        const store = this.#connections()
+        // Read **before** the deletion: the route a profile is served under is
+        // derived from its own values (`routeOf`), and after the splice there is
+        // nothing left to derive it from.
+        const route = routeOf(await store.get(id))
+        const listed = await store.delete(id)
+        // The settings layers store `provider` as a reference to that route, and
+        // nothing used to clean them: the reference outlived the profile, so the
+        // next generation on that layer reached the adapter registry and failed
+        // there — a message about a registry, from a conversation whose settings
+        // the user had never touched since (measured 2026-09-09; host §59).
+        //
+        // Only when the route has genuinely lost its last owner: the
+        // composition's own route and a sibling profile of the same provider are
+        // both still served, and clearing a layer that names one of those would
+        // undo a choice the deletion did not touch.
+        const cleared = this.#routeStillServed(route, listed.profiles)
+          ? { global: false, chats: [] }
+          : await this.#options.settings.clearProviderRoute(route)
+        if (cleared.global || cleared.chats.length > 0) {
+          const where = [
+            ...cleared.global ? ['the global route returns to the host\'s own'] : [],
+            ...cleared.chats.length === 0
+              ? []
+              : [`${String(cleared.chats.length)} conversation(s) lose their route override`],
+          ]
+          // A note rather than a fault: this is the deletion doing its job. The
+          // line exists because the *model* and sampling those layers were given
+          // by the same activation deliberately stay — so a reader who sees a
+          // conversation's model unchanged and its route changed can find out
+          // why without reading this file.
+          this.#report(
+            `deleting the connection served under route "${route}" cleared the settings layers naming it: `
+            + `${where.join(', ')} (the model and sampling it applied are values, not references, and stay)`,
+            { kind: 'host', grade: 'note' },
+          )
+        }
+        return { ...listed, host: this.#hostDefaultRow(), cleared }
+      },
 
       'connection.activate': async ({ id, chatId }) => {
         const store = this.#connections()
@@ -4738,11 +4982,23 @@ export class IrisAppService {
     trace?: { chatId: string, kind: string, caller?: string, turn?: number },
     side?: { entry: ChatEntry, caller: string, source: SideSource },
   ): AsyncIterable<StreamChunk> {
+    // **The route is settled before anything else runs**, and here rather than
+    // at each of the four callers: a turn, `script.generateRaw`,
+    // `script.generate` and the compaction summarizer all compose
+    // `provider: settings.provider` from their own read of the settings, and a
+    // check written per caller is a check three callers have and the fourth
+    // one added next year does not. `#resolveRoute` installs what it can and
+    // falls back to the host's own route when the name is dangling, so the
+    // substitution lands *before* the fingerprint and `noteRoute` below —
+    // which must name the route the provider was actually billed on, not the
+    // one the settings asked for.
+    const routed = await this.#resolveRoute(options.provider, entry?.chatId ?? side?.entry.chatId ?? trace?.chatId)
+    const asked = routed === options.provider ? options : { ...options, provider: routed }
     // The templates run here because here is the only place that has both the
     // assembled prompt and the chat it belongs to. `#generateRaw` reaches this
     // with no entry and is left alone deliberately: its prompt is written by
     // this host, not by a card, so there is nothing of the author's to evaluate.
-    const request = entry === undefined ? options : await this.#applyTemplates(options, entry)
+    const request = entry === undefined ? asked : await this.#applyTemplates(asked, entry)
     const messages = [
       ...request.system === undefined ? [] : [{ text: request.system }],
       ...request.messages.map(message => ({ text: textOf(message) })),

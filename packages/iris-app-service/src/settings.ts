@@ -248,6 +248,62 @@ export class SettingsStore {
   }
 
   /**
+   * The provider route the composition configured this host with.
+   *
+   * **Not readable from the merged settings**, which is the whole reason this
+   * accessor exists: `provider` in either layer is a reference to a *runtime*
+   * route (`routeOf`, ./connections.ts), so the global layer can be carrying
+   * the name of a connection that has since been deleted. Asking the layer
+   * "what is the host's own route?" would then answer with the dangling name
+   * and every check against it would pass. The constructed default is the one
+   * answer that cannot dangle: it is what the `llm-openai-compat` row
+   * registered, and it is what {@link set} restores a cleared `provider` to.
+   * @returns the configured route.
+   */
+  configuredRoute(): string {
+    return this.#defaults.provider
+  }
+
+  /**
+   * Drop every layer whose `provider` names one route, and say which.
+   *
+   * The write a deleted connection needs (`connection.delete`) and the write a
+   * generation needs when it finds the route it was told to use does not exist
+   * (`#resolveRoute`, service.ts). One method rather than a `set` call per
+   * layer, because the caller cannot enumerate the chat layers from outside and
+   * because *which layers were carrying it* is the answer both callers report.
+   *
+   * **`provider` only, and never the `model` or the sampling beside it.**
+   * `ConnectionStore.patchOf` writes all three, so a chat activated onto a
+   * profile carries `{ provider, model, ...sampling }` — but only `provider` is
+   * a *reference*: it names a route in a registry that lives as long as the
+   * process. A model id and a temperature are **values**, and they stay
+   * meaningful after the profile that supplied them is gone (which is exactly
+   * what upstream's connection profiles leave behind — see host §59). Clearing
+   * them would turn "the endpoint you chose is gone" into "your model choice is
+   * gone too", a second loss the deletion never asked for.
+   * @param route - the route no longer served.
+   * @returns whether the global layer was carrying it, and which chats were.
+   */
+  async clearProviderRoute(route: string): Promise<{ global: boolean, chats: string[] }> {
+    const chats: string[] = []
+    for (const [chatId, override] of Object.entries(this.#file.chats)) {
+      if (override.provider !== route) continue
+      delete override.provider
+      // Same rule as `set`: an override with nothing left in it is a key per
+      // chat the user ever activated a connection on, kept forever.
+      if (Object.keys(override).length === 0) delete this.#file.chats[chatId]
+      chats.push(chatId)
+    }
+    // Nothing sits below the global layer, so "clear" here means what it means
+    // in `set`: back to what the composition configured.
+    const global = this.#file.global.provider === route
+    if (global) this.#file.global.provider = this.#defaults.provider
+    if (global || chats.length > 0) await this.save()
+    return { global, chats }
+  }
+
+  /**
    * One chat's own layer, without the global values showing through.
    *
    * The merged read from {@link get} cannot answer "did this conversation
@@ -302,10 +358,6 @@ export class SettingsStore {
     return this.get(chatId)
   }
 
-  /**
-   * Drop a chat's overrides, when its conversation is deleted.
-   * @param chatId - the chat.
-   */
   /**
    * The books injected into every chat, whatever character is playing.
    *
@@ -513,6 +565,10 @@ export class SettingsStore {
     await this.save()
   }
 
+  /**
+   * Drop a chat's overrides, when its conversation is deleted.
+   * @param chatId - the chat.
+   */
   async forget(chatId: string): Promise<void> {
     if (this.#file.chats[chatId] === undefined) return
     delete this.#file.chats[chatId]
