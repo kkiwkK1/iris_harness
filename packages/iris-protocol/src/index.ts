@@ -43,6 +43,7 @@ export { toEntryDigest } from './digests.ts'
 
 export {
   parseRequest,
+  type PresetRegexAnswer,
   requestSchemas,
   RpcCallError,
   type RpcError,

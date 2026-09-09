@@ -20,6 +20,7 @@ export type CardId =
   | 'presets'
   | 'backups'
   | 'regex'
+  | 'presetRegex'
   | 'scopedRegex'
   | 'scriptLibrary'
   | 'route'
@@ -91,7 +92,7 @@ export function isOpen(state: Readonly<Partial<Record<CardId, boolean>>>, id: Ca
  * list that will not be. A comment asking for it would not have gone red.
  */
 const ALL_CARDS = [
-  'connection', 'presets', 'backups', 'regex', 'scopedRegex', 'route', 'sampling', 'replies',
+  'connection', 'presets', 'backups', 'regex', 'presetRegex', 'scopedRegex', 'route', 'sampling', 'replies',
   'appearance', 'reading', 'worldbooks', 'scripts', 'scriptLibrary', 'usage', 'about',
 ] as const satisfies readonly CardId[]
 

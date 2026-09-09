@@ -3383,6 +3383,86 @@ makes a scheduler read through the parent and one read bare the same functions
 with mutually cancellable handles. Injected through `FrameEnv` like the event
 target; absent, the six names follow the unpublished-name policy.
 
+## 72. The third regex tier gets a section of its own, and it is the one that has to explain itself
+
+**Kind:** new surface for a compatibility feature landing — host `DEVIATIONS.md`
+§53 is the mechanism, §47 the measurement.
+
+**What the drawer showed before.** Two of SillyTavern's three regex tiers: the
+profile's global list (`RegexPanel`) and the card's own (`ScopedRegexPanel`).
+The preset's tier — the active preset file's own `extensions.regex_scripts`,
+which upstream runs *between* those two — had no surface at all, and on the one
+preset measured for §47 that is **40 rules, 18 of them live: 6 rewriting the
+request and 12 rewriting the page**.
+
+**`PresetRegexPanel`, and where it sits.** Between `RegexPanel` and
+`ScopedRegexPanel` — **not** under the preset section, which is its subject.
+The three regex sections are read as a sequence, the drawer already says so in
+its own comment ("under the profile's, because that is the order they run in"),
+and a reader comparing the lists is comparing along the axis that decides which
+rewrite wins: global → preset → card is upstream's `SCRIPT_TYPES` iteration
+order. Putting the section next to its subject would have put it out of the
+order it runs in, which is the only ordering a reader can act on.
+
+**The section that renders while running nothing.** This is the one panel in the
+regex family whose *ordinary* state is refused: the tier arrives off (§53), so
+the section's first job is to tell a reader that the preset they imported
+carries rules at all. It therefore lists them whether or not they run —
+upstream's own panel does the same, `getRegexScripts` defaulting to
+`allowedOnly: false` — and the summary says `N rules, not enabled` rather than
+falling silent. The refusal note names the cost *and* names upstream's identical
+requirement, because a default that looks like breakage gets clicked through:
+「SillyTavern 也是同样的要求：预设名进了 `preset_allowed_regex` 白名单，它自带的
+正则才会跑」.
+
+**Three row states, and the third is new to this family.** `ScopedRegexPanel`
+has two — off by the card, and no `id` so it cannot be switched. This panel has
+a third, because the whole tier can be refused while an individual rule is on:
+that row is badged 「等上面那个开关」 rather than shown as running. A reader can
+set the rules up before turning the tier on, which is why the per-rule
+checkboxes stay live while the tier is refused.
+
+**The unnamed-preset branch hides the control rather than disabling it.** When
+the active preset has no library name — a host still assembling with its
+configured file, which upstream cannot represent — the allow-list has nothing to
+be keyed by, so the permission block is not rendered at all and the note says
+what to do instead ("save it to the preset library first"). A disabled switch
+would invite the reading that the feature is broken here; the sentence is the
+control.
+
+**One reload trigger, and it is the active preset.** The panel's effect is keyed
+on `state.activePreset`, not on a panel-local memory of it, so switching presets
+in the section two rows up re-reads this one — the tier, the permission and the
+name all belong to the preset. There is no `presetRegexFor` field beside the
+list the way `scopedRegexFor` sits beside the scoped one: the subject is a
+single global fact rather than one card among many, and the answer carries the
+name it was about (`presetRegexName`), which the panel *prints* rather than
+guards.
+
+**`presetRegexState` is one function on purpose.** All three calls — the list
+and the two writes — answer with the same envelope, and three hand-written
+`set({ … })` blocks are three places for the newest field (`malformed`) to be
+forgotten in two of them.
+
+**A green teeth check deleted a line.** The running count was first written
+`allowed ? scripts.filter(…).length : 0`, and breaking it on purpose changed no
+render: the refused summary takes no running count, so the guard was
+unobservable. It is gone, with the reason in the comment where it stood — the
+"on, but the tier is off" state is carried by the row badge, where it *is*
+observable.
+
+**Pinned by `check:render`** in both states: the refused render (the preset's
+name, its rules, `3 rules, not enabled`, the `preset_allowed_regex` sentence,
+the skipped-rows line, the off-by-preset and waiting-on-the-switch badges) and
+the allowed one (`2 of 3 running`, and no waiting badge). The fake answers the
+three `regex.*Preset*` methods from memory while every `preset.*` method stays
+refused, which is the same line the fake already drew: what it cannot honestly
+model is a host-side *file* — a preset library, a script body, a snapshot —
+while which preset is active and what rules it ships are data. Its seed carries
+one rule of each shape the measured preset is made of, the empty-pattern
+separator included, so the skipped-rows line has something real to render
+against.
+
 ## 74. Every cost figure also counts Iris's own compaction summaries, and says how many
 
 **Kind:** deliberate improvement, on a surface upstream does not have. §70 is

@@ -598,6 +598,70 @@ async function main(): Promise<void> {
   // unconditionally would put a dozen fields in the drawer for every reader.
   assert.doesNotMatch(withRegex, /Trim out/, 'the rule editor is open before anyone opened it')
 
+  // ------------------------------------------- regex, the preset tier
+  /*
+   * The third tier, in **both** of its states.
+   *
+   * Rendered twice on purpose. The refused render is the one a fresh profile
+   * actually sees — this tier arrives off — and the assertions there are about
+   * a section that has to explain itself while running nothing: the preset's
+   * name, the rules it ships, the count that is *not* running, the reason, and
+   * the rows the reader dropped. The allowed render then pins that the same
+   * section reports a running count once the switch is on, which is the half a
+   * default-off feature can ship broken with every other check green.
+   */
+  await wired.store.getState().loadPresetRegex()
+  const presetHeld = wired.store.getState()
+  assert.ok(
+    (presetHeld.presetRegex ?? []).length > 0,
+    'the fake no longer seeds a preset regex tier, so the panel cannot render',
+  )
+  assert.equal(
+    presetHeld.presetRegexAllowed,
+    false,
+    'the fake seeds the preset tier as allowed, so the default-off state is never rendered',
+  )
+  assert.ok(
+    presetHeld.presetRegexMalformed > 0,
+    'the fake no longer seeds an unrunnable preset row, so the skipped-rows line cannot render',
+  )
+
+  const withPresetRegex = render(wired.store, slots.core)
+  assert.match(withPresetRegex, /This preset’s regex/, 'the preset regex section is missing')
+  assert.match(withPresetRegex, /狐神抚/, 'the section does not say which preset the rules came from')
+  assert.match(withPresetRegex, /去除思维链/, 'the seeded preset rule is not listed')
+  // The default, stated as a count rather than as an absence: "3 rules, not
+  // enabled" is the sentence that tells a reader the preset they imported
+  // carries rules at all.
+  assert.match(withPresetRegex, /3 rules, not enabled/, 'the refused summary does not report the rules')
+  // And the reason, naming what SillyTavern asks for too — the sentence that
+  // stops the default reading as breakage.
+  assert.match(withPresetRegex, /preset_allowed_regex/, 'the default-off state is not explained')
+  // The rows the reader refused, said out loud. Two of the 40 rules in the
+  // measured preset are separators with an empty pattern.
+  assert.match(withPresetRegex, /not rules/, 'the skipped unrunnable rows are not reported')
+  // Both switches, and the third state this panel has that the scoped one does
+  // not: a rule that is on while the tier is off.
+  assert.match(withPresetRegex, /off by the preset/, 'a preset-disabled rule is not distinguished')
+  assert.match(withPresetRegex, /waiting on the switch above/, 'a rule held back by the tier says nothing')
+  assert.doesNotMatch(
+    withPresetRegex,
+    /Delete the script 去除思维链（发送前）/,
+    'a preset’s own rule is offered a delete, which would rewrite the preset file',
+  )
+
+  await wired.store.getState().setPresetRegexAllowed(true)
+  const withPresetRegexOn = render(wired.store, slots.core)
+  assert.match(withPresetRegexOn, /2 of 3 running/, 'an allowed preset tier does not report what runs')
+  assert.doesNotMatch(
+    withPresetRegexOn,
+    /waiting on the switch above/,
+    'a rule still says it is held back after the tier was allowed',
+  )
+  // Put back, so the sections below are checked against the state a fresh
+  // profile has rather than one this block left behind.
+  await wired.store.getState().setPresetRegexAllowed(false)
+
   // ------------------------------------------------------- the script library
   /*
    * The library section, both repositories.

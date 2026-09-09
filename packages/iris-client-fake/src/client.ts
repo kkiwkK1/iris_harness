@@ -23,6 +23,7 @@ import {
   type IrisClient,
   type IrisEvent,
   type RpcError,
+  type PresetRegexAnswer,
   type RpcMethod,
   type RpcRequest,
   type RegexScriptView,
@@ -48,6 +49,8 @@ import {
   DEFAULT_SETTINGS,
   FAKE_GLOBAL_REGEX,
   FAKE_LIBRARY,
+  FAKE_PRESET_NAME,
+  FAKE_PRESET_REGEX,
   FAKE_SCOPED_REGEX,
   FAKE_SCRIPTS,
   FAKE_SUMMARY,
@@ -215,6 +218,17 @@ class InMemoryClient implements FakeClient {
   readonly #regexAllowed = new Map<string, boolean>()
   /** User overrides of a scoped regex rule, keyed `characterId/scriptId`. */
   readonly #regexOverrides = new Map<string, boolean>()
+  /**
+   * Whether the user allows the active preset's own regex tier.
+   *
+   * A plain boolean starting `false`, not an absent-means-allowed map like
+   * `#regexAllowed` above: the preset tier's default is **refused**, which is
+   * upstream's own and the host's, so the fake starts where a fresh profile
+   * does.
+   */
+  #presetRegexAllowed = false
+  /** User overrides of a preset regex rule, keyed by the rule's id. */
+  readonly #presetRegexOverrides = new Map<string, boolean>()
   /** The user's own script library: one global repository and one per card. */
   readonly #library: { global: UserScript[], characters: Record<string, UserScript[]> } = {
     global: FAKE_LIBRARY.global.map(script => ({ ...script })),
@@ -891,6 +905,36 @@ class InMemoryClient implements FakeClient {
         }
         this.#regexOverrides.set(`${characterId}/${scriptId}`, enabled)
         return this.#scopedRegexView(characterId)
+      }
+
+      /*
+       * The preset tier, held in memory beside the other two.
+       *
+       * Answered while every `preset.*` method stays refused, and the line is
+       * the same one drawn above: what a fake cannot honestly model is a
+       * host-side *file* — a preset library, a script body, a snapshot. Which
+       * preset is active and what rules it ships are data, and the panel that
+       * shows them is unrenderable without an answer.
+       */
+      case 'regex.presetList':
+        return this.#presetRegexView()
+
+      case 'regex.setPresetAllowed': {
+        const { allowed } = params as RpcRequest<'regex.setPresetAllowed'>
+        this.#presetRegexAllowed = allowed
+        return this.#presetRegexView()
+      }
+
+      case 'regex.setPresetEnabled': {
+        const { scriptId, enabled } = params as RpcRequest<'regex.setPresetEnabled'>
+        // Checked against the **runnable** rows, not the seed, so a switch over
+        // a separator the reader dropped is refused here exactly as the host
+        // refuses it.
+        if (!this.#presetRegexView().scripts.some(row => row.script.id === scriptId)) {
+          throw new FakeRpcError('not-found', `no preset regex script "${scriptId}"`)
+        }
+        this.#presetRegexOverrides.set(scriptId, enabled)
+        return this.#presetRegexView()
       }
 
       case 'scriptLibrary.list': {
@@ -1725,6 +1769,34 @@ class InMemoryClient implements FakeClient {
     })
     // `!== false`: absent means allowed, the host's convention.
     return { scripts, allowed: this.#regexAllowed.get(characterId) !== false }
+  }
+
+  /**
+   * The active preset's own regex tier, with both switches reported.
+   *
+   * Rows whose pattern is empty are **dropped and counted**, which is what the
+   * host's reader does: an empty pattern matches at every position, so the two
+   * separator rows the measured preset carries are not rules. The count is
+   * answered rather than swallowed, or a preset with 38 rules and one with 40
+   * of which 2 cannot run would look the same to the panel.
+   * @returns the rows, the gate, and how many rows were refused.
+   */
+  #presetRegexView(): PresetRegexAnswer {
+    const runnable = FAKE_PRESET_REGEX.filter(script => script.findRegex !== '')
+    const scripts = runnable.map(script => {
+      const byPreset = script.disabled !== true
+      return {
+        script: { ...script },
+        enabledByCard: byPreset,
+        enabled: this.#presetRegexOverrides.get(String(script.id)) ?? byPreset,
+      }
+    })
+    return {
+      presetName: FAKE_PRESET_NAME,
+      scripts,
+      allowed: this.#presetRegexAllowed,
+      malformed: FAKE_PRESET_REGEX.length - runnable.length,
+    }
   }
 
   /**

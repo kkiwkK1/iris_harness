@@ -21,7 +21,13 @@ export {
   summarize,
 } from './connections.ts'
 export { mergeSettings } from './settings.ts'
-export { DEFAULT_SETTINGS, seedCharacters, seedChats } from './seed.ts'
+export {
+  DEFAULT_SETTINGS,
+  FAKE_PRESET_NAME,
+  FAKE_PRESET_REGEX,
+  seedCharacters,
+  seedChats,
+} from './seed.ts'
 export {
   fakeBookEntries,
   fakeCardWorldbook,

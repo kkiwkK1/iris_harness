@@ -319,6 +319,13 @@ const PROBES: Record<string, unknown> = {
   'regex.scopedList': { characterId: 'no-such-card' },
   'regex.setScopedAllowed': { characterId: 'no-such-card', allowed: true },
   'regex.setScopedEnabled': { characterId: 'no-such-card', scriptId: 'nope', enabled: true },
+  // The preset tier answers about whichever preset is active — on the probe
+  // host that is the composition's own file, which carries no library name, so
+  // the list comes back empty and the two writes refuse by *naming* that.
+  // Either way the handler ran, which is all this table asks.
+  'regex.presetList': {},
+  'regex.setPresetAllowed': { allowed: true },
+  'regex.setPresetEnabled': { scriptId: 'nope', enabled: true },
   'scriptLibrary.list': {},
   'scriptLibrary.read': { scope: 'global', id: 'nope' },
   // Deliberately the invalid pairing (a character repository with no character

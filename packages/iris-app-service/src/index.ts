@@ -46,6 +46,7 @@ import { openGlobalScope } from './context.ts'
 import { DEFAULT_PRUNE } from './prune.ts'
 import { serveSandboxAsset } from './sandbox-assets.ts'
 import { ScriptCache } from './script-cache.ts'
+import { presetRegexSource } from './regex.ts'
 import { ScriptPolicyStore } from './scripts.ts'
 import { ScriptLibraryStore } from './script-library.ts'
 import { ScriptVariableStore } from './script-variables.ts'
@@ -92,7 +93,18 @@ export {
   type PromptInput,
   type PromptResult,
 } from './prompt.ts'
-export { placementFor, runScripts, scriptsOf, substituteFor, type ScopedRegexPolicy } from './regex.ts'
+export {
+  placementFor,
+  presetRegexSource,
+  presetRegexTier,
+  readPresetRegex,
+  runScripts,
+  scriptsOf,
+  substituteFor,
+  type PresetRegexPolicy,
+  type PresetRegexTier,
+  type ScopedRegexPolicy,
+} from './regex.ts'
 export {
   DiagnosticBuffer,
   DEFAULT_LIMITS,
@@ -566,6 +578,29 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // beside the cards rather than inside them — see `paths.scriptLibrary`.
   const scriptLibrary = new ScriptLibraryStore(paths.scriptLibrary)
 
+  /**
+   * The last malformed-row report, so one preset is said once rather than on
+   * every chat open.
+   *
+   * Keyed by preset **and count**: the same preset reporting a different number
+   * is new information (its file changed under us), and the same pair twice is
+   * the same fact read twice. Deduplicated rather than dropped, because the
+   * durable channel for this number is the panel — `regex.presetList` carries
+   * `malformed` — and the log line exists for the operator who is reading a
+   * transcript rather than a drawer.
+   */
+  let reportedPresetRegex: string | undefined
+  const reportMalformedPresetRegex = (tier: { presetName: string, malformed: number, scripts: readonly unknown[] }): void => {
+    const key = `${tier.presetName}:${String(tier.malformed)}`
+    if (reportedPresetRegex === key) return
+    reportedPresetRegex = key
+    ctx.logger.warn(
+      `preset regex: "${tier.presetName}" carries ${String(tier.malformed)}`
+      + ` unrunnable rule(s) (no pattern, or an empty one) — skipped;`
+      + ` ${String(tier.scripts.length)} runnable`,
+    )
+  }
+
   const chats = new ChatStore(
     paths.chats, library, scriptVariables, globalScope, worldbooks,
     // Read through a closure rather than captured: the selection is a setting
@@ -591,6 +626,22 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // and again on every `refreshRegex`. A closure for the reason the global
     // list above is one: both are edited while the host runs.
     characterId => scripts.scopedRegex(characterId),
+    // The **active preset's** own regex tier — upstream's third tier, read
+    // from the switched-in preset body's `extensions.regex_scripts` and gated
+    // on the user having allow-listed that preset by name.
+    //
+    // A closure over the *persisted* selection, which is the same pair the
+    // service's own panel projection reads (`activePresetRegexSource`), so the
+    // list a reader switches and the list a conversation runs cannot come from
+    // two different presets. Read fresh here for one more reason than the two
+    // closures above have: which preset is active is itself runtime state, so a
+    // value captured at boot would keep the launch preset's rewrites running
+    // over prompts assembled from a different preset entirely.
+    presetRegexSource(
+      () => ({ name: settings.presetName(), body: settings.presetBody() }),
+      presetName => scripts.presetRegex(presetName),
+      reportMalformedPresetRegex,
+    ),
   )
   // Kept apart from `script-policy.json` because they answer to different
   // owners: the policy file is the user's decisions, this is data cards wrote.
@@ -841,6 +892,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('regex.scopedList', handlers['regex.scopedList']),
       ctx.irisRpc.register('regex.setScopedAllowed', handlers['regex.setScopedAllowed']),
       ctx.irisRpc.register('regex.setScopedEnabled', handlers['regex.setScopedEnabled']),
+      ctx.irisRpc.register('regex.presetList', handlers['regex.presetList']),
+      ctx.irisRpc.register('regex.setPresetAllowed', handlers['regex.setPresetAllowed']),
+      ctx.irisRpc.register('regex.setPresetEnabled', handlers['regex.setPresetEnabled']),
       ctx.irisRpc.register('scriptLibrary.list', handlers['scriptLibrary.list']),
       ctx.irisRpc.register('scriptLibrary.read', handlers['scriptLibrary.read']),
       ctx.irisRpc.register('scriptLibrary.save', handlers['scriptLibrary.save']),

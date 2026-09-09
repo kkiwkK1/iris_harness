@@ -364,3 +364,21 @@ token 都是估算或提供方的口径。所以这一族的词里**不出现「
 （「这个总量里有多少是宿主在折我的历史」）就是合计卡上那一句，不用切模式。
 所以指标切换仍是五项，`check:render` 钉的是**选项个数**而不是某个标题不存在——
 第六个指标无论为什么出现，都该重新走一遍这一段。
+
+任务（接上 ST 正则的第三档：预设内嵌正则，`dev/preset-regex-tier`）追加：
+
+ST 三档按声明顺序跑 global → **preset** → scoped（`extensions/regex/engine.js:11-16`，
+`:99`），预设那一档读活跃预设文件自己的 `extensions.regex_scripts`（`:126`），
+并且**有闸门**：预设名必须在 `extension_settings.preset_allowed_regex[api]` 里（`:126-128`）。
+Iris 此前只有两档，而切进来的预设 body 一直是整份存着的——输入一直在盘上，没人读。
+实测那一份预设（§47）**40 条，18 条启用：6 条改请求、12 条只改显示**，还有 2 条是空
+`findRegex` 的分隔条。所以这一节的文案有一件别的正则面板没有的任务：**它在什么都不跑的
+状态下也要把自己解释清楚**——默认关就是这一档的常态，不是异常。
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `PresetRegexPanel.tsx` | 预设自带的正则那一档，位置在全局档与卡自带档**之间**——因为那是它运行的位置（ST 的 `SCRIPT_TYPES` 迭代顺序），而三节连读时读者比较的正是「谁的改写压过谁」这条轴。摘要分两句：允许时报「N 条，M 条在跑」，未允许时报「N 条，未启用」——**被拒绝的一档仍然整份列出来**（ST 自己也列，`getRegexScripts` 默认 `allowedOnly: false`），空清单会被读成「这份预设没带正则」，而这一档默认就是关的，那句话会是绝大多数读者看到的第一句 | `sectionPresetRegex presetRegexSummary presetRegexRefusedSummary presetRegexNote` |
+| `PresetRegexPanel.tsx` 允许开关 | ST 的 `preset_allowed_regex`。拒绝那一句把代价与**上游的同一要求**一起说出来：预设是一份被到处传的设置文件，而这里有些规则改的是送给模型的文本、不只是你读到的——所以要等你点头；ST 也是同样的要求，预设名进了白名单它自带的正则才会跑。把 ST 的要求写进去是因为「默认关」很容易被读成功能坏了，而读者一旦这样读就会一路点过去 | `presetRegexAllowLabel presetRegexAllowedNote presetRegexRefusedNote presetRegexAllow presetRegexRefuse` |
+| `PresetRegexPanel.tsx` 三个行内标注 | 预设作者关掉的 / 没有标识不能开关（复用 `scopedRegexUnaddressable`）/ **等上面那个开关**。第三个是卡那一节没有的状态：整档被拒绝时单条仍然可以先设好，那一行报的是「如果允许就会跑」而不是「正在跑」，所以要标出来，否则那个勾选框在说谎 | `presetRegexOffByPreset presetRegexHeldBack` |
+| `PresetRegexPanel.tsx` 跳过的行 | 「还有 N 条不是规则——没有查找式，或者查找式是空的」。空查找式不是无害的空转：`new RegExp('')` 在每一个位置都匹配，跑一条就会把替换文本插进每条消息的每个字符之间。这一句是「这份预设有 38 条」与真相之间的差别，所以数目上报到面板（持久渠道），宿主日志再按预设名与数目去重报一次 | `presetRegexMalformed` |
+| `PresetRegexPanel.tsx` 没有库内名称时 | 白名单按预设名登记，而本机可以处在上游表示不出来的状态：跑的是 composition 配置里的那份预设文件，它没有库内名称。这时**整个允许开关不渲染**，只留这一句并给出出路（先另存进预设库）——一个禁用的开关会被读成功能坏了，而这里那句话本身就是控件 | `presetRegexUnnamed` |

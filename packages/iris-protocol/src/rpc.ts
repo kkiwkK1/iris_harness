@@ -848,6 +848,44 @@ export const requestSchemas = {
   }),
 
   /**
+   * The **active preset's** own regex tier, and whether the user lets it run.
+   *
+   * Upstream's third tier: the active preset file's `extensions.regex_scripts`,
+   * read through `presetManager.readPresetExtensionField`
+   * (`extensions/regex/engine.js:126`) and gated on the preset's *name* being
+   * in `extension_settings.preset_allowed_regex[api]` (`:126-128`).
+   *
+   * **No parameters, deliberately.** The subject is whichever preset is active,
+   * because that is the only one whose rules can run — a request naming a
+   * preset would invite a panel to show and switch a tier that is not in play,
+   * and the two writes below would then need to say which preset they meant
+   * while the runner would still only ever read the active one.
+   */
+  'regex.presetList': z.object({}),
+  /**
+   * Allow or refuse the active preset's own regex tier.
+   *
+   * Upstream's `preset_allowed_regex` membership, keyed by preset name. Two
+   * states like the scoped pair above, but **absent means refused** here, which
+   * is upstream's own default rather than a divergence — see
+   * `ScriptPolicyStore.presetRegex` and §53 for why the two tiers' defaults
+   * disagree on purpose.
+   */
+  'regex.setPresetAllowed': z.object({ allowed: z.boolean() }),
+  /**
+   * The user's own on/off for one of the active preset's regex rules.
+   *
+   * Stored beside the user's other decisions rather than written into the
+   * preset file, which a preset being passed around as a file makes stronger
+   * than the same argument about a card. The rule must exist in the active
+   * preset, the same gate `regex.setScopedEnabled` applies.
+   */
+  'regex.setPresetEnabled': z.object({
+    scriptId: z.string().min(1),
+    enabled: z.boolean(),
+  }),
+
+  /**
    * Every script that would run in this character's conversations.
    *
    * **Three repositories now, not one.** The card's own, plus the user's global
@@ -1733,6 +1771,43 @@ export type RpcMethod = keyof typeof requestSchemas
 /** The validated request body of one method. */
 export type RpcRequest<M extends RpcMethod> = z.infer<(typeof requestSchemas)[M]>
 
+/**
+ * What the three `regex.*Preset*` methods answer with.
+ *
+ * Named rather than spelled three times, because the three are one reading —
+ * a list and two writes that answer with the list they produced, exactly as
+ * the scoped trio does. A shape repeated inline is a shape that drifts on the
+ * fourth edit.
+ */
+export interface PresetRegexAnswer {
+  /**
+   * The preset the rules came out of, **absent** when the active preset has no
+   * library name.
+   *
+   * That state is a host still assembling with the file its composition
+   * configured, which upstream cannot represent. The allow-list is keyed by
+   * name, so such a tier can never be permitted: `allowed` is `false`,
+   * `scripts` is empty, and the panel says why rather than offering a control
+   * that could not be honoured.
+   */
+  presetName?: string
+  /** One row per runnable rule, in the preset's own order. */
+  scripts: ScopedRegexView[]
+  /** Whether the user has allow-listed this preset — absent from the store means no. */
+  allowed: boolean
+  /**
+   * How many stored rows the reader refused.
+   *
+   * A rule with no `replaceString`, or with an **empty** `findRegex` — two of
+   * the 40 rules in the one preset measured for §47 are UI separators of
+   * exactly that shape, and an empty pattern matches at every position, so
+   * running one would splice its replacement between every character of every
+   * message. Reported rather than dropped in silence: a preset with 38 rules
+   * and one with 40 of which 2 are unrunnable look identical otherwise.
+   */
+  malformed: number
+}
+
 /** What each method resolves with. */
 export interface RpcResponseMap {
   'chat.list': { chats: ChatSummary[] }
@@ -2036,6 +2111,19 @@ export interface RpcResponseMap {
   'regex.scopedList': { scripts: ScopedRegexView[], allowed: boolean }
   'regex.setScopedAllowed': { scripts: ScopedRegexView[], allowed: boolean }
   'regex.setScopedEnabled': { scripts: ScopedRegexView[], allowed: boolean }
+
+  /**
+   * The active preset's own tier, and whether it may run.
+   *
+   * The same row shape as the scoped tier — one file's rules with the user's
+   * two switches over each — because it is the same fact about a different
+   * document, and a second view type would be two places to keep one panel's
+   * reading in step. The envelope's own fields are on
+   * {@link PresetRegexAnswer}.
+   */
+  'regex.presetList': PresetRegexAnswer
+  'regex.setPresetAllowed': PresetRegexAnswer
+  'regex.setPresetEnabled': PresetRegexAnswer
 
   /**
    * The user's own library. Global first, then this character's — run order.

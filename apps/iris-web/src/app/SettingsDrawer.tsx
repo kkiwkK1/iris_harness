@@ -30,6 +30,7 @@ import { DemoActionsSection } from './DemoActionsSection.tsx'
 import { HostReports } from './HostReports.tsx'
 import { NoticeLog } from './NoticeLog.tsx'
 import { PresetPanel } from './PresetPanel.tsx'
+import { PresetRegexPanel } from './PresetRegexPanel.tsx'
 import { PersonaPanel } from './PersonaPanel.tsx'
 import { RegexPanel } from './RegexPanel.tsx'
 import { ScopedRegexPanel } from './ScopedRegexPanel.tsx'
@@ -161,10 +162,20 @@ export function SettingsDrawer({
             <RegexPanel />
 
             {/*
-              The card's own tier, under the profile's, because that is the order
+              The active preset's own tier, between the profile's and the card's,
+              because that is where it runs: upstream's `SCRIPT_TYPES` iterates
+              global → preset → character. It sits here rather than under the
+              preset section above — which is its *subject* — because these
+              sections are read as a sequence, and a reader comparing them is
+              comparing along the axis that decides which rewrite wins.
+            */}
+            <PresetRegexPanel />
+
+            {/*
+              The card's own tier, under the other two, because that is the order
               they run in — upstream's `SCRIPT_TYPES` iteration puts global
-              first. A reader comparing the two lists is comparing them along
-              the axis that decides which rewrite wins.
+              first and the card's last. A reader comparing the lists is
+              comparing them along the axis that decides which rewrite wins.
             */}
             <ScopedRegexPanel />
 
