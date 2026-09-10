@@ -134,8 +134,19 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * invariant holds at 53 KiB with `FRAME_COUNT_LIMIT` where it is — 19 against a
  * half-degradation point of 19.3 — which is what the 52 KiB paragraph meant by
  * "19 holds to about 55 KiB", and the row is in the table below.
+ *
+ * **54 KiB, and this time the gate moves to 18.** Two card-surface changes
+ * landed on the same day: the four dialog names and the live `chat` array
+ * (`frame.ts`, 52488 → 52947) and the `getContext()` absence report with its
+ * three `has` repairs (→ 52825 on its own). Each kept its data in the fetched
+ * member table and each fit under 53 KiB alone; together the bootstrap is
+ * 53285 bytes, 37 past the line once the wrapper is counted. The 1.8 KiB the
+ * 53 KiB paragraph said was left was spent by two branches that each measured
+ * against the other's absence — which is the seam this constant exists to
+ * catch. At 54 KiB the half-degradation point is 18.96, so 19 no longer sits
+ * below it and the gate goes to 18; the row is in the table below.
  */
-export const FRAME_OVERHEAD_BYTES = 53 * 1024
+export const FRAME_OVERHEAD_BYTES = 54 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -186,6 +197,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * | 50 KiB | 41.0 | 20.5 | 20 | held, half a frame from the line; 52 KiB would move the gate |
  * | 52 KiB | 39.4 | 19.7 | 20 | **false** → gate 19, the move 50 said 52 would cost |
  * | 53 KiB | 38.6 | 19.3 | 19 | held — the first increment since 41 KiB that cost no frame |
+ * | 54 KiB | 37.9 | 19.0 | 19 | **false** → gate 18, two same-day branches spent the 1.8 KiB together |
  *
  * Both times the reasonable-looking response was to raise the constant above and
  * treat the ratio as incidental; both times the invariant said otherwise, and
@@ -231,8 +243,15 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * why, and how much of the change went into the member table instead), and 19
  * against a half-degradation point of 19.3 is the first increment since 41 KiB
  * that cost no frame. About 2 KiB of the room is left.
+ *
+ * **18, at 54 KiB, by the same table.** The room was spent by two branches at
+ * once (the constant above says how), and 19 against a half-degradation point
+ * of 18.96 fails the invariant by four hundredths of a frame. 18 is the largest
+ * value that holds, and it holds to about 58 KiB. The alternative — trimming
+ * 37 bytes out of a minified bootstrap to keep 19 — would have been repairing
+ * the reading to fit the instrument, the move the table above refused twice.
  */
-export const FRAME_COUNT_LIMIT = 19
+export const FRAME_COUNT_LIMIT = 18
 
 /** One interface block that could become a frame. */
 export interface FrameCandidate {

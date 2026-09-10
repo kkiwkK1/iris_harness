@@ -5008,3 +5008,33 @@ every corpus count re-measured with its own evidence lines; the two divergences
 found are the missing `preset.get` arm and `getCharData`'s evidence card
 (人贩子物语), which is in neither corpus reachable from this tree — so that one
 name can be neither confirmed nor built here.
+
+## 86. The frame budget moves to 54 KiB and the gate to 18, because two branches spent the same headroom
+
+**Kind:** cost, recorded where it was paid.
+
+**Measured.** 2026-09-10, on the rebase of `dev/card-surface-used-members` onto a
+main that already carried `dev/card-surface-census`: `build:sandbox` refused with
+`a frame now costs about 54309 bytes (bootstrap 53285 + 1024 wrapper) but
+FRAME_OVERHEAD_BYTES is 54272`. Each branch alone fit under 53 KiB — 52,947 bytes
+with 301 to spare for the dialog names and the live `chat` array (§83, §84),
+52,825 with 423 to spare for the `getContext()` absence report and the three `has`
+repairs (§82) — and each report said so. Both measured their headroom against a
+main the other had not reached yet, and the 1.8 KiB the 53 KiB row left was spent
+twice.
+
+**Now.** `FRAME_OVERHEAD_BYTES` is 54 KiB; the table in `frame-budget.ts` gains
+the row `54 KiB | 37.9 | 19.0 | 19 | false → gate 18`, and `FRAME_COUNT_LIMIT` is
+18: the invariant `FRAME_COUNT_LIMIT < degradesAt / 2` fails at 19 by four
+hundredths of a frame, and 18 is the largest value that holds (to about 58 KiB).
+Trimming 37 bytes out of the minified bootstrap to keep 19 was considered and
+refused for the reason the table refused it twice before: it repairs the reading
+to fit the instrument. The behaviour change is the one the gate always makes —
+the nineteenth live frame on one screen becomes a named, openable placeholder —
+and `WINDOWING.md`'s corpus measurement never reaches sixteen.
+
+**What would overturn it.** A bootstrap slimming pass that moves the measured
+frame back under 53 KiB with room to spare (the table would then get a row the
+other way, and the gate its frame back); or the two-branch shape recurring, which
+would argue for the seam itself (a `build:sandbox` run on the merge result, not on
+each branch) rather than for another kibibyte.
