@@ -39,7 +39,6 @@ import { runCard } from '../sandbox/runner.ts'
 import { PROBE_SCRIPT } from './probe-script.ts'
 import { modeFor, stripCodeFence } from '../sandbox/script-source.ts'
 import { librariesFor } from '../sandbox/libraries.ts'
-import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import {
   SANDBOX_MANIFEST_PATH,
   parseSandboxManifest,
@@ -167,7 +166,7 @@ export function SandboxProbe(): ReactElement | null {
       setRunningCard(undefined)
       mount.current?.replaceChildren()
       window.clearTimeout(silence.current)
-      resetObservations('loading bootstrap…')
+      resetObservations('resolving sandbox assets…')
       // "dispatched", not "started": this is set before the frame exists, so
       // calling it started would claim the body had begun when nothing had.
       setHarness({
@@ -175,15 +174,10 @@ export function SandboxProbe(): ReactElement | null {
         ...(scriptId === undefined ? {} : { scriptId }),
       })
 
-      let bootstrap: string
-      // Both come from the same manifest read, so the probe cannot end up
-      // pairing one build's bootstrap with another build's preset.
-      let assets: SandboxAssets | undefined
+      // Every artifact comes from the same manifest read, so the probe cannot end
+      // up pairing one build's bootstrap with another build's preset.
+      let assets: SandboxAssets
       try {
-        // `/sandbox/` — under `public/`, the one directory Vite serves verbatim.
-        // Fetched from anywhere else in the project root it comes back rewritten
-        // as an ES module, and the `import` that adds is a parse error in the
-        // classic script it ends up inside.
         // Named by the manifest, because the artifacts carry content hashes now.
         // A fixed name here would fetch a file this build did not produce.
         const manifest = await fetch(SANDBOX_MANIFEST_PATH)
@@ -191,28 +185,20 @@ export function SandboxProbe(): ReactElement | null {
         const parsed = parseSandboxManifest(await manifest.text())
         if (typeof parsed === 'string') throw new Error(parsed)
         assets = parsed
-
-        const response = await fetch(parsed.bootstrap)
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        bootstrap = await response.text()
       } catch (error: unknown) {
         const why = error instanceof Error ? error.message : String(error)
-        setHarness({ status: `no bootstrap: ${why} — run "npm run build:sandbox"` })
+        setHarness({ status: `no sandbox assets: ${why} — run "npm run build:sandbox"` })
         return
       }
 
-      // Checked before injection, because after it there is nobody left to check.
-      // A transformed bootstrap fails at PARSE time, so the frame's own reporter —
-      // which is runtime — never exists, and the frame goes silent instead of
-      // saying what went wrong.
-      const unusable = checkBootstrap(bootstrap)
-      if (unusable !== undefined) {
-        setHarness({
-          status: 'the bootstrap is not usable',
-          lastRun: { label, result: 'bad bootstrap', detail: unusable },
-        })
-        return
-      }
+      /*
+       * **The bootstrap's bytes are no longer fetched or checked here.** The
+       * frame loads them itself by hashed URL (§91), so a transformed or missing
+       * file now arrives as the frame's own `bootstrap-error` through
+       * `onBootstrapError` below — which is where this probe already shows a
+       * bootstrap failure, and is the report of the frame that actually loaded
+       * the bytes rather than of a second copy this panel fetched.
+       */
 
       // The real snapshot when the host will give one, a labelled stand-in when
       // it will not. Against the fake it will not, and for a probe measuring the
@@ -229,12 +215,12 @@ export function SandboxProbe(): ReactElement | null {
 
       const card = runCard(
         {
-          bootstrap,
+          bootstrapUrl: `${window.location.origin}${assets.bootstrap}`,
           // The probe runs one body at a time on purpose: it exists to observe a
           // single script closely, not to reproduce a card's whole set.
           scripts: [{ id: scriptId, code: stripCodeFence(code) }],
           mode: modeFor(kind),
-          libraries: librariesFor(kind, `${window.location.origin}${assets?.preset ?? ''}`),
+          libraries: librariesFor(kind, `${window.location.origin}${assets.preset}`),
           documentGranted: granted,
           // Same origin as the page: the host serves both the interface and the proxy.
           bundleOrigin: window.location.origin,

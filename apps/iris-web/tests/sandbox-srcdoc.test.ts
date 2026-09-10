@@ -12,9 +12,35 @@ import {
   unblockFontStylesheets,
   withMessageCss,
 } from '../src/sandbox/srcdoc.ts'
+import {
+  BOOTSTRAP_MARKER,
+  BOOTSTRAP_SPOKE,
+  BOOTSTRAP_TAG_MARK,
+  bootstrapGuard,
+} from '../src/sandbox/bootstrap-contract.ts'
 
 /** Iris's own origin, as the runner supplies it. */
 const SELF = 'http://127.0.0.1:5173'
+
+/**
+ * A bootstrap URL shaped like the real one, with a findable fragment.
+ *
+ * The fragment is what the positional tests search for. They used to pass the
+ * bootstrap's **source** and look for a word inside it; the frame fetches it now,
+ * so what is in the document is a tag, and `bootstrap-MARKER` is the part of the
+ * tag no other element can contain.
+ */
+const BOOT = `${SELF}/sandbox/bootstrap-MARKER.js`
+
+/** The whole opening script tag containing an index. */
+function tagAround(doc: string, at: number): string {
+  return doc.slice(doc.lastIndexOf('<script', at), doc.indexOf('>', at) + 1)
+}
+
+/** How many script elements a document closes. */
+function closers(doc: string): number {
+  return doc.match(/<[/]script>/g)?.length ?? 0
+}
 
 test('the frame policy allows eval and pins where code comes from', () => {
   // The distinction docs/SANDBOX.md now draws: CSP cannot forbid `eval` here, because
@@ -45,48 +71,140 @@ test('the frame cannot open a nested context or post a form', () => {
   assert.match(policy, /default-src 'none'/)
 })
 
-test('the bootstrap is inlined, not fetched', () => {
-  // An opaque-origin frame has no useful same-origin path, and a stable public
-  // URL would be one more answer that could be substituted.
-  const doc = buildSrcdoc('tok', 'console.log(1)', { networkGranted: false, libraries: [], selfOrigin: SELF })
+test('the bootstrap is fetched by a blocking classic tag, not inlined', () => {
+  /*
+   * **The inversion of what this test used to assert, and the reason is the
+   * whole of §91.** It read "the bootstrap is inlined, not fetched" and pinned
+   * that the frame loaded *nothing* — on the reasoning that an opaque-origin
+   * frame has no useful same-origin path and a stable public URL is one more
+   * answer that could be substituted. What that cost was 53 KB per frame with no
+   * cache, which pushed the reading window's frame gate down four times.
+   *
+   * The four properties asserted here are the premise the move rests on, and
+   * every one of them fails silently if it goes:
+   *
+   * - no `async`/`defer`/`type` — a classic script with none of them finishes
+   *   before the parser moves on, which is what makes the bootstrap precede the
+   *   card's markup. Deferred, the document is identical and the timing is
+   *   inverted.
+   * - `crossorigin="anonymous"` — an opaque origin redacts a cross-origin throw
+   *   to the bare words `Script error.`, and for this file that would erase the
+   *   only diagnostic the frame has.
+   * - the marker attribute — the guard finds the tag by it, to read the URL off
+   *   the document rather than hold a second copy of it.
+   */
+  const doc = buildSrcdoc('tok', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF })
 
-  assert.match(doc, /<script>console\.log\(1\)<\/script>/)
-  assert.doesNotMatch(doc, /<script[^>]+src=/, 'the frame should load nothing')
+  /*
+   * Located by its `src`, not by the marker attribute. The guard's own source
+   * contains `script[data-iris-bootstrap]` — that is how it finds the tag at run
+   * time — so a marker search finds whichever element comes first, and under a
+   * wrong order that is the guard.
+   */
+  const at = doc.indexOf(`src="${BOOT}"`)
+  assert.ok(at !== -1, `no tag loading ${BOOT} in the document`)
+  const tag = tagAround(doc, at)
+
+  assert.ok(tag.includes(BOOTSTRAP_TAG_MARK), tag)
+  assert.doesNotMatch(tag, /\basync\b/, tag)
+  assert.doesNotMatch(tag, /\bdefer\b/, tag)
+  assert.doesNotMatch(tag, /\btype=/, tag)
+  assert.match(tag, /crossorigin="anonymous"/, tag)
+})
+
+test('a bootstrap that never ran is named by the frame, and the markup is not let loose', () => {
+  /*
+   * The failure inlining could not produce: the tag is in the document and the
+   * code never ran — a failed request, a CSP refusal, or bytes that would not
+   * parse. Without a check, a card's markup then runs against no bridge at all
+   * and throws a `ReferenceError` per member, every one of them attributed to the
+   * card. This project has already shipped a frame that reported nine missing
+   * library names when the truth was one blocked script.
+   *
+   * Asserted as five properties of the guard's source, because the guard cannot
+   * be executed without a browser (`tests/frame-bootstrap-live.test.ts` does
+   * that, with a 404 control):
+   *
+   * 1. it fires on the **absence** of the marker, so a healthy frame is silent;
+   * 2. it stays silent when the bootstrap has already spoken for itself, so a
+   *    real error is not overwritten by a guess about the network;
+   * 3. it reports through the `bootstrap-error` channel that already exists for
+   *    "this frame never started", rather than inventing a second one;
+   * 4. and 5. it makes the rest of the document inert two ways — a swallowing
+   *    `<template>` and `window.stop()`, which fail in opposite directions.
+   */
+  const guard = bootstrapGuard()
+
+  assert.match(guard, new RegExp(`${BOOTSTRAP_MARKER}===true`), 'the guard no longer reads the marker')
+  assert.match(
+    guard,
+    new RegExp(`${BOOTSTRAP_SPOKE}===true`),
+    'the guard would speak over the bootstrap’s own error report',
+  )
+  assert.match(guard, /type:'bootstrap-error'/, 'the guard reports on a channel nothing reads')
+  assert.match(guard, /window\.stop\(\)/, 'nothing aborts the parse')
+  assert.match(guard, /document\.write\('<template /, 'nothing makes the following markup inert')
+
+  // And it is in the document, after the tag it checks.
+  const doc = buildSrcdoc('tok', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const guardAt = doc.indexOf(guard)
+  assert.ok(guardAt !== -1, 'the frame carries no guard')
+  // The tag located by its `src`, for the reason the test above gives: the
+  // marker attribute also appears inside the guard's own source.
+  assert.ok(
+    doc.indexOf(`src="${BOOT}"`) < guardAt,
+    'the guard runs before the tag it checks, so it would report every healthy frame as broken',
+  )
 })
 
 test('the run token reaches the bootstrap through the markup', () => {
-  const doc = buildSrcdoc('abc123', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const doc = buildSrcdoc('abc123', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF })
   assert.match(doc, /<meta name="iris-token" content="abc123">/)
 })
 
 test('a token containing markup cannot escape its attribute', () => {
-  const doc = buildSrcdoc('a"><script>bad()</script>', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const doc = buildSrcdoc('a"><script>bad()</script>', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF })
 
   assert.doesNotMatch(doc, /content="a"><script>bad/)
   assert.match(doc, /&quot;&gt;&lt;script&gt;/)
 })
 
-test('a bootstrap containing a closing script tag cannot break out', () => {
-  // The one sequence that ends a script element early. Split rather than
-  // HTML-escaped: the payload is JavaScript, and escaping inside it would change
-  // the program.
-  //
-  // Asserted with a constructed string rather than a regex — in a test about
-  // escaping, a literal backslash in the pattern is one more layer to reason
-  // about than the thing under test.
+test('a card variable containing a closing script tag cannot break out of the seed', () => {
+  /*
+   * The one sequence that ends a script element early. Split rather than
+   * HTML-escaped: the payload is JavaScript, and escaping inside it would change
+   * the program.
+   *
+   * **The subject moved with §91 and the mechanism did not.** This used to feed
+   * the sequence in as the *bootstrap source*, because the bootstrap was inlined.
+   * The bootstrap is our own build output and is fetched now, so the only
+   * card-influenced text left in a script element is the context snapshot — which
+   * is the one that always mattered, since a card's variables are author-written
+   * and model-influenced text.
+   *
+   * Asserted with a constructed string rather than a regex — in a test about
+   * escaping, a literal backslash in the pattern is one more layer to reason
+   * about than the thing under test. And counted **against a harmless frame**
+   * rather than against the literal 1: the document has several script elements
+   * now, and pinning their number would make this fail for every unrelated tag.
+   */
   const BACKSLASH = String.fromCharCode(92)
-  const doc = buildSrcdoc('tok', `const s = "</script><img onerror=bad()>"`, { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const shape = { networkGranted: false, libraries: [], selfOrigin: SELF, body: '<div>x</div>' }
+  const plain = buildSrcdoc('tok', BOOT, { ...shape, context: { s: 'harmless' } })
+  const doc = buildSrcdoc('tok', BOOT, {
+    ...shape,
+    context: { s: '</script><img onerror=bad()>' },
+  })
 
   assert.equal(doc.includes('</script><img'), false, 'the payload broke out of its element')
   assert.equal(doc.includes(`<${BACKSLASH}/script`), true, 'the sequence was not neutralised')
-  // Exactly one real script element: the one we opened.
-  assert.equal(doc.match(/<[/]script>/g)?.length, 1)
+  assert.equal(closers(doc), closers(plain), 'the payload added a script element to the document')
 })
 
 test('the policy travels in the document, not as an attribute the host must set', () => {
   // The frame is built from `srcdoc`, so there is no response whose headers could
   // carry this. A meta element is the only place it can live.
-  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const doc = buildSrcdoc('tok', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF })
   assert.match(doc, /<meta http-equiv="Content-Security-Policy" content="[^"]+">/)
 })
 
@@ -164,13 +282,13 @@ test('the bootstrap is emitted before the libraries it must be able to report on
   // its error handling first, or a library that fails to load is a silent gap that
   // only surfaces later as `Vue is not defined` — a message naming the symptom and
   // hiding the cause.
-  const doc = buildSrcdoc('tok', 'BOOTSTRAP', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: ['https://cdn.example/vue.js', 'https://cdn.example/vue-router.js'],
     selfOrigin: SELF,
   })
 
-  const bootstrapAt = doc.indexOf('BOOTSTRAP')
+  const bootstrapAt = doc.indexOf('bootstrap-MARKER')
   const firstLibAt = doc.indexOf('vue.js')
   assert.ok(bootstrapAt !== -1 && firstLibAt !== -1)
   assert.ok(bootstrapAt < firstLibAt, 'the bootstrap must be able to watch the libraries load')
@@ -178,7 +296,7 @@ test('the bootstrap is emitted before the libraries it must be able to report on
 
 test('libraries keep their given order', () => {
   // `vue-router` expects `Vue` to already be a global.
-  const doc = buildSrcdoc('tok', '', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: ['https://cdn.example/vue.js', 'https://cdn.example/vue-router.js'],
     selfOrigin: SELF,
@@ -187,12 +305,12 @@ test('libraries keep their given order', () => {
 })
 
 test('library tags are marked so the bootstrap can find them', () => {
-  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: ['https://cdn.example/a.js'], selfOrigin: SELF })
+  const doc = buildSrcdoc('tok', BOOT, { networkGranted: false, libraries: ['https://cdn.example/a.js'], selfOrigin: SELF })
   assert.ok(doc.includes('data-iris-lib'), 'the bootstrap watches for load failures by this marker')
 })
 
 test('a frame with no libraries emits no library tags', () => {
-  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const doc = buildSrcdoc('tok', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF })
   assert.equal(doc.includes('data-iris-lib'), false)
 })
 
@@ -230,7 +348,7 @@ test('a library tag requests CORS, so its errors arrive with names', () => {
    * now been correct at different times, which is precisely why the pairing is
    * asserted somewhere that can see both sides rather than trusted to a comment.
    */
-  const doc = buildSrcdoc('tok', '', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: [`${SELF}/sandbox/preset.js`],
     selfOrigin: SELF,
@@ -251,7 +369,7 @@ test('a message frame carries its markup in the document, after the libraries', 
    * markup, because a card's inline script calls `$()` on its first line and an
    * external `<script src>` without `defer` blocks parsing until it has run.
    */
-  const doc = buildSrcdoc('tok', 'BOOTSTRAP', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: [`${SELF}/sandbox/message-preset-abc.js`],
     selfOrigin: SELF,
@@ -260,7 +378,7 @@ test('a message frame carries its markup in the document, after the libraries', 
 
   assert.ok(doc.includes('id="bridge"'), 'the card markup must be in the document')
   assert.ok(
-    doc.indexOf('BOOTSTRAP') < doc.indexOf('message-preset-abc.js'),
+    doc.indexOf('bootstrap-MARKER') < doc.indexOf('message-preset-abc.js'),
     'the bootstrap installs the channel before anything can fail',
   )
   assert.ok(
@@ -270,7 +388,7 @@ test('a message frame carries its markup in the document, after the libraries', 
 })
 
 test('a message frame cannot scroll itself, which is why height sync is existence', () => {
-  const doc = buildSrcdoc('tok', '', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: [],
     selfOrigin: SELF,
@@ -295,7 +413,7 @@ test('a message’s own sheet is lifted into the head, ahead of the card’s mar
    * nothing else — see `MESSAGE_CSS_MARK`. This is that round trip: attached at
    * one end, lifted at the other, and never rendered twice.
    */
-  const doc = buildSrcdoc('tok', '', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: [],
     selfOrigin: SELF,
@@ -334,7 +452,7 @@ test('a closing style tag inside the CSS cannot end the element', () => {
   assert.ok(attached.includes('img onerror=bad()'), 'the author’s own characters must survive')
   assert.ok(attached.endsWith('<div>x</div>'), 'the markup must follow the sheet whole')
 
-  const doc = buildSrcdoc('tok', '', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false, libraries: [], selfOrigin: SELF, body: attached,
   })
   assert.ok(doc.indexOf('img onerror=bad()') < doc.indexOf('</head>'), 'the payload escaped into the body')
@@ -346,14 +464,14 @@ test('a frame handed no message sheet is exactly the frame it was before', () =>
   assert.equal(withMessageCss('<div>x</div>', ''), '<div>x</div>')
   assert.equal(withMessageCss('<div>x</div>', '   \n  '), '<div>x</div>')
 
-  const doc = buildSrcdoc('tok', '', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false, libraries: [], selfOrigin: SELF, body: '<div>x</div>',
   })
   assert.ok(!doc.includes('data-iris-message-css'))
 })
 
 test('a script frame keeps the minimal reset and gets no markup', () => {
-  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const doc = buildSrcdoc('tok', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF })
 
   // Script bodies arrive as `run` messages, so there is nothing to place — and
   // `overflow:hidden` would be a rule about a document nobody looks at.
@@ -374,7 +492,7 @@ test('the inlined snapshot is a string literal, so card data cannot become code'
     variables: { note: '</script><img src=x onerror=alert(1)>' },
     nested: { deep: 'also "quoted" and \ escaped' },
   }
-  const doc = buildSrcdoc('tok', '', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: [],
     selfOrigin: SELF,
@@ -411,7 +529,7 @@ test('the inlined snapshot is a string literal, so card data cannot become code'
 test('a frame with no inlined snapshot has no seed at all', () => {
   // A script frame's snapshot arrives over the channel, and an empty seed global
   // would give the frame a second, always-stale source for it.
-  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const doc = buildSrcdoc('tok', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF })
   assert.ok(!doc.includes('__iris_context__'))
 })
 test('the inlined snapshot precedes the bootstrap, positionally', () => {
@@ -429,7 +547,7 @@ test('the inlined snapshot precedes the bootstrap, positionally', () => {
    * the whole parse-time order the invariant rests on: seed → bootstrap →
    * markup.
    */
-  const doc = buildSrcdoc('tok', 'BOOTSTRAP_MARKER', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: [],
     selfOrigin: SELF,
@@ -438,7 +556,7 @@ test('the inlined snapshot precedes the bootstrap, positionally', () => {
   })
 
   const seed = doc.indexOf('__iris_context__')
-  const bootstrap = doc.indexOf('BOOTSTRAP_MARKER')
+  const bootstrap = doc.indexOf('bootstrap-MARKER')
   const markup = doc.indexOf('<div id="x"></div>')
   assert.ok(seed !== -1, 'the seed was not emitted')
   assert.ok(
@@ -461,7 +579,7 @@ test('the member table loads before the bootstrap, and blocking', () => {
    * marker — one tick too late, in every frame, every time. That failure has no
    * error in it; the frame simply refuses to run cards and blames a fetch.
    */
-  const doc = buildSrcdoc('tok', 'BOOTSTRAP_MARKER', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: ['https://example.test/preset.js'],
     selfOrigin: SELF,
@@ -469,7 +587,7 @@ test('the member table loads before the bootstrap, and blocking', () => {
   })
 
   const members = doc.indexOf('data-iris-members')
-  const bootstrap = doc.indexOf('BOOTSTRAP_MARKER')
+  const bootstrap = doc.indexOf('bootstrap-MARKER')
   const library = doc.indexOf('data-iris-lib')
   assert.ok(members !== -1, 'the member table was not emitted')
   assert.ok(members < bootstrap, 'the table must load before the bootstrap reads it')
@@ -488,7 +606,7 @@ test('the member table loads before the bootstrap, and blocking', () => {
 test('no member URL emits no tag at all, rather than an empty one', () => {
   // `<script src="">` re-requests the frame's own document, and the failure that
   // produces is nothing like the one it would be standing in for.
-  const doc = buildSrcdoc('tok', 'x', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const doc = buildSrcdoc('tok', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF })
   assert.doesNotMatch(doc, /data-iris-members/)
   assert.doesNotMatch(doc, /<script src=""/)
 })
@@ -506,7 +624,7 @@ test('the head links a stylesheet whose filename a card can recognise', () => {
    * path valid but drops the word — `sentinel.css`, say — fails here. The
    * filename participates in behaviour, and nothing else in the tree says so.
    */
-  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF })
+  const doc = buildSrcdoc('tok', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF })
   const link = /<link rel="stylesheet" href="([^"]+)">/.exec(doc)
   assert.ok(link, `no sentinel stylesheet in the head: ${doc.slice(0, 400)}`)
   assert.match(link[1] ?? '', /fontawesome|font-awesome/)
@@ -514,7 +632,7 @@ test('the head links a stylesheet whose filename a card can recognise', () => {
 })
 
 test('a message frame gets the sentinel too, since its cards run the same guard', () => {
-  const doc = buildSrcdoc('tok', '', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: [],
     selfOrigin: SELF,
@@ -588,7 +706,7 @@ test('both frame kinds give a nested-frame stand-in an iframe’s default size',
    * is exactly how one of them would come to lack it.
    */
   for (const body of [undefined, '<body>an interface</body>']) {
-    const doc = buildSrcdoc('tok', '', {
+    const doc = buildSrcdoc('tok', BOOT, {
       networkGranted: false,
       libraries: [],
       selfOrigin: SELF,
@@ -621,7 +739,7 @@ test('a card’s font stylesheet loads without blocking anything', () => {
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
     + '<link href="https://fonts.googleapis.com/css2?family=Orbitron&display=swap" rel="stylesheet">'
     + '<button onclick="go()">SYSTEM_START</button><script>function go() {}</script>'
-  const doc = buildSrcdoc('tok', '', { networkGranted: false, libraries: [], selfOrigin: SELF, body })
+  const doc = buildSrcdoc('tok', BOOT, { networkGranted: false, libraries: [], selfOrigin: SELF, body })
 
   const link = /<link[^>]*Orbitron[^>]*>/.exec(doc)?.[0]
   assert.ok(link, 'the font link was dropped outright')
@@ -661,7 +779,7 @@ test('a stylesheet that is not the default-admitted font origin is untouched', (
 test('the unblocking is applied where the markup enters the document', () => {
   // Asserted through `buildSrcdoc`, so the transform cannot drift away from the
   // assembly the way a helper nobody calls would.
-  const doc = buildSrcdoc('tok', '', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: [],
     selfOrigin: SELF,
@@ -726,7 +844,7 @@ test('links the policy already answers, or refuses outright, are left alone', ()
 test('the rewrite is applied where static markup enters the document', () => {
   // Through `buildSrcdoc`, so the pass cannot drift from the assembly — and it
   // must run before the font pass, whose output it must not re-edit.
-  const doc = buildSrcdoc('tok', '', {
+  const doc = buildSrcdoc('tok', BOOT, {
     networkGranted: false,
     libraries: [],
     selfOrigin: SELF,

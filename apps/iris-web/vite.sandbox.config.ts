@@ -8,15 +8,26 @@ import { defineConfig } from 'vite'
  * output format has to differ: this one is a **classic IIFE** with no imports at
  * run time, and the app is an ES module graph.
  *
- * Why classic: a card's frame has an opaque origin (`sandbox="allow-scripts"`
- * with no `allow-same-origin`). A module script fetched from there is
- * CORS-checked; a classic script is not. And the host does not serve this at a
- * URL at all — it reads the text and inlines it into the frame's `srcdoc`, which
- * has no module graph to resolve against. Inlining also means the code inside a
- * frame cannot be swapped by anything that can answer a path.
+ * Why classic, in the order the reasons now matter (2026-09-10, §91):
  *
- * The result is one self-contained file at a stable name, which is the whole
- * contract with the host half.
+ * - **A module script is deferred by definition.** The frame loads this with a
+ *   blocking `<script src>` because a card's markup reads bridged names while
+ *   the document is still parsing, so the bootstrap has to finish first. A
+ *   module would run after the whole document — the one ordering this frame
+ *   cannot survive.
+ * - **A module from an opaque origin is CORS-checked** and a classic script is
+ *   not. This used to be the leading reason and is now the second one.
+ *
+ * The host **does** serve it at a URL, and until 2026-09-10 it did not: the
+ * shell read the text and inlined it into every frame's `srcdoc`, on the
+ * reasoning that inlined code cannot be swapped by anything that can answer a
+ * path. What that cost was 53 KB per frame with no cache, charged against the
+ * reading window's byte budget; the substitution worry it answered is covered by
+ * the content hash (a name whose bytes changed is a different name) and by the
+ * frame's CSP, which admits Iris's own origin and nothing else for this.
+ *
+ * The result is still one self-contained file, now at a content-addressed name,
+ * which is the whole contract with the host half.
  */
 export default defineConfig({
   configFile: false,
@@ -32,16 +43,20 @@ export default defineConfig({
      * a frame that sent nothing at all.
      *
      * `public/` is the one directory Vite serves verbatim and copies untouched,
-     * which is exactly the guarantee this file needs. It also gives the host a
-     * stable path inside `dist/` for the production inline.
+     * which is exactly the guarantee this file needs — and it is now load-bearing
+     * for a second reason: the frame fetches this file by URL, so "served
+     * verbatim" is no longer a property of a build step but of every request a
+     * frame makes.
      */
     outDir: 'public/sandbox',
     // NOT emptied: `public/` is a served directory, and emptying a slice of it on
     // every build is a footgun aimed at whatever else ends up there.
     emptyOutDir: false,
     target: 'es2022',
-    // Inlined into markup, so a sourcemap comment would point at a file that is
-    // not served and the frame would log a fetch failure for every card.
+    // No sourcemap: the comment would point at a file the build does not emit,
+    // and every frame would log a fetch failure for it. (Written when this was
+    // inlined into markup; still true now that it is fetched, for the plainer
+    // reason that the `.map` is not there.)
     sourcemap: false,
     lib: {
       entry: fileURLToPath(new URL('./src/sandbox/frame-entry.ts', import.meta.url)),

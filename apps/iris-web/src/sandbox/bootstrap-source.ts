@@ -12,8 +12,24 @@
  * frame simply says nothing, which is the most expensive answer a sandbox can
  * give and the one thing all the diagnostics were built to eliminate.
  *
- * So the check happens before injection, on the outside, where a parse error is
- * still preventable. This is the layer the frame cannot defend for itself.
+ * So the check happens on the outside, where a parse error is still
+ * preventable. This is the layer the frame cannot defend for itself.
+ *
+ * **Its one caller is now the build** (`tools/check-bootstrap.mjs`), and that is
+ * a narrowing worth recording. Until 2026-09-10 the shell fetched the
+ * bootstrap's source, ran this over it, and inlined the text into every frame;
+ * three call sites did so. The frame loads the file itself now (§91), so there
+ * is no text on the shell side to check — and the failure this function was
+ * written for became visible from inside the frame for the first time: a
+ * transformed file is a `<script src>` that parses to nothing, sets no marker,
+ * and is reported by name by the guard in `bootstrap-contract.ts`.
+ *
+ * The two are not redundant and neither replaces the other. This one reads the
+ * **emitted** bytes and can say *what* is wrong with them in a sentence a
+ * developer can act on, at the moment the build produced them; the guard reads
+ * the **served** bytes, cannot see them at all, and can only say that nothing
+ * installed. A dev server that rewrites on the way out is invisible to this
+ * function and visible to the guard; a bundler misconfiguration is the reverse.
  *
  * @module iris-web/sandbox/bootstrap-source
  */

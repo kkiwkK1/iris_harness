@@ -49,8 +49,17 @@ export interface CardScriptsEnv {
     characterId: string,
     scriptId: string,
   ) => Promise<{ ok: true, content: string } | { ok: false, error: { code: string, message: string } }>
-  /** The bootstrap source, fetched once for the whole set. */
-  bootstrap: () => Promise<string>
+  /**
+   * This build's bootstrap URL, resolved once for the whole set.
+   *
+   * Still a call rather than a value, and still awaited before the first frame,
+   * even though nothing downloads 53 KB of source here any more (§91): resolving
+   * it means fetching and validating the asset manifest, which is the step that
+   * can fail — and its failure has to be reported against the card *before* a
+   * frame is built, because a frame pointed at a name this build did not produce
+   * comes up and refuses everything.
+   */
+  bootstrapUrl: () => Promise<string>
   /**
    * Start the card's frame. Injected so the sequencing is testable without a DOM.
    *
@@ -61,7 +70,7 @@ export interface CardScriptsEnv {
   start: (input: {
     scripts: readonly { id: string | undefined, code: string }[]
     context: ScriptContext
-    bootstrap: string
+    bootstrapUrl: string
     documentGranted: boolean
     /** Reports against a script by id, since one frame now speaks for several. */
     onPhase: (scriptId: string | undefined, state: Omit<ScriptRunState, 'scriptId' | 'name'>) => void
@@ -207,13 +216,13 @@ export function startCardScripts(
      */
     let resolved: Awaited<ReturnType<CardScriptsEnv['resolve']>>
     let context: ScriptContext | undefined
-    let bootstrap: string
+    let bootstrapUrl: string
     try {
       resolved = await env.resolve(characterId)
       if (disposed) return
       context = await env.context(chatId, characterId)
       if (disposed) return
-      bootstrap = await env.bootstrap()
+      bootstrapUrl = await env.bootstrapUrl()
     } catch (error: unknown) {
       /*
        * The set could not be prepared. Reported against the card rather than
@@ -278,7 +287,7 @@ export function startCardScripts(
         const card = env.start({
           scripts: loaded.map(entry => ({ id: entry.script.id, code: entry.code })),
           context,
-          bootstrap,
+          bootstrapUrl,
           documentGranted: resolved.documentGranted,
           onPhase: (scriptId, next) => {
             /*

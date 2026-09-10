@@ -29,7 +29,6 @@ import { startCardScripts } from '../sandbox/card-scripts.ts'
 import { cardPopupBridge } from './card-popups.ts'
 import { registerCardEmitter } from './card-bus.ts'
 import { broadcastWindowEvent, registerWindowEventSink } from './window-events.ts'
-import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import { librariesFor } from '../sandbox/libraries.ts'
 import {
   SANDBOX_MANIFEST_PATH,
@@ -237,7 +236,7 @@ export function CardScriptFrames(): ReactElement {
         context: async (chat, character) => actionsOf(store).scriptContext(chat, character),
         body: async (character, scriptId) => actionsOf(store).scriptBody(character, scriptId),
         /*
-         * Resolved once by `bootstrap` and read by `start`.
+         * Resolved once by `bootstrapUrl` and read by `start`.
          *
          * The two callbacks need the same build's artifacts and the controller
          * runs them in that order, so fetching the manifest twice would be a
@@ -246,21 +245,23 @@ export function CardScriptFrames(): ReactElement {
          * the contract's ordering had changed, and quietly falling back to an
          * unhashed guess is how a stale asset gets served again.
          */
-        bootstrap: async () => {
+        bootstrapUrl: async () => {
           /*
-           * Both the name and the bytes are checked, and they catch different
-           * things. The manifest guards against fetching a file this build did
-           * not produce; `checkBootstrap` guards against the right file arriving
-           * transformed — a dev server once returned it as an ES module, which is
-           * a parse error inside a classic `srcdoc` script and therefore silent.
+           * The manifest is fetched and validated; the bootstrap's **bytes** are
+           * not, because nothing on this side reads them any more.
+           *
+           * This used to download the file and run `checkBootstrap` over it,
+           * guarding against the right file arriving *transformed* — a dev server
+           * once answered with an ES module, which is a parse error inside a
+           * classic `srcdoc` script and therefore silent. That guard has moved to
+           * the two places that can now hold it: `tools/check-bootstrap.mjs` runs
+           * the same function over the emitted artifact on every sandbox build,
+           * and the frame's own inline check observes the **served** bytes in the
+           * frame that loaded them — strictly closer to the failure than a
+           * shell-side fetch of a second copy ever was (§91).
            */
           resolvedAssets = await sandboxAssets()
-          const response = await fetch(resolvedAssets.bootstrap)
-          if (!response.ok) throw new Error(`bootstrap: HTTP ${String(response.status)}`)
-          const source = await response.text()
-          const unusable = checkBootstrap(source)
-          if (unusable !== undefined) throw new Error(`bootstrap: ${unusable}`)
-          return source
+          return `${window.location.origin}${resolvedAssets.bootstrap}`
         },
         start: input => {
           /*
@@ -276,7 +277,7 @@ export function CardScriptFrames(): ReactElement {
           let frame: RunningCard | undefined
           frame = runCard(
             {
-              bootstrap: input.bootstrap,
+              bootstrapUrl: input.bootstrapUrl,
               // One frame for the card's whole set. Each script still evaluates
               // as its own module, so their top-level bindings stay separate;
               // what they share is `window`, which is what lets a provider hand

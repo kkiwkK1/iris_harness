@@ -45,8 +45,18 @@ export interface PopupRequest {
 
 /** What one running card needs from the shell. */
 export interface RunnerHost {
-  /** The bootstrap source, already built. */
-  bootstrap: string
+  /**
+   * This build's bootstrap artifact, as a URL the frame will load.
+   *
+   * A URL rather than the source: since 2026-09-10 the frame fetches it with a
+   * blocking classic `<script src>` instead of carrying 53 KB of inlined text
+   * (§91). The name says `Url` because the field's *type* did not change and its
+   * meaning did — a caller still passing source would build a frame whose
+   * bootstrap tag points at a program, and the frame would report the absence by
+   * name rather than behave strangely, but the rename is what stops the mistake
+   * being made in the first place.
+   */
+  bootstrapUrl: string
   /**
    * The card's scripts, in card order — all of them in one frame.
    *
@@ -379,7 +389,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   frame.style.width = '100%'
   frame.style.border = '0'
   frame.style.display = 'block'
-  frame.srcdoc = buildSrcdoc(token, host.bootstrap, {
+  frame.srcdoc = buildSrcdoc(token, host.bootstrapUrl, {
     networkGranted: host.networkGranted,
     libraries: host.libraries,
     ...(host.members === undefined ? {} : { members: host.members }),

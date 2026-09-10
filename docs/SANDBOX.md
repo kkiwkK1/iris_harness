@@ -557,6 +557,15 @@ about Vue at all. That is what happened: MagVarUpdate's publish is gated on
 waited forever, while the missing-libraries banner — which could not name Vue
 either, see below — listed three libraries that bundle never references.
 
+> **2026-09-10: this paragraph is the reason the frame bootstrap, now itself a
+> classic `<script src>`, carries a guard.** "Fails silently — the global simply
+> never appears" describes exactly what a 404'd, CSP-refused or unparseable
+> `bootstrap-<hash>.js` would do, and for that file the consequence is not one
+> missing library but no bridge at all. So the frame checks a marker between the
+> tag and the card's markup instead of trusting the load: §91 and
+> `sandbox/bootstrap-contract.ts`. The finding recorded here is what made that
+> non-negotiable rather than defensive.
+
 ## Preset libraries are pinned and served by Iris
 
 Vue and vue-router are bundled into `sandbox/preset.js` alongside jQuery,
@@ -669,28 +678,44 @@ have. Diagnostics unwrap the routing and name the bundle the card asked for.
 
 ## The bootstrap split does not add a trust boundary
 
-The frame's code arrives in two pieces now. The **policy core** is inlined into
-the srcdoc — every decision about what a card may touch, refuse or read. The
-**member table** is a separate classic script fetched from `/sandbox`, carrying
-the implementations those decisions call: the storage façade, the ST anchors,
-the overlay-region walk, the TavernHelper surface, the nested-frame stand-in,
-the popup API.
+> **2026-09-10: both halves are fetched now, and this section survives the
+> change by getting simpler.** The policy core is no longer inlined into the
+> srcdoc — the frame loads it with a blocking classic
+> `<script src="/sandbox/bootstrap-<hash>.js">`: the same mechanism, the same
+> origin, the same `script-src` entry and the same CORS route as the member
+> table (`notes/apps/iris-web/DEVIATIONS.md` §91). Every numbered point below
+> still holds, and point 4 in particular stops being an argument by analogy and
+> becomes an identity. What the change costs is recorded in §91: the core is
+> refetched per frame like everything else, because each frame is a fresh opaque
+> origin and the HTTP cache is partitioned by it.
 
-The split exists for cost, not for design purity: a member added to the inlined
-core is paid for **once per frame**, and there are up to 20 frames. It moved the
-per-member cost from `20 ×` to `1 ×` and took ~24 KiB off every frame.
+The frame's code arrives in two pieces. The **policy core** carries every
+decision about what a card may touch, refuse or read. The **member table** is a
+second classic script from `/sandbox`, carrying the implementations those
+decisions call: the storage façade, the ST anchors, the overlay-region walk, the
+TavernHelper surface, the nested-frame stand-in, the popup API.
 
-**It is also the decision every added surface now has to make.** The popup API
+The split existed for cost, not for design purity: a member added to the
+**inlined** core was paid for **once per frame**, and there are up to 20 frames.
+It moved the per-member cost from `20 ×` to `1 ×` and took ~24 KiB off every
+frame. **That reason is spent** — the core is fetched now, so a member costs the
+same in either file — and whether the two should still be two artifacts is
+recorded as an open question in §91 rather than answered here.
+
+**It was also the decision every added surface had to make.** The popup API
 (`sandbox/popup-api.ts`) is the worked example: in the core it grew the
 bootstrap by 7.1 KiB and would have forced the reading window's live-frame gate
-from 20 down to 17, because that gate is derived from the per-frame overhead; in
-the table it costs 0.9 KiB of core and the gate did not move
-(`app/frame-budget.ts`, `notes/apps/iris-web/DEVIATIONS.md` §58). What stays in
-the core is what has to: the policy — which names a card may read — and the
-validation of any message the frame believes.
+from 20 down to 17, because that gate was derived from the per-frame overhead; in
+the table it cost 0.9 KiB of core and the gate did not move
+(`app/frame-budget.ts`, `notes/apps/iris-web/DEVIATIONS.md` §58). **That decision
+no longer exists**: as of 2026-09-10 the gate is not derived from the core's
+size, so a member goes wherever it belongs rather than wherever it is cheap
+(§91). What stays in the core is what has to on its own merits: the policy —
+which names a card may read — and the validation of any message the frame
+believes.
 
 The question this section answers is the one that matters more than the saving:
-**does fetching half the frame's code weaken the sandbox?**
+**does fetching the frame's code weaken the sandbox?**
 
 **No, and the reason is that the fetch is not a new capability.** Four things
 have to hold, and all four already did before the split:
@@ -715,11 +740,19 @@ have to hold, and all four already did before the split:
 
 4. **Swapping it is exactly as bad as swapping the bootstrap, and no worse.**
    That is the whole argument. Someone who can write to `dist/sandbox/` can
-   equally rewrite `bootstrap-<hash>.js`, which is inlined into every frame and
-   *is* the policy core. An attacker with that access does not need the table;
-   they already own the decisions. The split therefore changes the **size** of
-   the attack surface, not its **shape**: one more file in a directory where a
-   write was already game over.
+   equally rewrite `bootstrap-<hash>.js`, which *is* the policy core. An attacker
+   with that access does not need the table; they already own the decisions. The
+   split therefore changes the **size** of the attack surface, not its **shape**:
+   one more file in a directory where a write was already game over.
+
+   > **2026-09-10.** This was written when the core was inlined, so it was an
+   > argument *by analogy*: "a write that can reach the table can reach the
+   > bundler's output too". Now that the core is fetched from the same directory
+   > under the same hashed-name-and-`immutable` discipline, the two files are the
+   > same kind of object and the point is an identity rather than a comparison.
+   > Both are covered by exactly one thing — a write boundary on
+   > `dist/sandbox/` — which is what the third bullet under "What would overturn
+   > this" has always said.
 
 ### What the split *did* add, and how it is covered
 
@@ -732,6 +765,19 @@ the bootstrap-error channel, so the panel says **"never started: …"** rather
 than showing a card that runs with a hole in its surface. That sentence is the
 one a reader can act on; a card missing `localStorage` for no stated reason is
 not.
+
+> **2026-09-10: the core can now be absent the same way, and it needed its own
+> answer.** A missing member table is reported *by the core*; a missing **core**
+> has nothing left to report with — a `<script src>` that 404s, is refused by
+> this frame's CSP, or will not parse leaves no exception the parent can see and
+> no reporter in the frame. So the frame carries a small inline guard between the
+> core's tag and the card's markup (`sandbox/bootstrap-contract.ts`): the core
+> sets a marker as its last statement, the guard fires on that marker's absence,
+> names which absence it is, reports on the same `bootstrap-error` channel, draws
+> a named panel in the frame, and makes the rest of the document inert so the
+> card's markup does **not** run against an empty realm. It stays silent when the
+> core ran and threw, because that path has already sent the real error. Checked
+> at build time, in the frame, and in a real browser with a 404 control (§91).
 
 The alternative — carry on with whatever members did arrive — was rejected for
 the reason the whole sandbox is built on: **a card that half-works produces

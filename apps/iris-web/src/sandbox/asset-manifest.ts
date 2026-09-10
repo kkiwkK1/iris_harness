@@ -31,11 +31,13 @@ export interface SandboxAssets {
   /**
    * The card-facing member table.
    *
-   * Split out of the bootstrap so it is fetched once per page instead of inlined
-   * into every frame — that alone took the per-frame cost from 65 KiB to 41 KiB.
-   * It is **required** rather than optional here: a build that emitted no table
-   * would produce frames that come up and refuse to run anything, and the
-   * manifest is the earliest place that can be said.
+   * Split out of the bootstrap when the bootstrap was inlined, which took the
+   * per-frame cost from 65 KiB to 41 KiB. That reason is spent — the bootstrap
+   * is fetched by URL too as of 2026-09-10 (§91) — and the entry is unaffected:
+   * it is **required** rather than optional here for a reason that never
+   * depended on it, because a build that emitted no table would produce frames
+   * that come up and refuse to run anything, and the manifest is the earliest
+   * place that can be said.
    */
   members: string
   preset: string

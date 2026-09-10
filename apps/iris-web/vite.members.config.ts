@@ -9,10 +9,13 @@ import { defineConfig } from 'vite'
  * a frame's opaque origin makes a module script a CORS fetch, and a classic one
  * is not.
  *
- * It differs in the one way the split is for: this is fetched by URL and cached
- * once per page, where the bootstrap is inlined into every frame's `srcdoc` and
- * paid per frame. At twelve live frames that difference is the larger part of
- * the byte budget.
+ * It differed in the one way the split was for: this was fetched by URL where
+ * the bootstrap was inlined into every frame's `srcdoc` and paid per frame, and
+ * at twelve live frames that difference was the larger part of the byte budget.
+ * **Both are fetched by hashed URL as of 2026-09-10** (§91), so the two configs
+ * now differ only in which entry they build and whether they are card-facing.
+ * Whether they should still be two artifacts is an open question recorded
+ * there, not one this file answers.
  */
 export default defineConfig({
   configFile: false,
@@ -22,9 +25,10 @@ export default defineConfig({
     // `public/` is a served directory shared with everything else in it.
     emptyOutDir: false,
     target: 'es2022',
-    // Fetched by URL rather than inlined, so unlike the bootstrap a sourcemap
-    // would resolve — but it is still card-facing code in an opaque origin, and
-    // shipping one buys a reader nothing they cannot get from the source tree.
+    // Fetched by URL, so a sourcemap comment would resolve — but this is
+    // card-facing code in an opaque origin, and shipping one buys a reader
+    // nothing they cannot get from the source tree. (The sandbox build says the
+    // same for the same reason now that it is fetched too.)
     sourcemap: false,
     lib: {
       entry: fileURLToPath(new URL('./src/sandbox/members-entry.ts', import.meta.url)),

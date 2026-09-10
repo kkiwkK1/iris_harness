@@ -3,12 +3,25 @@
  *
  * Pure string assembly, kept out of `runner.ts` so the part that decides what
  * the frame *is* can be asserted without a browser — the frame's own CSP, the
- * token that lets the shell tell frames apart, and the fact that the bootstrap
- * is inlined rather than fetched.
+ * token that lets the shell tell frames apart, and the order in which the
+ * frame's three scripts run.
+ *
+ * **The bootstrap is fetched by content-hashed URL, not inlined.** It was
+ * inlined until 2026-09-10, on the reasoning that a card's markup reads bridged
+ * names at *parse* time so the bootstrap must finish before the body — true, and
+ * satisfied by a blocking classic `<script src>`, which is the same mechanism
+ * the member table has depended on since it was split out. What inlining bought
+ * was one fewer thing to cache-manage; what it cost was 53 KB per frame with no
+ * cache at all, charged against the reading window's byte budget, which had
+ * moved the frame gate down four times. See `notes/apps/iris-web/DEVIATIONS.md`
+ * §91 for the measurement and the one failure the move introduces — a tag in
+ * the document whose code never ran — which `bootstrap-contract.ts`'s guard
+ * exists to name.
  *
  * @module iris-web/sandbox/srcdoc
  */
 
+import { BOOTSTRAP_TAG_MARK, bootstrapGuard } from './bootstrap-contract.ts'
 import { fromProxied, toProxied } from './bundle-proxy.ts'
 import { isAllowedRemote, REMOTE_ALLOWLIST } from './policy.ts'
 
@@ -424,12 +437,15 @@ function liftMessageCss(body: string): { sheet: string, rest: string } {
 /**
  * Build a frame's document.
  *
- * The bootstrap arrives as text and is inlined. Nothing is fetched: an
- * opaque-origin frame has no useful same-origin path, and a stable public URL
- * would be one more thing that has to be cache-managed and one more thing whose
- * answer could be substituted.
+ * The bootstrap arrives as a **URL** and is loaded by a blocking classic
+ * `<script src>` from Iris's own origin — the same origin, the same
+ * `script-src` entry and the same CORS route the member table and the card
+ * libraries already use. A classic script with no `async`/`defer` finishes
+ * before the next script element begins and before the body parses, which is
+ * what the inlining was buying; the guard emitted after it is what turns "that
+ * premise held" from an assumption into an observation.
  * @param token - the run token for this frame, minted per run.
- * @param bootstrap - the built bootstrap source.
+ * @param bootstrapUrl - this build's bootstrap artifact, content-hashed.
  * @param options.networkGranted - whether the user let this card reach the
  * network. No default: a caller that forgot it would build the restrictive policy
  * for a card the user had granted, and the reader would see "Iris refused <host>"
@@ -440,17 +456,17 @@ function liftMessageCss(body: string): { sheet: string, rest: string } {
  */
 export function buildSrcdoc(
   token: string,
-  bootstrap: string,
+  bootstrapUrl: string,
   options: {
     networkGranted: boolean
     libraries: readonly string[]
     /**
      * The card-facing member table's URL.
      *
-     * Loaded once per page and cached by content hash, where the bootstrap is
-     * inlined per frame. Optional so a caller that has not been given one still
-     * builds a frame — it will report the absence by name rather than fail to
-     * exist, which is the more useful of the two failures.
+     * Loaded by content-hashed URL, the same way the bootstrap now is. Optional
+     * so a caller that has not been given one still builds a frame — it will
+     * report the absence by name rather than fail to exist, which is the more
+     * useful of the two failures.
      */
     members?: string
     selfOrigin: string
@@ -492,13 +508,6 @@ export function buildSrcdoc(
   },
 ): string {
   const { networkGranted, libraries, selfOrigin, members } = options
-  // The bootstrap is placed inside a script element, so the one sequence that
-  // could break out of it is a literal `</script`. Split rather than escaped:
-  // the string is JavaScript, and an HTML escape inside it would change the code.
-  // The replacement is built from a code point rather than written as an escape.
-  // A literal backslash here is invisible when it goes missing: `'<\/script'`
-  // and `'</script'` look almost identical and the second is a silent no-op,
-  // which is exactly the bug this line shipped with until a test caught it.
   const { body, context } = options
   /*
    * The message's own sheet, taken off the body and held for the head. See
@@ -507,10 +516,24 @@ export function buildSrcdoc(
    * message frame of a message without a `<style>` of its own.
    */
   const message = liftMessageCss(body ?? '')
+  /*
+   * The seed's payload is placed inside a script element, so the one sequence
+   * that could break out of it is a literal `</script`. Split rather than
+   * escaped: the string is JavaScript, and an HTML escape inside it would change
+   * the code. The replacement is built from a code point rather than written as
+   * an escape — a literal backslash here is invisible when it goes missing,
+   * `'<\/script'` and `'</script'` look almost identical, and the second is a
+   * silent no-op, which is exactly the bug this line shipped with until a test
+   * caught it.
+   *
+   * It used to guard the inlined bootstrap as well. The bootstrap is fetched
+   * now, so the only card-influenced text left in a script element is the
+   * snapshot — which is the one that always mattered: the bootstrap is our own
+   * build output and a card's variables are not.
+   */
   const BACKSLASH = String.fromCharCode(92)
   const escapeClose = (source: string): string =>
     source.split('</script').join(`<${BACKSLASH}/script`)
-  const safe = escapeClose(bootstrap)
 
   /*
    * The initial snapshot, as a global the bootstrap picks up.
@@ -637,7 +660,7 @@ export function buildSrcdoc(
      * other half of why they come second.
      */
     /*
-     * The member table, **before** the inlined bootstrap and blocking.
+     * The member table, **before** the bootstrap and blocking.
      *
      * A classic `<script src>` with no `async`/`defer` finishes before the next
      * script element begins, so by the time the bootstrap's first line runs the
@@ -681,7 +704,45 @@ export function buildSrcdoc(
      * have.
      */
     seed,
-    `<script>${safe}</script>`,
+    /*
+     * The bootstrap, **blocking and classic**, from Iris's own origin.
+     *
+     * No `async`, no `defer`, no `type="module"` — and none of those is a style
+     * choice. A classic script with none of them runs to completion before the
+     * parser moves past it, which is what makes every ordering claim in this
+     * function true: the seed is already set, the member table has already
+     * published, and the card's markup has not parsed yet. `defer` would move it
+     * to after the whole document, which is exactly the failure the inlined
+     * version could not have had. `type="module"` is deferred by definition, and
+     * would additionally be CORS-checked in a way a classic script is not.
+     *
+     * `crossorigin="anonymous"` for the reason the member table and the
+     * libraries carry it: this frame is an opaque origin, so every script it
+     * loads is cross-origin to it, and without the attribute an exception thrown
+     * inside the bootstrap is redacted to the bare words `Script error.` — for
+     * *this* file that would erase the only diagnostic the frame has. Its other
+     * half, the host's `access-control-allow-origin` on the sandbox-asset route,
+     * already exists and is asserted from the host side in
+     * `apps/iris/tests/sandbox-cors.test.ts`.
+     *
+     * The URL carries a content hash and nothing per-frame. That is deliberate:
+     * the token, the origin and the snapshot all travel in the markup instead
+     * (two `<meta>` tags and the seed above), because a URL that varied per
+     * frame would be a fresh cache key per frame and the fetch would buy
+     * nothing.
+     */
+    `<script src="${attribute(bootstrapUrl)}" crossorigin="anonymous" ${BOOTSTRAP_TAG_MARK}></script>`,
+    /*
+     * And the check that the tag above actually ran, before anything depends on
+     * it having run.
+     *
+     * This is the position that makes it a check rather than a report: after the
+     * bootstrap, so the marker is either set or definitively absent; before the
+     * libraries and the card's markup, so a frame with no bridge can be stopped
+     * instead of being watched throw. `bootstrap-contract.ts` holds what it does
+     * and why each step is there.
+     */
+    `<script>${bootstrapGuard()}</script>`,
     /*
      * `crossorigin="anonymous"`, and it only works as **one half of a pair**.
      *

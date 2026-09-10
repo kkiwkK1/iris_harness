@@ -96,13 +96,23 @@ import { spawn } from 'node:child_process'
  * `tavern-helper.test.ts` gates the Tavern Helper manifest check, and its skip reason names
  * SillyTavern so it groups under `corpus` above. The file's other two tests read only this
  * repository and run everywhere.
+ *
+ * 34 → 35, 2026-09-10, and this one is a **new gate category**:
+ * `apps/iris-web/tests/frame-bootstrap-live.test.ts` ×1 — "a card's first parse-time script
+ * sees the bridge, and sees nothing when the bootstrap 404s", which drives a real Chrome over
+ * CDP against three `srcdoc` frames built from the real assembly. Gated on `IRIS_BROWSER=1`,
+ * and gated on the **flag** rather than on whether a browser is installed, deliberately: a
+ * capability check would make this number a property of the machine, and the whole value of
+ * pinning it is that it is not. With the flag set and no Chrome, or no `public/sandbox` build,
+ * the test **fails** and says which — asking for a check and silently not getting it is the
+ * outcome that file exists to prevent (§91).
  */
-const EXPECTED_SKIPPED = 34
+const EXPECTED_SKIPPED = 35
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 
 /** The gate each skip reason names, in the order the report prints them. */
-const GATES = ['corpus', 'samples', 'IRIS_LIVE', 'provider key', 'unlabelled', 'other']
+const GATES = ['corpus', 'samples', 'IRIS_LIVE', 'IRIS_BROWSER', 'provider key', 'unlabelled', 'other']
 
 /**
  * Which gate a skip reason names.
@@ -121,6 +131,7 @@ const GATES = ['corpus', 'samples', 'IRIS_LIVE', 'provider key', 'unlabelled', '
 function gateOf(reason) {
   if (reason === 'SKIP' || reason === '') return 'unlabelled'
   if (/IRIS_LIVE/.test(reason)) return 'IRIS_LIVE'
+  if (/IRIS_BROWSER/.test(reason)) return 'IRIS_BROWSER'
   if (/test:live|provider key/.test(reason)) return 'provider key'
   if (/IRIS_SAMPLES/.test(reason)) return 'samples'
   if (/IRIS_CORPUS|corpus|Tavern Helper install|SillyTavern/i.test(reason)) return 'corpus'

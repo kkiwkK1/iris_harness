@@ -181,8 +181,9 @@ test('the weight is encoded bytes, not code units', () => {
 })
 
 test('an empty interface still costs a whole frame', () => {
-  // The overhead is the bootstrap and the srcdoc wrapper, which a card with no
-  // markup pays in full; a plan that charged only the body would count it free.
+  // The overhead is the srcdoc wrapper — the CSP, the metas, the reset, three
+  // script tags and the bootstrap guard — which a card with no markup pays in
+  // full; a plan that charged only the body would count it free.
   assert.equal(frameWeight({ floor: 0, instance: 0, body: '' }), FRAME_OVERHEAD_BYTES)
 })
 
@@ -224,29 +225,59 @@ test('a user floor pays the frame budget exactly like an assistant floor', () =>
 test('the count gate sits below the point where overhead eats the whole budget', () => {
   /*
    * The relationship, not the numbers. The gate exists because a pure byte
-   * budget degrades to "all scaffolding, no content" at about 53 frames; a
-   * change to either constant that put the gate above that point would remove
+   * budget degrades to "all scaffolding, no content" at some number of frames;
+   * a change to either constant that put the gate above that point would remove
    * the reason the gate is there, and no other test in this file would notice.
    */
   const degradesAt = FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES
 
-  /*
-   * A wide band, and it has moved twice: the design derived ≈53 from a 39 KiB
-   * frame, a later pass read ≈49 at 42 KiB, and it is ≈38.6 at 53 KiB. All three
-   * are the same statement — the ratio moves whenever the bootstrap does.
-   *
-   * So this band is only a sanity rail against a constant being changed by an
-   * order of magnitude or having its units confused; it is **not** the design,
-   * and widening it is not how a breach gets resolved. The assertion that
-   * carries the design is the next one, and when that one failed the gate moved
-   * rather than the band: `FRAME_COUNT_LIMIT` went 20 → 16 because 53 KiB put
-   * half the degradation point under it. Widening this rail to accommodate that
-   * would have been repairing the instrument to fit the reading.
-   */
-  assert.ok(degradesAt > 30 && degradesAt < 60, `derived ${degradesAt.toFixed(1)}`)
   assert.ok(
     FRAME_COUNT_LIMIT < degradesAt / 2,
     `the gate at ${String(FRAME_COUNT_LIMIT)} leaves no room below ${degradesAt.toFixed(1)}`,
+  )
+})
+
+test('the fixed overhead is a wrapper, which is what says the bootstrap is not in it', () => {
+  /*
+   * **This replaces a band on the ratio, and the replacement is a change of
+   * dimension rather than a widening.** The old rail read
+   * `degradesAt > 30 && degradesAt < 60` and it did real work three times: the
+   * design derived ≈53 from a 39 KiB frame, a later pass read ≈49 at 42 KiB,
+   * ≈38.6 at 53 KiB. Every one of those is a statement about a frame that
+   * carried the **bootstrap inlined**, and the rail's job was to catch a
+   * constant changed by an order of magnitude or with its units confused.
+   *
+   * The bootstrap left the srcdoc on 2026-09-10 (§91). The same measure of the
+   * same quantity — bytes of `srcdoc` charged per frame — now reads 3.0 KiB
+   * budgeted at 4 KiB, so `degradesAt` is 512 and the old band fails. Widening it to 30..600
+   * would be the move this file has refused twice: repairing the instrument to
+   * fit the reading. So the rail is restated in the dimension that actually
+   * changed, and it is **stricter** where it matters.
+   *
+   * The floor and ceiling are the two ways this can go wrong:
+   *
+   * - **Under 1 KiB** and something has stopped counting. The CSP alone is
+   *   several hundred bytes and the guard is about 1.2 KB; a frame cannot cost
+   *   less than its own policy.
+   * - **Over 8 KiB** and a build artifact is back inside the document. This is
+   *   the regression the ratio rail used to feel and `FRAME_COUNT_LIMIT` can no
+   *   longer: at 512 frames of headroom, re-inlining a 53 KB bootstrap would
+   *   leave the invariant above **passing** (degradesAt 38.6, gate 20 → false,
+   *   so it would fail at 20 — but it would pass at any gate the next person
+   *   lowered it to), while every frame silently paid twenty times over.
+   *
+   * Both bounds are sanity rails, not the design. The measurement that is not a
+   * rail happens in `build:sandbox`, which weighs the real `srcdoc` for all four
+   * frame shapes against this constant on every run and fails on the unsafe
+   * direction only.
+   */
+  assert.ok(
+    FRAME_OVERHEAD_BYTES >= 1024,
+    `${String(FRAME_OVERHEAD_BYTES)} is less than a frame's own CSP and guard`,
+  )
+  assert.ok(
+    FRAME_OVERHEAD_BYTES <= 8 * 1024,
+    `${String(FRAME_OVERHEAD_BYTES)} is too big for a wrapper — a build artifact is inlined into the frame again`,
   )
 })
 

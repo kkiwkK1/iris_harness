@@ -23,12 +23,36 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
 /**
  * Bytes a frame costs before its card writes anything.
  *
- * [notes/apps/iris-web/WINDOWING.md §三「每个 frame 的固定开销」] The bootstrap, the context
- * snapshot and the srcdoc wrapper are **inlined**, so they are paid per frame
- * with no cache. The preset and message-preset are not on this bill — they load
- * by content-hashed URL and are paid once for the page.
+ * [notes/apps/iris-web/WINDOWING.md §三「每个 frame 的固定开销」] **What this
+ * measures, as of 2026-09-10: the `srcdoc` string a frame is built from, with
+ * its card's body taken out.** Concretely — the doctype, the CSP meta, the token
+ * and origin metas, the FontAwesome sentinel link, the reset stylesheet, the
+ * body tag, three `<script>` tags (member table, bootstrap, one library) and the
+ * inline bootstrap guard. Everything the frame *fetches* is off this bill,
+ * because it is loaded by content-hashed URL under a `script-src` this policy
+ * already admits: the preset, the message-preset, the member table — and, since
+ * 2026-09-10, the bootstrap itself.
  *
- * Rounded **up** to the next whole KiB above the measured artifact, so a small
+ * **The bootstrap used to be on this bill and that is the whole history below.**
+ * It was inlined into every `srcdoc`, so every kilobyte it grew was a kilobyte
+ * charged twenty times, and the count gate was pushed down four times to pay for
+ * it (39 → 52 → 53 → 54 KiB, gate 20 → 19 → 18). It is now a blocking classic
+ * `<script src>` and the srcdoc wrapper is what is left: measured **3,006 bytes**
+ * for the widest of eight shapes (interface frame, network ungranted, a
+ * 51-character deployment origin; this machine's dev origin reads 2,766),
+ * against 55,900-odd before. The shell's origin appears seven times in a frame
+ * document, so the long origin is the one the budget is compared against and
+ * both are printed. `notes/apps/iris-web/DEVIATIONS.md` §91 records the move.
+ *
+ * **The context snapshot is deliberately *not* covered, and never was.** A
+ * message frame's snapshot is inlined and is card data — the worst single floor
+ * measured is 283 KiB, five times this whole constant — so no fixed figure could
+ * ever have included it. The earlier version of this sentence listed it here,
+ * which read as an accounting claim the build's own check has never made: that
+ * check compares the artifact and the wrapper, not the payload. Said plainly
+ * now rather than left as a number that quietly excludes its largest term.
+ *
+ * Rounded **up** to the next whole KiB above the measurement, so a small
  * build-to-build drift does not make the figure wrong — only stale.
  *
  * It keeps moving, and that is now normal rather than alarming: 38.5 → 39.4 KiB
@@ -68,7 +92,9 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * bootstrap is inlined per frame because policy must not be substitutable; but
  * the preset is already served from this origin by content-hashed URL under the
  * same `script-src`, so "inline or fetch" is a question with a real answer
- * rather than a settled one. Raised with the coordinator rather than decided
+ * rather than a settled one. **Answered 2026-09-10, in favour of fetching**
+ * (§91): the question was put to the coordinator here and stood open for two
+ * gate moves before it was taken up. Raised with the coordinator rather than decided
  * here.
  *
  * **Two independent lines of work raised it, and neither branch's number
@@ -145,8 +171,53 @@ import { encodedBytes } from '../sandbox/message-frames.ts'
  * against the other's absence — which is the seam this constant exists to
  * catch. At 54 KiB the half-degradation point is 18.96, so 19 no longer sits
  * below it and the gate goes to 18; the row is in the table below.
+ *
+ * **4 KiB, and the eleven paragraphs above stop being a series.** Every one of
+ * them is the same event — the per-frame bootstrap grew, the build's comparison
+ * caught it, and the reading window paid. The answer each time was to move
+ * something into the fetched member table, which worked and did not address why
+ * the bootstrap was inlined at all. It was inlined because a card's markup reads
+ * bridged names at **parse** time, so the bootstrap has to finish before the
+ * body does — true, and satisfied by a blocking classic `<script src>`, which is
+ * the mechanism the member table has run on since it was split out and the
+ * mechanism the card libraries have always run on. That premise is now checked
+ * three ways rather than assumed (build, frame, browser: §91).
+ *
+ * So this constant changes **dimension**, not value, and the distinction is the
+ * one thing worth being careful about here. It has always meant "bytes of
+ * `srcdoc` charged per frame"; what left the srcdoc is 53 KB of build artifact,
+ * so the same measure of the same quantity now reads 3.0 KB. Nothing was
+ * loosened, no threshold was widened, and the byte budget did not grow: the
+ * denominator shrank because the numerator's largest term moved to a URL. The
+ * frame still downloads those bytes — whether it downloads them *again* per
+ * frame is a cache-partitioning question measured in §91 — and this bill has
+ * excluded fetched artifacts since the member table split, so the bootstrap
+ * joining them changes no rule.
+ *
+ * **What this means for the next person who grows the bootstrap: it costs
+ * nothing here.** The pressure that moved the gate four times is gone, and the
+ * pressure that replaces it is the one the preset already lives under — page
+ * weight and a cold fetch, reported per frame by `describeTransferCost`. A
+ * member added to the table and a policy line added to the bootstrap now cost
+ * the same, which is the first time that has been true.
+ *
+ * What *is* still on this bill: the CSP (the longest single term in the
+ * wrapper), the reset, the three tags, and the guard. A new `<meta>`, a widened
+ * allowlist or a longer guard moves this figure; the build's comparison still
+ * catches it in the change that caused it, and 4 KiB leaves 1,090 bytes over the
+ * widest measured shape.
+ *
+ * **4 rather than 3, and the reason is the origin.** 3 KiB covers the widest
+ * shape by 66 bytes, which is the headroom this file has watched two branches
+ * spend simultaneously (§86). It is also headroom against a figure that moves
+ * with the **deployment**, not only with the code: seven occurrences of the
+ * shell origin means a longer hostname costs about 200 bytes that no commit
+ * would show. 4 KiB is 1 KiB of slack for 80 KiB of a 2 MiB budget — and, since
+ * the gate is no longer derived from this number, an overrun here is now a
+ * one-line bump with no live panel attached to it, which is the first time that
+ * has been true.
  */
-export const FRAME_OVERHEAD_BYTES = 54 * 1024
+export const FRAME_OVERHEAD_BYTES = 4 * 1024
 
 /**
  * The whole reading view's frame budget.
@@ -163,15 +234,22 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  *
  * [notes/apps/iris-web/WINDOWING.md §三「数量闸是必需的」] Structurally necessary, not a
  * precaution: at `FRAME_BUDGET_BYTES / FRAME_OVERHEAD_BYTES` frames — a figure
- * that moves every time the bootstrap does, so it is read from the table below
- * rather than written here — the fixed overhead eats the entire budget on its
- * own and not one byte of card content fits. A pure byte budget therefore degrades into "all scaffolding, no
- * content" exactly when there are most frames.
+ * read from the table below rather than written here — the fixed overhead eats
+ * the entire budget on its own and not one byte of card content fits. A pure
+ * byte budget therefore degrades into "all scaffolding, no content" exactly
+ * when there are most frames.
  *
- * 20 leaves about 1 MiB for content (overhead ≈ 1000 KiB, 49%), and 20 live
- * panels on one screen is already past any reading scenario. It is a trade-off
- * point rather than a threshold — moving it means revisiting the two measured
- * values above, not just this line.
+ * **The overhead's share is now small, which changes why the gate exists rather
+ * than whether it does.** 20 frames of wrapper is 80 KiB of the 2 MiB budget,
+ * about 4% — where at a 54 KiB inlined bootstrap the same 20 frames were 1,060
+ * KiB, 51%, and the sentence here read "20 leaves about 1 MiB for content". So
+ * the byte budget is close to measuring only card content, which is what its own
+ * citation was always about (`notes/apps/iris-web/RENDER.md` measured *rendered*
+ * bytes, three orders of magnitude apart between chats). The gate is not
+ * redundant: a live frame costs a realm, two observers, a message channel and a
+ * layout, and none of that is bytes of markup. It is a trade-off point rather
+ * than a threshold — moving it means revisiting the two measured values above,
+ * not just this line.
  *
  * **It was 20, then 16, and the test beside this moved it both times.** The
  * design's own invariant is that the gate stays *well* below the degradation
@@ -198,6 +276,7 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * | 52 KiB | 39.4 | 19.7 | 20 | **false** → gate 19, the move 50 said 52 would cost |
  * | 53 KiB | 38.6 | 19.3 | 19 | held — the first increment since 41 KiB that cost no frame |
  * | 54 KiB | 37.9 | 19.0 | 19 | **false** → gate 18, two same-day branches spent the 1.8 KiB together |
+ * | 4 KiB | 512.0 | 256.0 | **20** | held, and the column no longer describes a bootstrap |
  *
  * Both times the reasonable-looking response was to raise the constant above and
  * treat the ratio as incidental; both times the invariant said otherwise, and
@@ -220,10 +299,12 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * structural question unavoidable.
  *
  * **This is a behaviour change and it is small in the only place it shows.**
- * Frames past the sixteenth on one screen now get a named placeholder instead
- * of a live panel, and the placeholder is openable. `notes/apps/iris-web/WINDOWING.md` measured 189
- * rendered interface floors across the corpus with no chat putting sixteen on
- * one screen, so no measured reading scenario reaches the gate at all.
+ * Frames past the gate on one screen get a named placeholder instead of a live
+ * panel, and the placeholder is openable. (Written when the gate was 16; the
+ * number has been 12, 19, 18 and 20 since, and the sentence is about the
+ * mechanism rather than the value.) `notes/apps/iris-web/WINDOWING.md` measured
+ * 189 rendered interface floors across the corpus with no chat putting sixteen
+ * on one screen, so no measured reading scenario reaches the gate at all.
  *
  * The design named ≈53 and 38%, computed against a 39 KiB overhead; a later
  * pass read ≈43 and 47% at 48 KiB. Those are the same statement about a smaller
@@ -250,8 +331,35 @@ export const FRAME_BUDGET_BYTES = 2 * 1024 * 1024
  * value that holds, and it holds to about 58 KiB. The alternative — trimming
  * 37 bytes out of a minified bootstrap to keep 19 — would have been repairing
  * the reading to fit the instrument, the move the table above refused twice.
+ *
+ * **20, and back to being decided by reading rather than by bytes.** The
+ * bootstrap left the `srcdoc` (2026-09-10, §91), so the fixed overhead is a 3.0
+ * KiB wrapper budgeted at 4 KiB, and the degradation point is **512 frames**.
+ * The invariant holds by a factor of thirteen, which means it has stopped being
+ * the thing
+ * that decides this number — and that is the point of the move rather than a
+ * side effect of it. 20 is the design's own figure, chosen because twenty live
+ * panels on one screen is already past any reading scenario, and it is now
+ * chosen on that ground alone. The corpus agrees from the other direction:
+ * `notes/apps/iris-web/WINDOWING.md` measured 189 rendered interface floors
+ * across every chat with none putting sixteen on one screen, so no measured
+ * reading reaches the gate at all.
+ *
+ * **What no longer protects anything, said out loud.** For eleven increments the
+ * count gate was doubling as a brake on the inlined bootstrap: it was the number
+ * that moved when the bootstrap grew. It cannot serve that purpose any more, and
+ * nothing should try to make it — the bootstrap's weight is a fetch cost now,
+ * reported per frame by `describeTransferCost` and argued about there. The gate
+ * protects what it was designed to protect: how many live realms, live observers
+ * and live message channels one screen may hold, which is a cost in memory and
+ * main-thread work that no byte budget measures.
+ *
+ * The test beside this asserts the **relationship** and, since the dimension
+ * changed, a units rail on the overhead itself: a wrapper is kilobytes, and a
+ * reading in the tens of kilobytes means the bootstrap is back inside the
+ * document. That is the one regression this constant can no longer feel.
  */
-export const FRAME_COUNT_LIMIT = 18
+export const FRAME_COUNT_LIMIT = 20
 
 /** One interface block that could become a frame. */
 export interface FrameCandidate {

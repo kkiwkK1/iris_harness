@@ -86,11 +86,15 @@
  *    no origin to compare against that would mean what the DOM's comparison
  *    means; refusing on a mismatch would invent a rule upstream does not have.
  *
- * Lives in the **fetched member table** rather than the inlined bootstrap for
- * the reason `popup-api.ts` does: the bootstrap is re-parsed per frame and had
+ * Lives in the **fetched member table** rather than the bootstrap for the reason
+ * `popup-api.ts` does: the bootstrap was inlined and re-parsed per frame, with
  * 47 bytes of headroom against `FRAME_OVERHEAD_BYTES` when this was written.
- * The core keeps only the policy — that `parent.postMessage` is a bridged,
- * read-only name and where its argument goes.
+ * That reason is spent — the bootstrap is fetched by hashed URL as of
+ * 2026-09-10 (§91), so the same bytes would cost the same in either file — and
+ * the split is left where it is because the *other* half of it still holds:
+ * the core keeps only the policy, that `parent.postMessage` is a bridged,
+ * read-only name and where its argument goes, and this is what decides what a
+ * message means.
  *
  * @module iris-web/sandbox/parent-messages
  */
