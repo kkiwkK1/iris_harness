@@ -88,8 +88,16 @@ import { spawn } from 'node:child_process'
  * longer exists or no longer skips, and the arithmetic of "what was added" would have put this
  * constant at 33 and been wrong. Update this number **only** after listing the skips again and
  * naming the one that moved.
+ *
+ * 33 → 34, 2026-09-10, and this one **is** named: `apps/iris-web/tests/upstream-context.test.ts`
+ * ×1 — "the getContext surface is still the surface upstream returns", which re-extracts the 145
+ * keys of `getContext()` from the installed SillyTavern's `public/scripts/st-context.js` and
+ * compares them with `UPSTREAM_CONTEXT_MEMBERS`. Gated on `IRIS_CORPUS`, the same way
+ * `tavern-helper.test.ts` gates the Tavern Helper manifest check, and its skip reason names
+ * SillyTavern so it groups under `corpus` above. The file's other two tests read only this
+ * repository and run everywhere.
  */
-const EXPECTED_SKIPPED = 33
+const EXPECTED_SKIPPED = 34
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 

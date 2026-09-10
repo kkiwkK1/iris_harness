@@ -70,8 +70,34 @@ if (!existsSync(CARDS)) {
 }
 
 // --- the member list, from f7's extracted surface ---------------------------
+/*
+ * Bounded at the literal's closing bracket, which it was not.
+ *
+ * This used to slice from the constant's name to the **end of the file** and
+ * take every quoted identifier in between. Correct while
+ * `upstream-surface.ts` held exactly one array; wrong the moment it gained a
+ * second one. `UPSTREAM_CONTEXT_MEMBERS` (the 145 `getContext()` keys) would
+ * have been absorbed, answering 316 where the surface is 171 — and the failure
+ * would not have looked like one, because 145 extra names that no card uses
+ * land in the "declared but never used" column, which is this report's
+ * *expected* shape.
+ *
+ * The floor is the other half: a bounded extraction that finds nothing must
+ * stop the run rather than report a surface of zero.
+ */
 const surfaceSource = readFileSync(`${ROOT}apps/iris-web/src/sandbox/upstream-surface.ts`, 'utf8')
-const MEMBERS = [...surfaceSource.slice(surfaceSource.indexOf('UPSTREAM_MEMBERS')).matchAll(/'([A-Za-z_$][A-Za-z0-9_$]*)'/g)].map(m => m[1])
+const membersAt = surfaceSource.indexOf('UPSTREAM_MEMBERS: readonly string[] = [')
+const membersEnd = surfaceSource.indexOf('\n]', membersAt)
+const MEMBERS = membersAt === -1
+  ? []
+  : [...surfaceSource
+      .slice(membersAt, membersEnd === -1 ? undefined : membersEnd)
+      .matchAll(/'([A-Za-z_$][A-Za-z0-9_$]*)'/g)].map(m => m[1])
+if (MEMBERS.length < 150) {
+  console.log(`th-member-census: only ${MEMBERS.length} members extracted from upstream-surface.ts.`)
+  console.log('The extraction is broken — repair it before quoting any number from this caliper.')
+  process.exit(0)
+}
 
 // --- what Iris has built, from identity.ts ----------------------------------
 const identitySource = readFileSync(`${ROOT}apps/iris-web/src/sandbox/identity.ts`, 'utf8')

@@ -15,6 +15,7 @@
     "test:template-differential": "node scripts/template-differential.mjs",
     "census:cache-cause": "node scripts/cache-cause-census.mjs",
     "census:card-scripts": "node scripts/card-script-census.mjs",
+    "census:card-surface": "node scripts/card-surface-census.mjs",
     "census:frontend-blocks": "node scripts/frontend-block-census.mjs",
     "census:read-view": "node scripts/read-view-census.mjs",
     "census:settings-usage": "node scripts/settings-usage-census.mjs",
