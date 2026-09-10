@@ -135,6 +135,29 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
   createWorldbook: 'worldbook.create',
   rebindChatWorldbook: 'worldbook.bindChat',
   rebindGlobalWorldbooks: 'worldbook.setGlobalSelect',
+
+  // —— family②: regex ——
+  /*
+   * The regex family's three round trips.
+   *
+   * `getTavernRegexes` is **synchronous upstream** and is a round trip here all
+   * the same, which is this family's one real departure. The alternative was to
+   * put the tiers in the pushed snapshot the way `getCharWorldbookNames` and
+   * `getLorebookSettings` ride it, and it was measured rather than guessed: the
+   * card tier alone weighs a median of 131.7 KiB and up to 1.04 MiB across the
+   * ST corpus's 15 cards that carry one, and the snapshot is inlined into every
+   * frame's `srcdoc` uncached — at `FRAME_COUNT_LIMIT` 18 that is 2.4 MiB
+   * typical and 19.6 MiB worst, paid by every card including the 100% of the
+   * corpus that never calls this. Web ledger §88.
+   *
+   * `updateTavernRegexesWith` is deliberately absent and is **not** a gap: it
+   * takes a function, so the frame builds it out of the two below, exactly as
+   * `updateWorldbookWith` is built. `isCharacterTavernRegexesEnabled` is absent
+   * because it really is synchronous here — one boolean rides the snapshot.
+   */
+  getTavernRegexes: 'regex.tavernList',
+  replaceTavernRegexes: 'regex.tavernReplace',
+  formatAsTavernRegexedString: 'regex.tavernFormat',
 }
 
 /**
@@ -213,6 +236,25 @@ export const OFF_ST_SURFACE: readonly string[] = [
    */
   'composerDraft',
   'composerSend',
+  /*
+   * The regex family. Tavern Helper members, all five, and none of them is
+   * among `st-context.js`'s 145 keys — asserted against
+   * `UPSTREAM_CONTEXT_MEMBERS` in `tavern-regex-facade.test.ts`, not by eye. Serving
+   * `SillyTavern.getTavernRegexes` would be Iris inventing a member on the
+   * surface it is mirroring, the ruling this table exists for.
+   *
+   * All five, not the three that are routable: this list also gates the two the
+   * frame answers on its own (`updateTavernRegexesWith`,
+   * `isCharacterTavernRegexesEnabled`), and a name absent from here would be
+   * published on `SillyTavern` by default — the rot the deny-list note above
+   * admits to inviting.
+   */
+  // —— family②: regex ——
+  'getTavernRegexes',
+  'replaceTavernRegexes',
+  'updateTavernRegexesWith',
+  'isCharacterTavernRegexesEnabled',
+  'formatAsTavernRegexedString',
 ]
 
 /**

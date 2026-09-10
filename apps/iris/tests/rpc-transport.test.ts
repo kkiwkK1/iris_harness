@@ -424,6 +424,20 @@ const PROBES: Record<string, unknown> = {
   // Empty params on purpose: all three are optional, and "every record there
   // is, cut by day" is the page first call.
   'usage.summary': {},
+
+  // —— family②: regex ——
+  // A chat id nothing holds, like the other card-facing probes above: what is
+  // being proved is that a handler answered at all, and `not-found` for an
+  // absent conversation is an answer. Every field the strict schemas demand is
+  // present, so a schema rejection cannot stand in for a missing registration.
+  'regex.tavernList': { chatId: 'no-such-chat', tier: 'global' },
+  'regex.tavernReplace': { chatId: 'no-such-chat', tier: 'global', regexes: [] },
+  'regex.tavernFormat': {
+    chatId: 'no-such-chat',
+    text: 'probe',
+    source: 'ai_output',
+    destination: 'display',
+  },
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {

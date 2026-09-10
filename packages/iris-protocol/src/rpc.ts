@@ -17,7 +17,7 @@ import { z } from 'zod'
 
 import { MAX_CONTEXT_WINDOW } from './views.ts'
 
-import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -1803,6 +1803,117 @@ export const requestSchemas = {
     /** How finely to cut time. Default `'day'`. */
     granularity: z.enum(['day', 'hour']).optional(),
   }),
+
+  // —— family②: regex ——
+  /**
+   * One tier of regex rules, in Tavern Helper's own vocabulary.
+   *
+   * Upstream's `getTavernRegexes(option)`
+   * (`@types/function/tavern_regex.d.ts:87`; the reader is
+   * `get_tavern_regexes_without_clone`, `src/function/tavern_regex.ts:115-134`),
+   * which reads `extension_settings.regex` for `'global'`,
+   * `characters.at(id).data.extensions.regex_scripts` for `'character'` and the
+   * preset body's `extensions.regex_scripts` for `'preset'`.
+   *
+   * **No `name`, and that is the deviation.** Upstream's option carries
+   * `name?: string | 'current'` for a character and `name?: string | 'in_use'`
+   * for a preset, so a card there can read *any* installed card's tier and any
+   * saved preset's. Here the tier is resolved from the `chatId` the shell
+   * stamps on every card action: `'character'` is the chat's own card and
+   * `'preset'` is the active one. A card cannot name another. See the host
+   * ledger §64 for why the same rule governs the write.
+   *
+   * **One tier per call, in that tier's own stored order** — the tiers' run
+   * order (global, then preset, then card: upstream's iteration order and not
+   * its numbering, `@iris/regex`'s `TIER_ORDER`) is not visible in one answer,
+   * because upstream's own new signature answers one tier too. The frame's
+   * deprecated `{scope}` path is where the order shows, by concatenating two of
+   * the three.
+   */
+  'regex.tavernList': z.strictObject({
+    chatId: z.string().min(1),
+    tier: z.enum(['global', 'character', 'preset']),
+  }),
+  /**
+   * Replace one tier of regex rules wholesale.
+   *
+   * Upstream's `replaceTavernRegexes(regexes, option)`
+   * (`src/function/tavern_regex.ts:260-329`): the tier is rebuilt from the
+   * array, so a rule absent from it is deleted. `'global'` writes the profile's
+   * own list, `'character'` writes **the chat's card** — upstream's
+   * `writeExtensionField(id, 'regex_scripts', …)`, which really does rewrite
+   * the card file — and `'preset'` is refused, because this host's preset
+   * library is read-only (the same reason `ScriptSource` carries no `'preset'`).
+   *
+   * The caps are sized off the corpus rather than off a round number: the
+   * largest single `replaceString` measured across 251 rules is **524,550
+   * characters** (创世回廊 1.3's 「开局」), and a card writing its own tier back
+   * has to be able to send its own rules. `regexScriptRequest`'s 100 kB cap
+   * one screen up is for the *global* tier, which no card's rule reaches.
+   */
+  'regex.tavernReplace': z.strictObject({
+    chatId: z.string().min(1),
+    tier: z.enum(['global', 'character', 'preset']),
+    regexes: z.array(z.strictObject({
+      /**
+       * Required. Upstream mints ids lazily and would accept a rule without
+       * one, but an id is how a stored rule's unnamed fields
+       * (`substituteRegex`, and anything a file carried that this vocabulary
+       * has no word for) are matched back to it — see the handler.
+       */
+      id: z.string().min(1).max(200),
+      /** Blank is accepted: upstream renames it to `未命名-${id}` on the way in. */
+      script_name: z.string().max(300),
+      enabled: z.boolean(),
+      find_regex: z.string().max(2_000_000),
+      replace_string: z.string().max(2_000_000),
+      trim_strings: z.array(z.string().max(10_000)).max(200),
+      source: z.strictObject({
+        user_input: z.boolean(),
+        ai_output: z.boolean(),
+        slash_command: z.boolean(),
+        world_info: z.boolean(),
+        reasoning: z.boolean(),
+      }),
+      destination: z.strictObject({ display: z.boolean(), prompt: z.boolean() }),
+      run_on_edit: z.boolean(),
+      /** `null` is the unset spelling, as upstream normalises it. */
+      min_depth: z.number().int().min(-1).max(10_000).nullable(),
+      max_depth: z.number().int().min(0).max(10_000).nullable(),
+    })).max(1000),
+  }),
+  /**
+   * Run this chat's regex chain over one string.
+   *
+   * Upstream's `formatAsTavernRegexedString(text, source, destination, {depth,
+   * character_name})` (`src/function/tavern_regex.ts:27-73`), which calls
+   * `getRegexedString` with `isMarkdown: destination === 'display'` /
+   * `isPrompt: destination === 'prompt'`
+   * (`extensions/regex/engine.js:334-381`), then expands macros over the
+   * result, then applies any `registerMacroLike` macros.
+   *
+   * Answered in the host rather than in the frame **because that is where the
+   * rules are** — see `regex.tavernList` for the measurement that settled it —
+   * and the by-product is that it runs the very chain the reader's page and the
+   * outgoing prompt run (`entry.scripts`), so the three cannot disagree.
+   */
+  'regex.tavernFormat': z.strictObject({
+    chatId: z.string().min(1),
+    /** Sized as `regex.tavernReplace`'s bodies are; a card may format a page. */
+    text: z.string().max(2_000_000),
+    source: z.enum(['user_input', 'ai_output', 'slash_command', 'world_info', 'reasoning']),
+    destination: z.enum(['display', 'prompt']),
+    /**
+     * How far from the end of the chat this text sits, `0` being the last.
+     *
+     * Absent means **do not consider depth at all** — upstream's own wording,
+     * and its engine's `typeof depth === 'number'` gate: a rule with a depth
+     * window applies regardless.
+     */
+    depth: z.number().int().min(0).max(100_000).optional(),
+    /** Upstream's `character_name`; absent uses the chat's own character. */
+    characterName: z.string().max(300).optional(),
+  }),
 } as const
 
 /** Every callable method. */
@@ -2286,6 +2397,20 @@ export interface RpcResponseMap {
   'script.generateRaw': { text: string }
   'script.generate': { text: string }
   'script.setChatMessages': { view: ChatView }
+
+  // —— family②: regex ——
+  'regex.tavernList': { regexes: TavernRegexView[] }
+  /**
+   * The tier as it stands **after** the write, read back from storage.
+   *
+   * Read back rather than echoed, for `worldbook.replace`'s reason: the write
+   * renames a blank `script_name` and carries unnamed fields across by id, so
+   * the caller's array and the stored tier differ wherever that happened —
+   * and those are exactly the changes a card needs to see. It is also what
+   * `updateTavernRegexesWith` returns.
+   */
+  'regex.tavernReplace': { regexes: TavernRegexView[] }
+  'regex.tavernFormat': { text: string }
 }
 
 /** The response of one method. */

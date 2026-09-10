@@ -33,8 +33,15 @@ exactly the standing `initial` has — and never overwrites one that does.
 
 **Why.** The same reason `initial` is not writable: a card file gets shared, and
 content that depends on how long its owner played is not content its owner chose
-to send. Iris also never writes card files at all today, so the deviation is
-partly structural rather than only chosen.
+to send.
+
+**Postscript, 2026-09-10.** This paragraph used to end "Iris also never writes
+card files at all today, so the deviation is partly structural rather than only
+chosen". That sentence has been dropped: it was already untrue of `setTags` and
+`rename`, and §64 adds a third writer — a card's own script replacing its regex
+tier. The rule above is unchanged and now rests only on the reason, which is the
+one that was doing the work anyway: script variables are play state, and play
+state does not travel with a shared document.
 
 **This is not a disagreement with upstream.** `panel/script/ScriptEditor.vue:65`
 binds a per-script `export_with.data` checkbox — upstream already treats "does
@@ -2373,6 +2380,16 @@ quietly revive a rule the user had turned off — the argument
 tier beside them. It also means this host never rewrites a card file to record
 a preference, which is the property that makes a card's bytes stable enough to
 fingerprint.
+
+**Postscript, 2026-09-10.** §64 gives a card's own script a way to rewrite this
+very field (`replaceTavernRegexes({type: 'character'})`, upstream's own storage
+and upstream's own `writeExtensionField`), so the card file is no longer
+write-only-by-the-manager. The sentence above still holds as written, and the
+distinction is the whole of it: **a user preference** never reaches the card — it
+stays in `script-policy.json`, and the card-facing read reports `!disabled`, the
+author's word, precisely so that a card cannot pick the user's switch up and
+write it back. What can now rewrite the card is the document's own code asking
+to, which is an authoring act rather than a recorded preference.
 
 **The cost, stated.** A rule switched off here and then exported carries the
 *card's* `disabled`, not the user's. That is correct — the export is the card
@@ -5161,3 +5178,106 @@ written to, which is a different rule (the arrangement would have to be
 re-derived on every turn rather than only on a drop); a profile large enough
 that rewriting the whole sequence per drop matters, which at the corpus's 31
 chat files it is nowhere near.
+
+## 64. A card can read and write the regex tiers, but only its own conversation's — and a write keeps what the vocabulary cannot say
+
+**Kind:** deliberate departure, plus one correction of a silent loss.
+
+**Upstream.** `getTavernRegexes` reads one of three storages
+(`src/function/tavern_regex.ts:115-134`) and `replaceTavernRegexes` writes it
+(`:260-329`): `extension_settings.regex` for `'global'`,
+`writeExtensionField(id, 'regex_scripts', …)` — a rewrite of the **card file** —
+for `'character'`, and `oai_settings` or a saved preset file for `'preset'`.
+`formatAsTavernRegexedString` (`:27-73`) runs `getRegexedString`
+(`extensions/regex/engine.js:334-381`) with `isMarkdown`/`isPrompt` from the
+`destination` argument, then `substituteParams` over the result, then the
+`registerMacroLike` macros. `isCharacterTavernRegexesEnabled` (`:196-200`) is a
+membership test over `extension_settings.character_allowed_regex`.
+
+**Now.** Three wire methods, appended at the end of the contract:
+`regex.tavernList`, `regex.tavernReplace`, `regex.tavernFormat`. The vocabulary
+translation is one pair in `regex.ts` — `toTavernRegex` / `fromTavernRegex`,
+upstream's `to_tavern_regex` (`:136-163`) and `from_tavern_regex` (`:165-194`) —
+so `enabled = !disabled`, the two `…Only` flags and the numeric `placement`
+array are converted in exactly one place. Five departures, each deliberate:
+
+1. **No `name`.** Upstream's option carries `name?: string | 'current'` /
+   `'in_use'`, so a card there reads and writes any installed card's tier and any
+   saved preset's. Here the tier is resolved from the `chatId` the shell stamps
+   on every card action (`#tavernCharacter`, `#tavernTier`), so `'character'` is
+   the conversation's own card and nothing else. That makes "a card cannot edit
+   another card's rules" **structural** — there is no name to resolve — rather
+   than a check that a later refactor could drop. The frame refuses a foreign
+   name by name rather than ignoring it (web §88).
+2. **A `'preset'` write is refused** with `unsupported` saying the library is
+   read-only, the same line `ScriptSource` draws for the preset script
+   repository. Answering it would tell a card its rules were stored.
+3. **`enabled` is the document author's word, never the user's.** Upstream has
+   one switch; the panel's `ScopedRegexView` has two (§30's `!== false` for a
+   card, §53's `=== true` for a preset). A card reads `!disabled` — because a
+   card that read the folded value and wrote the tier back, which is what
+   `updateTavernRegexesWith`'s own documented example does, would burn the
+   reader's temporary decision into the card file and into every export of it.
+4. **A write carries across every field this vocabulary has no word for**,
+   matched by the rule's id. Upstream writes `substituteRegex: 0` with the
+   comment `// TODO: handle this?`, so on real SillyTavern a rule whose pattern
+   expands macros in escaped mode silently becomes one that does not, the first
+   time any card reorders the tier — and no card could have prevented it, since
+   `getTavernRegexes` never showed the field. `fromTavernRegex(regex, previous)`
+   keeps `substituteRegex` and any unknown key the file arrived with.
+5. **A rule the document never named gets a derived handle**, `iris-derived-` plus
+   twelve hex of a content hash (`tavernRegexId`). Upstream mints ids lazily and
+   passes `undefined` into a field its own type declares `string`; a card that
+   read such a rule and wrote the tier back would send a rule with no handle.
+   Derived from content so two reads agree and a reorder does not make every
+   rule a stranger. Measured: **all 251 stored rules in the corpus carry an id**
+   (173 in 15 cards, 78 in 4 presets), so this is the format's possibility
+   rather than the corpus's habit.
+
+`formatAsTavernRegexedString` runs `entry.scripts` — the very chain that produced
+the text on the reader's page and the text in the last request — so the three
+cannot disagree; that is better than upstream, where the member composes its own
+chain. Upstream's step 3 (`registerMacroLike`) has nothing to run here: that
+member is not built, so a card that registered a macro upstream gets its text
+back with that one macro unexpanded.
+
+**Two repairs this exposed.** Both were unobservable before a card could write a
+tier, which is why they are recorded here rather than as their own sections:
+
+- `ChatEntry.substitute` **dropped `characterOverride`**. The option was declared
+  on `MacroSubstitute`, carried through `@iris/regex`'s trim-string path, and
+  read by nobody — so `character_name` would have been accepted and silently
+  ignored. It now reaches `createMacroContext`'s `char`, upstream's
+  `name2Override`. Inert for every existing call site, none of which passes one.
+- `ChatStore.refreshCard(characterId)` is new, and the card write calls it before
+  `#refreshRegex()`. The refresh re-reads the two host-record tiers but not the
+  card *file*, so every conversation already open was holding a decoded copy from
+  before the write: the card would be told its rule was stored and no page would
+  change until the chat was reopened. Deliberately **not** folded into
+  `refreshRegex`, because a card decode is a median 494 KiB and nothing caches
+  it — a global-regex toggle must not pay for every open conversation's card.
+
+**Pinned.** `packages/iris-app-service/tests/tavern-regex.test.ts` (22 tests):
+the translation field for field; an unset depth as `null` and not `0`; the
+author's `enabled` beside the panel's folded one (the pair, so the assertion is
+about the difference); a refused tier still listed, as upstream's ungated reader
+lists it; the preset tier's malformed rows dropped; a derived handle stable
+across two reads and content- not position-derived; the card **file** rewritten
+and read back; `substituteRegex` and an unknown key surviving a write; upstream's
+`未命名-${id}` rename; the wholesale delete; the preset refusal leaving the tier
+untouched; a card's write reaching a conversation already open; the three tiers
+composing global → preset → card as a chain no other order produces; a rule
+marked neither display nor prompt never running through this member at all; the
+five sources and the two destinations selecting different rules; an absent depth
+meaning no depth filtering; macros expanding over text no rule touched;
+`character_name` overriding `{{char}}` for one call only; and the gate reported
+on the snapshot, before and after a refusal. Sixteen host mutations, each red on
+its own assertion, plus a no-op control that stayed green.
+
+**What would overturn it.** A measured card reading another character's tier —
+the narrowed scope would then be a compatibility break rather than a safety
+margin, and the answer would be a `name` that resolves through the library with
+the *write* still limited to the conversation's own card; a writable preset
+library, which would turn departure 2 into a plain capability; or upstream fixing
+its `substituteRegex: 0`, which would make departure 4 ordinary rather than an
+improvement worth naming.

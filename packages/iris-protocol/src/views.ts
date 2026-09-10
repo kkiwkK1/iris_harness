@@ -945,6 +945,30 @@ export interface ScriptContext {
     /** This conversation's, from `chat_metadata.variables`. */
     chat: Record<string, unknown>
   }
+  // —— family②: regex ——
+  /**
+   * Whether **this chat's card** may run its own regex tier.
+   *
+   * Upstream's `isCharacterTavernRegexesEnabled()` is *synchronous*
+   * (`function/tavern_regex.ts:196`) and reads
+   * `extension_settings.character_allowed_regex.includes(characters[this_chid].avatar)`
+   * — a membership test over the character being played, not over whichever
+   * card's script is asking. So it rides the snapshot rather than the wire, and
+   * it is the chat's own card that is reported, exactly as
+   * {@link ScriptContext.charWorldbooks} is.
+   *
+   * One boolean, which is why this tier's *gate* can ride the snapshot while
+   * the tier's *rules* cannot: measured over the ST corpus, 15 of 19 cards
+   * carry a scoped tier weighing a median of 131.7 KiB and up to 1.04 MiB, and
+   * this snapshot is inlined into every frame's `srcdoc` uncached (host ledger
+   * §64).
+   *
+   * **Absent means allowed**, matching `ScriptPolicyStore.scopedRegex`'s
+   * `!== false` — the host default this project deliberately diverges to (§30).
+   * A host running without a policy store leaves it absent, and a reader that
+   * read absent as refused would report a tier as off on a host that runs it.
+   */
+  characterRegexAllowed?: boolean
 }
 
 /** Where a script's injected prompt goes. Mirrors upstream's positions. */
@@ -2584,4 +2608,59 @@ export interface UsageSummary {
    * the corpus is not one.
    */
   skippedChats: number
+}
+
+// —— family②: regex ——
+
+/** Which tier of regex rules a card-facing request names. */
+export type TavernRegexTier = 'global' | 'character' | 'preset'
+
+/** Which kind of text a card is asking to have rewritten. */
+export type TavernRegexSource =
+  | 'user_input'
+  | 'ai_output'
+  | 'slash_command'
+  | 'world_info'
+  | 'reasoning'
+
+/** What the text is about to be used as. */
+export type TavernRegexDestination = 'display' | 'prompt'
+
+/**
+ * One regex rule in **Tavern Helper's** vocabulary rather than the file's.
+ *
+ * A second spelling of {@link RegexScriptView} on purpose. That view is the
+ * stored shape — `scriptName`, `findRegex`, `disabled`, `placement: number[]` —
+ * carried verbatim so an export re-imports; this is upstream's `TavernRegex`
+ * (`@types/function/tavern_regex.d.ts:30-57`), which renames every field to
+ * snake_case, **inverts** `disabled` into `enabled`, and turns the numeric
+ * `placement` array into two boolean records. Cards are written against this
+ * one, so the translation exists; putting it on the wire rather than in the
+ * frame keeps `to_tavern_regex`/`from_tavern_regex`
+ * (`src/function/tavern_regex.ts:136`/`:165`) as one pair on one side of the
+ * boundary instead of two halves that can disagree about `markdownOnly`.
+ *
+ * **`enabled` is the document author's word, not the user's.** Upstream has
+ * only the one switch (`!disabled`), so that is what this reports — the same
+ * reading `ScopedRegexView.enabledByCard` gives and deliberately *not*
+ * `ScopedRegexView.enabled`, which folds in the user's own override. A card
+ * toggling `enabled` and writing the list back therefore edits the card's own
+ * `disabled` flag, which is what upstream's own example does; the user's
+ * override is a separate record and survives the write. Ledger §64.
+ */
+export interface TavernRegexView {
+  /** Upstream's `id`. Required here: a rule with none cannot be addressed. */
+  id: string
+  script_name: string
+  /** `!disabled` as the file stores it. See the type's note. */
+  enabled: boolean
+  find_regex: string
+  replace_string: string
+  trim_strings: string[]
+  source: Record<TavernRegexSource, boolean>
+  destination: Record<TavernRegexDestination, boolean>
+  run_on_edit: boolean
+  /** `null`, never absent — upstream normalises a non-number to `null`. */
+  min_depth: number | null
+  max_depth: number | null
 }

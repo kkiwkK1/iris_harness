@@ -106,6 +106,11 @@ export {
   type PresetRegexPolicy,
   type PresetRegexTier,
   type ScopedRegexPolicy,
+  // —— family②: regex ——
+  SOURCE_PLACEMENT,
+  formatAsTavernRegexed,
+  fromTavernRegex,
+  toTavernRegex,
 } from './regex.ts'
 export {
   DiagnosticBuffer,
@@ -950,6 +955,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('worldbook.setCharBooks', handlers['worldbook.setCharBooks']),
       ctx.irisRpc.register('worldbook.settings', handlers['worldbook.settings']),
       ctx.irisRpc.register('worldbook.setSettings', handlers['worldbook.setSettings']),
+      // —— family②: regex ——
+      ctx.irisRpc.register('regex.tavernList', handlers['regex.tavernList']),
+      ctx.irisRpc.register('regex.tavernReplace', handlers['regex.tavernReplace']),
+      ctx.irisRpc.register('regex.tavernFormat', handlers['regex.tavernFormat']),
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()

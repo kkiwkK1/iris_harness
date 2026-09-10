@@ -704,7 +704,19 @@ export class ChatEntry {
       const { character, user } = this.names
       this.#substitute = (text, options) => {
         const macros = createMacroContext({
-          char: character,
+          /*
+           * `characterOverride` is honoured, and until 2026-09-10 it was
+           * silently dropped — the option was declared on `MacroSubstitute`,
+           * carried by `@iris/regex`'s trim-string path, and read by nobody.
+           *
+           * Upstream's `substituteParams(..., name2Override, ...)`: a caller
+           * asking about *another* character's text says which, and
+           * `formatAsTavernRegexedString(text, source, destination, {
+           * character_name })` is the member that does. Nothing else passes it,
+           * so this is inert for every existing call site — which is exactly
+           * why the drop was invisible.
+           */
+          char: options?.characterOverride ?? character,
           user,
           // The active persona description, what upstream's `{{persona}}`
           // expands to (`script.js:3353`, the persona row of the macro

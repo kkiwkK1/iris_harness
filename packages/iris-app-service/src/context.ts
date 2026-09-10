@@ -281,6 +281,17 @@ export function buildCardContext(
     storage?: Record<string, string>
     /** Reports a growth alarm; see {@link variableLayersOf}. */
     onReport?: (message: string) => void
+    // —— family②: regex ——
+    /**
+     * Whether this chat's card may run its own regex tier, for the synchronous
+     * `isCharacterTavernRegexesEnabled()`.
+     *
+     * Read by the caller for the reason `charBooks` is: this function is
+     * synchronous and the policy store is not. **Absent means allowed**, which
+     * is this host's own default for the scoped tier (`ScopedRegexPolicy`, §30)
+     * and is what a host running without a policy store really does.
+     */
+    characterRegexAllowed?: boolean
   },
 ): ScriptContext {
   const meta = entry.meta
@@ -324,6 +335,14 @@ export function buildCardContext(
     // has no use for it, and the snapshot is already the expensive part of
     // every turn.
     ...extras.storage === undefined ? {} : { storage: extras.storage },
+    // —— family②: regex ——
+    // The gate only. This tier's *rules* deliberately do not ride the snapshot:
+    // measured over the ST corpus they weigh a median of 131.7 KiB per card and
+    // up to 1.04 MiB, and this object is inlined into every frame's `srcdoc`
+    // uncached. See the host ledger §64 and `regex.tavernList`.
+    ...extras.characterRegexAllowed === undefined
+      ? {}
+      : { characterRegexAllowed: extras.characterRegexAllowed },
   }
 }
 

@@ -426,6 +426,35 @@ export class ChatStore {
     return ids
   }
 
+  // —— family②: regex ——
+  /**
+   * Re-read one character's card into every conversation already open on it.
+   *
+   * **Not folded into {@link refreshRegex}, deliberately.** Two of the three
+   * tiers' inputs are host records and cheap to re-read; the card tier's input
+   * is the card *file*, and `CharacterLibrary.load` decodes it whole (a median
+   * of 494 KiB across the local corpus, up to 2.8 MiB, and nothing caches it).
+   * Re-reading it on every global-regex toggle would make a settings switch pay
+   * for every open conversation's card, so the reload stays on the one path
+   * that changes a card: `regex.tavernReplace`'s character tier.
+   *
+   * A card that has since been deleted leaves the entry's copy alone rather
+   * than clearing it — the conversation is still playing whatever it opened
+   * with, which is the honest state, and clearing it would take the greetings
+   * and the prompt fields with it.
+   * @param characterId - whose card was rewritten.
+   */
+  async refreshCard(characterId: string): Promise<void> {
+    for (const entry of this.#entries.values()) {
+      if (entry.meta.characterId !== characterId) continue
+      try {
+        entry.card = await this.#library.load(characterId)
+      } catch {
+        continue
+      }
+    }
+  }
+
   /**
    * Open a conversation, loading it if it is not already live.
    * @param chatId - the id from the request.
