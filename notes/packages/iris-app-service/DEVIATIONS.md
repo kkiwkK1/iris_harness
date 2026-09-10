@@ -5402,6 +5402,185 @@ library, which would turn departure 2 into a plain capability; or upstream fixin
 its `substituteRegex: 0`, which would make departure 4 ordinary rather than an
 improvement worth naming.
 
+## 65. A card may read and write any library preset, the `Preset` mapping lives in one module, and a rename no longer destroys the preset it renamed
+
+**Kind:** host arms for a card-facing family (web §89), one refusal narrowed, two
+deliberate departures from upstream's own code.
+
+### The refusal that was true and stopped being true
+
+`script.getPreset` has existed since the single-preset host, and it refused every
+name but `'in_use'` with `preset "X" — this host only carries the one in use`.
+That was accurate then. It is not accurate now: `PresetStore.read` answers a
+name, `preset.select` switches to it, and `preset.list` offers the library to the
+panel. So a card asking for `'预设A'` is asking for something this host has, and
+the refusal was describing a host two features ago.
+
+The refusal that remains is the honest one — a name the library does not carry,
+thrown with the name in it, which is the shape upstream's own
+`throw Error("预设 'X' 不存在")` gives a card's `catch`. A host composed with **no**
+library refuses differently and says so, because "there is no library" and "the
+library does not have that" are different facts a card may act on.
+
+### The arm was written and nothing read it, and it was wrong in three places
+
+`script.getPreset` answered `{ prompts: [{ id, enabled, role?, content? }] }` —
+the four fields the corpus's one call site reads, which was the right minimum for
+a read. Nothing on the card face ever called it (web §85 refused to build the
+member), and in that silence three disagreements with upstream sat unnoticed:
+
+| the arm answered | upstream answers (`src/function/preset.ts:399-471`) |
+| --- | --- |
+| every prompt | only the ones `prompt_order[100001]` names, as `prompts`; the rest as `prompts_unused` |
+| in **file** order | in the **ordering's** order |
+| an unordered prompt as `enabled: false` | in `prompts_unused`, carrying its own flag (`true` by default) |
+
+None of the three is loud. A card walking `preset.prompts` and filtering on
+`enabled` would have seen entries that are not in the prompt list at all, and
+built a prompt out of them. `preset-read.test.ts`'s own assertion said the
+opposite of upstream on the second and third — its reasoning was right about the
+*assembler* (absence from the ordering is how a preset turns a prompt off) and
+wrong about `getPreset`, and the assertion has been restated rather than bumped.
+
+The reply is now the whole `Preset`. That is not thoroughness: every write member
+upstream is a read-modify-write over the whole thing (`setPreset` →
+`updatePresetWith` → `getPreset` + `replacePreset`), so a partial read would have
+a card save back a preset whose settings and unused prompts had been silently
+replaced with nothing.
+
+### Now
+
+**One mapping module, in `@iris/compat-tavernhelper-core/src/preset.ts`**, and it
+is there rather than in `@iris/preset` because two trust domains need the same
+answer: this host maps files to Tavern Helper's shape and back, and the frame
+publishes `default_preset` and the three `isPreset*Prompt` guards to card scripts
+as runtime values. The guards decide a prompt's class from its `id`, and the
+file's `system_prompt` and `marker` flags are written from the *same*
+classification — so two copies disagreeing by one identifier would give a card a
+prompt the guard calls normal and the file records as a marker: consistent on
+both sides, wrong as a pair, silent. The host reaches it through
+`@iris/compat-tavernhelper`, the frame through the core package directly, which
+is the only one on the browser's import allowlist.
+
+**Four card-facing arms**, and three of them call the panel's rather than the
+store's:
+
+- `script.createOrReplacePreset` — the one write primitive, because upstream
+  builds `createPreset`, `replacePreset`, `updatePresetWith` and `setPreset` on
+  top of this single function. A write to `'in_use'` goes through
+  `#applyPreset`, so it does everything a switch does — the body becomes the
+  assembler's input, the scalar fields it acts on land in the global settings
+  layer, and every open conversation's regex tier is refreshed (§53). A preset
+  carries its own regex rules; a body swapped in without that refresh leaves the
+  *previous* preset's rules rewriting the page with nothing to show it. Writing
+  to `'in_use'` does **not** save the file it was loaded from: upstream is
+  explicit that those are two acts (`preset.d.ts:152-160`).
+- `script.deletePreset` and `script.renamePreset` — through `preset.delete`,
+  because the active preset's *name* is the key its regex allow-list is
+  addressed by, and losing it has to stop that tier.
+- `script.loadPreset` — through `preset.select`, so a card's switch and a
+  person's are one act.
+
+**`ifAbsent`, and why the flag exists.** Upstream's `createPreset` reads its own
+synchronous name list and writes nothing when the name is taken. The card face
+has a name list too — the one on the snapshot — but it is as fresh as the last
+snapshot, so deciding there would leave a window in which `createPreset` silently
+*replaced* a preset created since. The flag moves the decision beside the file,
+where it cannot race.
+
+**The `Preset.settings` half comes from the settings layer, not the body.** A
+switch copies a preset's scalar fields *out* into the global layer
+(`presetScalarPatch`), and from that moment the layer is what generates —
+so `getPreset('in_use')` reads the same fields back through `livePresetFields`,
+the exact inverse. Upstream faces the same split and solves it the same way:
+`toPreset(…, { in_use: true })` reads `preset.temp_openai` where a named preset
+reads `preset.temperature`. The pairing is asserted rather than trusted, because
+one direction growing a field without the other is silent — both halves keep
+working on their own.
+
+The **global** layer, never a chat's. Upstream has one settings space, so
+`getPreset('in_use')` there reports what every chat runs with; a chat-scoped
+override is an Iris-only layer and a preset is not where a card would look for
+one. It also matters mechanically: one snapshot serves every frame of the page.
+
+### The fields that do not line up
+
+`Preset.settings` has 23 fields. Thirteen have an Iris equivalent this host acts
+on, and the other ten come off the body — which is the honest answer, because the
+body is the last thing that said anything about them.
+
+| upstream `Preset.settings` | this host |
+| --- | --- |
+| `max_context` | `GenerationSettings.contextWindow` (and `contextUnlocked` travels with it) |
+| `max_completion_tokens` | `maxTokens` |
+| `temperature`, `frequency_penalty`, `presence_penalty`, `top_p`, `repetition_penalty`, `min_p`, `top_k` | the same seven, under Iris's camelCase names |
+| `seed` | `seed` |
+| `squash_system_messages` | `squashSystemMessages` |
+| `reasoning_effort` | `reasoningEffort` |
+| `top_a` | **no equivalent** — read from the body, written back unchanged |
+| `reply_count` (`n`) | **no equivalent** — this host generates one reply |
+| `should_stream` | **no equivalent as a preset field**; streaming is a transport decision here |
+| `request_thoughts`, `request_images`, `enable_function_calling`, `enable_web_search` | **no equivalent** |
+| `allow_sending_images`, `allow_sending_videos` | **no equivalent** |
+| `character_name_prefix` (`names_behavior`) | **no equivalent** |
+| `wrap_user_messages_in_quotes` | **no equivalent** |
+
+And one Iris setting has no `Preset` field to be reported in:
+`continuePostfix`, which a preset does carry on disk (`continue_postfix`,
+`openai.js:496`) and which upstream's card-facing `Preset` simply has no slot
+for. It is applied on a switch and invisible to `getPreset`, exactly as it is
+upstream.
+
+### The two departures
+
+**A rename refuses a taken target; upstream destroys the source.** Upstream's
+`renamePreset` calls `createPreset` — which answers `false` and writes nothing
+when the new name exists — and then calls `deletePreset` on the old one
+**unconditionally** (`preset.ts:696-703`). So `renamePreset('A', 'B')` with a `B`
+already there deletes `A`, keeps `B` as it was, and returns `true`. This arm
+refuses, leaves both presets standing, answers
+`{ renamed: false, reason: 'name-taken' }` and reports the refusal naming what
+upstream would have done. Compatibility is the floor, and a data loss is not part
+of it.
+
+A successful rename also re-selects, because `preset.delete` of the active preset
+deliberately leaves the running body nameless — honest for a delete, wrong for a
+rename, where the same preset is still there under a new name.
+
+**A preset file with no `prompt_order[100001]` is read as everything, in file
+order.** Upstream would answer `prompts: []` with every entry in
+`prompts_unused`. That state is unreachable on SillyTavern, whose prompt manager
+writes an ordering the moment a preset is selected, and it is ordinary here,
+because this host reads preset files straight off a disk — two of the eight in
+the local corpora are hand-written. `prompts: []` would tell a card nothing is in
+the prompt list while the assembler runs every entry of it, so
+`withTavernHelperOrder` seeds the ordering the assembly already implies, which is
+the same seeding `withSeededOrder` does for the prompt manager and for the same
+reason.
+
+### The cost
+
+`script.context` now also builds the preset half: `PresetStore.list()`, measured
+at **~25 ms** on the real two-preset library (6.0 MB + 640 KB, every file parsed
+to validate it), plus the mapping and one `JSON.stringify`, on a snapshot the
+host already takes ~1.75 s to build. Not cached, deliberately: a cache here needs
+an invalidation rule, and a preset's name list changes on import, delete, rename
+and save — four places to be wrong about, for 1.4% of a call.
+
+The frame's copy is capped at `FRAME_PRESET_LIMIT` (2 MiB of JSON). That number
+is a guard, not a tuning: the trimmed card-facing body runs 1.4 KiB to 720 KiB
+over the eight real presets, and the ceiling sits above all eight so that a
+preset nobody has measured cannot turn one card's synchronous read into a page
+that never paints. Past it the snapshot carries `refusal` instead of the body and
+the frame throws with the size in the sentence.
+
+**What would overturn it.** A card that renames onto a taken name and depends on
+upstream's deletion (nothing in the corpus renames anything); a preset library
+large enough that the per-snapshot `list()` becomes visible against the 1.75 s,
+which would argue for a name-list cache invalidated at the four write sites; or a
+real preset past 2 MiB trimmed, which would need the ceiling raised with a new
+measurement rather than raised on principle.
+
 ## 66. A world book can be deleted, and the deletion says what it left dangling
 
 **What upstream does.** `deleteWorldInfo(name)` (`world-info.js:4234`) is the

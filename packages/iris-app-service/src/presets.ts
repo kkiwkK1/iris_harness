@@ -18,10 +18,151 @@
 import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import {
+  toTavernHelperPreset,
+  trimPresetForFrame,
+  type TavernHelperPreset,
+} from '@iris/compat-tavernhelper'
 import type { ChatCompletionPreset } from '@iris/preset'
+import type { GenerationSettings } from '@iris/protocol'
 
 import { invalid, notFound } from './errors.ts'
 import { fileFor, isSafeId } from './paths.ts'
+
+// —— family③: preset ——
+
+/**
+ * The live settings, written back into the file field names a preset uses.
+ *
+ * The exact inverse of `presetScalarPatch` (service.ts), and the pairing is the
+ * point rather than a nicety: a switch copies a preset's scalar fields *out*
+ * into the global settings layer, so from that moment the layer — not the
+ * body — is what the host generates with. `getPreset('in_use')` has to report
+ * what will actually be sent, which means reading the same fields back. Reading
+ * them off the body instead would answer with the temperature the preset
+ * shipped while the host generates at the one the user has since typed, and
+ * nothing in the answer would say so.
+ *
+ * Upstream faces the same split and solves it the same way — `toPreset(…, {
+ * in_use: true })` reads `preset.temp_openai` (the running value) where a named
+ * preset reads `preset.temperature` (the stored one), `preset.ts:441-448`.
+ * Hence the `*_openai` spellings here: they are the "in use" half of that pair,
+ * and {@link toTavernHelperPreset} reads exactly those for `'in_use'`.
+ *
+ * **Only the fields this host acts on.** `top_a`, `n`, `stream_openai`,
+ * `show_thoughts`, `request_images`, `function_calling`, `enable_web_search`,
+ * `image_inlining`, `video_inlining`, `names_behavior` and `wrap_in_quotes`
+ * have no Iris equivalent, so they are absent here and the *body's* own values
+ * stand — which is the honest answer: the body is the last thing that said
+ * anything about them. DEVIATIONS host §65 carries the field-by-field table.
+ * @param settings - the global generation settings.
+ * @returns a patch of preset-file field names, carrying only what is set.
+ */
+export function livePresetFields(settings: GenerationSettings): Record<string, unknown> {
+  const patch: Record<string, unknown> = {}
+  const put = (key: string, value: number | boolean | string | undefined): void => {
+    if (value !== undefined) patch[key] = value
+  }
+  put('openai_max_context', settings.contextWindow)
+  put('openai_max_tokens', settings.maxTokens)
+  put('temp_openai', settings.temperature)
+  put('freq_pen_openai', settings.frequencyPenalty)
+  put('pres_pen_openai', settings.presencePenalty)
+  put('top_p_openai', settings.topP)
+  put('repetition_penalty_openai', settings.repetitionPenalty)
+  put('min_p_openai', settings.minP)
+  put('top_k_openai', settings.topK)
+  put('seed', settings.seed)
+  put('squash_system_messages', settings.squashSystemMessages)
+  put('reasoning_effort', settings.reasoningEffort)
+  put('max_context_unlocked', settings.contextUnlocked)
+  return patch
+}
+
+/**
+ * Give an order-less preset the ordering its assembly already implies.
+ *
+ * Upstream's `getPreset` reads `prompt_order[100001]` and puts every prompt the
+ * ordering does not name into `prompts_unused` (`preset.ts:402-410`), so a file
+ * carrying no ordering at all comes back with `prompts: []`. On SillyTavern
+ * that state is unreachable — its prompt manager writes an ordering the moment
+ * a preset is selected — but here it is ordinary, because this host reads
+ * preset files straight off a disk, and two of the eight in the local corpora
+ * are hand-written.
+ *
+ * Answering `prompts: []` for such a preset would tell a card that nothing is
+ * in the prompt list while the assembler runs every entry of it
+ * (`resolveOrder`'s own file-order fallback). A card reads a preset in order to
+ * reason about what the model will be sent, so the answer that matches the
+ * assembler is the correct one. Deliberate divergence, recorded in host §65;
+ * the seeding is the same one `withSeededOrder` does for the prompt manager,
+ * for the same reason.
+ * @param preset - the stored body.
+ * @returns a body carrying the global ordering group, unchanged if it had one.
+ */
+export function withTavernHelperOrder(preset: ChatCompletionPreset): ChatCompletionPreset {
+  const orders = preset.prompt_order ?? []
+  if (orders.some(entry => entry.character_id === TH_ORDER_ID)) return preset
+  return {
+    ...preset,
+    prompt_order: [
+      ...orders,
+      {
+        character_id: TH_ORDER_ID,
+        order: preset.prompts.map(prompt => ({ identifier: prompt.identifier, enabled: true })),
+      },
+    ],
+  }
+}
+
+/**
+ * The ordering group both sides read, 100001.
+ *
+ * `@iris/preset`'s `GLOBAL_ORDER_ID` and
+ * `@iris/compat-tavernhelper-core`'s `TH_ORDER_CHARACTER_ID` are the same
+ * number for the same reason; this module names it once more only because it is
+ * the one that has to agree with **both**, and `presets.test.ts` pins all three
+ * equal.
+ */
+const TH_ORDER_ID = 100001
+
+/**
+ * The largest card-facing preset this host will hand a frame, in bytes of JSON.
+ *
+ * A policy number, not a measurement, and the distinction matters because a
+ * constant that encodes a measurement drifts silently. What is measured is
+ * beside it: over the eight real presets in the two local corpora on
+ * 2026-09-10, the trimmed card-facing body runs 1.4 KiB to 720 KiB, and it is
+ * structured-cloned once per live frame — 12.7 MiB per reading window at
+ * `FRAME_COUNT_LIMIT` 18 for the largest. This ceiling sits above all eight on
+ * purpose: it is not tuning, it is the guard that stops a preset nobody has
+ * measured from turning one card's synchronous read into a page that never
+ * paints. Past it, `getPreset('in_use')` throws with the size in the sentence.
+ */
+export const FRAME_PRESET_LIMIT = 2 * 1024 * 1024
+
+/**
+ * One preset as a card sees it.
+ *
+ * @param body - the stored preset body.
+ * @param options - `live` supplies the running settings, which marks this as
+ *   the `'in_use'` reading; absent means a named library preset, read as
+ *   stored. `forFrame` trims the extension sub-trees that cannot be
+ *   structured-cloned once per live frame — see `trimPresetForFrame`.
+ * @returns the card-facing preset.
+ */
+export function cardFacingPreset(
+  body: ChatCompletionPreset,
+  options: { live?: GenerationSettings, forFrame?: boolean } = {},
+): TavernHelperPreset {
+  const preset = toTavernHelperPreset(
+    withTavernHelperOrder(body),
+    options.live === undefined ? {} : { live: livePresetFields(options.live) },
+  )
+  return options.forFrame === true ? trimPresetForFrame(preset) : preset
+}
+
+// —— family③ end ——
 
 /**
  * Turn a preset name into the file stem we would store it under.

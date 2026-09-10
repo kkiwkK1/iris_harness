@@ -422,6 +422,35 @@ test('exactly the outward-reaching names are shadowed', () => {
     'retrieveDisplayedMessage',
     'refreshOneMessage',
     'rotateChatMessages',
+    // —— family③: preset ——
+    // Bare, like every other Tavern Helper member: `predefine.js` merges the
+    // whole `TavernHelper` object's keys into a card's globals, so both
+    // spellings resolve for these too. `placeholder_prompt_default_order` is
+    // the one name here that upstream declares and does not export — see the
+    // member for the measurement.
+    //
+    // Before `TavernHelper`, because that name is not a key of the surface at
+    // all: it is assigned after the literal is built, so it is always the last
+    // name however the literal grows.
+    'getPreset',
+    'getPresetNames',
+    'getLoadedPresetName',
+    'loadPreset',
+    'isPresetNormalPrompt',
+    'isPresetSystemPrompt',
+    'isPresetPlaceholderPrompt',
+    'default_preset',
+    'builtin_prompt_default_order',
+    'placeholder_prompt_default_order',
+    'getProxyPresetNames',
+    'createPreset',
+    'createOrReplacePreset',
+    'deletePreset',
+    'renamePreset',
+    'replacePreset',
+    'updatePresetWith',
+    'setPreset',
+    // —— family③ end ——
     'TavernHelper',
   ])
 })
@@ -1611,6 +1640,26 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'retrieveDisplayedMessage',
     'refreshOneMessage',
     'rotateChatMessages',
+    // —— family③: preset ——
+    'getPreset',
+    'getPresetNames',
+    'getLoadedPresetName',
+    'loadPreset',
+    'isPresetNormalPrompt',
+    'isPresetSystemPrompt',
+    'isPresetPlaceholderPrompt',
+    'default_preset',
+    'builtin_prompt_default_order',
+    'placeholder_prompt_default_order',
+    'getProxyPresetNames',
+    'createPreset',
+    'createOrReplacePreset',
+    'deletePreset',
+    'renamePreset',
+    'replacePreset',
+    'updatePresetWith',
+    'setPreset',
+    // —— family③ end ——
     'TavernHelper',
     // The per-script registry, published with the rest so a failure to define
     // it is reported like anything else — rather than leaving co-located scripts

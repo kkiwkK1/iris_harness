@@ -967,6 +967,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('script.chatHistoryBrief', handlers['script.chatHistoryBrief']),
       ctx.irisRpc.register('script.chatHistoryDetail', handlers['script.chatHistoryDetail']),
       ctx.irisRpc.register('script.rotateChatMessages', handlers['script.rotateChatMessages']),
+      // —— family③: preset ——
+      ctx.irisRpc.register('script.createOrReplacePreset', handlers['script.createOrReplacePreset']),
+      ctx.irisRpc.register('script.deletePreset', handlers['script.deletePreset']),
+      ctx.irisRpc.register('script.renamePreset', handlers['script.renamePreset']),
+      ctx.irisRpc.register('script.loadPreset', handlers['script.loadPreset']),
+      // —— family③ end ——
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()

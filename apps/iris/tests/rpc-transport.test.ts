@@ -453,6 +453,17 @@ const PROBES: Record<string, unknown> = {
   'script.chatHistoryBrief': { chatId: 'no-such-chat' },
   'script.chatHistoryDetail': { chatId: 'no-such-chat', files: ['no-such-chat.jsonl'] },
   'script.rotateChatMessages': { chatId: 'no-such-chat', begin: 0, middle: 1, end: 2 },
+  // —— family③: preset ——
+  // The probe host composes no preset library, so all four refuse with
+  // `unsupported` — which proves the handler ran, exactly as the storage and
+  // world-book probes above do. Names that exist nowhere on purpose: this guard
+  // checks reachability, not success, and a write probe that *worked* would
+  // leave a preset file behind on the probe profile.
+  'script.createOrReplacePreset': { name: 'no-such-preset', preset: { prompts: [] } },
+  'script.deletePreset': { name: 'no-such-preset' },
+  'script.renamePreset': { name: 'no-such-preset', newName: 'no-such-preset-2' },
+  'script.loadPreset': { name: 'no-such-preset' },
+  // —— family③ end ——
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {

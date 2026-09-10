@@ -1806,6 +1806,32 @@ class InMemoryClient implements FakeClient {
         )
       }
 
+      // —— family③: preset ——
+      case 'script.createOrReplacePreset':
+      case 'script.deletePreset':
+      case 'script.renamePreset':
+      case 'script.loadPreset': {
+        /*
+         * Refused as a group, on the same line `script.getPreset` above is.
+         *
+         * This client has no preset library, and the writes are worse to fake
+         * than the read: three of the four answer a **boolean** that a card
+         * branches on — `createPreset` returning `false` means "a preset of
+         * that name already exists", `loadPreset` returning `true` means "the
+         * host is now generating with this preset" — so any answer this client
+         * invents teaches a card something about a library that is not there.
+         * `loadPreset` is the sharpest: the only honest values are `false`
+         * (which a card reads as "no such preset" and may then try to create
+         * one) and `true` (which is a lie about what the next generation will
+         * assemble with).
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client keeps no preset library, so ${method} has nothing true to answer with`,
+        )
+      }
+      // —— family③ end ——
+
       default: {
         // Exhaustiveness guard: a method added to the protocol without an arm
         // here becomes a type error rather than a runtime surprise.

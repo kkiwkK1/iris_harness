@@ -23,18 +23,28 @@ import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribu
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TavernRegexTier, TurnUsage } from '@iris/protocol'
+import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
+// —— family③: preset ——
+import {
+  DuplicatePresetPromptError,
+  fromTavernHelperPreset,
+  restoreOmittedExtensions,
+  type TavernHelperPreset,
+} from '@iris/compat-tavernhelper'
+// —— family③ end ——
 import { checkScriptFetch, extractScripts } from '@iris/script'
 import { defaultRegistry } from '@iris/macro'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
 import { historyFromSession, slotsOf, squashSystemRuns, TurnDriver, type GenerateEvents, type HistoryProjection, type StreamFn } from '@iris/turn'
 import { randomUUID } from 'node:crypto'
 
-import { PresetStore } from './presets.ts'
+// —— family③: preset —— `cardFacingPreset` and the frame ceiling ride the same
+// import as the store they read.
+import { FRAME_PRESET_LIMIT, PresetStore, cardFacingPreset } from './presets.ts'
 import type { BackupStore } from './backups.ts'
 import {
   ConnectionStore,
@@ -887,6 +897,96 @@ export class IrisAppService {
     return managerViewOf(this.#activePresetName, this.#activePreset)
   }
 
+  // —— family③: preset ——
+
+  /**
+   * The running preset as a card sees it, read live.
+   *
+   * Live rather than captured: the body the manager swapped in is the one a
+   * card's next generation assembles with, and a card reading the preset must
+   * see the preset that will run.
+   * @param forFrame - trim the extension sub-trees a per-frame clone cannot
+   *   carry. True for the snapshot, false for the round-trip arm.
+   * @returns the card-facing preset.
+   */
+  #inUsePreset(forFrame: boolean): TavernHelperPreset {
+    return cardFacingPreset(this.#activePreset, {
+      // The **global** layer, not a chat's. Upstream has one settings space, so
+      // `getPreset('in_use')` there reports what every chat runs with; a
+      // chat-scoped override is an Iris-only layer and a preset is not the
+      // place a card would look for one. `getPreset` answers the same for every
+      // frame of the page, which is also what makes one snapshot serve them all.
+      live: this.#options.settings.get(),
+      forFrame,
+    })
+  }
+
+  /**
+   * The preset half of a card's snapshot, or nothing on a storeless host.
+   *
+   * @returns the field `buildCardContext` puts on the snapshot.
+   */
+  async #presetSnapshot(): Promise<ScriptContext['preset']> {
+    const store = this.#options.presets
+    /*
+     * Refused by absence rather than answered with `['in_use']`, the same line
+     * every other preset arm draws: a host that keeps no library cannot honour
+     * `loadPreset` or `createPreset` either, and an `['in_use']` name list
+     * would invite a card to offer a switch that can never land. The frame
+     * turns the absence into "this host has no preset library", which is the
+     * true sentence.
+     */
+    if (store === undefined) return undefined
+    const names = ['in_use', ...await store.list()]
+    const loaded = this.#activePresetName
+    const body = this.#inUsePreset(true)
+    const text = JSON.stringify(body)
+    /*
+     * A ceiling, and the reason it exists rather than the number.
+     *
+     * The body rides a structured clone into every live frame, so its cost is
+     * multiplied by `FRAME_COUNT_LIMIT` (18). Measured over the eight real
+     * presets in the two local corpora on 2026-09-10, the trimmed body is
+     * 1.4 KiB to 720 KiB — 12.7 MiB per reading window at the top of that
+     * range. This limit is not tuned to that measurement: it is here so that a
+     * preset nobody has measured cannot silently turn one card's read into a
+     * hundred megabytes of clone. Above it the frame throws with the size,
+     * which is a sentence a person can act on, where a page that simply became
+     * unusable is not.
+     */
+    if (text.length > FRAME_PRESET_LIMIT) {
+      const size = `${String(Math.round(text.length / 1024))} KiB`
+      this.#report(
+        `the preset in use is ${size} as a card sees it, past the ${String(FRAME_PRESET_LIMIT / 1024)} KiB a frame can be handed; `
+        + 'getPreset("in_use") will refuse in every card until it is smaller',
+        { kind: 'host', grade: 'note' },
+      )
+      return {
+        names,
+        ...loaded === undefined ? {} : { loaded },
+        refusal: `the preset in use is ${size} as a card sees it, which is past the ${String(FRAME_PRESET_LIMIT / 1024)} KiB this host hands a frame`,
+      }
+    }
+    return { names, ...loaded === undefined ? {} : { loaded }, inUse: text }
+  }
+
+  /**
+   * Read one preset by the name a card asked for.
+   * @param name - `'in_use'` or a library name.
+   * @returns the card-facing preset, untrimmed.
+   * @throws {AppError} `not-found` when the library has no such preset.
+   */
+  async #presetByName(name: string): Promise<TavernHelperPreset> {
+    if (name === 'in_use') return this.#inUsePreset(false)
+    const store = this.#options.presets
+    if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+    // `store.read` throws `not-found` with the name in it, which is the shape
+    // upstream's own `throw Error("预设 '…' 不存在")` gives a card's catch.
+    return cardFacingPreset(await store.read(name))
+  }
+
+  // —— family③ end ——
+
   /**
    * Swap the live preset for another body and persist the choice.
    *
@@ -1734,7 +1834,19 @@ export class IrisAppService {
       return rows
     }
 
-    return {
+    /*
+     * Named rather than returned inline, so an arm can call another arm.
+     *
+     * Three of the card-facing preset arms do: `script.deletePreset`,
+     * `script.renamePreset` and `script.loadPreset` reach `preset.delete` and
+     * `preset.select` instead of the store, because those two carry
+     * consequences beyond the file — the active preset's name is the key its
+     * regex allow-list is addressed by, and a switch has to refresh every open
+     * conversation's tier. Reimplementing them at the card face would be a
+     * second definition of what a delete and a switch mean, and the second one
+     * would be the one that forgets.
+     */
+    const handlers: Handlers = {
       'chat.list': async () => {
         const order = this.#options.chatOrder
         return {
@@ -2092,39 +2204,26 @@ export class IrisAppService {
       },
 
       'script.getPreset': async ({ name }) => {
-        // Refused by name rather than falling back. This host runs one preset;
-        // answering a request for another with the one in use would let a card
-        // reason confidently about prompts that are not in the preset it asked
-        // for, and nothing in its reply would say so.
-        if (name !== 'in_use') {
-          throw notFound(`preset "${name}" — this host only carries the one in use`)
-        }
-
-        // Read live, not captured at construction: the preset the manager
-        // swapped in is the one a card's next generation assembles with, and a
-        // card reading the preset should see the preset that will run.
-        const preset = this.#activePreset
-        const orders = preset.prompt_order ?? []
-        // The same fallback chain the assembler uses, minus the enabled filter:
-        // a card reads `enabled` and so needs the disabled entries too.
-        const chosen = orders.find(entry => entry.character_id === GLOBAL_ORDER_ID)
-          ?? orders.find(entry => entry.character_id === LEGACY_ORDER_ID)
-        const enabled = new Map((chosen?.order ?? []).map(entry => [entry.identifier, entry.enabled]))
-
-        return {
-          prompts: preset.prompts.map(item => ({
-            // `identifier` here, `id` on the wire: upstream's name for the field
-            // is what a card matches on.
-            id: item.identifier,
-            // A preset with no ordering at all runs its list in file order with
-            // everything on, which is what `resolveOrder` falls back to. With an
-            // ordering present, an item missing from it is off — being absent
-            // from the order is how a preset turns a prompt off.
-            enabled: chosen === undefined ? true : enabled.get(item.identifier) ?? false,
-            ...item.role === undefined ? {} : { role: item.role },
-            ...item.content === undefined ? {} : { content: item.content },
-          })),
-        }
+        /*
+         * **Any name, not just `'in_use'`.** This arm used to refuse every
+         * other name with "this host only carries the one in use", which was
+         * true of the host that had no preset library and stopped being true
+         * when one landed: `store.read` answers a name and `preset.select`
+         * switches to it, so a card asking for `'预设A'` is asking for
+         * something this host has. The refusal that remains is the honest one —
+         * a name the library does not carry, thrown with the name in it, which
+         * is the shape upstream's own `throw Error("预设 '…' 不存在")` gives a
+         * card's `catch`.
+         *
+         * Whole and untrimmed, unlike the copy on the snapshot: this is one
+         * round trip on demand, so the extension sub-trees the per-frame clone
+         * cannot afford are a cost only the caller who asked for it pays. Which
+         * matters beyond reading — every write member upstream is a
+         * read-modify-write over the whole `Preset`, and a partial read here
+         * would have a card save back a preset with its settings replaced by
+         * nothing.
+         */
+        return { preset: await this.#presetByName(name) as unknown as Record<string, unknown> }
       },
 
       'script.createChatMessages': async ({ chatId, messages, insertAt }) => {
@@ -3470,6 +3569,14 @@ export class IrisAppService {
             ...scripts === undefined || entry.meta.characterId === undefined
               ? {}
               : { characterRegexAllowed: (await scripts.scopedRegex(entry.meta.characterId)).allowed },
+            // —— family③: preset ——
+            // The three synchronous preset members' source. Read here rather
+            // than fetched by the frame because all three return values
+            // upstream; a preset switch reaches a live frame through this same
+            // field, because `#applyPreset` re-announces every open chat and
+            // the shell answers that by refetching this snapshot.
+            preset: await this.#presetSnapshot(),
+            // —— family③ end ——
           }),
         }
       },
@@ -4000,7 +4107,183 @@ export class IrisAppService {
         entry.touch()
         return { view: this.#announceChat(entry) }
       },
+      // —— family③: preset ——
+
+      'script.createOrReplacePreset': async ({ name, preset, ifAbsent }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+
+        /*
+         * `createPreset`'s guard, decided here rather than at the card face.
+         *
+         * Upstream writes nothing when the name is taken, and the *only* place
+         * that decision cannot race is beside the file. `'in_use'` is never
+         * free: upstream's `createPreset` signature excludes the name and its
+         * own `getPresetNames()` includes it, so the answer there is `false`.
+         */
+        if (ifAbsent === true && (name === 'in_use' || await store.has(name))) {
+          return { created: false, restored: [] }
+        }
+
+        /*
+         * The trimmed sub-trees go back on first, before anything is written.
+         *
+         * Upstream's own documented round trip is `const p =
+         * getPreset('in_use'); p.settings.should_stream = true; await
+         * replacePreset('in_use', p)`, and the `p` a card holds came from the
+         * frame's copy, which leaves out `extensions.tavern_helper` and
+         * `extensions.regex_scripts` because they are 5 MiB in one real preset
+         * and the copy is cloned once per live frame. Writing that body
+         * verbatim would delete a preset's script library as a side effect of
+         * turning streaming on, and the preset would still load.
+         */
+        const incoming = preset as unknown as TavernHelperPreset
+        const stored = await (async (): Promise<TavernHelperPreset | undefined> => {
+          try {
+            return await this.#presetByName(name)
+          } catch {
+            // A name nothing has yet: there is nothing to restore from, which
+            // is the ordinary create path rather than a failure.
+            return undefined
+          }
+        })()
+        const { preset: merged, restored } = restoreOmittedExtensions(incoming, stored)
+        if (restored.length > 0) {
+          this.#report(
+            `a card wrote preset "${name}" from the copy a frame is handed, so ${restored.join(' and ')} `
+            + 'was kept from the stored preset rather than being replaced with nothing',
+            { kind: 'script', grade: 'note' },
+          )
+        }
+
+        let body: ChatCompletionPreset
+        try {
+          body = fromTavernHelperPreset(merged) as unknown as ChatCompletionPreset
+        } catch (error: unknown) {
+          /*
+           * Upstream throws a bare `Error` for a repeated system or placeholder
+           * id (`preset.ts:481`) and lets it out of the member, so a card's
+           * `catch` sees it. Answered `invalid-request` with upstream's own
+           * sentence: the card's message matches either way, and the wire code
+           * says whose fault it was.
+           */
+          if (error instanceof DuplicatePresetPromptError) throw invalid(error.message)
+          throw error
+        }
+
+        const created = name === 'in_use' ? false : await store.has(name) === false
+        if (name === 'in_use') {
+          /*
+           * `#applyPreset`, the same path `preset.select` and a connection's
+           * bound preset take, so a card's write and the panel's switch cannot
+           * mean different things — and specifically so the write refreshes
+           * every open conversation's regex tier. A preset carries its own
+           * regex rules; a body swapped in without that refresh leaves the
+           * *previous* preset's rules rewriting the page with nothing to show
+           * it (host §53).
+           *
+           * The library name is kept: writing to `'in_use'` edits the running
+           * body, which is what upstream's `'in_use'` means, and does not save
+           * it back to the file it was loaded from — upstream is explicit that
+           * those are two acts (`preset.d.ts:152-160`).
+           */
+          await this.#applyPreset(this.#activePresetName, body)
+        } else {
+          await store.save(name, body)
+          // Saving over the name the running body was loaded from does **not**
+          // reload it, for the same reason: upstream's `'in_use'` and its
+          // source file are separate, and a card editing the file has not asked
+          // for a switch.
+        }
+        return { created, restored }
+      },
+
+      'script.deletePreset': async ({ name }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        /*
+         * `'in_use'` is answered `false`, not obeyed. Upstream's signature
+         * excludes it and its `preset_manager.deletePreset` has no entry to
+         * remove for it, so a host that deleted the running body here would
+         * destroy state on a call upstream answers `false` to.
+         */
+        if (name === 'in_use') return { deleted: false }
+        if (await store.has(name) === false) return { deleted: false }
+        /*
+         * Through the panel's own arm, not `store.delete`, because deleting the
+         * *active* preset has consequences beyond the file: the name goes, and
+         * with it the key the preset-regex allow-list is addressed by, so an
+         * open conversation would otherwise keep running the deleted preset's
+         * rules. One path, one set of consequences.
+         */
+        await handlers['preset.delete']({ name })
+        return { deleted: true }
+      },
+
+      'script.renamePreset': async ({ name, newName }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        if (name === 'in_use') return { renamed: false, reason: 'no-such-preset' as const }
+        if (await store.has(name) === false) return { renamed: false, reason: 'no-such-preset' as const }
+        /*
+         * Refused rather than obeyed, and this is a deliberate divergence.
+         *
+         * Upstream's `renamePreset` calls `createPreset` — which answers
+         * `false` and writes nothing when the target name is taken — and then
+         * deletes the source **unconditionally** (`preset.ts:696-703`), so a
+         * rename onto an existing name destroys the source and returns `true`.
+         * Copying that would make a data loss part of the compatibility floor.
+         * Recorded in host §65.
+         */
+        if (newName === 'in_use' || await store.has(newName)) {
+          this.#report(
+            `a card asked to rename preset "${name}" to "${newName}", which the library already has — `
+            + 'refused, and both presets are still there (upstream would have deleted the first)',
+            { kind: 'script', grade: 'note' },
+          )
+          return { renamed: false, reason: 'name-taken' as const }
+        }
+        const body = await store.read(name)
+        // Written before the removal, so a failure leaves the source standing
+        // rather than neither.
+        await store.save(newName, body)
+        // The panel's arm again: renaming the active preset is a delete of the
+        // name the regex allow-list is keyed by.
+        await handlers['preset.delete']({ name })
+        /*
+         * The running body follows its name. `preset.delete` of the active
+         * preset leaves the body live and nameless on purpose — honest for a
+         * delete, wrong for a rename, where the same preset is still there
+         * under a new name. Re-selecting it is what makes
+         * `getLoadedPresetName()` answer the new name, which is what upstream's
+         * rename leaves behind.
+         */
+        if (this.#activePresetName === undefined) await handlers['preset.select']({ name: newName })
+        return { renamed: true }
+      },
+
+      'script.loadPreset': async ({ name }) => {
+        const store = this.#options.presets
+        if (store === undefined) throw new AppError('unsupported', 'this host keeps no preset library')
+        /*
+         * `'in_use'` answers `false`: upstream's `findPreset('in_use')` finds
+         * nothing (the name is a word its manager understands, not a stored
+         * preset), so `loadPreset('in_use')` is `false` there too — and its
+         * signature excludes the name.
+         */
+        if (name === 'in_use') return { loaded: false }
+        if (await store.has(name) === false) return { loaded: false }
+        // The panel's arm, so a card's switch and a person's switch are one
+        // act: `#applyPreset` persists the choice, copies the scalar fields
+        // into the global settings layer and refreshes every open
+        // conversation's regex tier.
+        await handlers['preset.select']({ name })
+        return { loaded: true }
+      },
+
+      // —— family③ end ——
     }
+    return handlers
   }
 
   // —— family②: regex ——
