@@ -26,6 +26,18 @@ import {
   parseRegexFromString,
   type Listener,
 } from '@iris/compat-tavernhelper-core'
+// —— family③: preset —— the same module the host writes presets back through,
+// so the three prompt-class guards cannot disagree across the two sides.
+import {
+  PLACEHOLDER_PROMPT_DEFAULT_ORDER,
+  TH_DEFAULT_PRESET,
+  isPresetNormalPrompt,
+  isPresetPlaceholderPrompt,
+  isPresetSystemPrompt,
+  mergePresetDefaults,
+  type TavernHelperPreset,
+} from '@iris/compat-tavernhelper-core'
+// —— family③ end ——
 import type {
   LorebookSettings,
   ScriptChatMessage,
@@ -906,6 +918,19 @@ function toCardChatMessage(
 }
 
 export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<string, unknown> {
+  /**
+   * The in-use preset, parsed, and the text it was parsed from.
+   *
+   * — family③: preset. The snapshot carries the preset as JSON text (see
+   * `ScriptContext.preset.inUse` for why), and `getPreset` parses it. Keeping
+   * the text beside the value is what makes the cache safe without an
+   * invalidation rule: a new snapshot brings a different string, so `!==` is
+   * the whole check. A frame whose card never calls `getPreset` never parses at
+   * all, which is the point — the text arrives in every frame and the parse is
+   * the expensive half.
+   */
+  let parsedPreset: { text: string, value: TavernHelperPreset } | undefined
+
   /** The snapshot, or a refusal naming the member that needed it. */
   const snapshot = (member: string): ScriptContext => {
     const context = host.context()
@@ -4705,6 +4730,398 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
         ...option?.refresh === undefined ? {} : { refresh: option.refresh },
       })
     },
+    // —— family③: preset ——
+
+    /**
+     * The preset a card is being played with, or another one from the library.
+     *
+     * **Synchronous, and the whole family turns on that.** Upstream returns a
+     * `Preset`, not a promise (`@types/function/preset.d.ts:180`), and the
+     * corpus's one real consumer — 魔法少女的扣扣审判1.0's `外置状态栏`, the only
+     * card of 19 that reaches for this — reads
+     * `TavernHelper.getPreset('in_use')` with no `await` anywhere on the path
+     * and then walks `preset.prompts`, filtering on `p.enabled`, branching on
+     * `prompt.id === 'worldInfoBefore'` and pushing `{ role: prompt.role,
+     * content: prompt.content }` into its own message list. An `async` version
+     * of this member hands that site a promise: `preset && preset.prompts` is
+     * `undefined`, the `if` is false, the block does nothing and its own
+     * `try`/`catch` never fires — the same silence the card gets today from its
+     * `typeof` guard, except that the guard now passes and the surface reads as
+     * built. A metadata-only reply is worse still: `else if (prompt.content)`
+     * goes false for every normal prompt, so the card assembles a message list
+     * with its world-info blocks and none of the preset's text, and calls it
+     * done.
+     *
+     * So it reads the pushed snapshot. `'in_use'` is answered from
+     * `context.preset.inUse`, the whole `Preset` as JSON text — `JSON.parse`
+     * per distinct text, which a frame that never calls this never pays.
+     *
+     * **A name other than `'in_use'` throws**, and that is the one thing this
+     * cannot do upstream's way. Upstream reads the library synchronously; a
+     * frame cannot, so a named preset is reachable only through the
+     * asynchronous members below. A throw is the right shape for saying so: it
+     * is what upstream does for a name it cannot resolve, so a card's `catch`
+     * already handles it, and the sentence says which of the two reasons it
+     * was. Measured: the corpus passes the literal `'in_use'` and nothing else
+     * (`notes/TEST-CARDS.md:297` recorded the same on 2026-09-02).
+     * @param name - `'in_use'`, or a library name this frame cannot reach.
+     * @returns the preset as upstream shapes it.
+     */
+    getPreset: (name: string): TavernHelperPreset => {
+      const preset = snapshot('getPreset').preset
+      if (preset === undefined) {
+        throw new Error(
+          'getPreset: this host keeps no preset library, so it has no preset to answer with'
+          + ' — not even the one in use',
+        )
+      }
+      if (name !== 'in_use') {
+        throw new Error(
+          `getPreset('${name}'): only the preset in use can be read synchronously in a card frame.`
+          + ' Upstream reads the library synchronously and a frame cannot; reach a named preset with'
+          + ' await updatePresetWith / setPreset, or make it the one in use with loadPreset first.',
+        )
+      }
+      if (preset.inUse === undefined) {
+        throw new Error(`getPreset('in_use'): ${preset.refusal ?? 'the host offered no preset body'}`)
+      }
+      /*
+       * Parsed once per distinct text, not once per call.
+       *
+       * The invalidation rule is the text's own identity — a new snapshot
+       * brings a new string and `!==` is the whole of it — so this is a cache
+       * with no second place to be wrong about what changes a preset. Per-call
+       * freshness is still real: the one copy every member's return goes
+       * through (`detachReturns`, below) is upstream's `klona`, so a card that
+       * mutates what it got and hands it to `replacePreset` was never editing
+       * this copy.
+       */
+      if (parsedPreset === undefined || parsedPreset.text !== preset.inUse) {
+        parsedPreset = { text: preset.inUse, value: JSON.parse(preset.inUse) as TavernHelperPreset }
+      }
+      return parsedPreset.value
+    },
+
+    /**
+     * Every preset name, `'in_use'` first — upstream's `getPresetNames`
+     * (`preset.ts:571`).
+     *
+     * Synchronous like upstream's, from the snapshot, and it includes
+     * `'in_use'` because upstream includes it: a card checking
+     * `getPresetNames().includes(x)` before `loadPreset(x)` must get the same
+     * membership answer here.
+     * @returns the names, copied so one card's sort cannot reach the next reader.
+     */
+    getPresetNames: (): string[] => {
+      const preset = snapshot('getPresetNames').preset
+      if (preset === undefined) {
+        host.reportGap(
+          'a card called getPresetNames and this host keeps no preset library — it returned an empty'
+          + ' list, which is not a statement that the library is empty',
+        )
+        return []
+      }
+      return [...preset.names]
+    },
+
+    /**
+     * Which library preset the running body was loaded from — upstream's
+     * `getLoadedPresetName` (`preset.ts:575`).
+     *
+     * Upstream's own doc comment is worth repeating because it is the trap: the
+     * `'in_use'` preset was *loaded from* this one and its contents may since
+     * differ, because an edit takes effect immediately and is only written back
+     * on save (`preset.d.ts:152-160`). Iris's prompt manager has the same two
+     * layers, so the same sentence holds.
+     *
+     * `''` when the running body has no library name — a state upstream cannot
+     * reach and this host can, because `preset.delete` of the active preset
+     * deliberately leaves the body live and nameless. Reported once, because a
+     * fabricated name would be a name `getPreset` then throws on.
+     * @returns the name, or `''`.
+     */
+    getLoadedPresetName: (): string => {
+      const preset = snapshot('getLoadedPresetName').preset
+      if (preset === undefined) {
+        host.reportGap(
+          'a card called getLoadedPresetName and this host keeps no preset library — it returned an'
+          + ' empty string',
+        )
+        return ''
+      }
+      if (preset.loaded === undefined) {
+        host.reportGap(
+          'a card called getLoadedPresetName and the preset in use has no library name (it was'
+          + ' deleted, or this host was composed with a preset and no name) — it returned an empty'
+          + ' string rather than a name getPreset would then refuse',
+        )
+        return ''
+      }
+      return preset.loaded
+    },
+
+    /**
+     * Switch the running preset — upstream's `loadPreset` (`preset.ts:579`).
+     *
+     * **Returns a boolean, not a promise**, because upstream's does: its
+     * `preset_manager.selectPreset` starts the switch and the member answers
+     * whether the *name existed*. So the decision is taken here against the
+     * snapshot's name list and the switch is fired without being awaited —
+     * upstream's shape exactly, including its consequence that `true` means
+     * "this name exists and a switch has begun" rather than "the next
+     * generation will use it".
+     *
+     * The host arm goes through `#applyPreset`, so the switch does everything a
+     * switch does: the body becomes the assembler's input, the scalar fields it
+     * acts on land in the settings layer, and every open conversation's regex
+     * tier is refreshed. A preset carries its own regex rules, and a switch
+     * that skipped that refresh would leave the previous preset's rules
+     * rewriting the page with nothing to show it.
+     * @param name - the preset to load.
+     * @returns whether a preset of that name exists.
+     */
+    loadPreset: (name: string): boolean => {
+      const preset = snapshot('loadPreset').preset
+      if (preset === undefined || name === 'in_use' || !preset.names.includes(name)) return false
+      void host.call('loadPreset', { name }).then(
+        answer => {
+          /*
+           * The host's own verdict, reported only when it disagrees with the
+           * one already handed back. The two can differ honestly — the
+           * snapshot's name list is as fresh as the last snapshot, and a preset
+           * deleted since is a `true` this frame has already returned. Saying
+           * so is the only way that becomes visible; upstream, where both
+           * readings come from one synchronous list, has nothing to report.
+           */
+          if ((answer as { loaded?: boolean } | undefined)?.loaded === false) {
+            host.reportFault(
+              `loadPreset('${name}') answered true from this frame's snapshot, but the host no longer`
+              + ' has a preset of that name — nothing was switched',
+            )
+          }
+        },
+        (error: unknown) => {
+          host.reportFault(`loadPreset('${name}') could not be carried out: ${String(error)}`)
+        },
+      )
+      return true
+    },
+
+    /**
+     * The three prompt-class guards — upstream's `isPresetNormalPrompt`,
+     * `isPresetSystemPrompt` and `isPresetPlaceholderPrompt`
+     * (`preset.ts:107-123`).
+     *
+     * Served from `@iris/compat-tavernhelper-core`, which is also where the
+     * host reads them when it writes a card's edited preset back into a file.
+     * One copy on purpose: the guards decide a prompt's class from its `id`,
+     * and the file's `system_prompt` and `marker` flags are written from the
+     * *same* classification — so two copies disagreeing by one identifier would
+     * give a card a prompt the guard calls normal and the file records as a
+     * marker, consistent on both sides, wrong as a pair, and silent.
+     */
+    isPresetNormalPrompt: (prompt: { id: string }): boolean => isPresetNormalPrompt(prompt),
+    isPresetSystemPrompt: (prompt: { id: string }): boolean => isPresetSystemPrompt(prompt),
+    isPresetPlaceholderPrompt: (prompt: { id: string }): boolean => isPresetPlaceholderPrompt(prompt),
+
+    /**
+     * The preset a new one starts from — upstream's `default_preset`
+     * (`preset.ts:126`).
+     *
+     * A value, not a function, exactly as upstream declares it. The copy every
+     * member's *return* goes through does not apply to a property, so this
+     * hands out the frozen object — a card that writes into it gets a
+     * `TypeError` in strict mode rather than quietly changing what the next
+     * `createPreset` writes, which upstream's `as const` is only a type-level
+     * claim about.
+     */
+    default_preset: TH_DEFAULT_PRESET,
+
+    /**
+     * The order the built-in prompts go in by default
+     * (`src/function/generate/types.ts:172`).
+     *
+     * Two names for one array, and both are published deliberately.
+     * `builtin_prompt_default_order` is the spelling upstream actually puts on
+     * the `TavernHelper` object (`src/function/index.ts:337`, and the only one
+     * in `@types/function/index.d.ts`) even though its own JSDoc marks it
+     * `@deprecated`. `placeholder_prompt_default_order` is declared as a global
+     * in `@types/function/generate.d.ts:326`, is the one upstream's prose tells
+     * authors to use instead, and is **not published at all**: it is not a key
+     * of `TavernHelper`, `predefine.js` seeds a card's bare globals by merging
+     * that object's keys, and the string occurs 0 times in the shipped
+     * `dist/index.js` against 1 for the deprecated spelling.
+     *
+     * So a card written against the type declarations dies on real
+     * SillyTavern. Publishing it here is a deliberate addition rather than
+     * parity — a name upstream declares, documents as preferred, and forgot to
+     * export — recorded in DEVIATIONS web §89. It is the **same array object**,
+     * pinned by identity, so the two spellings cannot drift.
+     */
+    builtin_prompt_default_order: PLACEHOLDER_PROMPT_DEFAULT_ORDER,
+    placeholder_prompt_default_order: PLACEHOLDER_PROMPT_DEFAULT_ORDER,
+
+    /**
+     * The reverse-proxy configurations a generation can be routed through —
+     * upstream's `getProxyPresetNames` (`function/generate.d.ts:6`).
+     *
+     * **Empty because there are none, not as a stand-in for an answer.** An ST
+     * proxy preset is a named `{ url, password }` override for the API
+     * endpoint, kept in `oai_settings.proxies`; upstream answers `[]` on any
+     * install where nobody has added one, which is the majority state. Iris has
+     * no such concept at all — a route here is a connection profile (web §77),
+     * a different object with a different lifecycle — so `[]` is the true
+     * answer rather than a placeholder, and it stays true.
+     *
+     * Deliberately **not** answered with the saved provider names, which is the
+     * tempting mapping and wrong twice over: a profile is not a proxy override,
+     * and a card offering to switch "proxy preset" would be offering to change
+     * which endpoint generates, which is not what it asked about.
+     * @returns an empty list.
+     */
+    getProxyPresetNames: (): string[] => [],
+
+    /**
+     * Create a preset — upstream's `createPreset` (`preset.ts:596`).
+     *
+     * `false` when the name is taken, and the **host** decides that, not this
+     * frame: upstream reads its own synchronous name list, and the list here is
+     * as fresh as the last snapshot, so deciding here would leave a window in
+     * which this silently *replaced* a preset created since. The `ifAbsent`
+     * flag moves the decision beside the file.
+     * @param name - the new preset's name.
+     * @param preset - its contents; upstream defaults to `default_preset`.
+     * @returns whether it was created.
+     */
+    createPreset: async (name: string, preset?: TavernHelperPreset): Promise<boolean> => {
+      const answer = await host.call('createOrReplacePreset', {
+        name,
+        preset: (preset ?? TH_DEFAULT_PRESET) as unknown as Record<string, unknown>,
+        ifAbsent: true,
+      })
+      return (answer as { created?: boolean }).created === true
+    },
+
+    /**
+     * Create a preset, or replace one that is there — upstream's
+     * `createOrReplacePreset` (`preset.ts:657`).
+     *
+     * The `render` option upstream's third argument carries is accepted and
+     * ignored, which is not the same as dropping it: it chooses between a
+     * debounced and an immediate re-render of SillyTavern's own prompt-manager
+     * DOM, which this host does not have. The refresh a write to `'in_use'`
+     * *does* need — every open conversation's regex tier — is unconditional in
+     * the host, because a preset carries its own rules and getting that
+     * conditional wrong leaves the old ones running. Accepting the argument
+     * keeps a card's call signature working; honouring it would mean inventing
+     * a UI to debounce.
+     * @param name - the preset's name, or `'in_use'`.
+     * @param preset - its contents; upstream defaults to `default_preset`.
+     * @returns true when it was created, false when it was replaced.
+     */
+    createOrReplacePreset: async (name: string, preset?: TavernHelperPreset): Promise<boolean> => {
+      const answer = await host.call('createOrReplacePreset', {
+        name,
+        preset: (preset ?? TH_DEFAULT_PRESET) as unknown as Record<string, unknown>,
+      })
+      return (answer as { created?: boolean }).created === true
+    },
+
+    /**
+     * Remove a preset — upstream's `deletePreset` (`preset.ts:692`).
+     * @param name - the preset's name.
+     * @returns whether one was removed.
+     */
+    deletePreset: async (name: string): Promise<boolean> => {
+      const answer = await host.call('deletePreset', { name })
+      return (answer as { deleted?: boolean }).deleted === true
+    },
+
+    /**
+     * Rename a preset — upstream's `renamePreset` (`preset.ts:696`).
+     *
+     * `false` for a target name already taken, where upstream returns `true`
+     * having **deleted the source**: its `renamePreset` calls `createPreset`
+     * (which writes nothing when the name exists) and then deletes the old
+     * preset unconditionally. That is a data loss, so this host refuses instead
+     * and both presets stay — a deliberate divergence recorded in DEVIATIONS
+     * web §89 and host §65, and reported by the host so the `false` is not
+     * mute.
+     * @param name - the preset to rename.
+     * @param newName - the name to give it.
+     * @returns whether it was renamed.
+     */
+    renamePreset: async (name: string, newName: string): Promise<boolean> => {
+      const answer = await host.call('renamePreset', { name, newName })
+      return (answer as { renamed?: boolean }).renamed === true
+    },
+
+    /**
+     * Replace a preset's whole contents — upstream's `replacePreset`
+     * (`preset.ts:705`).
+     *
+     * Upstream throws for a name nothing has, and so does this: the host arm's
+     * own `not-found` carries the name, and a rejection is what a card's
+     * `catch` sees either way. No existence check is made here first — a check
+     * against a snapshot-stale name list would refuse a preset that exists and
+     * pass one that does not, and the host has to make the decision anyway.
+     * @param name - the preset to replace, or `'in_use'`.
+     * @param preset - the contents to write.
+     */
+    replacePreset: async (name: string, preset: TavernHelperPreset): Promise<void> => {
+      await host.call('createOrReplacePreset', { name, preset: preset as unknown as Record<string, unknown> })
+    },
+
+    /**
+     * Update a preset through a function — upstream's `updatePresetWith`
+     * (`preset.ts:718`).
+     *
+     * Composed in the frame because the argument is a **function**, which
+     * cannot cross the frame boundary — the same shape `updateVariablesWith`
+     * and `updateWorldbookWith` take. So this is a read, the card's own
+     * updater, and a write; the read is the asynchronous round trip, which is
+     * what lets it name a library preset the synchronous `getPreset` cannot
+     * reach.
+     * @param name - the preset to update, or `'in_use'`.
+     * @param updater - given the preset, returns the preset to write.
+     * @returns the preset as written.
+     */
+    updatePresetWith: async (
+      name: string,
+      updater: (preset: TavernHelperPreset) => TavernHelperPreset | Promise<TavernHelperPreset>,
+    ): Promise<TavernHelperPreset> => {
+      const read = await host.call('getPreset', { name })
+      const next = await updater((read as { preset: TavernHelperPreset }).preset)
+      await host.call('createOrReplacePreset', { name, preset: next as unknown as Record<string, unknown> })
+      return next
+    },
+
+    /**
+     * Write part of a preset back — upstream's `setPreset` (`preset.ts:731`).
+     *
+     * A read-modify-write over the whole preset, which is what upstream's is
+     * too (`setPreset` → `updatePresetWith` → `getPreset` + `replacePreset`) —
+     * and the reason the round-trip read had to start answering the whole
+     * `Preset` rather than the four prompt fields the corpus reads. The merge
+     * is upstream's own three rules and lives in the shared module beside the
+     * mapping: `settings` and `extensions` are filled in from the stored
+     * preset, while `prompts` and `prompts_unused` are replaced wholesale by
+     * whichever the partial names.
+     * @param name - the preset to write into, or `'in_use'`.
+     * @param preset - the fields to change.
+     * @returns the preset as written.
+     */
+    setPreset: async (
+      name: string,
+      preset: Parameters<typeof mergePresetDefaults>[0],
+    ): Promise<TavernHelperPreset> => {
+      const read = await host.call('getPreset', { name })
+      const merged = mergePresetDefaults(preset, (read as { preset: TavernHelperPreset }).preset)
+      await host.call('createOrReplacePreset', { name, preset: merged as unknown as Record<string, unknown> })
+      return merged
+    },
+
+    // —— family③ end ——
   }
 
   /*

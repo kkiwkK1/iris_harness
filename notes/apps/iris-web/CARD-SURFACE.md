@@ -148,3 +148,29 @@ node scripts/card-surface-census.mjs --verbose   # 每个名字逐来源
 需要 `E:\sillyTavern\SillyTavern` 在位（`IRIS_CORPUS` 可改）；Iris 自己的 data 目录用
 `IRIS_DATA_DIR` 指（worktree 里默认不存在）。量具恒 exit 0，是卡尺不是测试；
 任何一处提取短于下限就停止出数。
+
+---
+
+## 附记 2026-09-10（分支 `dev/th-preset-api`，家族③：预设）
+
+**§一那张表里 ① 面的三个数会变，这里不改它们**，因为四支并行分支各改同一个面，
+把数字就地改成本分支的值，合并时每个数都会是别人那一支眼里的旧值 —— 那张表是
+**一次运行的记录**，日期与分支都写在开头，重跑它才是取新值的方式（§五）。
+
+本分支落地的是家族③：预设域 15 个声明 + `builtin_prompt_default_order`、
+`placeholder_prompt_default_order`、`getProxyPresetNames` 共 18 名。对 ① 面的影响：
+
+- **「用到但没建」少一项**：`getPreset`（1 脚本 / 0 界面 / 2 次）现在是同步真成员，
+  形状是上游的整个 `Preset`。为什么不是元数据、也不是 async，量在
+  `notes/apps/iris-web/DEVIATIONS.md` §89 —— 那张卡读 `prompt.content` 并把它当作
+  消息正文，两种省法都会让它**静默**少发整段预设。
+- **「建了但这份语料没用到」多 17 项**：预设域除 `getPreset` 外全部语料 0 命中。
+  这不是「有面无用量」的浪费清单，是族内变体只有一个的后果 ——
+  `notes/TEST-CARDS.md` 早已把 `getPreset` 记成「只有一张卡」。
+- **`builtin` 仍在「没用到 · 没建」里**，且是本分支唯一一个带测量的拒绝：
+  16 个 ST 内部成员、语料 0，其中 4 个 Iris 今天能诚实作答，理由与代价见 §89。
+
+新语料群这一侧没有变化：本分支没有加 population，也没有改量具的判据。
+两次运行的差别只有 `IRIS_DATA_DIR` —— 带上 Iris 自己的 data 目录后，
+语料是 19 卡 / 4 预设 / 24 世界书、2261 段（脚本 50 / 界面 2211），
+`getPreset` 的读数仍然是 1 脚本 / 0 界面 / 2 次，与 §一那次不带该群的运行一致。

@@ -5353,6 +5353,166 @@ which is a different member than upstream's; or a snapshot channel that is not
 per-frame source bytes (a shared `SharedArrayBuffer`, a fetched per-chat blob),
 which would make the tiers affordable and the whole departure unnecessary.
 
+## 89. The preset family is eighteen names, `getPreset` is synchronous and whole, and the refusal §85 recorded is overturned by its own numbers
+
+**Kind:** card surface built, one refusal reversed, two deliberate departures and one addition.
+
+### The refusal this replaces, and why the numbers read differently
+
+§85 refused `getPreset` with a measurement: upstream answers a `Preset`
+synchronously, so a faithful shape must ride the pushed snapshot; the two real
+presets' `prompts` are 500.5 and 342.5 KiB; times `FRAME_COUNT_LIMIT` 19 is 6 to
+9 MiB of structured clone per reading window, for one guarded call site; and a
+throwing function would turn a `typeof`-guarded card from a silent skip into a
+crash. Every one of those readings reproduces (2026-09-10, both corpora, 8 real
+presets — `[主预设] V19.5 狐神抚 · 毓忻.json` at 500.5 KiB of `prompts` and
+`咩咩预设 - ver 5.8.1` at 342.5 KiB). What was missing is that **the byte total was
+never converted into a cost**:
+
+| what | measured 2026-09-10 |
+| --- | --- |
+| `structuredClone` of the heaviest preset's prompt graph | 0.481 ms per frame → 8.7 ms per 18-frame window |
+| the same data as one JSON **string** | 0.252 ms per frame → 4.5 ms per window |
+| `JSON.parse` of that string, once, only if a card asks | 0.304 ms |
+| the snapshot this rides, as it already stands | ~145 KB, ~1.75 s for the host to build (`client/in-flight.ts`) |
+
+8.8 MiB sounds fatal; 8.7 ms against a 1.75 s snapshot build does not. The
+refusal was right about the bytes and wrong about the conclusion, and the two
+halves are recorded separately here because the number stays true.
+
+### What the corpus actually reads, which decides the shape
+
+One card in 19 — 魔法少女的扣扣审判1.0, script `外置状态栏` — and it reads:
+
+```js
+if (usePreset && TavernHelper && typeof TavernHelper.getPreset === 'function') {
+    const preset = TavernHelper.getPreset('in_use');
+    if (preset && preset.prompts) {
+        preset.prompts.filter(p => p.enabled).forEach(prompt => {
+            if (prompt.id === 'worldInfoBefore') { /* … */ }
+            else if (prompt.content) {
+                finalMessages.push({ role: prompt.role || 'user', content: prompt.content });
+```
+
+`prompts`, `enabled`, `id`, `role` and **`content`** — the last one both as a
+truthiness test and as the payload. That kills two of the three candidate
+answers, and it kills them silently, which is the point:
+
+- **metadata only** (names and flags, content fetched on demand) makes
+  `else if (prompt.content)` false for every normal prompt, so the card
+  assembles a message list with its world-info blocks and none of the preset's
+  text, and reports nothing;
+- **`async getPreset`** makes `preset && preset.prompts` false — a promise is
+  truthy and has no `.prompts` — so the whole branch does nothing, inside a
+  `try`/`catch` that never fires. Observably identical to today's skip, except
+  that the `typeof` guard now passes and every census reads the member as built.
+
+### Now
+
+Eighteen names, all on both spellings a card writes (bare, and under
+`TavernHelper` — `predefine.js` produces the bare set by merging that object's
+own keys).
+
+**Four are synchronous, from the snapshot.** `ScriptContext.preset` carries
+`{ names, loaded?, inUse?, refusal? }`, where `inUse` is the whole `Preset` **as
+JSON text**. `getPreset` parses it once per distinct text — the cache's entire
+invalidation rule is `!==` on the string, so there is no second place to be wrong
+about what changes a preset — and per-call freshness comes from the surface's one
+`detachReturns` clone, which is upstream's `klona`. `getPresetNames` answers
+`['in_use', ...library]`, `getLoadedPresetName` the name the running body was
+loaded from, and `loadPreset` a boolean it decides from the name list before
+firing the switch unawaited, which is upstream's own shape.
+
+**It rides the snapshot rather than a channel of its own**, and that was a real
+choice: the in-use preset is host state, not chat state. But a preset switch
+already reaches every live frame through this field — `#applyPreset` ends in
+`#refreshRegex`, which re-announces every open chat, which is the `chat.updated`
+that `MessageInterfaces`' `watchContext` answers by refetching the snapshot. A
+second channel would have been a second freshness rule for one fact.
+
+**Fourteen are asynchronous or pure.** `createPreset`, `createOrReplacePreset`,
+`replacePreset`, `updatePresetWith` and `setPreset` compose over **one** wire
+method plus the round-trip read, which is upstream's own composition
+(`preset.ts:596`, `:705`, `:718`, `:731`); `deletePreset`, `renamePreset` and
+`loadPreset` have arms of their own because each carries a consequence beyond the
+file (host §65). The three `isPreset*Prompt` guards, `default_preset` and the
+built-in order come from `@iris/compat-tavernhelper-core/src/preset.ts` — the
+same module the host writes presets back through, so the guard a card calls and
+the `system_prompt` / `marker` flags the file records cannot disagree by an
+identifier.
+
+### The two departures, and one addition
+
+**`getPreset('某个预设名')` throws.** Upstream reads the library synchronously; a
+frame cannot. The throw is the right shape for saying so — upstream throws for a
+name it cannot resolve, so a card's `catch` already handles it — and the sentence
+names `loadPreset` and `updatePresetWith` as the ways in. Measured: the corpus
+passes the literal `'in_use'` and nothing else, which `notes/TEST-CARDS.md:297`
+recorded on 2026-09-02 and this branch re-measured across both corpora.
+
+**The frame's copy leaves out two `extensions` sub-trees and says so.** Measured
+over the eight real presets: the heaviest whole `Preset` is 5,961 KiB, of which
+5,040 KiB is `extensions.tavern_helper` (that preset's own script library) and
+202 KiB `extensions.regex_scripts` — 105 MiB of clone per 18-frame window for two
+keys no body in the 1,694-source corpus reads. Without them the same preset is
+719 KiB. They are named **inside the body** at `extensions.iris_omitted`, and the
+write arm restores them from the stored preset when the marker is there, so
+upstream's own documented round trip (`const p = getPreset('in_use');
+p.settings.should_stream = true; await replacePreset('in_use', p)`) cannot delete
+a preset's script library as a side effect of turning streaming on. A card that
+supplies the key itself is replacing it, and the restore stands aside. The
+asynchronous `script.getPreset` carries everything untrimmed; that one is a round
+trip on demand rather than a clone per frame.
+
+**`placeholder_prompt_default_order` is published, and upstream does not publish
+it.** Upstream declares it as a global (`@types/function/generate.d.ts:326`) and
+its own JSDoc tells authors to prefer it over the deprecated
+`builtin_prompt_default_order` — but it is not a key of the `TavernHelper`
+object, `predefine.js` seeds a card's bare globals by merging that object's keys,
+and the string occurs **0 times** in the shipped `dist/index.js` against 1 for
+the deprecated spelling. So a card written against the type declarations dies on
+real SillyTavern. This is the one place in the family where Iris adds rather than
+mirrors, and it is cheap and pinned: the two names are the **same array object**,
+asserted by identity, so they cannot drift.
+
+### Refused, with the reason
+
+**`builtin`** (`@types/function/builtin.d.ts:1`) is not built. It is a bag of 16
+SillyTavern internals — `addOneMessage`, `promptManager`, `renderMarkdown`,
+`reloadEditorDebounced`, `saveSettings`, `uuidv4` and the rest — with **0 corpus
+hits** across 19 cards, 4 presets and 24 world books. Of the 16, four have an
+honest Iris answer today (`uuidv4`, `copyText`, `duringGenerating`,
+`parseRegexFromString` — the last already living in
+`@iris/compat-tavernhelper-core/src/regex.ts`); the other twelve are pokes at
+SillyTavern's own DOM. Building it as a **partial** object is the trap §85 named,
+running the other way: `typeof TavernHelper.builtin === 'object'` would start
+passing, and the card behind that guard would then read `undefined` off
+`builtin.promptManager` and crash where it silently skips today. So it stays
+absent, and the four answerable names are written down here so a later branch
+does not have to re-derive them.
+
+### The cost this branch spends, beside the ones it saves
+
+Two, and both belong to whoever lands next. The bootstrap grows **53,369 → 54,116
+bytes (+747)** — all of it the two registry tables, `MEMBER_KINDS` gaining 21
+string keys and `CARD_METHODS`/`OFF_ST_SURFACE` five each — which leaves **240
+bytes** under the 54 KiB `FRAME_OVERHEAD_BYTES` §86 had just moved to. And every
+`script.context` now costs an extra `PresetStore.list()`, measured at **~25 ms**
+against the real two-preset library (6.0 MB + 640 KB, every file parsed to
+validate it) on a snapshot the host already takes ~1.75 s to build.
+
+**What would overturn any of this.** A corpus card that calls `getPreset` with
+anything but `'in_use'` (the throw becomes a gap worth closing with a preloaded
+library, or with an async-only named read); a card that reads
+`extensions.tavern_helper` or `extensions.regex_scripts` off a preset (the trim
+becomes a fidelity bug, and the ceiling has to move instead); a card that reaches
+`builtin` at all (build the four, report the twelve by name); upstream exporting
+`placeholder_prompt_default_order`, which would turn this addition into plain
+parity; or a fourth branch needing bootstrap room, which would argue for moving
+`MEMBER_KINDS` out of the inlined core and into the fetched member table rather
+than for another kibibyte — the table is data, and the frame reads it only to
+decide which members to rebind.
+
 ## 90. The `Lorebook` vocabulary Tavern Helper renamed, over the `Worldbook` one it renamed it to — and the four writes the new family was missing
 
 **The premise this landed with was wrong, and the correction changes the shape

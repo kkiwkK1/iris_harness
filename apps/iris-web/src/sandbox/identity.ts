@@ -335,6 +335,51 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   retrieveDisplayedMessage: 'shared',
   refreshOneMessage: 'shared',
   rotateChatMessages: 'shared',
+
+  // —— family③: preset ——
+  /*
+   * Every preset member is `shared`, for one reason that covers all of them: a
+   * preset belongs to the **host**, not to a script and not even to a card.
+   * There is one preset in use and one library, and two scripts of one card
+   * asking what it is must get the same answer — as must two scripts of two
+   * different cards. None of these members carries a scope or a script id, and
+   * upstream binds none of them per iframe: `predefine.js` merges the whole
+   * `TavernHelper` object's keys into a frame's globals unbound, while the
+   * members it *does* bind (its `_bind` group) are the identity-bearing ones,
+   * and no preset member is among them.
+   *
+   * The writes are shared for the same reason the world-book writes are: two
+   * scripts replacing the same preset are writing to the same place, which is
+   * the intended behaviour rather than a leak.
+   */
+  getPreset: 'shared',
+  getPresetNames: 'shared',
+  getLoadedPresetName: 'shared',
+  loadPreset: 'shared',
+  createPreset: 'shared',
+  createOrReplacePreset: 'shared',
+  replacePreset: 'shared',
+  updatePresetWith: 'shared',
+  setPreset: 'shared',
+  deletePreset: 'shared',
+  renamePreset: 'shared',
+  /*
+   * Pure functions and constants: nothing about which script asks changes what
+   * a type guard answers or what an array holds. `default_preset` and the two
+   * spellings of the built-in order are properties rather than functions, and
+   * they are listed because this table has to cover the whole surface — a
+   * member added without an entry fails `identity.test.ts`, which is the only
+   * thing that stops the list rotting.
+   */
+  isPresetNormalPrompt: 'shared',
+  isPresetSystemPrompt: 'shared',
+  isPresetPlaceholderPrompt: 'shared',
+  default_preset: 'shared',
+  builtin_prompt_default_order: 'shared',
+  placeholder_prompt_default_order: 'shared',
+  /** An empty list, the same for everyone; see the member for why it is empty. */
+  getProxyPresetNames: 'shared',
+  // —— family③ end ——
 }
 
 /**

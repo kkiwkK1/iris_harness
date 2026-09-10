@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import type { TavernHelperPreset } from '@iris/compat-tavernhelper'
 import type { ChatCompletionPreset } from '@iris/preset'
 import type { StreamFn } from '@iris/turn'
 
@@ -134,7 +135,7 @@ test('preset.select swaps the assembler’s preset and persists the choice for t
 
   // The assembler reads the live body: a card asking what preset is in use
   // must hear the one that will run, not the one the composition configured.
-  const readBack = await handlers['script.getPreset']({ name: 'in_use' })
+  const readBack = (await handlers['script.getPreset']({ name: 'in_use' })).preset as unknown as TavernHelperPreset
   assert.equal(readBack.prompts.length, 1, 'the swapped-in preset is what a card now reads')
   assert.equal(readBack.prompts[0]?.content, 'Other main.')
 

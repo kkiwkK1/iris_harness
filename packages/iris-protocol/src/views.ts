@@ -1018,6 +1018,79 @@ export interface ScriptContext {
    * is already optional in exactly that way, and this is that field.
    */
   scripts?: Record<string, { name: string, info?: string }>
+  // —— family③: preset ——
+  /**
+   * The preset half of the snapshot, for the three **synchronous** preset
+   * members.
+   *
+   * `getPreset`, `getPresetNames` and `getLoadedPresetName` all return values
+   * upstream, not promises (`@types/function/preset.d.ts:180`, `:150`, `:161`),
+   * and the corpus's one real consumer reads
+   * `TavernHelper.getPreset('in_use').prompts` with no `await` anywhere on the
+   * path. So a faithful answer has to be in the frame's hands before a card
+   * asks, which is what riding this snapshot means.
+   *
+   * **Why the snapshot and not a channel of its own.** The in-use preset is
+   * host state rather than chat state, so its own push looked right — but a
+   * preset switch already reaches every live frame through this field:
+   * `#applyPreset` ends in `#refreshRegex`, which re-announces every open chat,
+   * which is a `chat.updated` the shell's `watchContext` answers by refetching
+   * the snapshot. A second channel would have been a second freshness rule for
+   * the same fact.
+   *
+   * Absent on a host that keeps no preset library, which is a different thing
+   * from a host whose library is empty — see {@link ScriptContext.preset.names}.
+   */
+  preset?: {
+    /**
+     * The library name the running body was loaded from, for
+     * `getLoadedPresetName()`.
+     *
+     * Absent when the running body has **no** library name: `preset.delete` of
+     * the active preset leaves the body live and nameless on purpose, and so
+     * does a host composed with a preset but no `presetName`. Upstream's member
+     * always returns a string, so the frame answers `''` for this state and
+     * reports it once — a fabricated name would be a name `getPreset` then
+     * throws on.
+     */
+    loaded?: string
+    /**
+     * Every name `getPresetNames()` answers with, `'in_use'` first.
+     *
+     * `'in_use'` is included because upstream includes it
+     * (`preset.ts:571-573`), and it is first for the same reason: a card
+     * reading `names[0]` gets the running preset upstream and must get it here.
+     */
+    names: string[]
+    /**
+     * The running preset as a card sees it, **as JSON text**.
+     *
+     * Text, parsed by `getPreset` on the call rather than here, for two reasons
+     * that point the same way. Upstream's `getPreset` returns `klona(...)` — a
+     * fresh object per call — so a card that mutates the result and hands it to
+     * `replacePreset` must not have been editing the frame's own copy; parsing
+     * per call *is* that clone. And a string crosses the frame boundary for a
+     * fraction of an object's cost: measured 2026-09-10 on the heaviest real
+     * preset, `structuredClone` of the prompt graph is 0.481 ms against
+     * 0.252 ms for the same data as text, and a frame that never calls
+     * `getPreset` pays the parse (0.304 ms) never. The same trick, for the same
+     * reason, as `restoreFloorTables`' per-row getter.
+     *
+     * Absent when the body could not be offered — see
+     * {@link ScriptContext.preset.refusal}.
+     */
+    inUse?: string
+    /**
+     * Why `inUse` is absent, in a sentence `getPreset` can throw with.
+     *
+     * Upstream throws for a preset it cannot resolve (`preset.ts:588-594`), so
+     * a card's `try`/`catch` already handles a throw here; what it cannot
+     * handle is silence. Present exactly when `inUse` is absent, so the frame
+     * never has to decide which of the two states it is looking at.
+     */
+    refusal?: string
+  }
+  // —— family③ end ——
 }
 
 /** Where a script's injected prompt goes. Mirrors upstream's positions. */

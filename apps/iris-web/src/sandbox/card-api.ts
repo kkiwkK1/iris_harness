@@ -201,6 +201,29 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
   getChatHistoryBrief: 'script.chatHistoryBrief',
   getChatHistoryDetail: 'script.chatHistoryDetail',
   rotateChatMessages: 'script.rotateChatMessages',
+
+  // —— family③: preset ——
+  /*
+   * Not the same thing as the card's bare `getPreset('in_use')`, which answers
+   * **synchronously** from the pushed snapshot because upstream's member is
+   * synchronous. This is the round trip the write members need before they can
+   * amend a preset — including a *named* library preset, which the snapshot
+   * does not carry and the synchronous member therefore refuses. The same
+   * two-ways-to-one-fact shape `getVariables` above has, for the same reason.
+   */
+  getPreset: 'script.getPreset',
+  /*
+   * The one write primitive, listed once. `createPreset`, `replacePreset`,
+   * `updatePresetWith` and `setPreset` are all composed in the frame over this
+   * plus `getPreset` — which is upstream's own composition (`preset.ts:596`,
+   * `:705`, `:718`, `:731`) — so there is nothing here for them to map to and
+   * their absence is not a gap.
+   */
+  createOrReplacePreset: 'script.createOrReplacePreset',
+  deletePreset: 'script.deletePreset',
+  renamePreset: 'script.renamePreset',
+  loadPreset: 'script.loadPreset',
+  // —— family③ end ——
 }
 
 /**
@@ -323,6 +346,22 @@ export const OFF_ST_SURFACE: readonly string[] = [
   'getChatHistoryBrief',
   'getChatHistoryDetail',
   'rotateChatMessages',
+
+  // —— family③: preset ——
+  /*
+   * Tavern Helper members, same ruling as the world-book family above: checked
+   * against `st-context.js`'s 145 keys, none of the five is among them — the
+   * nearest is `getPresetManager`, which is SillyTavern's own manager object
+   * and a different thing. Serving `SillyTavern.loadPreset` would be Iris
+   * adding a member to the surface it is mirroring, and inviting a card to
+   * depend on a name no other host has.
+   */
+  'getPreset',
+  'createOrReplacePreset',
+  'deletePreset',
+  'renamePreset',
+  'loadPreset',
+  // —— family③ end ——
 ]
 
 /**

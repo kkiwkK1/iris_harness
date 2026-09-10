@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import type { TavernHelperPreset } from '@iris/compat-tavernhelper'
 import { BUILTIN_IDENTIFIERS, type ChatCompletionPreset } from '@iris/preset'
 import type { StreamFn } from '@iris/turn'
 
@@ -107,7 +108,7 @@ test('the preset in use comes back as its prompt list', async (t) => {
     }],
   })
 
-  const { prompts } = await handlers['script.getPreset']({ name: 'in_use' })
+  const { prompts } = await read(handlers)
   assert.deepEqual(prompts.map(prompt => prompt.id), ['main', 'worldInfoBefore', 'chatHistory'])
 
   // Disabled entries are **returned**, not filtered out. The assembler drops
@@ -119,7 +120,7 @@ test('the preset in use comes back as its prompt list', async (t) => {
   assert.equal(prompts[0]?.role, 'system')
 })
 
-test('a prompt missing from the ordering is off, not absent', async (t) => {
+test('a prompt the ordering does not name is unused, not disabled', async (t) => {
   const handlers = await fixture(t, {
     prompts: [
       { identifier: 'main', content: 'kept' },
@@ -128,11 +129,25 @@ test('a prompt missing from the ordering is off, not absent', async (t) => {
     prompt_order: [{ character_id: 100001, order: [{ identifier: 'main', enabled: true }] }],
   })
 
-  // Leaving a prompt out of the ordering is how a preset turns it off, so it has
-  // to come back present-and-disabled. Dropping it would tell a card the prompt
-  // does not exist, which is a different thing it might act on.
-  const { prompts } = await handlers['script.getPreset']({ name: 'in_use' })
-  assert.deepEqual(prompts.map(prompt => [prompt.id, prompt.enabled]), [['main', true], ['nsfw', false]])
+  /*
+   * **This assertion used to say the opposite, and it was wrong about upstream.**
+   *
+   * It said the unordered prompt comes back in `prompts` carrying
+   * `enabled: false`, reasoning that absence from the ordering is how a preset
+   * turns a prompt off. That is right about the *assembler* and wrong about
+   * `getPreset`: upstream partitions on exactly this (`preset.ts:404-410`) and
+   * puts what the ordering does not name into `prompts_unused`, where it keeps
+   * its own `enabled` flag — `true` by default.
+   *
+   * The difference is not cosmetic. A card that walks `preset.prompts` and
+   * filters on `enabled` sees two entries under the old shape and one under
+   * upstream's, and the extra one is a prompt that is not in the prompt list at
+   * all. Nothing noticed for as long as it did because nothing on the card face
+   * was reading this arm.
+   */
+  const { prompts, prompts_unused } = await read(handlers)
+  assert.deepEqual(prompts.map(prompt => [prompt.id, prompt.enabled]), [['main', true]])
+  assert.deepEqual(prompts_unused.map(prompt => [prompt.id, prompt.enabled]), [['nsfw', true]])
 })
 
 test('a preset with no ordering at all runs everything, in file order', async (t) => {
@@ -140,21 +155,88 @@ test('a preset with no ordering at all runs everything, in file order', async (t
     prompts: [{ identifier: 'main', content: 'a' }, { identifier: 'jailbreak', content: 'b' }],
   })
 
-  // The same fallback the assembler takes when `prompt_order` is absent. If this
-  // said `false`, a card would see a preset in which nothing is on, while the
-  // host was assembling all of it.
-  const { prompts } = await handlers['script.getPreset']({ name: 'in_use' })
-  assert.deepEqual(prompts.map(prompt => prompt.enabled), [true, true])
+  /*
+   * A deliberate divergence, and the one place this reading leaves upstream.
+   *
+   * Upstream reads `prompt_order[100001]` and would answer `prompts: []` with
+   * both entries in `prompts_unused` — unreachable on SillyTavern, whose prompt
+   * manager writes an ordering the moment a preset is selected, and ordinary
+   * here, because this host reads preset files straight off a disk and two of
+   * the eight in the local corpora are hand-written. `prompts: []` would tell a
+   * card nothing is in the prompt list while the assembler runs every entry of
+   * it, so `withTavernHelperOrder` seeds the ordering the assembly already
+   * implies. Recorded in DEVIATIONS host §65.
+   */
+  const { prompts, prompts_unused } = await read(handlers)
+  assert.deepEqual(prompts.map(prompt => [prompt.id, prompt.enabled]), [['main', true], ['jailbreak', true]])
+  assert.deepEqual(prompts_unused, [])
 })
 
 test('a preset this host does not have is refused by name', async (t) => {
   const handlers = await fixture(t)
 
-  // Not answered with the one in use. A card that asked for a named preset and
-  // received a different one cannot tell, and would go on to reason about
-  // prompts that are not in the preset it named.
+  /*
+   * The refusal that survives, and the one that did not.
+   *
+   * This arm used to refuse **every** name but `'in_use'` with "this host only
+   * carries the one in use" — true of a host with no preset library, and no
+   * longer true now that one exists: `store.read` answers a name and
+   * `preset.select` switches to it. What is refused now is a name the library
+   * does not have, with the name in the message, which is the shape upstream's
+   * own `throw Error("预设 '…' 不存在")` gives a card's `catch`. This fixture
+   * composes no library at all, so the refusal names that instead — and that is
+   * the distinction being pinned: a host without a library and a library
+   * without the name must not answer the same sentence.
+   */
   await assert.rejects(
     () => handlers['script.getPreset']({ name: 'Some Other Preset' }),
-    /Some Other Preset/u,
+    /preset library/u,
   )
 })
+
+test('the settings half reads the running values, not only the body’s', async (t) => {
+  /*
+   * The half of a `Preset` that is **not** in the body on this host.
+   *
+   * A switch copies a preset's scalar fields out into the global settings layer
+   * (`presetScalarPatch`), and from that moment the layer is what generates —
+   * so `getPreset('in_use').settings.temperature` has to read the layer back,
+   * exactly as upstream reads `oai_settings.temp_openai` rather than the file's
+   * `temperature` for `'in_use'` (`preset.ts:441`). Reading the body alone
+   * would report the temperature the preset shipped while the host generates at
+   * the one in force, and the answer would look complete.
+   */
+  const handlers = await fixture(t, {
+    prompts: [{ identifier: 'main', content: 'a' }],
+    temp_openai: 0.11,
+    openai_max_context: 4096,
+  })
+  const { settings } = await read(handlers)
+
+  // This fixture's settings layer carries no temperature or window, so the
+  // body's own values stand — the honest answer when nothing has overridden.
+  assert.equal(settings.temperature, 0.11)
+  assert.equal(settings.max_context, 4096)
+  // A field no Iris setting maps to comes off the body too, and one the body
+  // does not carry either falls back to upstream's `default_preset`: `top_a` is
+  // 0 there and `reply_count` is 1. Both are in the answer rather than absent,
+  // because upstream's `settings` is a total record and a card reads it by name.
+  assert.equal(settings.top_a, 0)
+  assert.equal(settings.reply_count, 1)
+})
+
+/**
+ * The arm's answer, cast once.
+ *
+ * `script.getPreset` answers `Record<string, unknown>` on the wire because the
+ * named shape lives in `@iris/compat-tavernhelper-core`, which `@iris/protocol`
+ * may not import (the browser's allowlist admits that package only because it
+ * imports nothing at all). The cast belongs in one place rather than at four
+ * call sites.
+ * @param handlers - the fixture's handlers.
+ * @returns the preset as a card sees it.
+ */
+async function read(handlers: Handlers): Promise<TavernHelperPreset> {
+  const { preset } = await handlers['script.getPreset']({ name: 'in_use' })
+  return preset as unknown as TavernHelperPreset
+}

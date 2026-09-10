@@ -28,3 +28,29 @@ export {
 } from './events.ts'
 export { parseRegexFromString } from './regex.ts'
 export { stringHash } from './hash.ts'
+// —— family③: preset ——
+export {
+  TH_DEFAULT_PRESET,
+  DuplicatePresetPromptError,
+  FRAME_OMITTED_EXTENSIONS,
+  OMITTED_EXTENSIONS_KEY,
+  PLACEHOLDER_PROMPT_DEFAULT_ORDER,
+  PLACEHOLDER_PROMPT_IDS,
+  SYSTEM_PROMPT_IDS,
+  TH_ORDER_CHARACTER_ID,
+  fromTavernHelperPreset,
+  isPresetNormalPrompt,
+  isPresetPlaceholderPrompt,
+  isPresetSystemPrompt,
+  mergePresetDefaults,
+  restoreOmittedExtensions,
+  toTavernHelperPreset,
+  trimPresetForFrame,
+  type PresetFile,
+  type PresetFileOrder,
+  type PresetFilePrompt,
+  type TavernHelperPreset,
+  type TavernHelperPresetPrompt,
+  type TavernHelperPresetSettings,
+} from './preset.ts'
+// —— family③ end ——

@@ -2048,6 +2048,103 @@ export const requestSchemas = {
      */
     refresh: z.enum(['none', 'affected', 'all']).optional(),
   }),
+  // —— family③: preset ——
+  /**
+   * Create a library preset, or replace one that exists — Tavern Helper's
+   * `createOrReplacePreset` (`@types/function/preset.d.ts:204`).
+   *
+   * **The one write primitive**, and deliberately the only one: upstream builds
+   * `createPreset`, `replacePreset`, `setPreset` and `updatePresetWith` on top
+   * of this single function (`src/function/preset.ts:596`, `:705`, `:718`,
+   * `:731`), so five card members composed in the frame reach one arm here. An
+   * arm per member would be five places for the same body to be validated
+   * differently.
+   *
+   * The `render` option upstream's signature carries is deliberately **not**
+   * here: it chooses between a debounced and an immediate re-render of
+   * SillyTavern's own prompt-manager DOM, which this host does not have. The
+   * refresh a write to `'in_use'` *does* have to trigger — every open
+   * conversation's regex tier — is unconditional and lives in `#applyPreset`,
+   * because getting that wrong leaves the previous preset's rules running with
+   * nothing to show it (host §53).
+   */
+  'script.createOrReplacePreset': z.object({
+    /** The library name, or `'in_use'` for the running body. */
+    name: z.string().min(1).max(200),
+    /**
+     * The preset as a card sees it — Tavern Helper's shape, not the file's.
+     *
+     * The four fields are upstream's whole `Preset` (`preset.ts:9-53`), and the
+     * three that are objects are `record`s rather than field-by-field schemas
+     * on purpose: `extensions` is declared open upstream (`[other: string]:
+     * any`) and real presets keep 200 KiB of a third-party extension's state in
+     * it, so a schema that enumerated fields would silently drop what it did
+     * not name and the preset would still save. The shape is checked where it
+     * is *used* — `fromTavernHelperPreset` classifies every prompt by id and
+     * throws by upstream's own rule for a repeated marker — so a malformed body
+     * is refused with a sentence rather than trimmed into a plausible one.
+     */
+    preset: z.object({
+      settings: z.record(z.string(), z.unknown()).optional(),
+      prompts: z.array(z.record(z.string(), z.unknown())).max(2000),
+      prompts_unused: z.array(z.record(z.string(), z.unknown())).max(2000).optional(),
+      extensions: z.record(z.string(), z.unknown()).optional(),
+    }),
+    /**
+     * Write only if the name is free — what `createPreset` needs and what
+     * nothing else may pass.
+     *
+     * Upstream's `createPreset` answers `false` and writes **nothing** when a
+     * preset of that name exists (`preset.ts:596-604`), deciding from its own
+     * synchronous name list. A card face here has a name list too — the one on
+     * the snapshot — but it is as fresh as the last snapshot, so deciding there
+     * would leave a window in which `createPreset` silently *replaced* a preset
+     * created since. The decision belongs where the file is: with this flag the
+     * arm answers `created: false` and writes nothing, and the race cannot
+     * destroy anything.
+     */
+    ifAbsent: z.boolean().optional(),
+  }),
+  /** Remove a library preset — `deletePreset` (`preset.d.ts:217`). */
+  'script.deletePreset': z.object({
+    /**
+     * The library name. `'in_use'` is refused rather than obeyed: upstream's
+     * signature excludes it (`Exclude<string, 'in_use'>`) and its
+     * `preset_manager.deletePreset` has no entry to remove for it, so a host
+     * that obliged would destroy the running body on a call upstream answers
+     * `false` to.
+     */
+    name: z.string().min(1).max(200),
+  }),
+  /**
+   * Rename a library preset — `renamePreset` (`preset.d.ts:227`).
+   *
+   * One arm rather than the create-then-delete the frame could compose, and the
+   * reason is a data loss upstream has: its `renamePreset` calls `createPreset`
+   * (which answers `false` and writes nothing when the new name is taken) and
+   * then deletes the old one **unconditionally** (`preset.ts:696-703`), so a
+   * rename onto an existing name destroys the source and returns `true`. This
+   * arm refuses a taken target and leaves both presets standing — recorded as a
+   * deliberate divergence in host §65.
+   */
+  'script.renamePreset': z.object({
+    name: z.string().min(1).max(200),
+    newName: z.string().min(1).max(200),
+  }),
+  /**
+   * Load a library preset as the running one — `loadPreset`
+   * (`preset.d.ts:169`).
+   *
+   * Goes through the host's `#applyPreset`, the same path `preset.select`
+   * takes, so a card's switch and the panel's switch cannot mean different
+   * things: the body becomes the assembler's input, the scalar fields it acts
+   * on land in the global settings layer, and every open conversation's regex
+   * tier is refreshed.
+   */
+  'script.loadPreset': z.object({
+    name: z.string().min(1).max(200),
+  }),
+  // —— family③ end ——
 } as const
 
 /** Every callable method. */
@@ -2516,9 +2613,40 @@ export interface RpcResponseMap {
   'script.saveMetadata': { metadata: Record<string, unknown> }
   'script.createChatMessages': { view: ChatView }
   'script.deleteChatMessages': { view: ChatView }
-  'script.getPreset': {
-    prompts: { id: string, enabled: boolean, role?: string, content?: string }[]
-  }
+  /**
+   * One whole preset, in Tavern Helper's shape.
+   *
+   * **This used to be `{ prompts }` alone** — four fields per prompt, chosen
+   * because the corpus's one call site reads only those four. That was the
+   * right minimum for a read and the wrong shape for a *write*: every write
+   * member upstream is a read-modify-write over the whole `Preset`
+   * (`setPreset` → `updatePresetWith` → `getPreset` + `replacePreset`), so a
+   * partial read would have a card save back a preset whose settings and
+   * unused prompts had been silently replaced with nothing. The narrow reply
+   * also disagreed with upstream on three points nothing had noticed, because
+   * nothing was reading it: it returned **every** prompt where upstream returns
+   * only the ordered ones, in **file order** where upstream returns them in the
+   * ordering's order, and it called an unordered prompt `enabled: false` where
+   * upstream puts it in `prompts_unused` carrying its own flag.
+   *
+   * Untrimmed, unlike the copy that rides `ScriptContext.preset.inUse`: this is
+   * one round trip on demand, not a structured clone per live frame, so the
+   * 5 MiB of `extensions.tavern_helper` the heaviest real preset carries is a
+   * cost only the caller who asked for it pays.
+   *
+   * **`Record<string, unknown>` rather than the named type, and that is not
+   * laziness.** The shape is `TavernHelperPreset` in
+   * `@iris/compat-tavernhelper-core/src/preset.ts`, which is where it has to
+   * live: the frame needs its `default_preset` and its three type guards as
+   * *runtime* values, and the browser's import allowlist admits that package
+   * only because it imports nothing at all (`architecture.test.ts:135`,
+   * `purity.test.ts`). This package, in turn, imports no `@iris` package —
+   * every other one depends on it. So the two contracts meet exactly here, and
+   * the choice is between a second declaration that can rot and an untyped
+   * field with a pointer. `preset.read` answers a preset body the same way, for
+   * a smaller version of the same reason.
+   */
+  'script.getPreset': { preset: Record<string, unknown> }
   'script.evalTemplate': { text: string }
   /** The table as stored, so a writer sees what its replace produced. */
   'script.replaceScriptButtons': { buttons: { name: string, visible: boolean }[] }
@@ -2610,6 +2738,41 @@ export interface RpcResponseMap {
    */
   'script.chatHistoryDetail': { chats: Record<string, ScriptChatMessage[]> }
   'script.rotateChatMessages': { view: ChatView }
+  // —— family③: preset ——
+  'script.createOrReplacePreset': {
+    /**
+     * True when the name was new — upstream's return value for
+     * `createOrReplacePreset` (`preset.ts:657`), and the value `createPreset`
+     * reads to decide whether it created anything.
+     */
+    created: boolean
+    /**
+     * Which `extensions` keys the host put back from the stored body.
+     *
+     * Present and empty is the normal answer. A non-empty list means the card
+     * handed back a preset it had got from the *frame's* trimmed copy, and this
+     * host restored the sub-trees that copy had left out — so upstream's own
+     * documented round trip (`const p = getPreset('in_use'); …; await
+     * replacePreset('in_use', p)`) does not delete a preset's script library as
+     * a side effect. Reported rather than silent, because a restore means the
+     * write was not literally what the card asked for.
+     */
+    restored: string[]
+  }
+  /** Whether a preset was there to remove — upstream's `deletePreset` boolean. */
+  'script.deletePreset': { deleted: boolean }
+  /**
+   * Whether the rename happened.
+   *
+   * False for a source that does not exist, **and** for a target name already
+   * taken — where upstream returns true having destroyed the source. The
+   * `reason` says which, so a card that only sees `false` still logs something
+   * a person can act on.
+   */
+  'script.renamePreset': { renamed: boolean, reason?: 'no-such-preset' | 'name-taken' }
+  /** Whether the switch happened — upstream's `loadPreset` boolean. */
+  'script.loadPreset': { loaded: boolean }
+  // —— family③ end ——
 }
 
 /** The response of one method. */

@@ -403,6 +403,17 @@ export function buildCardContext(
      * does not show. Absent means the host has no script repositories at all.
      */
     scripts?: Record<string, { name: string, info?: string }>
+    // —— family③: preset ——
+    /**
+     * The preset half, for the three synchronous preset members.
+     *
+     * Assembled by the caller rather than here, for the same reason
+     * `worldbookNames` is: the library's name list is an async read and this
+     * function is synchronous. Absent means this host keeps no preset library,
+     * which the frame reports as missing scope rather than as an empty library.
+     */
+    preset?: ScriptContext['preset']
+    // —— family③ end ——
   },
 ): ScriptContext {
   const meta = entry.meta
@@ -477,6 +488,12 @@ export function buildCardContext(
         },
     // Beside `scriptButtons`, keyed the same way and read from the same rows.
     ...extras.scripts === undefined ? {} : { scripts: extras.scripts },
+    // —— family③: preset ——
+    // In the snapshot rather than behind a call, because `getPreset`,
+    // `getPresetNames` and `getLoadedPresetName` are all synchronous upstream
+    // and the corpus's one consumer awaits none of them.
+    ...extras.preset === undefined ? {} : { preset: extras.preset },
+    // —— family③ end ——
   }
 }
 
