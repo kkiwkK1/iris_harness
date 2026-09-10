@@ -149,6 +149,9 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
 
   /** The blueprint's version: one number, the same for every caller. */
   getTavernHelperVersion: 'shared',
+  // Upstream's alias registration `getFrontendVersion: getTavernHelperVersion`
+  // in the injection table; published as the same function object.
+  getFrontendVersion: 'shared',
   /** Emission is card-wide on purpose: it is how scripts reach each other. */
   eventEmit: 'shared',
   getLastMessageId: 'shared',
@@ -218,6 +221,10 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
    */
   generateRaw: 'shared',
   triggerSlash: 'shared',
+  // Upstream's second registration of the same function
+  // (`triggerSlashWithResult: triggerSlash` in the injection table), published
+  // here as that same function object.
+  triggerSlashWithResult: 'shared',
   substitudeMacros: 'shared',
   iframe_events: 'shared',
   tavern_events: 'shared',
@@ -278,6 +285,12 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   setLorebookEntries: 'shared',
   createLorebookEntries: 'shared',
   deleteLorebookEntries: 'shared',
+  /*
+   * The deprecated singulars, over the same book file the plurals write: one
+   * entry through the same arms, so the same one-book answer.
+   */
+  createLorebookEntry: 'shared',
+  deleteLorebookEntry: 'shared',
 
   // —— family①: identity & messages ——
   /*

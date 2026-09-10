@@ -1,5 +1,5 @@
 /**
- * Every member upstream's type definitions declare for a card script.
+ * Every member upstream registers for a card script.
  *
  * Not a list of what Iris provides — `identity.ts` is that, and it holds 31 of
  * these. This is the far larger set a card **may reasonably reach for**, and it
@@ -9,32 +9,46 @@
  * Without it, `getTavernHelperVersion is not defined` reads as a broken card, and
  * that misattribution is the expensive kind: the report arrives with a suspect
  * already named, so nobody checks the innocent party. It has cost this project
- * twice already — first `waitGlobalInitialized`, then Vue, where a library Iris
- * was supposed to seed went unnamed because no list knew about it. The shape is
- * identical both times: **a checklist can only ever speak about names that are
- * on it**, so anything missing from the list is missing from every report the
- * list can produce.
+ * three times — first `waitGlobalInitialized`, then Vue, where a library Iris
+ * was supposed to seed went unnamed because no list knew about it, and then
+ * `setChatMessage`, which the list's own first source could not see at all. The
+ * shape is identical every time: **a checklist can only ever speak about names
+ * that are on it**, so anything missing from the list is missing from every
+ * report the list can produce.
  *
- * Extracted from the installed Tavern Helper's `@types` declarations rather than
- * written by hand. A hand-kept list that long would rot silently, and the rot is
- * invisible until a card is handed the wrong diagnosis.
+ * Extracted from upstream's **registration surface** rather than written by
+ * hand: the injection table `getTavernHelper()` returns in
+ * `src/function/index.ts` — the object `predefine.js` merges into every card
+ * frame, its `_bind` group included under the spelling predefine maps it to
+ * (one leading underscore stripped) — plus the four API namespaces predefine
+ * itself defines or picks. The list was first read off the installed
+ * extension's `@types` instead, and the declarations sit downstream of the
+ * table with their own drift: `setChatMessage` is registered and never
+ * declared, which is how a real card met it as `setChatMessage is not defined`
+ * with nothing anywhere entitled to name the gap. `upstream-registration.test.ts`
+ * re-reads the table wherever the corpus is present and pins both directions.
+ * A hand-kept list this long would rot silently, and the rot is invisible
+ * until a card is handed the wrong diagnosis.
  *
  * Membership here says nothing about whether Iris implements a member — only
  * that a card is entitled to expect it. `identity.ts` answers the other question.
  *
  * ## Two lists, two surfaces
  *
- * A card reaches for two vocabularies, and until now only one of them was
- * written down. The Tavern Helper list at the bottom of this file holds the
- * names its `@types` declare — 171 at the extraction — plus `setChatMessage`,
- * which upstream's registration table carries and its `@types` never did; a
- * list read off the declarations alone had no way to know the member existed,
- * and a card calling it met `setChatMessage is not defined` with no sentence
- * anywhere naming it as expected scope (measured: 魔法少女的扣扣审判1.0's 封面
- * regex, at its enter button). {@link UPSTREAM_CONTEXT_MEMBERS}, first, holds
+ * A card reaches for two vocabularies, and until 2026-09-10 only one of them
+ * was written down. The Tavern Helper list at the bottom of this file holds
+ * what the registration table seeds into a frame — 183 names in the 4.9.1
+ * install — plus the two the declarations name under spellings the table does
+ * not register (`getExtensionInstallationInfo`, `placeholder_prompt_default_order`),
+ * kept listed because a card written against the declarations still reaches
+ * for them. {@link UPSTREAM_CONTEXT_MEMBERS}, first, holds
  * SillyTavern's own — the 145 keys `getContext()` returns. They are separate
  * lists because they are separate authorities, they are extracted from
- * different files, and a name on one says nothing about the other.
+ * different files, and a name on one says nothing about the other. The frame's
+ * seeded *libraries* (`YAML`, `showdown`, `toastr`, `z`, `$`, `_`, Vue) are a
+ * third thing again and live in `preset-globals.ts`, which is the list the
+ * missing-libraries report reads; they are not API members and were never on
+ * either list here.
  *
  * **Declaration order matters here, unusually, and so does this comment's
  * wording.** The caliper `scripts/th-member-census.mjs` (and, until its branch
@@ -242,20 +256,32 @@ export const UPSTREAM_CONTEXT_MEMBERS: readonly string[] = [
   'writeExtensionFieldBulk',
 ]
 
-/** Names upstream declares as available to a card script. */
+/**
+ * Names upstream registers as available to a card script — the injection
+ * table `predefine.js` seeds every frame from, per this file's header. Two of
+ * the names come from the declarations rather than the table, and the header
+ * says why they stay.
+ */
 export const UPSTREAM_MEMBERS: readonly string[] = [
   'EjsTemplate',
   'Mvu',
+  'RawCharacter',
   'SillyTavern',
   'TavernHelper',
   'appendAudioList',
   'appendInexistentScriptButtons',
+  'audioEnable',
+  'audioImport',
+  'audioMode',
+  'audioPlay',
+  'audioSelect',
   'builtin',
   'builtin_prompt_default_order',
   'createCharacter',
   'createChatMessages',
   'createLorebook',
   'createLorebookEntries',
+  'createLorebookEntry',
   'createOrReplaceCharacter',
   'createOrReplacePersona',
   'createOrReplacePreset',
@@ -269,6 +295,7 @@ export const UPSTREAM_MEMBERS: readonly string[] = [
   'deleteChatMessages',
   'deleteLorebook',
   'deleteLorebookEntries',
+  'deleteLorebookEntry',
   'deletePersona',
   'deletePreset',
   'deleteVariable',
@@ -315,7 +342,9 @@ export const UPSTREAM_MEMBERS: readonly string[] = [
   'getCurrentPersonaId',
   'getCurrentPersonaName',
   'getExtensionInstallationInfo',
+  'getExtensionStatus',
   'getExtensionType',
+  'getFrontendVersion',
   'getGlobalWorldbookNames',
   'getIframeName',
   'getLastMessageId',
@@ -402,16 +431,19 @@ export const UPSTREAM_MEMBERS: readonly string[] = [
   'substitudeMacros',
   'tavern_events',
   'triggerSlash',
+  'triggerSlashWithResult',
   'uninjectPrompts',
   'uninstallExtension',
   'unregisterMacroLike',
   'updateCharacterWith',
   'updateExtension',
+  'updateFrontendVersion',
   'updateLorebookEntriesWith',
   'updatePersonaWith',
   'updatePresetWith',
   'updateScriptButtonsWith',
   'updateScriptTreesWith',
+  'updateTavernHelper',
   'updateTavernRegexesWith',
   'updateVariablesWith',
   'updateWorldbookWith',

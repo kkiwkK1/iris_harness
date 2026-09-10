@@ -4121,6 +4121,47 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       }
     },
 
+    /**
+     * The deprecated singular append, and one registered name the declarations
+     * never carried — found by reading the injection table rather than the
+     * `@types`, which is the correction this member arrived with: upstream's
+     * `createLorebookEntry` (`lorebook_entry.ts:423`) is one entry through the
+     * plural above, answering the one uid. Composed here over the same two
+     * helpers, with the lowest-free-uid rule the plural documents.
+     * @param lorebook - the book's name; it must already exist.
+     * @param fieldValues - the entry's fields; `uid` is assigned, not read.
+     * @returns the uid the entry was stored under.
+     */
+    createLorebookEntry: async (
+      lorebook: string,
+      fieldValues: Partial<CardLorebookEntry>,
+    ): Promise<number> => {
+      const current = await readLorebook(lorebook)
+      const taken = new Set(current.map(entry => entry.uid))
+      let uid = 0
+      while (taken.has(uid)) uid += 1
+      await replaceLorebook(lorebook, [...current, { ...fieldValues, uid }])
+      return uid
+    },
+
+    /**
+     * The deprecated singular delete, answering what the plural's
+     * `delete_occurred` answers for a one-element list: upstream is exactly
+     * `deleteLorebookEntries(lorebook, [uid]).delete_occurred`
+     * (`lorebook_entry.ts:428`). The write happens even when the uid was not
+     * there, for the same reason the plural's does — the book comes back
+     * either way, and the boolean is the only word about what matched.
+     * @param lorebook - the book's name.
+     * @param uid - the entry to remove.
+     * @returns whether anything was removed.
+     */
+    deleteLorebookEntry: async (lorebook: string, uid: number): Promise<boolean> => {
+      const current = await readLorebook(lorebook)
+      const kept = current.filter(entry => entry.uid !== uid)
+      await replaceLorebook(lorebook, kept)
+      return kept.length !== current.length
+    },
+
     // —— family①: identity & messages ——
     /**
      * Every card in the library, by name.
@@ -5227,6 +5268,21 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
    * forgot to clone" a regression that can happen. There is no list to keep.
    */
   const detached = detachReturns(api, host.reportGap)
+
+  /*
+   * Upstream registers four members twice — the same function under a second
+   * key, in the injection table itself (`src/function/index.ts`):
+   * `triggerSlashWithResult: triggerSlash`, `getFrontendVersion:
+   * getTavernHelperVersion`, `updateFrontendVersion: updateTavernHelper` and
+   * `getExtensionStatus: getExtensionInstallationInfo`. Two of the four
+   * targets are built here, so their aliases answer with the **same function
+   * object** — a card that probes one spelling and calls the other must not
+   * find a stranger. The other two (`updateTavernHelper`,
+   * `getExtensionInstallationInfo`) are unbuilt, so their aliases stay absent
+   * and are reported as expected scope, exactly like their targets.
+   */
+  detached['triggerSlashWithResult'] = detached['triggerSlash']
+  detached['getFrontendVersion'] = detached['getTavernHelperVersion']
 
   // Upstream exposes the same members twice: bare, and under `TavernHelper`.
   // Both spellings appear in real cards, so both have to resolve.

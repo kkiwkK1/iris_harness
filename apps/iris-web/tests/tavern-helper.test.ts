@@ -935,6 +935,32 @@ test('getTavernHelperVersion answers with the version it was transcribed from', 
   )
 })
 
+test('the two built alias registrations answer as the same function', async () => {
+  /*
+   * Upstream's injection table registers four members twice — the same
+   * function under a second key (`src/function/index.ts`):
+   * `triggerSlashWithResult: triggerSlash`, `getFrontendVersion:
+   * getTavernHelperVersion`, `updateFrontendVersion: updateTavernHelper` and
+   * `getExtensionStatus: getExtensionInstallationInfo`. Two of the four
+   * targets are built here; their aliases are the **same function objects**,
+   * because a card that probes one spelling and calls the other must not find
+   * a stranger. The other two stay absent with their unbuilt targets, which is
+   * what the absent-member report is for — an alias of a gap is the same gap.
+   */
+  const { api, calls } = surface()
+
+  const slash = api['triggerSlash'] as (command: string) => Promise<string>
+  const withResult = api['triggerSlashWithResult'] as (command: string) => Promise<string>
+  assert.equal(withResult, slash, 'the alias must be the published function itself, not a copy')
+  await withResult('/trigger')
+  assert.deepEqual(calls.length, 0, 'a slash call crosses the shell arm, not the host call channel')
+
+  const version = api['getTavernHelperVersion'] as () => string
+  const frontend = api['getFrontendVersion'] as () => string
+  assert.equal(frontend, version)
+  assert.equal(frontend(), TAVERN_HELPER_VERSION)
+})
+
 test('the version matches the installed extension it was transcribed from', async t => {
   /*
    * The drift pin. This string is a claim about a specific installed copy of

@@ -164,9 +164,14 @@ test('every name we build is a name upstream has, or is declared as ours', () =>
    * surface deliberately copies, and the copy was itself mistyped as
    * `substidudeMacros`. Five green tests, one dead member.
    *
-   * `UPSTREAM_MEMBERS` is extracted from upstream’s `@types`, so it is the one
-   * list here that cannot drift to match our mistakes. This is the only guard
-   * that consults it.
+   * `UPSTREAM_MEMBERS` is extracted from upstream’s registration table rather
+   * than written by hand — pinned against that table, both directions, by
+   * `upstream-registration.test.ts` wherever the corpus is present — so it is
+   * a list that cannot quietly drift to match our mistakes. It could, and once
+   * did, drift from *upstream* the other way: the `@types` it was first read
+   * from never declared the registered `setChatMessage`, and the gap was only
+   * visible when a card called it. This is the only guard here that consults
+   * it.
    *
    * The module header already had the principle backwards-on: “a checklist can
    * only ever speak about names that are on it.” The checklist was on the shelf;

@@ -399,6 +399,10 @@ test('exactly the outward-reaching names are shadowed', () => {
     'setLorebookEntries',
     'createLorebookEntries',
     'deleteLorebookEntries',
+    // The deprecated singulars, which the injection table registers and the
+    // declarations never did — one entry through the plurals above.
+    'createLorebookEntry',
+    'deleteLorebookEntry',
     // —— family①: identity & messages —— appended to the api literal, so they
     // land here, after the constant tables and before the nested surface.
     'getCharacterNames',
@@ -454,6 +458,12 @@ test('exactly the outward-reaching names are shadowed', () => {
     'updatePresetWith',
     'setPreset',
     // —— family③ end ——
+    // Two of upstream's four alias registrations, published after the
+    // literal as the same function objects the bare names hold. The other
+    // two aliases (updateFrontendVersion, getExtensionStatus) stay absent
+    // with their unbuilt targets.
+    'triggerSlashWithResult',
+    'getFrontendVersion',
     'TavernHelper',
   ])
 })
@@ -1620,6 +1630,10 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'setLorebookEntries',
     'createLorebookEntries',
     'deleteLorebookEntries',
+    // The deprecated singulars, which the injection table registers and the
+    // declarations never did — one entry through the plurals above.
+    'createLorebookEntry',
+    'deleteLorebookEntry',
     // —— family①: identity & messages —— appended to the api literal, so they
     // land here, after the constant tables and before the nested surface.
     'getCharacterNames',
@@ -1666,6 +1680,12 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'updatePresetWith',
     'setPreset',
     // —— family③ end ——
+    // Two of upstream's four alias registrations, published after the
+    // literal as the same function objects the bare names hold. The other
+    // two aliases (updateFrontendVersion, getExtensionStatus) stay absent
+    // with their unbuilt targets.
+    'triggerSlashWithResult',
+    'getFrontendVersion',
     'TavernHelper',
     // The per-script registry, published with the rest so a failure to define
     // it is reported like anything else — rather than leaving co-located scripts

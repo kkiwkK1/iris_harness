@@ -688,6 +688,46 @@ test('deleteLorebookEntries says whether anything was actually removed', async (
   assert.deepEqual(miss.calls.map(call => call.method), ['getWorldbook', 'replaceWorldbook'])
 })
 
+test('createLorebookEntry is the plural for one entry, answering the uid', async () => {
+  /*
+   * A registered name the declarations never carried
+   * (`lorebook_entry.ts:423`, found by reading the injection table). Upstream
+   * delegates: `createLorebookEntries(lorebook, [field_values]).new_uids[0]`
+   * — so the lowest-free-uid rule and the stored entry are the plural's, and
+   * the only new fact is which uid came back.
+   */
+  const scope = surface({}, {
+    getWorldbook: { entries: [wireEntry({ uid: 0 }), wireEntry({ uid: 2 })] },
+    replaceWorldbook: { entries: [] },
+  })
+  const uid = await member<(name: string, fieldValues: Partial<CardLorebookEntry>) => Promise<number>>(
+    scope.api, 'createLorebookEntry',
+  )('Book', { comment: 'single' })
+
+  assert.equal(uid, 1, 'the lowest free uid, as the plural assigns them')
+  const sent = scope.calls[1]?.params as { entries: WorldbookEntry[] }
+  assert.deepEqual(sent.entries.map(entry => entry.uid), [0, 2, 1])
+})
+
+test('deleteLorebookEntry answers whether the one uid was there', async () => {
+  const book = { entries: [wireEntry({ uid: 1 }), wireEntry({ uid: 2 })] }
+  const hit = surface({}, { getWorldbook: book, replaceWorldbook: { entries: [] } })
+  const removed = await member<(name: string, uid: number) => Promise<boolean>>(
+    hit.api, 'deleteLorebookEntry',
+  )('Book', 2)
+  assert.equal(removed, true)
+  assert.deepEqual((hit.calls[1]?.params as { entries: WorldbookEntry[] }).entries.map(e => e.uid), [1])
+
+  const miss = surface({}, { getWorldbook: book, replaceWorldbook: { entries: [] } })
+  const nothing = await member<(name: string, uid: number) => Promise<boolean>>(
+    miss.api, 'deleteLorebookEntry',
+  )('Book', 99)
+  assert.equal(nothing, false, 'a uid nothing matched must not read as a deletion')
+  // The write happens anyway, exactly as the plural's does — upstream routes
+  // the singular through the same unconditional path.
+  assert.deepEqual(miss.calls.map(call => call.method), ['getWorldbook', 'replaceWorldbook'])
+})
+
 test('updateLorebookEntriesWith shows the updater the old vocabulary', async () => {
   const scope = surface({}, {
     getWorldbook: { entries: [wireEntry({ uid: 1, name: 'before' })] },

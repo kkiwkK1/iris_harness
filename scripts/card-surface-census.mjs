@@ -901,7 +901,7 @@ function tally(declared, built, probe) {
 const FACES = [
   {
     key: '①',
-    label: '酒馆助手声明给卡脚本的接口（@types，171）',
+    label: '酒馆助手注册给卡脚本的接口（注册表 index.ts，185）',
     declared: TH_DECLARED,
     built: TH_BUILT,
     probe: (source, name) => reachesTh(source.code, name, source.owner),

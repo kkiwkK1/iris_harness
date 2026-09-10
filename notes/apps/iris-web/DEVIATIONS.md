@@ -6087,3 +6087,82 @@ bare Vite port is this, not a regression.
   request per frame and a class of "which half is missing" report. Not done in
   this change: four branches are adding members to that table concurrently, and
   the conflict cost would swamp the benefit.
+
+---
+
+## 92. The surface list is read off the registration table now, not the declarations — the reconciliation that found the singular
+
+**Kind:** enumeration source corrected, with the diff accounted name by name.
+
+**The failure that forced it.** §87's postscript tells the card's half: the
+list in `upstream-surface.ts` was extracted from the installed Tavern Helper's
+`@types`, the declarations never state the registered `setChatMessage`, and
+魔法少女的扣扣审判1.0's 封面 regex met the name as a ReferenceError its player
+saw. A list's authority is only as good as its source, and the declarations are
+a *downstream artifact* of the thing every card frame is actually seeded from —
+the injection table `getTavernHelper()` returns (`src/function/index.ts`), which
+`predefine.js` merges into each frame (everything but `_bind`, whose keys it
+publishes with one leading underscore stripped and bound). Where the two
+disagree, the table is what a card's runtime answers to.
+
+**The reconciliation.** Extracting the table's keys — top level, plus `_bind`
+remapped — and diffing against the 171-name list the `@types` had produced:
+nineteen names registered and unlisted. Where each went:
+
+- **`setChatMessage`** — built in the previous commit; §87's postscript.
+- **`createLorebookEntry`, `deleteLorebookEntry`** — the deprecated singulars
+  of the lorebook-entry family (`lorebook_entry.ts:423`, `:428`), each a
+  one-element delegation to the plural this surface already answers. Built as
+  the same composition over `readLorebook`/`replaceLorebook`; tested beside the
+  plurals in `lorebook-aliases.test.ts`.
+- **`triggerSlashWithResult`, `getFrontendVersion`** — two of the four alias
+  registrations in the table, targets of which are built here, so they are
+  published as the **same function objects** (`triggerSlashWithResult` is
+  `triggerSlash`; `getFrontendVersion` is `getTavernHelperVersion`). A card
+  that probes one spelling and calls the other must not find a stranger. The
+  other two aliases, `updateFrontendVersion` and `getExtensionStatus`, stay
+  absent with their unbuilt targets — an alias of a gap is the same gap, and
+  the absent-member report now names them as expected scope like any other.
+- **`audioEnable`, `audioPlay`, `audioMode`, `audioImport`, `audioSelect`** —
+  the deprecated slash-command wrappers over the audio store, registered like
+  any member. **Not built**, and deliberately so: the whole audio family they
+  would compose with (`playAudio`, `getAudioList`, and seven more) is unbuilt,
+  so five new refusals ahead of nine existing ones answers nothing a card
+  measures. They ride the list as declared-but-unbuilt, the census's gap table
+  carries them, and the first corpus card that calls one is the trigger to
+  build the family under them.
+- **`RawCharacter`** — the character-data *class* upstream registers
+  (`raw_character.ts:74`), a constructor with static lookups over a store this
+  host does not expose (`getCharData` answers a summary instead). Not built:
+  reproducing a class interface without the store behind it would be a facade
+  over nothing. Same disposition as the audio five — on the list, in the gap
+  table, awaiting a measured caller.
+- **`updateTavernHelper`, `updateFrontendVersion`, `getExtensionStatus`** —
+  registered, not built. `updateTavernHelper` is the extension's self-updater;
+  this host *is* the frontend, and a card updating it is not a thing this
+  architecture can mean. The three stay listed so their absence reads as Iris's
+  gap rather than the card's fault.
+
+Not added, each with its reason: `YAML`, `showdown`, `toastr`, `z` are the
+predefine parent-pick **libraries** — card-facing, but enumerated where the
+frame's missing-globals report already reads them (`preset-globals.ts`), and
+putting them on an API list would make that report call Iris's own bundle
+"not built". `_bind` and `_th_impl` are internal plumbing (the merge omits the
+first and keeps the second only for predefine's own use).
+
+**The other direction.** Two names the declarations state that the table never
+registers under that spelling: `getExtensionInstallationInfo` (registered as
+`getExtensionStatus`) and `placeholder_prompt_default_order` (registered as
+`builtin_prompt_default_order`). They stay listed — a card written against the
+declarations still reaches for them — and `upstream-registration.test.ts`
+pins the exception at exactly two, so it cannot become a habit.
+
+**Pinned.** The new `upstream-registration.test.ts` re-extracts the table
+wherever the corpus is present and checks both directions: no registered name
+unlisted (the `setChatMessage` shape, made impossible to repeat silently), and
+no listed name unregistered beyond the two named above. The list grows 171 →
+185; the census calipers read the list dynamically and need no edit. New
+members: the four built ones carry behaviour tests (the singulars in
+`lorebook-aliases.test.ts`, the aliases in `tavern-helper.test.ts`), all six
+are in `MEMBER_KINDS` as `shared` (each composes over members already shared),
+and the two frame tests that pin the bare globals by name carry the entries.
