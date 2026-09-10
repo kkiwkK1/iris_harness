@@ -1,0 +1,364 @@
+{
+  "generatedAt": "2026-09-10T15:48:30.055Z",
+  "packages": {
+    "@iris/app-service": {
+      "layer": "L4",
+      "deps": [
+        "@iris/character",
+        "@iris/chat",
+        "@iris/compat-prompt-template",
+        "@iris/compat-tavernhelper",
+        "@iris/llm-openai-compat",
+        "@iris/lorebook",
+        "@iris/macro",
+        "@iris/mvu",
+        "@iris/persistence",
+        "@iris/pipeline",
+        "@iris/preset",
+        "@iris/protocol",
+        "@iris/regex",
+        "@iris/rpc-host",
+        "@iris/script",
+        "@iris/tokenizer",
+        "@iris/turn",
+        "@iris/variables"
+      ]
+    },
+    "@iris/character": {
+      "layer": "L0",
+      "deps": []
+    },
+    "@iris/chat": {
+      "layer": "L0",
+      "deps": []
+    },
+    "@iris/client-fake": {
+      "layer": "L1",
+      "deps": [
+        "@iris/protocol"
+      ]
+    },
+    "@iris/compat-prompt-template": {
+      "layer": "L0",
+      "deps": []
+    },
+    "@iris/compat-tavernhelper": {
+      "layer": "L3",
+      "deps": [
+        "@iris/chat",
+        "@iris/compat-tavernhelper-core",
+        "@iris/mvu",
+        "@iris/variables"
+      ]
+    },
+    "@iris/compat-tavernhelper-core": {
+      "layer": "L0",
+      "deps": []
+    },
+    "@iris/llm-openai-compat": {
+      "layer": "L0",
+      "deps": []
+    },
+    "@iris/lorebook": {
+      "layer": "L1",
+      "deps": [
+        "@iris/compat-tavernhelper-core"
+      ]
+    },
+    "@iris/macro": {
+      "layer": "L1",
+      "deps": [
+        "@iris/compat-tavernhelper-core"
+      ]
+    },
+    "@iris/mvu": {
+      "layer": "L2",
+      "deps": [
+        "@iris/variables"
+      ]
+    },
+    "@iris/persistence": {
+      "layer": "L1",
+      "deps": [
+        "@iris/chat"
+      ]
+    },
+    "@iris/pipeline": {
+      "layer": "L0",
+      "deps": []
+    },
+    "@iris/preset": {
+      "layer": "L1",
+      "deps": [
+        "@iris/pipeline"
+      ]
+    },
+    "@iris/protocol": {
+      "layer": "L0",
+      "deps": []
+    },
+    "@iris/regex": {
+      "layer": "L0",
+      "deps": []
+    },
+    "@iris/rpc-client": {
+      "layer": "L1",
+      "deps": [
+        "@iris/protocol"
+      ]
+    },
+    "@iris/rpc-host": {
+      "layer": "L1",
+      "deps": [
+        "@iris/protocol"
+      ]
+    },
+    "@iris/script": {
+      "layer": "L0",
+      "deps": []
+    },
+    "@iris/tokenizer": {
+      "layer": "L0",
+      "deps": []
+    },
+    "@iris/turn": {
+      "layer": "L1",
+      "deps": [
+        "@iris/chat",
+        "@iris/pipeline"
+      ]
+    },
+    "@iris/variables": {
+      "layer": "L1",
+      "deps": [
+        "@iris/chat"
+      ]
+    },
+    "@iris/app": {
+      "layer": "L5",
+      "deps": [
+        "@iris/app-service",
+        "@iris/character",
+        "@iris/chat",
+        "@iris/compat-tavernhelper",
+        "@iris/llm-openai-compat",
+        "@iris/lorebook",
+        "@iris/macro",
+        "@iris/mvu",
+        "@iris/persistence",
+        "@iris/pipeline",
+        "@iris/preset",
+        "@iris/protocol",
+        "@iris/regex",
+        "@iris/rpc-client",
+        "@iris/rpc-host",
+        "@iris/tokenizer",
+        "@iris/turn",
+        "@iris/variables"
+      ]
+    }
+  },
+  "cycles": [],
+  "upwardViolations": [],
+  "drift": [
+    "@iris/llm-openai-compat crosses a package boundary by path: packages\\iris-llm-openai-compat\\tests\\adapter-key.test.ts -> ../../iris-app-service/tests/support/fetchable-port.ts",
+    "@iris/llm-openai-compat crosses a package boundary by path: packages\\iris-llm-openai-compat\\tests\\baseurl-parity.test.ts -> ../../iris-app-service/tests/support/fetchable-port.ts",
+    "@iris/llm-openai-compat crosses a package boundary by path: packages\\iris-llm-openai-compat\\tests\\interrupted.test.ts -> ../../iris-app-service/tests/support/fetchable-port.ts",
+    "@iris/llm-openai-compat crosses a package boundary by path: packages\\iris-llm-openai-compat\\tests\\timeouts.test.ts -> ../../iris-app-service/tests/support/fetchable-port.ts",
+    "@iris/rpc-host crosses a package boundary by path: packages\\iris-rpc-host\\tests\\transport.test.ts -> ../../iris-app-service/tests/support/fetchable-port.ts",
+    "@iris/app crosses a package boundary by path: apps\\iris\\tests\\live-generation-kinds.test.ts -> ../../../packages/iris-app-service/tests/support/materialising-store.ts",
+    "@iris/app crosses a package boundary by path: apps\\iris\\tests\\live-generation-kinds.test.ts -> ../../../packages/iris-app-service/src/library.ts",
+    "@iris/app crosses a package boundary by path: apps\\iris\\tests\\live-generation-kinds.test.ts -> ../../../packages/iris-app-service/src/chats.ts",
+    "@iris/app crosses a package boundary by path: apps\\iris\\tests\\live-generation-kinds.test.ts -> ../../../packages/iris-app-service/src/service.ts",
+    "@iris/app crosses a package boundary by path: apps\\iris\\tests\\live-generation-kinds.test.ts -> ../../../packages/iris-app-service/src/settings.ts",
+    "@iris/app crosses a package boundary by path: apps\\iris\\tests\\mock-provider.ts -> ../../../packages/iris-app-service/tests/support/fetchable-port.ts",
+    "@iris/app crosses a package boundary by path: apps\\iris\\tests\\sandbox-cors.test.ts -> ../../../packages/iris-app-service/src/sandbox-assets.ts"
+  ],
+  "webForbidden": [],
+  "layerDrift": [
+    "@iris/app-service: doc says L3, computed L4",
+    "@iris/compat-prompt-template (L0) is absent from docs/ARCHITECTURE.md's table",
+    "@iris/compat-tavernhelper: doc says L2, computed L3",
+    "@iris/compat-tavernhelper-core (L0) is absent from docs/ARCHITECTURE.md's table",
+    "@iris/lorebook: doc says L0, computed L1",
+    "@iris/macro: doc says L0, computed L1",
+    "docs/ARCHITECTURE.md claims 22 packages; 23 exist (apps/iris-web excluded)"
+  ],
+  "docTable": {
+    "character": "L0",
+    "chat": "L0",
+    "llm-openai-compat": "L0",
+    "lorebook": "L0",
+    "macro": "L0",
+    "pipeline": "L0",
+    "protocol": "L0",
+    "regex": "L0",
+    "script": "L0",
+    "tokenizer": "L0",
+    "client-fake": "L1",
+    "persistence": "L1",
+    "preset": "L1",
+    "rpc-client": "L1",
+    "rpc-host": "L1",
+    "turn": "L1",
+    "variables": "L1",
+    "compat-tavernhelper": "L2",
+    "mvu": "L2",
+    "app-service": "L3",
+    "app": "L4",
+    "(apps/iris — the composition root)": "L4"
+  },
+  "docClaimedTotal": 22,
+  "handlerCensus": {
+    "serviceTsLines": 6032,
+    "handlersMethodStartsAtLine": 1409,
+    "handlersMethodSpansLines": 2112,
+    "registeredCount": 110,
+    "declaredProtocolMethods": 110,
+    "byDomain": {
+      "script": 24,
+      "chat": 17,
+      "worldbook": 13,
+      "preset": 12,
+      "character": 8,
+      "regex": 8,
+      "connection": 6,
+      "scriptLibrary": 5,
+      "backup": 4,
+      "persona": 4,
+      "storage": 3,
+      "prompt": 2,
+      "settings": 2,
+      "debug": 1,
+      "usage": 1
+    },
+    "unregistered": [],
+    "undeclared": []
+  },
+  "composition": {
+    "cordisRows": [
+      "logger",
+      "timer",
+      "system-prompt",
+      "llm",
+      "llm-openai-compat",
+      "webserver",
+      "rpc",
+      "app",
+      "frontend"
+    ],
+    "treeDocClaims": {
+      "pluginCount": 9,
+      "handlersApprox": "70",
+      "serviceLinesApprox": "2300"
+    }
+  },
+  "tools": {
+    "scripts": {
+      "files": 20,
+      "lines": 7432
+    },
+    "qa": {
+      "files": 24,
+      "lines": 5580
+    },
+    "rootScripts": 15
+  },
+  "findings": [
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/llm-openai-compat crosses a package boundary by path: packages\\iris-llm-openai-compat\\tests\\adapter-key.test.ts -> ../../iris-app-service/tests/support/fetchable-port.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/llm-openai-compat crosses a package boundary by path: packages\\iris-llm-openai-compat\\tests\\baseurl-parity.test.ts -> ../../iris-app-service/tests/support/fetchable-port.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/llm-openai-compat crosses a package boundary by path: packages\\iris-llm-openai-compat\\tests\\interrupted.test.ts -> ../../iris-app-service/tests/support/fetchable-port.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/llm-openai-compat crosses a package boundary by path: packages\\iris-llm-openai-compat\\tests\\timeouts.test.ts -> ../../iris-app-service/tests/support/fetchable-port.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/rpc-host crosses a package boundary by path: packages\\iris-rpc-host\\tests\\transport.test.ts -> ../../iris-app-service/tests/support/fetchable-port.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/app crosses a package boundary by path: apps\\iris\\tests\\live-generation-kinds.test.ts -> ../../../packages/iris-app-service/tests/support/materialising-store.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/app crosses a package boundary by path: apps\\iris\\tests\\live-generation-kinds.test.ts -> ../../../packages/iris-app-service/src/library.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/app crosses a package boundary by path: apps\\iris\\tests\\live-generation-kinds.test.ts -> ../../../packages/iris-app-service/src/chats.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/app crosses a package boundary by path: apps\\iris\\tests\\live-generation-kinds.test.ts -> ../../../packages/iris-app-service/src/service.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/app crosses a package boundary by path: apps\\iris\\tests\\live-generation-kinds.test.ts -> ../../../packages/iris-app-service/src/settings.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/app crosses a package boundary by path: apps\\iris\\tests\\mock-provider.ts -> ../../../packages/iris-app-service/tests/support/fetchable-port.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "manifest-drift",
+      "message": "@iris/app crosses a package boundary by path: apps\\iris\\tests\\sandbox-cors.test.ts -> ../../../packages/iris-app-service/src/sandbox-assets.ts"
+    },
+    {
+      "severity": "warn",
+      "area": "doc-drift",
+      "message": "@iris/app-service: doc says L3, computed L4"
+    },
+    {
+      "severity": "warn",
+      "area": "doc-drift",
+      "message": "@iris/compat-prompt-template (L0) is absent from docs/ARCHITECTURE.md's table"
+    },
+    {
+      "severity": "warn",
+      "area": "doc-drift",
+      "message": "@iris/compat-tavernhelper: doc says L2, computed L3"
+    },
+    {
+      "severity": "warn",
+      "area": "doc-drift",
+      "message": "@iris/compat-tavernhelper-core (L0) is absent from docs/ARCHITECTURE.md's table"
+    },
+    {
+      "severity": "warn",
+      "area": "doc-drift",
+      "message": "@iris/lorebook: doc says L0, computed L1"
+    },
+    {
+      "severity": "warn",
+      "area": "doc-drift",
+      "message": "@iris/macro: doc says L0, computed L1"
+    },
+    {
+      "severity": "warn",
+      "area": "doc-drift",
+      "message": "docs/ARCHITECTURE.md claims 22 packages; 23 exist (apps/iris-web excluded)"
+    }
+  ]
+}
