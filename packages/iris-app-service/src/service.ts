@@ -72,6 +72,9 @@ import { cardWorldbookDigest, cardWorldbookView, charWorldbookNames, WorldbookSt
 import { activationSettingsOf } from './worldbook-settings.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
+// —— family①: identity & messages ——
+import { toCardCharacter } from './context.ts'
+import type { ScriptChatMessage } from '@iris/protocol'
 import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
@@ -3436,6 +3439,26 @@ export class IrisAppService {
             worldbookSettings: settings.worldbookSettings(),
             ...cardStorage === undefined ? {} : { storage: await cardStorage.snapshot() },
             characters: await library.list(),
+            // —— family①: identity & messages ——
+            // The whole persona list, because upstream's four list members ask
+            // for exactly that; the key is omitted rather than defaulted when
+            // no store is configured, so "no store" and "no personas" stay
+            // different answers all the way to the card.
+            ...this.#options.personas === undefined
+              ? {}
+              : { personas: await this.#options.personas.list() },
+            // Names and author notes for `getScriptName` / `getScriptInfo`, out
+            // of the one listing the panel and the runner already share.
+            ...characterId === undefined
+              ? {}
+              : {
+                  scripts: Object.fromEntries(
+                    (await listAllScripts(characterId)).map(row => [
+                      row.id,
+                      { name: row.name, ...row.info === undefined ? {} : { info: row.info } },
+                    ]),
+                  ),
+                },
             ...messageId === undefined ? {} : { messageId },
             onReport: message => { this.#report(message, { kind: 'script', grade: 'note', chatId, characterId }) },
             // —— family②: regex ——
@@ -3837,6 +3860,145 @@ export class IrisAppService {
         )
 
         return { deleted, clearedGlobalSelect, dangling: { characters, materialisedFor } }
+      },
+      // —— family①: identity & messages ——
+      /*
+       * One card, projected as Tavern Helper's `getCharacter` projects it.
+       *
+       * The name is resolved **against this conversation's character and
+       * nothing else**. Upstream searches the whole library
+       * (`RawCharacter.findIndex`, lower-casing both the name and the avatar
+       * id); the same three spellings are accepted here — `'current'`, the
+       * card's name, its id — and a fourth that names a real neighbouring card
+       * is refused rather than served, because a card script's consent is
+       * per card and this member hands over regexes and script bodies.
+       */
+      'script.getCharacter': async ({ chatId, name }) => {
+        const entry = await chats.open(chatId)
+        const characterId = entry.meta.characterId
+        const card = entry.card
+        if (characterId === undefined || card === undefined) {
+          throw notFound('this conversation is not played with a character')
+        }
+        // Folded, as `RawCharacter.findIndex` folds both sides — and because
+        // this host's ids are filename-shaped, so two spellings of one id
+        // differ only in case on a case-folding filesystem.
+        const asked = name.toLowerCase()
+        const matches = asked === 'current'
+          || asked === characterId.toLowerCase()
+          || asked === card.data.name.toLowerCase()
+          || asked === entry.header.character_name.toLowerCase()
+        if (!matches) {
+          throw new AppError(
+            'unsupported',
+            `getCharacter only answers about this conversation's own character here, not "${name}":`
+              + ' a card script is consented to per card, and this member carries the card\'s regexes'
+              + ' and script bodies',
+          )
+        }
+        return {
+          character: toCardCharacter(
+            card,
+            characterId,
+            charWorldbookNames(card, settings.charBooks(characterId)).primary,
+          ),
+        }
+      },
+
+      /*
+       * This character's conversations, newest activity first — the sidebar's
+       * own order, which is also the order upstream sorts its brief list into
+       * (`getSortedChatList` sorts by file name and reverses; ST names files by
+       * creation time, so both read as newest-first).
+       */
+      'script.chatHistoryBrief': async ({ chatId }) => {
+        const entry = await chats.open(chatId)
+        const characterId = entry.meta.characterId
+        if (characterId === undefined) throw notFound('this conversation is not played with a character')
+        const rows = (await chats.list()).filter(row => row.characterId === characterId)
+        return {
+          chats: rows.map(row => ({
+            file_name: `${row.chatId}.jsonl`,
+            chat_items: row.messageCount,
+            ch_name: entry.header.character_name,
+            avatar_url: characterId,
+            chatId: row.chatId,
+            title: row.title,
+            updatedAt: row.updatedAt,
+          })),
+        }
+      },
+
+      /*
+       * The named conversations' floors.
+       *
+       * The allowed set is built first, from this character's own chats, and a
+       * file outside it is dropped — the same silence upstream keeps for a file
+       * the server will not serve, and the reason it is dropped rather than
+       * refused is that a card handing back the rows it was given must not be
+       * able to turn one wrong string into a failed call for all fifty.
+       */
+      'script.chatHistoryDetail': async ({ chatId, files }) => {
+        const entry = await chats.open(chatId)
+        const characterId = entry.meta.characterId
+        if (characterId === undefined) throw notFound('this conversation is not played with a character')
+        const mine = new Map(
+          (await chats.list())
+            .filter(row => row.characterId === characterId)
+            .map(row => [`${row.chatId}.jsonl`, row.chatId]),
+        )
+        const answer: Record<string, ScriptChatMessage[]> = {}
+        for (const file of files) {
+          // Both spellings, because upstream's own rows carry the extension and
+          // its reader strips it again (`file_name.replace('.jsonl','')`), so a
+          // card that has done either is asking the same question.
+          const id = mine.get(file) ?? mine.get(`${file}.jsonl`)
+          if (id === undefined) continue
+          const floors = await chats.floorsOf(id)
+          if (floors === undefined) continue
+          // Without the per-floor variable tables: another conversation's
+          // state, the bulk of a chat file, and nothing upstream's consumers
+          // of this member read.
+          answer[file] = floors.map(({ variables: _variables, ...rest }) => rest as ScriptChatMessage)
+        }
+        return { chats: answer }
+      },
+
+      /*
+       * Upstream's floor rotation, spliced on the host's own file.
+       *
+       * The index arithmetic is upstream's, line for line
+       * (`function/chat_message.ts:468-488`): both ends clamped into
+       * `[0, length]`, `middle` clamped into `[begin, end]`, then
+       * `splice(middle, end - middle)` and `splice(begin, 0, …)`. A span that
+       * collapses is upstream's no-op rather than an error.
+       *
+       * `rebuild`'s index map is the parallel splice of the *source* indices,
+       * so every line's per-swipe variable table travels with the line. That is
+       * the whole reason this is a host arm: the frame could only have moved the
+       * text.
+       */
+      'script.rotateChatMessages': async ({ chatId, begin, middle, end }) => {
+        const entry = await this.#idle(chatId, 'rotated by a script')
+        const lines = entry.toFile().messages
+        const at = (index: number): number =>
+          Math.min(Math.max(index < 0 ? lines.length + index : index, 0), lines.length)
+        const first = at(begin)
+        const last = at(end)
+        const pivot = Math.min(Math.max(at(middle), first), last)
+        if (pivot === first || pivot === last) return { view: this.#viewOf(entry) }
+
+        await this.#snapshotBefore(chatId, entry.meta.characterId, 'rewrite-messages', true)
+
+        const sources = lines.map((_line, index) => index)
+        const movedSources = sources.splice(pivot, last - pivot)
+        sources.splice(first, 0, ...movedSources)
+        const moved = lines.splice(pivot, last - pivot)
+        lines.splice(first, 0, ...moved)
+
+        entry.rebuild(lines, index => sources[index])
+        entry.touch()
+        return { view: this.#announceChat(entry) }
       },
     }
   }

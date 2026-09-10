@@ -5179,6 +5179,126 @@ re-derived on every turn rather than only on a drop); a profile large enough
 that rewriting the whole sequence per drop matters, which at the corpus's 31
 chat files it is nowhere near.
 
+## 63. Four card-script arms for Tavern Helper's identity and message family, and a rotation that moves a floor whole
+
+**Kind: new surface, with the scope decisions taken here rather than in the frame.**
+
+**What upstream does.** Tavern Helper's identity family reads the SillyTavern
+page directly and takes any name the library holds:
+`getCharacter(name)` runs `toCharacter` over `characters[index]`
+(`function/character.ts:75-119, 240`) and hands a card the projection —
+greetings folded into one array, eleven storage keys dropped by name, the bound
+book resolved to a name. `getChatHistoryBrief(name)` asks the server for that
+character's chat files (`function/raw_character.ts:216`) and
+`getChatHistoryDetail(data)` fetches each one, in parallel, unbounded, dropping
+the first line of every non-group file because that line is metadata
+(`RawCharacter.getChatsFromFiles`, `:100-129`). `rotateChatMessages` splices the
+page's own `chat` array (`function/chat_message.ts:468-488`).
+
+**What Iris does.** Four wire methods — `script.getCharacter`,
+`script.chatHistoryBrief`, `script.chatHistoryDetail`,
+`script.rotateChatMessages` — all taking a **chatId** and deriving the character
+from it, plus three new `ScriptContext` fields (`personas`, `persona`,
+`scripts`) for the nineteen members of the family that upstream answers
+synchronously. The frame half, its narrowings and its five degenerate answers
+are `notes/apps/iris-web/DEVIATIONS.md` §87; what follows is only what this
+process decides.
+
+**Why the chat and not the character.** A frame asserts its own `characterId`
+today for one purpose — which partition of extension settings it may read — and
+the scope questions this family raises are not answerable from an assertion the
+untrusted side makes. So `entry.meta.characterId` is the subject of all four
+arms, exactly as `script.context`'s `charBooks` already reads the chat's
+character rather than the asking one.
+
+**The narrowing, and it is a narrowing.** `script.getCharacter` accepts
+`'current'`, the chat's character by id, by card name, or by the name the chat
+header records — all folded, as `RawCharacter.findIndex` folds both sides — and
+refuses anything else with `unsupported` naming the reason. A card script is
+consented to per card (`notes/apps/iris-web/GRANTS.md`) and this member carries
+the card's `extensions`: its regexes and its script bodies. Serving a
+neighbouring card would let one card's grant answer for another's. The two
+history arms narrow the same way, and `script.chatHistoryDetail` builds the
+allowed set first — this character's own chat files — and then **drops** a file
+outside it rather than refusing the call, which is upstream's own silence for a
+file its fetch could not read and keeps one wrong string in a fifty-file request
+from failing the other forty-nine.
+
+**One deliberate infidelity in the projection.** `toCardCharacter`
+(`context.ts`) is a transcription of upstream's `toCharacter`, including the
+eleven omitted keys and the repair of a `tavern_helper` stored as an array of
+pairs — but `extensions.regex_scripts` keeps the card's **stored** spelling.
+Upstream maps every row through `to_tavern_regex`
+(`function/tavern_regex.ts:136`), which renames every field
+(`scriptName`→`script_name`, `disabled`→`enabled` inverted, `placement[]`→a
+five-flag `source` object). That projection is what `getTavernRegexes` returns
+and Iris has not built that member; writing it here would put two shapes of one
+fact in the product, and the second one would be the one nothing tests.
+
+**The rotation is a host arm, and that is the load-bearing decision.**
+`script.setChatMessages` carries a floor's **text** and nothing else — its own
+answer reports the fields it cannot carry — so a rotation composed in the frame
+out of that arm would move the words and leave every speaker name, role, swipe
+list and per-floor variable table where it was. That succeeds and corrupts. Here
+the index arithmetic is upstream's line for line (both ends clamped into
+`[0, length]`, `middle` into `[begin, end]`, then `splice(middle, end - middle)`
+and `splice(begin, 0, …)`), and the **source indices are spliced in step with
+the lines** so `rebuild`'s mapping brings each line's candidate — and its
+variable table — with it. `rebuild-hydration.test.ts` classifies the new site as
+total, which it is: a permutation gives every line a predecessor.
+
+A collapsed span returns before doing anything, and its only observable effect
+is the one asserted: no pre-change snapshot is taken. A card rotating an empty
+span every turn must not churn the retention window, which is the same rule
+`script.saveChat` keeps for the save.
+
+**`ChatStore.floorsOf`, and why not `open`.** The detail arm reads other
+conversations' files with a new store method rather than opening them: `open` is
+stateful — it materialises the entry, composes the card's regex scopes and can
+raise a cleanup offer — so answering one question about forty files would put
+forty entries in the cache and forty cleanup decisions in front of the reader.
+`search` and `usageSummary` read the files for that reason and this is their
+scan with their reasoning. It also means the answer is the **committed** file: a
+card reading its own conversation's unsaved edits has `getChatMessages` for
+that, and upstream has the same split (its detail fetch goes to the server while
+the page holds a live array).
+
+**Found but not changed.** `script.context`'s `floor.variables` is a
+**per-turn** read: `lineTurns` maps a line to its turn and then to the selected
+candidate, so a user line and the reply beside it report one table and a user
+line with no reply yet reports none. Measured while building the rotation test:
+with three floors appended by `script.createChatMessages` carrying `{at:'A'}`,
+`{at:'B'}`, `{at:'C'}`, the chat file holds A, B, C on floors 1-3 while that
+read answers -, B, B, - . Correct for the question it answers — a floor's
+*turn's* state — and the wrong unit for "this line's own table", which is what
+`toFile()` carries. Nothing is changed here; it is recorded because a test that
+took the first for the second passed a mutation that had deleted the rotation's
+whole index mapping.
+
+**Pinned.** `packages/iris-app-service/tests/identity-messages.test.ts`, 15
+tests: the projection's fold, its omissions and its legacy repair; the three
+name spellings and the refusal of a card that really exists; the brief listing
+this character's conversations and not the neighbour's; the detail's dropped
+header, stripped tables, absent keys and either file-name spelling; the rotation
+carrying both a line's own table (in the file and in the live log) and each
+turn's candidate table; the collapsed span's snapshot count; and the three
+snapshot fields, including that a host with no persona store omits the key
+instead of sending an empty list. Eleven mutations were applied to this half one
+at a time and each went red on its own assertion — two of them only after their
+fixtures were replaced, because floors created by `script.createChatMessages`
+carry their tables on the line itself and so travel whichever way the rotation
+is written.
+
+**What would overturn it.** A card that legitimately needs a neighbouring card's
+data or another character's conversations would put the per-card grant model
+itself in question rather than these arms. A group-chat model in this host would
+give `getChatHistoryDetail`'s ignored `isGroupChat` something to mean. And if a
+redraw arm is ever built for the reading column, `script.rotateChatMessages`'s
+`refresh` switch stops being decorative — it is carried in the schema for
+exactly that reason.
+
+---
+
 ## 64. A card can read and write the regex tiers, but only its own conversation's — and a write keeps what the vocabulary cannot say
 
 **Kind:** deliberate departure, plus one correction of a silent loss.

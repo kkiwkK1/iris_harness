@@ -1780,6 +1780,32 @@ class InMemoryClient implements FakeClient {
         )
       }
 
+      // —— family①: identity & messages ——
+      case 'script.getCharacter':
+      case 'script.chatHistoryBrief':
+      case 'script.chatHistoryDetail':
+      case 'script.rotateChatMessages': {
+        /*
+         * Refused with the bridge group above, and for its reason rather than a
+         * new one: all four are card-script arms whose answers are made of
+         * things this client does not keep. `script.getCharacter` projects a
+         * **loaded card file** (its `extensions`, its greetings) and this client
+         * holds summaries; the two history arms read **chat files** and this
+         * client holds arrays in memory with no files behind them;
+         * `script.rotateChatMessages` moves floors whole, carrying each one's
+         * per-swipe variable table, and a fake that moved the text only would
+         * pass a test that a real host fails.
+         *
+         * The refusal names the method, so a card whose `getCharacter()` call
+         * lands here is told which arm is missing rather than that the member
+         * does not exist.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client keeps no card files or chat files, so ${method} has nothing true to answer with`,
+        )
+      }
+
       default: {
         // Exhaustiveness guard: a method added to the protocol without an arm
         // here becomes a type error rather than a runtime surprise.

@@ -123,6 +123,9 @@ export type {
   TavernRegexSource,
   TavernRegexTier,
   TavernRegexView,
+  // —— family①: identity & messages ——
+  CardCharacter,
+  ChatHistoryBriefRow,
 } from './views.ts'
 
 export { CACHE_STALE_MS, HISTORY_ITEM_PREFIX, MAX_CONTEXT_WINDOW, providerExcuse } from './views.ts'

@@ -70,6 +70,13 @@ const CLASSIFIED: Record<string, { total: boolean, why: string }> = {
     total: true,
     why: 'identity mapping; only `mes` is rewritten',
   },
+  // —— family①: identity & messages ——
+  'script.rotateChatMessages': {
+    total: true,
+    why: 'a permutation; every line keeps its identity and the source indices are spliced in step '
+      + 'with the lines, which is the whole reason the rotation is a host arm — a frame composing '
+      + 'it out of setChatMessages could only have moved the text',
+  },
 }
 
 /** Call sites that put tables back, whatever their rebuild does. */

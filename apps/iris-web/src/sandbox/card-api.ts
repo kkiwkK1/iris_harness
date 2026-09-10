@@ -184,6 +184,23 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
    */
   rebindCharWorldbooks: 'worldbook.setCharBooks',
   setLorebookSettings: 'worldbook.setSettings',
+
+  // —— family①: identity & messages ——
+  /*
+   * The four round trips of the identity family. The other twenty members of it
+   * answer from the pushed snapshot, because upstream answers them
+   * synchronously and a promise would break their call sites; these four are
+   * asynchronous upstream too, so a call costs no compatibility.
+   *
+   * All four take the **chat** and let the host derive the character, which is
+   * what makes the scope decision the host's: a card asking about a
+   * neighbouring card's file or another character's conversations is refused
+   * there, not here, because this frame is the untrusted side.
+   */
+  getCharacter: 'script.getCharacter',
+  getChatHistoryBrief: 'script.chatHistoryBrief',
+  getChatHistoryDetail: 'script.chatHistoryDetail',
+  rotateChatMessages: 'script.rotateChatMessages',
 }
 
 /**
@@ -293,6 +310,19 @@ export const OFF_ST_SURFACE: readonly string[] = [
   'deleteWorldbook',
   'rebindCharWorldbooks',
   'setLorebookSettings',
+
+  // —— family①: identity & messages ——
+  /*
+   * All four are Tavern Helper members, and none of the four names appears
+   * among `st-context.js`'s 145 keys — checked against
+   * `UPSTREAM_CONTEXT_MEMBERS`, not assumed. Serving them on the SillyTavern
+   * object would invent members on the surface being mirrored, which is the
+   * whole reason this list exists rather than being derived.
+   */
+  'getCharacter',
+  'getChatHistoryBrief',
+  'getChatHistoryDetail',
+  'rotateChatMessages',
 ]
 
 /**

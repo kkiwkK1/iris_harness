@@ -272,6 +272,69 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   setLorebookEntries: 'shared',
   createLorebookEntries: 'shared',
   deleteLorebookEntries: 'shared',
+
+  // —— family①: identity & messages ——
+  /*
+   * `shared`: the library, the played card and the selected persona are facts
+   * about the conversation, not about which script asked. Every one of these
+   * answers from the pushed snapshot or from a host arm that takes the chat,
+   * and none of them carries a scope or a script id.
+   *
+   * They are written one per line, in full, rather than folded into a compact
+   * `Object.fromEntries(...)` spread that would cost the inlined bootstrap
+   * about seven bytes less per name: `card-surface-census.mjs` reads this
+   * object out of the **source text** with a per-line pattern
+   * (`/^\s*'?(name)'?\s*:\s*'(identity|shared)'/gm`), so a folded block would
+   * make every member in it invisible to the caliper — which would then report
+   * them as declared-but-unbuilt, the exact reading the census exists to get
+   * right. The bytes are recorded in DEVIATIONS §87 instead.
+   */
+  getCharacterNames: 'shared',
+  getCharacterIds: 'shared',
+  getCurrentCharacterName: 'shared',
+  getCurrentCharacterId: 'shared',
+  getCharAvatarPath: 'shared',
+  getCharData: 'shared',
+  getCharacter: 'shared',
+  getPersonaNames: 'shared',
+  getPersonaIds: 'shared',
+  getCurrentPersonaName: 'shared',
+  getCurrentPersonaId: 'shared',
+  getPersonaAvatarPath: 'shared',
+  getPersona: 'shared',
+  /*
+   * `identity`: the four that answer about **the calling script**.
+   *
+   * `getScriptName` and `getScriptInfo` read the snapshot's row for
+   * `getScriptId()`'s value, and `replaceScriptInfo` writes a note keyed by it,
+   * so a shared binding would answer for whichever script the frame happens to
+   * think it is — the failure this file exists to prevent, and a quiet one: a
+   * script would print its neighbour's name.
+   *
+   * `getIframeName` is identity-bearing for the same reason in a script frame,
+   * where its answer embeds that script's name and id. In a message frame it is
+   * the same for every caller, exactly as `getCurrentMessageId` is; the
+   * classification follows the fact it reports rather than the frame it happens
+   * to be read in.
+   */
+  getScriptName: 'identity',
+  getScriptInfo: 'identity',
+  replaceScriptInfo: 'identity',
+  getIframeName: 'identity',
+  /* `shared`: a pure function of its argument — upstream's own pattern. */
+  getMessageId: 'shared',
+  /*
+   * `shared`: all six address the conversation, by floor or by chat file. The
+   * two history members are narrowed to the open conversation's character by
+   * the **host**, which is where a scope decision has to live when the frame is
+   * the untrusted side.
+   */
+  getChatHistoryBrief: 'shared',
+  getChatHistoryDetail: 'shared',
+  formatAsDisplayedMessage: 'shared',
+  retrieveDisplayedMessage: 'shared',
+  refreshOneMessage: 'shared',
+  rotateChatMessages: 'shared',
 }
 
 /**

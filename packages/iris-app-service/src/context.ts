@@ -19,7 +19,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import type { CharacterSummary, RegexScriptView, ScriptContext } from '@iris/protocol'
+// —— family①: identity & messages —— `CardCharacter` and `PersonaView` join this line
+import type { CardCharacter, CharacterSummary, PersonaView, RegexScriptView, ScriptContext } from '@iris/protocol'
+// —— family①: identity & messages ——
+import type { CharacterCard } from '@iris/character'
 import { extractScripts } from '@iris/script'
 
 import type { SillyTavernMessage } from '@iris/persistence'
@@ -142,6 +145,93 @@ function withCurrentCardData(
   return summaries.map(summary => summary.characterId === characterId
     ? { ...summary, data: { character_book: structuredClone(book) } }
     : summary)
+}
+
+// —— family①: identity & messages ——
+/** The eleven storage keys upstream's `toCharacter` drops on the way out. */
+const CHARACTER_OMITTED_EXTENSIONS: readonly string[] = [
+  'TavernHelper_scripts',
+  'TavernHelper_characterScriptVariables',
+  'fav',
+  'talkativeness',
+  'world',
+  'depth_prompt',
+  'pygmalion_id',
+  'github_repo',
+  'source_url',
+  'chub',
+  'risuai',
+  'sd_character_prompt',
+]
+
+/**
+ * A V1-mirror field, when the card carries one at the top level.
+ *
+ * Upstream's projection reads `character.first_mes ?? data.first_mes` and three
+ * more pairs in that order, so the precedence is copied rather than decided
+ * here: a V1 card whose mirror and `data` disagree is answered the way the
+ * member a card was written against answers it.
+ * @param card - the loaded card.
+ * @param key - the mirror key.
+ * @returns the string, or undefined when the card has no such mirror.
+ */
+function mirrored(card: CharacterCard, key: string): string | undefined {
+  const value = card[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+/**
+ * One card in Tavern Helper's `getCharacter` shape.
+ *
+ * A transcription of upstream's `toCharacter`
+ * (`JS-Slash-Runner/src/function/character.ts:75-119`), which is a projection
+ * and not a copy: it folds the greetings into one array, prefers the V1 mirror
+ * over `data`, resolves the bound book's *name*, and omits eleven storage keys
+ * from `extensions` by name.
+ *
+ * **One deliberate departure: `extensions.regex_scripts` keeps the card's
+ * stored shape.** Upstream maps each row through `to_tavern_regex`
+ * (`function/tavern_regex.ts:136`), which renames every field
+ * (`scriptName`→`script_name`, `disabled`→`enabled` inverted,
+ * `placement[]`→a five-flag `source` object, `markdownOnly`/`promptOnly`→a
+ * `destination` pair). That projection belongs to the regex family — it is what
+ * `getTavernRegexes` returns, and Iris has not built that member — and
+ * inventing it in two places is how two shapes of one fact come to disagree.
+ * A card reading `regex_scripts` here sees `scriptName`, not `script_name`;
+ * recorded in `notes/apps/iris-web/DEVIATIONS.md`.
+ * @param card - the loaded card.
+ * @param characterId - the host's id for it, which is this shape's `avatar`.
+ * @param worldbook - the primary bound book's name, or null.
+ * @returns the projection, detached.
+ */
+export function toCardCharacter(
+  card: CharacterCard,
+  characterId: string,
+  worldbook: string | null,
+): CardCharacter {
+  const data = card.data
+  const extensions: Record<string, unknown> = structuredClone(data.extensions) as Record<string, unknown>
+  for (const key of CHARACTER_OMITTED_EXTENSIONS) delete extensions[key]
+  /*
+   * Upstream repairs one legacy shape here: a `tavern_helper` stored as an
+   * array of pairs is turned back into an object (`character.ts:84-92`). Kept,
+   * because the cards that store it that way are real and a card reading
+   * `extensions.tavern_helper.scripts` off an array gets `undefined`.
+   */
+  const helper = extensions['tavern_helper']
+  if (Array.isArray(helper)) {
+    extensions['tavern_helper'] = Object.fromEntries(helper as [string, unknown][])
+  }
+  return {
+    avatar: characterId,
+    version: data.character_version,
+    creator: data.creator,
+    creator_notes: mirrored(card, 'creatorcomment') ?? data.creator_notes,
+    worldbook,
+    description: mirrored(card, 'description') ?? data.description,
+    first_messages: [mirrored(card, 'first_mes') ?? data.first_mes, ...data.alternate_greetings],
+    extensions,
+  }
 }
 
 /**
@@ -292,6 +382,27 @@ export function buildCardContext(
      * and is what a host running without a policy store really does.
      */
     characterRegexAllowed?: boolean
+
+    // —— family①: identity & messages ——
+    /**
+     * The profile's personas and which one is selected.
+     *
+     * Read by the caller for the reason `worldbookNames` is: the store is async
+     * and this function is not. **Absent means the host has no persona store**,
+     * which is a different fact from a store that holds none — the four
+     * synchronous persona members report the first as a gap and answer the
+     * second with the empty answer upstream gives, and a default applied here
+     * would erase the distinction before either could see it.
+     */
+    personas?: { personas: readonly PersonaView[], activeId?: string }
+    /**
+     * Each runnable script's name and author note, by script id.
+     *
+     * Read by the caller, out of the same `listAllScripts` reading the panel and
+     * the runner use, so `getScriptName()` cannot answer with a name the panel
+     * does not show. Absent means the host has no script repositories at all.
+     */
+    scripts?: Record<string, { name: string, info?: string }>
   },
 ): ScriptContext {
   const meta = entry.meta
@@ -343,6 +454,29 @@ export function buildCardContext(
     ...extras.characterRegexAllowed === undefined
       ? {}
       : { characterRegexAllowed: extras.characterRegexAllowed },
+
+    // —— family①: identity & messages ——
+    /*
+     * Names and ids for the list members; the selected persona's content, once,
+     * for `getPersona('current')`.
+     *
+     * The selection is `activeId`, not `active()`: that accessor gates on a
+     * non-empty description because an empty one contributes nothing to a
+     * prompt (`persona.ts:263`), and applying a *prompt* rule to an *identity*
+     * question would make `getCurrentPersonaName()` answer `null` for a persona
+     * the user can see selected in the panel.
+     */
+    ...extras.personas === undefined
+      ? {}
+      : {
+          personas: extras.personas.personas.map(persona => ({ id: persona.id, name: persona.name })),
+          ...(() => {
+            const active = extras.personas.personas.find(persona => persona.id === extras.personas?.activeId)
+            return active === undefined ? {} : { persona: structuredClone(active) }
+          })(),
+        },
+    // Beside `scriptButtons`, keyed the same way and read from the same rows.
+    ...extras.scripts === undefined ? {} : { scripts: extras.scripts },
   }
 }
 

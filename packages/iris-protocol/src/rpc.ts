@@ -17,7 +17,9 @@ import { z } from 'zod'
 
 import { MAX_CONTEXT_WINDOW } from './views.ts'
 
-import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary } from './views.ts'
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
+// —— family①: identity & messages ——
+import type { CardCharacter, ChatHistoryBriefRow } from './views.ts'
 
 /**
  * A partial card-facing entry, as the book-writing methods accept it.
@@ -1949,6 +1951,103 @@ export const requestSchemas = {
     /** The book's name, exactly as spelled — not an id, like `worldbook.get`. */
     name: z.string().min(1).max(120),
   }),
+
+  // —— family①: identity & messages ——
+  /**
+   * One character card, projected the way Tavern Helper's `getCharacter` does.
+   *
+   * **Scoped to the conversation's own character, and that is a narrowing.**
+   * Upstream takes any name in the library and hands back the whole card
+   * including its script bodies; here `name` must be `'current'`, or the open
+   * chat's character by name or by id, and anything else is refused by
+   * `unsupported` naming the narrowing. The reason is not the bytes: a card
+   * script runs under a per-card consent (`notes/apps/iris-web/GRANTS.md`), and
+   * a member that reads a *neighbouring* card's regexes and script bodies would
+   * let one card's grant answer for another's. Zero corpus scripts call it, so
+   * the narrowing costs no measured behaviour.
+   *
+   * `chatId` rather than `characterId` for the reason `script.context` takes
+   * one: the conversation is what a frame is anchored to, and the character is
+   * derived from it rather than asserted by the asking frame.
+   */
+  'script.getCharacter': z.object({
+    chatId: z.string().min(1),
+    /** `'current'`, or the open chat's character by name or by id. */
+    name: z.string().min(1).max(200),
+  }),
+  /**
+   * The conversations of the open chat's character, as a brief list.
+   *
+   * Upstream's `getChatHistoryBrief(name)` takes a character; this takes the
+   * chat and answers about that chat's character only — the same narrowing
+   * `script.getCharacter` makes, for the same reason. A card asking about
+   * `'current'`, which is the only spelling the corpus uses anywhere, gets
+   * exactly upstream's answer.
+   *
+   * Rows, never floors: the detail arm below is a separate call, because
+   * upstream's two members are separate calls and because a brief list of a
+   * character with forty conversations must not ship forty chat files.
+   */
+  'script.chatHistoryBrief': z.object({ chatId: z.string().min(1) }),
+  /**
+   * The floors of named past conversations of the open chat's character.
+   *
+   * Upstream's `getChatHistoryDetail(data)` takes the brief rows back and
+   * fetches each file; this takes their `file_name`s. **Every file must belong
+   * to the same character as the open chat** — checked here, not in the frame,
+   * because the frame is the untrusted side and a card naming another
+   * character's file is asking to read past a grant boundary.
+   *
+   * `isGroupChat` is upstream's second parameter and has no counterpart here:
+   * this host has no group chats, so the flag could only be a lie in one
+   * direction. The frame accepts it, ignores it, and says so once.
+   */
+  'script.chatHistoryDetail': z.object({
+    chatId: z.string().min(1),
+    /**
+     * The `file_name`s from `script.chatHistoryBrief`.
+     *
+     * Capped at 50 — upstream caps nothing and fetches every file in parallel,
+     * which on this host is a request whose answer size is set by the corpus
+     * rather than by the request. A card wanting more asks twice.
+     */
+    files: z.array(z.string().min(1).max(300)).min(1).max(50),
+  }),
+  /**
+   * Rotate a span of floors, upstream's `[begin, middle, end)` three-index form.
+   *
+   * A host arm rather than a composition of `script.setChatMessages`, and the
+   * difference is not convenience: that arm carries a floor's **text** and
+   * nothing else (its own answer reports the fields it cannot carry), so a
+   * rotation built out of it would move the words while leaving every speaker
+   * name, role, swipe list and per-floor variable table where it was. That
+   * succeeds and corrupts. The chat file is the host's, so the splice belongs
+   * here, where a line moves whole and `rebuild` carries its variables with it.
+   *
+   * Indices arrive signed and are clamped here exactly as upstream clamps them
+   * (`_.clamp(normalizeMessageId(x), 0, chat.length)`, `middle` into
+   * `[begin, end]`), so a card that asks for an impossible span gets upstream's
+   * no-op rather than an error it has no handler for.
+   */
+  'script.rotateChatMessages': z.object({
+    chatId: z.string().min(1),
+    /** First floor of the span. Negative counts from the end, as upstream's does. */
+    begin: z.number().int(),
+    /** The floor that becomes first. */
+    middle: z.number().int(),
+    /** One past the last floor of the span. */
+    end: z.number().int(),
+    /**
+     * Upstream's redraw switch, accepted and not acted on.
+     *
+     * The shell re-renders on the `chat.updated` broadcast this write already
+     * emits, so `'affected'` and `'all'` are the same thing here; `'none'`
+     * cannot be honoured, because there is no way to change the file and hold
+     * the view. Recorded in the schema rather than dropped in the frame, so the
+     * asymmetry is visible to whoever next builds a redraw arm.
+     */
+    refresh: z.enum(['none', 'affected', 'all']).optional(),
+  }),
 } as const
 
 /** Every callable method. */
@@ -2483,6 +2582,34 @@ export interface RpcResponseMap {
      */
     dangling: { characters: string[], materialisedFor: string[] }
   }
+  // —— family①: identity & messages ——
+  /** The card, projected as upstream's `getCharacter` projects it. */
+  'script.getCharacter': { character: CardCharacter }
+  /**
+   * The character's conversations, newest activity first.
+   *
+   * The open chat is **in** the list, as it is in upstream's: upstream asks
+   * SillyTavern for every chat file of the character and the current one is a
+   * file like the rest. A card wanting the others compares against
+   * `getCurrentChatId()`, which it already has.
+   */
+  'script.chatHistoryBrief': { chats: ChatHistoryBriefRow[] }
+  /**
+   * The requested conversations' floors, keyed by the `file_name` asked for.
+   *
+   * A file that could not be read is **absent from the map** rather than
+   * present and empty, which is upstream's own behaviour (its per-file fetch
+   * returns early on a non-ok response and never writes the key) and is the
+   * distinction a caller needs: an empty conversation and an unreadable one are
+   * different answers.
+   *
+   * Floors arrive in SillyTavern's storage shape, like `ScriptContext.chat`,
+   * **without** the per-floor variable tables: those are another
+   * conversation's state, they are the bulk of a chat file, and upstream's
+   * consumers of this member read `mes` and `name`.
+   */
+  'script.chatHistoryDetail': { chats: Record<string, ScriptChatMessage[]> }
+  'script.rotateChatMessages': { view: ChatView }
 }
 
 /** The response of one method. */

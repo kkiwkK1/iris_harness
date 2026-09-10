@@ -445,6 +445,14 @@ const PROBES: Record<string, unknown> = {
   // one. **Never point this at a book that exists**: this table's calls are
   // made for real.
   'worldbook.delete': { name: 'no-such-book' },
+  // —— family①: identity & messages ——
+  // All four take a chat that is not there, so each refuses with not-found
+  // from inside its own handler — which is what proves the registration, the
+  // same way the world-book probes above prove theirs.
+  'script.getCharacter': { chatId: 'no-such-chat', name: 'current' },
+  'script.chatHistoryBrief': { chatId: 'no-such-chat' },
+  'script.chatHistoryDetail': { chatId: 'no-such-chat', files: ['no-such-chat.jsonl'] },
+  'script.rotateChatMessages': { chatId: 'no-such-chat', begin: 0, middle: 1, end: 2 },
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {
