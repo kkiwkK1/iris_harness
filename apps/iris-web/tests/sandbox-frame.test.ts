@@ -1389,8 +1389,8 @@ test('the facade says which kind of absence it is, upstream’s or nobody’s', 
    *   `undefined` on the real SillyTavern page too, so the honest report says
    *   the read found nothing *and* that upstream has nothing of that name — the
    *   defensive-probe idiom ST-CONTEXT-SURFACE-AUDIT §4.2.3 measured 19 times
-   *   (branch `dev/audit-st-context-surface`; see
-   *   `notes/apps/iris-web/CARD-SURFACE.md`).
+   *   (the audit was retired with its branch on 2026-09-11, frozen at PR #51's
+   *   head `c91d7b5`; see `notes/apps/iris-web/CARD-SURFACE.md`).
    *
    * The list that tells them apart is fetched with the member table rather than
    * inlined per frame, so this also pins that it arrives: a table without it

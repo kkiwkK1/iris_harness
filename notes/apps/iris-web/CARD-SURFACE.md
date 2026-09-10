@@ -1,13 +1,17 @@
 # 卡能够到的四个面：现状、口径、以及两个此前没人扫过的语料群
 
-**这份文件不是逐成员账本。** 逐成员的账在两处，它们是权威：
+**这份文件不是逐成员账本。** 逐成员的账曾在两份审计里，2026-09-11 起两份都已退役：
 
-- `notes/apps/iris-web/TH-SURFACE-AUDIT.md` —— 酒馆助手 `@types` 声明的 171 个成员，
-  逐个带上游声明位置与 Iris 现状（量具 `scripts/th-surface-audit.mjs`，分支
-  `dev/audit-th-surface`）；
-- `notes/apps/iris-web/ST-CONTEXT-SURFACE-AUDIT.md` —— `getContext()` 的 145 键、
-  宿主页面全局、裸库全局，逐个带缺口分级 P0/P1/P2（量具
-  `scripts/st-context-audit.mjs`，分支 `dev/audit-st-context-surface`）。
+- `TH-SURFACE-AUDIT.md` —— 酒馆助手 `@types` 声明的 171 个成员，逐个带上游声明位置与
+  Iris 现状（量具 `th-surface-audit.mjs`）；
+- `ST-CONTEXT-SURFACE-AUDIT.md` —— `getContext()` 的 145 键、宿主页面全局、裸库全局，
+  逐个带缺口分级 P0/P1/P2（量具 `st-context-audit.mjs`）。
+
+两份都只走过纯审计 PR（#50、#51，2026-09-09 开当天关闭，未合并），分支
+`dev/audit-th-surface`、`dev/audit-st-context-surface` 于 2026-09-11 按决定删除。
+文本仍冻结在两个 PR 的头提交 `4840297`、`c91d7b5`（`git fetch origin pull/50/head`
+可取回），但**不再是权威**：现状看下面这把量具每次跑出的「用到 · 没建」表，
+缺口的分级与裁决看账本 `DEVIATIONS.md` §82、§85 和各家族条目。
 
 这份文件只管**可重跑的度量**：`scripts/card-surface-census.mjs`
 （`npm run census:card-surface`）每次跑出的四面表，两列（脚本 / 界面文本），

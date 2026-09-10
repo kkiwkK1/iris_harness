@@ -9,7 +9,7 @@
  *
  * ## WHAT THIS ADDS, AND WHAT IT DELIBERATELY DOES NOT REPEAT
  *
- * Two per-member audits already exist and this is not a third:
+ * Two per-member audits preceded this and it is not a third:
  *
  * - **TH-SURFACE-AUDIT** (+ `th-surface-audit.mjs`) — Tavern Helper's 171
  *   declared members, one row each, with upstream's declaration site and Iris's
@@ -18,17 +18,20 @@
  *   `getContext()` 145, the host-page globals and the bare library globals, one
  *   row each, with the gap list graded P0/P1/P2.
  *
- * Both live on unmerged branches (`dev/audit-th-surface`,
- * `dev/audit-st-context-surface`), so neither file is in this tree — which is
- * why they are named without their paths here: `md-references.test.ts` checks
- * that every `.md` a source comment names exists, and it is right to.
- * `notes/apps/iris-web/CARD-SURFACE.md` holds the cross-branch pointers in one
- * place, and this file's report prints them beside each face.
+ * Both were retired on 2026-09-11 by decision: their pull requests (#50, #51)
+ * closed unmerged on 2026-09-09 and their branches were deleted, so neither
+ * file is in this tree — which is why they are named without their paths here:
+ * `md-references.test.ts` checks that every `.md` a source comment names
+ * exists, and it is right to. The texts stay frozen at the PRs' head commits
+ * (`4840297`, `c91d7b5`; `git fetch origin pull/50/head`). The standing
+ * per-member account is this report's 用到 · 没建 tables plus the ledger, and
+ * `notes/apps/iris-web/CARD-SURFACE.md` says so in one place.
  *
- * **Those two own the verdicts.** A name's status, its upstream semantics and
- * whether it should be built are theirs; this file must not restate them,
- * because two documents answering one question drift and then the reader has to
- * decide which is stale.
+ * **Those two owned the verdicts; the ledger owns them now.** A name's status,
+ * its upstream semantics and whether it should be built are decided in
+ * `DEVIATIONS.md`'s family entries; this file must not restate them, because
+ * two documents answering one question drift and then the reader has to decide
+ * which is stale.
  *
  * What this adds is the *population* and the *unit*:
  *
@@ -902,7 +905,7 @@ const FACES = [
     declared: TH_DECLARED,
     built: TH_BUILT,
     probe: (source, name) => reachesTh(source.code, name, source.owner),
-    authority: 'TH-SURFACE-AUDIT（逐成员；分支 dev/audit-th-surface）',
+    authority: 'TH-SURFACE-AUDIT（已退役 2026-09-11；冻结在 PR #50 头提交 4840297）',
   },
   {
     key: '②',
@@ -910,7 +913,7 @@ const FACES = [
     declared: CTX_DECLARED,
     built: CTX_BUILT,
     probe: (source, name) => reachesContext(source.code, name, source.ctxAliases),
-    authority: 'ST-CONTEXT-SURFACE-AUDIT §3.1（分支 dev/audit-st-context-surface）',
+    authority: 'ST-CONTEXT-SURFACE-AUDIT §3.1（已退役 2026-09-11；冻结在 PR #51 头提交 c91d7b5）',
   },
   {
     key: '③',
@@ -922,7 +925,7 @@ const FACES = [
     declared: undefined,
     built: PARENT_BRIDGED,
     probe: (source, name) => reachesParent(source.code, name, source.parentAliases, source.shadowed),
-    authority: 'ST-CONTEXT-SURFACE-AUDIT §3.2（分支 dev/audit-st-context-surface）',
+    authority: 'ST-CONTEXT-SURFACE-AUDIT §3.2（已退役 2026-09-11；冻结在 PR #51 头提交 c91d7b5）',
   },
   {
     key: '④',
@@ -930,7 +933,7 @@ const FACES = [
     declared: BARE_EXPECTED,
     built: BARE_BUILT,
     probe: (source, name) => reachesBare(source.code, name, source.owner),
-    authority: 'ST-CONTEXT-SURFACE-AUDIT §3.3（分支 dev/audit-st-context-surface）',
+    authority: 'ST-CONTEXT-SURFACE-AUDIT §3.3（已退役 2026-09-11；冻结在 PR #51 头提交 c91d7b5）',
   },
 ]
 
@@ -1003,7 +1006,7 @@ for (const face of FACES) {
   const sourcesOf = name => usage.get(name).script.size + usage.get(name).iface.size
 
   console.log(`\n\n═══ ${face.key} ${face.label}`)
-  console.log(`    逐成员账目在 ${face.authority}；此处只给来源计数与两列`)
+  console.log(`    逐成员账目曾在 ${face.authority}；现状以下表为准，此处只给来源计数与两列`)
   console.log(`    ${face.declared === undefined ? '桥接 + 语料读到' : '声明'} ${String(declared.length)}`
     + ` · Iris 建 ${String(declared.filter(name => face.built.has(name)).length)}`
     + ` · 语料用到 ${String(used.length)}`

@@ -4476,6 +4476,16 @@ The per-member accounting for all four surfaces already exists in
 `TH-SURFACE-AUDIT.md` and `ST-CONTEXT-SURFACE-AUDIT.md` (both from 2026-09-08,
 on their own branches) and this does not restate it.
 
+*Postscript 2026-09-11.* Both audits were retired by the user's decision: their
+pull requests (#50, #51) had closed unmerged on 2026-09-09, and the branches
+`dev/audit-th-surface` and `dev/audit-st-context-surface` were deleted. The
+texts stay frozen at the PRs' head commits (`4840297`, `c91d7b5`, reachable as
+`refs/pull/50/head` and `refs/pull/51/head`). The standing per-member account
+is the census's 用到 · 没建 tables together with this ledger's family entries,
+and `CARD-SURFACE.md` now says so. Every other citation of the two documents in
+this ledger is a dated record of what was read at the time and is left as
+written.
+
 ### 82.1 `UPSTREAM_CONTEXT_MEMBERS`, and which kind of absence a card met
 
 The facade's report for a member Iris has not built said:

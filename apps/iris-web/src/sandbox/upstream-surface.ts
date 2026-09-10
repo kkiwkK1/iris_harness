@@ -33,8 +33,8 @@
  * different files, and a name on one says nothing about the other.
  *
  * **Declaration order matters here, unusually, and so does this comment's
- * wording.** Two calipers (`scripts/th-member-census.mjs`, and
- * `scripts/th-surface-audit.mjs` on the `dev/audit-th-surface` branch) find the
+ * wording.** The caliper `scripts/th-member-census.mjs` (and, until its branch
+ * was retired on 2026-09-11, `scripts/th-surface-audit.mjs` too) finds the
  * Tavern Helper list by searching this file for its name and then matching
  * every quoted identifier from there to the **end of the file**. Two
  * consequences, and both are easy to trip over while doing something else:
@@ -49,7 +49,8 @@
  *   "the Tavern Helper list" instead of naming it.
  *
  * The census in this tree slices to the closing bracket and no longer cares;
- * the off-branch one still does.
+ * the member census still reads to the end of the file, so the order still
+ * matters.
  *
  * @module iris-web/sandbox/upstream-surface
  */
@@ -61,9 +62,10 @@
  * Extracted from the installed SillyTavern's `public/scripts/st-context.js`
  * (1.18.0, `getContext()`'s returned object literal), not written by hand, and
  * re-extracted by `upstream-context.test.ts` wherever that install is present.
- * Two independently written extractors — this one and the caliper on
- * `dev/audit-st-context-surface` — answer the same 145 names, which is the only
- * reason the number is quoted rather than hedged.
+ * Two independently written extractors — this one and `st-context-audit.mjs`
+ * (retired with its branch on 2026-09-11; frozen at PR #51's head `c91d7b5`) —
+ * answered the same 145 names, which is the only reason the number is quoted
+ * rather than hedged.
  *
  * It exists for the same reason the Tavern Helper list does, and closes the same
  * gap one surface later: a card reading `SillyTavern.printMessages` was told "Iris
@@ -80,9 +82,10 @@
  * exports never land there, and the SillyTavern page's own `SillyTavern` global
  * carries only `{libs, getContext}` (`script.js:292-295`). A card reading
  * `top.printMessages` gets `undefined` upstream too — measured, and recorded in
- * ST-CONTEXT-SURFACE-AUDIT §4.2.3 (branch `dev/audit-st-context-surface`; the
- * pointers are collected in `notes/apps/iris-web/CARD-SURFACE.md`, since that
- * file is not in this tree). So this list must never be consulted by
+ * ST-CONTEXT-SURFACE-AUDIT §4.2.3 (retired with its branch on 2026-09-11 and
+ * frozen at PR #51's head `c91d7b5`; `notes/apps/iris-web/CARD-SURFACE.md`
+ * says where it went, since the file is not in this tree). So this list must
+ * never be consulted by
  * the virtual **parent** proxy's absent-name report: it would answer "upstream
  * declares this" about names upstream's page does not have, manufacturing scope
  * we never owed out of a list that is true about a different object.
