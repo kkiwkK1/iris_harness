@@ -268,6 +268,15 @@ class InMemoryClient implements FakeClient {
    * model source is the provider in use.
    */
 
+  /**
+   * The order the reader arranged, exactly as the host keeps it.
+   *
+   * Empty until something is dragged, which is what makes the sort capsules in
+   * the sidebar appear only once there is a choice — so the fake has to hold
+   * this or the panel's first-run state cannot be seen at all.
+   */
+  #chatOrder: string[] = []
+
   constructor(options: FakeClientOptions) {
     this.#chats = options.empty === true ? [] : seedChats()
     this.#characters = options.empty === true ? [] : seedCharacters()
@@ -331,7 +340,7 @@ class InMemoryClient implements FakeClient {
   async #dispatch(method: RpcMethod, params: unknown): Promise<unknown> {
     switch (method) {
       case 'chat.list':
-        return { chats: this.#summaries() }
+        return { chats: this.#summaries(), ordered: this.#chatOrder.length > 0 }
 
       case 'chat.create': {
         const { characterId } = params as RpcRequest<'chat.create'>
@@ -361,6 +370,9 @@ class InMemoryClient implements FakeClient {
         this.#require(chatId)
         this.#abort(chatId)
         this.#chats = this.#chats.filter(row => row.chatId !== chatId)
+        // And its place on the shelf: the host forgets it too, because a freed
+        // chat id is handed to the next conversation of that name.
+        this.#chatOrder = this.#chatOrder.filter(id => id !== chatId)
         this.#emit({ type: 'chats.updated', chats: this.#summaries() })
         return {}
       }
@@ -370,6 +382,29 @@ class InMemoryClient implements FakeClient {
         this.#require(chatId).title = title
         this.#emit({ type: 'chats.updated', chats: this.#summaries() })
         return { chats: this.#summaries() }
+      }
+
+      /*
+       * The host's rule, reimplemented rather than approximated.
+       *
+       * The two things a caller can get wrong here are the ones the host
+       * refuses on: an id the profile does not have, and the question of where
+       * a chat the order never mentioned appears. Both are answered the same
+       * way as `chat-order.ts` — refuse by name, and unmentioned chats on top
+       * by recency — because a fake that is lenient where the host is strict
+       * is a fake that lets a broken panel look finished.
+       */
+      case 'chat.reorder': {
+        const { order } = params as RpcRequest<'chat.reorder'>
+        const missing = order.filter(id => !this.#chats.some(row => row.chatId === id))
+        const first = missing[0]
+        if (first !== undefined) {
+          throw new FakeRpcError('not-found', `no chat "${first}" - the order was not stored`)
+        }
+        const seen = new Set<string>()
+        this.#chatOrder = order.filter(id => (seen.has(id) ? false : (seen.add(id), true)))
+        this.#emit({ type: 'chats.updated', chats: this.#summaries() })
+        return { chats: this.#summaries(), ordered: this.#chatOrder.length > 0 }
       }
 
       case 'chat.search': {
@@ -1851,8 +1886,22 @@ class InMemoryClient implements FakeClient {
   }
 
 
+  /**
+   * The sidebar list, newest first and then rearranged by whatever the reader
+   * arranged — the host's own two groups (`chat-order.ts`: what the
+   * arrangement has never heard of goes on top, by recency).
+   */
   #summaries(): ChatSummary[] {
-    return [...this.#chats].sort((left, right) => right.updatedAt - left.updatedAt).map(toChatSummary)
+    const rows = [...this.#chats]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map(toChatSummary)
+    if (this.#chatOrder.length === 0) return rows
+    const placed = new Set(this.#chatOrder)
+    const byId = new Map(rows.map(row => [row.chatId, row]))
+    return [
+      ...rows.filter(row => !placed.has(row.chatId)),
+      ...this.#chatOrder.map(id => byId.get(id)).filter((row): row is ChatSummary => row !== undefined),
+    ]
   }
 
   /**

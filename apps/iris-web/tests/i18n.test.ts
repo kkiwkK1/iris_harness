@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 import { DICTIONARIES, en, translate, interpolate, type StringKey } from '../src/app/i18n/strings.ts'
 import { detectLanguage, getLanguage, setLanguage, subscribeLanguage } from '../src/app/i18n/language.ts'
-import { since, describeBytes } from '../src/app/format.ts'
+import { chatMeta, since, describeBytes } from '../src/app/format.ts'
 import { describeError } from '../src/client/errors.ts'
 import { describeRun, summariseRuns, type ScriptRunState } from '../src/sandbox/script-run-state.ts'
 import { consentFigures, describeConsentAsk } from '../src/sandbox/consent.ts'
@@ -116,6 +116,19 @@ test('the sentence builders follow the language parameter', () => {
   assert.equal(since(NOON - 20 * 1000, NOON, 'zh'), '刚刚')
   // English stays the default, which is what the older suites assert against.
   assert.equal(since(NOON - 4 * 60 * 1000, NOON), '4m ago')
+
+  /*
+   * The sidebar row's whole stamp, in both columns.
+   *
+   * Asserted here rather than beside `since` because it is the *joined* string
+   * that a 272px row has to fit, and the join is where the two columns can
+   * disagree without either half being wrong - a separator with spaces in one
+   * dictionary and without in the other reads as two different products.
+   */
+  assert.equal(chatMeta(NOON - 2 * 86_400_000, 3, NOON, 'zh'), '2 天前 · 3 条')
+  assert.equal(chatMeta(NOON - 2 * 86_400_000, 3, NOON), '2d ago · 3 msg')
+  // The long spelling still exists, for the character page's wider column.
+  assert.equal(translate('zh', 'messageCount', { count: 3 }), '3 条消息')
 
   assert.equal(describeBytes(0, 'zh'), '空')
   assert.equal(describeBytes(-1, 'zh'), '大小未知')

@@ -26,14 +26,17 @@ import { useLanguage, t } from './i18n/use-language.ts'
 /**
  * Render the masthead.
  * @param props.onOpenSettings - opens the settings drawer.
- * @param props.onToggleNav - shows the sidebar on a narrow screen.
+ * @param props.navOpen - whether the sidebar is showing, so the ☰ can say so.
+ * @param props.onToggleNav - shows or hides the sidebar on a narrow screen.
  * @returns the masthead.
  */
 export function Masthead({
   onOpenSettings,
+  navOpen,
   onToggleNav,
 }: {
   onOpenSettings: () => void
+  navOpen: boolean
   onToggleNav: () => void
 }): ReactElement {
   const view = useIris(state => state.view)
@@ -70,10 +73,21 @@ export function Masthead({
   return (
     <header className="iris-masthead">
       <div className="iris-masthead__row">
+        {/*
+          The narrow window's way back to the sidebar.
+          It answers the same switch the sidebar's own fold control does
+          (`App.tsx`: one `collapsed`, not a drawer flag beside it), so it is a
+          *toggle* and now says which state it is in — `aria-expanded` on a
+          control that only ever showed the panel would have been a constant.
+          It exists only below 880px, where collapsing means off-canvas rather
+          than the rail (`panels.css`).
+        */}
         <button
           type="button"
           className="iris-act iris-nav-toggle"
           aria-label={t('showConversations')}
+          aria-expanded={navOpen}
+          aria-controls="iris-sidebar-body"
           onClick={onToggleNav}
         >
           ☰

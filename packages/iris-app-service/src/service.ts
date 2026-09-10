@@ -23,7 +23,7 @@ import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribu
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, CharacterSummary, ChatBudget, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TurnUsage } from '@iris/protocol'
+import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TurnUsage } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -64,6 +64,7 @@ import type { ChatEntry, ScriptInjection } from './entry.ts'
 import { writeTimedEffects, writeVolatility } from './entry.ts'
 import { AppError, invalid, notFound } from './errors.ts'
 import { FavoriteStore } from './favorites.ts'
+import { applyChatOrder, ChatOrderStore } from './chat-order.ts'
 import type { WorldbookBindingStore } from './materialise.ts'
 import { ScriptButtonStore } from './script-buttons.ts'
 import type { SideSource } from './side-usage.ts'
@@ -646,6 +647,15 @@ export interface AppServiceOptions {
    */
   favorites?: FavoriteStore
   /**
+   * The order the reader put their conversations in.
+   *
+   * Optional on the same presence-is-the-switch rule: absent means
+   * `chat.reorder` is refused by name and `chat.list` omits `ordered`
+   * altogether — never `ordered: false`, which would be a host with no
+   * arrangement store claiming to hold an empty one.
+   */
+  chatOrder?: ChatOrderStore
+  /**
    * Which named book each card's embedded book was materialised into.
    *
    * Read by `character.duplicate` alone: the copy's binding row is copied from
@@ -699,7 +709,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection'>>
     & {
       onError: (error: Error) => void
       hostConnection?: HostConnection
@@ -720,6 +730,7 @@ export class IrisAppService {
       installConnection?: (route: string, endpoint: ConnectionEndpoint) => void
       personas?: PersonaStore
       favorites?: FavoriteStore
+      chatOrder?: ChatOrderStore
       worldbookBindings?: WorldbookBindingStore
       backups?: BackupStore
       cacheTrace?: CacheTraceStore
@@ -844,6 +855,7 @@ export class IrisAppService {
       ...options.sillyTavernDir === undefined ? {} : { sillyTavernDir: options.sillyTavernDir },
       ...options.personas === undefined ? {} : { personas: options.personas },
       ...options.favorites === undefined ? {} : { favorites: options.favorites },
+      ...options.chatOrder === undefined ? {} : { chatOrder: options.chatOrder },
       ...options.worldbookBindings === undefined ? {} : { worldbookBindings: options.worldbookBindings },
       ...options.backups === undefined ? {} : { backups: options.backups },
       ...options.cacheTrace === undefined ? {} : { cacheTrace: options.cacheTrace },
@@ -1718,7 +1730,17 @@ export class IrisAppService {
     }
 
     return {
-      'chat.list': async () => ({ chats: await chats.list() }),
+      'chat.list': async () => {
+        const order = this.#options.chatOrder
+        return {
+          chats: await this.#chatList(),
+          // Absent, not `false`, when this host keeps no arrangement: the
+          // protocol's own note on this field says why, and the panel reads a
+          // missing field as "there is no such thing here" rather than as
+          // "there is one and it is empty".
+          ...order === undefined ? {} : { ordered: (await order.list()).length > 0 },
+        }
+      },
 
       'chat.create': async ({ characterId }) => {
         const entry = await chats.create(characterId, this.#options.userName)
@@ -1768,6 +1790,14 @@ export class IrisAppService {
         chats.cached(chatId)?.abort()
         await chats.delete(chatId)
         await settings.forget(chatId)
+        /*
+         * And its place on the shelf, for the reason the star list is forgotten
+         * when a card is deleted: chat ids are minted against the files that
+         * exist, so this id can be handed to the next conversation of the same
+         * name — and a position left behind would seat a stranger exactly where
+         * the deleted one used to be.
+         */
+        await this.#options.chatOrder?.forget(chatId)
         await this.#announceChats()
         return {}
       },
@@ -1809,7 +1839,33 @@ export class IrisAppService {
         entry.touch({ title })
         await chats.save(entry)
         this.#options.broadcast({ type: 'chat.updated', chatId, view: this.#viewOf(entry) })
-        return { chats: await chats.list() }
+        return { chats: await this.#chatList() }
+      },
+
+      /*
+       * Store the order the reader arranged, and answer with the list it makes.
+       *
+       * **Every id is checked against the profile first, and one bad id refuses
+       * the whole request.** A partial write would be the worst outcome
+       * available here: the caller sent a sequence it had just laid out, so an
+       * id the host does not have means the two disagree about what the profile
+       * contains — and silently dropping it would store an arrangement the
+       * reader never made and can only discover by noticing a row in the wrong
+       * place. Refusing names the id.
+       *
+       * An empty order clears the arrangement, which is the way back to
+       * newest-first and the reason this method needs no second spelling.
+       */
+      'chat.reorder': async ({ order }) => {
+        const store = this.#chatOrder()
+        const known = new Set(await chats.ids())
+        const missing = order.filter(chatId => !known.has(chatId))
+        if (missing.length > 0) {
+          throw notFound(`no chat "${missing[0] ?? ''}" — the order was not stored`)
+        }
+        const stored = await store.set(order)
+        await this.#announceChats()
+        return { chats: await this.#chatList(), ordered: stored.length > 0 }
       },
 
       'chat.search': async ({ query, caseSensitive, limit }) => ({
@@ -2180,7 +2236,7 @@ export class IrisAppService {
         const child = await chats.branch(chatId, id, swipeId)
         const view = this.#viewOf(child)
         this.#options.broadcast({ type: 'chat.updated', chatId, view: this.#viewOf(await chats.open(chatId)) })
-        return { view, chats: await chats.list() }
+        return { view, chats: await this.#chatList() }
       },
 
       'chat.import': async ({ filename, content, characterId }) => {
@@ -3876,7 +3932,34 @@ export class IrisAppService {
 
   /** Push the conversation list. */
   async #announceChats(): Promise<void> {
-    this.#options.broadcast({ type: 'chats.updated', chats: await this.#options.chats.list() })
+    this.#options.broadcast({ type: 'chats.updated', chats: await this.#chatList() })
+  }
+
+  /**
+   * The sidebar list, in the order the reader arranged.
+   *
+   * **The one place the list is read.** `chat.list` answers from here, every
+   * `chats.updated` broadcast goes through `#announceChats` above, and
+   * `chat.rename` and `chat.reorder` return this — so there is no path by which
+   * a caller gets the arrangement and another gets newest-first. The chat store
+   * itself stays sorted by `updatedAt`, which is the honest thing for it to
+   * report: it knows about files, not about shelves.
+   * @returns the summaries in display order.
+   */
+  async #chatList(): Promise<ChatSummary[]> {
+    const rows = await this.#options.chats.list()
+    const store = this.#options.chatOrder
+    if (store === undefined) return rows
+    return applyChatOrder(rows, await store.list())
+  }
+
+  /** The arrangement store, refused-by-name when the host keeps none. */
+  #chatOrder(): ChatOrderStore {
+    const store = this.#options.chatOrder
+    if (store === undefined) {
+      throw new AppError('unsupported', 'a manual chat order is not configured on this host')
+    }
+    return store
   }
 
   /**

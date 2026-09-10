@@ -75,17 +75,55 @@ test('the ladder orders content under shell, and shell under the cleaning offer'
   step('--iris-drawer-z', '--iris-cleanup-z')
 })
 
+/**
+ * The one selector allowed to order siblings with a literal, and why.
+ *
+ * A row lifted by a drag has to paint over the rows it is passing. That is an
+ * order **inside one list**, between siblings that share a parent - the same
+ * kind of statement as `reading.css`'s two `z-index: 1`, which order a
+ * message's marginalia against its own interface slot and are excluded from
+ * this test for exactly that reason. Neither meets the page ladder: the shell's
+ * layers are things that cover the *page*, and a row cannot cover anything
+ * outside the panel it scrolls in.
+ *
+ * Named rather than pattern-matched, and asserted to still exist below, so that
+ * deleting the drag makes this exception go red instead of standing for ever as
+ * a licence nothing uses.
+ */
+const LOCAL_STACKING = ['.iris-row-shell--lifted']
+
 test('every shell layer reads its z-index from the ladder, none from a literal', () => {
   // `reading.css` is deliberately not in this list: its two `z-index: 1` order
   // a message's marginalia against its own interface slot inside `.iris-msg`
   // and never meet the page ladder (tokens.css says the same).
   for (const file of ['panels.css', 'shell.css']) {
     const css = source('app', file)
-    const declarations = [...css.matchAll(/z-index:\s*([^;]+);/g)].map(match => match[1]?.trim() ?? '')
-    assert.ok(declarations.length > 0, `${file} has no z-index at all; the consumers moved`)
-    for (const value of declarations) {
-      assert.match(value, /var\(--iris-[a-z-]+-z/, `${file} has a literal z-index: ${value}`)
+    // Each declaration with the selector that carries it, so the exception can
+    // be granted to a rule rather than to a value - a bare `z-index: 3`
+    // allow-list would have excused the next one anywhere in the file.
+    const rules = [...css.matchAll(/([^{};]+)\{[^{}]*z-index:\s*([^;]+);/g)]
+      .map(match => ({ selector: (match[1] ?? '').trim(), value: (match[2] ?? '').trim() }))
+    assert.ok(rules.length > 0, `${file} has no z-index at all; the consumers moved`)
+    for (const rule of rules) {
+      if (LOCAL_STACKING.some(allowed => rule.selector.includes(allowed))) continue
+      assert.match(
+        rule.value,
+        /var\(--iris-[a-z-]+-z/,
+        `${file} has a literal z-index: ${rule.value} on ${rule.selector}`,
+      )
     }
+  }
+})
+
+test('the local-stacking exception is still used by the rule it was granted to', () => {
+  // An allow-list nothing uses is a licence waiting for the next literal. This
+  // is what makes deleting the drag delete its exception too.
+  const css = source('app', 'shell.css')
+  for (const selector of LOCAL_STACKING) {
+    assert.ok(
+      css.includes(`${selector} {`),
+      `${selector} is gone, so its permission to order siblings by hand should go with it`,
+    )
   }
 })
 

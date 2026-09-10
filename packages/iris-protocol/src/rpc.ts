@@ -174,6 +174,40 @@ export const requestSchemas = {
   'chat.delete': z.object({ chatId: z.string().min(1) }),
   'chat.rename': z.object({ chatId: z.string().min(1), title: z.string().max(200) }),
   /**
+   * Put the conversation list in the order the reader arranged.
+   *
+   * **Iris has no upstream to be compatible with here.** SillyTavern's chat
+   * list is sorted by its own picker — by name, by date, ascending or
+   * descending — and offers no manual order at all, so there is no file format,
+   * no key and no behaviour to match. This is an addition, recorded as one
+   * (host DEVIATIONS §62).
+   *
+   * **The whole visible order, not a move.** A `{ chatId, toIndex }` shape
+   * would be smaller and would be wrong: the browser has just laid the list out
+   * and knows exactly what it means, while a host applying a relative move has
+   * to agree with the browser about what the list was *before* it — and the two
+   * disagree the moment a chat is created, deleted or renamed in another tab.
+   * Sending the sequence makes the request idempotent and makes a stale caller
+   * fail loudly (an id the host does not have is refused) rather than quietly
+   * arranging the wrong rows.
+   *
+   * Branches are included even though a reader cannot place one: a branch
+   * renders under the conversation it left, but it is still an id in the
+   * arrangement, and an id the arrangement omits is treated as newer than it.
+   */
+  'chat.reorder': z.object({
+    /**
+     * Every conversation, in the order it should be listed.
+     *
+     * Capped at 2000, which is two orders of magnitude above the largest
+     * profile measured on this machine (31 chat files) and low enough that a
+     * malformed request cannot ask the host to hold a megabyte of ids. The
+     * per-id 120 is `isSafeId`'s own ceiling, so an id too long to name a file
+     * is refused by the schema rather than by the filesystem.
+     */
+    order: z.array(z.string().min(1).max(120)).max(2000),
+  }),
+  /**
    * Find conversations by a fragment of floor text.
    *
    * Upstream's `POST /api/chats/search` (`chats.js:874`) plus the "Previous
@@ -1816,11 +1850,32 @@ export interface PresetRegexAnswer {
 
 /** What each method resolves with. */
 export interface RpcResponseMap {
-  'chat.list': { chats: ChatSummary[] }
+  /**
+   * The sidebar list, and whether its order is one somebody arranged.
+   *
+   * `ordered` is **optional, and absent means the host keeps no arrangement** —
+   * the same shape and the same reason as `chat.delete`'s `cleared` (§59): a
+   * host without an order store cannot say "false, nothing is arranged", it can
+   * only decline to answer, and a caller that reads a missing field as `false`
+   * has manufactured a fact. It exists because the interface has one decision
+   * to make with it: whether to offer the reader a choice between this order
+   * and newest-first at all, which is a control that must not appear until
+   * there are two different lists to choose between.
+   */
+  'chat.list': { chats: ChatSummary[], ordered?: boolean }
   'chat.create': { view: ChatView }
   'chat.open': { view: ChatView }
   'chat.delete': Record<string, never>
   'chat.rename': { chats: ChatSummary[] }
+  /**
+   * The list as it now reads, so the caller renders the host's answer rather
+   * than its own optimistic guess.
+   *
+   * The array it returns is not necessarily the array it was sent: a chat the
+   * request did not mention is still in the profile and still has to appear
+   * somewhere, and the host's rule puts it on top (`chat-order.ts`).
+   */
+  'chat.reorder': { chats: ChatSummary[], ordered: boolean }
   /**
    * Chats with at least one matching floor, newest activity first.
    *

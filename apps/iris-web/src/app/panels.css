@@ -1624,6 +1624,21 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /*
+   * Collapsed here means *away*, not the rail.
+   *
+   * The rail is 44px of permanent column, which is a reasonable trade on a
+   * 1200px window and a tenth of a phone's width spent on four icons. So below
+   * 880px the same one switch (`App.tsx`: `collapsed`) drives the drawer it
+   * always drove — off-canvas when collapsed, sliding in over the page when
+   * not — and the masthead's ☰ is what answers it.
+   *
+   * The rules below are what make one state have two appearances. `width` is
+   * back to the drawer's 288px in both forms, because the rail's 44px would
+   * otherwise show through as a sliver of a panel; and the fold transitions the
+   * expanded layout uses are replaced by the slide, so a collapse here is one
+   * movement rather than a fold happening inside a drawer.
+   */
   .iris-sidebar {
     position: fixed;
     inset: 0 auto 0 0;
@@ -1631,6 +1646,15 @@
     width: 288px;
     background: var(--iris-bg-base);
     box-shadow: var(--iris-shadow);
+    transform: none;
+    visibility: visible;
+    transition:
+      transform 180ms var(--iris-ease),
+      visibility 180ms;
+  }
+
+  .iris-sidebar--rail {
+    width: 288px;
     transform: translateX(-100%);
     visibility: hidden;
     transition:
@@ -1638,9 +1662,35 @@
       visibility 180ms;
   }
 
-  .iris-sidebar--open {
+  /* The panel is a drawer, so its own contents are always the expanded form —
+     the rail never shows here, and the list must not be faded out inside a
+     drawer the reader just opened. */
+  .iris-sidebar--rail .iris-sidebar__full {
+    width: 288px;
+    opacity: 1;
     transform: none;
     visibility: visible;
+    transition: none;
+  }
+
+  .iris-sidebar__full {
+    width: 288px;
+  }
+
+  .iris-sidebar--rail .iris-sidebar__rail,
+  .iris-sidebar__rail {
+    display: none;
+  }
+
+  /* The fold control in the head would put the drawer off-canvas with no way
+     back inside the panel; the ☰ in the masthead is that way back, and it is
+     the only one that exists at this width. Kept as the same control rather
+     than a second one, so the switch stays single. */
+  .iris-sidebar--rail .iris-brand__word,
+  .iris-brand__word {
+    clip-path: inset(0 0 0 0);
+    transform: none;
+    transition: none;
   }
 
   .iris-nav-toggle {

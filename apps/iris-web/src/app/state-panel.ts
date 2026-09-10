@@ -449,7 +449,22 @@ export function saveAsideOpen(open: boolean, storage: StorageLike | undefined = 
  * the margin stands down.
  */
 
-/** The sidebar's grid track above 880px (`shell.css`, `.iris-shell`). */
+/**
+ * The sidebar's width above 880px (`shell.css`, `.iris-sidebar`).
+ *
+ * Its **expanded** width, and the arithmetic below assumes it deliberately. The
+ * panel folds to a 44px rail now, so the shell's first track is `auto` and this
+ * number lives on `.iris-sidebar` rather than on `.iris-shell` — but a media
+ * query cannot ask whether the reader has folded it, and a breakpoint that
+ * moved when they did would make the margin appear and disappear for a reason
+ * nothing on screen explains.
+ *
+ * So the expanded width decides, which errs in the safe direction: with the
+ * rail showing there is 228px *more* reading area than these sums assume, and
+ * the margin yields at a width where it would have fitted. The opposite
+ * mistake — computing against 44 and then expanding — squeezes the prose into
+ * exactly the ribbon this block exists to prevent.
+ */
 export const SIDEBAR_TRACK = 272
 
 /** The margin's own open width (`tokens.css`, `--iris-aside`). */
