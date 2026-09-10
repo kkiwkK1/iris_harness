@@ -1789,6 +1789,15 @@ What upstream *does* show per message is `extra.token_count`: **its own tokenize
 - **The breakdown was a native `title`; it is now a styled hover card, and this bullet is the record of that landing.** Both readings that carried one — the per-turn chip in a reply's actions row and the composer's session strip — open the same card (`app/UsagePopover.tsx`): anchored below the trigger by `useAnchoredPosition` from `@deepseek-ai/dsh-client-ui-primitives` (the model menu's own package; the strip lives at the viewport's bottom edge and the reading pane scrolls, so the card is portaled rather than CSS-positioned like the context card), clamped inside the viewport, drawn only in `--iris-*` tokens at the dropdown layer. It opens on hover (after a dwell) and on keyboard focus at once, closes on Escape, pointer-out (with the menus' 200ms grace, so the trip onto the portaled card does not close it) and an outside press, and its rows are a two-column `<dl>` a screen reader reads as pairs. The touch semantics are the honest trade: touch has no hover, so a tap **toggles** the card and an outside tap closes it — a press-and-hold or a second tap on the trigger is how a touch reader dismisses it, which is less discoverable than a hover-out but reachable, which the `title` was not. The plain-text assembly (`usageDetailText`) is deleted rather than kept beside the card: the rows are built once (`usageDetailRows` for the turn, `usageSummaryRows` for the session, the strip's own line being `usageSummaryRows` flattened by `usageLineGroups`), so the copy cannot drift between the line, the card, and the two languages. On the composer card those rows are joined by the card-script share as a `note` under them — the split the strip's `title` used to own, riding the card rather than a fourth group in the line (the composer's card-share divergence, §70).
 
 **What would overturn it.** A ruling that Iris should also carry upstream's estimate — which is a *different* entry, not this one: it would mean computing a count for imported floors so that a migrated conversation is not blank, and it would need its own word in the interface. Or a provider population where the reported figures are unreliable enough that showing them is worse than showing nothing; nothing measured so far suggests that.
+
+**Postscript, 2026-09-11.** The sentence above about upstream's timer tooltip —
+that it carries a rate derived from upstream's estimate, "not a usage
+breakdown" — is still an accurate reading of upstream and is no longer a
+statement that Iris shows no rate. Each turn's chip now carries one, over
+upstream's own window and with the provider's `outputTokens` as the numerator,
+and the hover card carries the timing rows beside the bucket rows. §92 records
+the definitions and the two departures; this entry's ruling — reported figures
+where upstream estimates — is what the numerator follows from.
 ## 48. The world book panel groups books by whose card they are; upstream lays every book out flat
 
 **Kind:** deliberate improvement.
@@ -6063,3 +6072,125 @@ bare Vite port is this, not a regression.
   request per frame and a class of "which half is missing" report. Not done in
   this change: four branches are adding members to that table concurrently, and
   the conflict cost would swamp the benefit.
+
+## 92. Each turn's reading carries its output speed, and there are two rates because they answer two questions
+
+**Kind:** compatibility in the definition (the primary rate is upstream's, to
+the digit), with two departures — the numerator, and one extra row upstream has
+no counterpart for. Dated 2026-09-11.
+
+**The request**, verbatim: 「加一个功能在每轮对话的用量中就是 token 输出速度」.
+The per-turn reading was already there — `用量 7.2K` at the end of a reply's
+action row with the breakdown in a hover card (§47) — and it had no time in it,
+because nothing in the host recorded any. The host half is
+`notes/packages/iris-app-service/DEVIATIONS.md` §67.
+
+**What upstream shows.** A message timer, and a rate inside its tooltip:
+`formatGenerationTimer` (`public/script.js:2681`) puts `{seconds}s` on the
+message block and a five-line title behind it — `Generation queued`, `Reply
+received`, `Time to generate`, `Time to first token`, `Time to think`,
+`Token rate: {n} t/s`. The rate is `tokenCount / seconds` where `seconds` is
+`gen_finished - gen_started` (`:2688`, `:2697`), printed to three decimals, and
+`tokenCount` is `mes.extra.token_count` — **upstream's own tokenizer estimate of
+the reply text** (`:3638`). §47 already records that Iris shows the provider's
+reported figures where upstream shows that estimate; this section is what
+follows for the rate.
+
+**What Iris shows.** The chip becomes `用量 1.1K · 75.0 tok/s` (`usageTurnRate`,
+built by `usageChipText` in `app/token-format.ts`), and the hover card gains
+five rows after the token rows, in upstream's own tooltip order and with
+upstream's own English words:
+
+| row | value | present when |
+| --- | --- | --- |
+| 用时 / Time to generate | `durationMs`, one decimal of a second | there is a timing at all |
+| 首字 / Time to first token | `firstTokenMs` | the host saw an output-carrying chunk |
+| 思考 / Time to think | `reasoningMs` | it is present **and above zero** — upstream's own `reasoningDuration > 0` gate |
+| 输出速度 / Token rate | `outputTokens ÷ (durationMs / 1000)` | both are usable |
+| 纯输出 / Decode rate | `outputTokens ÷ ((durationMs − firstTokenMs) / 1000)` | `firstTokenMs` is known and above zero |
+
+The timing rows sit *after* the token rows and are never mixed into them,
+because they are a different measurement by a different measurer — the host's
+clock against the provider's counters — and a reader has to be able to see
+which half of the table came from where.
+
+**The definitions, stated because the whole risk here is confusing them.**
+
+- **输出速度 / Token rate is upstream's number.** The *whole* window: the
+  provider's queue, the first connection and the decode are all inside it, and
+  the denominator is exactly `gen_finished - gen_started` as SillyTavern
+  divides it. So the figure Iris prints is the figure SillyTavern would print
+  for the same reply, and `token-format.test.ts` asserts the arithmetic against
+  upstream's own expression rather than against a recorded output.
+- **纯输出 / Decode rate is Iris's own.** The same tokens over the time after
+  the first one arrived. It answers what the whole-window rate cannot: whether a
+  slow reply was a slow *model* or a slow *start*. Two seconds of queue in front
+  of a two-second decode and a fast start in front of a four-second decode give
+  the same `Token rate` and are different providers to live with.
+- They can differ by a factor, which is why they are two labelled rows rather
+  than one number that changes meaning, and why the chip carries the
+  **whole-window** one: the chip is the figure a reader compares across hosts.
+
+**Formatting** lives in `app/token-format.ts` beside `usageDetailRows`, whose
+signature grew a third parameter rather than gaining a sibling builder: the rows
+belong to one generation and one card, and a second builder would be a second
+place for the order and the wording to drift — the drift that function's own
+history is a record of (§47's last bullet).
+
+- rates: one decimal at ten and above, two below. The band from a hosted
+  reasoning model to a local 7B is three orders of magnitude, and one precision
+  across it either prints noise (`312.47`) or erases the difference between
+  `4.2` and `4.8`. Upstream's three decimals are fine in a tooltip nobody reads
+  at a glance; this string sits beside the reply.
+- seconds: one decimal, upstream's own precision — but computed in **integer
+  tenths**, not `(ms / 1000).toFixed(1)`. `4050ms` is `4.05` seconds, `4.05` is
+  not representable, and `toFixed` prints `4.0` — wrong by a tenth in the one
+  place a reader would check. The module's own house rule (see its opening
+  comment about integer arithmetic) applied to one more figure.
+- **absent is never zero**, the rule §47 states for the buckets: no timing means
+  no timing rows at all; no time-to-first-token means no decode row, rather
+  than a decode rate that silently equals the row above it; an unusable
+  duration means no rate, rather than `∞ tok/s` or a large finite number a
+  reader would believe.
+
+**What it costs.**
+
+- **The chip's speed is gated on `usage`, not on the timing.** The numerator is
+  the provider's `outputTokens`, so a turn the host clocked through an endpoint
+  that reports no usage shows neither a cost nor a speed — and shows no
+  duration either, because the whole popover hangs off `message.usage`. That is
+  a real gap: the host *has* the duration (§67 stores it for every generation),
+  and a reader of such a turn is told nothing rather than "3.4s, tokens
+  unknown". Left as a follow-up rather than fixed here, because it means the
+  reading no longer being a *usage* chip at all.
+- **A reloaded turn shows a speed only for the reading its file was showing.**
+  The host stores the timer in SillyTavern's one-per-line `gen_started` /
+  `gen_finished` pair, so the other swipes come back with a cost and no
+  stopwatch (§67's second departure). The interface renders that as no speed,
+  and the fake's seeded conversation is deliberately in that state so the
+  rendering is exercised without a reload.
+- **No live rate while a reply streams.** A duration that grows makes a rate
+  that starts absurd and settles, so the host projects no timing onto a
+  streaming row and neither does the fake. A streaming figure would need its own
+  definition — tokens per second *so far*, over a window that has not closed —
+  and its own word, and the number that matters is the final one. Follow-up.
+- **Two more words in a table that was already six rows.** The card is now up to
+  eleven rows on a reasoning turn with a cache. It is a hover card a reader
+  opened on purpose; the chip stayed one line.
+
+**Held by** `tests/token-format.test.ts` (five new tests: no timing → no timing
+rows; the row order and upstream's reading of "Time to think"; the two rates on
+a slow start, checked against upstream's own expression; a zero thinking
+duration dropped; the precision thresholds and the chip agreeing with the card
+to the digit) and `packages/iris-client-fake/tests/usage.test.ts` (the fake's
+timing shape, and the seeded turn with one clocked reading and one not). Every
+new assertion was shown red under a named mutation.
+
+**What would overturn it.** A ruling that the chip should carry the decode rate
+instead — which is a claim that a reader cares more about the model than about
+the wait, and would break comparability with SillyTavern's own number. A
+provider population where a proxy buffers whole replies, making the whole-window
+rate a measurement of the proxy rather than the model; the decode row is already
+the answer, and it would then have to be promoted. Or the follow-up above
+landing: a reading that shows a duration with no bill beside it, which needs the
+popover to stop being gated on `usage`.

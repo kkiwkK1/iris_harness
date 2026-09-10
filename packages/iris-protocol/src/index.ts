@@ -86,6 +86,7 @@ export type {
   LorebookSettings,
   MessageView,
   ModelContextLength,
+  TurnGeneration,
   TurnUsage,
   PersonaView,
   PresetManagerView,

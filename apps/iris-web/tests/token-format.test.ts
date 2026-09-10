@@ -10,15 +10,20 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import type { TurnUsage } from '@iris/protocol'
+import type { TurnGeneration, TurnUsage } from '@iris/protocol'
 
 import {
   billedInputTokens,
   cacheHitPercent,
+  decodeRate,
   formatCacheHitPercent,
   formatExactTokens,
+  formatRate,
+  formatSeconds,
   formatTokens,
+  tokenRate,
   totalTokens,
+  usageChipText,
   usageDetailRows,
   usageLineGroups,
   usageSideShareSentences,
@@ -243,6 +248,116 @@ test('the per-turn breakdown has a row only for a bucket the provider reported',
     { label: '未缓存输入', value: '800 tok' },
     { label: '输出', value: '300 tok（其中推理 250 tok）' },
   ])
+})
+
+/**
+ * The timing half: a per-turn output speed, and the two rates it can state.
+ *
+ * The property under all of these is the one §92 exists for: **the two rates
+ * are different numbers and must not be confused.** `Token rate` is upstream's
+ * — the provider's output count over the whole window, queue and first
+ * connection included, which is what makes it comparable with the figure
+ * SillyTavern prints — and `Decode rate` is Iris's own, the same tokens over
+ * the time after the first one arrived. On a slow start they differ by a
+ * factor; a surface that showed one under the other's name would be answering
+ * "is this model slow" with "is this connection slow".
+ *
+ * The other assertions here are all forms of "absent is not zero": no timing
+ * means no timing rows at all, no time-to-first-token means no decode row, and
+ * a reasoning duration of zero is not a thinking model.
+ */
+
+/** A generation timing with the moments a test needs. */
+function timing(extra: Partial<TurnGeneration> = {}): TurnGeneration {
+  return { startedAt: 1_760_000_000_000, durationMs: 4_000, ...extra }
+}
+
+test('a turn with no timing has no timing rows, exactly as before the feature', () => {
+  const rows = usageDetailRows(usage({ cacheReadTokens: 1_200 }))
+  assert.deepEqual(rows.map(row => row.label), ['Cache hit', 'Uncached input', 'Cached input', 'Output'])
+  assert.doesNotMatch(JSON.stringify(rows), /tok\/s|Time to/, 'a turn nobody clocked got a speed anyway')
+})
+
+test('the timing rows follow upstream’s tooltip order and the rate closes it', () => {
+  // 300 output tokens over 4.0s is 75 tok/s, and over the 3.2s after the first
+  // token 93.75 — both computed by hand rather than copied off the run, so a
+  // change of definition fails here instead of being blessed.
+  assert.deepEqual(usageDetailRows(usage(), 'en', timing({ firstTokenMs: 800 })), [
+    { label: 'Uncached input', value: '800 tok' },
+    { label: 'Output', value: '300 tok' },
+    { label: 'Time to generate', value: '4.0s' },
+    { label: 'Time to first token', value: '0.8s' },
+    { label: 'Token rate', value: '75.0 tok/s' },
+    { label: 'Decode rate', value: '93.8 tok/s' },
+  ])
+
+  // The thinking row appears between the first token and the rates, and carries
+  // upstream's own reading: the clock starts with the generation, so a 2.5s
+  // "Time to think" *contains* the 0.8s wait before the first reasoning token.
+  const thinking = usageDetailRows(
+    usage({ reasoningTokens: 120 }), 'zh',
+    timing({ firstTokenMs: 800, reasoningMs: 2_500 }),
+  )
+  assert.deepEqual(thinking.map(row => row.label),
+    ['未缓存输入', '输出', '用时', '首字', '思考', '输出速度', '纯输出'])
+  assert.equal(thinking[4]?.value, '2.5s')
+})
+
+test('the two rates are the two definitions, and the whole window is upstream’s', () => {
+  // The case the labels exist for: two seconds of queue in front of a decode
+  // that took two more. Upstream's rate halves; the decode rate does not move.
+  const slowStart = timing({ durationMs: 4_000, firstTokenMs: 2_000 })
+  assert.equal(tokenRate(usage(), slowStart), 75)
+  assert.equal(decodeRate(usage(), slowStart), 150)
+  // Upstream's own arithmetic on the same numbers, from
+  // `formatGenerationTimer`: `tokenCount / seconds` over `gen_finished -
+  // gen_started`. Iris's numerator is the provider's count and its window is
+  // this one, so this is the equality that makes the two hosts comparable.
+  assert.equal(tokenRate(usage(), slowStart), 300 / (4_000 / 1_000))
+
+  // No first token: nothing to subtract, so there is no decode window and no
+  // row — not a decode rate that happens to equal the overall one.
+  assert.equal(decodeRate(usage(), timing()), undefined)
+  assert.equal(decodeRate(usage(), timing({ firstTokenMs: 0 })), undefined)
+  const noFirst = usageDetailRows(usage(), 'en', timing())
+  assert.deepEqual(noFirst.map(row => row.label), ['Uncached input', 'Output', 'Time to generate', 'Token rate'])
+
+  // A first token that arrived with the last one leaves no decode window
+  // either, and an unusable duration leaves no rate at all — `Infinity tok/s`
+  // is the failure this refuses.
+  assert.equal(decodeRate(usage(), timing({ durationMs: 900, firstTokenMs: 900 })), undefined)
+  assert.equal(tokenRate(usage(), timing({ durationMs: 0 })), undefined)
+  assert.equal(tokenRate(usage({ outputTokens: 0 }), timing()), undefined)
+})
+
+test('a zero thinking duration is not a thinking model', () => {
+  // Upstream's own gate is `reasoningDuration > 0`. Absent and zero both mean
+  // "there is nothing to say", and neither may print 0.0s.
+  const zero = usageDetailRows(usage(), 'en', timing({ firstTokenMs: 800, reasoningMs: 0 }))
+  assert.doesNotMatch(JSON.stringify(zero), /Time to think/)
+})
+
+test('rates change precision at ten, and the chip says the same number as the card', () => {
+  // One decimal at ten and above, two below: the band between a hosted
+  // reasoning model and a local 7B is three orders of magnitude wide.
+  assert.equal(formatRate(9.994), '9.99 tok/s')
+  assert.equal(formatRate(10), '10.0 tok/s')
+  assert.equal(formatRate(312.47), '312.5 tok/s')
+  assert.equal(formatRate(0), '0.00 tok/s')
+  assert.equal(formatSeconds(4_050), '4.1s')
+  assert.equal(formatSeconds(0), '0.0s')
+
+  // The chip carries the whole-window rate, which is the card's `Token rate`
+  // row verbatim — the two readings of one reply must agree to the digit.
+  const clocked = timing({ firstTokenMs: 2_000 })
+  const rows = usageDetailRows(usage(), 'en', clocked)
+  assert.equal(usageChipText(usage(), clocked), 'Usage 1.1K · 75.0 tok/s')
+  assert.ok(rows.some(row => row.label === 'Token rate' && row.value === '75.0 tok/s'))
+  // And falls back to the wording that was there before, with no dangling
+  // separator, for a turn nobody clocked.
+  assert.equal(usageChipText(usage(), undefined), 'Usage 1.1K')
+  assert.equal(usageChipText(usage(), timing({ durationMs: 0 })), 'Usage 1.1K')
+  assert.equal(usageChipText(usage(), clocked, 'zh'), '用量 1.1K · 75.0 tok/s')
 })
 
 test('the session rows name the sides of the bill, cache share first when there is one', () => {

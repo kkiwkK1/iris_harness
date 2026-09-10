@@ -14,11 +14,12 @@
 import type { Message } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { listCandidates, selectedCandidate } from '@iris/chat'
-import type { ChatBudget, ChatCompaction, ChatView, MessageView, TurnUsage } from '@iris/protocol'
+import type { ChatBudget, ChatCompaction, ChatView, MessageView, TurnGeneration, TurnUsage } from '@iris/protocol'
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 
 import type { PromptFingerprint } from './fingerprint.ts'
 import { runScripts } from './regex.ts'
+import { timingBySeq } from './timing.ts'
 import { conversationUsage, usageBySeq } from './usage.ts'
 
 /** Speaker names, as the surface shows them. */
@@ -70,6 +71,18 @@ export interface PendingTurn {
    * the same fact to disagree with itself.
    */
   route?: UsageRoute
+  /**
+   * How long this generation took, parked here for the fourth time for the
+   * reason `usage` gives: the last of its moments is the stream's end, which
+   * is still before the candidate exists.
+   *
+   * **Never projected onto the streaming row either**, and here that would be
+   * actively misleading rather than merely early: a duration that grows while
+   * the reply arrives makes a rate that starts absurd and settles down, and
+   * the whole worth of this figure is that it describes a finished generation.
+   * The row gets it when the turn settles, off the candidate.
+   */
+  timing?: TurnGeneration
 }
 
 /**
@@ -132,6 +145,10 @@ export function projectMessages(
   // walk below already visits every turn, and a per-row scan would make the
   // cost of rendering a chat quadratic in its length.
   const usages = usageBySeq(session)
+  // The same one-pass rule, for the same reason: the stopwatch is keyed by
+  // candidate seq exactly as the cost is, and a per-row walk would make
+  // rendering quadratic in the conversation's length twice over.
+  const timings = timingBySeq(session)
   const keyAt = (index: number): string => options.keys[index] ?? `m-orphan-${String(index)}`
   const views: MessageView[] = []
   const seenTurns = new Set<number>()
@@ -171,6 +188,12 @@ export function projectMessages(
     // candidate reported nothing — an imported reply, a provider that sends no
     // usage, or a generation that failed before the usage chunk.
     const usage = usages.get(current.seq)
+    // The selected candidate's own stopwatch, under the rule its cost follows:
+    // swiping to a reply generated an hour ago shows how long *that* one took.
+    // Absent for an imported floor whose file carried no timer, for a
+    // generation this host never measured, and — after a reload — for every
+    // reading but the one the file was showing (`./timing.ts`'s residual).
+    const generation = timings.get(current.seq)
     views.push({
       id: views.length,
       key: keyAt(views.length),
@@ -181,6 +204,7 @@ export function projectMessages(
       swipes: { count: candidates.length, index: current.index },
       turn: messageTurn,
       ...usage === undefined ? {} : { usage },
+      ...generation === undefined ? {} : { generation },
     })
   }
 
@@ -211,7 +235,10 @@ export function projectMessages(
       // candidate's bill — leaving it would put a settled number under text
       // that has not been charged yet, and it would even change as the user
       // watched, since the new candidate becomes selected once it lands.
-      const { usage: _superseded, ...settled } = last
+      // The stopwatch goes with it, and for a sharper version of the same
+      // reason: the previous reading's duration under text that has not
+      // finished arriving is a *rate* for a generation nobody is watching.
+      const { usage: _superseded, generation: _restarted, ...settled } = last
       views[views.length - 1] = { ...settled, text: pending.text, streaming: true }
     }
   }

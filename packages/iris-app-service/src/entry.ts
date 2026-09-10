@@ -33,7 +33,7 @@ import { rowFields,
   type SillyTavernChatHeader,
   type SillyTavernMessage,
 } from '@iris/persistence'
-import type { ChatBudget, ChatSummary, ChatView, PromptItemization, ScriptPromptPosition, TurnUsage } from '@iris/protocol'
+import type { ChatBudget, ChatSummary, ChatView, PromptItemization, ScriptPromptPosition, TurnGeneration, TurnUsage } from '@iris/protocol'
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 import { keyedMemoryBackend, memoryBackend, sessionMessageBackend, VariableStore, type ScopeBackend, type Variables } from '@iris/variables'
 
@@ -48,6 +48,7 @@ import { parseFingerprint, type PromptFingerprint } from './fingerprint.ts'
 import {
   appendSideUsage, compactionUsage, readSideUsage, scriptUsage, type SideUsage,
 } from './side-usage.ts'
+import { parseTiming, timingBySeq, writeTiming } from './timing.ts'
 import { fingerprintBySeq, parseUsage, usageBySeq, usageFieldOf, USAGE_FIELD } from './usage.ts'
 import { projectMessages, textOf, toChatView, type Names, type PendingTurn, type UsageRoute } from './views.ts'
 
@@ -1151,6 +1152,29 @@ export class ChatEntry {
   }
 
   /**
+   * Hold how long this generation took until there is a candidate to hang it
+   * on.
+   *
+   * The same shape and the same guard as {@link noteUsage} above, and parked
+   * for the same reason: the last of the four moments is only known when the
+   * stream ends, which is still before the driver has appended the candidate.
+   *
+   * Noted **once**, with the whole record, rather than one call per moment.
+   * The alternative — a `noteFirstToken`, a `noteReasoningEnd`, a
+   * `noteGenerationEnd` — would put four independent guards around four
+   * partial writes and leave "a record with a start and no end" as a state
+   * that can reach storage. The caller holds the moments in locals it already
+   * has (`#stream`'s own `sentAt` is one of them) and hands over a finished
+   * measurement.
+   * @param turn - the turn that was generated.
+   * @param timing - the four moments, as one record.
+   */
+  noteTiming(turn: number, timing: TurnGeneration): void {
+    if (this.pending === undefined || this.pending.turn !== turn) return
+    this.pending.timing = timing
+  }
+
+  /**
    * Hold which request this generation sent until there is a candidate to hang
    * it on.
    *
@@ -1263,6 +1287,40 @@ export class ChatEntry {
     return true
   }
 
+  /**
+   * Attach how long a generation took to the candidate it produced.
+   *
+   * The same candidate {@link recordUsage} picks and by the same argument —
+   * **the newest of the turn, not the selected one** — because a generation
+   * always appends, so the newest candidate is by construction the one that was
+   * just waited for. Reading the selection here would put this turn's stopwatch
+   * on a reply generated earlier.
+   *
+   * A separate method rather than a second line inside `recordUsage`, because
+   * the two records are independently absent: `recordUsage` returns without
+   * appending when the provider reported nothing, which is most
+   * OpenAI-compatible endpoints, and the *time* is the host's own measurement
+   * and exists either way. Folding them would have made a speed available only
+   * where a bill was.
+   *
+   * Nothing is recorded when nothing was measured, the rule usage lives under:
+   * a turn whose generation never started leaves no record rather than one
+   * claiming it took no time.
+   * @param turn - the turn that just settled.
+   * @param timing - how long it took; the noted value when absent.
+   * @returns whether a record was appended.
+   */
+  recordTiming(turn: number, timing: TurnGeneration | undefined = this.pending?.timing): boolean {
+    if (timing === undefined) return false
+    const candidates = listCandidates(this.session, turn)
+    const candidate = candidates[candidates.length - 1]
+    // An impersonation produced a user line and has no candidate; the same
+    // shape `recordUsage` describes one method up.
+    if (candidate === undefined) return false
+    this.session.append('iris/generation-timing', { candidateSeq: candidate.seq, timing })
+    return true
+  }
+
   /** The newest turn's variables, for a status-bar surface. */
   currentVariables(): Record<string, unknown> | undefined {
     try {
@@ -1293,6 +1351,13 @@ export class ChatEntry {
     // would make the number vanish for every chat with `trimSentences` on —
     // visible only as "the numbers show up for some users and not others".
     const beforeUsage = this.#snapshotUsage()
+    // And so does the stopwatch, for exactly the reason above: a sentence trim
+    // rebuilds the log in the same breath as the record is written, so a timing
+    // left behind here would make the speed appear for chats with
+    // `trimSentences` off and vanish for chats with it on. Every candidate's,
+    // not just the selected one's — the log carries the full set even though
+    // only the selected one reaches the file (`./timing.ts` says why).
+    const beforeTiming = this.#snapshotTimings()
     // The floor projection is a view of the old log; every macro that reads it
     // after this point must see the rebuilt one.
     this.#macroChat = undefined
@@ -1343,6 +1408,14 @@ export class ChatEntry {
           usage: record.usage,
           ...record.fingerprint === undefined ? {} : { fingerprint: record.fingerprint },
         })
+      }
+
+      const savedTiming = beforeTiming.get(source)
+      for (let swipe = 0; swipe < (savedTiming?.length ?? 0); swipe += 1) {
+        const timing = savedTiming?.[swipe]
+        const candidate = candidates[swipe]
+        if (timing === undefined || candidate === undefined) continue
+        rebuilt.append('iris/generation-timing', { candidateSeq: candidate.seq, timing })
       }
     }
   }
@@ -1414,6 +1487,27 @@ export class ChatEntry {
         if (record === undefined) return null
         return { ...record.usage, ...record.fingerprint ?? {} }
       })
+    }
+
+    // **How long each generation took, in SillyTavern's own four fields** —
+    // `gen_started`, `gen_finished`, `extra.time_to_first_token` and
+    // `extra.reasoning_duration`, which is what makes a file Iris wrote show
+    // its message timer, and its token rate, when opened in SillyTavern
+    // (`./timing.ts` quotes `formatGenerationTimer`). Deliberately *not* the
+    // shape the costs above take: the timer's fields are the line's own and
+    // describe the swipe it is showing, so what is written here is the
+    // **selected** candidate's timing and the other candidates' stay in the
+    // log. `./timing.ts` states that residual and why the alternative was
+    // worse.
+    //
+    // Nothing is written for a line with no record, which is every imported
+    // floor: whatever SillyTavern put there rides through untouched as an
+    // unmodelled field, exactly as `extra.token_count` does.
+    for (const [index, timing] of this.#selectedTimings()) {
+      const line = messages[index]
+      // Assistant lines only, for the reason the tables give above.
+      if (line === undefined || line.is_user) continue
+      writeTiming(line, timing)
     }
 
     // **Row-level trims, applied on the way out.** A user row’s table is not a
@@ -1571,6 +1665,57 @@ export class ChatEntry {
           ...fingerprint === undefined ? {} : { fingerprint },
         })
       }
+    }
+  }
+
+  /**
+   * Put a loaded file's generation timers back into the log.
+   *
+   * **Onto the selected candidate, because that is the swipe the fields
+   * describe.** `gen_started` and friends are the line's own keys and upstream
+   * keeps them in step with the swipe on show (`syncSwipeToMes` copies them out
+   * of `swipe_info`); a file therefore carries one timer and it belongs to
+   * `swipe_id`. Attaching it to candidate 0 regardless would put a reading's
+   * speed under a different reading after the first swipe.
+   *
+   * **An imported SillyTavern chat hydrates here too, and that is the point.**
+   * Unlike a cost — which upstream never records, so an imported floor has
+   * none and never will (`hydrateUsage` above says so) — the *time* is
+   * something upstream does measure, in these exact fields: 6,480 of the
+   * 13,186 message lines in the SillyTavern install on this machine carry both
+   * ends of the window. So a migrated conversation shows its speeds, computed
+   * from upstream's own stopwatch and Iris's own token count wherever the
+   * provider reported one.
+   * @param lines - the message lines the log was rebuilt from.
+   * @param onReport - told about each dropped record; absent means silence.
+   */
+  hydrateTiming(
+    lines: readonly SillyTavernMessage[],
+    onReport?: (message: string) => void,
+  ): void {
+    const turns = lineTurns(this.session)
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]
+      if (line === undefined || line.is_user) continue
+      const timing = parseTiming(line)
+      if (timing === undefined) continue
+      const turn = turns[index]
+      if (turn === undefined) continue
+      const candidates = listCandidates(this.session, turn)
+      // Upstream's own `swipe_id`, defaulted to 0 the way upstream defaults it
+      // (`mes.swipe_id ?? 0`, `public/script.js:2589`).
+      const swipes = line['swipes']
+      const selected = typeof line.swipe_id === 'number' ? line.swipe_id : 0
+      const candidate = candidates[selected]
+      if (candidate === undefined) {
+        onReport?.(
+          `timing: line ${String(index)} shows swipe ${String(selected)} of `
+          + `${String(Array.isArray(swipes) ? swipes.length : 1)} but the turn has `
+          + `${String(candidates.length)} candidate(s); the generation timer was dropped`,
+        )
+        continue
+      }
+      this.session.append('iris/generation-timing', { candidateSeq: candidate.seq, timing })
     }
   }
 
@@ -2156,6 +2301,55 @@ export class ChatEntry {
         return { usage, ...fingerprint === undefined ? {} : { fingerprint } }
       })
       if (saved.some(entry => entry !== undefined)) snapshot.set(index, saved)
+    }
+    return snapshot
+  }
+
+  /**
+   * Per-candidate generation timings, keyed by the chat-file line they belong
+   * to — the positional shape a rebuild carries records across in.
+   *
+   * The **whole** set, one entry per candidate, unlike {@link #selectedTimings}
+   * beside it: a rebuild is a move inside the log, where every reading's
+   * stopwatch still exists, while the file has one place to put a timer.
+   */
+  #snapshotTimings(): Map<number, (TurnGeneration | undefined)[]> {
+    const byCandidate = timingBySeq(this.session)
+    const snapshot = new Map<number, (TurnGeneration | undefined)[]>()
+    const turns = lineTurns(this.session)
+    for (let index = 0; index < turns.length; index += 1) {
+      const turn = turns[index]
+      if (turn === undefined) continue
+      const candidates = listCandidates(this.session, turn)
+      if (candidates.length === 0) continue
+      const saved = candidates.map(candidate => byCandidate.get(candidate.seq))
+      if (saved.some(entry => entry !== undefined)) snapshot.set(index, saved)
+    }
+    return snapshot
+  }
+
+  /**
+   * The **selected** candidate's timing per chat-file line, which is the one
+   * the file's own `gen_started` / `gen_finished` pair describes.
+   *
+   * `selectedCandidate` rather than the newest, and that is the difference from
+   * every other snapshot here: the other records are arrays written beside
+   * `swipes`, so each one lands under its own index and the selection never
+   * comes up. A timer has a single slot, upstream keeps that slot in step with
+   * the swipe on show, and an export that wrote the newest reading's stopwatch
+   * would tell SillyTavern a swiped-away reply's speed.
+   */
+  #selectedTimings(): Map<number, TurnGeneration> {
+    const byCandidate = timingBySeq(this.session)
+    const snapshot = new Map<number, TurnGeneration>()
+    const turns = lineTurns(this.session)
+    for (let index = 0; index < turns.length; index += 1) {
+      const turn = turns[index]
+      if (turn === undefined) continue
+      const current = selectedCandidate(this.session, turn)
+      if (current === undefined) continue
+      const timing = byCandidate.get(current.seq)
+      if (timing !== undefined) snapshot.set(index, timing)
     }
     return snapshot
   }

@@ -27,7 +27,7 @@
  * @module iris-web/app/token-format
  */
 
-import type { TurnUsage } from '@iris/protocol'
+import type { TurnGeneration, TurnUsage } from '@iris/protocol'
 
 import type { Language } from './i18n/strings.ts'
 import { translate } from './i18n/strings.ts'
@@ -246,6 +246,126 @@ export function cacheHitPercent(usage: TurnUsage): string | null {
 }
 
 /**
+ * A duration fit to be divided by: finite, and strictly positive.
+ *
+ * Strict where {@link countable} is forgiving, because the two are used
+ * differently. A mangled *count* is clamped to zero and its row is dropped; a
+ * mangled or zero *duration* is a denominator, and letting one through
+ * produces `Infinity` — a rate rendered as `∞ tok/s`, or worse, a large finite
+ * number a reader would believe.
+ * @param ms - a span in milliseconds.
+ * @returns the span, or `undefined` when nothing may be divided by it.
+ */
+function divisible(ms: number | undefined): number | undefined {
+  if (ms === undefined || !Number.isFinite(ms) || ms <= 0) return undefined
+  return ms
+}
+
+/**
+ * Seconds, to one decimal — the precision upstream's own timer prints
+ * (`${seconds.toFixed(1)}s`, `public/script.js:2689`).
+ *
+ * A negative or unusable span reads as `0.0s` rather than being dropped here:
+ * the callers below decide whether a row exists at all, and a formatter that
+ * returned `null` would put that decision in two places.
+ *
+ * Rounded in **integer tenths of a second**, not by `(ms / 1000).toFixed(1)`,
+ * and this is the module's own house rule rather than fussiness: `4050ms` is
+ * `4.05` seconds, `4.05` is not representable, and `toFixed` therefore prints
+ * `4.0` — a reader who checks the arithmetic finds it wrong by a tenth in the
+ * one place they would think to look. Tenths are computed with a `+50`
+ * half-up, so the boundary is decided by a rule written here instead of by a
+ * float's last bit.
+ * @param ms - a span in milliseconds.
+ * @param lang - the language the unit is read from.
+ * @returns the display string, unit included.
+ */
+export function formatSeconds(ms: number, lang: Language = 'en'): string {
+  const safe = Number.isFinite(ms) ? Math.max(0, Math.round(ms)) : 0
+  const tenths = Math.floor((safe + 50) / 100)
+  const value = `${String(Math.floor(tenths / 10))}.${String(tenths % 10)}`
+  return translate(lang, 'usageSeconds', { value })
+}
+
+/**
+ * A token rate, to one decimal at ten and above and two below.
+ *
+ * The band matters more than the digits: a local 7B streams at three figures
+ * and a hosted reasoning model at single ones, and the same number of decimals
+ * across that range either prints noise (`312.47 tok/s`) or loses the whole
+ * distinction between `4.2` and `4.8`. Upstream prints three decimals at every
+ * magnitude (`toFixed(3)`, `public/script.js:2697`); that is a tooltip nobody
+ * reads at a glance, and this one sits in a line beside the reply.
+ *
+ * Fixed decimals rather than a trimmed `.0`, unlike the cache share above:
+ * this string is in a row that must not wrap and beside a token total, so a
+ * stable width is worth a redundant zero on the rare round rate.
+ * @param tokensPerSecond - the rate.
+ * @param lang - the language the unit is read from.
+ * @returns the display string, unit included.
+ */
+export function formatRate(tokensPerSecond: number, lang: Language = 'en'): string {
+  const safe = Number.isFinite(tokensPerSecond) ? Math.max(0, tokensPerSecond) : 0
+  return translate(lang, 'usageRate', { value: safe.toFixed(safe >= 10 ? 1 : 2) })
+}
+
+/**
+ * **Upstream's token rate**: the output the provider counted over the whole
+ * generation window.
+ *
+ * `outputTokens / (durationMs / 1000)`, which is `formatGenerationTimer`'s
+ * `tokenCount / seconds` where `seconds` is `gen_finished - gen_started`
+ * (`public/script.js:2688`-`:2697`) — the queue, the first connection and the
+ * decode all inside it. Iris divides a different numerator into the same
+ * denominator: the provider's reported `outputTokens` instead of upstream's own
+ * tokenizer estimate of the reply text (`DEVIATIONS.md` §47 for the general
+ * departure, §92 for this row). Same definition, better numerator; the two
+ * hosts' numbers are comparable.
+ *
+ * `undefined` rather than `0` when there is nothing to divide: a generation
+ * with no reported output, or one the host clocked at under a millisecond, has
+ * no rate — and `0 tok/s` beside a reply full of text is a claim about the
+ * provider that nothing measured.
+ * @param usage - the generation's cost, for its output count.
+ * @param generation - the generation's timing.
+ * @returns tokens per second, or `undefined`.
+ */
+export function tokenRate(usage: TurnUsage, generation: TurnGeneration): number | undefined {
+  const output = countable(usage.outputTokens)
+  const ms = divisible(generation.durationMs)
+  if (output === 0 || ms === undefined) return undefined
+  return output * 1_000 / ms
+}
+
+/**
+ * **Iris's own addition**: the same tokens over the time after the first one
+ * arrived.
+ *
+ * `outputTokens / ((durationMs - firstTokenMs) / 1000)`. Upstream has no such
+ * figure, and it answers the question the whole-window rate cannot: whether a
+ * slow reply was a slow *model* or a slow start. A minute of queueing in front
+ * of a fast decode and a fast start in front of a slow one produce the same
+ * `Token rate` and very different experiences of the same provider.
+ *
+ * Only where the first token's moment is known **and positive**, which is why
+ * this is a separate function rather than a branch inside the one above: with
+ * no time-to-first-token there is no decode window to speak of, and a
+ * `firstTokenMs` of `0` would make this row a duplicate of the row above it
+ * wearing a different name.
+ * @param usage - the generation's cost, for its output count.
+ * @param generation - the generation's timing.
+ * @returns tokens per second after the first token, or `undefined`.
+ */
+export function decodeRate(usage: TurnUsage, generation: TurnGeneration): number | undefined {
+  const output = countable(usage.outputTokens)
+  const firstToken = divisible(generation.firstTokenMs)
+  if (output === 0 || firstToken === undefined) return undefined
+  const ms = divisible(generation.durationMs - firstToken)
+  if (ms === undefined) return undefined
+  return output * 1_000 / ms
+}
+
+/**
  * One label/value row of a usage reading.
  *
  * The usage hover cards render these as a two-column `<dl>`; the composer's
@@ -274,7 +394,7 @@ export interface UsageDetailRow {
  * @param lang - the language the rows are read in.
  * @returns the rows, in reading order; the card's heading is the caller's.
  */
-function turnDetailRows(usage: TurnUsage, lang: Language): UsageDetailRow[] {
+function turnDetailRows(usage: TurnUsage, lang: Language, generation?: TurnGeneration): UsageDetailRow[] {
   const count = (value: number): string =>
     translate(lang, 'usageCount', { count: formatExactTokens(value, lang) })
   const rows: UsageDetailRow[] = []
@@ -294,6 +414,47 @@ function turnDetailRows(usage: TurnUsage, lang: Language): UsageDetailRow[] {
     label: translate(lang, 'usageDetailOutput'),
     value: `${count(usage.outputTokens)}${reasoning}`,
   })
+  if (generation === undefined) return rows
+
+  /*
+   * The timing rows, after the token rows and never mixed into them: these are
+   * a *different measurement by a different measurer* — the host's own clock
+   * against the provider's own counters — and a reader has to be able to see
+   * which half of the table came from where. The order is upstream's tooltip
+   * order (`formatGenerationTimer`, `public/script.js:2691`-`:2697`): how long,
+   * how long to the first token, how long thinking, then the rate.
+   */
+  rows.push({
+    label: translate(lang, 'usageDetailDuration'),
+    value: formatSeconds(generation.durationMs, lang),
+  })
+  if (generation.firstTokenMs !== undefined) {
+    rows.push({
+      label: translate(lang, 'usageDetailFirstToken'),
+      value: formatSeconds(generation.firstTokenMs, lang),
+    })
+  }
+  // Upstream's own gate: `reasoningDuration > 0 ? … : ''`. A model that emitted
+  // no reasoning has no `reasoningMs` at all, and one whose thinking landed
+  // inside the same millisecond as the request has nothing to report either —
+  // "thought for 0.0s" is a sentence about a measurement that did not resolve.
+  if (generation.reasoningMs !== undefined && generation.reasoningMs > 0) {
+    rows.push({
+      label: translate(lang, 'usageDetailThinking'),
+      value: formatSeconds(generation.reasoningMs, lang),
+    })
+  }
+  const overall = tokenRate(usage, generation)
+  if (overall !== undefined) {
+    rows.push({ label: translate(lang, 'usageDetailRate'), value: formatRate(overall, lang) })
+  }
+  // Last, and only when there is a first-token moment to subtract: it is the
+  // one row here upstream has no counterpart for, so it reads as an addition to
+  // a familiar table rather than as a disagreement inside it.
+  const decode = decodeRate(usage, generation)
+  if (decode !== undefined) {
+    rows.push({ label: translate(lang, 'usageDetailDecodeRate'), value: formatRate(decode, lang) })
+  }
   return rows
 }
 
@@ -304,12 +465,52 @@ function turnDetailRows(usage: TurnUsage, lang: Language): UsageDetailRow[] {
  * because the card that replaces the native `title` reads these rows directly
  * (`UsagePopover`, `DEVIATIONS.md` 47), and there is no second rendering left
  * to keep in step.
+ * The timing rows ride the same call, when the host measured any: they belong
+ * to the same generation and the same hover card, and a second builder for them
+ * would be a second place for the order and the wording to drift — the drift
+ * this function's own history is a record of.
  * @param usage - one generation's usage.
  * @param lang - the language the rows are read in.
+ * @param generation - how long it took, when the host measured it. Absent for
+ * an imported floor, for a generation older than the measurement, and for every
+ * reading but the one a reloaded chat file was showing.
  * @returns the rows, in reading order.
  */
-export function usageDetailRows(usage: TurnUsage, lang: Language = 'en'): readonly UsageDetailRow[] {
-  return turnDetailRows(usage, lang)
+export function usageDetailRows(
+  usage: TurnUsage,
+  lang: Language = 'en',
+  generation?: TurnGeneration,
+): readonly UsageDetailRow[] {
+  return turnDetailRows(usage, lang, generation)
+}
+
+/**
+ * The chip a reply's action row shows: what the turn cost, and how fast it
+ * arrived when the host clocked it.
+ *
+ * Here rather than in `app/Message.tsx` because the choice between the two
+ * wordings **is** a formatting decision — it turns on whether the rate resolves
+ * to a number, which only this module knows how to ask — and because the
+ * component would then be the second place that knows a rate needs a positive
+ * duration under it.
+ *
+ * The rate is the whole-window one, upstream's definition, so the chip's figure
+ * is the figure SillyTavern would print for the same reply; the decode rate
+ * stays inside the hover card, where its label can say what it is.
+ * @param usage - one generation's cost.
+ * @param generation - how long it took, when the host measured it.
+ * @param lang - the language the chip is read in.
+ * @returns the chip's text.
+ */
+export function usageChipText(
+  usage: TurnUsage,
+  generation: TurnGeneration | undefined,
+  lang: Language = 'en',
+): string {
+  const total = formatTokens(totalTokens(usage), lang)
+  const rate = generation === undefined ? undefined : tokenRate(usage, generation)
+  if (rate === undefined) return translate(lang, 'usageTurn', { total })
+  return translate(lang, 'usageTurnRate', { total, rate: formatRate(rate, lang) })
 }
 
 /**

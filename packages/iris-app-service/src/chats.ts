@@ -505,6 +505,10 @@ export class ChatStore {
     // provider said it once and the file is the only place it survives.
     entry.hydrateVariables(file.messages)
     entry.hydrateUsage(file.messages)
+    // And how long each one took, which unlike the cost is something upstream
+    // records too — in `gen_started` / `gen_finished` — so this one reads a
+    // SillyTavern chat as well as an Iris one (`./timing.ts`).
+    entry.hydrateTiming(file.messages)
     this.#entries.set(chatId, entry)
     return entry
   }
@@ -663,6 +667,10 @@ export class ChatStore {
     // conversations from here, so the same figures appear in both totals — the
     // alternative is a branch whose early turns look free.
     child.hydrateUsage(lines)
+    // The same argument, one measurement over: the inherited history was
+    // generated once and took the time it took, and a branch whose early turns
+    // showed no speed would look like a chat played on a different host.
+    child.hydrateTiming(lines)
 
     this.#entries.set(childId, child)
     await this.save(child)

@@ -4831,6 +4831,15 @@ export class IrisAppService {
       // (see `recordUsage`), so nothing is written — but the reason is the
       // shape of the log, not this switch.
       entry.recordUsage(turn)
+      // Beside the cost, under the same ordering rule (before
+      // `#storeRewritten`, which may rebuild the log), and a separate call for
+      // the reason `recordTiming` gives: the two records are independently
+      // absent, and an endpoint that reports no usage still took a measurable
+      // amount of time — which is most of them. An **aborted** turn reaches
+      // here through `#fail`'s partial path and records what it has: the wait
+      // up to the stop is what the person actually waited, and a partial reply
+      // the user chose to keep is a reply whose speed is a fact about it.
+      entry.recordTiming(turn)
       this.#storeRewritten(entry, entry.scripts, generated, settledText)
       entry.touch()
       entry.finish()
@@ -6044,8 +6053,57 @@ export class IrisAppService {
     // reach disk, and `chats.save` is a file write that must not run inside
     // the loop yielding chunks to whoever is consuming this stream.
     let sideUsage: TurnUsage | undefined
+    /*
+     * **The stopwatch, in the one funnel every generation passes through.**
+     *
+     * Four moments, three of them read off the chunks themselves:
+     *
+     * - `sentAt` above is the start, and it is the same moment `noteRoute`
+     *   stamps — reused rather than taken again, so the cost's `at` and the
+     *   timer's `gen_started` cannot disagree by the width of the macro pass.
+     * - `firstTokenAt` is the first chunk carrying **any** output the model
+     *   produced, a reasoning delta counting exactly as much as a text one:
+     *   upstream's own time-to-first-token is set on the first chunk of its
+     *   generator whatever it holds (`public/script.js:3819`), and on a
+     *   reasoning model the first visible word can be a minute after the model
+     *   started answering.
+     * - `reasoningEndAt` is where the thinking stopped, which upstream reads as
+     *   "the first content delta after reasoning was under way" (its
+     *   `ReasoningHandler` sets `endTime` when the message text changes while
+     *   the state is still `Thinking`, `public/scripts/reasoning.js:448`) and
+     *   otherwise as the last reasoning it saw. Both are here, in that order.
+     * - `lastChunkAt` is the end. The `finally` below cannot take it itself:
+     *   that block runs after the consumer has finished with the final chunk,
+     *   so it would fold the shell's broadcast and the assembler's work into
+     *   the model's time. The last chunk's own arrival is the moment the
+     *   provider stopped speaking, which is what `gen_finished` means.
+     *
+     * Nothing here is per-turn state: a side generation runs through this same
+     * loop and is measured the same way. What it has no room for is the
+     * *record* — see the `finally`.
+     */
+    let firstTokenAt: number | undefined
+    let reasoningEndAt: number | undefined
+    let reasoningClosed = false
+    let lastChunkAt: number | undefined
     try {
       for await (const chunk of this.#options.stream(request)) {
+        lastChunkAt = Date.now()
+        if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
+          firstTokenAt ??= lastChunkAt
+          if (chunk.type === 'reasoning-delta') {
+            // Every reasoning delta moves the end forward, so a stream that
+            // was still reasoning when it closed has an end anyway.
+            if (!reasoningClosed) reasoningEndAt = lastChunkAt
+          } else if (reasoningEndAt !== undefined && !reasoningClosed) {
+            // The first visible word after thinking — upstream's own boundary,
+            // and the last time this may move. It is *this* moment and not the
+            // previous reasoning delta's, because that is what upstream
+            // records and the two differ by the pause a reader sees.
+            reasoningEndAt = lastChunkAt
+            reasoningClosed = true
+          }
+        }
         if (chunk.type === 'usage') {
           this.#counter.observe(estimated, chunk.usage.inputTokens)
           // Recorded beside the estimate so a user can see whether to trust it.
@@ -6093,8 +6151,44 @@ export class IrisAppService {
       }
       throw error
     } finally {
-      // **A generation that is not a turn, billed to its conversation.** First
-      // in the `finally`, and in the `finally` rather than in the loop, because that
+      // **The stopwatch, filed on the turn.** First in the `finally` and in a
+      // `finally` at all for the reason the side bill below gives: an abort and
+      // a provider failure are exactly the generations whose duration is worth
+      // having, and a record written only on the happy path would be missing
+      // from every turn a reader is trying to explain. `#fail` settles a kept
+      // partial through `#settle`, which is where `recordTiming` picks this up.
+      //
+      // Read off `pendingTurn`, the turn this request was composed for, rather
+      // than `entry.pending?.turn` again: the second read can have moved (the
+      // turn settled and another began) and `noteTiming`'s own guard would then
+      // silently drop the record instead of refusing the wrong one.
+      //
+      // **Side generations are left out, and that is a decision.** A card's
+      // `TavernHelper.generate` and the host's compaction summary have no
+      // candidate and land on the chat header (`./side-usage.ts`), where
+      // upstream has no timer field and Iris has no surface — so a duration
+      // stored there would be a number nothing reads. §67 records it as the
+      // open follow-up.
+      if (entry !== undefined && pendingTurn !== undefined) {
+        const finishedAt = lastChunkAt ?? Date.now()
+        // Never negative, whatever the clock did between the two readings: a
+        // duration that ran backwards is what upstream's own timer refuses to
+        // render (`isNaN(seconds) || seconds < 0`, `public/script.js:2700`),
+        // and `./timing.ts` refuses to read one back.
+        const durationMs = Math.max(0, finishedAt - sentAt)
+        entry.noteTiming(pendingTurn, {
+          startedAt: sentAt,
+          durationMs,
+          // Clamped the same way and for the same reason. Absent — never
+          // zero — when nothing ever arrived, which is the shape of a request
+          // that failed before its first token: `0` there would read as
+          // "answered instantly".
+          ...firstTokenAt === undefined ? {} : { firstTokenMs: Math.max(0, firstTokenAt - sentAt) },
+          ...reasoningEndAt === undefined ? {} : { reasoningMs: Math.max(0, reasoningEndAt - sentAt) },
+        })
+      }
+      // **A generation that is not a turn, billed to its conversation.** In
+      // the `finally` rather than in the loop, because that
       // is what covers the abort and the provider error: a request that
       // reported its usage and then failed was still charged, and dropping it
       // would leave a gap exactly where a reader is comparing what they paid
