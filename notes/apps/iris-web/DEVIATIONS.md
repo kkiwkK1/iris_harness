@@ -5039,6 +5039,206 @@ other way, and the gate its frame back); or the two-branch shape recurring, whic
 would argue for the seam itself (a `build:sandbox` run on the merge result, not on
 each branch) rather than for another kibibyte.
 
+## 87. Tavern Helper's identity and message family is built — twenty from the snapshot, four over the wire, five answering the value upstream allows and saying why
+
+**Kind:** compatibility gap closed, with four narrowings and one cost recorded.
+
+**Measured.** Upstream 4.9.1, from the installed extension. Twenty-four members
+the `@types` declare and Iris had not built, in five groups: the character
+family (`getCharacterNames` `character.ts:52`, `getCharacterIds` `:59`,
+`getCurrentCharacterName` `:63`, `getCurrentCharacterId` `:70`, `getCharacter`
+`:240`), the raw-card family (`getCharData` `raw_character.ts:181`,
+`getCharAvatarPath` `:197`, `getChatHistoryBrief` `:216`, `getChatHistoryDetail`
+`:235`), the persona reads (`getPersonaNames` `persona.ts:53`, `getPersonaIds`
+`:60`, `getCurrentPersonaName` `:67`, `getCurrentPersonaId` `:74`,
+`getPersonaAvatarPath` `:302`, `getPersona` `:310`), the frame's own identity
+(`getIframeName` `util.ts:74`, `getMessageId` `util.ts:109`, `getScriptName`
+`script.ts:125`, `getScriptInfo` `:134`, `replaceScriptInfo` `:143`) and the
+displayed-message family (`formatAsDisplayedMessage`
+`displayed_message.ts:24`, `retrieveDisplayedMessage` `:88`, `refreshOneMessage`
+`:92`, `rotateChatMessages` `chat_message.ts:468`).
+
+**Nineteen of the twenty-four are synchronous upstream**, and that decides the
+architecture rather than describing it: `getPersonaNames().includes(...)` reads
+its answer in the same statement, `getCurrentCharacterId()` lands straight in a
+comparison. A promise there breaks a card with no type error anywhere. So
+nineteen answer from the pushed snapshot or from the frame's own state, and the
+five that are asynchronous upstream too are the only ones that cross to the
+host — four of them as new wire methods, and `getPersonaAvatarPath` as a refusal
+(see below).
+
+**Corpus: zero.** `card-surface-census.mjs` over both corpora finds no script,
+interface, preset regex or world-book entry reaching for any of the twenty-four.
+So none of this is firefighting and none of it is measured demand; it is the surface
+being filled, and the census's face ① moves `Iris 建 54 → 78` with
+`用到但没建` unchanged at 5.
+
+### The snapshot grew by three fields, and each is the cheapest shape that works
+
+`personas` (`{id, name}[]`), `persona` (the selected one in full) and `scripts`
+(`{name, info?}` by script id). The persona split is a narrowing: the four list
+members need names and ids, `getPersona` needs content, and carrying *every*
+persona's description would hand a card the user's other alter egos' prompt text
+for no measured demand. So one persona's content travels — the one this
+conversation is being played with.
+
+**Key-absent and empty are kept apart in all three**, because they are different
+facts and the frame reports them differently: a host with no persona store omits
+the key and the frame says so; a store holding nothing sends `[]` and the frame
+answers upstream's own empty answer in silence. A `?? []` at either end would
+have manufactured a clean zero.
+
+### The four narrowings, all enforced on the host
+
+Upstream takes any name in the library and hands over the whole card, including
+its script bodies, and reads any of a character's chat files. A card script here
+is consented to per card (`GRANTS.md`), so:
+
+| member | upstream | here |
+| --- | --- | --- |
+| `getCharacter(name)` | any card in the library | `'current'`, or this conversation's card by name or id; anything else rejected by `unsupported` naming the narrowing |
+| `getCharData(name)` | any card, whole `v1CharData` | the played card only, from the snapshot; any other card answers `null` **with a report** saying the null is Iris's scope and not a missing card |
+| `getChatHistoryBrief(name)` | any character's chat list | this conversation's character; another answers `null` and reports, without asking the host |
+| `getChatHistoryDetail(data)` | every named file, unbounded, in parallel | only files belonging to this character (checked on the host, because the frame is the untrusted side), at most 50 per call, floors without their per-swipe variable tables |
+
+Two more departures worth naming because a card can see them:
+
+- **Ids are Iris's, not avatar file names.** Upstream's `getCharacterIds`,
+  `getCurrentCharacterId` and `getCharData().avatar` all answer a `foo.png`,
+  because on SillyTavern the picture is the identity. They answer the host's
+  `characterId` here, which is what every other Iris member takes. A card that
+  round-trips the value finds its card; one that appends it to `/characters/`
+  gets nothing, and never could have.
+- **`getCharAvatarPath` answers Iris's own endpoint** (`/iris/avatar/<id>`),
+  never a filesystem path. Upstream's own interface frames use this member in
+  the `<style>` they inject into every message frame
+  (`.char_avatar{background-image:url('${getCharAvatarPath()}')}`,
+  `panel/render/iframe.ts:78-103`) — **Iris injects no such rule**, which is a
+  separate gap, recorded here because building the member is what makes closing
+  it possible.
+
+### Five members answer the value upstream's contract allows, and say so once
+
+The founding rule of §1 is that an unbuilt member answers `undefined` and is
+reported. These five are *built* and still cannot do what upstream does, so they
+answer a value upstream itself returns and report which limit produced it — the
+`substidudeMacros` shape, whose sentence they deliberately echo:
+
+- `getPersonaAvatarPath` → `null`. This host keeps no persona pictures at all;
+  inventing a URL would put a broken `<img>` on the page with nothing saying
+  why.
+- `formatAsDisplayedMessage` → the text unchanged. Its three passes are macros,
+  display regexes and markdown; the first two are the host's (the display tier
+  runs there, so a floor's text arrives already regexed) and the third is a
+  React component in the shell, while the member is synchronous. It keeps the
+  whole of upstream's *argument* checking, including the throw, because that is
+  a fact about the chat rather than about rendering.
+- `retrieveDisplayedMessage` → an empty jQuery, which is upstream's documented
+  answer for a floor that is not displayed. Here every floor is undisplayed to a
+  card: the reading view is across an opaque origin and `parent.document` is
+  container-scoped with no `#chat` in it, deliberately (`st-anchors.ts`).
+- `refreshOneMessage` → nothing, once reported. Upstream's own fork detection
+  takes the shape this host is in: on a *managed* chat surface it touches no DOM
+  and calls `refreshManagedChatSurface()` (`displayed_message.ts:97-100`). Every
+  host write here broadcasts `chat.updated` and the view re-renders, so the
+  floor already shows what the file holds; what the member would add is a card's
+  control over *when*, which needs a shell arm. **Left named rather than
+  guessed at**, the ruling `reloadCurrentChat` has in §84. It does **not** emit
+  `CHARACTER_MESSAGE_RENDERED`: announcing a render that did not happen would
+  put a lie on the one bus a card can hear.
+- `replaceScriptInfo` → remembered for the frame's life, reported as unstored.
+  A card script's name and note are the **card file's**, so storing this would
+  be writing the user's character file on a card's own initiative — a
+  character-library write the grant model has no slot for. The mechanism is
+  written down where the member is: a `script.setInfo` arm through the script
+  policy store for a card script and through `scriptLibrary.save` for the user's
+  own, which already carries `info`.
+
+**One report per fact per frame**, not per call: these sit on members a status
+panel calls in a redraw loop, and four hundred identical lines hide the other
+findings. `parent-messages.ts` counts by shape for the same reason; the tenfold
+reprises are omitted because none of these has a rate that means anything.
+
+### `getCharData` omits the clipped description, and says which fields are gone
+
+The snapshot's `description` is clipped to 200 code points, and 4 of the 19
+corpus cards that carry one run 730 to 2851. Serving that clip under the field's
+own name would be the quietest possible wrong answer: a card would put a fifth
+of a description into a prompt and nothing would say so. So `description`,
+`first_mes`, `personality`, `scenario` and `mes_example` are **absent**, the
+report names all five, and it names `await getCharacter('current')` as the way
+to the whole card. What it does answer is what the one measured call site reads
+— `data.character_book.entries`, which the snapshot already carries for the
+played card — plus name, id, tags, creator and `extensions.world`, the key
+`RawCharacter.getWorldName()` reads.
+
+### `getIframeName`'s trailing number is a placeholder, and is reported as one
+
+Upstream's name is `TH-message--<floor>--<n>` or `TH-script--<name>--<id>`. The
+script spelling is exact. The message spelling ends in `0`: upstream's own
+number means different things on its two render paths and upstream never parses
+it (`getMessageId`'s pattern takes only the floor), while Iris's frames carry an
+opaque instance identity the member table cannot see. Reported once rather than
+fabricated from something that looks like an index. `getMessageId` is upstream's
+pattern verbatim, `_n` suffix included, and the two share the constant so the
+name a card builds is the name the parser accepts.
+
+### What it costs
+
+**The inlined bootstrap grew 909 bytes: 53,285 → 54,194**, leaving **78 bytes**
+under `FRAME_OVERHEAD_BYTES`. Attributed by two measurement builds rather than
+by estimate: **652 bytes** are the twenty-four `MEMBER_KINDS` lines (the names
+survive minification; the prose does not) and **257 bytes** are the four
+`CARD_METHODS` pairs plus their four `OFF_ST_SURFACE` strings. The fetched
+member table, where every implementation lives, grew 56.61 → 65.52 kB and costs
+the frame budget nothing — it is fetched once per page.
+
+**This is 92% of the headroom §86 left, and three sibling branches are spending
+the same 987 bytes right now.** §86's own lesson was that each branch measured
+against a main the others had not reached; this section is the second instance,
+recorded before the merge rather than after it. The structural fix, if the merge
+overflows: `MEMBER_KINDS` is 81 entries and roughly 2 KiB of the bootstrap, and
+three of its four readers need only the *identity* names — `frame.ts:2319`,
+`frame.ts:2418` and `preamble.ts:66`. Only `script-run-state.ts:262`'s
+`Object.hasOwn` needs the whole set, and it could ask the live surface the frame
+has already built. Moving the table to the fetched side would free the 2 KiB for
+all four branches at once. Not done here, because it is a shared registry with
+three branches in flight and the decision is the coordinator's.
+
+The twenty-four entries are also written one per line rather than folded into a
+compact spread that would have saved about seven bytes each:
+`card-surface-census.mjs` reads `MEMBER_KINDS` out of the **source text** with a
+per-line pattern, so a folded block would make every member in it invisible to
+the caliper — which would then report them as declared-but-unbuilt, the exact
+reading the census exists to get right. 168 bytes is not worth breaking the
+instrument for.
+
+**Pinned.** `apps/iris-web/tests/identity-messages.test.ts` (30 tests) and
+`packages/iris-app-service/tests/identity-messages.test.ts` (15), plus the four
+surface pins that grew (`identity.test.ts`'s identity set, `sandbox-frame.test.ts`'s
+two exhaustive name lists, `rpc-transport.test.ts`'s wire probes) and
+`rebuild-hydration.test.ts`'s classification of the new rebuild site.
+Twenty-seven mutations were applied one at a time and each went red on its own
+assertion — including the two that did **not**, at first: a rotation stripped of
+its index mapping and a collapsed span stripped of its guard both stayed green,
+because the first fixture wrote its floors with `script.createChatMessages`
+(whose tables ride on the line itself, so they travel whenever the line does)
+and because a collapsed rotation leaves the same file either way. The fixtures
+were replaced with real turns carrying candidate tables and with a snapshot
+count, and both mutations then went red. A green teeth check is a finding about
+the test, not about the code.
+
+**What would overturn it.** A card reaching for any of these five degenerate
+answers and needing the real behaviour — the first one to appear in a corpus
+scan is the one to build, and `refreshOneMessage` is the cheapest, since the
+shell arm it needs is the one §84 already names. A measured card reading
+`getCharData().description` would move the description into the played card's
+summary (a bounded cost: 15 of 19 corpus cards carry none). And a card that
+legitimately needs a *neighbouring* card's data would put the per-card grant
+model itself in question, which is a decision above this surface.
+
+---
+
 ## 88. The regex family reads and writes over the wire, because the tiers are too heavy to ride the snapshot
 
 **Kind:** deliberate departure, measured.

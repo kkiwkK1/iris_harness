@@ -962,6 +962,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
       // —— family④: lorebook / worldbook ——
       ctx.irisRpc.register('worldbook.delete', handlers['worldbook.delete']),
+      // —— family①: identity & messages ——
+      ctx.irisRpc.register('script.getCharacter', handlers['script.getCharacter']),
+      ctx.irisRpc.register('script.chatHistoryBrief', handlers['script.chatHistoryBrief']),
+      ctx.irisRpc.register('script.chatHistoryDetail', handlers['script.chatHistoryDetail']),
+      ctx.irisRpc.register('script.rotateChatMessages', handlers['script.rotateChatMessages']),
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()

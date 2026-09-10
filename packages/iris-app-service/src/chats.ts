@@ -779,6 +779,44 @@ export class ChatStore {
     }
   }
 
+  // —— family①: identity & messages ——
+  /**
+   * One conversation's floors, read from its file and nothing else.
+   *
+   * **Not `open`, deliberately.** `open` is a stateful call — it materialises
+   * the entry, composes the card's regex scopes and can raise a cleanup
+   * offer — and this is a *read of somebody else's* conversation on behalf of a
+   * card asking `getChatHistoryDetail`. Opening forty files to answer one
+   * question would put forty entries in the cache and forty cleanup decisions
+   * in front of the reader. {@link search} and {@link usageSummary} read the
+   * files for the same reason, and this is their scan with their reasoning.
+   *
+   * The header line is dropped, which is also what upstream's own reader does
+   * (`RawCharacter.getChatsFromFiles` calls `currentChat.shift()` for every
+   * non-group chat, `function/raw_character.ts:120-122`) — the first line of a
+   * SillyTavern chat file is metadata, not a floor.
+   *
+   * The **file**, so the open conversation's unsaved edits are not in the
+   * answer. Upstream has the same split — its detail fetch goes to
+   * `/api/chats/get` while the page holds a live `chat` array — and a card
+   * reading its *own* conversation has `getChatMessages` for the live one.
+   * @param chatId - the conversation to read.
+   * @returns its floors, or undefined when the file cannot be read or parsed.
+   */
+  async floorsOf(chatId: string): Promise<SillyTavernMessage[] | undefined> {
+    let text: string
+    try {
+      text = await readFile(fileFor(this.#dir, chatId, '.jsonl'), 'utf8')
+    } catch {
+      return undefined
+    }
+    try {
+      return parseChatFile(text).messages
+    } catch {
+      return undefined
+    }
+  }
+
   /**
    * Write a conversation to disk.
    * @param entry - the live conversation.

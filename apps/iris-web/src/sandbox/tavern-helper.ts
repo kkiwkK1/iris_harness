@@ -35,6 +35,8 @@ import type {
   TavernRegexSource,
   TavernRegexTier,
   TavernRegexView,
+  // —— family①: identity & messages ——
+  CharacterSummary,
 } from '@iris/protocol'
 
 import { buttonEventName } from './button-event.ts'
@@ -335,6 +337,54 @@ const LIMIT_NOT_YOUR_FAULT = ' This is a limit in Iris, not a mistake in the car
  * card's compatibility check would be answered with a fact about nothing.
  */
 export const TAVERN_HELPER_VERSION = '4.9.1'
+
+// —— family①: identity & messages ——
+/**
+ * A message interface frame's name, as `getIframeName` spells it.
+ *
+ * Upstream's own pattern, verbatim from `function/util.ts:110` — including the
+ * optional `_n` suffix, which its second render path appends and which its own
+ * reader tolerates without reading. Declared once because two members share
+ * it: the name is built to match this, and `getMessageId` parses it.
+ */
+const MESSAGE_FRAME_NAME = /^TH-message--(\d+)--\d+(_\d+)?$/u
+
+/**
+ * SillyTavern's `persona_description_positions`, as a card reads them.
+ *
+ * Numbers, not names: upstream's `Persona.position` is a `number` and its own
+ * enum is `{IN_PROMPT: 0, AFTER_CHAR: 1, TOP_AN: 2, BOTTOM_AN: 3, AT_DEPTH: 4,
+ * NONE: 9}` (`public/scripts/personas.js:88-98`). Iris stores three of those
+ * five states under its own names, so this is the translation back — a card
+ * comparing `position === 0` has to be right.
+ */
+const PERSONA_POSITIONS: Readonly<Record<'inprompt' | 'atdepth' | 'none', number>> = {
+  inprompt: 0,
+  atdepth: 4,
+  none: 9,
+}
+
+/** SillyTavern's `extension_prompt_roles` (`public/script.js:493-497`). */
+const PERSONA_ROLES: Readonly<Record<'system' | 'user' | 'assistant', number>> = {
+  system: 0,
+  user: 1,
+  assistant: 2,
+}
+
+/** Upstream's `DEFAULT_DEPTH` for a persona description (`function/persona.ts:47`). */
+const UPSTREAM_PERSONA_DEPTH = 2
+
+/** Upstream's `DEFAULT_ROLE`, which is `SYSTEM` (`function/persona.ts:48`). */
+const UPSTREAM_PERSONA_ROLE = 0
+
+/**
+ * How many conversations one `getChatHistoryDetail` call may read.
+ *
+ * The host's own cap, restated here so the frame can say what happened to the
+ * fifty-first file rather than let a card compare two array lengths and guess.
+ * Upstream caps nothing; the protocol's schema says why this does.
+ */
+const HISTORY_DETAIL_LIMIT = 50
 
 /**
  * A worldbook entry as a **card** sees it.
@@ -1810,6 +1860,88 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     return rows
   }
 
+  // —— family①: identity & messages ——
+  /**
+   * Say a thing once per frame, however many times a card asks.
+   *
+   * Every report in this family sits on a member a status panel may call in a
+   * redraw loop, and the panel of one corpus card redraws on every variable
+   * update. One line per distinct fact is a diagnosis; four hundred identical
+   * lines is a flood that hides the other findings — the same reasoning
+   * `parent-messages.ts` counts by shape for, minus its tenfold reprises,
+   * because none of these is a thing whose *rate* means anything.
+   */
+  const reported = new Set<string>()
+  const reportOnce = (key: string, message: string): void => {
+    if (reported.has(key)) return
+    reported.add(key)
+    host.reportGap(message)
+  }
+
+  /**
+   * Notes written by `replaceScriptInfo`, by script id.
+   *
+   * In the frame, because nothing stores them — see that member. Keyed by script
+   * id rather than kept as one value, because a card's scripts share this realm
+   * and the identity-bound copies of the surface share this closure: two scripts
+   * each writing their own note must not read each other's.
+   */
+  const scriptInfoWrites = new Map<string, string>()
+
+  /**
+   * The library summary a card's name argument means.
+   *
+   * Upstream's `RawCharacter.findIndex` (`function/raw_character.ts:89-98`)
+   * takes `'current'`, or matches a lower-cased name against both the card's
+   * name and its avatar id. The same three spellings, folded the same way —
+   * this host's ids are filename-shaped, so two spellings of one id can differ
+   * only in case.
+   *
+   * An empty or absent name is `'current'`, which is upstream's own backward
+   * compatibility (`name = !name ? 'current' : name`, `raw_character.ts:184`).
+   * @param context - the snapshot to look in.
+   * @param name - what the card asked for.
+   * @returns the summary, or undefined when nothing matches.
+   */
+  const characterFor = (
+    context: ScriptContext,
+    name?: string,
+  ): CharacterSummary | undefined => {
+    const asked = name === undefined || name === '' ? 'current' : String(name)
+    if (asked.toLowerCase() === 'current') {
+      const current = context.characterId
+      return current === undefined
+        ? undefined
+        : context.characters.find(summary => summary.characterId === current)
+    }
+    const wanted = asked.toLowerCase()
+    return context.characters.find(
+      summary => summary.characterId.toLowerCase() === wanted || summary.name.toLowerCase() === wanted,
+    )
+  }
+
+  /**
+   * The persona list, or the empty answer plus a report when there is no store.
+   *
+   * The distinction the snapshot's field keeps — key absent means no store, `[]`
+   * means a store with nothing in it — is spent here and nowhere else, so the
+   * four list members do not each have to remember it.
+   * @param member - who is asking, for the report.
+   * @returns the rows, possibly empty.
+   */
+  const personaRows = (member: string): readonly { id: string, name: string }[] => {
+    const rows = snapshot(member).personas
+    if (rows === undefined) {
+      reportOnce(
+        'personas-absent',
+        `a card read ${member} and this host keeps no persona store, so the answer is empty —`
+          + ' which is not a report that the profile has no personas',
+      )
+      return []
+    }
+    return rows
+  }
+
   /**
    * Replace one tier — or, on the deprecated path, both of them, partitioned by
    * each row's own `scope`.
@@ -1853,6 +1985,84 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     if (scope === 'all' || scope === 'character') {
       await write('character', rows.filter(row => row['scope'] !== 'global'))
     }
+  }
+
+  /**
+   * One script's row out of the snapshot.
+   *
+   * A missing `scripts` field is reported once, because the members that read it
+   * answer `''` — upstream's own answer for a script its store does not know —
+   * and an empty string is exactly the kind of plausible value that hides a
+   * missing field.
+   * @param member - who is asking, for the report.
+   * @param scriptId - the calling script.
+   * @returns the row, or undefined.
+   */
+  const scriptRow = (
+    member: string,
+    scriptId: string,
+  ): { name: string, info?: string } | undefined => {
+    const rows = snapshot(member).scripts
+    if (rows === undefined) {
+      reportOnce(
+        'scripts-absent',
+        `a card read ${member} and this snapshot carries no script names, so the answer is the`
+          + ' empty string — which upstream also answers for a script its own store has lost,'
+          + ' so the two are indistinguishable from the call',
+      )
+      return undefined
+    }
+    return rows[scriptId]
+  }
+
+  /**
+   * Upstream's `message_id` option, resolved against this chat.
+   *
+   * A transcription of `formatAsDisplayedMessage`'s own preamble
+   * (`function/displayed_message.ts:28-63`): the three `'last*'` spellings, the
+   * negative-index normalisation, and the range check whose message names the
+   * span upstream names.
+   * @param messageId - upstream's option value.
+   * @returns the floor index.
+   * @throws {UnsupportedApiError} for a value that is not a floor of this chat.
+   */
+  const displayFloorOf = (messageId: 'last' | 'last_user' | 'last_char' | number): number => {
+    const chat = chatOf('formatAsDisplayedMessage')
+    const last = chat.length - 1
+    if (last < 0) {
+      throw new UnsupportedApiError('formatAsDisplayedMessage', 'this conversation has no floors.')
+    }
+    const lastWhere = (wanted: 'user' | 'char'): number => {
+      for (let index = last; index >= 0; index -= 1) {
+        const line = chat[index]
+        if (line === undefined || line.is_system === true) continue
+        if (wanted === 'user' ? line.is_user : !line.is_user) return index
+      }
+      return -1
+    }
+    let resolved: number
+    switch (messageId) {
+      case 'last': resolved = last; break
+      case 'last_user': resolved = lastWhere('user'); break
+      case 'last_char': resolved = lastWhere('char'); break
+      default: {
+        if (typeof messageId !== 'number' || !Number.isInteger(messageId)) {
+          throw new UnsupportedApiError(
+            'formatAsDisplayedMessage',
+            `message_id must be 'last', 'last_user', 'last_char' or a floor number, and it was`
+              + ` ${String(messageId)}.`,
+          )
+        }
+        resolved = messageId < 0 ? chat.length + messageId : messageId
+      }
+    }
+    if (resolved < 0 || resolved > last) {
+      throw new UnsupportedApiError(
+        'formatAsDisplayedMessage',
+        `message_id is not in [${String(-last - 1)}, ${String(last)}]: ${String(messageId)}.`,
+      )
+    }
+    return resolved
   }
 
   const api: Record<string, unknown> = {
@@ -3797,6 +4007,704 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
         delete_occurred: kept.length !== current.length,
       }
     },
+
+    // —— family①: identity & messages ——
+    /**
+     * Every card in the library, by name.
+     *
+     * Synchronous, because upstream is: `characters.map(c => c.name)` off the
+     * page (`JS-Slash-Runner/src/function/character.ts:52`). The snapshot
+     * already carries the whole library as summaries — a card that offers to
+     * reference another one reads them — so this is a projection of data the
+     * frame has, not a new exposure.
+     * @returns the names, in the host's order.
+     */
+    getCharacterNames: (): string[] =>
+      snapshot('getCharacterNames').characters.map(summary => summary.name),
+    /**
+     * Every card in the library, by id.
+     *
+     * **Upstream's ids are avatar file names** (`character.avatar`, a
+     * `foo.png`), because on SillyTavern the picture is the identity. Here they
+     * are the host's `characterId`, which is what every other Iris surface
+     * names a card by and what `getCharacter`, `getCharData` and
+     * `getCharAvatarPath` accept. Index-parallel to `getCharacterNames()`, as
+     * upstream's two are.
+     *
+     * A card that appends one of these to `/characters/` — upstream's own path
+     * — gets nothing, and could not have got anything: this host serves avatars
+     * from its own endpoint, which `getCharAvatarPath` answers with.
+     * @returns the ids, in the host's order.
+     */
+    getCharacterIds: (): string[] =>
+      snapshot('getCharacterIds').characters.map(summary => summary.characterId),
+    /**
+     * The played character's name, or `null`.
+     *
+     * Upstream reads `name2` and turns the empty string into `null`
+     * (`character.ts:63`), which is the distinction a card checks — so the
+     * empty string is not passed through.
+     * @returns the name, or null when no card is being played.
+     */
+    getCurrentCharacterName: (): string | null => {
+      const name = snapshot('getCurrentCharacterName').name2
+      return name === '' ? null : name
+    },
+    /**
+     * The played character's id, or `null`.
+     *
+     * Upstream answers `RawCharacter.find({name:'current'})?.avatar ?? null`
+     * (`character.ts:70`) — the avatar file name again. This answers the host's
+     * `characterId`, for the reason `getCharacterIds` gives.
+     * @returns the id, or null when no card is being played.
+     */
+    getCurrentCharacterId: (): string | null =>
+      snapshot('getCurrentCharacterId').characterId ?? null,
+    /**
+     * Where a card's picture is served from, or `null`.
+     *
+     * Upstream returns `'/characters/' + <thumbnail file>`
+     * (`function/raw_character.ts:197-214`) — a path on SillyTavern's own
+     * server. **This answers Iris's own avatar endpoint** (`/iris/avatar/<id>`,
+     * as `CharacterSummary.avatarUrl` carries it) and never a filesystem path:
+     * the host's card files live outside the browser's reach, and handing a
+     * card an absolute path would leak the shape of the machine to no purpose.
+     * A card that puts the answer in `url(...)` — which is what upstream's own
+     * interface frames do with this member, injecting
+     * `.char_avatar{background-image:url(...)}` into every message frame — gets
+     * a picture either way.
+     *
+     * `null` for a card that has no picture at all (a `.json` card), which is a
+     * different fact from a card that is not there; both are `null` upstream
+     * too, so the report says which one happened.
+     * @param name - `'current'`, or a card by id or name.
+     * @returns the URL, or null.
+     */
+    getCharAvatarPath: (name?: string): string | null => {
+      const summary = characterFor(snapshot('getCharAvatarPath'), name)
+      if (summary === undefined) return null
+      if (summary.avatarUrl === undefined) {
+        reportOnce(
+          'avatar-missing',
+          `a card asked for ${summary.name}'s avatar path and that card carries no picture`
+            + ' — null here means "no image", not "no such card"',
+        )
+        return null
+      }
+      return summary.avatarUrl
+    },
+    /**
+     * The played card's raw data, as much of it as the snapshot carries.
+     *
+     * **Synchronous upstream** (`raw_character.ts:181`, returning
+     * `characters[index]` — SillyTavern's own storage object), so it can only be
+     * answered from the pushed snapshot, and the snapshot deliberately carries
+     * one card's `data.character_book` plus every card's summary rather than
+     * whole cards: a card costs a median of 494 KiB and up to 2.8 MiB, times
+     * every live frame, every turn. `CharacterSummary.data` records that
+     * measurement and the one corpus call site it was made for —
+     * `charData.data && charData.data.character_book && ...entries`, which this
+     * answers.
+     *
+     * **What it does not carry, and why that is said out loud rather than
+     * filled in.** `description`, `first_mes`, `personality`, `scenario` and
+     * `mes_example` are absent. The summary's `description` is *clipped to 200
+     * code points*, and serving a clip under the field's own name would be the
+     * quietest possible wrong answer — a card would put two hundred characters
+     * of a two-thousand-character description into a prompt and nothing would
+     * say so. The whole card is one `await getCharacter('current')` away, and
+     * the report says that.
+     *
+     * `null` for any other card, which is upstream's own answer for a card it
+     * cannot find. Here it means the snapshot carries only this conversation's
+     * card, and the report says so rather than letting a card conclude the
+     * library is empty.
+     * @param name - `'current'`, or the played card by id or name.
+     * @returns the card data, or null.
+     */
+    getCharData: (name?: string): Record<string, unknown> | null => {
+      const context = snapshot('getCharData')
+      const current = context.characterId
+      const summary = characterFor(context, name)
+      if (summary === undefined || current === undefined || summary.characterId !== current) {
+        if (summary !== undefined) {
+          reportOnce(
+            'chardata-foreign',
+            `a card asked for ${summary.name}'s card data and got null: the snapshot carries card`
+              + ' data for this conversation\'s own card only, so null here is a limit in Iris'
+              + ' rather than a claim that the card does not exist',
+          )
+        }
+        return null
+      }
+      reportOnce(
+        'chardata-partial',
+        'a card read getCharData and this frame answered from the pushed snapshot, which carries'
+          + ' name, id, tags, creator, the embedded character_book and the bound book name —'
+          + ' description, first_mes, personality, scenario and mes_example are absent, not empty;'
+          + ' await getCharacter(\'current\') for the whole card',
+      )
+      const book = summary.data?.character_book
+      return {
+        name: summary.name,
+        // Upstream's `avatar` is the picture's file name; here it is the id, as
+        // `getCharacterIds` explains.
+        avatar: summary.characterId,
+        tags: [...summary.tags],
+        data: {
+          name: summary.name,
+          tags: [...summary.tags],
+          creator: summary.creator ?? '',
+          ...book === undefined ? {} : { character_book: book },
+          // Upstream's `RawCharacter.getWorldName()` reads exactly this key.
+          extensions: { world: context.charWorldbooks?.primary ?? '' },
+        },
+      }
+    },
+    /**
+     * One whole card, projected as upstream projects it.
+     *
+     * Asynchronous upstream too (`character.ts:240`, which awaits
+     * `unshallowCharacter` before reading), so the round trip costs no
+     * compatibility. It carries the card's `extensions` — its regexes and its
+     * script bodies — which is why it is a call a card makes once rather than a
+     * snapshot field every frame pays for every turn.
+     *
+     * **Only this conversation's own card.** Upstream takes any name in the
+     * library; the host refuses a fourth spelling, because a card script is
+     * consented to per card and this member would otherwise let one card's
+     * grant read a neighbour's code. The rejection names the narrowing, and
+     * upstream throws for an unknown name too, so the shape a card handles is
+     * the same one.
+     * @param name - `'current'`, or this conversation's card by id or name.
+     * @returns the card, projected.
+     * @throws when the name is not this conversation's card.
+     */
+    getCharacter: async (name?: string): Promise<Record<string, unknown>> => {
+      const answer = await host.call('getCharacter', { name: name === undefined ? 'current' : name })
+      return (answer as { character?: Record<string, unknown> } | undefined)?.character ?? {}
+    },
+
+    /**
+     * Every persona this profile has, by name.
+     *
+     * Synchronous upstream (`function/persona.ts:53`, mapping
+     * `power_user.personas`), so it answers from the snapshot's `personas`
+     * field. **A missing field and an empty list are different answers**: no
+     * persona store on this host reports a gap and answers `[]`; a store with
+     * nothing in it answers `[]` in silence, which is upstream's answer for the
+     * same state.
+     * @returns the names, in the host's order.
+     */
+    getPersonaNames: (): string[] => personaRows('getPersonaNames').map(row => row.name),
+    /**
+     * Every persona this profile has, by id.
+     *
+     * Upstream's ids are avatar file names (`persona.ts:60`, the keys of
+     * `power_user.personas`); Iris's are the persona store's own opaque ids,
+     * because this host keeps no persona avatar files at all — see
+     * `getPersonaAvatarPath`. Index-parallel to `getPersonaNames()`.
+     * @returns the ids, in the host's order.
+     */
+    getPersonaIds: (): string[] => personaRows('getPersonaIds').map(row => row.id),
+    /**
+     * The selected persona's name, or `null`.
+     *
+     * The **selection**, not the prompt: this host's persona store treats an
+     * empty description as no persona for assembly purposes
+     * (`persona.ts:263`), and applying that rule here would answer `null` for a
+     * persona the user can see selected in the panel. Upstream reads
+     * `power_user.personas[user_avatar]`, which is the selection.
+     *
+     * Not `name1`. That field is the user name the **chat file** records, which
+     * is what upstream's `name1` is too — a persona rename does not rewrite old
+     * chat files, so the two can honestly disagree, and this member is about
+     * the persona.
+     * @returns the name, or null when no persona is selected.
+     */
+    getCurrentPersonaName: (): string | null =>
+      snapshot('getCurrentPersonaName').persona?.name ?? null,
+    /**
+     * The selected persona's id, or `null`.
+     * @returns the id, or null when no persona is selected.
+     */
+    getCurrentPersonaId: (): string | null =>
+      snapshot('getCurrentPersonaId').persona?.id ?? null,
+    /**
+     * Where a persona's picture is served from — always `null` here.
+     *
+     * Upstream answers `./User Avatars/<avatar id>` (`persona.ts:302`), because
+     * on SillyTavern a persona *is* an avatar file: the file name is the
+     * identity. **This host has no persona avatars at all** — the store's own
+     * note says so, and the persona a card can see has an id, a name and a
+     * description and no picture anywhere.
+     *
+     * So the answer is `null`, which is a value upstream also returns (for a
+     * persona it cannot resolve), reported once so that "Iris has no persona
+     * pictures" does not read as "that persona does not exist". Inventing a URL
+     * would be worse in the exact way a plausible answer always is: the card
+     * would put it in an `<img src>` and show a broken image with nothing
+     * anywhere saying why.
+     * @param _personaId - accepted and unused; there is no file to name.
+     * @returns null, always.
+     */
+    getPersonaAvatarPath: (_personaId?: string): null => {
+      reportOnce(
+        'persona-avatar',
+        'a card asked for a persona avatar path and this host keeps no persona pictures —'
+          + ' null here means Iris has no such file to name, not that the persona is missing',
+      )
+      return null
+    },
+    /**
+     * One persona in full — the selected one.
+     *
+     * Synchronous upstream (`persona.ts:310`) and it **throws** when the id is
+     * unknown or the name is not unique, so throwing is a shape the caller
+     * already handles. Two things throw here: an id nothing matches (upstream's
+     * own case) and an id that names a persona the snapshot carries no content
+     * for, which is every persona except the selected one. The second is Iris's
+     * narrowing and the message says so: carrying every persona's description
+     * would hand a card the user's other alter egos' prompt text, for which no
+     * corpus card has ever asked.
+     *
+     * The shape is upstream's `Persona`, and four of its fields are honest
+     * placeholders rather than data: `title`, `lorebook` and `connections` are
+     * concepts this host does not have, and `is_default` is `false` because
+     * Iris has one selected persona and no separate default — so `false` means
+     * "there is no such notion here", not "this persona is not the default".
+     * `avatar` is **absent**, for the reason `getPersonaAvatarPath` returns
+     * null. `position` and `role` are translated back into SillyTavern's own
+     * numbers, because a card reads them as numbers.
+     * @param personaId - `'current'`, or the selected persona by id or name.
+     * @returns the persona.
+     * @throws {UnsupportedApiError} when it is not the selected persona.
+     */
+    getPersona: (personaId?: string): Record<string, unknown> => {
+      const context = snapshot('getPersona')
+      const active = context.persona
+      const asked = personaId === undefined || personaId === '' ? 'current' : personaId
+      const wanted = asked.toLowerCase()
+      if (active === undefined) {
+        throw new UnsupportedApiError(
+          'getPersona',
+          `no persona is selected in this conversation, so there is none to answer with for "${asked}".`,
+        )
+      }
+      if (wanted !== 'current' && wanted !== active.id.toLowerCase() && wanted !== active.name.toLowerCase()) {
+        const known = personaRows('getPersona').some(
+          row => row.id.toLowerCase() === wanted || row.name.toLowerCase() === wanted,
+        )
+        throw new UnsupportedApiError(
+          'getPersona',
+          known
+            ? `persona "${asked}" exists but its content does not travel to this frame: the snapshot`
+              + ' carries the selected persona only.' + LIMIT_NOT_YOUR_FAULT
+            : `persona "${asked}" does not exist or its name is not unique.`,
+        )
+      }
+      return {
+        avatar_id: active.id,
+        name: active.name,
+        title: '',
+        description: active.description,
+        position: PERSONA_POSITIONS[active.position],
+        depth: active.depth ?? UPSTREAM_PERSONA_DEPTH,
+        role: active.role === undefined ? UPSTREAM_PERSONA_ROLE : PERSONA_ROLES[active.role],
+        lorebook: '',
+        connections: [],
+        is_default: false,
+      }
+    },
+
+    /**
+     * This frame's own name, in upstream's spelling.
+     *
+     * Upstream builds it from the iframe element's id — `TH-message--<floor>--<n>`
+     * for an interface, `TH-script--<name>--<id>` for a script
+     * (`iframe/util.d.ts:35`, `function/util.ts:74`) — and it exists to be an
+     * event-registration key and to be handed to `getMessageId`. Here each frame
+     * has its own bus, so nothing keys off it; what a card does with it is parse
+     * the floor out, or print it.
+     *
+     * **The trailing number of a message frame's name is `0`, and that is a
+     * placeholder.** Upstream's own number means different things on its two
+     * render paths and upstream never parses it — `getMessageId`'s regex takes
+     * only the floor — while Iris's frames carry an opaque instance identity
+     * the member table cannot see. So it is reported once rather than
+     * fabricated out of something that looks like an index.
+     * @returns the name.
+     * @throws {UnsupportedApiError} in a frame that is neither.
+     */
+    getIframeName: (): string => {
+      const script = host.scriptId()
+      if (script !== undefined) {
+        return `TH-script--${scriptRow('getIframeName', script)?.name ?? ''}--${script}`
+      }
+      const floor = host.currentMessageId?.()
+      if (floor !== undefined) {
+        reportOnce(
+          'iframe-name-instance',
+          `a card read getIframeName in a message frame and got TH-message--${String(floor)}--0:`
+            + ' the trailing number is a placeholder, since this frame carries no index of its own,'
+            + ' and upstream\'s readers of this name parse only the floor',
+        )
+        return `TH-message--${String(floor)}--0`
+      }
+      throw new UnsupportedApiError(
+        'getIframeName',
+        'this frame is neither a card script nor a message interface, so it has no Tavern Helper name.',
+      )
+    },
+    /**
+     * The floor an interface frame's name belongs to.
+     *
+     * A pure function upstream (`function/util.ts:109-115`) and a pure function
+     * here — the same pattern, including the optional `_n` suffix upstream's
+     * second render path appends, and the same throw for a script frame's name,
+     * which upstream words as "do not call getMessageId on a global script
+     * iframe".
+     * @param iframeName - a name from `getIframeName()`.
+     * @returns the floor.
+     * @throws {UnsupportedApiError} when the name is not an interface frame's.
+     */
+    getMessageId: (iframeName: string): number => {
+      const match = MESSAGE_FRAME_NAME.exec(String(iframeName))
+      const floor = match?.[1]
+      if (floor === undefined) {
+        throw new UnsupportedApiError(
+          'getMessageId',
+          `"${String(iframeName)}" is not a message interface's frame name, so it belongs to no`
+            + ' floor — upstream throws here too, and says not to call this on a script frame.',
+        )
+      }
+      return Number.parseInt(floor, 10)
+    },
+    /**
+     * The calling script's name.
+     *
+     * Synchronous upstream, off the runtime store (`function/script.ts:125`),
+     * and `''` when the store has no such script — a real upstream answer,
+     * which is why an absent name here answers the same way rather than
+     * throwing. It reads the snapshot's `scripts` table, which the host builds
+     * out of the one listing the panel and the runner share, so the name a card
+     * prints is the name the user sees.
+     * @returns the name, or `''`.
+     */
+    getScriptName: (): string => {
+      const script = host.scriptId()
+      return script === undefined ? '' : scriptRow('getScriptName', script)?.name ?? ''
+    },
+    /**
+     * The calling script's author note.
+     *
+     * Upstream's `script.info` (`function/script.ts:134`), `''` when unknown for
+     * the reason `getScriptName` answers `''`. A `replaceScriptInfo` in this
+     * frame's lifetime is read back here, so a script that writes and then reads
+     * sees its own write even though nothing was stored — see that member for
+     * why nothing was.
+     * @returns the note, or `''`.
+     */
+    getScriptInfo: (): string => {
+      const script = host.scriptId()
+      if (script === undefined) return ''
+      return scriptInfoWrites.get(script) ?? scriptRow('getScriptInfo', script)?.info ?? ''
+    },
+    /**
+     * Replace the calling script's author note — **not stored**.
+     *
+     * Upstream writes `script.info` into the repository the script came out of
+     * and the panel persists it (`function/script.ts:143`). Here a card script's
+     * name and note are the **card file's** (`@iris/script`'s extractor reads
+     * them out of `tavern_helper.scripts`), so storing this would mean writing
+     * the user's character file on a card's own initiative — a
+     * character-library write, which this host's grant model has no slot for
+     * (`notes/apps/iris-web/GRANTS.md`) and which belongs with the second wave
+     * of this family.
+     *
+     * So: the value is kept for this frame's life, so `getScriptInfo()` agrees
+     * with the write that just happened, and a fault is reported saying nothing
+     * was persisted. Upstream's return is `void`, so a caller cannot tell the
+     * difference from the call — which is exactly why it has to be said on the
+     * record instead.
+     *
+     * **The mechanism, named rather than guessed at**: a `script.setInfo` arm
+     * taking `{ characterId, scriptId, info }`, writing through the card's
+     * script policy store for a card script (which needs a card-file write and
+     * a grant) and through `scriptLibrary.save` for one of the user's own
+     * (which already carries `info`). The frame would then await it the way
+     * `replaceScriptButtons` does and report a fault only on rejection.
+     * @param info - the new note.
+     * @throws {UnsupportedApiError} outside a script frame, as upstream's
+     *   declaration requires.
+     */
+    replaceScriptInfo: (info: string): void => {
+      const script = host.scriptId()
+      if (script === undefined) {
+        throw new UnsupportedApiError(
+          'replaceScriptInfo',
+          'upstream allows this only inside a script; this frame is not one.',
+        )
+      }
+      scriptInfoWrites.set(script, String(info))
+      host.reportFault(
+        'a script replaced its own author note and nothing was stored: the note lives in the card'
+          + ' file here, and writing a card file needs a grant Iris has not built — the value is'
+          + ' remembered for this frame\'s life only, so a later getScriptInfo() agrees with it',
+      )
+    },
+
+    /**
+     * This character's past conversations, in brief.
+     *
+     * Asynchronous upstream too (`raw_character.ts:216`), which asks
+     * SillyTavern for the character's chat files and attaches `ch_name` and
+     * `avatar_url` to each row. The host answers about **this conversation's
+     * character only** — the same narrowing `getCharacter` makes — and `null`
+     * for any other name, which is upstream's own answer for a character it
+     * cannot find, reported so that it does not read as "that card has no
+     * conversations".
+     *
+     * The rows carry upstream's four usable keys (`file_name`, `chat_items`,
+     * `ch_name`, `avatar_url`) and Iris's own `chatId`, `title` and `updatedAt`
+     * beside them; `ChatHistoryBriefRow` says what each one is worth. Hand them
+     * straight to `getChatHistoryDetail`, as upstream's own example does.
+     * @param name - `'current'`, or this conversation's card by id or name.
+     * @returns the rows, or null.
+     */
+    getChatHistoryBrief: async (name?: string): Promise<unknown[] | null> => {
+      const context = snapshot('getChatHistoryBrief')
+      const summary = characterFor(context, name)
+      if (summary === undefined || summary.characterId !== context.characterId) {
+        reportOnce(
+          'history-foreign',
+          'a card asked for another character\'s chat history and got null: this host answers the'
+            + ' history members about the open conversation\'s own character only',
+        )
+        return null
+      }
+      const answer = await host.call('getChatHistoryBrief', {})
+      return (answer as { chats?: unknown[] } | undefined)?.chats ?? []
+    },
+    /**
+     * The floors of named past conversations.
+     *
+     * Upstream takes the brief rows back and fetches each file
+     * (`raw_character.ts:235`, `RawCharacter.getChatsFromFiles`), keys the
+     * answer by `file_name`, and drops the first line of every non-group file —
+     * which is the metadata header, and this host drops it too.
+     *
+     * Three departures, each named where it is made: only files belonging to the
+     * open conversation's character are answered (the host checks, because the
+     * frame is the untrusted side), at most fifty per call, and the floors
+     * arrive without their per-swipe variable tables. A file that is not
+     * answered is **absent from the map** rather than present and empty, which
+     * is upstream's own behaviour for a file its fetch could not read.
+     * @param data - the brief rows, or anything carrying `file_name`s.
+     * @param isGroupChat - upstream's flag; this host has no group chats.
+     * @returns floors by `file_name`.
+     */
+    getChatHistoryDetail: async (
+      data: unknown,
+      isGroupChat?: boolean,
+    ): Promise<Record<string, unknown>> => {
+      if (isGroupChat === true) {
+        reportOnce(
+          'history-group',
+          'a card asked for group-chat history detail and this host has no group conversations —'
+            + ' the flag was ignored and the named files were read as ordinary conversations',
+        )
+      }
+      const files = (Array.isArray(data) ? data : [])
+        .map(row => (row as { file_name?: unknown } | null)?.file_name)
+        .filter((file): file is string => typeof file === 'string' && file.length > 0)
+      // Upstream's own reader filters the same way and answers `{}` for a list
+      // with no usable file names, without asking the server anything.
+      if (files.length === 0) return {}
+      if (files.length > HISTORY_DETAIL_LIMIT) {
+        host.reportFault(
+          `a card asked for ${String(files.length)} conversations' floors in one call and this host`
+            + ` answers at most ${String(HISTORY_DETAIL_LIMIT)} — the first`
+            + ` ${String(HISTORY_DETAIL_LIMIT)} were read and the rest were not`,
+        )
+      }
+      const answer = await host.call('getChatHistoryDetail', {
+        files: files.slice(0, HISTORY_DETAIL_LIMIT),
+      })
+      return (answer as { chats?: Record<string, unknown> } | undefined)?.chats ?? {}
+    },
+    /**
+     * Text as the reading view would display it — **unchanged, and it says so**.
+     *
+     * Upstream does three things (`function/displayed_message.ts:24`): expands
+     * SillyTavern's macros, applies the display-tier regexes for that floor, and
+     * renders the markdown to HTML. In this frame it can do none of them, and
+     * the reason is structural rather than unfinished: the macro engine and the
+     * regex engine are the host's (the host runs the display tier as it builds
+     * a message view, so a floor's text arrives already regexed) and the
+     * markdown step is a React component in the shell, while **this member is
+     * synchronous** and cannot cross to either.
+     *
+     * So it returns the text it was given and reports that nothing was applied —
+     * the same answer and the same sentence as `substidudeMacros` above,
+     * because text handed back unchanged is otherwise indistinguishable from
+     * text that had nothing to change.
+     *
+     * What it *does* keep is the argument checking, because that is a fact about
+     * the chat rather than about rendering: `'last'`, `'last_user'` and
+     * `'last_char'` resolve against the snapshot's own floors, a negative index
+     * counts from the end, and an out-of-range floor throws with upstream's
+     * range in the message.
+     * @param text - the text to format.
+     * @param option - upstream's `{ message_id }`.
+     * @returns the text, unformatted.
+     * @throws {UnsupportedApiError} when `message_id` is not a floor.
+     */
+    formatAsDisplayedMessage: (
+      text: string,
+      option?: { message_id?: 'last' | 'last_user' | 'last_char' | number },
+    ): string => {
+      // Resolved for its own sake: upstream throws before formatting, so a card
+      // whose floor is wrong has to hear about it here rather than get its text
+      // back and carry on.
+      displayFloorOf(option?.message_id ?? 'last')
+      reportOnce(
+        'display-format',
+        'a card asked for text formatted as a displayed message and this frame applied none of the'
+          + ' three passes — no macros, no display regexes, no markdown; the text came back'
+          + ' unchanged, which is not a statement that it needed nothing',
+      )
+      return text
+    },
+    /**
+     * The floor's rendered body as a jQuery handle — **always an empty one**.
+     *
+     * Upstream reaches into the host page: `$('#chat > .mes[mesid=...]',
+     * window.parent.document).find('div.mes_text')`
+     * (`displayed_message.ts:88`), and its own declaration says the answer is an
+     * empty jQuery when the floor is not displayed. Here the parent document is
+     * across an opaque origin — `sandbox="allow-scripts"` without
+     * `allow-same-origin`, so the browser refuses before any Iris code is
+     * consulted — and `parent.document` is a virtual document scoped to the
+     * card's own container, which has no `#chat` in it and deliberately never
+     * will (`st-anchors.ts` says why `#chat` is not among the three ids that are
+     * served).
+     *
+     * So this answers the empty jQuery upstream's own contract already allows,
+     * and reports once that it is always empty. A card's `.text(...)` and
+     * `.append(...)` on it are no-ops, which is what they would be upstream for
+     * an undisplayed floor — the difference is that here every floor is
+     * undisplayed to a card.
+     * @param _messageId - accepted, and there is nothing to find it in.
+     * @returns an empty jQuery, or `undefined` in a realm with no jQuery.
+     */
+    retrieveDisplayedMessage: (_messageId?: number): unknown => {
+      reportOnce(
+        'retrieve-displayed',
+        'a card asked for a floor\'s rendered HTML and got an empty jQuery: the reading view is'
+          + ' across an opaque origin, so no card frame can reach a message element — upstream'
+          + ' answers an empty jQuery for an undisplayed floor, and here every floor is one',
+      )
+      // The realm's own jQuery, read at call time rather than captured: the
+      // preset seeds it into this frame, and the member table is loaded before
+      // it. `$()` with no argument is jQuery's own empty set.
+      const realm = globalThis as unknown as Record<string, unknown>
+      const jquery = realm['jQuery'] ?? realm['$']
+      return typeof jquery === 'function' ? (jquery as () => unknown)() : undefined
+    },
+    /**
+     * Redraw one floor — **the data is already right, and the draw is the
+     * shell's**.
+     *
+     * Upstream rewrites the floor's DOM from `chat[message_id]` and ends by
+     * emitting `USER_MESSAGE_RENDERED` / `CHARACTER_MESSAGE_RENDERED`
+     * (`displayed_message.ts:92-161`). Its own fork detection takes the shape
+     * this host is in: on a *managed* chat surface it touches no DOM at all and
+     * calls `refreshManagedChatSurface()` instead
+     * (`displayed_message.ts:97-100`).
+     *
+     * Iris is that case. Every host write arm broadcasts `chat.updated` and the
+     * reading view re-renders on it, so after a card's `setChatMessages` the
+     * floor already shows the new text: what upstream's member adds here is a
+     * card's own control over *when*, which needs a shell arm ("re-push this
+     * floor and wait for the render"). That is a decision about the reading
+     * column rather than about this surface, so it is left named — the ruling
+     * `reloadCurrentChat` already has.
+     *
+     * It keeps upstream's early return for an empty handle, refuses a floor
+     * that is not in the chat (upstream throws a `TypeError` reading
+     * `undefined.swipe_id` there), and **does not emit the rendered events**:
+     * announcing a render that did not happen would put a lie on the one bus a
+     * card can hear.
+     * @param messageId - the floor.
+     * @param $mes - upstream's optional handle; an empty one returns early.
+     */
+    refreshOneMessage: async (messageId: number, $mes?: { length?: number }): Promise<void> => {
+      if ($mes !== undefined && $mes !== null && $mes.length === 0) return
+      const chat = chatOf('refreshOneMessage')
+      const floor = typeof messageId === 'number' && messageId < 0 ? chat.length + messageId : messageId
+      if (!Number.isInteger(floor) || floor < 0 || floor >= chat.length) {
+        host.reportFault(
+          `a card asked to refresh floor ${String(messageId)}, which this conversation does not have`
+            + ` (it has ${String(chat.length)})`,
+        )
+        return
+      }
+      reportOnce(
+        'refresh-one',
+        'a card asked to redraw a floor and this frame did not: the reading view re-renders on the'
+          + ' host\'s own chat.updated, so the floor already shows what the chat file holds — what'
+          + ' is missing is a card\'s control over when, which needs a shell arm nobody has built',
+      )
+    },
+    /**
+     * Move a span of floors, upstream's three-index rotation.
+     *
+     * `[begin, middle, end)`: the floors from `middle` up to `end` move in front
+     * of `begin`. Asynchronous upstream too (`function/chat_message.ts:468`),
+     * and the whole operation happens on the host — the chat file is its, and a
+     * rotation composed out of `setChatMessages` would move the words while
+     * leaving every name, role, swipe list and per-floor variable table where it
+     * was. The indices are clamped there, as upstream clamps them, so an
+     * impossible span is upstream's no-op.
+     *
+     * `refresh` travels and is not acted on: this host's write broadcasts and
+     * the view follows, so `'none'` cannot be honoured. Said once, on the call
+     * that asked for it.
+     * @param begin - first floor of the span; negative counts from the end.
+     * @param middle - the floor that becomes first.
+     * @param end - one past the last floor of the span.
+     * @param option - upstream's `{ refresh }`.
+     */
+    rotateChatMessages: async (
+      begin: number,
+      middle: number,
+      end: number,
+      option?: { refresh?: 'none' | 'affected' | 'all' },
+    ): Promise<void> => {
+      for (const [label, value] of [['begin', begin], ['middle', middle], ['end', end]] as const) {
+        if (!Number.isInteger(value)) {
+          throw new UnsupportedApiError(
+            'rotateChatMessages',
+            `${label} must be a whole number, and it was ${String(value)}.`,
+          )
+        }
+      }
+      if (option?.refresh === 'none') {
+        reportOnce(
+          'rotate-refresh',
+          'a card rotated floors with refresh:"none" and the reading view redrew anyway: this host'
+            + ' broadcasts every chat write and the view follows it, so there is no way to change'
+            + ' the file and hold the display',
+        )
+      }
+      await host.call('rotateChatMessages', {
+        begin,
+        middle,
+        end,
+        ...option?.refresh === undefined ? {} : { refresh: option.refresh },
+      })
+    },
   }
 
   /*
@@ -3876,6 +4784,17 @@ const HANDLE_RETURNS: ReadonlySet<string> = new Set([
    * the call rather than at the copy — far from the cause.
    */
   'injectPrompts',
+  // —— family①: identity & messages ——
+  /*
+   * A jQuery object is not structured-cloneable — it holds a `length`, a
+   * `prototype` chain of methods and, for a non-empty set, DOM nodes. Cloning
+   * one fails, and `detach`'s fallback is to hand back the original **with a
+   * report**, so leaving this out would put a gap line on the panel for every
+   * call of a member whose whole answer is already reported once. It is listed
+   * for the reason `injectPrompts` is: the return is a live handle, and a card
+   * calls methods on it.
+   */
+  'retrieveDisplayedMessage',
 ])
 
 function detachReturns(

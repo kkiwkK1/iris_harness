@@ -969,6 +969,55 @@ export interface ScriptContext {
    * read absent as refused would report a tier as off on a host that runs it.
    */
   characterRegexAllowed?: boolean
+
+  // —— family①: identity & messages ——
+  /**
+   * The profile's personas, **names and ids only**.
+   *
+   * Six of upstream's persona members are synchronous
+   * (`JS-Slash-Runner/src/function/persona.ts:53,60,67,74,302,310` — every one
+   * reads `power_user.personas` off the page and returns), so four of them
+   * (`getPersonaNames`, `getPersonaIds`, `getCurrentPersonaName`,
+   * `getCurrentPersonaId`) can only be answered from a snapshot. A name and an
+   * id is what those four need, and it is all they get here.
+   *
+   * **Key absent and empty list are different facts, and both happen.** A host
+   * with no persona store configured (`service.ts`'s `#personas()` refuses with
+   * `unsupported`) omits the key; a profile that has a store and no personas
+   * sends `[]`. The façade reports the first as a gap and answers the second
+   * with upstream's own answer for an empty list, because a default applied to
+   * a missing key manufactures a clean zero that reads as a measurement.
+   */
+  personas?: { id: string, name: string }[]
+  /**
+   * The persona **in use**, in full — the only one whose content travels.
+   *
+   * `getPersona(id)` is synchronous upstream too and returns the whole
+   * descriptor, so serving it at all means carrying content. Carrying *every*
+   * persona's would hand a card the user's other alter egos' prompt text for no
+   * measured demand (zero corpus calls), so the snapshot carries one: the
+   * persona this conversation is being played with, which is already part of
+   * what the card is being told about. `getPersona` on any other id throws and
+   * says which narrowing refused it.
+   *
+   * Absent means no persona is in use — which is a real state here, since a
+   * persona with an empty description counts as none (`persona.ts:263,290`).
+   */
+  persona?: PersonaView
+  /**
+   * Each runnable script's name and author note, by script id.
+   *
+   * `getScriptName()` and `getScriptInfo()` are synchronous upstream
+   * (`function/script.ts:125,134`, both `useScriptIframeRuntimesStore().get(id)`
+   * off the page) and both answer about **the calling script**, which the frame
+   * knows by its own `scriptId`. Keyed by id like `scriptButtons` beside it, and
+   * carrying every script of the card for the same reason that field does: one
+   * snapshot serves a card whose scripts share a realm.
+   *
+   * `info` is absent when the script carries no author note — `ScriptView.info`
+   * is already optional in exactly that way, and this is that field.
+   */
+  scripts?: Record<string, { name: string, info?: string }>
 }
 
 /** Where a script's injected prompt goes. Mirrors upstream's positions. */
@@ -2663,4 +2712,101 @@ export interface TavernRegexView {
   /** `null`, never absent — upstream normalises a non-number to `null`. */
   min_depth: number | null
   max_depth: number | null
+}
+
+// —— family①: identity & messages ——
+
+/**
+ * One character card, in **Tavern Helper's** shape rather than SillyTavern's.
+ *
+ * Upstream's `getCharacter` (`JS-Slash-Runner/src/function/character.ts:240`)
+ * does not hand a card the raw `v1CharData` — it runs `toCharacter`
+ * (`character.ts:75-119`), which renames, folds `first_mes` and
+ * `alternate_greetings` into one `first_messages` array, resolves the bound
+ * book's name, and **omits eleven storage fields by name** (`fav`,
+ * `talkativeness`, `world`, `depth_prompt`, `pygmalion_id`, `github_repo`,
+ * `source_url`, `chub`, `risuai`, `sd_character_prompt`, and the two legacy
+ * `TavernHelper_*` keys). This mirrors that projection, so a card reading the
+ * member gets the fields its author wrote against.
+ *
+ * `getCharData` is the *other* member and deliberately not this shape: it is
+ * synchronous upstream and answers the raw storage object, so it rides the
+ * pushed snapshot instead. Two members, two shapes, one card file.
+ */
+export interface CardCharacter {
+  /**
+   * Upstream spells this `${name}.png` — the character's file, which on
+   * SillyTavern is also its identity.
+   *
+   * Here it is the host's `characterId`, which is what every other Iris surface
+   * uses to name a card and what `getCharacterIds()` answers with. A card that
+   * round-trips this value to another Iris member finds the card it meant; one
+   * that appends it to `/characters/` — upstream's own path — does not, and
+   * never could, because this host serves avatars from its own endpoint.
+   */
+  avatar: string
+  /** `data.character_version`, empty when the card carries none. */
+  version: string
+  /** `data.creator`, empty when the card carries none. */
+  creator: string
+  /** `creatorcomment` or `data.creator_notes`, in upstream's order of preference. */
+  creator_notes: string
+  /**
+   * The **primary bound book's name**, or `null`.
+   *
+   * The binding, not the book: upstream fills this from
+   * `getCharWorldbookNames(name).primary` and so does this, which means a name
+   * that no file answers to is still reported. `ScriptContext.charWorldbooks`
+   * says why at length.
+   */
+  worldbook: string | null
+  /** `description`, unclipped — this is the round trip, not the summary. */
+  description: string
+  /** `first_mes` followed by every `alternate_greetings` entry, upstream's fold. */
+  first_messages: string[]
+  /**
+   * `data.extensions`, minus the keys upstream's projection drops.
+   *
+   * Carries `regex_scripts` and `tavern_helper` — which means it carries the
+   * card's script **bodies**, exactly as upstream's member does. That is why
+   * this is a round trip and not a snapshot field: a card asks for it, once,
+   * rather than every frame paying for it every turn.
+   */
+  extensions: Record<string, unknown>
+}
+
+/**
+ * One past conversation, as `getChatHistoryBrief` reports it.
+ *
+ * Upstream's shape is whatever SillyTavern's `/api/characters/chats` returns
+ * (`file_name`, `chat_items`, `mes`, `last_mes`, …) with `ch_name` and
+ * `avatar_url` attached by `attachCharacterToChats`
+ * (`function/raw_character.ts:66-72`); its declared return type is `any[]`, so
+ * there is no contract to break, only a set of key names cards would read.
+ *
+ * The four upstream keys a caller can use are kept, spelled as upstream spells
+ * them, and Iris's own identity travels beside them rather than instead: a
+ * `file_name` here is `${chatId}.jsonl`, and `chatId` is the value every other
+ * Iris member takes.
+ */
+export interface ChatHistoryBriefRow {
+  /** `${chatId}.jsonl` — upstream's key, and what `getChatHistoryDetail` takes. */
+  file_name: string
+  /** How many floors the file holds. Upstream's key for the same count. */
+  chat_items: number
+  /** The character's name, as `attachCharacterToChats` attaches it. */
+  ch_name: string
+  /**
+   * Upstream attaches the character's avatar id here.
+   *
+   * Iris attaches its `characterId`, for the reason {@link CardCharacter.avatar}
+   * gives: this host has no `/characters/<avatar>.png` to name.
+   */
+  avatar_url: string
+  /** Iris's own chat id — the one every other member takes. */
+  chatId: string
+  /** The conversation's title, which upstream's rows have no equivalent of. */
+  title: string
+  /** Last activity, Unix epoch milliseconds. `ChatSummary.updatedAt`'s value. */
+  updatedAt: number
 }
