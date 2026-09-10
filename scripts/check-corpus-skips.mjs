@@ -97,6 +97,12 @@ import { spawn } from 'node:child_process'
  * SillyTavern so it groups under `corpus` above. The file's other two tests read only this
  * repository and run everywhere.
  *
+ * 35 → 36, 2026-09-11, a new corpus-gated test from the registration-table reconciliation:
+ * `apps/iris-web/tests/upstream-registration.test.ts` ×1 — "the registration table matches the
+ * declared surface in both directions", which re-extracts the injection table from the installed
+ * Tavern Helper's `src/function/index.ts` and so cannot run without the corpus. Noted in the
+ * corpus bucket, not a new gate: the gate is the same `IRIS_CORPUS` absence every corpus test
+ * rides on.
  * 34 → 35, 2026-09-10, and this one is a **new gate category**:
  * `apps/iris-web/tests/frame-bootstrap-live.test.ts` ×1 — "a card's first parse-time script
  * sees the bridge, and sees nothing when the bootstrap 404s", which drives a real Chrome over
@@ -107,7 +113,7 @@ import { spawn } from 'node:child_process'
  * the test **fails** and says which — asking for a check and silently not getting it is the
  * outcome that file exists to prevent (§91).
  */
-const EXPECTED_SKIPPED = 35
+const EXPECTED_SKIPPED = 36
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 
