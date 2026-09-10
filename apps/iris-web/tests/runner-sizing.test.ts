@@ -102,7 +102,7 @@ function harness(host?: Partial<RunnerHost>): {
   const heights: number[] = []
   const card = runCard(
     {
-      bootstrap: ';',
+      bootstrapUrl: 'http://iris.test/sandbox/bootstrap-abc.js',
       scripts: [{ id: 'one', code: ';' }],
       mode: 'classic',
       libraries: [],

@@ -29,7 +29,6 @@ import {
   parseSandboxManifest,
   type SandboxAssets,
 } from '../sandbox/asset-manifest.ts'
-import { checkBootstrap } from '../sandbox/bootstrap-source.ts'
 import { interfacesMayBuild } from '../sandbox/consent.ts'
 import { MVU_UPDATE_ENDED_EVENT } from '../sandbox/tavern-helper.ts'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -50,43 +49,35 @@ import { useLanguage, t } from './i18n/use-language.ts'
 import { getLanguage } from './i18n/language.ts'
 
 /**
- * This build's bootstrap and asset URLs, fetched at most once per page.
+ * This build's asset names, fetched at most once per page.
  *
  * Memoised at module scope deliberately. Every displayed message would otherwise
- * ask for the same two immutable files, and on a long conversation that is a
- * request per row for something that cannot have changed — the manifest names
- * content-hashed artifacts, so "the same build" is the only thing it can mean.
+ * ask for the same manifest, and on a long conversation that is a request per
+ * row for something that cannot have changed — the manifest names content-hashed
+ * artifacts, so "the same build" is the only thing it can mean.
  *
  * The promise is cached rather than the value, so concurrent rows share one
  * in-flight fetch instead of racing.
+ *
+ * **It used to fetch the bootstrap's 53 KB of source too**, and validate it
+ * before injection, because the frame carried that text inlined. The frame loads
+ * it by URL now (§91), so what this resolves is names; the bytes are checked at
+ * build time and, in the frame that actually loaded them, by the frame's own
+ * guard.
  */
-let supply: Promise<{ assets: SandboxAssets, bootstrap: string }> | undefined
+let supply: Promise<SandboxAssets> | undefined
 
 /**
- * Resolve the bootstrap and the asset names for this build.
+ * Resolve the asset names for this build.
  * @returns the shared supply.
  */
-function sandboxSupply(): Promise<{ assets: SandboxAssets, bootstrap: string }> {
+function sandboxSupply(): Promise<SandboxAssets> {
   supply ??= (async () => {
     const manifest = await fetch(SANDBOX_MANIFEST_PATH)
     if (!manifest.ok) throw new Error(`sandbox manifest: HTTP ${String(manifest.status)}`)
     const assets = parseSandboxManifest(await manifest.text())
     if (typeof assets === 'string') throw new Error(`sandbox manifest: ${assets}`)
-
-    const response = await fetch(assets.bootstrap)
-    if (!response.ok) throw new Error(`bootstrap: HTTP ${String(response.status)}`)
-    const bootstrap = await response.text()
-    /*
-     * Checked before it is ever injected, for the reason `bootstrap-source.ts`
-     * records: a dev server once returned it transformed into an ES module, and
-     * that is a **parse-time** error inside a classic `srcdoc` script — so the
-     * frame's own reporter cannot exist yet to report it, and the frame simply
-     * says nothing.
-     */
-    const unusable = checkBootstrap(bootstrap)
-    if (unusable !== undefined) throw new Error(`bootstrap: ${unusable}`)
-
-    return { assets, bootstrap }
+    return assets
   })()
   return supply
 }
@@ -139,7 +130,6 @@ export function MessageInterfaces({
   const [ready, setReady] = useState<
     | {
         assets: SandboxAssets
-        bootstrap: string
         documentGranted: boolean
         context: ScriptContext
       }
@@ -162,7 +152,7 @@ export function MessageInterfaces({
     void (async () => {
       try {
         if (chatId === undefined) return
-        const [{ assets, bootstrap }, grants, snapshot] = await Promise.all([
+        const [assets, grants, snapshot] = await Promise.all([
           sandboxSupply(),
           /*
            * Asked of the host, not read from `state.documentGranted`. The
@@ -189,11 +179,11 @@ export function MessageInterfaces({
          */
         if (snapshot === undefined) return
         if (live) {
-          setReady({ assets, bootstrap, documentGranted: grants.documentGranted, context: snapshot })
+          setReady({ assets, documentGranted: grants.documentGranted, context: snapshot })
         }
       } catch {
         /*
-         * Swallowed here on purpose: `useCardScripts` fetches the same two files
+         * Swallowed here on purpose: `useCardScripts` resolves the same manifest
          * and reports a failure to the panel already. Reporting it a second time
          * per displayed message would put the same sentence on screen once per
          * row.
@@ -277,7 +267,7 @@ export function MessageInterfaces({
       const popups = cardPopupBridge('interface')
       const card = runCard(
         {
-          bootstrap: current.bootstrap,
+          bootstrapUrl: `${window.location.origin}${current.assets.bootstrap}`,
           scripts: [],
           mode: 'module',
           libraries: [`${window.location.origin}${current.assets.messagePreset}`],

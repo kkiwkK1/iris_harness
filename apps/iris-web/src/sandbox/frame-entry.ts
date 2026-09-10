@@ -2,10 +2,25 @@
  * The bootstrap, as it exists inside a card's frame.
  *
  * This file is the second build entry (`vite.sandbox.config.ts`) and is emitted
- * as a **classic IIFE**, not a module. Two reasons, both about the frame being
- * cross-origin: a module script from an opaque origin is CORS-checked and a
- * classic one is not, and the host inlines this text into `srcdoc` anyway, where
- * there is no module graph to load from.
+ * as a **classic IIFE**, not a module. Both halves of that still matter, and
+ * since 2026-09-10 the reasons are different ones.
+ *
+ * **Classic**, because the frame loads it with a blocking `<script src>` and
+ * nothing else would keep the ordering: a classic script with no `async`/`defer`
+ * runs to completion before the parser moves on, where a module script is
+ * deferred by definition and would land after the card's markup — the one
+ * ordering this frame cannot survive. (A module from an opaque origin is also
+ * CORS-checked where a classic script is not, which was the original reason and
+ * is now the lesser one.)
+ *
+ * **Self-contained**, because it is fetched at one content-hashed URL and shared
+ * by every frame on the page; a run-time `import` would be a second request no
+ * frame is waiting for. It is no longer inlined into each `srcdoc` — see
+ * `srcdoc.ts`'s header and `notes/apps/iris-web/DEVIATIONS.md` §91 — so the
+ * bytes here are paid once per build rather than once per frame, and the
+ * `<script src>` that replaced the inline element brought one new failure with
+ * it: a tag that never ran. The two markers this file sets are what tell that
+ * apart from a bootstrap that ran and threw (`bootstrap-contract.ts`).
  *
  * It does nothing but adapt the real frame realm to `FrameEnv` and hand it to
  * `installSandbox`. Every decision about what a card may touch lives there,
@@ -16,15 +31,20 @@
  */
 
 import type { ScriptContext } from '@iris/protocol'
+import { BOOTSTRAP_MARKER, BOOTSTRAP_SPOKE } from './bootstrap-contract.ts'
 import { installSandbox } from './frame.ts'
 import { rewritingTemplate } from './srcdoc.ts'
 /*
  * **Types only.** The stand-in's code comes off the member table
- * (`members.js`), which is fetched once per frame rather than inlined into
- * every frame's bootstrap — importing it here for real cost 8.2 KiB per frame
- * and pulled `card-css.ts`'s whole scanner in behind it, which is the exact
- * growth the table exists to stop. A type import is erased, so this line is
- * free.
+ * (`members.js`): importing it here for real cost 8.2 KiB per frame and pulled
+ * `card-css.ts`'s whole scanner in behind it, which is the exact growth the
+ * table was split out to stop. A type import is erased, so this line is free.
+ *
+ * The *byte* half of that reason is spent as of 2026-09-10 — this file is
+ * fetched by hashed URL too, so 8.2 KiB here would no longer be 8.2 KiB per
+ * frame (§91). The line stays because a type import costs nothing either way,
+ * and whether the two artifacts should still be two is recorded as an open
+ * question in that section rather than answered by an import.
  */
 import type { NestedNode, NestedQueryHost } from './nested-frame.ts'
 import { remoteImports, requestedImports } from './script-source.ts'
@@ -605,10 +625,11 @@ function reportRegions(
  * Hand cards a stand-in whenever they build a nested iframe.
  *
  * A thin adapter on purpose. Everything that *decides* anything lives in
- * `nested-frame.ts` and arrives on the member table — fetched once per frame
- * rather than inlined into every frame's bootstrap. Importing it for real cost
+ * `nested-frame.ts` and arrives on the member table. Importing it for real cost
  * **8.2 KiB per frame** and pulled `card-css.ts`'s whole scanner in behind it,
- * which is precisely the growth the table was split out to stop. What is left
+ * which is precisely the growth the table was split out to stop — a per-frame
+ * cost that the bootstrap's own move to a fetched URL has since removed (§91).
+ * What is left
  * here is the two things only this file has: the real `document`, and the
  * channel to the shell.
  * @param run - the frame's token, for reports.
@@ -1403,9 +1424,11 @@ let firstFrameAt: number | undefined
  * The card-facing member table, fetched once per page.
  *
  * It arrives as a **synchronous blocking** `<script src>` placed before this
- * inlined block, so by the time any line below runs it is either present or
+ * file's own tag, so by the time any line below runs it is either present or
  * definitively absent — that ordering is `srcdoc.ts`'s guarantee, and it is why
- * nothing here waits.
+ * nothing here waits. The two tags are now the same kind of thing (2026-09-10:
+ * this file is fetched too), so the ordering rests on one mechanism rather than
+ * on a fetched script finishing before an inlined one.
  *
  * Read at module scope because the reporters below are module-level functions
  * and need it too.
@@ -1659,6 +1682,25 @@ function reportBlocked(run: string, post: (message: FromFrame) => void): void {
  * neither run code nor change state.
  */
 function fail(error: unknown): void {
+  /*
+   * Claimed **before** the send, and that is the whole of why it is here rather
+   * than after.
+   *
+   * The guard the markup runs after the bootstrap tag (`bootstrap-contract.ts`)
+   * fires on "no marker", and a bootstrap that threw has no marker. Without
+   * this name it would conclude "the script never ran", post a second
+   * `bootstrap-error` guessing at the network, and stop the parse — replacing
+   * the real error below with a worse one and blanking an interface for a
+   * failure that is today survivable. Set first, so a `sendToShell` that itself
+   * throws still leaves the guard silent: the frame has one voice about this,
+   * and it is the one holding the actual error.
+   */
+  try {
+    const realm = globalThis as unknown as Record<string, unknown>
+    realm[BOOTSTRAP_SPOKE] = true
+  } catch {
+    // A realm that refuses a global assignment has larger problems than this.
+  }
   try {
     sendToShell(
       {
@@ -1721,7 +1763,7 @@ try {
    * The member table, fetched once per page and read here.
    *
    * It arrives as a **synchronous blocking** `<script src>` placed before this
-   * inlined block, so by the time anything below runs it is either present or
+   * file's own tag, so by the time anything below runs it is either present or
    * definitively absent. That ordering is `srcdoc.ts`'s to guarantee and it is
    * the reason no waiting is needed here.
    */
@@ -2263,6 +2305,26 @@ try {
   // document was built with, and this is the one decision the handshake timing
   // turns on — see `announceReady` for which side waits for what.
   announceReady(run, post, document.body?.hasAttribute('data-iris-interface') === true)
+  /*
+   * **Last**, and only on the path where everything above ran.
+   *
+   * This is the same shape as `MEMBERS_MARKER` and it answers the same kind of
+   * question one layer out: the member table's marker lets *this* file tell "the
+   * build has no such member" from "the table never arrived", and this marker
+   * lets the frame's own markup tell "the bootstrap is installed" from "the tag
+   * is in the document and nothing happened" — the one failure that inlining
+   * could not produce and a `<script src>` can (`bootstrap-contract.ts`).
+   *
+   * A marker set anywhere but the end would be a lie in the direction that
+   * matters: it would report a bridge as installed while some of it was not,
+   * and the guard would wave the card's markup through onto a half-built
+   * surface. `announceReady` is above it deliberately — `ready` is a statement
+   * to the *shell* about the channel, and this is a statement to the *markup*
+   * about the bridge; the channel is up either way, and a shell that never
+   * heard `ready` has its own timeout for saying so.
+   */
+  const realm = globalThis as unknown as Record<string, unknown>
+  realm[BOOTSTRAP_MARKER] = true
 } catch (error: unknown) {
   // Same reasoning: an install that throws is invisible from the outside, and
   // "nothing happened" is the most expensive answer a sandbox can give.

@@ -6,11 +6,15 @@
  * pure: the promise, the id, the round trip to the shell, and the `Popup` class
  * a card can construct.
  *
- * **It lives in the fetched member table, not in the inlined bootstrap**, and
- * that placement is the one decision in this file worth arguing. The bootstrap
- * is inlined into every frame's `srcdoc`, so every byte here would be paid once
- * per interface on screen — `FRAME_OVERHEAD_BYTES` is that cost, and the
- * reading window's count gate is derived from it (`app/frame-budget.ts`). This
+ * **It lives in the fetched member table, not in the bootstrap**, and that
+ * placement was the one decision in this file worth arguing. When this was
+ * written the bootstrap was inlined into every frame's `srcdoc`, so every byte
+ * here would have been paid once per interface on screen —
+ * `FRAME_OVERHEAD_BYTES` was that cost and the reading window's count gate was
+ * derived from it (`app/frame-budget.ts`). **That is no longer so** (2026-09-10,
+ * §91: the bootstrap is fetched by hashed URL and the gate is not derived from
+ * its size), so the paragraphs below record why the placement was chosen rather
+ * than why it must stay. This
  * API is about 7 KiB of bootstrap if it goes there, which is a seventh of the
  * artifact for a dialog most frames never raise. The member table is fetched
  * once per frame from a content-hashed URL the browser caches, which is exactly

@@ -134,7 +134,7 @@ single place that string is assembled.
 | `sandbox/protocol.ts` | the host↔frame messages, validated in both directions against a per-run token |
 | `sandbox/frame.ts` | the frame-side installer, dependency-injected so the decisions it makes are testable under `node --test` |
 | `sandbox/frame-entry.ts` | the second build entry: adapts the real frame realm to `FrameEnv` and holds no policy of its own |
-| `sandbox/srcdoc.ts` | the frame's markup, including its own CSP and the inlined bootstrap |
+| `sandbox/srcdoc.ts` | the frame's markup: its own CSP, the blocking tag that loads the bootstrap, and the guard that checks it ran |
 | `sandbox/runner.ts` | host side: create, feed, size, dispose. The thinnest module here, because it is the only one a browser is required to exercise. **It does not insert the frame** — `card.element` is the caller's to attach, and forgetting to is silent |
 | `sandbox/card-scripts.ts` | the set of frames one chat runs: card order, failure isolation, teardown, and the checks that a frame really entered the document and really became ready |
 | `sandbox/consent.ts` | the three-state run-scripts answer. Absent is not a decline, and the field beside it uses the opposite convention |

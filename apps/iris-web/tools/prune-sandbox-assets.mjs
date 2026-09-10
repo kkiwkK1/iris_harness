@@ -48,9 +48,9 @@ const keep = new Set(['manifest.json', ...Object.values(manifest)])
  * The artifact families this tool is allowed to touch.
  *
  * Deletion is restricted to `<prefix>-<hash>.js` names so the pruner can only
- * ever remove a **superseded version of something the manifest names**. The
- * un-hashed build outputs alongside them are left alone, which is why the report
- * below lists what it did not manage as well as what it did.
+ * ever remove a **superseded version of something the manifest names**. Anything
+ * else in the directory is left alone, which is why the report below lists what
+ * it did not manage as well as what it did.
  */
 const prefixes = Object.keys(manifest)
 
@@ -66,16 +66,23 @@ for (const entry of readdirSync(dir)) {
  * Reported as the directory actually is, not as the manifest wishes it were.
  *
  * The first version of this line said the directory "now serves only" the three
- * manifest entries. It served five: the un-hashed `bootstrap.js` and `preset.js`
- * are build outputs this tool deliberately leaves alone, and the sentence walked
- * straight past them. A build log that overstates what it checked is the same
- * failure this whole tool was written to fix — the stale artifacts it now deletes
- * went unnoticed because nothing ever said what was really there.
+ * manifest entries, and it served five, so the sentence walked straight past
+ * two. A build log that overstates what it checked is the same failure this whole
+ * tool was written to fix — the stale artifacts it now deletes went unnoticed
+ * because nothing ever said what was really there.
  *
- * The un-hashed pair is safe only because the host derives its `immutable` set
+ * **What those two were is no longer what this paragraph said.** It named the
+ * un-hashed `bootstrap.js` and `preset.js` as build outputs left alone; the hash
+ * step *renames* rather than copies, so neither has existed for some time and the
+ * only unlisted entry today is `fontawesome.min.css` — the sentinel, whose
+ * filename is its entire function and which must never be hashed. Corrected
+ * 2026-09-10 while the bootstrap moved to a fetched URL (§91) and the un-hashed
+ * copy was looked for and found absent.
+ *
+ * Anything unlisted is safe only because the host derives its `immutable` set
  * from the manifest (`sandbox-assets.ts`), so a name that is not in the manifest
  * never gets a year-long TTL. Printing them keeps that dependency visible: if
- * anyone ever caches this directory by pattern instead, these two are the trap.
+ * anyone ever caches this directory by pattern instead, they are the trap.
  */
 /**
  * The last two segments of a path, under either separator.

@@ -78,7 +78,7 @@ function harness(host?: Partial<RunnerHost>): {
 
   const card = runCard(
     {
-      bootstrap: ';',
+      bootstrapUrl: 'http://iris.test/sandbox/bootstrap-abc.js',
       scripts: [{ id: 'one', code: ';' }],
       mode: 'classic',
       libraries: [],

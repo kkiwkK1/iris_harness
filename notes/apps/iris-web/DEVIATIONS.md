@@ -5038,3 +5038,334 @@ frame back under 53 KiB with room to spare (the table would then get a row the
 other way, and the gate its frame back); or the two-branch shape recurring, which
 would argue for the seam itself (a `build:sandbox` run on the merge result, not on
 each branch) rather than for another kibibyte.
+
+---
+
+## 91. The frame bootstrap is fetched, not inlined — and the premise that made it inline is now checked three ways
+
+**Kind:** deliberate divergence from our own earlier design, with a measured cost
+paid in the opposite direction from the one it saves.
+
+**What was there.** Every card frame is an opaque-origin `srcdoc` document, and
+the 53 KB bootstrap was **inlined into each one**. The reason is written in
+`srcdoc.ts`'s own header and it was a real one: a card's interface markup runs
+its scripts at **parse** time and reads bridged names immediately — drawing a
+status panel from `getAllVariables()` is the point of it existing — so the
+bootstrap has to have finished before the body parses. The judgement at the time
+was that fetching would lose that race, plus two secondary arguments: an
+opaque-origin frame has no useful same-origin path, and a stable public URL is
+one more answer that could be substituted.
+
+The cost of that decision is the entire history in `frame-budget.ts`. The
+bootstrap is charged **per frame with no cache**, the reading window's byte
+budget is denominated in that charge, and the count gate is derived from it — so
+every kilobyte the bootstrap grew was a kilobyte charged twenty times, and the
+gate moved four times to pay for it: 39 KiB with the gate at 20, then 52 → gate
+19, 53 → 19 held, 54 → gate 18 (§86, and that last one was two branches spending
+the same 1.8 KiB). Four rounds of the same event. Each was answered by moving
+something into the fetched member table, which worked and never asked why the
+bootstrap was inlined at all.
+
+**What upstream does.** Tavern Helper's message iframes carry no client code in
+their `srcdoc` — only a row of `<script src="…">` tags (`predefine`,
+`parent_jquery`, `adjust_iframe_height`, `adjust_viewport`, `cleanup_protector`,
+Tailwind), all same-origin and browser-cached, so each frame's inline cost is a
+handful of tags. Read from
+`data/default-user/extensions/JS-Slash-Runner/dist/index.js`.
+
+**The premise, restated correctly.** "The bootstrap must finish before the body
+parses" is true. "Therefore it must be inlined" does not follow: a **classic
+`<script src>` with no `async`, `defer` or `type`** blocks the parser until it
+has run. That is not a hope about timing — it is the mechanism the **member
+table** has run on since it was split out of the bootstrap, and the mechanism the
+card libraries have always run on, both in this very document, both already
+depended on by every frame that works. The inlining was buying a property it
+already had by another route.
+
+**Now.** The frame's head and body carry, in order: the CSP, token and origin
+metas, the FontAwesome sentinel, the reset, then the member table tag, the
+context seed, **the bootstrap tag**, the guard, the card libraries, the card
+markup.
+
+```
+<script src="{origin}/sandbox/bootstrap-{hash}.js" crossorigin="anonymous" data-iris-bootstrap></script>
+```
+
+`crossorigin="anonymous"` for the reason the member table and libraries carry it:
+an opaque origin redacts a cross-origin throw to the bare words `Script error.`,
+and for this file that would erase the frame's only diagnostic. Its other half —
+the host's `access-control-allow-origin` on the sandbox-asset route — already
+existed. Nothing per-frame goes in the URL: the token and origin travel in
+`<meta>` tags and the snapshot in the inline seed, exactly as before, because a
+URL that varied per frame would be a fresh cache key per frame.
+
+**The srcdoc, byte for byte.** Measured through `buildSrcdoc` over all four
+frame shapes:
+
+| | before | after |
+| --- | --- | --- |
+| script frame, network closed | ~54.7 KB | **2,448 B** |
+| interface frame, network closed | ~54.8 KB | **2,572 B** |
+| interface frame, 51-char origin | — | **3,006 B** |
+| of which: bootstrap guard | — | 1,187 B |
+| of which: three script tags | — | 376 B |
+| of which: CSP, metas, sentinel, reset, body tag, doctype | — | ~1,009 B |
+
+`FRAME_OVERHEAD_BYTES` is **4 KiB**, measured rather than allowed for —
+`check-bootstrap.mjs` now builds eight real documents — two frame kinds × two
+grant states × the dev origin and a deliberately long deployment origin — and
+weighs the widest, where it used to add a stated 1 KiB "wrapper allowance" to
+the artifact's size. The long origin is in there because the shell's origin
+appears **seven times** in a frame document, so the wrapper's size depends on
+where Iris is deployed and measuring only at `127.0.0.1` would budget for the
+developer's machine. 4 KiB rather than 3: 3 KiB clears the widest shape by 66
+bytes, which is the headroom §86 watched two branches spend at once, and an
+overrun here no longer costs a live panel — it is a one-line bump.
+`FRAME_COUNT_LIMIT` is back to the design's **20**: the degradation point is
+512 frames, the invariant `FRAME_COUNT_LIMIT < degradesAt / 2` holds by a
+factor of thirteen, and the gate is chosen by "how many live panels is still
+reading" rather than by bytes. The table in `frame-budget.ts` gains its closing
+row `4 KiB | 512.0 | 256.0 | 20 | held`.
+
+**This is a change of dimension, not a loosening, and it is worth being exact
+about.** `FRAME_OVERHEAD_BYTES` has always meant "bytes of `srcdoc` charged per
+frame". What left the `srcdoc` is 53 KB of build artifact, so the same measure of
+the same quantity reads 3.0 KB. No threshold was widened; the byte budget did not
+grow; the bill has excluded fetched artifacts since the member table split, so
+the bootstrap joining them changes no rule. `frame-budget.test.ts`'s sanity band
+on the ratio (`degradesAt > 30 && degradesAt < 60`) could not survive that and
+was **not widened to 30..600** — widening it would have been the move that file
+has refused twice. It is replaced by a rail in the dimension that changed: the
+overhead must be between 1 KiB (a frame cannot cost less than its own CSP and
+guard) and 8 KiB (above that, a build artifact is inlined into the frame again).
+That second bound is the regression `FRAME_COUNT_LIMIT` can no longer feel, and
+it is the reason a rail is still there at all.
+
+The build's **waste** warning was rebuilt for the same reason and is the one
+place a threshold did move. It fired when the constant sat more than a quarter
+above the measurement, on the reasoning that overstating makes the budget
+tight; at 54 KiB a quarter was 270 KiB across a full gate, an eighth of the
+whole budget, and at 4 KiB it is 20 KiB, 1%. So the fraction is kept **and**
+paired with a materiality test — the waste has to exceed 5% of the budget
+across a full gate. Moving 0.75 to 0.70 would have silenced the same reading
+without saying anything, which is the difference between the two edits.
+
+### The cost, measured, in the direction this move makes worse
+
+**Every frame downloads it again.** Measured 2026-09-10 over CDP against the
+product's own `serveSandboxAsset` route, three interface frames on one page,
+resource timing read from inside each frame (`transferSize > 0` means bytes
+crossed the wire; `transferSize 0` with `decodedBodySize > 0` would mean a cache
+hit — the distinction `transfer-cost.ts` exists to draw):
+
+| frame | bootstrap transferSize | decodedBodySize | duration |
+| --- | --- | --- | --- |
+| 1st | 53,802 | 53,502 | 1.3 ms |
+| 2nd | 53,802 | 53,502 | 1.2 ms |
+| 3rd | 53,802 | 53,502 | 1.0 ms |
+
+`cache-control: public, max-age=31536000, immutable` on all three — the same
+header the preset gets, because the host derives its immutable set from
+`manifest.json` and `bootstrap-<hash>.js` has been in that manifest since the
+artifacts were hashed. **The header buys nothing here**: every chat, and as this
+measurement shows every *frame*, is a fresh opaque origin, and the HTTP cache is
+partitioned by it. `RENDER.md` established this across chats; this is the same
+finding one level finer.
+
+The declining durations are **not** a cache effect and must not be read as one.
+`transferSize` stays at 53,802 in all three; what falls is a warm server and a
+warm connection.
+
+So the honest ledger of the trade:
+
+- **Before**, the shell fetched the bootstrap's source **once per page**
+  (memoised at module scope in `MessageInterfaces.tsx`) and inlined it N times.
+  Wire cost: 53 KB per page. `srcdoc` cost: 53 KB × N.
+- **After**, wire cost is 53.8 KB × N and `srcdoc` cost is 2.6 KB × N. At
+  N = 20 that is **+1.02 MB of transfer** and **−1.06 MB of markup**.
+
+**Why that is accepted, with the number that decides it.** An interface frame
+already fetches, per frame, in the same partition:
+
+| artifact | per frame | share |
+| --- | --- | --- |
+| message preset | 1,658,336 B | 93.7% |
+| member table | 56,908 B | 3.2% |
+| **bootstrap (new)** | **53,802 B** | **3.0%** |
+| total | 1,769,046 B | |
+
+The bootstrap's new wire cost is **3.0% of what the frame was already paying**,
+and it is the same magnitude and the same mechanism as the member table, which
+has been paid per frame for months without anyone arguing about it. On loopback
+the whole of it is 1.0–1.3 ms per frame, ~25 ms across twenty frames. The
+per-frame `library cost:` note reports all of it already, so the day the host
+moves to a remote machine the panel makes the number ugly by itself — and the
+answer then is the one the 1.66 MB preset needs first, not this.
+
+### Three checks, because the premise is a browser fact and this project has been wrong about browser facts
+
+The move rests on one sentence — *a blocking classic script finishes before the
+body parses* — and being wrong about it produces the failure this whole sandbox
+was built to eliminate: a card's markup running against no bridge, throwing a
+`ReferenceError` per member, every one of them attributed to the card. So the
+sentence is checked at three levels, ordered by how early each can speak and by
+how much each can see. None subsumes another.
+
+**① Build time — `tools/check-bootstrap.mjs`.** Beyond the two checks it already
+made (the artifact is a classic self-contained IIFE; the channel is captured
+exactly once), it now:
+
+- hashes the artifact and asserts the name matches, using the **same
+  `fingerprint`** the hash step names files with — extracted to
+  `tools/asset-fingerprint.mjs` so a verifier cannot check one convention
+  against another. A stale manifest or a file touched after hashing would
+  otherwise be served `immutable` for a year under a name that no longer
+  describes it, which is the one failure content hashing exists to prevent.
+- builds the **real** `srcdoc` from `srcdoc.ts` and reads the tag out of it: the
+  `src` is this build's artifact by name; there is no `async`, `defer` or `type`;
+  `crossorigin="anonymous"` is present; the guard is present, **after** the tag
+  and **before** the card markup; and the bootstrap's source does not appear in
+  the document (a frame carrying both would pass everything else and pay twice).
+- counts `postMessage` reads **twice, separately** — once in the artifact, once
+  in the guard, each expected to be exactly 1. A single combined count of 2 is
+  satisfied by two wrong distributions.
+- weighs the widest of the four real documents against `FRAME_OVERHEAD_BYTES`,
+  failing on the unsafe direction and warning on the wasteful one.
+
+**② In the frame — `bootstrap-contract.ts`.** The `<script src>` introduces
+exactly one failure the inline element could not have: *the tag is in the
+document and the code never ran.* Three ways in — the request failed, this
+frame's CSP refused it, the file would not parse — and all three look identical
+from outside. So the bootstrap sets `__iris_bootstrap_ready__` as its **last**
+statement, `fail()` sets `__iris_bootstrap_spoke__` **before** it reports, and a
+guard between the tag and the card's markup reads both:
+
+- Neither set → the script never ran. The guard names which absence it is, using
+  the resource timing entry as the discriminator (an entry with a body means the
+  file arrived and did not install — wrong bytes, a parse error, a stale build;
+  no entry means nothing was delivered — CSP, blocked, or a failed request), and
+  reads the URL off the tag rather than holding a second copy of it. It reports
+  through the **existing** unstamped `bootstrap-error` channel — the same one
+  `frame-entry.ts`'s own `fail()` uses, which `runner.ts` accepts on
+  `event.source` alone and the shell shows through `onBootstrapError` — draws a
+  named panel in the frame so a blank frame is blank *for a stated reason*, and
+  then makes the rest of the document inert two ways: `document.write` of an
+  unclosed `<template>` (everything after it becomes template content, parsed but
+  neither rendered nor executed) and `window.stop()`.
+- `spoke` set → the bootstrap ran and threw, and has already reported the real
+  error. The guard is **silent and does nothing**. Speaking would replace a
+  named error with a guess about the network; stopping would blank a card's
+  interface for a failure that is today survivable, which this move has no
+  business changing.
+
+`document.open()` is not used and cannot be: called from a parser-inserted
+script it sets the ignore-destructive-writes counter and returns, so it is a
+no-op in exactly the position this guard occupies.
+
+**③ A real browser — `tests/frame-bootstrap-live.test.ts`.** Three `srcdoc`
+frames in a headless Chrome over CDP, built from the real `buildSrcdoc` and the
+real built artifact served with the host's headers. The card body under test is
+one parse-time `<script>` followed by one element, and the element is the witness.
+
+1. **The real thing.** The card's first parse-time script reports
+   `__iris_bootstrap_ready__ === true`, `window.parent.document` **reachable**,
+   the member table present, and `document.readyState === 'loading'` — that last
+   one is what makes the reading about the moment under test rather than a later
+   one.
+2. **The negative control: the bootstrap 404s.** The shell receives a
+   `bootstrap-error` whose message names the failing URL and whose `iris` field
+   is empty (unstamped, as the pre-token channel is); the frame carries the named
+   panel with a sentence a reader can act on; the swallowing `<template>` is in
+   the DOM; and **the card's markup never ran** — no probe reading, and the
+   witness element is not in the document at all.
+3. **The vacuity control: no bootstrap tag at all.** The same probe in a bare
+   sandboxed `srcdoc` reports `window.parent.document` **threw** a SecurityError.
+   This is what stops ① from being a test of nothing: if a cross-origin parent's
+   `document` were readable anyway, the live frame's reading would be green with
+   the bootstrap deleted.
+4. **The other absence: a real script that is not the bootstrap.** The tag points
+   at the member table — HTTP 200, loads, parses, sets no bootstrap marker, which
+   is the shape a stale build or a wrong manifest entry takes. It exists because
+   the guard's first diagnosis was **wrong for the commonest case** and this file
+   was green while it was: the guard asked "is there a body" and answered "it
+   arrived and set no marker: wrong bytes, a parse error, or a stale build"
+   whenever there was — and a 404 has a body, so a missing file sent the reader to
+   the bundler. Found by mutating the guard's inertness away, which let the panel
+   text through into a failure message; the negative control had only asserted
+   that the panel said *something* actionable, so the branch it took was never
+   pinned. The guard now reads `responseStatus`, the report names the status, and
+   both branches are pinned in both directions (404 says 404 and does not say
+   "wrong bytes"; a 200 that sets no marker says so and does not say 404).
+
+Gated on `IRIS_BROWSER=1` — on the **flag**, not on whether a browser is
+installed, so the suite's skip count is a property of the request and not of the
+machine (`check-corpus-skips.mjs`, 34 → 35, with a new `IRIS_BROWSER` gate
+category). With the flag set and no Chrome, or no `public/sandbox` build, it
+**fails** and says which: asking for a check and silently not getting it is the
+outcome the file exists against.
+
+### What else moved
+
+- **The shell stops fetching the bootstrap's bytes.** Three call sites did
+  (`MessageInterfaces.tsx`, `useCardScripts.tsx`, `SandboxProbe.tsx`); they now
+  resolve the manifest and hand `runCard` a URL. `RunnerHost.bootstrap: string`
+  is `bootstrapUrl: string` — renamed because the type did not change and the
+  meaning did.
+- **`checkBootstrap` narrows to one caller, the build.** It is not deleted and
+  not redundant: it reads the **emitted** bytes and can say *what* is wrong with
+  them in an actionable sentence, where the guard reads the **served** bytes,
+  cannot see them, and can only say that nothing installed. A bundler
+  misconfiguration is visible to the first and not the second; a dev server that
+  rewrites on the way out is the reverse.
+- **`bootstrap.js`, the un-hashed copy, does not exist** and has not for some
+  time: the hash step *renames* rather than copies. `prune-sandbox-assets.mjs`'s
+  comment still described it as a build output the pruner deliberately leaves
+  alone; corrected, together with the report's "also present" line, whose only
+  member today is the FontAwesome sentinel.
+
+### One dev-story change, found by measuring rather than by reasoning
+
+**A bare `npm run dev` — Vite alone, no Iris host — does not serve
+`access-control-allow-origin` on `/sandbox/*`.** Measured 2026-09-10 on Vite
+6.4.3, with and without an `Origin: null` request header (which is what a
+sandboxed `srcdoc` frame sends): `content-type: text/javascript`,
+`cache-control: no-cache`, and **no CORS header at all**, for the bootstrap and
+for the member table alike. Vite's `server.cors` default does not admit an
+opaque origin.
+
+That was already true and already fatal for the member table, so a bare Vite dev
+server has never been able to run a card frame: the frame came up and refused,
+naming the table. What changes is **which** name the refusal carries — the
+bootstrap is blocked first now, so the guard says "the bootstrap did not install
+— the browser recorded no response for it" instead. Both sentences point at the
+same missing header.
+
+Not fixed here, because the supported path is not bare Vite: the Iris host claims
+`/sandbox` ahead of the frontend plugin and answers it through
+`serveSandboxAsset`, which sends `access-control-allow-origin: *` and
+`timing-allow-origin: *` (measured above, and the route this section's cost table
+was measured through). **Acceptance has to go through the host** — `node
+apps/iris/bin.ts` — and a frame reporting "the bootstrap did not install" on a
+bare Vite port is this, not a regression.
+
+### What would overturn it
+
+- **A measurement showing a card's markup reaching a bridged name before the
+  bootstrap installed.** Check ③ is written to see exactly this, and its failure
+  message says so. The fix would not be to re-inline: it would be to find which
+  attribute or which browser broke the blocking-classic contract, because
+  everything else in the document — the member table, every card library —
+  depends on the same contract.
+- **A remote deployment.** Then 20 frames × 53.8 KB is a real number instead of
+  25 ms. But the same page already pays 20 × 1.66 MB for the message preset, so
+  the case that arrives with that evidence is a shared-cache or a
+  smaller-preset case, and it would have to answer for 93.7% of the transfer
+  before it reached this 3.0%.
+- **The member table and the bootstrap becoming one artifact.** Recorded as an
+  open question rather than answered here. The seam between them was justified by
+  the inline/fetch split — policy inlined and unsubstitutable, surface fetched —
+  and that justification is now spent on both sides: both are fetched, both by
+  hashed URL, both under the same `script-src`. Merging them would remove one
+  request per frame and a class of "which half is missing" report. Not done in
+  this change: four branches are adding members to that table concurrently, and
+  the conflict cost would swamp the benefit.

@@ -25,10 +25,11 @@
  *
  * @module iris-web/tools/hash-sandbox-assets
  */
-import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { hashedName } from './asset-fingerprint.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const dir = join(here, '..', 'public', 'sandbox')
@@ -44,20 +45,6 @@ const dir = join(here, '..', 'public', 'sandbox')
  */
 const ARTIFACTS = ['bootstrap', 'members', 'preset', 'message-preset']
 
-/**
- * Sixteen hex characters of SHA-256.
- *
- * Long enough that a collision is not a thing anyone needs to reason about,
- * short enough to read in a network panel and compare by eye — which is what
- * someone does when they are trying to work out whether the browser has the
- * build they just made.
- * @param bytes - the file contents.
- * @returns the hash fragment for the name.
- */
-function fingerprint(bytes) {
-  return createHash('sha256').update(bytes).digest('hex').slice(0, 16)
-}
-
 const manifest = {}
 const keep = new Set(['manifest.json'])
 
@@ -71,7 +58,14 @@ for (const artifact of ARTIFACTS) {
     process.exit(1)
   }
 
-  const name = `${artifact}-${fingerprint(bytes)}.js`
+  /*
+   * The name comes from `asset-fingerprint.mjs` rather than from a local
+   * `createHash` call, because `check-bootstrap.mjs` verifies this equality on
+   * every build — that the file the manifest names still hashes to the hash in
+   * its own filename — and a verifier with its own spelling of the hash would be
+   * checking one convention against another.
+   */
+  const name = hashedName(artifact, bytes)
   renameSync(plain, join(dir, name))
   manifest[artifact] = name
   keep.add(name)

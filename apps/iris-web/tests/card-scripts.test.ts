@@ -56,7 +56,7 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
     resolve: async () => ({ scripts: scripts(), documentGranted: false }),
     context: async () => CONTEXT,
     body: async (_character, scriptId) => ({ ok: true, content: `/* ${scriptId} */` }),
-    bootstrap: async () => '(function(){})()',
+    bootstrapUrl: async () => 'http://iris.test/sandbox/bootstrap-abc.js',
     start: input => {
       // One frame for the card's whole set now, so the harness records the set.
       for (const script of input.scripts) started.push(script.id ?? '')
