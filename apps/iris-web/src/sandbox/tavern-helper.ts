@@ -3156,6 +3156,94 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     },
 
     /**
+     * Upstream's deprecated singular set — the member whose absence was loud.
+     * Upstream has it (`chat_message.ts:492`) but its own `@types` never
+     * declared it, so the surface list this file's siblings read — extracted
+     * from those `@types` — could not carry it, and a card calling
+     * `setChatMessage(…)` met `setChatMessage is not defined` with no sentence
+     * anywhere naming it as expected scope. Measured: 魔法少女的扣扣审判1.0's
+     * 封面 regex switches its opening swipes through
+     * `setChatMessage(messages[0].swipes[swipeId], 0, { swipe_id: swipeId,
+     * refresh: 'display_and_render_current' })`, and its enter button died on
+     * exactly that ReferenceError, caught by the card and toasted.
+     *
+     * Upstream's own docstring says to prefer the plural, and this composes
+     * the same two arms the plural routes to. What it adds is the singular
+     * contract, kept verbatim:
+     *
+     * - the first argument may be a bare string, coerced to `{message}`;
+     * - `swipe_id` and `refresh` are validated **before anything else**, and
+     *   the two error sentences are upstream's own, character for character,
+     *   trailing space included;
+     * - a `message_id` that addresses no floor answers **silently** —
+     *   upstream's `chat.at(message_id)` returning undefined returns, it does
+     *   not throw. Array.at semantics, so a negative id counts from the end.
+     *
+     * A numeric `swipe_id` both moves the floor and addresses the write,
+     * which upstream does in one mutation; this host addresses text by the
+     * floor's *shown* swipe, so the composition is `swipeTo` first and the
+     * write second — the very order the plural's refusal asks a card to
+     * perform by hand, done here for it.
+     *
+     * Not carried, each for the plural's own reason: a `refresh` of 'none'
+     * with a numeric `swipe_id` wants the write to land in a swipe that is
+     * not showing, which no arm here addresses — refused by name rather than
+     * applied to whichever swipe happens to be up. And upstream demacros the
+     * text on write (`substituteParamsExtended`); the write arm writes
+     * literally, the same leg the plural crosses.
+     * @param fieldValues - the text, or `{message, data}`.
+     * @param messageId - the floor, upstream's `chat.at` addressing.
+     * @param options - upstream's `{swipe_id, refresh}`.
+     * @returns nothing; a floor that does not exist counts as done.
+     */
+    setChatMessage: async (
+      fieldValues: string | { message?: string, data?: Record<string, unknown> },
+      messageId: number,
+      options?: { swipe_id?: 'current' | number, refresh?: 'none' | 'display_current' | 'display_and_render_current' | 'all' },
+    ): Promise<void> => {
+      const values = typeof fieldValues === 'string' ? { message: fieldValues } : fieldValues
+      const swipeId = options?.swipe_id ?? 'current'
+      const refresh = options?.refresh ?? 'display_and_render_current'
+      if (typeof swipeId !== 'number' && swipeId !== 'current') {
+        throw new Error(`提供的 swipe_id 无效, 请提供 'current' 或序号, 你提供的是: ${String(swipeId)} `)
+      }
+      if (!['none', 'display_current', 'display_and_render_current', 'all'].includes(refresh)) {
+        throw new Error(
+          `提供的 refresh 无效, 请提供 'none', 'display_current', 'display_and_render_current' 或 'all', 你提供的是: ${String(refresh)} `,
+        )
+      }
+
+      // `chat.at(message_id)`: absent floor, silent return — including a
+      // non-integer id, which `at` also answers with undefined.
+      if (typeof messageId !== 'number' || !Number.isInteger(messageId)) return
+      const chat = chatOf('setChatMessage')
+      const at = messageId < 0 ? chat.length + messageId : messageId
+      if (at < 0 || at >= chat.length) return
+
+      const writes = typeof values.message === 'string' || values.data !== undefined
+      if (typeof swipeId === 'number' && writes && refresh === 'none') {
+        throw new UnsupportedApiError(
+          `setChatMessage(values, ${String(messageId)}, { swipe_id: ${String(swipeId)}, refresh: 'none' })`,
+          "the write would have to land in a swipe that is not showing —"
+            + ' swipe first (refresh omitted), then send the text',
+        )
+      }
+      if (typeof swipeId === 'number') {
+        await host.call('swipeTo', { messageId: at, swipeIndex: swipeId })
+      }
+      if (typeof values.message === 'string') {
+        await host.call('setChatMessages', { messages: [{ messageId: at, message: values.message }] })
+      }
+      if (values.data !== undefined) {
+        // Upstream: `variables[swipe_id_to_set_index] = field_values.data` —
+        // the whole table for that swipe, replaced. After the `swipeTo` above
+        // the shown swipe is the one upstream addresses, so the message-scope
+        // write lands on the same index.
+        await write('setChatMessage', 'replace', { type: 'message', message_id: at }, { variables: values.data })
+      }
+    },
+
+    /**
      * Upstream's chat-append member — and until now a name the surface
      * declared but never answered, which is the one shape this surface cannot
      * carry: a card guards with `typeof createChatMessages === 'undefined'`,

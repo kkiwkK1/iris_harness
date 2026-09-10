@@ -16,8 +16,7 @@
  * list can produce.
  *
  * Extracted from the installed Tavern Helper's `@types` declarations rather than
- * written by hand, and pinned by a test that re-extracts them when that corpus
- * is present. A hand-kept list of 171 names would rot silently, and the rot is
+ * written by hand. A hand-kept list that long would rot silently, and the rot is
  * invisible until a card is handed the wrong diagnosis.
  *
  * Membership here says nothing about whether Iris implements a member — only
@@ -26,8 +25,13 @@
  * ## Two lists, two surfaces
  *
  * A card reaches for two vocabularies, and until now only one of them was
- * written down. The Tavern Helper list at the bottom of this file holds the 171
- * names its `@types` declare; {@link UPSTREAM_CONTEXT_MEMBERS}, first, holds
+ * written down. The Tavern Helper list at the bottom of this file holds the
+ * names its `@types` declare — 171 at the extraction — plus `setChatMessage`,
+ * which upstream's registration table carries and its `@types` never did; a
+ * list read off the declarations alone had no way to know the member existed,
+ * and a card calling it met `setChatMessage is not defined` with no sentence
+ * anywhere naming it as expected scope (measured: 魔法少女的扣扣审判1.0's 封面
+ * regex, at its enter button). {@link UPSTREAM_CONTEXT_MEMBERS}, first, holds
  * SillyTavern's own — the 145 keys `getContext()` returns. They are separate
  * lists because they are separate authorities, they are extracted from
  * different files, and a name on one says nothing about the other.
@@ -387,6 +391,7 @@ export const UPSTREAM_MEMBERS: readonly string[] = [
   'rotateChatMessages',
   'setAudioSettings',
   'setChatLorebook',
+  'setChatMessage',
   'setChatMessages',
   'setCurrentCharLorebooks',
   'setLorebookEntries',

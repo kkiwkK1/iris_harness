@@ -5247,6 +5247,30 @@ summary (a bounded cost: 15 of 19 corpus cards carry none). And a card that
 legitimately needs a *neighbouring* card's data would put the per-card grant
 model itself in question, which is a decision above this surface.
 
+**Postscript, 2026-09-10 — the singular the declarations never named.**
+Upstream 4.9.1 has always had a deprecated singular beside the patch this
+section built: `setChatMessage(field_values, message_id, {swipe_id, refresh})`
+(`chat_message.ts:492`), registered into the card surface by the injection
+table's `chat_message` group (`src/function/index.ts`). Its own `@types` never
+declared it, so the member list that was extracted from the declarations
+carried only the plural — and no checklist could name the gap when
+魔法少女的扣扣审判1.0's 封面 regex called `setChatMessage(messages[0].swipes[
+swipeId], 0, { swipe_id: swipeId, refresh: 'display_and_render_current' })` at
+its enter button and the card toasted `进入失败: setChatMessage is not
+defined`. The failure shape is the surface module's own sentence made flesh: a
+checklist can only ever speak about names that are on it. The member is now
+built as the plural's composition over the same two arms — `swipeTo` first,
+then the rewrite, because this host addresses text by the floor's shown swipe
+and upstream does both in one mutation — with the singular contract kept
+verbatim: the bare-string coercion, the two validation sentences character for
+character (trailing space included), and the silent return when
+`chat.at(message_id)` addresses no floor. Two narrowings recorded: a
+`refresh` of `'none'` aimed at a numbered swipe wants a write into a
+non-showing swipe, which no arm here addresses, so it is refused by name; and
+upstream demacros the text on write (`substituteParamsExtended`), while the
+rewrite arm writes literally — the same leg the plural crosses, so no
+departure this section had not already made.
+
 ---
 
 ## 88. The regex family reads and writes over the wire, because the tiers are too heavy to ride the snapshot

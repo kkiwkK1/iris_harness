@@ -169,6 +169,12 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
    */
   setChatMessages: 'shared',
   /*
+   * The deprecated singular set, composed over the same two arms as the patch
+   * above: it addresses the chat by floor index — a fact of the chat, not of
+   * whichever script asked.
+   */
+  setChatMessage: 'shared',
+  /*
    * Upstream's chat append and delete, over the same route as the patch above:
    * both address the chat file by index (rows to append, ids to remove), so the
    * answer belongs to the chat, not to whichever script asked.

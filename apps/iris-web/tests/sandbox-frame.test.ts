@@ -341,8 +341,11 @@ test('exactly the outward-reaching names are shadowed', () => {
     'createWorldbookEntries',
     'swipeTo',
     // The chat-patch member, bare like upstream's injected iframe API, with
-    // the append and delete arms that share its route.
+    // the append and delete arms that share its route — and the deprecated
+    // singular beside it, which upstream registers but never declared in its
+    // `@types`, which is why the extracted list had missed it.
     'setChatMessages',
+    'setChatMessage',
     'createChatMessages',
     'deleteChatMessages',
     'generate',
@@ -1559,8 +1562,11 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'createWorldbookEntries',
     'swipeTo',
     // The chat-patch member, bare like upstream's injected iframe API, with
-    // the append and delete arms that share its route.
+    // the append and delete arms that share its route — and the deprecated
+    // singular beside it, which upstream registers but never declared in its
+    // `@types`, which is why the extracted list had missed it.
     'setChatMessages',
+    'setChatMessage',
     'createChatMessages',
     'deleteChatMessages',
     'generate',

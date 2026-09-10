@@ -169,6 +169,116 @@ test('setChatMessages refuses a patch without a readable message_id', async () =
   )
 })
 
+/** The singular under test, typed off the surface bag. */
+type SetChatMessage = (
+  fieldValues: string | { message?: string, data?: Record<string, unknown> },
+  messageId: number,
+  options?: { swipe_id?: 'current' | number, refresh?: 'none' | 'display_current' | 'display_and_render_current' | 'all' },
+) => Promise<void>
+function setChatMessage(scope: { api: Record<string, unknown> }): SetChatMessage {
+  return scope.api['setChatMessage'] as SetChatMessage
+}
+
+test('setChatMessage answers the measured call: swipe first, then the text', async () => {
+  /*
+   * 魔法少女的扣扣审判1.0's 封面 regex, verbatim:
+   * `setChatMessage(messages[0].swipes[swipeId], 0, { swipe_id: swipeId,
+   * refresh: 'display_and_render_current' })`. This used to die as
+   * `setChatMessage is not defined` before the card's enter button ever
+   * worked — the member was real upstream (`chat_message.ts:492`) and absent
+   * from every list this repo extracted from its `@types`, which never
+   * declared it.
+   *
+   * The order is the contract: upstream writes the text into swipe N and
+   * moves the floor there in one mutation, and here the text is addressed by
+   * the floor's *shown* swipe, so `swipeTo` has to land before the write —
+   * the reverse order would put the text in the swipe being left.
+   */
+  const scope = surface()
+  await setChatMessage(scope)('开场白文本', 0, { swipe_id: 1, refresh: 'display_and_render_current' })
+  assert.deepEqual(scope.calls, [
+    { method: 'swipeTo', params: { messageId: 0, swipeIndex: 1 } },
+    { method: 'setChatMessages', params: { messages: [{ messageId: 0, message: '开场白文本' }] } },
+  ])
+})
+
+test('setChatMessage carries the singular contract the plural does not have', async () => {
+  // A bare string as the first argument, coerced to a message write.
+  const bare = surface()
+  await setChatMessage(bare)('文本', 1)
+  assert.deepEqual(bare.calls, [
+    { method: 'setChatMessages', params: { messages: [{ messageId: 1, message: '文本' }] } },
+  ], "no options means swipe_id 'current': a text write and no swipe")
+
+  // `chat.at(message_id)` answers undefined for a floor that is not there,
+  // and the singular returns silently rather than throwing — upstream's own
+  // behaviour, unlike the plural, which refuses an unreadable id.
+  const absent = surface()
+  await setChatMessage(absent)('文本', 9)
+  await setChatMessage(absent)('文本', 1.5)
+  assert.deepEqual(absent.calls, [], 'a floor that does not exist must not produce a write')
+
+  // Array.at semantics: a negative id counts from the end.
+  const negative = surface()
+  await setChatMessage(negative)('文本', -1)
+  assert.deepEqual(negative.calls, [
+    { method: 'setChatMessages', params: { messages: [{ messageId: 2, message: '文本' }] } },
+  ])
+})
+
+test('setChatMessage throws the two validation sentences verbatim', async () => {
+  /*
+   * Upstream validates before it touches anything, and its sentences end in a
+   * space (`你提供的是: ${value} `) — copied character for character, because
+   * a card surfaces them to its player and a reworded sentence is a second
+   * dialect of the same API.
+   */
+  const scope = surface()
+  await assert.rejects(
+    () => setChatMessage(scope)('文本', 0, { swipe_id: 'first' as 'current' | number }),
+    (error: Error) => error.message === `提供的 swipe_id 无效, 请提供 'current' 或序号, 你提供的是: first `,
+  )
+  await assert.rejects(
+    () => setChatMessage(scope)('文本', 0, { refresh: 'sometimes' as 'none' | 'display_current' | 'display_and_render_current' | 'all' }),
+    (error: Error) =>
+      error.message === `提供的 refresh 无效, 请提供 'none', 'display_current', 'display_and_render_current' 或 'all', 你提供的是: sometimes `,
+  )
+  assert.deepEqual(scope.calls, [], 'validation runs before any arm is touched')
+})
+
+test('setChatMessage refuses a none-refresh write aimed at an unshown swipe', async () => {
+  /*
+   * Upstream writes into `swipes[to_set]` and leaves the shown swipe alone
+   * when refresh is 'none'. No arm here addresses a swipe that is not
+   * showing, so the honest answer is the plural's own refusal shape, by
+   * name, before any arm runs.
+   */
+  const scope = surface()
+  await assert.rejects(
+    () => setChatMessage(scope)('文本', 0, { swipe_id: 1, refresh: 'none' }),
+    UnsupportedApiError,
+  )
+  assert.deepEqual(scope.calls, [])
+})
+
+test('setChatMessage carries data to the message-scope table replace', async () => {
+  /*
+   * Upstream: `variables[swipe_id_to_set_index] = field_values.data` — the
+   * whole table, replaced, at the swipe it just moved to. After the swipeTo
+   * the shown swipe *is* that one, so the message-scope write lands on the
+   * same index upstream addresses.
+   */
+  const scope = surface()
+  await setChatMessage(scope)({ data: { hp: 5 } }, 1, { swipe_id: 0 })
+  assert.deepEqual(scope.calls, [
+    { method: 'swipeTo', params: { messageId: 1, swipeIndex: 0 } },
+    {
+      method: 'setVariables',
+      params: { scope: 'message', messageId: 1, op: 'replace', variables: { hp: 5 } },
+    },
+  ])
+})
+
 test('createChatMessages maps roles onto the wire rows the host arm takes', async () => {
   /*
    * The 建国控制台's chain: `createChatMessages([{ role: 'user', message }])`
