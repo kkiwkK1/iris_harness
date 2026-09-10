@@ -5153,6 +5153,216 @@ which is a different member than upstream's; or a snapshot channel that is not
 per-frame source bytes (a shared `SharedArrayBuffer`, a fetched per-chat blob),
 which would make the tiers affordable and the whole departure unnecessary.
 
+## 90. The `Lorebook` vocabulary Tavern Helper renamed, over the `Worldbook` one it renamed it to — and the four writes the new family was missing
+
+**The premise this landed with was wrong, and the correction changes the shape
+of the work.** The dispatch said upstream implements the old `Lorebook` API as a
+compatibility layer over the new `Worldbook` one, so the aliases would be a
+rename plus a field map. Read: `src/function/lorebook.ts` and
+`src/function/lorebook_entry.ts` implement the old names **directly** against
+SillyTavern's own state (`world_names`, `loadWorldInfo`, `saveWorldInfo`,
+`chat_metadata`, and a `$('#character_world')` write), and it is the *new*
+module that delegates to the old one — `worldbook.ts:50-82` builds four of its
+binding members out of `getCharLorebooks`, `getChatLorebook`, `setChatLorebook`
+and `getOrCreateChatLorebook`. The two entry vocabularies meet **nowhere**
+upstream: each converts to and from the raw stored row on its own
+(`toLorebookEntry` at `lorebook_entry.ts:133`, `fromPartialLorebookEntry` at
+`:223`; `toWorldbookEntry` at `worldbook.ts:205`, `fromWorldbookEntry` at
+`:262`). Iris has no raw row in the frame — the host owns storage and the wire
+carries the new shape — so the old vocabulary is composed *through* the new one
+here, with the raw row as a pivot read out of both converters.
+
+**Why the old names are built at all, against the surface audit.**
+`TH-SURFACE-AUDIT.md` groups these sixteen names as **不补** — the whole family
+is `@deprecated`, each declaration points at its replacement, and corpus usage
+measured **zero** in both corpora. That reading is correct and the conclusion is
+overturned here, on the coordinator's dispatch of 2026-09-10 and for three
+reasons: the corpus is 19 cards and one sample, so a zero there bounds nothing
+about card 20; these were upstream's *only* spelling until 4.x, and they still
+work there — `@deprecated` is advice to whoever writes the next card, not a
+member that stopped working; and the failure mode is not a no-op but a
+`TypeError` in a card's first statement, because the measured idiom is
+`getCharLorebooks().primary`. Recorded rather than quietly done, per the rule
+that a peer's ruling is overturned in writing or not at all.
+
+**Twenty members, three new wire routes.** Seventeen of the twenty are composed
+in the frame out of routes that already existed, which is the ratio the family's
+shape predicts: the old names are a second spelling of members already here.
+
+| member | how | note |
+| --- | --- | --- |
+| `createOrReplaceWorldbook` | `worldbook.create`, then `worldbook.replace` if it existed | one call for an absent book: the host's create takes entries |
+| `deleteWorldbook` | `worldbook.delete` (**new**) | host §66 |
+| `deleteWorldbookEntries` | `worldbook.get` + `worldbook.replace` | takes a predicate, so it cannot cross the boundary |
+| `rebindCharWorldbooks` | `worldbook.setCharBooks` (**newly routed**) | `primary` refused; see below |
+| `getLorebooks` | snapshot `worldbookNames` | synchronous, like `getWorldbookNames` |
+| `createLorebook` | `worldbook.create` | |
+| `deleteLorebook` | `worldbook.delete` | |
+| `getCharLorebooks` | snapshot `charWorldbooks` | `type` accepted and ignored — upstream ignores it too |
+| `getCurrentCharPrimaryLorebook` | the same read's `.primary` | |
+| `setCurrentCharLorebooks` | `worldbook.setCharBooks` | same local as `rebindCharWorldbooks` |
+| `getChatLorebook` | snapshot `chatMetadata` + names | same local as `getChatWorldbookName` |
+| `setChatLorebook` | `worldbook.bindChat` | `null` unbinds |
+| `getOrCreateChatLorebook` | the local `getOrCreateChatWorldbook` composes | upstream's exact name-minting recipe |
+| `setLorebookSettings` | `worldbook.setSettings` (**newly routed**) + `worldbook.setGlobalSelect` | synchronous, `void` |
+| `getLorebookEntries` | `worldbook.get` + the mapping + upstream's `filter` | |
+| `replaceLorebookEntries` | `worldbook.replace` with the **old** defaults | |
+| `updateLorebookEntriesWith` | read, updater, replace | not on the dispatch's list; see below |
+| `setLorebookEntries` | read, `_.merge` per uid, replace | |
+| `createLorebookEntries` | read, lowest free uid, replace | |
+| `deleteLorebookEntries` | read, filter by uid, replace | |
+
+`updateLorebookEntriesWith` was not on the branch's list of names and is built:
+upstream constructs `setLorebookEntries`, `createLorebookEntries` and
+`deleteLorebookEntries` on top of it (`lorebook_entry.ts:361`), so leaving it
+out would have made the vocabulary five sixths complete with the missing sixth
+the one every sibling is a composition of. No other branch owns it.
+
+**The mapping** (`lorebook-aliases.ts`, whose header carries the full table and
+the upstream line numbers). The five asymmetries are copied rather than
+repaired, and each is a place a "cleaner" implementation would be silently
+wrong:
+
+1. **The default entry is not the same entry.** An old partial with no `type`
+   becomes `selective` (`default_original_lorebook_entry`, `:99`); a new partial
+   with no `strategy` becomes `constant` — always on (`worldbook.ts:272`). So
+   `replaceLorebookEntries(book, [{uid: 0}])` and
+   `replaceWorldbook(book, [{uid: 0}])` write **different entries**, and this is
+   why the old write leg fills in a complete entry from the old defaults instead
+   of forwarding the partial. Forwarding passes every other test and turns a
+   card's blank entry always-on.
+2. **The old getter revives no keys**, so the mapping reads the wire shape
+   before revival. `LorebookEntry.keys` is `string[]` upstream and
+   `getWorldbook` hands out `RegExp` objects; `readWorldbookRows` is split out
+   of `readWorldbook` for exactly this, so "how a book is fetched" stays one
+   decision and revival is the only thing the two readers differ by.
+3. **`key` and `filter` are readable and not writable.** Upstream's getter sets
+   all four spellings (`:157`, `:167`); its writer has transformers for `keys`
+   and `filters` only (`:262`, `:271`). A card writing `key` is ignored *there*
+   too, so both halves are reproduced — a card that "works" here and drops its
+   keys on real SillyTavern is the worse outcome.
+4. **`outlet` has no old spelling.** Upstream's old getter maps six position
+   codes by table and sends everything else through the role fallback
+   (`:141-152`), so position 4 *and* 7 read as `at_depth_as_<role>`; writing
+   that back stores `at_depth`. An outlet is lost by a round trip through the
+   old API, upstream's included. **0 of the 2476 entries** in the two real
+   corpora sit at position 7.
+5. **`display_index` cannot line up, and that is upstream's doing.** The new API
+   dropped the field and derives `displayIndex` from array position
+   (`fromWorldbookEntry`'s second parameter *is* the index); this host does the
+   same on every write, and `worldbook.get` does not carry it. So the value a
+   card reads is the entry's **position in the book**. Measured over the 29 real
+   books (2476 entries): the stored `displayIndex` equals the entry's ordinal
+   for 1966 of them, so **21% of real entries would read a different number**
+   under upstream's old getter.
+
+**Two orderings measured rather than assumed.**
+
+- `getLorebookEntries` answers in the host's **`displayIndex` order**, not uid
+  order. Upstream's old getter effectively answers in *uid* order — its storage
+  is an object keyed by uid, so `_(data.entries).values()` walks integer-like
+  keys ascending — while its own new API sorts by `displayIndex`. Copying the
+  uid order here would be actively destructive: this host renumbers
+  `displayIndex` from array position on every write, so a card's
+  read-modify-write would permanently reorder the book, and **14 of the 29 real
+  books have a uid order that differs from their displayIndex order**.
+- `createLorebookEntries` mints the **lowest free** uid (`:391`), not the random
+  one the replace path uses (`:315`), because `new_uids` is what a card holds on
+  to in order to find its own entries again.
+
+**`_.merge`, not a spread.** `setLorebookEntries` patches with
+`_.merge(data_entry, entry_to_set)` (`:377`), and lodash merges two arrays
+**index by index**: patching `keys: ['a']` over `['x','y']` leaves `['a','y']`.
+A spread would drop the tail, so a card narrowing a key list would leave this
+host's book activating on keywords the card removed — with no error anywhere.
+Reproduced in `mergeLorebookEntry` rather than by importing lodash, because the
+old entry shape is flat and the whole of merge's behaviour over it is that rule
+plus "an `undefined` source does not overwrite".
+
+**Three writes the old vocabulary cannot carry, and one it cannot read.**
+`outletName`, `triggers`, `characterFilter` and `ignoreBudget` exist on disk,
+have no old spelling, and are therefore **reset across the whole book by any
+write through this vocabulary** — upstream's old writer loses the same four, its
+default row having no key for any of them. And `probability` is unrecoverable
+for an entry with `useProbability: false`: this wire (and upstream's new API,
+`worldbook.ts:241`) reports 100, while upstream's old getter reports the stored
+number. 23 of the 2476 real entries are in that state; reporting what the entry
+actually does beats inventing a number nobody sent. The write leg sets
+`useProbability: true`, which is upstream's old default row doing the same
+thing.
+
+**The one thing this family cannot do: change a character's primary book.**
+Upstream's `setCurrentCharLorebooks` writes it into the **card file** — it drives
+`#character_world` and posts `/api/characters/edit` (`lorebook.ts:263-284`) —
+and this host has no arm for that: `worldbook.setCharBooks` is
+`world_info.charLore`, the additional list, and its contract says the primary
+"lives on the card, and the card file is shared between installations". So a
+`primary` that would **change** is refused by name with nothing written; a
+`primary` that is unchanged is not a request, because the shape a card writes is
+`setCurrentCharLorebooks({...getCharLorebooks(), additional: […]})`. The
+existence check covers the additional list **only**, which departs from
+upstream's `_.concat` of both (`:255`): a primary whose file is gone is a normal
+state here — `getCharWorldbookNames` reports the binding rather than the book in
+use, and 2 of the corpus's 18 bindings dangle — so validating it would refuse
+the ordinary call over a name this host cannot write anyway. Found by this
+branch's own first test run, not by reading.
+
+**The character is named by the shell, never by the card.**
+`worldbook.setCharBooks` takes a `characterId` and the frame is the untrusted
+side, so a card supplying one could rewrite the bindings of a character the user
+did not open. Both members accept only `'current'`, and `client/store.ts` fills
+in `view.characterId` — spread **after** the card's own params so a frame that
+sends its own is overridden. Same division as `runId` for an injection, and
+pinned by a `store.test.ts` case that deliberately sends a hostile
+`characterId`.
+
+**`setLorebookSettings` is synchronous and `void`, because upstream's is** — MVU
+has a call site that does not await it. So the validation happens before
+anything is sent (upstream's own order: refuse the whole call when the global
+selection names a book that does not exist, one throw carrying **every** missing
+name, `lorebook.ts:191`; then apply only the fields that differ from what is set,
+`:198`), and the two writes are fired with their failures reported rather than
+thrown — an asynchronous throw from a `void` member arrives as an unhandled
+rejection with no card frame in the stack, the precedent `writeButtons` set.
+The sixteen fields split three ways: twelve knobs to `worldbook.setSettings`
+under this host's own names (`context_percentage` → `budgetPercent`, `max_depth`
+→ `minActivationsDepthMax` — both misleading names mapped by meaning),
+`selected_global_lorebooks` to `worldbook.setGlobalSelect`, and
+**`overflow_alert` to nothing**: this host stores no such knob, so it is
+reported as a gap rather than accepted, because accepting it would make the next
+read disagree with what the card just set, silently.
+
+**Cost: the bootstrap grows 53,285 → 54,059 bytes (+774).** The members
+themselves and the whole mapping module ride the **fetched member table**, which
+the budget does not bill; what grew is the three inlined tables the frame's core
+reads — 20 `MEMBER_KINDS` entries, 3 `CARD_METHODS` entries, 3 `OFF_ST_SURFACE`
+entries. Frame overhead is now about 55,083 bytes against `FRAME_OVERHEAD_BYTES`
+= 55,296, so this branch alone fits with **213 bytes to spare where it found
+987**. §86 is the standing warning about exactly this: three sibling branches
+are spending the same headroom against the same main, and the constant will have
+to move — and `FRAME_COUNT_LIMIT < degradesAt / 2` re-checked — when they land
+together rather than one branch at a time.
+
+**Pinned.** `lorebook-aliases.test.ts` (44 tests, split deliberately: the pure
+mapping field by field in both directions, the members through the real façade
+with a recording host, so what is asserted is the call that would cross the
+boundary), plus one case in `store.test.ts` for the injected `characterId`, and
+the two pinned bare-surface lists in `sandbox-frame.test.ts` grow by twenty
+names. 21 mutations across the mapping, the members and the shell each turned
+exactly the expected assertion red — including "the arrays are replaced instead
+of merged index-wise", "the old default is `constant`", "the primary refusal is
+removed", "the frame may name the character" and "the settings write becomes
+asynchronous".
+
+**What would overturn it.** A host arm that can write a card's `extensions.world`
+— the primary refusal would become a real rebind, and `rebindCharWorldbooks`
+would then match upstream field for field; a `worldbook.get` that carries the
+stored `displayIndex`, which would let `display_index` be the number upstream
+reports rather than the ordinal (and would then need a rule for what a write
+does with it, since this host renumbers); a measured card that reads
+`probability` off an entry whose roll is disabled; SillyTavern giving `outlet` an
+old-vocabulary spelling, which would end asymmetry 4.
+
 ---
 
 ## 91. The frame bootstrap is fetched, not inlined — and the premise that made it inline is now checked three ways

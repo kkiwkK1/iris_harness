@@ -959,6 +959,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('regex.tavernList', handlers['regex.tavernList']),
       ctx.irisRpc.register('regex.tavernReplace', handlers['regex.tavernReplace']),
       ctx.irisRpc.register('regex.tavernFormat', handlers['regex.tavernFormat']),
+
+      // —— family④: lorebook / worldbook ——
+      ctx.irisRpc.register('worldbook.delete', handlers['worldbook.delete']),
     ]
     return () => {
       for (const dispose of disposers.reverse()) dispose()

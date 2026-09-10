@@ -158,6 +158,32 @@ export const CARD_METHODS: Readonly<Record<string, RpcMethod>> = {
   getTavernRegexes: 'regex.tavernList',
   replaceTavernRegexes: 'regex.tavernReplace',
   formatAsTavernRegexedString: 'regex.tavernFormat',
+  // —— family④: lorebook / worldbook ——
+  /*
+   * Three new routes for twenty new members, and the ratio is the point: the
+   * old `Lorebook` names are upstream's pre-4.x spelling of members already
+   * here, so seventeen of them are composed in the frame out of routes this
+   * table already carries. A route per member would have put the same write
+   * behind two names the shell would then have to keep in step.
+   *
+   * `deleteWorldbook` is the one genuinely new host capability in the family.
+   * `rebindCharWorldbooks` and `setLorebookSettings` reach arms the panel
+   * already uses — and both are named after the **card-facing** member rather
+   * than the host arm, which is this table's rule: a card asks for what it
+   * calls, and the value is where that goes.
+   */
+  deleteWorldbook: 'worldbook.delete',
+  /*
+   * The character is **not** named by the card.
+   *
+   * `worldbook.setCharBooks` takes a `characterId`, and the frame is the
+   * untrusted side: a card supplying one could rebind another character's
+   * books. `'current'` is the only character these members accept, and the
+   * shell is what knows which that is — so it fills the id in, the way it fills
+   * in `runId` for an injection. See `client/store.ts`.
+   */
+  rebindCharWorldbooks: 'worldbook.setCharBooks',
+  setLorebookSettings: 'worldbook.setSettings',
 }
 
 /**
@@ -255,6 +281,18 @@ export const OFF_ST_SURFACE: readonly string[] = [
   'updateTavernRegexesWith',
   'isCharacterTavernRegexesEnabled',
   'formatAsTavernRegexedString',
+
+  // —— family④: lorebook / worldbook ——
+  /*
+   * The three new routes, off the SillyTavern object for the same measured
+   * reason the rest of the worldbook family is: none of the three names is
+   * among `st-context.js`'s 145 keys — they are Tavern Helper members — so
+   * serving them there would invent members on the surface being mirrored.
+   * A card reaches them as `TavernHelper.deleteWorldbook`, as it does upstream.
+   */
+  'deleteWorldbook',
+  'rebindCharWorldbooks',
+  'setLorebookSettings',
 ]
 
 /**

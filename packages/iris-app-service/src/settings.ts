@@ -429,6 +429,29 @@ export class SettingsStore {
     return row === undefined ? [] : [...row.extraBooks]
   }
 
+  // —— family④: lorebook / worldbook ——
+  /**
+   * Which characters bind one named book as an additional one.
+   *
+   * The `charLore` table read by the book rather than by the character, which
+   * is the question a **delete** asks: once the file is gone, these rows name
+   * nothing. Deliberately narrow — it answers that one question instead of
+   * handing out the row list, because a caller holding the rows would be one
+   * edit away from writing them back and undoing {@link setCharBooks}' three
+   * normalisation properties.
+   *
+   * Reading, never repairing: `worldbook.delete` leaves these bindings standing
+   * because upstream's own delete does, and every reader here already treats a
+   * name with no file behind it as unbound.
+   * @param bookName - the book's name, verbatim.
+   * @returns the character ids that bind it, in stored order.
+   */
+  charactersBindingBook(bookName: string): string[] {
+    return (this.#file.worldbooks?.charLore ?? [])
+      .filter(row => row.extraBooks.includes(bookName))
+      .map(row => row.name)
+  }
+
   /**
    * Replace one character's additional books, and persist.
    *

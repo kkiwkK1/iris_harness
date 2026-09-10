@@ -1914,6 +1914,41 @@ export const requestSchemas = {
     /** Upstream's `character_name`; absent uses the chat's own character. */
     characterName: z.string().max(300).optional(),
   }),
+  // —— family④: lorebook / worldbook ——
+  /**
+   * Delete a named world book, file and all.
+   *
+   * The write half of the family that `worldbook.names` reads, and the one arm
+   * of it that destroys something the user may be the only holder of — so it is
+   * its own method rather than a flag on another, and the answer carries a
+   * report instead of a bare success.
+   *
+   * **Upstream's `deleteWorldInfo` (`world-info.js:4234`) is the model, and it
+   * does three things this copies and two it cannot.** Copied: a name with no
+   * file behind it answers `false` rather than raising — that is upstream's own
+   * first line, and it is why `deleteLorebook`/`deleteWorldbook` are typed
+   * `Promise<boolean>`; the file goes; and the name is dropped from the
+   * **global selection**, because upstream splices `selected_world_info` and
+   * saves the settings (`world-info.js:4253`). Not copied: the two UI-local
+   * clears — `#character_world` for whichever card happens to be open
+   * (`:4262`) and the persona lorebook field (`:4270`) — have no equivalent
+   * here, and the first is a write into the card file, which this host has no
+   * arm for at all.
+   *
+   * **Every other binding is left dangling, which is upstream's behaviour
+   * rather than an omission.** A character's additional books
+   * (`worldbook.setCharBooks`) and a chat's own book (`worldbook.bindChat`)
+   * keep naming a book that is gone; upstream touches neither, every reader
+   * here already treats a name with no file as unbound
+   * (`getChatWorldbookName`, `resolveCardWorldbook`'s rules 2 and 4), and
+   * clearing them would make a delete rewrite settings the caller never
+   * mentioned. What the answer does instead is **say so**, which is the part
+   * upstream has no channel for.
+   */
+  'worldbook.delete': z.object({
+    /** The book's name, exactly as spelled — not an id, like `worldbook.get`. */
+    name: z.string().min(1).max(120),
+  }),
 } as const
 
 /** Every callable method. */
@@ -2411,6 +2446,43 @@ export interface RpcResponseMap {
    */
   'regex.tavernReplace': { regexes: TavernRegexView[] }
   'regex.tavernFormat': { text: string }
+  // —— family④: lorebook / worldbook ——
+  /**
+   * What the delete removed, and what it deliberately left behind.
+   *
+   * `deleted` alone is what the card-facing member answers with, because
+   * upstream's is `Promise<boolean>` and nothing else can travel that
+   * signature. The rest is for the reader of a host report: a delete is
+   * irreversible, and the facts that make it comprehensible afterwards —
+   * whether a selection changed, and which bindings now name nothing — are
+   * unrecoverable once the file is gone.
+   */
+  'worldbook.delete': {
+    /** False when no book had that name; upstream's answer, not an error. */
+    deleted: boolean
+    /**
+     * Whether the name was in the global selection, and so was dropped from it.
+     *
+     * Upstream's own delete does this (`world-info.js:4253`), and it is the one
+     * binding this method rewrites.
+     */
+    clearedGlobalSelect: boolean
+    /**
+     * Bindings left naming a book that is gone — upstream leaves these too.
+     *
+     * `characters` are the ids whose **additional** books named it, read from
+     * the settings layer (one file). `materialisedFor` are the ids whose
+     * embedded book this was the host's materialised copy of, read from the
+     * binding table (one file) — those cards fall back to the copy inside the
+     * card, which `resolveCardWorldbook`'s rule 2 already does.
+     *
+     * A card's own `extensions.world` primary binding is **not** scanned, and
+     * neither are chat bindings: the first costs decoding every card in the
+     * library and the second a read of every chat file, for a sentence beside a
+     * delete. Both dangle silently, exactly as they do upstream.
+     */
+    dangling: { characters: string[], materialisedFor: string[] }
+  }
 }
 
 /** The response of one method. */

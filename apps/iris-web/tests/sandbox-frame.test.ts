@@ -370,6 +370,32 @@ test('exactly the outward-reaching names are shadowed', () => {
     'updateTavernRegexesWith',
     'isCharacterTavernRegexesEnabled',
     'formatAsTavernRegexedString',
+
+    // —— family④: lorebook / worldbook ——
+    // The four `Worldbook` writes the family was missing, then the whole
+    // `Lorebook` vocabulary they were renamed from. Bare, like every Tavern
+    // Helper member above: a card written before the 4.x rename calls
+    // `getCharLorebooks()` with no namespace at all.
+    'createOrReplaceWorldbook',
+    'deleteWorldbook',
+    'deleteWorldbookEntries',
+    'rebindCharWorldbooks',
+    'getLorebooks',
+    'createLorebook',
+    'deleteLorebook',
+    'getCharLorebooks',
+    'getCurrentCharPrimaryLorebook',
+    'setCurrentCharLorebooks',
+    'getChatLorebook',
+    'setChatLorebook',
+    'getOrCreateChatLorebook',
+    'setLorebookSettings',
+    'getLorebookEntries',
+    'replaceLorebookEntries',
+    'updateLorebookEntriesWith',
+    'setLorebookEntries',
+    'createLorebookEntries',
+    'deleteLorebookEntries',
     'TavernHelper',
   ])
 })
@@ -1507,6 +1533,32 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'updateTavernRegexesWith',
     'isCharacterTavernRegexesEnabled',
     'formatAsTavernRegexedString',
+
+    // —— family④: lorebook / worldbook ——
+    // Published bare for the reason every member above it is: a card written
+    // before Tavern Helper 4.x renamed this family calls these with no
+    // namespace, and the old names are still live upstream — `@deprecated` is
+    // advice to whoever writes the next card, not a member that stopped working.
+    'createOrReplaceWorldbook',
+    'deleteWorldbook',
+    'deleteWorldbookEntries',
+    'rebindCharWorldbooks',
+    'getLorebooks',
+    'createLorebook',
+    'deleteLorebook',
+    'getCharLorebooks',
+    'getCurrentCharPrimaryLorebook',
+    'setCurrentCharLorebooks',
+    'getChatLorebook',
+    'setChatLorebook',
+    'getOrCreateChatLorebook',
+    'setLorebookSettings',
+    'getLorebookEntries',
+    'replaceLorebookEntries',
+    'updateLorebookEntriesWith',
+    'setLorebookEntries',
+    'createLorebookEntries',
+    'deleteLorebookEntries',
     'TavernHelper',
     // The per-script registry, published with the rest so a failure to define
     // it is reported like anything else — rather than leaving co-located scripts

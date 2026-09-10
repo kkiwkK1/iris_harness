@@ -1730,3 +1730,33 @@ test('a script switched off in the panel reaches the card page’s own copy', as
   assert.deepEqual(store.getState().characterDetail?.scripts, [])
   dispose()
 })
+
+// —— family④: lorebook / worldbook ——
+test('a character rebind is addressed to the open card, whatever the frame sent', async () => {
+  /*
+   * `worldbook.setCharBooks` takes a `characterId`, and the frame is the
+   * untrusted side: a card that supplied one could rewrite the bindings of a
+   * character the user did not open. The two members that reach this arm
+   * (`rebindCharWorldbooks`, `setCurrentCharLorebooks`) accept only
+   * `'current'`, and this layer is the one that knows which character that is —
+   * the same division `runId` above is filled in under.
+   *
+   * The frame's own value is sent here **on purpose**: the assertion is not that
+   * a well-behaved frame is passed through, it is that a misbehaving one is
+   * overridden. That depends on the spread order, which is a one-character edit
+   * away from being wrong and has nothing else watching it.
+   */
+  const scope = recordingStore()
+  scope.store.setState({
+    view: { chatId: 'c1', title: 'A scene', messages: [], characterId: 'aria' },
+  })
+
+  await actionsOf(scope.store).runCardAction('rebindCharWorldbooks', {
+    names: ['Extra'],
+    characterId: 'someone-else',
+  })
+
+  const call = scope.calls.find(it => it.method === 'worldbook.setCharBooks')
+  assert.deepEqual(call?.params, { chatId: 'c1', names: ['Extra'], characterId: 'aria' })
+  scope.dispose()
+})

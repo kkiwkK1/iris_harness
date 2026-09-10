@@ -31,7 +31,7 @@
  */
 
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 
 import { fromCharacterBook, parseLorebook, type Lorebook, type LorebookEntry } from '@iris/lorebook'
 import type { CharacterCard } from '@iris/character'
@@ -337,10 +337,18 @@ export function charWorldbookNames(
 /**
  * The named world books beside an installation.
  *
- * Reads, and one write: {@link WorldbookStore.replace}, which replaces a whole
- * book. There is deliberately no create and no per-entry write — upstream's
- * `replaceWorldbook` refuses a book that does not exist, and every other write
- * member in that family is built on top of the same whole-book replacement.
+ * Reads, and three writes, each at the granularity of a whole file:
+ * {@link WorldbookStore.replace} rewrites one that exists,
+ * {@link WorldbookStore.create} writes one that does not, and
+ * {@link WorldbookStore.remove} deletes one. There is deliberately **no
+ * per-entry write** — upstream's `replaceWorldbook` refuses a book that does
+ * not exist, and every other write member in that family (including the old
+ * `*LorebookEntries` four) is built on top of the same whole-book replacement.
+ *
+ * The line between `replace` and `create` is not tidiness: an edit must not
+ * create and a materialisation must not overwrite, and an upsert would let each
+ * one do the other's damage silently. `remove` is the one arm whose failure
+ * cannot be undone, which is why its caller carries a report.
  */
 export class WorldbookStore {
   private readonly dir: string
@@ -546,6 +554,38 @@ export class WorldbookStore {
     // actually closes it, by never reusing a name it did not record.
     await rename(temporary, path)
     return text
+  }
+
+  // —— family④: lorebook / worldbook ——
+  /**
+   * Delete a book's file.
+   *
+   * **Answers `false` for a name with no file rather than throwing**, which is
+   * upstream's own shape: `deleteWorldInfo` returns `false` when the name is not
+   * in `world_names` (`world-info.js:4235`), and both card-facing members over
+   * this (`deleteWorldbook`, `deleteLorebook`) are declared `Promise<boolean>`.
+   * A read here refuses with `not-found` because a caller asking for contents
+   * has to tell "no such book" from "an empty one"; a delete has no such
+   * distinction to lose — the post-state is the same either way.
+   *
+   * No temporary file and no atomic dance, unlike {@link replace}: there is no
+   * half-deleted state to be caught in. The only thing that can go wrong is the
+   * unlink failing, and that is reported as itself.
+   *
+   * Bindings are **not** touched. Which of them a caller then repairs is a
+   * policy decision, and the one place with the standing to make it is the
+   * handler that knows why the delete was asked for — see `worldbook.delete`.
+   * @param name - the book's name, used verbatim as the filename.
+   * @returns whether a file was there to remove.
+   */
+  async remove(name: string): Promise<boolean> {
+    // `fileFor` for the containment guard, exactly as every other arm: a name
+    // is used verbatim, so the one thing that must not be verbatim is a name
+    // that climbs out of the directory.
+    const path = fileFor(this.dir, name, '.json')
+    if (!existsSync(path)) return false
+    await unlink(path)
+    return true
   }
 }
 

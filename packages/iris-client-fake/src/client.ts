@@ -1754,6 +1754,32 @@ class InMemoryClient implements FakeClient {
         )
       }
 
+      // —— family④: lorebook / worldbook ——
+      case 'worldbook.delete': {
+        const { name } = params as RpcRequest<'worldbook.delete'>
+        /*
+         * Refused, and — unlike `worldbook.create` — refused for **every**
+         * name, including a seeded one.
+         *
+         * The seed is a constant, so a delete this client accepted could not
+         * remove anything: the very next `worldbook.names` would list the book
+         * again. That is worse than either honest answer. `false` ("no book had
+         * that name") would be a lie about a name this client can see in its own
+         * seed, and `true` would report a deletion that did not happen — and a
+         * caller acting on `true` is a caller that has just told a user their
+         * world book is gone.
+         *
+         * `create` can answer `false` for a seeded name because "already there"
+         * is a *true* fact about the seed. There is no equivalent true fact for
+         * a delete.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client's world books are a fixed seed, so "${name}" cannot be deleted`
+          + ' — and answering either way would be a claim about a file that is still there',
+        )
+      }
+
       default: {
         // Exhaustiveness guard: a method added to the protocol without an arm
         // here becomes a type error rather than a runtime surprise.
